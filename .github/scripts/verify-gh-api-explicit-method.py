@@ -37,13 +37,24 @@ The escape hatch is a same-line or immediately-preceding
 `# wc-gh-method-exempt: <reason>` comment, and a bare marker with no reason
 does not count - same shape as Gate 18's.
 
+HOW A CALL IS FOUND
+-------------------
+By the shared locator, wc_gh_callsites.py (specs/113-gh-callsite-locator
+FR-012): this gate has no shell tokeniser of its own. The locator finds each
+`gh api` call and reads its flags from the call's own words, so a field flag
+that is really another flag's value (`-H -f`) is not one, a `-f` belonging
+to the next command in a pipeline is not one, and the glued method spellings
+(`-XPOST`, `-iXPOST`, `--method=POST`) all count as a method. A call in a
+form the locator cannot prove is Gate 12's failure to report, not this
+gate's.
+
 SCOPE
 -----
-Every `.github/workflows/*.yml|yaml`, every `.github/actions/**/action.yml|yaml`,
-and every checked-in script under `.github/scripts/`. Raw lines, not just
-parsed `run:` blocks: a composite action's `if:` expression, a heredoc body
-and a documentation string can all carry a shipped invocation, and the point
-of a class check is that the class cannot land anywhere in the tree.
+Every `run:` block of every `.github/workflows/*.yml|yaml` and every
+`.github/actions/**/action.yml|yaml`, and every checked-in shell script
+under `.github/scripts/` and `.github/actions/`. Python scripts are not in
+scope: their `gh api` text is a string for a test or a docstring, and
+reading it as shell needed an exemption marker on every fixture.
 
 Usage:
     python3 .github/scripts/verify-gh-api-explicit-method.py
@@ -55,13 +66,10 @@ import os
 import re
 import sys
 
-# --------------------------------------------------------------- detection
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import wc_gh_callsites as loc  # noqa: E402
 
-# `gh api` as an actual command word. The lookbehind keeps `foogh api` out;
-# requiring whitespace (or end of line) after `api` keeps the allow-list
-# spelling `Bash(gh api:*)` out, which appears in every agent step's
-# --allowedTools string and is a grant, not an invocation.
-GH_API_RE = re.compile(r"(?<![\w./-])gh\s+api(?=\s|$)")
+# --------------------------------------------------------------- detection
 
 # One alternative per flag gh treats as a body. Written as a tuple rather
 # than one blob so that removing any single alternative is a one-line
@@ -83,18 +91,13 @@ FIELD_FLAG_ALTERNATIVES = (
 # `-X`/`-XGET`/`--method GET`/`--method=GET`, and `-X` ending a cluster of
 # gh api's one boolean shorthand (`-iX POST`, `-iXPOST`): reading only a
 # leading `-X` reported `gh api -iX POST ... -f body=x` as having no
-# method (code review of #944). Gate 12's _GH_API_VALUE_FLAG reads the
-# same clusters.
+# method (code review of #944).
 METHOD_FLAG_ALTERNATIVES = (
     r"-i*X\S*",
     r"--method(?:=.*)?",
 )
 
 EXEMPT_RE = re.compile(r"wc-gh-method-exempt:\s*\S")
-
-# Tokens that end a simple command, so a field flag belonging to some other
-# command in a pipeline is never blamed on `gh api`.
-TERMINATORS = set("|;&<>)`")
 
 
 def _flag_re(alternatives):
@@ -111,135 +114,54 @@ class Detector(object):
 
     def __init__(self, field_alternatives=FIELD_FLAG_ALTERNATIVES,
                  method_alternatives=METHOD_FLAG_ALTERNATIVES,
-                 join_continuations=True, quote_aware=True):
+                 honour_exemptions=True, look_in_substitutions=True):
         self.field_re = _flag_re(field_alternatives)
         self.method_re = _flag_re(method_alternatives)
-        self.join_continuations = join_continuations
-        self.quote_aware = quote_aware
-
-    # -- tokenising ------------------------------------------------------
-
-    def _args(self, text):
-        """[(token, started_unquoted)] for the command beginning at text[0].
-
-        Quote-aware because a `--jq` filter routinely contains a `|`
-        (`--jq '.[] | .name'`), and a scanner that stopped at the first `|`
-        it saw would stop reading a real invocation halfway through and miss
-        every flag after the filter.
-        """
-        if not self.quote_aware:
-            head = text.split("|")[0]
-            return [(tok, True) for tok in head.split()]
-        args = []
-        tok = []
-        started = False
-        unquoted = False
-        quote = None
-        i, n = 0, len(text)
-        while i < n:
-            c = text[i]
-            if quote:
-                if c == quote:
-                    quote = None
-                elif quote == '"' and c == "\\" and i + 1 < n:
-                    tok.append(text[i + 1])
-                    i += 2
-                    continue
-                else:
-                    tok.append(c)
-                i += 1
-                continue
-            if c in "'\"":
-                if not started:
-                    started, unquoted = True, False
-                quote = c
-                i += 1
-                continue
-            if c == "\\" and i + 1 < n:
-                if not started:
-                    started, unquoted = True, False
-                tok.append(text[i + 1])
-                i += 2
-                continue
-            if c.isspace():
-                if started:
-                    args.append(("".join(tok), unquoted))
-                    tok, started, unquoted = [], False, False
-                i += 1
-                continue
-            if c in TERMINATORS:
-                break
-            if not started:
-                started, unquoted = True, True
-            tok.append(c)
-            i += 1
-        if started:
-            args.append(("".join(tok), unquoted))
-        return args
+        self.honour_exemptions = honour_exemptions
+        self.look_in_substitutions = look_in_substitutions
 
     # -- the rule --------------------------------------------------------
 
-    def offenders(self, logical_line):
-        """The `gh api` invocations on this line that ship an unstated method.
-
-        Returns the offending flag for each, so the error can quote it.
-        """
+    def offenders(self, script):
+        """[(0-based line, flag)] for the `gh api` calls in this shell script
+        that ship an unstated method; the flag is quoted in the error."""
         found = []
-        for m in GH_API_RE.finditer(logical_line):
-            args = self._args(logical_line[m.end():])
+        for tok in loc.locate(script):
+            if tok.kind != "call" or tok.position == "disallowed":
+                continue
+            if tok.position == "subst_first" and not self.look_in_substitutions:
+                continue
+            if not tok.argv or tok.argv[0] != "api":
+                continue
             field = None
             method = False
-            for token, started_unquoted in args:
-                if not started_unquoted:
-                    continue        # a quoted string is data, not a flag
-                if self.method_re.match(token):
+            for word in loc.api_flags(tok.argv[1:]):
+                if self.method_re.match(word):
                     method = True
-                elif field is None and self.field_re.match(token):
-                    field = token
+                elif field is None and self.field_re.match(word):
+                    field = word
             if field is not None and not method:
-                found.append(field)
+                found.append((tok.line - 1, field))
         return found
 
-    # -- file sweep ------------------------------------------------------
-
-    def logical_lines(self, lines):
-        """(joined line, index of its first physical line).
-
-        A `\\`-continued invocation is one command, and a per-physical-line
-        scanner sees neither half of it: the first line has the `gh api` and
-        no flags, the second has the flags and no `gh api`. Both halves read
-        clean while the command they form does not.
-        """
-        i, n = 0, len(lines)
-        while i < n:
-            first = i
-            parts = [lines[i]]
-            while (self.join_continuations
-                   and parts[-1].rstrip().endswith("\\") and i + 1 < n):
-                i += 1
-                parts.append(lines[i])
-            yield " ".join(p.rstrip().rstrip("\\").rstrip()
-                           for p in parts), first
-            i += 1
-
-    def scan_text(self, path, text):
-        """Every failure line for one file's contents."""
-        lines = text.splitlines()
+    def scan_script(self, path, script, first_line=1):
+        """Every failure line for one shell script, whose first line is line
+        `first_line` of the file `path`."""
+        lines = script.splitlines()
         failures = []
-        for line, idx in self.logical_lines(lines):
-            for flag in self.offenders(line):
-                if _is_exempt(lines, idx):
-                    continue
-                failures.append(
-                    "::error file={0},line={1}::Gate 28: this `gh api` call "
-                    "passes `{2}` with no `-X`/`--method`, which makes it a "
-                    "POST whether or not that was meant - gh switches method "
-                    "the moment it is given a body. If it is a read, write "
-                    "`-X GET` (or move the parameter into the path as a query "
-                    "string); if it is a write, say `-X POST` out loud. An "
-                    "intentional exception needs a same-line or "
-                    "immediately-preceding `# wc-gh-method-exempt: <reason>` "
-                    "comment.".format(path, idx + 1, flag))
+        for idx, flag in self.offenders(script):
+            if self.honour_exemptions and _is_exempt(lines, idx):
+                continue
+            failures.append(
+                "::error file={0},line={1}::Gate 28: this `gh api` call "
+                "passes `{2}` with no `-X`/`--method`, which makes it a "
+                "POST whether or not that was meant - gh switches method "
+                "the moment it is given a body. If it is a read, write "
+                "`-X GET` (or move the parameter into the path as a query "
+                "string); if it is a write, say `-X POST` out loud. An "
+                "intentional exception needs a same-line or "
+                "immediately-preceding `# wc-gh-method-exempt: <reason>` "
+                "comment.".format(path, first_line + idx, flag))
         return failures
 
 
@@ -265,13 +187,15 @@ LINT_WORKFLOW = ".github/workflows/lint-workflows.yml"
 
 
 def subject_files():
-    paths = (glob.glob(".github/workflows/*.yml")
+    """-> (YAML files whose run: blocks are scanned, shell scripts)."""
+    yamls = (glob.glob(".github/workflows/*.yml")
              + glob.glob(".github/workflows/*.yaml")
              + glob.glob(".github/actions/**/action.yml", recursive=True)
-             + glob.glob(".github/actions/**/action.yaml", recursive=True)
-             + glob.glob(".github/scripts/**/*.sh", recursive=True)
-             + glob.glob(".github/scripts/**/*.py", recursive=True))
-    return sorted(set(posix(p) for p in paths))
+             + glob.glob(".github/actions/**/action.yaml", recursive=True))
+    shells = (glob.glob(".github/scripts/**/*.sh", recursive=True)
+              + glob.glob(".github/actions/**/*.sh", recursive=True))
+    return (sorted(set(posix(p) for p in yamls)),
+            sorted(set(posix(p) for p in shells)))
 
 
 def sweep():
@@ -283,19 +207,22 @@ def sweep():
         sys.exit("::error::run this from the repository root; {0} not "
                  "found.".format(LINT_WORKFLOW))
     detector = Detector()
-    files = subject_files()
-    if not files:
+    yamls, shells = subject_files()
+    if not yamls or not shells:
         sys.exit("::error::Gate 28 matched no workflows, composite actions or "
                  "scripts at all. That is a broken sweep, not a clean tree.")
     failures = []
-    for path in files:
+    for path in yamls:
+        for first_line, script in loc.run_blocks(path):
+            failures.extend(detector.scan_script(path, script, first_line))
+    for path in shells:
         with open(path, encoding="utf-8") as fh:
-            failures.extend(detector.scan_text(path, fh.read()))
+            failures.extend(detector.scan_script(path, fh.read()))
     for f in failures:
         print(f)
-    print("Gate 28: scanned {0} workflow/action/script file(s) for `gh api` "
-          "calls that pass a field with no explicit method; {1} "
-          "failure(s).".format(len(files), len(failures)))
+    print("Gate 28: scanned {0} workflow/action file(s) and {1} shell script(s) "
+          "for `gh api` calls that pass a field with no explicit method; {2} "
+          "failure(s).".format(len(yamls), len(shells), len(failures)))
     return 1 if failures else 0
 
 
@@ -306,9 +233,9 @@ def sweep():
 # every unrelated edit gets deleted rather than fixed.
 #
 # Every fixture line below that would itself trip the sweep carries the
-# exemption marker, because this file is inside the sweep's own scope. A gate
-# that excluded itself would be the one file in the tree where the defect
-# could land.
+# exemption marker, because this file is inside the sweep's own scope? It is
+# not any more -- Python files are out of scope -- but the markers stay: they
+# are what a reader of the fixture sees to know the line is quoted text.
 
 SHIPPED_DEFECT = (  # wc-gh-method-exempt: the measured defect, quoted as a self-test fixture
     'issue=$(gh api "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json"'
@@ -352,6 +279,10 @@ CASES = [
      'gh api -XGET "repos/$R/contents/x" -f ref=main',
      False, ()),
 
+    ("a method with its value attached: -XPOST, after the path",
+     'gh api "repos/$R/issues/1/comments" -f body=x -XPOST',
+     False, ()),
+
     ("a method ending a short-flag cluster: -iX POST",
      'gh api -iX POST "repos/$R/issues/1/comments" -f body=x',
      False, ()),
@@ -366,6 +297,10 @@ CASES = [
 
     ("a long method flag with =: --method=GET",
      'gh api --method=GET "repos/$R/contents/x" --field ref=main',
+     False, ()),
+
+    ("a long method flag with =: --method=POST, after the path",
+     'gh api "repos/$R/issues/1/comments" --field body=x --method=POST',
      False, ()),
 
     ("a long method flag with a separate value: --method GET",
@@ -415,9 +350,29 @@ CASES = [
      "gh api \"repos/$R/x\" --jq '.[].name' | grep -f patterns.txt",
      False, ()),
 
+    ("no false positive: a flag-looking value is another flag's value, not a field",
+     'gh api "repos/$R/x" -H -F --jq .name',
+     False, ()),
+
     ("no false positive: the allow-list grant Bash(gh api:*)",
      '--allowedTools "Read,Grep,Bash(gh api:*),Bash(grep -f:*)"',
      False, ()),
+
+    ("no false positive: a quoted mention of a call",
+     'echo "run gh api repos/x -f ref=main to see it"',
+     False, ()),
+
+    ("no false positive: a quoted-delimiter heredoc body is data",
+     "cat <<'EOF'\ngh api repos/x -f ref=main\nEOF",
+     False, ()),
+
+    ("no false positive: a comment",
+     "# gh api repos/x -f ref=main",
+     False, ()),
+
+    ("a call after a heredoc is still seen",  # wc-gh-method-exempt: self-test fixture text
+     "cat <<'EOF'\ntext\nEOF\ngh api repos/x -f ref=main",
+     True, ("-f",)),
 
     ("no false positive: an exempted call that states its reason",  # wc-gh-method-exempt: self-test fixture text
      'gh api "repos/$R/x" -f ref=main  '
@@ -447,10 +402,10 @@ MUTATIONS = [
      Detector(method_alternatives=METHOD_FLAG_ALTERNATIVES[:1])),
     ("drop the -X alternative from the method regex",
      Detector(method_alternatives=METHOD_FLAG_ALTERNATIVES[1:])),
-    ("stop joining \\-continued lines",
-     Detector(join_continuations=False)),
-    ("stop tracking quotes when reading the argument list",
-     Detector(quote_aware=False)),
+    ("stop honouring the exemption comment",
+     Detector(honour_exemptions=False)),
+    ("stop looking inside $( )",
+     Detector(look_in_substitutions=False)),
 ]
 
 
@@ -458,7 +413,7 @@ def _verdicts(detector):
     """(fired, output) per fixture, under the given detector."""
     out = []
     for name, text, _, _ in CASES:
-        failures = detector.scan_text("fixture.sh", text)
+        failures = detector.scan_script("fixture.sh", text)
         out.append((bool(failures), "\n".join(failures)))
     return out
 

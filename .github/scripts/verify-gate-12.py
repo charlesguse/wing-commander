@@ -12,45 +12,65 @@ by accident — a maintainer noticing a stall, not a check — and T062/T063
 survived five pipeline cycles, a full quickstart desk-check, and three
 rounds of executing the shipped shell against synthetic inputs first.
 
-Also covers multi-permission verbs: `gh pr create` needs contents:read on
-top of pull-requests:write (it resolves repository.defaultBranchRef over
-GraphQL even with an explicit --base), and `gh pr ready` needs
-contents:WRITE — the markPullRequestReadyForReview mutation is gated like
-a merge (cli/cli discussion #6924).
-
 A gate that never fires is indistinguishable from one whose detection logic
 is broken (gate 5 exists because that already happened once — a verifier sat
-green for weeks checking a filter that did not ship). So this script feeds
-Gate 12 synthetic workflow trees that each carry one known-bad call (or one
-known-fine one) and asserts the verdict, including what the error text
-names.
+green for weeks checking a filter that did not ship). So this script runs
+the SHIPPED gate, verify-gate-12-token-permissions.py, and the shared
+locator it reads `run:` blocks with, wc_gh_callsites.py (specs/113-gh-
+callsite-locator), five ways:
 
-Drift-proofing: the gate's source is EXTRACTED from lint-workflows.yml at
-run time rather than copied here, the same way verify-gate-6.py and
-verify-gate-7.py do it. There is no second copy to fall out of sync — if the
-shipped gate changes, this runs the changed gate.
+  1. fixtures: synthetic workflow trees that each carry one known-bad call
+     (or one known-fine one) and an assertion on the verdict, including
+     what the error text names (FIXTURES);
+  2. the locator on its own, snippet by snippet, including the mention/call
+     boundary of each clause of the authoring rule (LOCATOR_CASES);
+  3. the acceptance corpus: the 183 scenarios of the closed PR #969
+     (gate-12-corpus.json). Each one #969 expected to fail still fails; the
+     only verdict that may change is pass -> disallowed, and only where the
+     scenario says `changed_from_969` (FR-014);
+  4. a seeded differential against real bash: generated scripts run under a
+     stub `gh` that records its argv, and every invocation bash actually ran
+     must be one the locator found or rejected as disallowed (FR-015, SC-001);
+  5. a mutation: a locator that calls a real call a mention must turn the
+     corpus red (FR-016).
 
 Usage: python3 .github/scripts/verify-gate-12.py
 """
-import io
+import concurrent.futures
+import json
 import os
+import random
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_lint_gate_source import LINT_WORKFLOW, extract_gate_step  # noqa: E402
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, "gate-12-fuzz"))
+import wc_gh_callsites as loc  # noqa: E402
+import wc_shell_harness as harness  # noqa: E402
+
+GATE = os.path.join(HERE, "verify-gate-12-token-permissions.py")
+LOCATOR = os.path.join(HERE, "wc_gh_callsites.py")
+CORPUS = os.path.join(HERE, "gate-12-corpus.json")
+FUZZ_DIR = os.path.join(HERE, "gate-12-fuzz")
 
 _N = chr(10)
 
-STEP_PREFIX = "Gate 12"
-
 # One scenario runs in well under a second; a gate still running after this
-# long is backtracking without bound, which on the real fleet is a CI job
-# that hangs until its timeout instead of failing.
+# long is not terminating in time, which on the real fleet is a CI job that
+# hangs until its timeout instead of failing.
 CASE_TIMEOUT_S = 30
+# The differential's fixed seed range and size: bounded CI time (FR-015).
+FUZZ_SEED, FUZZ_COUNT = 969, 400
+# Scenarios the mutation check replays; enough that one real call among them
+# is certain to be among the ones the mutated locator hides.
+MUTATION_SAMPLE = 12
 
+AUTHORING_RULE = "Authoring rule for `gh` call sites"
 
 # ---------------------------------------------------------------- fixtures
 #
@@ -70,17 +90,11 @@ DOCS_OK = """\
    - Everything else: No access
 """
 
-# Same doc, but the App holds Issues at Read-only — the T073 case: category
-# membership alone would let an App-token `gh issue create` pass here.
-DOCS_ISSUES_READONLY = DOCS_OK.replace("Issues: **Read and write**",
-                                       "Issues: **Read-only**")
-
-# Same doc, but Pull requests at Read-only - the `gh pr close` mirror of T073.
-DOCS_PRS_READONLY = DOCS_OK.replace("Pull requests: **Read and write**",
-                                    "Pull requests: **Read-only**")
-
 APP_ENV = 'GH_TOKEN: ${{ steps.ctx.outputs.token }}'
 DEFAULT_ENV = 'GH_TOKEN: ${{ github.token }}'
+
+ACTIONS_WRITE = "      actions: write\n"
+ISSUES_READ = "      issues: read\n"
 
 
 def wf(run_body, job_perms="", job_env="", name="w"):
@@ -99,56 +113,6 @@ def step(env_lines, run_lines):
     return env + run
 
 
-ACTIONS_WRITE = "      actions: write\n"
-ACTIONS_READ = "      actions: read\n"
-ISSUES_WRITE = "      issues: write\n"
-CONTENTS_READ = "      contents: read\n"
-
-
-def minted_wf(minter_uses, run_lines, step_id="e2e-token"):
-    """A job whose first step mints a token (or pretends to) under `step_id`
-    and whose second step runs `gh` under `steps.<step_id>.outputs.token`.
-    Gate 12 recognises the output as the App token only when the minting
-    step really `uses: actions/create-github-app-token` - structurally, per
-    job - so the same generic step id under any other action stays an
-    unrecognised token, not a silently-inherited App classification."""
-    run = "".join(f"          {l}\n" for l in run_lines)
-    return ("name: minted\n"
-            "on:\n  workflow_dispatch: {}\n"
-            "jobs:\n  work:\n    runs-on: ubuntu-latest\n"
-            "    steps:\n"
-            f"      - name: mint\n        id: {step_id}\n"
-            f"        uses: {minter_uses}\n"
-            "      - name: call\n        env:\n"
-            f"          GH_TOKEN: ${{{{ steps.{step_id}.outputs.token }}}}\n"
-            "        run: |\n" + run)
-
-
-def mkcase_minted(minter_uses, run_lines, docs=DOCS_OK, step_id="e2e-token"):
-    return {".github/workflows/w.yml": minted_wf(minter_uses, run_lines, step_id),
-            "docs/setup.md": docs}
-
-
-def mkcase_ctx_env(run_lines, with_ctx=True, job_perms=ACTIONS_READ):
-    """A job whose second step runs `gh` under `env.WC_BOT_TOKEN`, the App
-    token wing-commander-context exports to $GITHUB_ENV. Gate 12 treats it
-    as the App token only in a job that runs that composite."""
-    ctx = ("      - name: ctx\n        id: ctx\n"
-           "        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context\n"
-           if with_ctx else "")
-    run = "".join(f"          {l}\n" for l in run_lines)
-    return {".github/workflows/w.yml":
-                ("name: ctxenv\n"
-                 "on:\n  workflow_dispatch: {}\n"
-                 "jobs:\n  work:\n    runs-on: ubuntu-latest\n"
-                 f"    permissions:\n{job_perms}"
-                 "    steps:\n" + ctx +
-                 "      - name: call\n        env:\n"
-                 "          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}\n"
-                 "        run: |\n" + run),
-            "docs/setup.md": DOCS_OK}
-
-
 def mkcase(job_perms, job_env, env_lines, run_lines, docs=DOCS_OK):
     return {
         ".github/workflows/w.yml": wf(step(env_lines, run_lines),
@@ -157,1297 +121,611 @@ def mkcase(job_perms, job_env, env_lines, run_lines, docs=DOCS_OK):
     }
 
 
-# --- category C fixtures (#215) -------------------------------------------
-# Category C reads tools passed at a REUSABLE-WORKFLOW call site, where they
-# arrive at the called stage as an unexpanded `inputs.extra-allowed-tools`
-# that category B cannot see through. This repository has exactly one such
-# call site with a literal list, and its grants are `Bash(python3 ...)` /
-# `Bash(bash ...)`, which TOOL_GH_RE matches nothing in - so `cs_grants` is
-# empty and neither the cross-check nor its "found no agent step" failure
-# branch runs against the real tree. The branch WAS proven by hand when it
-# landed (a temporary `Bash(gh run list:*)` grant, since reverted); these
-# fixtures are that experiment made permanent, because a proof that is not
-# checked in is not coverage.
+# With one env line and no job permissions, `wf` puts the step's first run
+# line on line 12 of w.yml; a failure must name exactly that line (FR-005).
+FIRST_RUN_LINE = 12
+DISALLOWED = "gh call in a form Gate 12 cannot verify"
+UNUSED_COMPOSITE = {
+    ".github/actions/wing-commander-probe/action.yml":
+        "name: probe" + _N + "description: fixture" + _N + "runs:" + _N +
+        "  using: composite" + _N + "  steps:" + _N + "    - name: Render" + _N +
+        "      shell: bash" + _N + "      run: |" + _N +
+        "        gh issue view 5" + _N,
+    "docs/setup.md": DOCS_OK,
+}
+BIG_HEREDOC = ["cat <<'EOF'"] + ["a b c"] * 60000 + ["EOF", "gh issue view 5"]
 
-def caller_wf(grant, called="./.github/workflows/stage.yml",
-              key="extra-allowed-tools"):
-    return ("name: caller" + _N +
-            "on:" + _N + "  workflow_dispatch: {}" + _N +
-            "jobs:" + _N + "  call:" + _N +
-            "    uses: " + called + _N +
-            "    with:" + _N +
-            "      " + key + ': "' + grant + '"' + _N)
+# name, files, expect_fail, must_mention
+FIXTURES = [
+    # --- US1: allowed forms are checked ---------------------------------
+    ("a statement-level call is checked: App-token `gh run cancel` fails, "
+     "naming file and line",
+     mkcase("", "", [APP_ENV], ['gh run cancel "$RUN_ID"']),
+     True, ("run cancel", "App token", f".github/workflows/w.yml :: work / step")),
 
-
-def stage_wf(agent_env=APP_ENV, with_agent=True):
-    head = ("name: stage" + _N +
-            "on:" + _N + "  workflow_call: {}" + _N +
-            "jobs:" + _N + "  work:" + _N +
-            "    runs-on: ubuntu-latest" + _N +
-            "    steps:" + _N)
-    if not with_agent:
-        return head + "      - name: not an agent" + _N + "        run: echo hi" + _N
-    return head + ("      - name: agent" + _N +
-                   "        uses: anthropics/claude-code-action@v1" + _N +
-                   "        env:" + _N +
-                   "          " + agent_env + _N)
-
-
-# A stage with TWO agent steps that do NOT agree about a grant: one runs
-# under github.token in a job granting `actions: read` (which covers
-# `gh run list`), the other under the App token (which docs/setup.md gives
-# no Actions permission at all). A stage-level `extra-allowed-tools` input
-# reaches both, so the grant is only safe if it is safe for the least
-# privileged one — the whole reason the cross-check loops over EVERY agent
-# context rather than the first.
-#
-# Every other category C fixture builds a stage with exactly one agent
-# step, which made that loop untestable: `for ... in ctxs` and
-# `for ... in ctxs[:1]` are indistinguishable on a one-element list, so a
-# mutation narrowing it to the first agent step left the self-test green.
-# Both orderings ship, because truncating from either end must fail.
-def stage_wf_split_agents(approve_first=True):
-    approving = ("  permissive:" + _N +
-                 "    runs-on: ubuntu-latest" + _N +
-                 "    permissions:" + _N +
-                 "      actions: read" + _N +
-                 "    steps:" + _N +
-                 "      - name: agent on github.token" + _N +
-                 "        uses: anthropics/claude-code-action@v1" + _N +
-                 "        env:" + _N +
-                 "          " + DEFAULT_ENV + _N)
-    rejecting = ("  restricted:" + _N +
-                 "    runs-on: ubuntu-latest" + _N +
-                 "    steps:" + _N +
-                 "      - name: agent on the App token" + _N +
-                 "        uses: anthropics/claude-code-action@v1" + _N +
-                 "        env:" + _N +
-                 "          " + APP_ENV + _N)
-    order = (approving, rejecting) if approve_first else (rejecting, approving)
-    return ("name: stage" + _N +
-            "on:" + _N + "  workflow_call: {}" + _N +
-            "jobs:" + _N + "".join(order))
-
-
-def mkcase_c(grant, with_agent=True, called="./.github/workflows/stage.yml"):
-    files = {
-        ".github/workflows/caller.yml": caller_wf(grant, called=called),
-        ".github/workflows/stage.yml": stage_wf(with_agent=with_agent),
-        "docs/setup.md": DOCS_OK,
-    }
-    return files
-
-
-# --- category D fixtures (#339) -------------------------------------------
-# Category D walks composite actions under .github/actions/**, resolving each
-# composite's `inputs.*` token through what the workflow call site passes in
-# `with:` (or the input's declared default) and checking the call in THAT
-# caller's job. The fixtures build one tiny composite, `wing-commander-probe`,
-# and vary the call site around it.
-
-ISSUES_READ = "      issues: read\n"
-APP_TOKEN_WITH = 'token: ${{ steps.ctx.outputs.token }}'
-DEFAULT_TOKEN_WITH = 'token: ${{ github.token }}'
-PROBE_USES = "./.github/actions/wing-commander-probe"
-PIPELINE_USES = "./.wing-commander-pipeline/.github/actions/wing-commander-probe"
-
-
-def composite_action(run_lines, env_lines=(), inputs=("token",),
-                     token_default=None, mint_step_id=None,
-                     token_env="${{ inputs.token }}"):
-    """A composite with one bash step, `Render`, whose env carries
-    GH_TOKEN: `token_env` (inputs.token by default) plus `env_lines`,
-    running `run_lines`. Every name in `inputs` is declared optional;
-    `token` gets `token_default` when one is given. `mint_step_id` adds a
-    preceding actions/create-github-app-token step under that id — the
-    composite's OWN App mint, in its own step-id namespace."""
-    out = "name: probe" + _N + "description: fixture" + _N + "inputs:" + _N
-    for name in inputs:
-        out += "  " + name + ":" + _N + "    description: t" + _N + "    required: false" + _N
-        if name == "token" and token_default is not None:
-            out += "    default: " + token_default + _N
-    out += "runs:" + _N + "  using: composite" + _N + "  steps:" + _N
-    if mint_step_id:
-        out += ("    - name: mint" + _N + "      id: " + mint_step_id + _N +
-                "      uses: actions/create-github-app-token@v3" + _N)
-    out += ("    - name: Render" + _N + "      shell: bash" + _N +
-            "      env:" + _N +
-            "        GH_TOKEN: " + token_env + _N)
-    for l in env_lines:
-        out += "        " + l + _N
-    out += "      run: |" + _N
-    for l in run_lines:
-        out += "        " + l + _N
-    return out
-
-
-def composite_caller_job(jname, with_lines, uses_path=PROBE_USES, job_perms=""):
-    perms = ("    permissions:" + _N + job_perms) if job_perms else ""
-    out = ("  " + jname + ":" + _N + "    runs-on: ubuntu-latest" + _N + perms +
-           "    steps:" + _N +
-           "      - name: Probe" + _N +
-           "        uses: " + uses_path + _N)
-    if with_lines:
-        out += "        with:" + _N
-        for l in with_lines:
-            out += "          " + l + _N
-    return out
-
-
-def composite_caller_wf(with_lines, uses_path=PROBE_USES, job_perms=""):
-    return ("name: w" + _N + "on:" + _N + "  workflow_dispatch: {}" + _N +
-            "jobs:" + _N +
-            composite_caller_job("work", with_lines, uses_path, job_perms))
-
-
-def mkcase_d(with_lines, run_lines, env_lines=(), inputs=("token",),
-             token_default=None, job_perms="", uses_path=PROBE_USES):
-    return {
-        ".github/actions/wing-commander-probe/action.yml":
-            composite_action(run_lines, env_lines, inputs, token_default),
-        ".github/workflows/w.yml":
-            composite_caller_wf(with_lines, uses_path, job_perms),
-        "docs/setup.md": DOCS_OK,
-    }
-
-
-CASES = [
-    # name, files, expect_fail, must_mention
-
-    ("healthy: App-token issue comment (App has Issues)",
-     mkcase("", "", [APP_ENV], ['gh issue comment "$N" --body hi']),
+    ("a GH_TOKEN= prefix wins over the step's token",
+     mkcase(ACTIONS_WRITE, "", [APP_ENV, "DISPATCH: ${{ github.token }}"],
+            ['GH_TOKEN="$DISPATCH" gh run cancel "$RUN_ID"']),
      False, ()),
 
-    ("the T062/T063 defect: App-token `gh run cancel` (App has no Actions)",
-     mkcase("", "", [APP_ENV], ['gh run cancel "$RUN_ID" -R "$REPO"']),
-     True, ("run cancel", "App token", "actions")),
+    ("a call as the first command of a one-level $( ) is checked",
+     mkcase("", "", [APP_ENV], ['r="$(gh run list -R "$REPO")"']),
+     True, ("run list", "App token")),
 
-    ("the T062/T063 fix: per-command prefix routes to github.token, which "
-     "the job grants actions:write",
-     mkcase(ACTIONS_WRITE, "", [APP_ENV, "DISPATCH_TOKEN: ${{ github.token }}"],
-            ['GH_TOKEN="$DISPATCH_TOKEN" gh run cancel "$RUN_ID" -R "$REPO"']),
-     False, ()),
+    # --- US1: unprovable forms fail closed, naming file:line and the rule --
+    ("backticks: a call inside them fails closed",
+     mkcase("", "", [APP_ENV], ["x=`gh issue view 5`"]),
+     True, (DISALLOWED, "(backtick)", AUTHORING_RULE,
+            f".github/workflows/w.yml:{FIRST_RUN_LINE}:")),
 
-    ("github.token call with no permissions: block anywhere to resolve "
-     "(inherits the repo default) is reported as unverified, not silently "
-     "passed and not failed on a guess - same rule Gate 3 already uses",
-     mkcase("", "", [DEFAULT_ENV], ['gh run list -R "$REPO"']),
-     False, ("cannot resolve",)),
+    ("a nested $( $( ) ) fails closed",
+     mkcase("", "", [APP_ENV], ['x="$(echo "$(gh issue view 5)")"']),
+     True, (DISALLOWED, "(nested-substitution)", AUTHORING_RULE)),
 
-    ("github.token call with only read granted cannot satisfy a write call",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV], ['gh run cancel "$RUN_ID" -R "$REPO"']),
-     True, ("run cancel", "actions")),
+    ("a $( ) whose gh is not its first command fails closed",
+     mkcase("", "", [APP_ENV], ['x="$(cd /tmp && gh issue view 5)"']),
+     True, (DISALLOWED, "(substitution-not-first)")),
 
-    ("github.token call with read granted satisfies a read call",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV], ['gh run list -R "$REPO"']),
-     False, ()),
+    ("a variable subcommand fails closed",
+     mkcase("", "", [APP_ENV], ['gh "$VERB" list']),
+     True, (DISALLOWED, "(variable-subcommand)")),
 
-    ("gh api under the App token needing Actions (the watchdog collector class)",
+    ("a variable second subcommand word fails closed",
+     mkcase("", "", [APP_ENV], ['gh issue "$ACTION" 5']),
+     True, (DISALLOWED, "(variable-subcommand)")),
+
+    ("a variable `gh api` method fails closed",
+     mkcase("", "", [APP_ENV], ['gh api -X "$M" "repos/$REPO/issues/1"']),
+     True, (DISALLOWED, "(variable-method)")),
+
+    ("a wrapper before gh fails closed",
+     mkcase("", "", [APP_ENV], ["env FOO=1 gh issue view 5"]),
+     True, (DISALLOWED, "(unquoted-wrapper)")),
+
+    ("a gh inside an unquoted heredoc body fails closed",
+     mkcase("", "", [APP_ENV], ["cat <<EOF", "gh issue view 5", "EOF"]),
+     True, (DISALLOWED, "(unquoted-heredoc)")),
+
+    ("an ANSI-C quoted gh fails closed",
+     mkcase("", "", [APP_ENV], ["echo $'gh issue view 5'"]),
+     True, (DISALLOWED, "(ansi-c)")),
+
+    ("a case arm inside $( ) fails closed",
      mkcase("", "", [APP_ENV],
-            ['jobs="$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs")"']),
-     True, ("actions", "App token")),
+            ['x="$(case "$a" in b) gh issue view 5;; esac)"']),
+     True, (DISALLOWED, "(case-arm)")),
 
-    ("gh api under the App token for a permission it DOES have (Issues)",
+    ("a double-quoted string holding $( ) and the word gh fails closed",
+     mkcase("", "", [APP_ENV], ['echo "gh totallynew thing $(date)"']),
+     True, (DISALLOWED, "(quoted-substitution)")),
+
+    ("a gh in ${...} fails closed",
+     mkcase("", "", [APP_ENV], ['x="${Y:-$(gh issue view 5)}"']),
+     True, (DISALLOWED, "(param-expansion)")),
+
+    ("an unterminated quote hides nothing: the rest fails closed",
+     mkcase("", "", [APP_ENV], ["echo 'oops", "gh issue view 5"]),
+     True, (DISALLOWED, "(unterminated-quote)")),
+
+    # --- US1: provable mentions pass (even of calls the gate would reject) --
+    ("a quoted mention of an unrecognised subcommand is not a call",
+     mkcase("", "", [APP_ENV], ['echo "run gh totallynew thing first"']),
+     False, ()),
+
+    ("a single-quoted mention is not a call",
+     mkcase("", "", [APP_ENV], ["echo 'gh totallynew thing'"]),
+     False, ()),
+
+    ("a comment mention is not a call, trailing or whole-line",
      mkcase("", "", [APP_ENV],
-            ['gh api -X PATCH "repos/$REPO/issues/comments/$ID" -f body=hi']),
+            ["# gh totallynew thing", "true # gh totallynew thing"]),
      False, ()),
 
-    ("gh api under the App token reading a branch (cleanup.yml's #282 probe: "
-     "branches/ is Contents, which the App holds)",
+    ("a quoted-delimiter heredoc body mention is not a call",
      mkcase("", "", [APP_ENV],
-            ['gh api -X GET "repos/$REPO/branches/$BRANCH" --jq .name']),
+            ["cat <<'EOF'", "gh totallynew thing", "EOF"]),
      False, ()),
 
-    ("cross-repository gh api call is out of scope (different owner/repo)",
-     mkcase("", "", [DEFAULT_ENV],
-            ['releases="$(gh api repos/github/spec-kit/releases)"']),
+    ("words that merely contain gh are not calls: ghost, gh-pages, .github",
+     mkcase("", "", [APP_ENV],
+            ["git push origin gh-pages", "ghost run", "ls .github/gh"]),
      False, ()),
 
-    ("unrecognised subcommand fails loudly rather than passing silently",
-     mkcase("", "", [APP_ENV], ['gh totallynew thing "$X"']),
+    ("an Actions expression is opaque text, not shell",
+     mkcase("", "", [APP_ENV],
+            ['echo "${{ github.event.name }} gh totallynew"']),
+     False, ()),
+
+    ("a line continuation joins the call's words: `gh \\\\\\n run cancel`",
+     mkcase("", "", [APP_ENV], ["gh \\", "  run cancel 5"]),
+     True, ("run cancel", "App token")),
+
+    ("a large quoted heredoc is skipped in linear time and the gh after it "
+     "is still checked",
+     mkcase("", "", [APP_ENV], BIG_HEREDOC),
+     False, ()),
+
+    # --- US1: every other failure branch -----------------------------------
+    ("an unresolvable token fails",
+     mkcase("", "", [APP_ENV], ['GH_TOKEN="$UNSET" gh issue view 5']),
+     True, ("could not resolve",)),
+
+    ("an unknown subcommand fails",
+     mkcase("", "", [APP_ENV], ["gh totallynew thing"]),
      True, ("totallynew", "SUBCOMMAND_PERMS")),
 
-    # --- auto-release.yml's call sites (#319) ---------------------------
-    ("gh run watch is a read: github.token with actions:write (the "
-     "dispatching job's grant) satisfies it",
-     mkcase(ACTIONS_WRITE, "", [DEFAULT_ENV],
-            ['gh run watch "$run_id" --exit-status >/dev/null 2>&1']),
-     False, ()),
+    ("an unknown `gh api` path category fails",
+     mkcase("", "", [APP_ENV], ['gh api "repos/$REPO/zzzunknown/1"']),
+     True, ("zzzunknown", "API_CATEGORY_PERM")),
 
-    ("gh run watch under the App token fails: the App has no Actions grant",
-     mkcase("", "", [APP_ENV], ['gh run watch "$run_id" --exit-status']),
-     True, ("run watch", "App token", "actions")),
+    ("a composite that calls gh but is used by no workflow fails",
+     UNUSED_COMPOSITE, True, ("no workflow under",)),
 
-    ("gh api .../commits/... is a Contents read: github.token with "
-     "contents:read satisfies it",
-     mkcase(CONTENTS_READ, "", [DEFAULT_ENV],
-            ['tip="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"']),
-     False, ()),
+    ("the authoring-rule section the failures point at must exist",
+     {**mkcase("", "", [APP_ENV], ['gh issue view 5']),
+      "CONTRIBUTING.md": "# Contributing\n"},
+     True, (f"no `### {AUTHORING_RULE}` section",)),
 
-    ("gh api .../commits/... under github.token with only actions:read "
-     "fails, naming contents",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ['tip="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"']),
-     True, ("commits", "contents")),
-
-    ("gh api .../actions/variables/... is the Variables permission, not "
-     "Actions: github.token with actions:write fails, naming variables "
-     "(code review of #924)",
-     mkcase(ACTIONS_WRITE, "", [DEFAULT_ENV],
-            ['v="$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/X" --jq .value)"']),
-     True, ("actions/variables", "variables")),
-
-    ("a query string does not hide the Variables surface: "
-     ".../actions/variables?per_page=30 under github.token with "
-     "actions:read still fails (code review of #939)",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ['gh api "repos/${GITHUB_REPOSITORY}/actions/variables?per_page=30"']),
-     True, ("actions/variables", "never grants")),
-
-    ("a `${VAR:?}` expansion is not a query string: "
-     "repos/${GITHUB_REPOSITORY:?}/actions/variables/X is still checked "
-     "(code review of #939)",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ['gh api "repos/${GITHUB_REPOSITORY:?}/actions/variables/X"']),
-     True, ("actions/variables", "never grants")),
-
-    # --- the code review of #939's Gate 12 lines --------------------------
-    ("gh api flags before the path are skipped, not read as the path: "
-     "`gh api -i -X POST .../issues/...` under github.token with only "
-     "actions:read fails, naming issues",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ['s="$(gh api -i -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x)"']),
+    # --- the #889 gaps, each by name ---------------------------------------
+    ("gap: glued method flags `-XPOST` are a write",
+     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
+            ['gh api -XPOST "repos/$REPO/issues/1/comments" -f body=x']),
      True, ("issues", "write")),
 
-    ("... a valued flag consumes its value: `gh api -H 'Accept: x' --silent "
-     "PATH` resolves PATH (.../commits/... is a Contents read)",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["gh api -H 'Accept: application/json' --silent \"repos/${GITHUB_REPOSITORY}/commits/main\""]),
-     True, ("commits", "contents")),
-
-    ("... `--method=PATCH` is a write: the attached spelling the flag "
-     "parser skips as a switch is not read as a read, so github.token with "
-     "only issues:read fails",
+    ("gap: `--method=POST` is a write",
      mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api --method=PATCH "repos/${GITHUB_REPOSITORY}/issues/1" -f state=closed']),
+            ['gh api --method=POST "repos/$REPO/issues/1/comments" -f body=x']),
      True, ("issues", "write")),
 
-    ("... and so is `-XPOST`",
+    ("gap: an unquoted Actions expression in a `gh api` value is not one "
+     "word, so it fails closed instead of hiding a method",
      mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -XPOST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
-     True, ("issues", "write")),
-
-    ("... a partly quoted flag value is one shell word: `-f body=\"a b\"` "
-     "does not leave `b\"` behind as the PATH",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ['gh api -f body="a b" -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
-     True, ("issues", "write")),
-
-    ("... a quoted method is still that method: `-X 'POST'` under "
-     "github.token with only issues:read fails (the call line blanks "
-     "quoted text, so the method word is read from the raw line)",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ["gh api -X 'POST' \"repos/${GITHUB_REPOSITORY}/issues/1/comments\" -f body=x"]),
-     True, ("issues", "write")),
-
-    ("... and so is `--method=\"PATCH\"`",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api --method="PATCH" "repos/${GITHUB_REPOSITORY}/issues/1" -f state=closed']),
-     True, ("issues", "write")),
-
-    ("... while a method word inside another flag's quoted value is not "
-     "this call's method: `-f body=\"x -X POST\"` stays a read",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            [
-                # wc-gh-method-exempt: fixture -- a method word inside a quoted value is not the call's method
-                'gh api -f body="x -X POST" "repos/${GITHUB_REPOSITORY}/issues/1"']),
-     False, ()),
-
-    ("a valued flag is never re-read as a switch to free its value as the "
-     "PATH: `gh api -H 'Accept: x' -X POST -- PATH` resolves PATH, not "
-     "`POST`",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["gh api -H 'Accept: x' -X POST -- \"repos/${GITHUB_REPOSITORY}/issues/1/comments\" -f body=x"]),
-     True, ("issues", "write")),
-
-    ("... and an attached short-flag value (`-H'...'`) is one switch word, "
-     "so `--jq '.id'` keeps its value and PATH is still resolved",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["gh api --jq '.id' -H'Accept: application/json' \"repos/${GITHUB_REPOSITORY}/issues/1\""]),
-     True, ("issues", "read")),
-
-    ("... and a `gh api` whose flags leave no PATH fails loudly rather "
-     "than passing with a flag value as its PATH",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["gh api --jq '.id' -X GET"]),
-     True, ("gh api", "SUBCOMMAND_PERMS")),
-
-    ("... a line continuation is whitespace, never the PATH: `gh api -X "
-     "GET \\` with PATH on the next line resolves it (.../actions/... "
-     "under github.token with only issues:read fails, naming actions)",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ["gh api -X GET \\",
-             '  "repos/${GITHUB_REPOSITORY}/actions/workflows/w.yml/runs" --jq .total_count']),
-     True, ("actions", "read")),
-
-    ("... and the flags never reach past the end of the line: a `gh api` "
-     "with no PATH followed by another command fails loudly, not with "
-     "that command's first word as its PATH",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["gh api --jq '.id' -X GET", "echo done"]),
-     True, ("gh api", "SUBCOMMAND_PERMS")),
-
-    ("a valued flag's value holding a command substitution with blanks is "
-     "one word: `-f sha=$(git rev-parse HEAD)` never frees `rev-parse` as "
-     "the PATH, so the Issues write under issues:read fails",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST -f sha=$(git rev-parse HEAD) "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
-     True, ("issues", "write")),
-
-    ("... and so is an Actions expression with blanks: `-f body=${{ x.y }}` "
-     "never frees `x.y` as the PATH",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST -f body=${{ steps.x.outputs.y }} "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
-     True, ("issues", "write")),
-
-    ("... so a call whose only words are such flags has no PATH and fails "
-     "loudly, not skipped with an expression fragment as its PATH",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST -f body=${{ steps.x.outputs.y }}']),
-     True, ("gh api", "SUBCOMMAND_PERMS")),
-
-    ("... and so is a double-quoted value holding a substitution whose own "
-     "quoted words have blanks: `-f body=\"$(printf \"%s %s\" ...)\"` never "
-     "frees `%s\"` as the PATH, so the Issues write under issues:read fails",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST -f body="$(printf "%s %s" "$A" "$B")" "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
-     True, ("issues", "write")),
-
-    ("... and a value with a backslash-escaped quote (`-f body='it'\\''s'`) "
-     "is one word, so its call is resolved, not failed as having no PATH",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ["gh api -X POST -f body='it'\\''s' \"repos/${GITHUB_REPOSITORY}/issues/1/comments\""]),
-     True, ("issues", "write")),
-
-    ("... and an unquoted escape is only an escape: a call with no PATH "
-     "whose value holds forty `\\.` escapes fails loudly in well under the "
-     "per-scenario timeout, not after 2^40 backtracking splits",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["gh api -X GET --jq .a" + "\\.b" * 40]),
-     True, ("gh api", "SUBCOMMAND_PERMS")),
-
-    ("a short-flag cluster ending in a valued flag consumes its value: "
-     "`gh api -iX POST PATH` never takes `POST` as the PATH, so the Issues "
-     "write under issues:read fails",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -iX POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
-     True, ("issues", "write")),
-
-    ("a `<<WORD` inside quotes is not a heredoc opener: a call after "
-     "`echo 'v<<EOF'` is still scanned",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["echo 'verdict<<VERDICT_EOF'",
-             'gh issue comment 1 --body hi',
-             "echo 'VERDICT_EOF'"]),
-     True, ("issue comment", "issues")),
-
-    ("... while a real heredoc body still hides its text",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["python3 - <<'PY'",
-             'print("gh issue comment 1 --body hi")',
-             "PY"]),
-     False, ()),
-
-    # --- the code review of #944's Gate 12 lines --------------------------
-    ("a method held in a variable is resolved through the step's "
-     "assignments: `-X \"$METHOD\"` with METHOD=POST is a write, so the "
-     "Issues call under issues:read fails",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['METHOD=POST',
-             'gh api -X "$METHOD" "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
-     True, ("issues", "write")),
-
-    ("... one resolving to GET stays a read",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['METHOD=GET',
-             'gh api --method "${METHOD}" "repos/${GITHUB_REPOSITORY}/issues/1"']),
-     False, ()),
-
-    ("... and one that resolves to no literal fails loudly (fail closed), "
-     "never read as a read",
-     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
-            ['gh api -X "$(pick_method)" "repos/${GITHUB_REPOSITORY}/issues/1"']),
-     True, ("cannot resolve this call's method", "pick_method")),
-
-    ("... nor does an unassigned variable",
-     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
-            ['gh api -X "$UNSET_METHOD" "repos/${GITHUB_REPOSITORY}/issues/1"']),
-     True, ("cannot resolve this call's method", "UNSET_METHOD")),
-
-    ("gh keeps the LAST method flag: `-X POST ... -X GET` is a read, so "
-     "the Issues call under issues:read passes",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1" -X GET']),
-     False, ()),
-
-    ("... and `-X GET ... --method POST` is a write",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X GET "repos/${GITHUB_REPOSITORY}/issues/1/comments" --method POST -f body=x']),
-     True, ("issues", "write")),
-
-    ("an unquoted `${X:-a b}` flag value is one word: its `b}` is never "
-     "the PATH, so the Issues write under issues:read fails",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST -f body=${BODY:-no body} "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
-     True, ("issues", "write")),
-
-    ("... and so is a backtick substitution with blanks",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST -f sha=`git rev-parse HEAD` "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
-     True, ("issues", "write")),
-
-    ("... and a method an Actions expression supplies fails closed even "
-     "assigned unquoted with no blanks, which the PATH resolver's "
-     "expression normalising reduces to a bare literal",
-     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
-            ['METHOD=${{inputs.method}}',
-             'gh api -X "$METHOD" "repos/${GITHUB_REPOSITORY}/issues/1"']),
-     True, ("cannot resolve this call's method", "METHOD")),
-
-    ("a `${...}` flag value nesting three levels after the PATH is one "
-     "word: the `-X GET` inside it is not the call's last method, so the "
-     "POST under issues:read fails",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
-             '-f body=${A:-${B:-${C} -X GET}}']),
-     True, ("issues", "write")),
-
-    ("... and that nesting stays linear: a call with no PATH whose 200 "
-     "flag values each nest `${...}` three levels, followed by unclosed "
-     "openers, fails loudly in well under the per-scenario timeout",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["gh api -X GET "
-             + "-f a=${A:-${B:-${C} x} y} " * 200
-             + "-f b=" + "${A:-${B:-{ " * 50]),
-     True, ("gh api", "SUBCOMMAND_PERMS")),
-
-    ("a flag value whose substitution nests three levels and holds a "
-     "quoted `)` is one word: its call's PATH is resolved and passes under "
-     "issues:write, not failed as having no PATH",
-     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
-            ['gh api -X POST -f body="$(a "$(b "$(printf \')\')")")" "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
-     False, ()),
-
-    ("... while one nesting four levels is no word and still fails "
-     "closed, as having no PATH",
-     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
-            ['gh api -X POST -f body=$(a $(b $(c $(d)))) "repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
-     True, ("gh api", "SUBCOMMAND_PERMS")),
-
-    ("... and the new word parts stay linear: a call with no PATH whose "
-     "200 flag values each hold a `${...}`, a backtick and a nested "
-     "substitution with a quoted `)`, followed by unclosed openers, fails "
-     "loudly in well under the per-scenario timeout",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["gh api -X GET "
-             + "-f a=${X:-a b}`c d`$(e \"$(f ')')\") " * 200
-             + "-f b=" + "$( ${ ` \"$(" * 50]),
-     True, ("gh api", "SUBCOMMAND_PERMS")),
-
-    ("a method flag inside another flag's `$(...)` value is not the "
-     "call's last method: the POST stays a write, so the Issues call under "
-     "issues:read fails",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
-             '-f body="$(gh api "repos/${GITHUB_REPOSITORY}/issues/2" --method GET --jq .body)"']),
-     True, ("issues", "write")),
-
-    ("... even when a `|` inside that `$(...)` value cuts the inner "
-     "command short: the call does not end inside its own value",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
-             '-f body="$(gh api repos/o/r/issues/2 --method GET --jq .body | head -1)"']),
-     True, ("issues", "write")),
-
-    ("... or a `;` inside an unquoted backtick value",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
-             '-f body=`gh api repos/o/r/issues/2 -X GET; true`']),
-     True, ("issues", "write")),
-
-    ("... while a `)` closing the substitution the call sits in does end "
-     "it: the next command's `-X POST` is not this read's method",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['x="$(gh api "repos/${GITHUB_REPOSITORY}/issues/2" --jq .body)" '
-             'curl -X POST https://example.invalid']),
-     False, ()),
-
-    ("... and a backtick closing the substitution the call sits in ends "
-     "it too: the next command's `-X GET` does not make the POST a read",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['c=`gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x`; '
-             'curl -X GET https://example.invalid']),
-     True, ("issues", "write")),
-
-    ("... nor its `-X POST` make a read a write",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['c=`gh api "repos/${GITHUB_REPOSITORY}/issues/1" --jq .body`; '
-             'curl -X POST https://example.invalid']),
-     False, ()),
-
-    ("an arithmetic `$((...))` inside the call's quoted PATH closes "
-     "both its levels: the `;` after it still ends the call, so the next "
-     "command's `-X GET` does not make the POST a read",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments?p=$((p+1))" '
-             '-f body=x; curl -X GET https://example.invalid']),
-     True, ("issues", "write")),
-
-    ("... nor the `-X POST` after a `|` make that read a write",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api "repos/${GITHUB_REPOSITORY}/issues?page=$((p+1))" --jq .x '
-             '| curl -X POST https://example.invalid']),
-     False, ()),
-
-    ("... nor is one inside a backtick value",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=`echo -X GET`']),
-     True, ("issues", "write")),
-
-    ("... nor one inside a `${...}` value",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=${X:- -X GET}']),
-     True, ("issues", "write")),
-
-    ("a word of the call nested deeper than Gate 12 parses fails the "
-     "call closed, never split at its blanks: the `-X GET` inside a "
-     "four-level `${...}` value after the PATH is no method of the "
-     "call, so the call fails as unreadable rather than passing as a "
-     "read under issues:read",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
-             '-f body=${A:-${B:-${C:-${D}}} -X GET}']),
-     True, ("cannot read this call's method", "deeper")),
-
-    ("... nor the one inside a four-level `$(...)` value",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
-             '-f body=$(a $(b $(c $(d))) -X GET)']),
-     True, ("cannot read this call's method", "deeper")),
-
-    ("... nor the one after an opener the call never closes",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
-             '-f body=$(echo -X GET']),
-     True, ("cannot read this call's method", "deeper")),
-
-    ("... and that word walk stays linear: a call with a PATH whose 200 "
-     "flag values each nest three levels and end in a `<(...)`, followed by unclosed openers, "
-     "fails closed in well under the per-scenario timeout",
-     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
-             + "-f a=${A:-${B:-${C} x} y}`c d`$(e \"$(f ')')\")<(g) " * 200
-             + "-f b=" + "$( ${ ` \"$( \"${X:-\" <( \"${{ " * 50]),
-     True, ("cannot read this call's method",)),
-
-    ("... and so does an unquoted Actions expression the call's line is "
-     "cut inside at its `||`, naming that cause",
-     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
             ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
              '-f body=${{ inputs.a || inputs.b }}']),
-     True, ("cannot read this call's method", "`||`")),
+     True, (DISALLOWED, "(dynamic-flag)")),
 
-    ("a quoted string inside a double-quoted `${...}` is part of that "
-     "word, as bash reads it: the `-X GET` in `\"${X:-\" -X GET \"}\"` is "
-     "not the call's last method, so the POST under issues:read fails",
+    ("gap: ... while the same expression quoted is one word and the write "
+     "is checked",
      mkcase(ISSUES_READ, "", [DEFAULT_ENV],
             ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
-             '-f body="${X:-" -X GET "}"']),
+             '-f body="${{ inputs.a || inputs.b }}"']),
      True, ("issues", "write")),
 
-    ("... and a `\"${BODY:-\"no body\"}\"` value before the PATH is one "
-     "word: the PATH is resolved and the write passes under issues:write",
-     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
-            ['gh api -X POST -f body="${BODY:-"no body"}" '
-             '"repos/${GITHUB_REPOSITORY}/issues/1/comments"']),
-     False, ()),
-
-    ("... while a trailing comment's unbalanced quote is no word of the "
-     "call: the read passes",
+    ("gap: separators in escaped backticks end nothing of the call",
      mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api "repos/${GITHUB_REPOSITORY}/issues/1" --jq .body  # it\'s a read']),
-     False, ()),
-
-    ("a method flag inside another flag's `<(...)` process substitution "
-     "is not the call's last method either: the POST stays a write, so "
-     "the Issues call under issues:read fails",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" '
-             '-F body=@<(gh api "repos/${GITHUB_REPOSITORY}/issues/2" --method GET --jq .body)']),
-     True, ("issues", "write")),
-
-    ("a newline inside the call's own `$(...)` value does not end the "
-     "call: a multi-line `-f body=\"$(` ... `)\"` POST is one word, read "
-     "as a write, and passes under issues:write",
-     mkcase(ISSUES_WRITE, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body="$(',
-             '  cat body.md',
-             ')"']),
-     False, ()),
-
-    ("... and a `-X GET` on that value's own lines is no method of the "
-     "call: the POST under issues:read fails",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body="$(',
-             '  gh api "repos/${GITHUB_REPOSITORY}/issues/2" -X GET --jq .body',
-             ')"']),
-     True, ("issues", "write")),
-
-    ("a `(` inside a `${...}` pattern (`${subject##*(#}`) opens no "
-     "level: the call still ends at its newline, so the next line's "
-     "`-X GET` is not its last method and the POST under issues:read fails",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api -X POST repos/${GITHUB_REPOSITORY}/issues/${subject##*(#}/comments -f body=x',
-             'gh api "repos/${GITHUB_REPOSITORY}/issues/2" -X GET --jq .body']),
-     True, ("issues", "write")),
-
-    ("... nor inside a quoted `$(...)` (`\"$(echo ${subject##*(#})\"`): "
-     "the substitution's `)` still closes it, so the POST after it is "
-     "still scanned and fails under issues:read",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['pr="$(echo ${subject##*(#})"',
-             'gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/1/comments" -f body=x']),
-     True, ("issues", "write")),
-
-    ("an unquoted heredoc delimiter is its whole word (`<<EOF-1` opens "
-     "one ending at `EOF-1`, not `EOF`): the call after it is still "
-     "scanned",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["cat <<EOF-1",
-             "EOF",
-             "EOF-1",
-             'gh issue comment 1 --body hi']),
-     True, ("issue comment", "issues")),
-
-    ("... and its body is data, not shell: an apostrophe in it opens no "
-     "quote that hides that call",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["cat <<EOF-1",
-             "don't",
-             "EOF-1",
-             'gh issue comment 1 --body hi']),
-     True, ("issue comment", "issues")),
-
-    ("... as is a quoted delimiter that is no plain word (`<<'END-X'`)",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["cat <<'END-X'",
-             "don't",
-             'gh issue comment 1 --body in-the-body',
-             "END-X",
-             'gh issue comment 1 --body hi']),
-     True, ("issue comment", "issues")),
-
-    ("a heredoc opener need not end its line: a `cat <<EOF | jq` body is "
-     "data, not shell",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["cat <<EOF | jq -R .",
-             'gh issue comment 1 --body hi',
-             "EOF"]),
-     False, ()),
-
-    ("... nor does `python3 - <<'PY' > out`'s, and two openers on one line "
-     "take their bodies in order",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["python3 - <<'PY' > out",
-             'print("gh issue comment 1 --body hi")',
-             "PY",
-             "paste <<A <<\"B\"",
-             'gh issue comment 1 --body a',
-             "A",
-             'gh issue comment 1 --body b',
-             "B"]),
-     False, ()),
-
-    ("... while the rest of the opener's line is still shell, and a call "
-     "after the last body is still scanned",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["paste <<A <<B | gh issue comment 1 --body-file -",
-             "a",
-             "A",
-             "b",
-             "B",
-             "gh pr comment 1 --body hi"]),
-     True, ("issue comment", "pr comment")),
-
-    ("... and a `<<` shift inside `$((...))` or a `<<<` here-string opens "
-     "no heredoc",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ["n=$((1 << SHIFT))",
-             "jq . <<<\"$n\"",
-             'gh issue comment 1 --body hi',
-             "SHIFT"]),
-     True, ("issue comment", "issues")),
-
-    ("gh api .../actions/permissions is the Administration permission, not "
-     "Actions: github.token with actions:write fails, naming administration",
-     mkcase(ACTIONS_WRITE, "", [DEFAULT_ENV],
-            ['gh api "repos/${GITHUB_REPOSITORY}/actions/permissions"']),
-     True, ("actions/permissions", "administration", "never grants")),
-
-    ("gh api .../actions/secrets/... is the Secrets permission",
-     mkcase(ACTIONS_WRITE, "", [DEFAULT_ENV],
-            ['gh api "repos/${GITHUB_REPOSITORY}/actions/secrets/public-key"']),
-     True, ("actions/secrets", "secrets")),
-
-    ("gh api .../actions/organization-variables is the Variables permission",
-     mkcase(ACTIONS_WRITE, "", [DEFAULT_ENV],
-            ['gh api "repos/${GITHUB_REPOSITORY}/actions/organization-variables"']),
-     True, ("actions/organization-variables", "variables")),
-
-    ("... and other actions/ sub-paths stay Actions: .../actions/runs under "
-     "github.token with actions:read passes",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ['gh api "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=1"']),
-     False, ()),
-
-    ("gh's repos/{owner}/{repo}/ placeholders are this repository, so the "
-     "call is checked: an Actions read under the App token fails",
-     mkcase("", "", [APP_ENV],
-            ['gh api "repos/{owner}/{repo}/actions/runs"']),
-     True, ("App token", "actions")),
-
-    ("a token minted through the _shared/scoped-app-token composite IS the "
-     "App token: its Actions read fails against the documented grant",
-     mkcase_minted("./.github/actions/_shared/scoped-app-token",
-                   ['gh run list --repo "$E2E_REPO"'], step_id="token"),
-     True, ("run list", "App token", "actions")),
-
-    ("... by its published-stage path too, and an issue create under it "
-     "passes",
-     mkcase_minted("./.wing-commander-pipeline/.github/actions/_shared/scoped-app-token",
-                   ['gh issue create --repo "$E2E_REPO" --title t --body b'],
-                   step_id="token"),
-     False, ()),
-
-    ("a Variables call under github.token fails even with no permissions: "
-     "block to compare against: no block can grant it (code review of #939)",
-     mkcase("", "", [DEFAULT_ENV],
-            ['gh variable get WING_COMMANDER_AUTO_RELEASE_PAUSED']),
-     True, ("variables", "never grants")),
-
-    ("gh pr close under the App token passes against the documented "
-     "Pull requests: Read and write grant",
-     mkcase("", "", [APP_ENV],
-            ['gh pr close "$n" --repo "$E2E_REPO" --comment "leftover"']),
-     False, ()),
-
-    ("gh pr close under the App token fails when Pull requests is "
-     "Read-only (the T073 level check, on the new entry)",
-     mkcase("", "", [APP_ENV],
-            ['gh pr close "$n" --repo "$E2E_REPO" --comment "leftover"'],
-            docs=DOCS_PRS_READONLY),
-     True, ("pr close", "App token", "pull-requests")),
-
-    # --- structural App-token recognition (#319) -------------------------
-    ("a token minted by actions/create-github-app-token in the same job IS "
-     "the App token: its gh issue create passes against the documented grant",
-     mkcase_minted("actions/create-github-app-token@v3",
-                   ['gh issue create --repo "$E2E_REPO" --title t --body b']),
-     False, ()),
-
-    ("... and is held to that grant: gh issue create fails when the doc "
-     "says Issues is Read-only",
-     mkcase_minted("actions/create-github-app-token@v3",
-                   ['gh issue create --repo "$E2E_REPO" --title t --body b'],
-                   docs=DOCS_ISSUES_READONLY),
-     True, ("issue create", "App token", "issues")),
-
-    ("... and the recognition follows the minting step, not the id: the "
-     "generic id `token` under some other action is an unrecognised token "
-     "(reported unverified, neither passed as the App nor failed)",
-     mkcase_minted("some-org/mint-a-different-token@v1",
-                   ['gh issue create --repo "$OTHER" --title t --body b'],
-                   step_id="token"),
-     False, ("unrecognised token", "Unverified")),
-
-    ("... and a job cannot borrow another job's minted token by name: the "
-     "same expression in a job with no minting step is unrecognised",
-     {".github/workflows/w.yml":
-          minted_wf("actions/create-github-app-token@v3",
-                    ['gh issue view "$N"']).replace(
-              "      - name: mint\n        id: e2e-token\n"
-              "        uses: actions/create-github-app-token@v3\n", ""),
-      "docs/setup.md": DOCS_OK},
-     False, ("unrecognised token", "Unverified")),
-
-    ("env.WC_BOT_TOKEN in a job that runs wing-commander-context is the App "
-     "token: an Actions read under it fails (board-loop triage's run-evidence "
-     "fetch, which 403s under the documented App grant)",
-     mkcase_ctx_env(['gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts"']),
-     True, ("App token", "actions")),
-
-    ("... and it is held to the App's real grant: an issue comment under it "
-     "passes",
-     mkcase_ctx_env(['gh issue comment "$N" --body hi']),
-     False, ()),
-
-    ("... and in a job that never runs wing-commander-context the same "
-     "expression stays unrecognised (reported unverified, neither passed as "
-     "the App nor failed)",
-     mkcase_ctx_env(['gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts"'], with_ctx=False),
-     False, ("unrecognised token", "Unverified")),
-
-    ("an unresolvable gh api path (traced to a $(...) computed value) fails "
-     "loudly rather than being silently skipped",
-     mkcase("", "", [APP_ENV], ['gh api -X PATCH "$(compute_path)" -f body=hi']),
-     True, ("cannot resolve",)),
-
-    ("no false positive: a gh mention inside an echo string never runs",
-     mkcase("", "", [APP_ENV],
-            ['echo "   gh run cancel $RUN_ID -R $REPO"']),
-     False, ()),
-
-    ("no false positive: a gh mention inside a `#` comment never runs",
-     mkcase("", "", [APP_ENV],
-            ['# gh run cancel is mentioned here for humans only',
-             'gh issue view "$N"']),
-     False, ()),
-
-    ("no false positive: a gh mention inside a heredoc body (data for "
-     "another interpreter) never runs",
-     mkcase("", "", [APP_ENV],
-            ["python3 - <<'PYEOF'",
-             'print("gh run cancel $RUN_ID")',
-             "PYEOF"]),
-     False, ()),
-
-    ("agent tool grant: Bash(gh run view:*) handed to an agent step whose "
-     "token is the App token 403s exactly like a deterministic call would",
-     {".github/workflows/w.yml": (
-         "name: w\non:\n  workflow_dispatch: {}\njobs:\n  work:\n"
-         "    runs-on: ubuntu-latest\n    steps:\n"
-         "      - name: Compose tool args\n"
-         "        uses: ./.github/actions/wing-commander-tool-args\n"
-         "        with:\n"
-         '          default-allowed-tools: "Read,Bash(gh run view:*)"\n'
-         "      - name: Agent step\n"
-         "        uses: anthropics/claude-code-action@v1\n"
-         "        env:\n"
-         f"          {APP_ENV}\n"),
-      "docs/setup.md": DOCS_OK},
-     True, ("agent tool grant", "run view", "App token")),
-
-    ("agent tool grant under github.token with the matching job permission "
-     "is fine",
-     {".github/workflows/w.yml": (
-         "name: w\non:\n  workflow_dispatch: {}\njobs:\n  work:\n"
-         "    runs-on: ubuntu-latest\n    permissions:\n      actions: read\n"
-         "    steps:\n"
-         "      - name: Compose tool args\n"
-         "        uses: ./.github/actions/wing-commander-tool-args\n"
-         "        with:\n"
-         '          default-allowed-tools: "Read,Bash(gh run view:*)"\n'
-         "      - name: Agent step\n"
-         "        uses: anthropics/claude-code-action@v1\n"
-         "        env:\n"
-         f"          {DEFAULT_ENV}\n"),
-      "docs/setup.md": DOCS_OK},
-     False, ()),
-
-    # T068 regression guards. The shipped `executable_flags` decides which
-    # text really runs; when it wrongly concludes "not executable" the gate
-    # skips the call entirely and reports success — a false PASS, the one
-    # failure mode a linter must never have. Both shapes below hid real
-    # calls in this repository (rebase.yml's `gh label create`, masked by
-    # "Once you've rebased"; wing-commander-watchdog-test's `gh workflow
-    # run`, masked by "# ... stage 8's resolve job must fail"), so each is
-    # pinned with a KNOWN-BAD call after the apostrophe: if the scanner
-    # regresses, the call goes invisible and the case stops failing.
-    ("T068: an apostrophe inside a DOUBLE-quoted string is a literal, not a "
-     "quote opener - a wrongly-permissioned call after it must still be seen",
-     mkcase("", "", [APP_ENV],
-            # Exactly ONE apostrophe on purpose: a second one would close the
-            # bogus frame the bug opens and the fixture would pass even
-            # against the broken scanner, proving nothing (this fixture was
-            # written with two first, and the mutation test caught it).
-            ['echo "Once you\'ve rebased the branch, CI retries automatically"',
-             'gh run cancel "$RUN_ID" -R "$REPO"']),
-     True, ("run cancel", "App token", "actions")),
-
-    ("T068: an apostrophe inside a TRAILING `#` comment does not open a "
-     "quote - a wrongly-permissioned call after it must still be seen",
-     mkcase("", "", [APP_ENV],
-            ["target=1   # no run 1 exists; stage 8's resolve job must fail",
-             'gh run cancel "$target" -R "$REPO"']),
-     True, ("run cancel", "App token", "actions")),
-
-    # T073: the App branch must honour the required LEVEL, not just the
-    # category. With membership-only checking this case passed while 403ing
-    # at runtime - exactly the class T064 built this gate to catch.
-    ("T073: an App-token write call against a Read-only App grant fails, "
-     "rather than passing on mere category membership",
-     mkcase("", "", [APP_ENV], ['gh issue create --title t --body b'],
-            docs=DOCS_ISSUES_READONLY),
-     True, ("issue create", "App token", "issues")),
-
-    ("T073: an App-token read call against that same Read-only grant is fine",
-     mkcase("", "", [APP_ENV], ['gh issue view "$N"'],
-            docs=DOCS_ISSUES_READONLY),
-     False, ()),
-
-    ("under-permissioned `gh pr create` under github.token with only "
-     "pull-requests:write (missing contents:read) fails",
-     mkcase("      pull-requests: write\n", "", [DEFAULT_ENV],
-            ['gh pr create --repo "$REPO" --base main --head "$HEAD" '
-             '--draft --title t --body b']),
-     True, ("pr create", "contents")),
-
-    ("the fix: `gh pr create` with both pull-requests:write "
-     "and contents:read passes",
-     mkcase("      pull-requests: write\n      contents: read\n", "", [DEFAULT_ENV],
-            ['gh pr create --repo "$REPO" --base main --head "$HEAD" '
-             '--draft --title t --body b']),
-     False, ()),
-
-    ("under-permissioned `gh pr ready` under github.token with contents:read "
-     "(needs contents:WRITE) fails",
-     mkcase("      pull-requests: write\n      contents: read\n", "", [DEFAULT_ENV],
-            ['gh pr ready "$N" --repo "$REPO"']),
-     True, ("pr ready", "contents")),
-
-    ("the fix: `gh pr ready` with contents:write passes",
-     mkcase("      pull-requests: write\n      contents: write\n", "", [DEFAULT_ENV],
-            ['gh pr ready "$N" --repo "$REPO"']),
-     False, ()),
-
-    # --- category C (#215) ------------------------------------------------
-    ("category C: a call site granting `gh run list` to a stage whose agent "
-     "runs on the App token fails - the App has no Actions permission",
-     mkcase_c("Bash(gh run list:*)"),
-     True, ("run list", "App token", "actions")),
-
-    ("category C: the second call-site key, allowed-tools-override, is read "
-     "too - not just extra-allowed-tools",
-     {".github/workflows/caller.yml":
-         caller_wf("Bash(gh run list:*)", key="allowed-tools-override"),
-      ".github/workflows/stage.yml": stage_wf(),
-      "docs/setup.md": DOCS_OK},
-     True, ("run list", "App token", "actions")),
-
-    ("category C: a grant the App token does cover passes",
-     mkcase_c("Bash(gh issue comment:*)"),
-     False, ()),
-
-    ("category C: a call site granting tools to a stage with no agent step "
-     "fails rather than passing quietly",
-     mkcase_c("Bash(gh run list:*)", with_agent=False),
-     True, ("no agent step",)),
-
-    ("category C: a call site naming a workflow that does not exist fails",
-     mkcase_c("Bash(gh run list:*)",
-              called="./.github/workflows/gone.yml"),
-     True, ("no agent step",)),
-
-    ("category C: a grant the stage's FIRST agent step can satisfy is still "
-     "rejected for a later one that cannot - the input reaches both",
-     {".github/workflows/caller.yml": caller_wf("Bash(gh run list:*)"),
-      ".github/workflows/stage.yml": stage_wf_split_agents(approve_first=True),
-      "docs/setup.md": DOCS_OK},
-     True, ("restricted / agent on the App token", "run list", "App token",
-            "actions")),
-
-    ("category C: and the same the other way round - the offending agent "
-     "step being the FIRST one must not be the only case that fails",
-     {".github/workflows/caller.yml": caller_wf("Bash(gh run list:*)"),
-      ".github/workflows/stage.yml": stage_wf_split_agents(approve_first=False),
-      "docs/setup.md": DOCS_OK},
-     True, ("restricted / agent on the App token", "run list", "App token",
-            "actions")),
-
-    # --- category D: composite actions (#339) -----------------------------
-    ("category D: the #337 shape - a composite's `gh run view` under an "
-     "`inputs.token` the caller binds to the App token fails, naming both the "
-     "composite and the call site",
-     mkcase_d([APP_TOKEN_WITH], ['gh run view "$RUN_ID" --json headBranch']),
-     True, ("wing-commander-probe", "Render", "w.yml :: work / Probe",
-            "run view", "App token", "actions")),
-
-    ("category D: the same composite bound to github.token in a job granting "
-     "actions:read passes",
-     mkcase_d([DEFAULT_TOKEN_WITH], ['gh run view "$RUN_ID" --json headBranch'],
-              job_perms=ACTIONS_READ),
-     False, ()),
-
-    ("category D: the same call site through the published-stage path "
-     "(./.wing-commander-pipeline/.github/actions/...) resolves to the same "
-     "composite",
-     mkcase_d([APP_TOKEN_WITH], ['gh run view "$RUN_ID" --json headBranch'],
-              uses_path=PIPELINE_USES),
-     True, ("wing-commander-probe", "run view", "App token", "actions")),
-
-    ("category D: the inspected-run-identity split - a per-command "
-     'GH_TOKEN="$ACTIONS_TOKEN" prefix bound to github.token (actions:read) '
-     "for the Actions read, the step's App token for the issue read - passes",
-     mkcase_d([APP_TOKEN_WITH, 'actions-token: ${{ github.token }}'],
-              ['GH_TOKEN="$ACTIONS_TOKEN" gh run download "$RUN_ID" -p rec',
-               'gh issue view "$N" --json labels'],
-              env_lines=['ACTIONS_TOKEN: ${{ inputs.actions-token }}'],
-              inputs=("token", "actions-token"), job_perms=ACTIONS_READ),
-     False, ()),
-
-    ("category D: ... and the split is what saves it: the same two reads with "
-     "the prefix dropped fail on the Actions read only",
-     mkcase_d([APP_TOKEN_WITH, 'actions-token: ${{ github.token }}'],
-              ['gh run download "$RUN_ID" -p rec',
-               'gh issue view "$N" --json labels'],
-              env_lines=['ACTIONS_TOKEN: ${{ inputs.actions-token }}'],
-              inputs=("token", "actions-token"), job_perms=ACTIONS_READ),
-     True, ("run download", "App token", "actions")),
-
-    ("category D: a token input the caller never passes and that has no "
-     "default is unresolved - the call would run under an empty token",
-     mkcase_d([], ['gh issue view "$N"']),
-     True, ("could not resolve", "not passed at this call site")),
-
-    ("category D: a token input the caller never passes falls back to its "
-     "declared default (the metrics-persist shape: github.token, checked "
-     "against the caller's job permissions)",
-     mkcase_d([], ['gh run download "$RUN_ID" -p rec'],
-              token_default="${{ github.token }}", job_perms=ACTIONS_READ),
-     False, ()),
-
-    ("category D: ... and that default is held to the caller's grant - the "
-     "same composite in a job without actions:read fails",
-     mkcase_d([], ['gh run download "$RUN_ID" -p rec'],
-              token_default="${{ github.token }}", job_perms=ISSUES_WRITE),
-     True, ("run download", "actions")),
-
-    ("category D: a composite is checked once per call site - fine under the "
-     "App token in one job, a failure under an under-granted github.token in "
-     "another, and the failure names the second job",
-     {".github/actions/wing-commander-probe/action.yml":
-          composite_action(['gh issue comment "$N" --body hi']),
-      ".github/workflows/w.yml":
-          composite_caller_wf([APP_TOKEN_WITH])
-          + composite_caller_job("second", [DEFAULT_TOKEN_WITH],
-                                 job_perms="      issues: read\n"),
-      "docs/setup.md": DOCS_OK},
-     True, ("w.yml :: second / Probe", "issue comment", "issues")),
-
-    ("category D: a composite that calls gh but no workflow uses fails "
-     "loudly - no call site, no token to check",
-     {".github/actions/wing-commander-orphan/action.yml":
-          composite_action(['gh issue view "$N"']),
-      ".github/workflows/w.yml": wf(step([APP_ENV], ['gh issue view "$N"'])),
-      "docs/setup.md": DOCS_OK},
-     True, ("wing-commander-orphan", "no workflow")),
-
-    ("category D: a composite that makes no gh call needs no call site",
-     {".github/actions/wing-commander-quiet/action.yml":
-          composite_action(['echo "nothing to see"']),
-      ".github/workflows/w.yml": wf(step([APP_ENV], ['gh issue view "$N"'])),
-      "docs/setup.md": DOCS_OK},
-     False, ()),
-
-    ("category D: a gh call inside a _shared script fails - shared scripts "
-     "run under whatever the sourcing composite exported",
-     {".github/actions/_shared/helper.sh":
-          '#!/usr/bin/env bash\ngh issue view "$N"\n',
-      ".github/workflows/w.yml": wf(step([APP_ENV], ['gh issue view "$N"'])),
-      "docs/setup.md": DOCS_OK},
-     True, ("_shared/helper.sh", "shared script")),
-
-    # --- gh api level: --method (#339) --------------------------------------
-    # The composite walk brought metrics-persist's `gh api --method PATCH`
-    # into scope, which the -X-only parser read as a PATH named `--method`
-    # and silently dropped as out of scope. (An implicit POST — a body field
-    # with no method — is Gate 28's subject, so there is no fixture for it
-    # here: Gate 28 scans this file too and would reject the fixture text.)
-    ("gh api --method PATCH is a write: under github.token with only "
-     "issues:read it fails, naming issues",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api --method PATCH "repos/$REPO/issues/comments/$ID" -F body=@f']),
-     True, ("issues", "write")),
-
-    ("gh api -X GET with a body field (a query parameter) stays a read",
-     mkcase(CONTENTS_READ, "", [DEFAULT_ENV],
-            ['gh api -X GET "repos/$REPO/contents/$P" -f ref="$BRANCH" --jq .content']),
-     False, ()),
-
-    ("the --method GET / --paginate combination stays a read and its path "
-     "is still parsed (not mistaken for `--method`)",
-     mkcase(ACTIONS_READ, "", [DEFAULT_ENV],
-            ['gh api --method GET "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate']),  # wc-pagination-exempt: Gate 12 self-test fixture text (this repo's own no-filter shape, deliberately unfiltered to test Gate 12's own --method parsing), not a real invocation
-     False, ()),
-
-    ("... and under the App token that same --method GET Actions read fails, "
-     "proving the path was seen",
-     mkcase("", "", [APP_ENV],
-            ['gh api --method GET "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate']),  # wc-pagination-exempt: Gate 12 self-test fixture text, not a real invocation
-     True, ("actions", "App token")),
-
-    # The method is read from THIS call's own executable arguments only
-    # (review of #348): a `--method POST` in a trailing comment, inside a
-    # quoted value, or in the next command on the same line is not this
-    # call's method. Each of these is a read under a read-only grant and
-    # must pass.
-    ("gh api level: a `--method POST` in a trailing comment does not make "
-     "the read a write",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api "repos/$REPO/issues/$N" --jq .id   # writes use --method POST']),
-     False, ()),
-
-    ("gh api level: a `--method POST` inside a quoted argument does not make "
-     "the read a write",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api "repos/$REPO/issues/$N" --jq \'"--method POST"\'']),
-     False, ()),
-
-    ("gh api level: a `--method POST` in the NEXT command on the line does "
-     "not make the read a write",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api "repos/$REPO/issues/$N" --jq .id && echo "--method POST"']),
-     False, ()),
-
-    ("gh api level: ... while a write chained after the read is still "
-     "checked as a write in its own right",
-     mkcase(ISSUES_READ, "", [DEFAULT_ENV],
-            ['gh api "repos/$REPO/issues/$N" --jq .id && gh api --method POST '
-             '"repos/$REPO/issues" --input body.json']),
-     True, ("issues", "write")),
-
-    # Step-id namespaces (review of #348): `steps.<id>.outputs.token` names a
-    # different step on the caller's side and on the composite's side. A
-    # composite's own App mint must never vouch for a caller's unrelated
-    # token that happens to share the id, and vice versa.
-    ("category D: the composite mints its own App token under id `setup`; "
-     "the caller passes ITS `steps.setup.outputs.token` from a non-App "
-     "action - unverified, never classified App by the shared id",
-     {".github/actions/wing-commander-probe/action.yml":
-          composite_action(['gh issue comment "$N" --body hi'], mint_step_id="setup"),
-      ".github/workflows/w.yml": (
-          "name: w" + _N + "on:" + _N + "  workflow_dispatch: {}" + _N +
-          "jobs:" + _N + "  work:" + _N + "    runs-on: ubuntu-latest" + _N +
-          "    permissions:" + _N + "      issues: read" + _N +
-          "    steps:" + _N +
-          "      - name: not a mint" + _N + "        id: setup" + _N +
-          "        uses: some-org/mint-a-different-token@v1" + _N +
-          "      - name: Probe" + _N +
-          "        uses: ./.github/actions/wing-commander-probe" + _N +
-          "        with:" + _N +
-          "          token: ${{ steps.setup.outputs.token }}" + _N),
-      "docs/setup.md": DOCS_OK},
-     False, ("unrecognised token", "Unverified")),
-
-    ("category D: a composite's own App mint IS the App token for the "
-     "composite's own env - held to the documented grant",
-     {".github/actions/wing-commander-probe/action.yml":
-          composite_action(['gh issue create --title t --body b'],
-                           mint_step_id="mint",
-                           token_env="${{ steps.mint.outputs.token }}"),
-      ".github/workflows/w.yml": composite_caller_wf([]),
-      "docs/setup.md": DOCS_ISSUES_READONLY},
-     True, ("issue create", "App token", "issues")),
-
-    ("category D: a token the CALLER mints in its own job and passes in is "
-     "the App token on the caller's side - held to the documented grant",
-     {".github/actions/wing-commander-probe/action.yml":
-          composite_action(['gh issue create --title t --body b']),
-      ".github/workflows/w.yml": (
-          "name: w" + _N + "on:" + _N + "  workflow_dispatch: {}" + _N +
-          "jobs:" + _N + "  work:" + _N + "    runs-on: ubuntu-latest" + _N +
-          "    steps:" + _N +
-          "      - name: mint" + _N + "        id: ctx2" + _N +
-          "        uses: actions/create-github-app-token@v3" + _N +
-          "      - name: Probe" + _N +
-          "        uses: ./.github/actions/wing-commander-probe" + _N +
-          "        with:" + _N +
-          "          token: ${{ steps.ctx2.outputs.token }}" + _N),
-      "docs/setup.md": DOCS_ISSUES_READONLY},
-     True, ("issue create", "App token", "issues")),
-
-    ("category D: ... and the caller's job env is the caller's namespace "
-     "too - a composite step with no env of its own falls back to the "
-     "caller job's GH_TOKEN, an App token minted in that job",
-     {".github/actions/wing-commander-probe/action.yml":
-          composite_action(['gh issue create --title t --body b']).replace(
-              "      env:" + _N + "        GH_TOKEN: ${{ inputs.token }}" + _N, ""),
-      ".github/workflows/w.yml": (
-          "name: w" + _N + "on:" + _N + "  workflow_dispatch: {}" + _N +
-          "jobs:" + _N + "  work:" + _N + "    runs-on: ubuntu-latest" + _N +
-          "    env:" + _N + "      GH_TOKEN: ${{ steps.ctx2.outputs.token }}" + _N +
-          "    steps:" + _N +
-          "      - name: mint" + _N + "        id: ctx2" + _N +
-          "        uses: actions/create-github-app-token@v3" + _N +
-          "      - name: Probe" + _N +
-          "        uses: ./.github/actions/wing-commander-probe" + _N),
-      "docs/setup.md": DOCS_ISSUES_READONLY},
-     True, ("issue create", "App token", "issues")),
+            ['x=`gh api "repos/$REPO/issues/1/comments" -f body=\\`a;b\\` -X POST`']),
+     True, (DISALLOWED, "(backtick)")),
+]
+
+# ----------------------------------------------------------- locator cases
+#
+# script, then the (kind, detail) pairs locate() must return in order, where
+# detail is the position of an allowed call, `disallowed:<reason>` of a
+# rejected one, or the mention clause.
+
+C_ST, C_SUB = ("call", "statement"), ("call", "subst_first")
+
+
+def dis(reason):
+    return ("call", "disallowed:" + reason)
+
+
+def men(clause):
+    return ("mention", clause)
+
+
+LOCATOR_CASES = [
+    ("statement", "gh issue view 5", [C_ST]),
+    ("after a separator", "true; gh a b && gh c d | gh e f", [C_ST] * 3),
+    ("after then/do/!", "if ! gh a b; then gh c d; fi", [C_ST] * 2),
+    ("first command of a substitution", 'x="$(gh issue view 5)"', [C_SUB]),
+    ("first of a pipeline in a substitution", "x=$(gh api x | jq .)", [C_SUB]),
+    ("process substitution", "mapfile -t a < <(gh issue list)", [C_SUB]),
+    ("GH_TOKEN prefix", 'GH_TOKEN="$T" gh run list', [C_ST]),
+    ("timeout prefix", 'x="$(timeout "$T" gh issue view 5)"', [C_SUB]),
+    ("other assignment prefix", "GH_REPO=x gh issue view 5",
+     [dis("unsupported-prefix")]),
+    ("backticks", "x=`gh issue view 5`", [dis("backtick")]),
+    ("double-quoted backticks", 'x="`gh issue view 5`"', [dis("backtick")]),
+    ("nested substitution", 'x="$(echo "$(gh issue view 5)")"',
+     [dis("nested-substitution")]),
+    ("not first in substitution", "x=$(cd d && gh issue view 5)",
+     [dis("substitution-not-first")]),
+    ("variable subcommand", 'gh "$V" list', [dis("variable-subcommand")]),
+    ("variable verb two", 'gh issue "$A"', [dis("variable-subcommand")]),
+    ("variable api method", 'gh api -X "$M" x', [dis("variable-method")]),
+    ("glued api method is literal", "gh api -XPOST x", [C_ST]),
+    ("wrapper", "env gh issue view 5", [dis("unquoted-wrapper")]),
+    ("command -v is not a wrapper call", "command -v gh", []),
+    ("which / echo are not calls", "which gh; echo gh", []),
+    ("single-quoted mention", "echo 'gh issue view'", [men("quoted")]),
+    ("double-quoted mention", 'echo "gh issue view"', [men("quoted")]),
+    ("quote with $( ) is not a mention", 'echo "gh $(date)"',
+     [dis("quoted-substitution")]),
+    ("quote with backtick is not a mention", 'echo "gh `date`"',
+     [dis("quoted-substitution")]),
+    ("quote with ${} only is a mention", 'echo "gh ${X}"', [men("quoted")]),
+    ("comment", "# gh issue view", [men("comment")]),
+    ("trailing comment", "true # gh issue view", [men("comment")]),
+    ("# inside a word is no comment", "echo a#gh", []),
+    ("quoted heredoc", "cat <<'EOF'\ngh x\nEOF", [men("quoted-heredoc")]),
+    ("double-quoted delimiter", 'cat <<"EOF"\ngh x\nEOF', [men("quoted-heredoc")]),
+    ("backslash delimiter", "cat <<\\EOF\ngh x\nEOF", [men("quoted-heredoc")]),
+    ("unquoted heredoc", "cat <<EOF\ngh x\nEOF", [dis("unquoted-heredoc")]),
+    ("tab-stripped heredoc", "cat <<-'EOF'\n\tgh x\n\tEOF\ngh a b",
+     [men("quoted-heredoc"), C_ST]),
+    ("heredoc then call", "cat <<'EOF' | jq .\ngh x\nEOF\ngh a b",
+     [men("quoted-heredoc"), C_ST]),
+    ("two heredocs on a line", "cat <<'A' <<'B'\ngh 1\nA\ngh 2\nB\ngh a b",
+     [men("quoted-heredoc"), men("quoted-heredoc"), C_ST]),
+    ("heredoc inside a substitution", 'x="$(cat <<\'E\'\ngh x\nE\n)"\ngh a b',
+     [men("quoted-heredoc"), C_ST]),
+    ("unterminated heredoc", "cat <<'EOF'\ngh x", [dis("unterminated-heredoc")]),
+    ("here-string", 'cat <<< "gh x"', [men("quoted")]),
+    ("shift is no heredoc", "echo $(( 1 << 2 )) && gh a b", [C_ST]),
+    ("arithmetic command shift", "(( A = 1 << 2 )); gh a b", [C_ST]),
+    ("ANSI-C", "echo $'gh x'", [dis("ansi-c")]),
+    ("unterminated ANSI-C ending in gh", "echo $'x gh", [dis("ansi-c")]),
+    ("gh as a ${} default in command position", "${X:-gh} api x -X DELETE",
+     [dis("dynamic-command")]),
+    ("a quoted ${:-} default holding gh is no call", 'echo "${D:-gh gave nothing}"', []),
+    ("gh as a ${:+} alternate, one token", "${X:+gh} api x", [dis("param-expansion")]),
+    ("gh as a ${} default behind a wrapper", "sudo ${X:-gh} api x",
+     [dis("unquoted-wrapper")]),
+    ("a ${} word holding gh anywhere is unprovable",
+     "${X:-gh}/x api; ${GH:-${HOME}/bin/gh} api; sudo ${G:-${D}/gh} a; ${X:-gh}${Y:-} a",
+     [dis("dynamic-command"), dis("dynamic-command"), dis("unquoted-wrapper"),
+      dis("dynamic-command")]),
+    ("a quoted gh behind a wrapper stays a call", 'sudo "gh" api x',
+     [dis("unquoted-wrapper"), men("quoted")]),
+    ("gh as a quoted or nested ${} default", '${X:-"gh"} api x; ${X:-${Y:-gh}} a',
+     [dis("dynamic-command"), men("quoted"), dis("dynamic-command")]),
+    ("a dashed word after time on the next line is no option", "time\n-n gh a b", []),
+    ("a ${} default before a continuation or an empty expansion",
+     "${X:-gh}\\\n api x; ${X:-gh}$Y api x",
+     [dis("dynamic-command"), dis("dynamic-command")]),
+    ("gh split by a continuation in a ${} word", "${X:-g\\\nh} api x; sudo ${X:-g\\\nh} a",
+     [dis("dynamic-command"), dis("unquoted-wrapper")]),
+    ("a wrapper scan passes a word already holding a call",
+     'sudo $(gh a b)${S} gh api -X DELETE x',
+     [("call", "subst_first"), dis("unquoted-wrapper")]),
+    ("function as a case pattern", "case $x in\n  function) gh a b ;;\nesac", [C_ST]),
+    ("a command word that may expand to nothing", "$SUDO gh a b; ${S:-} gh a b",
+     [dis("dynamic-command"), dis("dynamic-command")]),
+    ("more runners, and one given as a path", "/usr/bin/env gh a b; flock /l gh a b",
+     [dis("unquoted-wrapper"), dis("unquoted-wrapper")]),
+    ("text ending gh} is no expansion", 'sudo echo "$X uses gh}"', [men("quoted")]),
+    ("redirect target spelled function", ">function gh a b", [C_ST]),
+    ("a dashed test operand is no command", '[[ -z "$X" || -e gh ]]', []),
+    ("function keyword", "function f { gh a b; }", [C_ST]),
+    ("function keyword with parens", "function f() { gh a b; }", [C_ST]),
+    ("time with an option", "time -p gh a b", [C_ST]),
+    ("coproc", "coproc gh a b", [dis("unquoted-wrapper")]),
+    ("case arm in substitution", 'x="$(case $a in b) gh x y;; esac)"',
+     [dis("case-arm")]),
+    ("case arm at top level", "case $a in b) gh x y;; esac", [C_ST]),
+    ("param expansion", 'x="${Y:-$(gh a b)}"', [dis("param-expansion")]),
+    ("unterminated quote", "echo 'gh x", [dis("unterminated-quote")]),
+    ("unterminated substitution", "x=$(gh a b",
+     [dis("unterminated-substitution")]),
+    ("ghost and gh-pages", "ghost run; git push origin gh-pages", []),
+    ("quoted gh-pages", 'echo "gh-pages .github/gh"', []),
+    ("Actions expression text", "echo ${{ x == '`' }} && gh a b", [C_ST]),
+    ("Actions expression with }} string", "echo ${{ contains(x, '}}') }} gh a b",
+     []),
+    ("line continuation", "gh issue \\\n  comment 5", [C_ST]),
+    ("redirect target is no command", "echo x >gh", []),
+    ("unclosed Actions openers are linear", "echo \"" + "`${{" * 20000 + "\"", None),
+    ("a large heredoc is linear", "cat <<'EOF'\n" + "a b c\n" * 200000 + "EOF\ngh a b",
+     [C_ST]),
 ]
 
 
-def main():
-    if not os.path.isfile(LINT_WORKFLOW):
-        sys.exit(f"::error::run this from the repository root; {LINT_WORKFLOW} not found.")
+def fmt(tok):
+    if tok.kind == "mention":
+        return ("mention", tok.mention_clause)
+    if tok.position == "disallowed":
+        return ("call", "disallowed:" + tok.reason)
+    return ("call", tok.position)
 
-    gate_src = extract_gate_step(STEP_PREFIX)
-    root = tempfile.mkdtemp(prefix="verify_gate12_")
-    gate_path = os.path.join(root, "gate12.py")
-    io.open(gate_path, "w", encoding="utf-8").write(gate_src)
 
-    failures = []
+def run_locator_cases():
+    bad = []
+    for name, script, expected in LOCATOR_CASES:
+        t0 = time.time()
+        got = [fmt(t) for t in loc.locate(script)]
+        took = time.time() - t0
+        if took > 5:
+            bad.append((name, [f"took {took:.1f}s: not linear"]))
+        elif expected is not None and got != expected:
+            bad.append((name, [f"expected {expected}", f"got      {got}"]))
+    toks = loc.locate('GH_TOKEN="$T" timeout 30 gh api -iX POST "repos/$R/issues" '
+                      '-f a="$b" --jq .x')
+    argv = toks[0].argv if toks else []
+    if not (toks and toks[0].prefix_token == '"$T"' and toks[0].timeout
+            and [str(w) for w in argv[:3]] == ["api", "-iX", "POST"]
+            and [type(w) for w in argv[3:]] == [loc.Dynamic, str, loc.Dynamic, str, str]
+            and argv[4] == "-f"):
+        bad.append(("token fields", [f"got {toks}"]))
+    for args, want in (
+            (["-XPOST", "p"], ("p", ["POST"])),
+            (["-X", "PATCH", "p"], ("p", ["PATCH"])),
+            (["-iX", "PUT", "p"], ("p", ["PUT"])),
+            (["--method", "DELETE", "p"], ("p", ["DELETE"])),
+            (["--method=POST", "p"], ("p", ["POST"])),
+            (["p", "-X", "POST", "-X", "GET"], ("p", ["POST", "GET"])),
+            (["-H", "Accept: x", "-i", "p"], ("p", [])),
+            (["-f", "a=-X POST", "p"], ("p", [])),
+            (["--", "-p"], ("-p", [])),
+            ([], (None, []))):
+        path, methods = loc.api_parts(args)
+        if (None if path is None else str(path), [str(m) for m in methods]) != want:
+            bad.append((f"api_parts {args}", [f"got {(path, methods)}, want {want}"]))
+    return bad
+
+
+# -------------------------------------------------------------- gate runner
+
+def write_tree(case_dir, files):
+    # The gate checks that the heading its failures point at exists.
+    files = {"CONTRIBUTING.md": f"### {AUTHORING_RULE}\n", **files}
+    for relpath, body in files.items():
+        body = re.sub(r"@@REPEAT:(.*?):(\d+)@@",
+                      lambda m: m.group(1) * int(m.group(2)), body)
+        full = os.path.join(case_dir, *relpath.split("/"))
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as fh:
+            fh.write(body)
+
+
+def run_gate(gate, files, root):
+    """-> (fired, output, timed_out) for the gate run over a synthetic tree."""
+    case_dir = tempfile.mkdtemp(prefix="case_", dir=root)
+    write_tree(case_dir, files)
     try:
-        for name, files, expect_fail, must_mention in CASES:
-            case_dir = tempfile.mkdtemp(prefix="case_", dir=root)
-            for relpath, body in files.items():
-                full = os.path.join(case_dir, *relpath.split("/"))
-                os.makedirs(os.path.dirname(full), exist_ok=True)
-                io.open(full, "w", encoding="utf-8").write(body)
+        proc = subprocess.run([sys.executable, gate], cwd=case_dir,
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=CASE_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return False, "", True
+    return proc.returncode != 0, (proc.stdout or "") + (proc.stderr or ""), False
 
-            problems = []
-            try:
-                proc = subprocess.run([sys.executable, gate_path], cwd=case_dir,
-                                      capture_output=True, text=True,
-                                      encoding="utf-8", errors="replace",
-                                      timeout=CASE_TIMEOUT_S)
-            except subprocess.TimeoutExpired:
-                problems.append(f"the gate did not finish within {CASE_TIMEOUT_S}s "
-                                f"(a regex backtracking without bound?)")
-                failures.append((name, problems, ""))
-                print(f"FAIL  {name}")
-                print(f"        - {problems[0]}")
+
+def judge(name, fired, out, timed_out, expect_fail, must_mention, changed=False):
+    """-> problems for one scenario's verdict."""
+    if timed_out:
+        return [f"the gate did not finish within {CASE_TIMEOUT_S}s"]
+    problems = []
+    if changed and not expect_fail and fired and DISALLOWED in out:
+        return problems              # the one change FR-014 allows
+    if fired != expect_fail:
+        problems.append(f"expected the gate to {'FAIL' if expect_fail else 'PASS'}, "
+                        f"it {'FAILED' if fired else 'PASSED'}")
+    for token in must_mention:
+        if token not in out:
+            problems.append(f"error text never mentions {token!r}")
+    return problems
+
+
+def run_scenarios(gate, scenarios, root):
+    """scenarios: (name, files, expect_fail, must_mention, changed) tuples
+    -> [(name, problems, output)] for those behaving wrongly."""
+    def one(sc):
+        name, files, expect_fail, must, changed = sc
+        fired, out, timed = run_gate(gate, files, root)
+        return name, judge(name, fired, out, timed, expect_fail, must, changed), out
+
+    workers = min(8, os.cpu_count() or 2)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        return [r for r in pool.map(one, scenarios) if r[1]]
+
+
+def load_corpus():
+    with open(CORPUS, encoding="utf-8") as fh:
+        data = json.load(fh)
+    scenarios, errors = [], []
+    for c in data:
+        expect_fail = c["expect"] == "fail"
+        changed = bool(c.get("changed_from_969"))
+        if changed and expect_fail:
+            errors.append(f"{c['id']}: changed_from_969 on a scenario that "
+                          f"expects a failure (only pass -> disallowed may change)")
+        scenarios.append((f"{c['id']} {c['name']}", c["files"], expect_fail,
+                          tuple(c.get("must_mention") or ()), changed))
+    return scenarios, errors
+
+
+def report(title, results, limit=12):
+    for name, problems, out in results[:limit]:
+        print(f"FAIL  {title}: {name[:150]}")
+        for p in problems:
+            print(f"        - {p[:300]}")
+        for line in (out or "").strip().splitlines()[:3]:
+            print(f"        | {line[:300]}")
+    if len(results) > limit:
+        print(f"FAIL  {title}: ... and {len(results) - limit} more")
+    return len(results)
+
+
+# ------------------------------------------------------------ differential
+
+def exec_method(argv):
+    """The HTTP method a recorded `gh api` argv names (gh keeps the last)."""
+    meth, k = "GET", 1
+    # Written out here rather than imported: the oracle must not share the
+    # locator's reading of gh's flags.
+    valued = {"-H", "--header", "-f", "--raw-field", "-F", "--field", "-q", "--jq",
+              "-t", "--template", "-p", "--preview", "--hostname", "--input", "--cache"}
+    while k < len(argv):
+        a = argv[k]
+        if a in ("-X", "--method") or re.fullmatch(r"-i+X", a):
+            meth = argv[k + 1] if k + 1 < len(argv) else meth
+            k += 2
+            continue
+        if a in valued or re.fullmatch(r"-i+[HfFqtp]", a):
+            k += 2
+            continue
+        glued = re.fullmatch(r"-i*X(.+)", a)
+        if a.startswith("--method="):
+            meth = a.split("=", 1)[1]
+        elif glued:
+            meth = glued.group(1)
+        k += 1
+    return meth
+
+
+def accounted(tokens, argv):
+    """True when the locator found (or rejected as disallowed) this
+    invocation bash actually ran."""
+    calls = [t for t in tokens if t.kind == "call"]
+    if any(t.position == "disallowed" for t in calls):
+        return True
+    for t in calls:
+        words = [str(w) for w in t.argv]
+        if any(isinstance(w, loc.Dynamic) for w in t.argv[:2]):
+            return True
+        if argv[:1] == ["api"]:
+            if words[:1] == ["api"]:
+                methods = [str(m) for m in loc.api_parts(t.argv[1:])[1]]
+                if (methods[-1] if methods else "GET") == exec_method(argv):
+                    return True
+        elif words[:2] == argv[:2]:
+            return True
+    return False
+
+
+def bash_run(bash, bin_dir, script):
+    """-> recorded argv list per gh bash ran, or None when the script is not
+    a valid, terminating one."""
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "s.sh")
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(script)
+        if subprocess.run([bash, "-n", path], capture_output=True).returncode:
+            return None
+        log = os.path.join(td, "log")
+        open(log, "w").close()
+        try:
+            subprocess.run([bash, path], cwd=td, stdin=subprocess.DEVNULL,
+                           capture_output=True, timeout=3,
+                           env={"PATH": bin_dir + os.pathsep + "/usr/bin" + os.pathsep
+                                + "/bin", "GHLOG": log})
+        except subprocess.TimeoutExpired:
+            return None
+        with open(log, encoding="utf-8", errors="replace") as fh:
+            return harness.gh_argv_calls(fh.read())
+
+
+def differential():
+    """-> (failures, scripts run under bash, invocations bash ran)."""
+    import gen
+    bash = harness.resolve_bash()
+    exprs = gen.EXPRS
+    scripts = []
+    for seed in range(FUZZ_SEED, FUZZ_SEED + FUZZ_COUNT):
+        r = random.Random(seed)
+        kind = r.choice(["verb", "api"])
+        scripts.append((f"seed {seed} ({kind})", gen.G(r).script(kind)))
+    for fname in sorted(os.listdir(FUZZ_DIR)):
+        if fname.endswith(".jsonl"):
+            with open(os.path.join(FUZZ_DIR, fname), encoding="utf-8") as fh:
+                for n, line in enumerate(fh, 1):
+                    rec = json.loads(line)
+                    scripts.append((f"{fname}:{n} ({rec['kind']})", rec["min"]))
+    failures, ran, invoked = [], 0, 0
+    with tempfile.TemporaryDirectory() as td:
+        bin_dir = harness.gh_argv_recording_stub(td)
+        for label, script in scripts:
+            under_bash = script
+            for e in exprs:
+                under_bash = under_bash.replace(e, "EXPRV")
+            if "${{" in under_bash:
                 continue
-            out = (proc.stdout or "") + (proc.stderr or "")
-            fired = proc.returncode != 0
+            calls = bash_run(bash, bin_dir, under_bash)
+            if calls is None:
+                continue
+            ran += 1
+            tokens = loc.locate(script)
+            for argv in calls:
+                invoked += 1
+                if not accounted(tokens, argv):
+                    failures.append((label, [
+                        f"bash ran `gh {' '.join(argv)[:80]}` but the locator "
+                        f"neither found it nor rejected the script",
+                        f"script: {script!r}"], ""))
+                    break
+    return failures, ran, invoked
 
-            if fired != expect_fail:
-                problems.append(
-                    f"expected the gate to {'FAIL' if expect_fail else 'PASS'}, "
-                    f"it {'FAILED' if fired else 'PASSED'}")
-            for token in must_mention:
-                if token not in out:
-                    problems.append(f"error text never mentions {token!r}")
 
-            if problems:
-                failures.append((name, problems, out.strip()))
-                print(f"FAIL  {name}")
-                for p in problems:
-                    print(f"        - {p}")
-                for line in out.strip().splitlines():
-                    print(f"        | {line}")
-            else:
-                print(f"ok    {name}")
+# ---------------------------------------------------------------- mutation
+
+def mutation(scenarios, root):
+    """A locator that calls a real call a mention must turn the corpus red
+    (FR-016). -> (survived: bool, replayed count)."""
+    with open(LOCATOR, encoding="utf-8") as fh:
+        src = fh.read()
+    needle = 'self._note(head.off, "call", reason=reason,'
+    if needle not in src:
+        return True, 0               # the mutation target moved: fail loudly
+    mdir = tempfile.mkdtemp(prefix="mutant_", dir=root)
+    shutil.copy(GATE, mdir)
+    with open(os.path.join(mdir, "wc_gh_callsites.py"), "w", encoding="utf-8") as fh:
+        fh.write(src.replace(needle, 'self._note(head.off, "mention", reason=reason,'))
+    sample = [s for s in scenarios if s[2] and s[3]][:MUTATION_SAMPLE]
+    red = run_scenarios(os.path.join(mdir, os.path.basename(GATE)), sample, root)
+    return not red, len(sample)
+
+
+def main():
+    failed = 0
+    root = tempfile.mkdtemp(prefix="verify_gate12_")
+    try:
+        bad = run_locator_cases()
+        failed += report("locator", [(n, p, "") for n, p in bad])
+        print(f"locator: {len(LOCATOR_CASES)} snippet(s), "
+              f"{len(bad)} behaving wrongly")
+
+        fixtures = [(n, f, e, m, False) for n, f, e, m in FIXTURES]
+        res = run_scenarios(GATE, fixtures, root)
+        failed += report("fixture", res)
+        print(f"fixtures: {len(fixtures)} scenario(s), {len(res)} behaving wrongly")
+
+        corpus, errors = load_corpus()
+        for e in errors:
+            print(f"FAIL  corpus: {e}")
+        failed += len(errors)
+        res = run_scenarios(GATE, corpus, root)
+        failed += report("corpus", res)
+        print(f"corpus: {len(corpus)} scenario(s) from PR #969, "
+              f"{len(res)} behaving wrongly")
+
+        diffs, ran, invoked = differential()
+        failed += report("differential", diffs)
+        print(f"differential: {ran} generated script(s) run under real bash, "
+              f"{invoked} gh invocation(s) recorded, {len(diffs)} unaccounted")
+        if not invoked:
+            print("FAIL  differential: bash ran no gh invocation at all, so the "
+                  "oracle checked nothing")
+            failed += 1
+
+        survived, n = mutation(corpus, root)
+        print(f"mutation: a locator hiding real calls as mentions was "
+              f"{'NOT caught' if survived else 'caught'} ({n} scenario(s) replayed)")
+        if survived:
+            print("FAIL  mutation: the corpus stays green when the locator "
+                  "calls a real call a mention, so it cannot fail its subject")
+            failed += 1
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
     print()
-    if failures:
-        print(f"::error file={LINT_WORKFLOW}::Gate 12 self-test: "
-              f"{len(failures)} of {len(CASES)} scenarios behaved wrongly. Gate "
-              f"12's detection logic does not do what its name claims, so a "
-              f"green Gate 12 on the real fleet means nothing.")
+    if failed:
+        print(f"::error file=.github/workflows/lint-workflows.yml::Gate 12 "
+              f"self-test: {failed} check(s) behaved wrongly. Gate 12's detection "
+              f"logic does not do what its name claims, so a green Gate 12 on the "
+              f"real fleet means nothing.")
         return 1
-    print(f"Gate 12 self-test: all {len(CASES)} scenarios behaved as expected.")
+    print("Gate 12 self-test: every check behaved as expected.")
     return 0
 
 

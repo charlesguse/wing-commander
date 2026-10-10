@@ -709,6 +709,32 @@ def gh_error_stub_arm(match_glob, status, message, stderr_extra=""):
     ).format(match_glob, message, status, extra)
 
 
+GH_ARGV_SEP, GH_CALL_END = "\x1f", "\x1e"
+
+
+def gh_argv_recording_stub(bin_dir):
+    """Write an executable `gh` into `bin_dir` that appends every invocation's
+    argv to the file named by $GHLOG and does nothing else, and return the
+    directory to put first on PATH. An invocation is its words each followed
+    by GH_ARGV_SEP and then GH_CALL_END, so `gh_argv_calls()` reads it back
+    whatever the words hold. Gate 12's differential check runs generated
+    scripts under real bash against it (specs/113-gh-callsite-locator FR-015):
+    what the stub recorded is what bash actually ran."""
+    path = os.path.join(bin_dir, "gh")
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write('#!/bin/bash\n'
+                 'for a in "$@"; do printf "%s\\x1f" "$a"; done >> "$GHLOG"\n'
+                 'printf "\\x1e" >> "$GHLOG"\n')
+    os.chmod(path, 0o755)
+    return bin_dir
+
+
+def gh_argv_calls(log_text):
+    """The argv lists recorded in a $GHLOG written by gh_argv_recording_stub."""
+    return [rec.split(GH_ARGV_SEP)[:-1]
+            for rec in log_text.split(GH_CALL_END)[:-1]]
+
+
 def find_step(path, name):
     """The step dict named `name` in workflow OR composite action `path`.
 

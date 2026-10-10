@@ -547,7 +547,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
         run: |
-          db="${DEFAULT_BRANCH:-$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)}"
+          db="${DEFAULT_BRANCH:-}"
+          [ -n "$db" ] || db="$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)"
           echo "name=$db" >> "$GITHUB_OUTPUT"
 
       # clean: false — a default `git clean` here would delete the untracked
