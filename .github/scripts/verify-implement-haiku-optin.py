@@ -31,6 +31,9 @@ from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from wc_shell_pin import effective_shell, pins_bash  # noqa: E402
+
 WRAPPER = ".github/workflows/wing-commander-5-implement.yml"
 STAGE = ".github/workflows/implement.yml"
 OTHERS = (".github/workflows/wing-commander-9-pr-conversation.yml",
@@ -70,19 +73,22 @@ def tier_job(wrapper_text):
 
 
 def run_shell(doc, job, step):
-    """The shell the runner uses for this step: the step's `shell:`, else
-    the job's, else the workflow's `defaults.run.shell`, else `bash -e
-    {0}`. Returns a template with {0}, or None for one this gate does not
-    run (only bash is, as `bash` or an explicit bash template)."""
-    shell = step.get("shell")
-    for scope in (job, doc):
-        if shell is None:
-            shell = ((scope.get("defaults") or {}).get("run") or {}).get("shell")
-    shell = shell or "bash -e {0}"
+    """The shell the runner uses for this step, resolved by
+    wc_shell_pin.effective_shell (step > job > workflow `defaults.run.
+    shell`, the one home of that rule), as a template with {0}; with no
+    shell set anywhere, `bash -e {0}` on a runner but sh inside a
+    `container:` job. None for anything this gate does not run (it runs
+    bash only) or cannot read."""
+    try:
+        shell = effective_shell(step, job, doc)
+    except AttributeError:
+        return None
+    if not shell:
+        return None if job.get("container") else "bash -e {0}"
     if shell == "bash":
         return "bash --noprofile --norc -eo pipefail {0}"
-    if isinstance(shell, str) and "{0}" in shell and shell.split()[0] == "bash":
-        return shell
+    if pins_bash(shell) and "{0}" in str(shell):
+        return str(shell)
     return None
 
 
@@ -122,8 +128,8 @@ def behaviour_failures(wrapper_text, budget):
         return [f"{WRAPPER}: no resolve-model job with a `tier` step"]
     template = run_shell(doc, job, step)
     if template is None:
-        return [f"{WRAPPER}: the tier step's shell is not bash; this gate "
-                "runs it under bash only"]
+        return [f"{WRAPPER}: the tier step's shell is not bash (or cannot "
+                "be read); this gate runs it under bash only"]
     with tempfile.TemporaryDirectory() as bindir:
         gh = Path(bindir) / "gh"
         gh.write_text(STUB_GH, encoding="utf-8")
@@ -320,6 +326,11 @@ def self_test():
                                              "steps.tier.outputs.tier")}),
         "tier step under sh": dict(base, **{WRAPPER: wrapper_doc(GOOD_RUN)
                                     .replace("id: tier", "id: tier\n      shell: sh")}),
+        "tier step in a container job with no shell": dict(base, **{
+            WRAPPER: wrapper_doc(GOOD_RUN).replace(
+                "  resolve-model:\n", "  resolve-model:\n    container: alpine\n")}),
+        "malformed defaults": dict(base, **{WRAPPER: "defaults: bash\n"
+                                            + wrapper_doc(GOOD_RUN)}),
         "stray reader": dict(base, **{OTHERS[1]: "model:opus model:haiku\n"}),
         "stray reader in pr-conversation": dict(base, **{OTHERS[2]: "model:haiku\n"}),
         "reader file missing": {k: v for k, v in base.items() if k != OTHERS[1]},

@@ -34,6 +34,8 @@ import argparse
 import importlib.util
 import os
 import json
+import math
+import re
 import statistics
 import sys
 
@@ -76,18 +78,25 @@ readable_trial = _BOUND.readable_trial
 NOT_COMPARED = _BOUND.NOT_COUNTED
 
 
+DIGITS = re.compile(r"[0-9]+")
+
+
 def scalar(value):
-    """A JSON string or integer id as a string (so 123 and "123" are one
-    id), else None (never an unhashable key)."""
-    if isinstance(value, (str, int)) and not isinstance(value, bool):
-        return str(value)
-    return None
+    """A JSON string or integer id as a string, else None (never an
+    unhashable key). A numeric id is canonical decimal, so 972, "972" and
+    "0972" are one id."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    text = str(value).strip()
+    return str(int(text)) if DIGITS.fullmatch(text) else text
 
 
 def number(value):
-    """A JSON number, else None: a string or object where a count or a
-    cost belongs is read as absent, never summed into a TypeError."""
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
+    """A finite JSON number, else None: a string, an object, NaN or an
+    infinity where a count or a cost belongs is read as absent, never
+    summed into a TypeError or a nan."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool) \
+            and math.isfinite(value):
         return value
     return None
 
@@ -238,7 +247,8 @@ def implement_section(records):
     haiku, sonnet = {}, []
     # Numeric order (#972 before #1001), any non-numeric key after.
     for issue, recs in sorted(by_issue.items(), key=lambda kv: (
-            not kv[0].isdigit(), int(kv[0]) if kv[0].isdigit() else 0, kv[0])):
+            not DIGITS.fullmatch(kv[0]),
+            int(kv[0]) if DIGITS.fullmatch(kv[0]) else 0, kv[0])):
         # A record without a timestamp sorts last, never first.
         recs.sort(key=lambda r: (not r.get("emitted_at"), str(r.get("emitted_at") or "")))
         models = [str(r.get("model", "")) for r in recs]

@@ -901,8 +901,10 @@ sed 's/if (ts > from \&\& ts < to) next/if (ts >= from \&\& ts <= to) next/' \
 run_mutation "$mut" "m17" "s29" "dropping the shared boundary second is caught"
 
 # m18 (spec 110, review gate round 9): the shadow's span starts at its
-# last step again, so the gaps between its steps (and every earlier shadow
-# step) count against the acting diagnose. s30 must catch it.
+# last step, so the gaps between its steps (and every earlier shadow step)
+# count against the acting diagnose -- the round 9 defect, where only the
+# steps' own durations were subtracted, in the shape the shared span can
+# take. s30 must catch it.
 sed 's/    else \[(map(.\[0\]) | min), (map(.\[1\]) | max)\]$/    else [(map(.[0]) | max), (map(.[1]) | max)]/' \
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m18" "s30" "a span that drops the gaps between the shadow's steps is caught"

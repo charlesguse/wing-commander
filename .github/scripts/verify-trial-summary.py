@@ -130,6 +130,11 @@ CASES = {
     "issue-order": (
         [cycle(1001, "claude-haiku-5-5"), cycle(972, "claude-haiku-5-5")],
         "| #972 | 1 | 0 | 0 | 0 | $1.0000 |\n| #1001 |", None),
+    # "0972" is issue 972, and a NaN cost is read as absent.
+    "padded-id-and-nan-cost": (
+        [cycle(972, "claude-haiku-5-5"),
+         dict(cycle("0972", "claude-haiku-5-5", "retry"), cost_usd=float("nan"))],
+        "| #972 | 2 | 1 (claude-haiku-5-5) | 0 | 0 | $1.0000 |", None),
     "mixed-run-id-types": (
         [paired(1, "diagnose", "claude-opus-5-5", 0.08),
          paired("1", "diagnose-shadow", "claude-haiku-5-5", 0.002, "agreed")],

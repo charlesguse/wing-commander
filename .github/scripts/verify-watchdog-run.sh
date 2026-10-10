@@ -116,16 +116,17 @@ JQ_EPOCH='def epoch: sub("\\.[0-9]+"; "")
                - (($o[0:1] + "1" | tonumber) * (($o[1:3] | tonumber) * 3600 + ($o[4:6] | tonumber) * 60))
           else fromdateiso8601 end;'
 
-# The diagnose shadow's span (spec 110): its steps -- every one named
-# "diagnose shadow"/"diagnose-shadow", together the diagnose job's
+# The diagnose shadow's span (spec 110), in the one diagnose job check 1
+# times and check 8 reads the log of (the first): its steps -- every one
+# named "diagnose shadow"/"diagnose-shadow", together the diagnose job's
 # contiguous tail, both of which Gate 146 holds -- from the first start to
 # the last completion, skipped steps ignored, as "from_epoch to_epoch
 # from_date to_date". One home for check 1's duration ceiling and check
 # 8's log cut, so the two always leave out the same span; empty when no
 # shadow step ran or none has a time JQ_EPOCH can read.
 shadow_span="$(jq -r "$JQ_EPOCH"'
-  [.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
-   | (.steps // [])[] | select((.name // "") | test("diagnose[ -]shadow"; "i"))
+  [[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))]
+   | first // {} | (.steps // [])[] | select((.name // "") | test("diagnose[ -]shadow"; "i"))
        | select(.conclusion != "skipped")
    | (try [(.started_at | epoch), (.completed_at | epoch)] catch empty)]
   | if length == 0 then empty

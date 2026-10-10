@@ -200,8 +200,9 @@ def baseline_usable(f):
     Such a baseline -- an acting result that skipped the schema -- is no
     baseline. The schema does let a `__new__` proposedClass be null, but a
     shadow finding with no proposal names no class to compare and is
-    malformed (review gate round 4); the acting read-back never leaves a
-    `__new__` in the baseline."""
+    malformed (review gate round 4). The acting read-back resolves a
+    baseline `__new__` before writing it, but one that reaches here is
+    still read by its proposedClass, as class_of reads it."""
     if not isinstance(f, dict):
         return False
     cls = f.get("class")
