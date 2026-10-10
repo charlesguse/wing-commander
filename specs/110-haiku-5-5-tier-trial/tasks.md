@@ -443,3 +443,22 @@ Round 7 (at 4b003161) posted these on #982 after the gate's round budget was spe
   Resolution: fixed in structure: the acting transcript is compressed away before the shadow runs, and the metrics record is written whenever the prep step succeeded (from no transcript if need be), so every shadow run leaves a record. A shadow that dies is an `error` trial, which FR-013/FR-017 leave out of the cap; the 60-day bound covers it.
 - [X] Review finding: Watchdog job now waits on trial-bound with !cancelled()
   Resolution: with the trial off trial-bound is skipped at once; with it on, each step has its own short timeout and tolerates failure (Gate 75), so the wait is the checkout time.
+
+## Review Gate Round 9 Findings
+
+Round 9 (at 56a3c0e5) posted these on #982 after the gate's round budget was spent (its state counts 8 open; the posted review carries these seven), so they were not folded automatically; recorded here with their resolution.
+
+- [X] Review finding: Shadow schema check ignores top-level keys other than findings
+  Resolution: fixed: the comparator holds the shadow's whole result to the schema instead of re-wrapping its findings array, so a forbidden top-level key is malformed and a required one is honoured; Gate 142 cases top-level-extra-key and top-level-required-present fail the old check.
+- [X] Review finding: baseline_usable accepts int/None signalIds but shadow is string-typed
+  Resolution: fixed: a baseline finding whose class or any evidence signalId is not a string (an acting result that skipped the schema) is no baseline, never a disagreement no model made (contracts/trial-record.md); Gate 142 fixtures for an integer, a null and a missing signalId fail the old check.
+- [X] Review finding: Gate 145 shell nesting parse is a token heuristic
+  Resolution: fixed: Gate 145 no longer parses the script; it runs resolve-model's tier step under bash against a stub gh for each label set (none, model:haiku, both, unreadable) and checks tier, escalation and max-turns against FR-014 and implement.yml's default. Its self-test passes heredoc, case/esac, $(if ...) and multi-line-string shapes, and fails an escalation spelled only inside a heredoc or a string, which the old heuristic passed.
+- [X] Review finding: trial-summary counts every non-Haiku cycle as an escalation
+  Resolution: fixed: an escalation is a run_label "retry" record (implement's one-tier-up retry), so Haiku, Sonnet retry, Sonnet, Sonnet is one escalation, not three (FR-017 implement opt-in; data-model.md); Gate 144 case escalation-counted-once fails the old count.
+- [X] Review finding: Shadow log cut can drop acting post-step output and miscount duration
+  Resolution: the log-cut half is refuted: Gate 146 holds the shadow family as the diagnose job's contiguous tail, and post-steps run in reverse order, so every acting post-step runs after the shadow's last step and is read (Gate 36 s27). The duration half is fixed: the ceiling subtracts the shadow's span, first start to last completion, the same span the log cut uses, so the gaps between its steps no longer count; Gate 36 s30 and mutation m18 fail the old per-step sum.
+- [X] Review finding: Diagnose prompt pasted a second time into watchdog.yml
+  Resolution: refuted, as at round 7 and T005: Gate 38 forbids any composite from invoking the agent action, so research D7's recorded fallback applies; Gate 146 fails on any byte drift between the two prompts and schemas, which is the gate the single-home rule asks for, and no further follow-up is owed.
+- [X] Review finding: Unhashable trial.outcome crashes trial-summary/trial-bound with exit 1
+  Resolution: fixed: trial-bound.readable_trial (imported by trial-summary) reads a trial whose outcome is not a string as no readable trial, which the cap counts (fail closed) and the summary reports on its own; label() returns strings only, and trial-summary reads run ids and issues as scalars only. Gate 143 and Gate 144 unhashable cases fail the old scripts with a TypeError.

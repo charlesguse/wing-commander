@@ -200,16 +200,21 @@ if [ "$diagnose_conclusion" = "skipped" ]; then
 else
   # The diagnose shadow (spec 110) runs last in this job under its own
   # 5-minute bound and acts on nothing. Its steps -- every one named
-  # "diagnose shadow"/"diagnose-shadow", which Gate 146 holds -- are
-  # subtracted here: a slow shadow is not a stalled acting diagnose and
-  # must not file anything (SC-003). A step time JQ_EPOCH cannot read
-  # subtracts nothing, so the acting bound is never lost to it.
+  # "diagnose shadow"/"diagnose-shadow", and together the job's contiguous
+  # tail, both of which Gate 146 holds -- are subtracted here as one span,
+  # first start to last completion, so the gaps between them go too: a
+  # slow shadow is not a stalled acting diagnose and must not file
+  # anything (SC-003). It is the same span check 8 cuts from the log. A
+  # step time JQ_EPOCH cannot read subtracts nothing, so the acting bound
+  # is never lost to it.
   d_secs="$(jq -r "$JQ_EPOCH"'
     [.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
     | select(.started_at != null and .completed_at != null)
     | ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601))
       - ([(.steps // [])[] | select((.name // "") | test("diagnose[ -]shadow"; "i"))
-          | (try ((.completed_at | epoch) - (.started_at | epoch)) catch 0)] | add // 0)
+          | select(.conclusion != "skipped")
+          | (try [(.started_at | epoch), (.completed_at | epoch)] catch empty)]
+         | if length == 0 then 0 else (map(.[1]) | max) - (map(.[0]) | min) end)
     ] | first // empty' <<<"$jobs_json")"
   if [ -n "$d_secs" ] && [ "$d_secs" -gt 300 ]; then
     reason "the diagnose job ran ${d_secs}s (normal is under 75s; hard ceiling 300s) — the agent stalled"

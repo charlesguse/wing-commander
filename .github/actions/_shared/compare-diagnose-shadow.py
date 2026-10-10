@@ -34,18 +34,22 @@ def load_json(path, what):
         die(f"cannot read {what} {path}: {exc}")
 
 
-def load_findings(path, what, wrapped_only=False):
-    """Return the findings list, or None when the file is absent/unparseable.
+def read_or_none(path):
+    """The parsed JSON at `path`, or None when it is absent/unparseable."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def unwrap(data, wrapped_only=False):
+    """Return the findings list, or None when there is none.
 
     The baseline is the read-back's bare array. The shadow's result is the
     agent's own structured output, which the diagnose schema requires to be
     an object with a `findings` array (wrapped_only): a bare array misses the
     schema and is malformed, not compared."""
-    try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
-        return None
     if isinstance(data, dict) and isinstance(data.get("findings"), list):
         return data["findings"]
     if isinstance(data, list) and not wrapped_only:
@@ -166,12 +170,14 @@ def conforms(value, schema):
     return True
 
 
-def schema_valid(findings, schema):
-    """The shadow's findings against the full diagnose schema, plus the
-    comparator's own invariants whatever the schema says: every finding is
-    an object whose evidence is a list of objects each carrying a signalId,
-    and a `__new__` class names its proposedClass."""
-    if not isinstance(schema, dict) or not conforms({"findings": findings}, schema):
+def schema_valid(result, findings, schema):
+    """The shadow's whole result -- the object the acting agent's
+    --json-schema governs, top-level keys included, not only its findings
+    array -- against the full diagnose schema, plus the comparator's own
+    invariants whatever the schema says: every finding is an object whose
+    evidence is a list of objects each carrying a signalId, and a `__new__`
+    class names its proposedClass."""
+    if not isinstance(schema, dict) or not conforms(result, schema):
         return False
     for f in findings:
         if not baseline_usable(f):
@@ -187,17 +193,20 @@ def schema_valid(findings, schema):
 
 
 def baseline_usable(f):
-    """A baseline finding whose class/signalId values are hashable scalars."""
+    """A finding whose class and signalIds are strings, the only type the
+    diagnose schema gives them. The shadow is held to that schema, so a
+    baseline 1 (or null, or a missing signalId) could never meet a shadow
+    "1": comparing it would score a disagreement no model made. Such a
+    baseline -- an acting result that skipped the schema -- is no baseline."""
     if not isinstance(f, dict):
         return False
     cls = f.get("class")
     if cls == "__new__":
         cls = f.get("proposedClass")
     ev = f.get("evidence") or []
-    if not isinstance(cls, (str, type(None))) or not isinstance(ev, list):
+    if not isinstance(cls, str) or not isinstance(ev, list):
         return False
-    return all(isinstance(e, dict)
-               and isinstance(e.get("signalId"), (str, int, type(None)))
+    return all(isinstance(e, dict) and isinstance(e.get("signalId"), str)
                for e in ev)
 
 
@@ -234,11 +243,11 @@ def compare(args, schema):
         return trial("exhausted", bv, False)
     if args.shadow_verdict != "healthy":
         return trial("error", bv)
-    shadow = load_findings(args.shadow_findings, "shadow findings",
-                           wrapped_only=True)
-    if shadow is None or not schema_valid(shadow, schema):
+    result = read_or_none(args.shadow_findings)
+    shadow = unwrap(result, wrapped_only=True)
+    if shadow is None or not schema_valid(result, shadow, schema):
         return trial("malformed", bv, False)
-    baseline = load_findings(args.baseline_findings, "baseline findings")
+    baseline = unwrap(read_or_none(args.baseline_findings))
     if baseline is None or not all(baseline_usable(f) for f in baseline):
         return trial("no-baseline", bv)
 

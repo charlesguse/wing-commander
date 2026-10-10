@@ -40,10 +40,25 @@ def parse_date(text):
 # .github/scripts/trial-summary.py imports them from this file.
 def label(rec):
     """run_label sits at the top level of a metrics record; the contract's
-    original run.run_label spelling is accepted too."""
+    original run.run_label spelling is accepted too. Only a string is a
+    label: anything else reads as none, never as a value that crashes a
+    set membership test."""
     run = rec.get("run")
-    return rec.get("run_label") or (run.get("run_label")
-                                    if isinstance(run, dict) else None)
+    for value in (rec.get("run_label"),
+                  run.get("run_label") if isinstance(run, dict) else None):
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def readable_trial(rec):
+    """The record's `trial` object, or None when it has none a reader can
+    use: not an object, or an outcome that is not a string (a list or an
+    object outcome would crash every membership test that reads it)."""
+    trial = rec.get("trial")
+    if isinstance(trial, dict) and isinstance(trial.get("outcome"), str):
+        return trial
+    return None
 
 
 def in_window(rec, since):
@@ -75,13 +90,13 @@ def compared_count(path, since):
                 raise RecordsError(f"{path}:{lineno}: record is not an object")
             if label(rec) != "diagnose-shadow":
                 continue
-            trial = rec.get("trial")
-            outcome = trial.get("outcome") if isinstance(trial, dict) else None
+            trial = readable_trial(rec)
             # A shadow record with no readable trial object (the trial
-            # merge failed) still spent a shadow run, and nothing says it
-            # was infrastructure: it counts, like a comparator error, so a
-            # broken trial-record step cannot hold the cap open.
-            if (outcome in NOT_COUNTED
+            # merge failed, or its outcome is not a string) still spent a
+            # shadow run, and nothing says it was infrastructure: it counts,
+            # like a comparator error, so a broken trial-record step cannot
+            # hold the cap open.
+            if (trial is not None and trial["outcome"] in NOT_COUNTED
                     and trial.get("error_source") != "comparator"):
                 continue
             if in_window(rec, since):

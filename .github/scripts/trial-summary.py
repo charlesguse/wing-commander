@@ -71,12 +71,20 @@ def _load_bound():
 
 _BOUND = _load_bound()
 label = _BOUND.label
+readable_trial = _BOUND.readable_trial
 # FR-017's not-compared outcomes, from the same home as the cap's.
 NOT_COMPARED = _BOUND.NOT_COUNTED
 
 
+def scalar(value):
+    """A JSON string or integer id, else None (never an unhashable key)."""
+    return value if isinstance(value, (str, int)) and \
+        not isinstance(value, bool) else None
+
+
 def run_id(rec):
-    return (rec.get("run") or {}).get("workflow_run_id")
+    run = rec.get("run")
+    return scalar(run.get("workflow_run_id")) if isinstance(run, dict) else None
 
 
 def turns(rec):
@@ -110,8 +118,8 @@ def in_window(rec, since):
 
 def diagnose_section(records, since=None):
     records = [r for r in records if in_window(r, since)]
-    shadow = [r for r in records if label(r) == "diagnose-shadow"
-              and isinstance(r.get("trial"), dict)]
+    all_shadow = [r for r in records if label(r) == "diagnose-shadow"]
+    shadow = [r for r in all_shadow if readable_trial(r) is not None]
     # Both model rows cover the compared runs only (a no-baseline run never
     # called the shadow; an error run is infrastructure), the acting row
     # matched to them by workflow run, so both describe one population.
@@ -146,7 +154,8 @@ def diagnose_section(records, since=None):
               else "all records")
     lines = ["## Diagnose shadow", "",
              f"- Window: {window}",
-             f"- Shadow runs with a trial record: {len(shadow)}",
+             f"- Shadow runs with a trial record: {len(shadow)}"
+             f" (without a readable one: {len(all_shadow) - len(shadow)})",
              f"- Compared runs (error and no-baseline excluded): {n}",
              f"- Outcomes: {outcomes}",
              f"- Fully agreed: {agreed}",
@@ -185,12 +194,14 @@ def diagnose_section(records, since=None):
     return lines
 
 
-def lifecycle_stats(recs, start_model):
+def lifecycle_stats(recs):
     cost_total = sum(cost(r) or 0 for r in recs)
-    # Escalations are cycles that ran above the tier the lifecycle opted
-    # into, so a Haiku, Sonnet, Haiku sequence counts one, not two.
-    tiers = [str(r.get("model")) for r in recs
-             if r.get("model") != start_model]
+    # An escalation is implement's one-tier-up retry, which it records under
+    # run_label "retry" on the escalation model. A cycle that merely ran on
+    # that tier is not another one: a truncated retry's carry-forward keeps
+    # its tier (implement.yml "Resolve effective model"), so Haiku, retry
+    # on Sonnet, Sonnet, Sonnet is one escalation, not three.
+    tiers = [str(r.get("model")) for r in recs if label(r) == "retry"]
     return {"cycles": len(recs), "escalations": tiers,
             "refusals": sum(1 for r in recs if r.get("refusal") is True),
             "exhaustions": sum(1 for r in recs
@@ -207,20 +218,22 @@ def implement_section(records):
         # either would make every lifecycle look like a Haiku opt-in.
         if r.get("stage") != "implement" or label(r) not in IMPLEMENT_LABELS:
             continue
-        issue = (r.get("spec") or {}).get("issue")
+        spec = r.get("spec")
+        issue = scalar(spec.get("issue")) if isinstance(spec, dict) else None
         if issue is None:
             continue
+        issue = str(issue)  # 972 and "972" are one lifecycle, and sortable
         by_issue.setdefault(issue, []).append(r)
     haiku, sonnet = {}, []
     for issue, recs in sorted(by_issue.items()):
         # A record without a timestamp sorts last, never first.
-        recs.sort(key=lambda r: (not r.get("emitted_at"), r.get("emitted_at") or ""))
+        recs.sort(key=lambda r: (not r.get("emitted_at"), str(r.get("emitted_at") or "")))
         models = [str(r.get("model", "")) for r in recs]
         if HAIKU in models:
-            haiku[issue] = lifecycle_stats(recs, HAIKU)
+            haiku[issue] = lifecycle_stats(recs)
         elif all(m.startswith("claude-sonnet") for m in models):
             # Only pure-Sonnet lifecycles form the baseline (no Opus cycle).
-            sonnet.append(lifecycle_stats(recs, models[0]))
+            sonnet.append(lifecycle_stats(recs))
     lines = ["## Implement opt-in (`model:haiku`)", ""]
     if sonnet:
         base = (f"median Sonnet lifecycle over {len(sonnet)}: cycles "

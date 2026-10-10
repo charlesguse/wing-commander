@@ -722,6 +722,25 @@ JSON
   else
     fail "$tag s28: expected exit 1 naming the crash signature, got rc=$rc: $(tail -3 <<<"$out")"
   fi
+  # s30 (review gate round 9): the shadow's steps are subtracted as one
+  # span, gaps between them included. A 400s job whose two shadow steps
+  # run 5s each, 300s apart first start to last end, is a healthy acting
+  # diagnose; summing the two steps alone leaves 390s, a false stall.
+  shadow_jobs "Diagnose shadow"
+  jq '(.jobs[0].steps) |= map(if .name == "Diagnose shadow"
+        then .started_at = "2026-08-25T01:06:40Z" | .completed_at = "2026-08-25T01:06:45Z"
+        else . end)
+      | .jobs[0].steps += [{"number": 25, "name": "Prepare the diagnose shadow",
+          "conclusion": "success", "started_at": "2026-08-25T01:01:45Z",
+          "completed_at": "2026-08-25T01:01:50Z"}]' \
+    "$work/fixtures/jobs.json" > "$work/jobs.json.tmp" && mv "$work/jobs.json.tmp" "$work/fixtures/jobs.json"
+  printf '2026-08-25T01:00:55.0000000Z diagnose ran\n' > "$work/fixtures/diagnose.log"
+  run_scenario "$script" '' false
+  if [ "$rc" = "0" ] && ! grep -q "the agent stalled" <<<"$out"; then
+    ok "$tag s30: the gaps between the shadow's steps do not count against the acting diagnose's ceiling"
+  else
+    fail "$tag s30: expected exit 0 with no stall, got rc=$rc: $(tail -3 <<<"$out")"
+  fi
   mv "$work/diagnose.log.bak_sh" "$work/fixtures/diagnose.log"
   mv "$work/run.json.bak_sh" "$work/fixtures/run.json"
   mv "$work/jobs.json.bak_sh" "$work/fixtures/jobs.json"
@@ -855,7 +874,7 @@ run_mutation "$mut" "m12" "s23 s24 s26" "an offset step time losing the failed-s
 # against an acting path it never touched. s24 must catch it.
 sed 's/- (\[(.steps \/\/ \[\])\[\] | select((.name \/\/ "") | test("diagnose\[ -\]shadow"; "i"))/- ([(.steps \/\/ [])[] | select(false)/' \
   "$SCRIPT" > "$mut"
-run_mutation "$mut" "m13" "s24" "counting the diagnose shadow against the acting ceiling is caught"
+run_mutation "$mut" "m13" "s24 s30" "counting the diagnose shadow against the acting ceiling is caught"
 
 # m14 (spec 110): the crash-signature check reads the diagnose shadow's
 # part of the job log again, so a crashed shadow files a crashed-diagnose
@@ -881,5 +900,12 @@ sed 's/if (ts > from \&\& ts < to) next/if (ts >= from \&\& ts <= to) next/' \
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m17" "s29" "dropping the shared boundary second is caught"
 
-echo "Gate 36: 29 scenario(s) x 17 runs + 16 mutation(s); $bad failure(s)."
+# m18 (spec 110, review gate round 9): the ceiling subtracts the sum of the
+# shadow's step durations again, so the gaps between them count against the
+# acting diagnose. s30 must catch it.
+sed 's/         | if length == 0 then 0 else (map(.\[1\]) | max) - (map(.\[0\]) | min) end)$/         | map(.[1] - .[0]) | add \/\/ 0)/' \
+  "$SCRIPT" > "$mut"
+run_mutation "$mut" "m18" "s30" "counting the gaps between the shadow's steps is caught"
+
+echo "Gate 36: 30 scenario(s) x 18 runs + 17 mutation(s); $bad failure(s)."
 exit $([ "$bad" -eq 0 ] && echo 0 || echo 1)

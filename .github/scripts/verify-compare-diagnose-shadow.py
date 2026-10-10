@@ -146,6 +146,26 @@ def schema_failures(tmp):
         "enum-bool": ([f], {"findings": [dict(f, k=True)]}, "malformed", typed),
         "enum-float": ([f], {"findings": [dict(f, k=1.0)]}, "agreed", typed),
     })
+    # The whole result is checked, not only its findings array (review
+    # gate round 9): a top-level key the schema forbids, or one it requires
+    # and the shadow left out or mistyped, is malformed...
+    closed = dict(typed, additionalProperties=False)
+    needs_summary = dict(typed, required=["findings", "summary"],
+                         properties=dict(typed["properties"],
+                                         summary={"type": "string"}))
+    cases.update({
+        "top-level-extra-key": ([f], {"findings": [f], "extra": 1},
+                                "malformed", closed),
+        "top-level-closed-ok": ([f], {"findings": [f]}, "agreed", closed),
+        "top-level-missing-required": ([f], {"findings": [f]}, "malformed",
+                                       needs_summary),
+        "top-level-wrong-type": ([f], {"findings": [f], "summary": 3},
+                                 "malformed", needs_summary),
+        # ...and a result carrying it is compared, where re-wrapping the
+        # findings alone dropped it and called every such result malformed.
+        "top-level-required-present": ([f], {"findings": [f], "summary": "s"},
+                                       "agreed", needs_summary),
+    })
     for name, case in cases.items():
         base, shadow, want = case[:3]
         schema = case[3] if len(case) > 3 else prod

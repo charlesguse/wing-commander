@@ -1,25 +1,35 @@
 #!/usr/bin/env python3
 """Gate: the `model:haiku` implement opt-in stays confined (spec 110, FR-014..016).
 
-1. wing-commander-5-implement.yml's literal `max_turns=180` equals
-   implement.yml's `max-turns` input default, so a non-Haiku cycle keeps the
-   budget it has today.
-2. In that wrapper the `model:opus` test is the `if` and the `model:haiku`
-   test its very next `elif` (model:opus wins), and the Haiku branch itself
-   escalates to claude-sonnet-5-5. Read from the executable lines only, in
-   order: a comment that quotes either test cannot satisfy it (review gate
-   rounds 4-5: a whole-file str.find could).
-3. Only that wrapper reads the label: pr-conversation and the board loop
+1. wing-commander-5-implement.yml's `resolve-model` job resolves the tier
+   as FR-014 says, checked by RUNNING its `tier` step under bash -- the
+   shell GitHub runs it with -- against a stub `gh` serving each label set,
+   never by parsing the script (review gate round 9: a token heuristic over
+   if/elif/fi can miscount heredocs, case/esac, $(if ...) and multi-line
+   strings, and pass or fail for reasons the shell does not share):
+   * no opt-in label: the default tier and escalation variables, and a
+     max-turns equal to implement.yml's `max-turns` input default, so a
+     non-Haiku cycle keeps the budget it has today;
+   * `model:haiku`: claude-haiku-5-5, escalating to claude-sonnet-5-5
+     whatever the escalation variable says, with the Haiku budget variable
+     (a non-numeric or zero one falling back to that same default);
+   * `model:haiku` and `model:opus`: claude-opus-5-5 (model:opus wins);
+   * labels that cannot be read: the default tier, with a warning.
+   The job's outputs carry the step's tier, escalation and max-turns.
+2. Only that wrapper reads the label: pr-conversation and the board loop
    never mention `model:haiku`.
 
 Usage: verify-implement-haiku-optin.py [--root DIR]
        verify-implement-haiku-optin.py --self-test
 """
 import argparse
-import re
-import shlex
+import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+import yaml
 
 WRAPPER = ".github/workflows/wing-commander-5-implement.yml"
 STAGE = ".github/workflows/implement.yml"
@@ -27,23 +37,143 @@ OTHERS = (".github/workflows/wing-commander-9-pr-conversation.yml",
           ".github/workflows/board-loop.yml",
           ".github/workflows/pr-conversation.yml")
 
+HAIKU, SONNET, OPUS = "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"
+JOB_OUTPUTS = {"model": "${{ steps.tier.outputs.tier }}",
+               "escalation-model": "${{ steps.tier.outputs.escalation }}",
+               "max-turns": "${{ steps.tier.outputs.max-turns }}"}
+# A stand-in for `gh issue view ... --jq '.labels[].name'`: prints the
+# case's labels, or fails as an API error would.
+STUB_GH = """#!/bin/sh
+[ "${STUB_GH_FAIL:-}" = "1" ] && { echo "gh: HTTP 502" >&2; exit 1; }
+printf '%s' "$STUB_LABELS"
+"""
+
+
+def stage_default(stage_text):
+    try:
+        doc = yaml.safe_load(stage_text) or {}
+        on = doc.get("on", doc.get(True)) or {}
+        return int(on["workflow_call"]["inputs"]["max-turns"]["default"])
+    except (yaml.YAMLError, AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+
+def tier_job(wrapper_text):
+    try:
+        doc = yaml.safe_load(wrapper_text) or {}
+        job = doc["jobs"]["resolve-model"]
+        step = next(s for s in job["steps"] if s.get("id") == "tier")
+    except (yaml.YAMLError, AttributeError, KeyError, TypeError, StopIteration):
+        return None, None
+    return job, step
+
+
+def run_tier(step, labels, env_vars, gh_fails=False):
+    """Run the step's script as GitHub would (`bash -e {0}` when the step
+    names no shell) and return (outputs dict, stdout+stderr, exit code)."""
+    shell = step.get("shell") or "bash -e {0}"
+    with tempfile.TemporaryDirectory() as tmp:
+        bindir = Path(tmp) / "bin"
+        bindir.mkdir()
+        gh = bindir / "gh"
+        gh.write_text(STUB_GH, encoding="utf-8")
+        gh.chmod(0o755)
+        script = Path(tmp) / "step.sh"
+        script.write_text(step.get("run") or "", encoding="utf-8")
+        out, summary = Path(tmp) / "output", Path(tmp) / "summary"
+        out.write_text("", encoding="utf-8")
+        env = {"PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}",
+               "HOME": tmp, "GITHUB_OUTPUT": str(out),
+               "GITHUB_STEP_SUMMARY": str(summary),
+               "GITHUB_REPOSITORY": "owner/repo", "STUB_LABELS": labels,
+               "STUB_GH_FAIL": "1" if gh_fails else ""}
+        # The step's own env: block, with its ${{ }} expressions replaced by
+        # the case's values (unset variables are empty, as in Actions).
+        for key in (step.get("env") or {}):
+            env[key] = ""
+        env.update({"ISSUE": "1", "GH_TOKEN": "x"})
+        env.update(env_vars)
+        if shell == "bash":
+            argv = ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(script)]
+        else:
+            argv = shell.replace("{0}", str(script)).split()
+        proc = subprocess.run(argv, env=env, capture_output=True, text=True,
+                              check=False, timeout=30)
+        outputs = {}
+        for line in out.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            if sep:
+                outputs[key] = value
+    return outputs, proc.stdout + proc.stderr, proc.returncode
+
+
+def behaviour_failures(wrapper_text, budget):
+    job, step = tier_job(wrapper_text)
+    if step is None:
+        return [f"{WRAPPER}: no resolve-model job with a `tier` step"]
+    failures = []
+    outputs = job.get("outputs") or {}
+    for name, want in JOB_OUTPUTS.items():
+        if str(outputs.get(name, "")).strip() != want:
+            failures.append(f"{WRAPPER}: resolve-model output {name} must be "
+                            f"{want!r}, got {outputs.get(name)!r}")
+    defaults = {"MODEL_VAR": "", "ESCALATION_VAR": "", "HAIKU_MAX_TURNS": ""}
+    cases = [
+        # (name, labels, env, gh fails, expected tier/escalation/max-turns,
+        #  text the run must print)
+        ("no label", "", defaults, False, (SONNET, OPUS, budget), None),
+        ("other labels", "spec-request\nmodel:haikus", defaults, False,
+         (SONNET, OPUS, budget), None),
+        ("model:haiku", "spec-request\nmodel:haiku", defaults, False,
+         (HAIKU, SONNET, budget), None),
+        ("model:haiku, budget and escalation variables set", "model:haiku",
+         dict(defaults, MODEL_VAR="claude-x", ESCALATION_VAR="claude-y",
+              HAIKU_MAX_TURNS="60"), False, (HAIKU, SONNET, 60), None),
+        ("model:haiku, non-numeric budget", "model:haiku",
+         dict(defaults, HAIKU_MAX_TURNS="lots"), False,
+         (HAIKU, SONNET, budget), None),
+        ("model:haiku, zero budget", "model:haiku",
+         dict(defaults, HAIKU_MAX_TURNS="0"), False, (HAIKU, SONNET, budget),
+         None),
+        ("model:opus", "model:opus", defaults, False, (OPUS, OPUS, budget),
+         None),
+        ("model:haiku and model:opus", "model:haiku\nmodel:opus", defaults,
+         False, (OPUS, OPUS, budget), None),
+        ("model:opus and model:haiku, variables set", "model:opus\nmodel:haiku",
+         dict(defaults, ESCALATION_VAR="claude-y", HAIKU_MAX_TURNS="60"),
+         False, (OPUS, "claude-y", budget), None),
+        ("labels unreadable", "model:haiku", defaults, True,
+         (SONNET, OPUS, budget), "::warning::"),
+    ]
+    for name, labels, env, gh_fails, want, prints in cases:
+        try:
+            got, log, rc = run_tier(step, labels, env, gh_fails)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            failures.append(f"{name}: the tier step could not run: {exc}")
+            continue
+        seen = (got.get("tier"), got.get("escalation"), got.get("max-turns"))
+        expect = (want[0], want[1], str(want[2]))
+        if rc != 0 or seen != expect:
+            failures.append(f"{WRAPPER} tier step, {name}: expected tier/"
+                            f"escalation/max-turns {expect}, got {seen} "
+                            f"(rc={rc}) {log.strip()[-200:]}")
+        elif prints and prints not in log:
+            failures.append(f"{WRAPPER} tier step, {name}: must print "
+                            f"{prints!r}")
+    return failures
+
 
 def check(texts):
     """texts maps repo-relative path -> file text; returns failure strings."""
-    failures = []
     wrapper, stage = texts.get(WRAPPER), texts.get(STAGE)
     if wrapper is None or stage is None:
         return [f"{WRAPPER} or {STAGE} missing"]
-    lit = re.search(r"^[ ]*max_turns=(\d+)[ ]*$", wrapper, re.M)
-    default = re.search(r"^[ ]{6}max-turns:\n(?:[ ]{8}.*\n)*?[ ]{8}default:[ ]*(\d+)",
-                        stage, re.M)
-    if not lit or not default:
-        failures.append("cannot find the wrapper's max_turns literal or "
-                        "implement.yml's max-turns default")
-    elif lit.group(1) != default.group(1):
-        failures.append(f"wrapper max_turns={lit.group(1)} != implement.yml "
-                        f"max-turns default {default.group(1)}")
-    failures += branch_failures(wrapper)
+    failures = []
+    budget = stage_default(stage)
+    if budget is None:
+        failures.append(f"cannot read {STAGE}'s max-turns input default")
+    else:
+        failures += behaviour_failures(wrapper, budget)
     for rel in OTHERS:
         if rel not in texts:
             failures.append(f"{rel} missing; the confinement check cannot run")
@@ -52,171 +182,124 @@ def check(texts):
     return failures
 
 
-OPUS_IF = re.compile(r"^if grep -qx 'model:opus'")
-HAIKU_ELIF = re.compile(r"^elif grep -qx 'model:haiku'")
-BRANCH = re.compile(r"^(elif|else|fi)\b")
-
-
-SEPARATORS = {";", "&&", "||", "&", "|", ";;"}
-OPENS_COMMAND = {"if", "then", "else", "elif", "do", "!"}
-
-
-def net_depth(line):
-    """How many if-blocks this line opens minus how many it closes, reading
-    `if` and `fi` only where the shell would: as the first word of a
-    command (so `[ a = fi ]`, a quoted `#` and a trailing comment are
-    data). A line shlex cannot split counts as neither."""
-    try:
-        lex = shlex.shlex(line, posix=True, punctuation_chars=";&|")
-        lex.whitespace_split = True
-        tokens = list(lex)
-    except ValueError:
-        return 0
-    depth, command_start = 0, True
-    for tok in tokens:
-        if tok in SEPARATORS:
-            command_start = True
-            continue
-        if command_start:
-            if tok == "if":
-                depth += 1
-            elif tok == "fi":
-                depth -= 1
-            # `if`/`then`/`else`/... are followed by another command word;
-            # any other first word is followed by its arguments.
-            command_start = tok in OPENS_COMMAND
-        # else: an argument, never a keyword
-    return depth
-
-
-def branch_lines(lines, start):
-    """(index of the next elif/else/fi at the same nesting depth as the
-    branch opened at `start`, the branch's own depth-0 body lines). A nested
-    if ... fi inside the branch neither ends it nor counts as its body
-    (review-gate round 7: a nested elif could hide a missing escalation)."""
-    depth, body = 0, []
-    for i in range(start + 1, len(lines)):
-        ln = lines[i]
-        if depth == 0 and BRANCH.match(ln):
-            return i, body
-        net = net_depth(ln)
-        if depth == 0 and net == 0 and not ln.startswith("if "):
-            body.append(ln)
-        depth += net
-    return len(lines), body
-
-
-def branch_failures(wrapper):
-    """model:opus is the if, model:haiku its next same-depth elif, and the
-    Haiku branch's own (not a nested block's) body sets the Sonnet
-    escalation."""
-    lines = [ln.strip() for ln in wrapper.splitlines()]
-    lines = [ln for ln in lines if ln and not ln.startswith("#")]
-    at = next((i for i, ln in enumerate(lines) if OPUS_IF.match(ln)), None)
-    if at is None:
-        return [f"{WRAPPER} has no `if grep -qx 'model:opus'` test"]
-    nxt, _ = branch_lines(lines, at)
-    if nxt >= len(lines) or not HAIKU_ELIF.match(lines[nxt]):
-        return ["model:opus must be tested first and model:haiku in its very "
-                f"next elif in {WRAPPER}, so model:opus wins"]
-    _, body = branch_lines(lines, nxt)
-    if 'escalation="claude-sonnet-5-5"' not in body:
-        return ["the Haiku branch must escalate to claude-sonnet-5-5"]
-    return []
-
-
-GOOD_WRAPPER = """max_turns=180
+GOOD_RUN = """tier="${MODEL_VAR:-claude-sonnet-5-5}"
+escalation="${ESCALATION_VAR:-claude-opus-5-5}"
+max_turns=180
+labels="$(gh issue view "$ISSUE" --json labels)" || {
+  echo "::warning::could not read labels"
+  labels=''
+}
 if grep -qx 'model:opus' <<< "$labels"; then
   tier="claude-opus-5-5"
 elif grep -qx 'model:haiku' <<< "$labels"; then
+  tier="claude-haiku-5-5"
   escalation="claude-sonnet-5-5"
+  max_turns="${HAIKU_MAX_TURNS:-180}"
+  case "$max_turns" in
+    ''|*[!0-9]*|0|0[0-9]*) max_turns=180 ;;
+  esac
 fi
+{
+  echo "tier=$tier"
+  echo "escalation=$escalation"
+  echo "max-turns=$max_turns"
+} >> "$GITHUB_OUTPUT"
 """
-SWAPPED = """max_turns=180
-# if grep -qx 'model:opus' runs first, model:opus wins
-if grep -qx 'model:haiku' <<< "$labels"; then
-  escalation="claude-sonnet-5-5"
-elif grep -qx 'model:opus' <<< "$labels"; then
-  tier="claude-opus-5-5"
-fi
-"""
-GOOD_STAGE = "      max-turns:\n        type: number\n        default: 180\n"
+GOOD_STAGE = ("on:\n  workflow_call:\n    inputs:\n      max-turns:\n"
+              "        type: number\n        default: 180\n")
+
+
+def wrapper_doc(run):
+    return yaml.safe_dump({"jobs": {"resolve-model": {
+        "outputs": dict(JOB_OUTPUTS),
+        "steps": [{"name": "Resolve model tier", "id": "tier",
+                   "env": {"MODEL_VAR": "x", "ESCALATION_VAR": "x",
+                           "HAIKU_MAX_TURNS": "x", "ISSUE": "x"},
+                   "run": run}]}}}, sort_keys=False)
 
 
 def self_test():
-    base = {WRAPPER: GOOD_WRAPPER, STAGE: GOOD_STAGE,
+    base = {WRAPPER: wrapper_doc(GOOD_RUN), STAGE: GOOD_STAGE,
             OTHERS[0]: "model:opus\n", OTHERS[1]: "model:opus\n",
             OTHERS[2]: "model:opus\n"}
-    ok = not check(base)
-    # A nested if inside the Haiku branch, before the escalation, is fine.
-    nested = dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
-        '  escalation="claude-sonnet-5-5"\n',
-        '  if [ -n "$x" ]; then\n    :\n  fi\n  escalation="claude-sonnet-5-5"\n')})
-    for variant in ('if [ -n "$X" ]; then tier=x; fi',
-                    'if [ -n "$X" ]; then tier=x; fi  # override',
-                    'if [ -n "$X" ]; then tier=x; fi;',
-                    'if [ "$x" = "a #b" ]; then y=1; fi'):
-        one_line = dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
-            '  tier="claude-opus-5-5"\n',
-            f'  tier="claude-opus-5-5"\n  {variant}\n')})
-        if check(one_line):
-            print(f"self-test: a one-line if ({variant!r}) in the opus branch "
-                  f"must pass: {check(one_line)}", file=sys.stderr)
-            ok = False
-    if check(nested):
-        print("self-test: a nested if in the Haiku branch must pass: "
-              f"{check(nested)}", file=sys.stderr)
+    ok = True
+    if check(base):
+        print(f"self-test: the good layout must pass: {check(base)}",
+              file=sys.stderr)
         ok = False
-    bad = [
-        dict(base, **{STAGE: GOOD_STAGE.replace("180", "100")}),
-        dict(base, **{WRAPPER: GOOD_WRAPPER.replace("model:opus", "model:zzz")}),
-        dict(base, **{OTHERS[1]: "model:opus model:haiku\n"}),
-        dict(base, **{OTHERS[2]: "model:haiku\n"}),
-        {k: v for k, v in base.items() if k != OTHERS[1]},
-        dict(base, **{WRAPPER: GOOD_WRAPPER.replace("sonnet", "opus")}),
-        # a comment quoting the opus test above swapped branches
-        dict(base, **{WRAPPER: SWAPPED}),
-        # the escalation set only inside a nested if within the Haiku branch
-        dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
-            '  escalation="claude-sonnet-5-5"\n',
-            '  if [ -n "$x" ]; then\n    escalation="claude-sonnet-5-5"\n'
-            '  elif true; then\n    :\n  fi\n')}),
-        # a one-line if in the Haiku branch, the escalation moved after the
-        # chain where it applies to every tier
-        dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
-            '  escalation="claude-sonnet-5-5"\nfi\n',
-            '  if [ -n "$x" ]; then y=1; fi\n  tier=haiku\nfi\n'
-            'escalation="claude-sonnet-5-5"\n')}),
-        # a multi-line if whose condition ends in the word fi, the
-        # escalation only inside it
-        dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
-            '  escalation="claude-sonnet-5-5"\n',
-            '  if test "$m" = fi\n  then\n    escalation="claude-sonnet-5-5"\n'
-            '  fi\n')}),
-        # an if still open after a nested one-line if, the escalation in it
-        dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
-            '  escalation="claude-sonnet-5-5"\n',
-            '  if a; then if b; then c; fi\n    escalation="claude-sonnet-5-5"\n'
-            '  fi\n')}),
-        # then/fi as test operands, the escalation in the still-open if
-        dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
-            '  escalation="claude-sonnet-5-5"\n',
-            '  if [ a = then ] && [ b = fi ]; then\n'
-            '    escalation="claude-sonnet-5-5"\n  fi\n')}),
-        # the Sonnet escalation set in the opus branch, not the Haiku one
-        dict(base, **{WRAPPER: GOOD_WRAPPER.replace(
-            '  tier="claude-opus-5-5"', '  escalation="claude-sonnet-5-5"')
-            .replace('then\n  escalation="claude-sonnet-5-5"\nfi',
-                     'then\n  tier="claude-haiku-5-5"\nfi')}),
-    ]
-    for i, texts in enumerate(bad):
+    escalation = '  escalation="claude-sonnet-5-5"\n'
+    good = {
+        # Shapes the old token heuristic misread; the shell does not.
+        "heredoc quoting fi": GOOD_RUN.replace(
+            escalation, escalation + "  cat >/dev/null <<'EOF'\nfi\nelse\nEOF\n"),
+        "case/esac inside the branch": GOOD_RUN.replace(
+            escalation, escalation + '  case "$x" in a) : ;; esac\n'),
+        "$(if ...) substitution": GOOD_RUN.replace(
+            escalation, escalation + '  y="$(if true; then echo fi; fi)"\n'),
+        "multi-line string": GOOD_RUN.replace(
+            escalation, escalation + '  note="first line\nfi\nelse"\n'),
+        "nested if": GOOD_RUN.replace(
+            escalation, '  if [ -n "${x:-}" ]; then\n    :\n  fi\n' + escalation),
+        "comment quoting the tests": "# if grep -qx 'model:haiku' runs first\n"
+                                     + GOOD_RUN,
+    }
+    for name, run in good.items():
+        got = check(dict(base, **{WRAPPER: wrapper_doc(run)}))
+        if got:
+            print(f"self-test: {name} must pass: {got}", file=sys.stderr)
+            ok = False
+    swapped = GOOD_RUN.replace("'model:opus'", "'model:TMP'") \
+        .replace("'model:haiku'", "'model:opus'") \
+        .replace("'model:TMP'", "'model:haiku'") \
+        .replace('  tier="claude-opus-5-5"\n', "  TIER_OPUS\n") \
+        .replace('  tier="claude-haiku-5-5"\n', '  tier="claude-opus-5-5"\n') \
+        .replace("  TIER_OPUS\n", '  tier="claude-haiku-5-5"\n')
+    bad = {
+        "drifted stage default": dict(base, **{STAGE: GOOD_STAGE.replace(
+            "180", "100")}),
+        "no opt-in at all": dict(base, **{WRAPPER: wrapper_doc(
+            GOOD_RUN.replace("model:haiku", "model:zzz"))}),
+        # The escalation spelled only as data -- the old token heuristic
+        # read both as the Haiku branch setting it (review gate round 9).
+        "escalation only inside a heredoc": dict(base, **{WRAPPER: wrapper_doc(
+            GOOD_RUN.replace(escalation, "  cat >/dev/null <<'EOF'\n"
+                             + escalation + "EOF\n"))}),
+        "escalation only inside a multi-line string": dict(base, **{
+            WRAPPER: wrapper_doc(GOOD_RUN.replace(
+                escalation, '  note="\n' + escalation + '"\n'))}),
+        "branches swapped": dict(base, **{WRAPPER: wrapper_doc(swapped)}),
+        "Haiku escalates to Opus": dict(base, **{WRAPPER: wrapper_doc(
+            GOOD_RUN.replace(escalation, '  escalation="claude-opus-5-5"\n'))}),
+        "escalation only in a nested if never taken": dict(base, **{
+            WRAPPER: wrapper_doc(GOOD_RUN.replace(
+                escalation, '  if [ -n "${x:-}" ]; then\n' + "  " + escalation
+                + "  fi\n"))}),
+        "escalation applied to every tier": dict(base, **{
+            WRAPPER: wrapper_doc(GOOD_RUN.replace(escalation, "").replace(
+                "{\n  echo \"tier", 'escalation="claude-sonnet-5-5"\n{\n  echo "tier'))}),
+        "non-Haiku budget drifted": dict(base, **{WRAPPER: wrapper_doc(
+            GOOD_RUN.replace("max_turns=180\nlabels", "max_turns=100\nlabels"))}),
+        "bad Haiku budget not caught": dict(base, **{WRAPPER: wrapper_doc(
+            GOOD_RUN.replace("''|*[!0-9]*|0|0[0-9]*)", "''|0)"))}),
+        "label failure aborts the step": dict(base, **{WRAPPER: wrapper_doc(
+            GOOD_RUN.replace(' || {\n  echo "::warning::could not read labels"\n'
+                             "  labels=''\n}", ""))}),
+        "label failure is silent": dict(base, **{WRAPPER: wrapper_doc(
+            GOOD_RUN.replace('  echo "::warning::could not read labels"\n', ""))}),
+        "job output unmapped": dict(base, **{WRAPPER: wrapper_doc(GOOD_RUN)
+                                    .replace("steps.tier.outputs.escalation",
+                                             "steps.tier.outputs.tier")}),
+        "stray reader": dict(base, **{OTHERS[1]: "model:opus model:haiku\n"}),
+        "stray reader in pr-conversation": dict(base, **{OTHERS[2]: "model:haiku\n"}),
+        "reader file missing": {k: v for k, v in base.items() if k != OTHERS[1]},
+    }
+    for name, texts in bad.items():
         if not check(texts):
-            print(f"self-test: bad case {i} passed", file=sys.stderr)
+            print(f"self-test: bad case {name!r} passed", file=sys.stderr)
             ok = False
     if not ok:
-        print("self-test: the good layout must pass", file=sys.stderr)
         return 1
-    print("self-test ok")
+    print(f"self-test ok ({len(good)} good shapes, {len(bad)} bad cases)")
     return 0
 
 
@@ -235,7 +318,8 @@ def main():
         print(f, file=sys.stderr)
     if failures:
         return 1
-    print("model:haiku opt-in is confined to the implement wrapper")
+    print("model:haiku opt-in resolves as FR-014 says and is confined to the "
+          "implement wrapper")
     return 0
 
 

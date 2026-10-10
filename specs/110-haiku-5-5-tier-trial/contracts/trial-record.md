@@ -39,7 +39,11 @@ Extends `specs/043-durable-metrics-record/contracts/metrics-record-schema.md`
 ```
 
 A shadow result that is not an object with a `findings` array (for example a
-bare array) misses the diagnose schema and is `malformed`.
+bare array) misses the diagnose schema and is `malformed`. The whole result is
+held to the schema, top-level keys included, not only its `findings` array.
+A baseline finding whose `class` or any evidence `signalId` is not a string
+(the only type the diagnose schema gives them) cannot be compared with the
+schema-held shadow, so the run is `no-baseline`.
 
 `candidate_model` is the record's own top-level `model` (the
 `diagnose-shadow-model` input), passed to the comparator by

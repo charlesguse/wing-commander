@@ -40,8 +40,10 @@ States of the diagnose shadow: `off` (no SINCE) → `on` (SINCE set, <60 d, <300
 
 No new record: the cycle's normal metrics record (`stage` implement, top-level
 `model` = `claude-haiku-5-5`, `turns`, tokens, `cost_usd`, `outcome`, `refusal`,
-`spec.issue`) is the trial record. Escalations appear as the later record on the
-same `spec.issue` with the escalation model.
+`spec.issue`) is the trial record. Each escalation is implement's one-tier-up
+retry, recorded on the same `spec.issue` with `run_label` `retry` and the
+escalation model; a later cycle that carries that tier forward is not another
+escalation.
 
 ## Trial summary (derived, not stored)
 

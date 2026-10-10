@@ -98,6 +98,27 @@ CASES = {
          cycle(8, "claude-haiku-5-5", "progress comment"),
          cycle(8, None, "branch advance")],
         "| none | | | | | |", "median Sonnet lifecycle over 1: cycles 1"),
+    # One escalation (the Sonnet retry), not three: the Sonnet cycles after
+    # it carry the escalated tier forward (review gate round 9).
+    "escalation-counted-once": (
+        [dated(cycle(9, "claude-haiku-5-5"), "2026-10-01"),
+         dated(cycle(9, "claude-sonnet-5-5", "retry"), "2026-10-02"),
+         dated(cycle(9, "claude-sonnet-5-5"), "2026-10-03"),
+         dated(cycle(9, "claude-sonnet-5-5"), "2026-10-04")],
+        "| #9 | 4 | 1 (claude-sonnet-5-5) |", None),
+    # Unhashable values where a scalar belongs are read as absent, never a
+    # TypeError and exit 1 (review gate round 9): a list or object outcome
+    # is a shadow record without a readable trial; a list run_label, run id
+    # or issue is no label, run or lifecycle.
+    "unhashable-values": (
+        [shadow("agreed")] * 3
+        + [dict(shadow("agreed"), trial={"outcome": ["agreed"]}),
+           dict(shadow("agreed"), trial={"outcome": {"a": 1}}),
+           dict(shadow("agreed"), run={"workflow_run_id": ["1"]}),
+           dict(cycle(9, "claude-haiku-5-5"), run_label=["cycle"]),
+           dict(cycle(9, "claude-haiku-5-5"), spec={"issue": [9]})],
+        "Shadow runs with a trial record: 4 (without a readable one: 2)",
+        "| none | | | | | |"),
     # Both rows cover the compared runs only: run 2 had no shadow, run 3's
     # shadow was no-baseline (never called).
     "acting-row-paired": (

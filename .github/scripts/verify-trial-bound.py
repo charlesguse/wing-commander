@@ -93,6 +93,31 @@ def main():
         if proc.returncode != 2:
             failures.append("a missing records file must fail closed "
                             f"(exit 2), got rc={proc.returncode} {proc.stdout!r}")
+        # An outcome that is not a string (a list, an object) is a shadow
+        # record with no readable trial: counted toward the cap, never a
+        # TypeError and exit 1 (review gate round 9).
+        odd = Path(tmp) / "unhashable.jsonl"
+        odd.write_text("\n".join([record(["error"], "2026-10-05"),
+                                   record({"a": 1}, "2026-10-05"),
+                                   record("error", "2026-10-05")]) + "\n",
+                       encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, "-I", str(SCRIPT), "--since", "2026-10-01",
+             "--records", str(odd), "--today", "2026-10-05"],
+            capture_output=True, text=True, check=False)
+        if proc.returncode != 0 or proc.stdout.strip() != "enabled=true":
+            failures.append("a list or object trial.outcome must be read, not "
+                            f"crash: rc={proc.returncode} {proc.stderr[-200:]!r}")
+        else:
+            import datetime
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("trial_bound", SCRIPT)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            n = mod.compared_count(str(odd), datetime.date(2026, 10, 1))
+            if n != 2:
+                failures.append("records whose trial.outcome is not a string "
+                                f"must count toward the cap (2), got {n}")
         # A corrupt records line is named as such, never as a bad SINCE.
         bad = Path(tmp) / "corrupt.jsonl"
         bad.write_text("not json\n", encoding="utf-8")

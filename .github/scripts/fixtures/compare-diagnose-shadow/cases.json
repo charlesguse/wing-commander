@@ -338,5 +338,89 @@
       ]
     },
     "expect": "agreed"
+  },
+  "baseline-integer-signal-id": {
+    "baseline_verdict": "healthy",
+    "shadow_verdict": "healthy",
+    "refusal": "false",
+    "baseline": [
+      {
+        "class": "pipeline-defect",
+        "evidence": [
+          {
+            "signalId": 1
+          }
+        ]
+      }
+    ],
+    "shadow": {
+      "findings": [
+        {
+          "class": "pipeline-defect",
+          "evidence": [
+            {
+              "signalId": "s1"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "no-baseline"
+  },
+  "baseline-null-signal-id": {
+    "baseline_verdict": "healthy",
+    "shadow_verdict": "healthy",
+    "refusal": "false",
+    "baseline": [
+      {
+        "class": "pipeline-defect",
+        "evidence": [
+          {
+            "signalId": null
+          }
+        ]
+      }
+    ],
+    "shadow": {
+      "findings": [
+        {
+          "class": "pipeline-defect",
+          "evidence": [
+            {
+              "signalId": "s1"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "no-baseline"
+  },
+  "baseline-evidence-without-signal-id": {
+    "baseline_verdict": "healthy",
+    "shadow_verdict": "healthy",
+    "refusal": "false",
+    "baseline": [
+      {
+        "class": "pipeline-defect",
+        "evidence": [
+          {
+            "source": "x"
+          }
+        ]
+      }
+    ],
+    "shadow": {
+      "findings": [
+        {
+          "class": "pipeline-defect",
+          "evidence": [
+            {
+              "signalId": "s1"
+            }
+          ]
+        }
+      ]
+    },
+    "expect": "no-baseline"
   }
 }
