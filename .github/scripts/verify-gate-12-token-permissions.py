@@ -19,6 +19,7 @@ from wc_gh_callsites import Dynamic, api_parts, locate  # noqa: E402
 
 AUTHORING_RULE = "Authoring rule for `gh` call sites"
 AUTHORING_RULE_DOC = "CONTRIBUTING.md"
+CALLS_LOCATED = [0]     # `gh` calls found in run: blocks, reported on the pass line
 
 # subcommand (verb1, verb2) -> frozenset of (permission-category, level)
 # pairs it needs. Extended only with evidence (research.md R6 / Gate 6's
@@ -552,6 +553,7 @@ def scan_run(run, path, first_line, failures):
     for tok in locate(run):
         if tok.kind != "call":
             continue
+        CALLS_LOCATED[0] += 1
         if tok.position == "disallowed":
             failures.append(
                 f"{path}:{first_line + tok.line - 1}: gh call in a form Gate 12 "
@@ -859,6 +861,7 @@ for n in notes:
     print(f"note: {n}")
 for fl in failures:
     print(f"::error::Gate 12: {fl}")
-print(f"Gate 12: checked every gh/API call site in {len(action_files)} composite action(s) "
-      f"and every workflow for a permissioned token; {len(failures)} failure(s).")
+print(f"Gate 12: checked every gh/API call site ({CALLS_LOCATED[0]} located) in "
+      f"{len(action_files)} composite action(s) and every workflow for a "
+      f"permissioned token; {len(failures)} failure(s).")
 sys.exit(1 if failures else 0)
