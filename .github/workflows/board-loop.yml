@@ -3027,7 +3027,10 @@ jobs:
   # (wing-commander-gate-verdict), so a job that fails, times out or is
   # cancelled before uploading one reads as a red suite, never a green
   # one. It joins the board-loop group like every job from select to
-  # readiness, so no other run's job starts between fix-agent and fix.
+  # readiness. The group is held per job, not per run: between any two of
+  # those jobs another run's job can take it, as between route and fix
+  # before the split. What keeps two runs off one item is select's marker
+  # read, not the group.
   gate-suite-fix:
     needs: [fix-agent]
     if: "!cancelled() && needs.fix-agent.result == 'success'"

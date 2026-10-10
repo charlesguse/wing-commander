@@ -43,9 +43,11 @@ busy-check meaningful (research.md D3's "Alternatives considered").
 specs/095-agent-code-credential-containment split `fix` into `fix-agent`
 → `gate-suite-fix` → `fix`, and added `gate-suite-review-fixup` →
 `review-fixup-publish` after `review`. Each new job joins the ordinary
-group too, so no other run's job starts in the gap between the job that
-ran an agent and the job that publishes its commits; the jobs run in
-sequence (`needs:`), so sharing the group never makes one wait on another.
+group too. The jobs of one run follow each other through `needs:`, so
+sharing the group never makes one wait on another; and since the group is
+taken per job, the split adds handoff gaps in which another run's pending
+job can take it, as the gaps between `select`, `triage`, `route` and `fix`
+already allowed.
 
 ## Pre-dispatch checks
 

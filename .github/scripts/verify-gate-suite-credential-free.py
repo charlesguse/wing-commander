@@ -95,7 +95,12 @@ def credential_problems(job_id, job):
     if "environment" in job:
         problems.append("{0}: binds an environment: (its secrets would be reachable)".format(
             job_id))
-    scan = {k: v for k, v in job.items() if k not in ("steps", "container")}
+    scan = {k: v for k, v in job.items() if k != "steps"}
+    if isinstance(scan.get("container"), dict):
+        # The image-pull credential is used by the runner before any step
+        # starts; everything else under container: (its env above all)
+        # reaches the steps.
+        scan["container"] = {k: v for k, v in scan["container"].items() if k != "credentials"}
     if CREDENTIAL_RE.search(json.dumps(scan, default=str)):
         problems.append("{0}: names a credential outside its steps".format(job_id))
     for step in _steps(job):
@@ -244,6 +249,10 @@ def _mutations():
         del docs["implement.yml"]["jobs"]["gate-suite-implement-cycle"]
         docs["implement.yml"]["jobs"]["implement"]["needs"].remove("gate-suite-implement-cycle")
 
+    def container_env_secret(docs):
+        docs["implement.yml"]["jobs"]["gate-suite-implement-cycle"]["container"]["env"][
+            "TOK"] = "${{ secrets.speckit-app-private-key }}"
+
     def reader_not_waiting(docs):
         docs["board-loop.yml"]["jobs"]["review-fixup-publish"]["needs"].remove(
             "gate-suite-review-fixup")
@@ -264,6 +273,8 @@ def _mutations():
         ("review uses the contained composite itself", suite_back_in_review,
          "holds credentials and its step"),
         ("gate-suite-implement-cycle removed", gate_job_gone, "cannot be determined"),
+        ("a secret in the gate job's container env", container_env_secret,
+         "names a credential outside its steps"),
         ("review-fixup-publish no longer needs its gate job", reader_not_waiting,
          "cannot wait for the verdict"),
         ("the retry exemption outlives its step", stale_exemption, "is stale"),

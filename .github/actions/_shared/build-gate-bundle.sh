@@ -16,11 +16,15 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 wc_harden_git_env
 mkdir -p "$out_dir"
 head_sha="$(git rev-parse HEAD)"
-# No new commits (no base, the base is HEAD, or HEAD is behind the base):
-# git refuses an empty thin bundle, so ship the head itself.
+# The bundle's one ref is HEAD; its consumers fetch exactly that.
+# No new commits (no base, or the base is HEAD) or a base HEAD does not
+# descend from: git refuses an empty thin bundle, so ship the head commit
+# alone (its parent is in every consumer's full-history checkout), and the
+# whole history only for a root commit.
 if [ -z "$base_sha" ] || [ "$base_sha" = "$head_sha" ] \
   || ! git bundle create --quiet "$out_dir/bundle.git" "$base_sha..HEAD" HEAD 2>/dev/null; then
-  git bundle create --quiet "$out_dir/bundle.git" HEAD
+  git bundle create --quiet "$out_dir/bundle.git" HEAD~1..HEAD HEAD 2>/dev/null \
+    || git bundle create --quiet "$out_dir/bundle.git" HEAD
 fi
 jq -n --arg base "$base_sha" --arg head "$head_sha" --arg site "$site" \
   '{base_sha: $base, head_sha: $head, site: $site}' > "$out_dir/meta.json"

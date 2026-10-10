@@ -5610,6 +5610,19 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-git-deny.py --self-test
 
+      # Gate 147 — specs/095-agent-code-credential-containment
+      # (contracts/workspace-bundle.md): the agent's commits survive the
+      # round trip build-gate-bundle.sh -> contained-gate-suite.sh ->
+      # restore-gate-bundle.sh against real git repositories, and the
+      # restore refuses any head the producer did not report. Path triggers:
+      # .github/actions/** and .github/scripts/** above.
+      - name: "Gate 147 — a workspace bundle round-trips from the agent's job through the gate job to the publisher"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gate-bundle-roundtrip.py
+      - name: "Gate 147 self-test — a refs/* bundle fetch, a skipped head check and a full-history no-op bundle each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-gate-bundle-roundtrip.py --self-test
+
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate

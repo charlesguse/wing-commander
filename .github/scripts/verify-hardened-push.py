@@ -53,7 +53,10 @@ COVERED_JOBS = {
     "pr-conversation.yml": ("act",),
 }
 
-RAW_PUSH_RE = re.compile(r"(?<![\w-])git\s+(?:-\S+\s+)*push\b")
+# git's own options may come first, some with a separate argument
+# (`git -C "$dir" push`, `git -c k=v push`, `git --git-dir "$d" push`).
+RAW_PUSH_RE = re.compile(
+    r"(?<![\w-])git\s+(?:(?:-C|-c|--git-dir|--work-tree|--namespace)\s+\S+\s+|-\S+\s+)*push\b")
 # The hardening's own spellings -- not every core.hooksPath (pr-conversation
 # points it at its run-attribution hook on purpose).
 IDIOM_RE = re.compile(r"GIT_CONFIG_NOSYSTEM|core\.hooksPath[\s=\"']+/dev/null"
@@ -113,20 +116,34 @@ def reachable(docs, root=ROOT):
     return found
 
 
+def _shell_bodies(name, text):
+    """The separate shells rule 2 must judge one at a time: each `run:` of
+    a composite (its exports die with that step's shell), or a whole
+    script."""
+    if not name.endswith((".yml", ".yaml")):
+        return [text]
+    try:
+        doc = yaml.safe_load(text) or {}
+    except yaml.YAMLError:
+        return [text]
+    steps = ((doc.get("runs") or {}).get("steps")) or []
+    return [str(s.get("run", "")) for s in steps if isinstance(s, dict) and s.get("run")]
+
+
 def composite_errors(name, text):
-    """Rule 2 over one composite's (or shared script's) text."""
-    code = _code(text)
-    push = RAW_PUSH_RE.search(code)
-    if not push:
-        return []
-    harden = code.find(HARDEN_CALL + "\n")
-    if harden < 0:
+    """Rule 2 over one composite's (or shared script's) text: in the same
+    shell as each push, the hardening is sourced and called before it."""
+    for body in _shell_bodies(name, text):
+        code = _code(body)
+        push = RAW_PUSH_RE.search(code)
+        if not push:
+            continue
         harden = code.find(HARDEN_CALL)
-    sourced = "git-push-hardening.sh" in code
-    if not sourced or harden < 0 or harden > push.start():
-        return ["{0}: pushes without calling {1} from _shared/git-push-hardening.sh first -- "
-                "a planted hook or global config would run with the token".format(
-                    name, HARDEN_CALL)]
+        sourced = "git-push-hardening.sh" in code[:push.start()]
+        if not sourced or harden < 0 or harden > push.start():
+            return ["{0}: pushes without calling {1} from _shared/git-push-hardening.sh first, "
+                    "in the same step -- a planted hook or global config would run with the "
+                    "token".format(name, HARDEN_CALL)]
     return []
 
 
@@ -275,7 +292,8 @@ def self_test():
         failures.append("pasted idiom not detected")
     if check_doc("composite-use.yml", fixture("composite-use.yml"), ("publish",)):
         failures.append("composite use rejected")
-    for name, want in (("unhardened-composite.yml", True), ("hardened-composite.yml", False)):
+    for name, want in (("unhardened-composite.yml", True), ("hardened-composite.yml", False),
+                       ("hardened-in-another-step.yml", True)):
         with open(os.path.join(FIXTURES, name), encoding="utf-8") as fh:
             if bool(composite_errors(name, fh.read())) != want:
                 failures.append("{0}: composite rule said {1}".format(name, not want))
@@ -288,6 +306,8 @@ def self_test():
     docs = _load_workflows()
     if static_errors(docs):
         failures.append("the shipped workflows already fail: {0}".format(static_errors(docs)))
+    if not RAW_PUSH_RE.search('git -C "$WORKDIR" push origin HEAD'):
+        failures.append("`git -C <dir> push` not recognised as a push")
     # T031: a raw push put back at each real covered site is caught there.
     for name, jobs in COVERED_JOBS.items():
         for job_id in jobs:

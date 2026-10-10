@@ -69,7 +69,9 @@ REQUIRED_PHRASES = (
 )
 PUSH_USES = ("wing-commander-hardened-push", "wing-commander-publish-stranded-commits",
              "wing-commander-fold-commit")
-RAW_PUSH_RE = re.compile(r"^[^#\n]*\bgit\s+(?:-\S+\s+)*push\b", re.MULTILINE)
+RAW_PUSH_RE = re.compile(
+    r"^[^#\n]*\bgit\s+(?:(?:-C|-c|--git-dir|--work-tree|--namespace)\s+\S+\s+|-\S+\s+)*push\b",
+    re.MULTILINE)
 
 
 def _norm(text):

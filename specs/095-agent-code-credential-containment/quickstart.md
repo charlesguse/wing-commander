@@ -59,8 +59,11 @@ The three hazards above, resolved:
 
 1. Every new board-loop job joins `wing-commander-board-loop`. They run in
    sequence through `needs:`, so sharing the group never makes one wait on
-   another, and holding it keeps another run's job out of the gap between
-   the job that ran an agent and the job that publishes its commits.
+   another. The group is taken per job, not per run, so the split adds
+   handoff gaps (fix-agent → gate-suite-fix → fix) in which another run's
+   pending job can take it -- the exposure the gaps between select, triage,
+   route and fix already carried; select's marker read is what keeps two
+   runs off one item (code review of #990).
 2. The publishing job keeps the name `fix` (and its `pr-number`/`breach`
    outputs); the agent's half is the new `fix-agent`. review-fixup's
    publisher is the new `review-fixup-publish`; `review` keeps its outputs

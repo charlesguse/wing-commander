@@ -86,7 +86,8 @@ else
     write_verdict fail 1 "$head_sha" "workspace bundle failed verification"
     exit 0
   fi
-  if ! git fetch --quiet --no-tags "$bundle" "+refs/*:refs/wc-gate/*" 2>/dev/null; then
+  # The bundle carries one ref, HEAD (build-gate-bundle.sh).
+  if ! git fetch --quiet --no-tags "$bundle" "+HEAD:refs/wc-gate/head" 2>/dev/null; then
     write_verdict fail 1 "$head_sha" "bundle does not contain head_sha"
     exit 0
   fi
