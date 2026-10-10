@@ -366,9 +366,15 @@ def main():
         if leg == "cycle":
             # An output the gate job never set reads as present and ready,
             # so the summary falls through to the (absent, red) verdict.
+            # A verdict for another head (the branch moved while the gate
+            # job ran) reads as a named skip, never as red.
+            mismatch = "steps.gate-suite-cycle.outputs.reason"
             want = {"SCRIPT_EXISTS": OPEN + NEEDS + "script-exists || 'true'" + CLOSE,
-                    "READY": OPEN + NEEDS + "ready || 'false'" + CLOSE,
-                    "MISSING": OPEN + NEEDS + "missing || 'the gate-suite-implement-cycle job "
+                    "READY": OPEN + mismatch + " != 'head_sha mismatch' && " + NEEDS
+                             + "ready || 'false'" + CLOSE,
+                    "MISSING": OPEN + mismatch + " == 'head_sha mismatch' && 'a verdict for this "
+                               "head (the spec branch moved while the gate suite ran)' || " + NEEDS
+                               + "missing || 'the gate-suite-implement-cycle job "
                                "(it ended before its preflight ran)'" + CLOSE}
         else:
             want = {k: OPEN + "steps.gate-suite-preflight-{0}.outputs.{1}".format(leg, v) + CLOSE
@@ -382,8 +388,12 @@ def main():
         check("({0}) the agent prompt interpolates the summary's paragraph, not a fixed copy".format(leg),
               ref in prompt and "already ran once" not in prompt, "")
         record_env = found["record"].get("env") or {}
+        own = "steps.gate-suite-{0}.outputs.outcome".format(leg)
+        if leg == "cycle":
+            own = ("steps.gate-suite-cycle.outputs.reason != 'head_sha mismatch' && "
+                   + own + " || 'skipped'")
         check("({0}) the cycle-outcome artifact reads the suite step's own outcome".format(leg),
-              record_env.get("GATE_OUTCOME") == OPEN + "steps.gate-suite-{0}.outputs.outcome".format(leg) + CLOSE,
+              record_env.get("GATE_OUTCOME") == OPEN + own + CLOSE,
               "env={0}".format(record_env))
         run_steps = {k: str(found[k]["run"]) for k in ("preflight", "summary", "record")}
         texts[leg] = run_steps

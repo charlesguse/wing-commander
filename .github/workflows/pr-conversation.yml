@@ -2233,7 +2233,7 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           # spec 095 FR-018: .git/ through the write boundary tool-args applies
           # after any adopter override or extra-allowed-tools, so neither can
-          # reopen it -- see implement.yml\'s no-write-paths input.
+          # reopen it -- see implement.yml's no-write-paths input.
           no-write-paths: ".git/"
           step-label: "pr-conversation.act"
 
@@ -2251,9 +2251,7 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
-          # spec 095 FR-018: .git/ through the write boundary tool-args applies
-          # after any adopter override or extra-allowed-tools, so neither can
-          # reopen it -- see implement.yml\'s no-write-paths input.
+          # .git/ deny -- see the act step's tool args above in this file.
           no-write-paths: ".git/"
           step-label: "pr-conversation.act.fold"
 

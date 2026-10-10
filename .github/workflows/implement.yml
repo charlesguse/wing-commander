@@ -536,9 +536,9 @@ jobs:
           fetch-depth: 0
 
       # pin the exact commit, never a branch -- see specs/010-reusable-pipeline/research.md.
-      # This job holds no id-token, so the OIDC fallback below has nothing to
-      # read: with github.job_workflow_sha empty and no pipeline-ref input it
-      # fails. continue-on-error, and every pipeline step below is skipped or
+      # This job holds no id-token, so the implement job's OIDC fallback is
+      # not available here: with github.job_workflow_sha empty and no
+      # pipeline-ref input it fails. continue-on-error, and every pipeline step below is skipped or
       # tolerated, so this job reports the suite not ready, naming the
       # pipeline checkout as the missing prerequisite -- an honest skip in the
       # agent's prompt, never a red suite read off a verdict that was never
@@ -551,13 +551,8 @@ jobs:
           PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
         run: |
           ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
-          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
-            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
-            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
-          fi
           if [ -z "$ref" ]; then
-            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            echo "::error::wing-commander implement stage (cycle-start gate suite): cannot determine the pipeline commit to check out — github.job_workflow_sha is empty, and this credential-free job holds no id-token for the OIDC fallback. Set the pipeline-ref input to the same ref as your uses: pin."
             exit 1
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
@@ -1089,9 +1084,12 @@ jobs:
           # cycle-start gate suite's verdict (cycle)" above. An empty output
           # (that job ended before its preflight) reads as a suite that
           # exists but did not run, naming why.
+          # A verdict for another head (the spec branch moved while the
+          # suite ran -- the gate job holds no per-spec lock) says nothing
+          # about this head: a named skip, never a red suite.
           SCRIPT_EXISTS: ${{ needs.gate-suite-implement-cycle.outputs.script-exists || 'true' }}
-          READY: ${{ needs.gate-suite-implement-cycle.outputs.ready || 'false' }}
-          MISSING: ${{ needs.gate-suite-implement-cycle.outputs.missing || 'the gate-suite-implement-cycle job (it ended before its preflight ran)' }}
+          READY: ${{ steps.gate-suite-cycle.outputs.reason != 'head_sha mismatch' && needs.gate-suite-implement-cycle.outputs.ready || 'false' }}
+          MISSING: ${{ steps.gate-suite-cycle.outputs.reason == 'head_sha mismatch' && 'a verdict for this head (the spec branch moved while the gate suite ran)' || needs.gate-suite-implement-cycle.outputs.missing || 'the gate-suite-implement-cycle job (it ended before its preflight ran)' }}
           OUTCOME: ${{ steps.gate-suite-cycle.outputs.outcome }}
           FIRST_FAILURE: ${{ steps.gate-suite-cycle.outputs.first-failure }}
         run: |
@@ -1840,7 +1838,7 @@ jobs:
         env:
           CONVERGED: ${{ steps.outcome.outputs.converged }}
           HANDOFF: ${{ steps.outcome.outputs.handoff }}
-          GATE_OUTCOME: ${{ steps.gate-suite-cycle.outputs.outcome }}
+          GATE_OUTCOME: ${{ steps.gate-suite-cycle.outputs.reason != 'head_sha mismatch' && steps.gate-suite-cycle.outputs.outcome || 'skipped' }}
           FIRST_FAILURE: ${{ steps.gate-suite-cycle.outputs.first-failure }}
         run: |
           set -uo pipefail
