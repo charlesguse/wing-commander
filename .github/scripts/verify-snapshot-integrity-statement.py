@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 145 -- the snapshot's guarantee is stated exactly, and still true
+"""Gate 153 -- the snapshot's guarantee is stated exactly, and still true
 (spec 095 FR-007..FR-010).
 
 WHY THIS EXISTS
@@ -34,6 +34,11 @@ except a step EXEMPT_GATE_SUITE_SITES records.
 --self-test runs the fixtures under fixtures/095-snapshot-statement/ (one
 per failure branch, plus a passing one) and mutations of the shipped
 workflows, and asserts each is caught for its own reason.
+
+NOTE ON GATE NUMBERING: this gate was first registered as Gate 145. It is
+numbered 153, not 145: 141-146 were taken by spec 110's PR #982 and 147-148
+by spec 112's PR #1003, which claimed them first among the open
+lifecycle branches.
 
 Usage: python3 .github/scripts/verify-snapshot-integrity-statement.py [--self-test]
 """
@@ -216,10 +221,10 @@ def _read(name, directory=WORKFLOWS):
 def run():
     problems = check(_read(BOARD_LOOP), _read(IMPLEMENT))
     for p in problems:
-        print("::error::Gate 145: " + p)
+        print("::error::Gate 153: " + p)
     if problems:
         return 1
-    print("Gate 145: the snapshot statement names what it covers, what it rests on and "
+    print("Gate 153: the snapshot statement names what it covers, what it rests on and "
           "the runner it assumes, and no job that runs the gate suite pushes.")
     return 0
 
@@ -277,10 +282,10 @@ def self_test():
         else:
             failures.append("mutation {0!r} not caught for {1!r}: {2}".format(label, expect, got))
     for f in failures:
-        print("::error::Gate 145 self-test: " + f)
+        print("::error::Gate 153 self-test: " + f)
     if failures:
         return 1
-    print("Gate 145 self-test: {0} fixture(s) and {1} mutation(s), each caught for its own "
+    print("Gate 153 self-test: {0} fixture(s) and {1} mutation(s), each caught for its own "
           "reason.".format(len(FIXTURE_CASES), len(mutations)))
     return 0
 

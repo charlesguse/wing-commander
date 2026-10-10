@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 147 -- a workspace bundle survives the round trip it exists for
+"""Gate 155 -- a workspace bundle survives the round trip it exists for
 (spec 095, contracts/workspace-bundle.md).
 
 WHY THIS EXISTS
@@ -31,6 +31,11 @@ base, a trusted clone and a publisher clone that hold only the base:
 --self-test reruns the checks with each script's fetch reverted to the
 `refs/*` refspec, and with the restore's head check removed, and asserts
 each mutation is caught.
+
+NOTE ON GATE NUMBERING: this gate was first registered as Gate 147. It is
+numbered 155, not 147: 141-146 were taken by spec 110's PR #982 and 147-148
+by spec 112's PR #1003, which claimed them first among the open
+lifecycle branches.
 
 Usage: python3 .github/scripts/verify-gate-bundle-roundtrip.py [--self-test]
 Requires: bash, git, jq.
@@ -289,7 +294,7 @@ def mutated_shared(tmp, edits):
         path = os.path.join(shared, name)
         text = open(path, encoding="utf-8").read()
         if old not in text:
-            sys.exit("::error::Gate 147 self-test: {0!r} not in {1}; update the "
+            sys.exit("::error::Gate 155 self-test: {0!r} not in {1}; update the "
                      "mutation with the script.".format(old, name))
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(text.replace(old, new))
@@ -333,10 +338,10 @@ def main():
             else:
                 failures.append("mutation {0!r} was NOT caught".format(label))
     for f in failures:
-        print("::error::Gate 147: " + f)
+        print("::error::Gate 155: " + f)
     if failures:
         return 1
-    print("Gate 147{0}: a workspace bundle round-trips from the agent's job through the "
+    print("Gate 155{0}: a workspace bundle round-trips from the agent's job through the "
           "gate job to the publisher.".format(" self-test" if "--self-test" in sys.argv[1:]
                                               else ""))
     return 0

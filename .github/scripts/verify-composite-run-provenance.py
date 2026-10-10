@@ -19,6 +19,11 @@ wing-commander-contained-gate-suite is exempt by design: running the gate
 suite over the agent's workspace is its entire job, and it does so in a
 credential-free job (spec 095 US1).
 
+NOTE ON GATE NUMBERING: this gate was first registered as Gate 143. It is
+numbered 151, not 143: 141-146 were taken by spec 110's PR #982 and 147-148
+by spec 112's PR #1003, which claimed them first among the open
+lifecycle branches.
+
 Usage:
     python3 .github/scripts/verify-composite-run-provenance.py
     python3 .github/scripts/verify-composite-run-provenance.py --self-test

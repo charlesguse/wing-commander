@@ -5539,89 +5539,103 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-write-boundary.py --self-test
 
-      # Gate 141 — specs/095-agent-code-credential-containment FR-002/FR-003/
+      # Gate 149 — specs/095-agent-code-credential-containment FR-002/FR-003/
       # FR-004: a gate-suite verdict is read fail-closed (absent, unparsable,
       # unknown-keyed, mis-bound or non-pass/fail reads as a failure), and no
       # publisher `if:` treats a skipped or cancelled gate-suite job as green
       # (contracts/new-gates.md). Path trigger: .github/scripts/** above.
-      - name: "Gate 141 — a gate-suite verdict that is absent, malformed or mis-bound reads as a failure, and no publisher treats a skipped gate job as green"
+      # Numbered 149, not 141: 141-146 were taken by spec 110's PR #982 and
+      # 147-148 by spec 112's PR #1003.
+      - name: "Gate 149 — a gate-suite verdict that is absent, malformed or mis-bound reads as a failure, and no publisher treats a skipped gate job as green"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-verdict-fail-closed.py
-      - name: "Gate 141 self-test — a negated gate-result condition and a wrong reader expectation each fail"
+      - name: "Gate 149 self-test — a negated gate-result condition and a wrong reader expectation each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-verdict-fail-closed.py --self-test
 
-      # Gate 142 — specs/095-agent-code-credential-containment FR-015..FR-017,
+      # Gate 150 — specs/095-agent-code-credential-containment FR-015..FR-017,
       # FR-022: every covered push goes through the wing-commander-hardened-push
       # composite, and its shared script is driven against a real repository
       # with a planted pre-push hook and a planted insteadOf rewrite.
-      - name: "Gate 142 — covered pushes use the hardened-push composite, and a planted hook or insteadOf cannot steer it"
+      # Numbered 150, not 142: 141-146 were taken by spec 110's PR #982 and
+      # 147-148 by spec 112's PR #1003.
+      - name: "Gate 150 — covered pushes use the hardened-push composite, and a planted hook or insteadOf cannot steer it"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-hardened-push.py
-      - name: "Gate 142 self-test — a raw push, a pasted idiom, a planted hook and a planted insteadOf each fail"
+      - name: "Gate 150 self-test — a raw push, a pasted idiom, a planted hook and a planted insteadOf each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-hardened-push.py --self-test
 
-      # Gate 143 — specs/095-agent-code-credential-containment FR-011/FR-013/
+      # Gate 151 — specs/095-agent-code-credential-containment FR-011/FR-013/
       # FR-014: no composite reachable from the covered workflows reaches a
       # workspace-relative script from a run: body, and an undeterminable
       # reachable set fails loud. Path triggers: .github/actions/** and
       # .github/scripts/** above, plus the workflows.
-      - name: "Gate 143 — no reachable composite run: body reaches a workspace-relative script, and an undeterminable composite set fails loud"
+      # Numbered 151, not 143: 141-146 were taken by spec 110's PR #982 and
+      # 147-148 by spec 112's PR #1003.
+      - name: "Gate 151 — no reachable composite run: body reaches a workspace-relative script, and an undeterminable composite set fails loud"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-composite-run-provenance.py
-      - name: "Gate 143 self-test — a workspace-relative path, an undeterminable set and a moved composite each fail"
+      - name: "Gate 151 self-test — a workspace-relative path, an undeterminable set and a moved composite each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-composite-run-provenance.py --self-test
 
-      # Gate 144 — specs/095-agent-code-credential-containment FR-001/FR-004/
+      # Gate 152 — specs/095-agent-code-credential-containment FR-001/FR-004/
       # FR-005/FR-006: at every gate-suite site the suite runs in a job
       # holding read-only permissions and no App token, and the job that acts
       # waits for and reads its verdict; no credential-bearing job in the
       # covered workflows runs the suite except a recorded deferral, and an
       # undeterminable job graph fails loud. Path triggers: .github/
       # workflows/**, .github/actions/** and .github/scripts/** above.
-      - name: "Gate 144 — the gate suite runs only in a credential-free job at every covered site"
+      # Numbered 152, not 144: 141-146 were taken by spec 110's PR #982 and
+      # 147-148 by spec 112's PR #1003.
+      - name: "Gate 152 — the gate suite runs only in a credential-free job at every covered site"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-suite-credential-free.py
-      - name: "Gate 144 self-test — an App-token step, write permissions, a kept credential, an in-job suite and an undeterminable graph each fail"
+      - name: "Gate 152 self-test — an App-token step, write permissions, a kept credential, an in-job suite and an undeterminable graph each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-suite-credential-free.py --self-test
 
-      # Gate 145 — specs/095-agent-code-credential-containment FR-007..FR-010:
+      # Gate 153 — specs/095-agent-code-credential-containment FR-007..FR-010:
       # the comment documenting board-loop's snapshot states which steps its
       # guarantee covers, what it rests on and the runner it assumes, and no
       # job that pushes also runs the gate suite. Path triggers: .github/
       # workflows/** and .github/scripts/** above.
-      - name: "Gate 145 — the snapshot statement is exact, and no job that runs the gate suite pushes"
+      # Numbered 153, not 145: 141-146 were taken by spec 110's PR #982 and
+      # 147-148 by spec 112's PR #1003.
+      - name: "Gate 153 — the snapshot statement is exact, and no job that runs the gate suite pushes"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-snapshot-integrity-statement.py
-      - name: "Gate 145 self-test — a missing covered-steps or runner sentence and a pushing gate-suite job each fail"
+      - name: "Gate 153 self-test — a missing covered-steps or runner sentence and a pushing gate-suite job each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-snapshot-integrity-statement.py --self-test
 
-      # Gate 146 — specs/095-agent-code-credential-containment FR-018 (deny
+      # Gate 154 — specs/095-agent-code-credential-containment FR-018 (deny
       # half): every covered agent is denied Edit/Write on .git/** -- the
       # implement agent through spec 090's one no-write-paths definition,
       # never a second literal list. Path triggers: .github/workflows/** and
       # .github/scripts/** above.
-      - name: "Gate 146 — every covered agent is denied .git/**, implement's through its write boundary"
+      # Numbered 154, not 146: 141-146 were taken by spec 110's PR #982 and
+      # 147-148 by spec 112's PR #1003.
+      - name: "Gate 154 — every covered agent is denied .git/**, implement's through its write boundary"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-git-deny.py
-      - name: "Gate 146 self-test — a missing deny, a second literal list and a boundary without .git/ each fail"
+      - name: "Gate 154 self-test — a missing deny, a second literal list and a boundary without .git/ each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-git-deny.py --self-test
 
-      # Gate 147 — specs/095-agent-code-credential-containment
+      # Gate 155 — specs/095-agent-code-credential-containment
       # (contracts/workspace-bundle.md): the agent's commits survive the
       # round trip build-gate-bundle.sh -> contained-gate-suite.sh ->
       # restore-gate-bundle.sh against real git repositories, and the
       # restore refuses any head the producer did not report. Path triggers:
       # .github/actions/** and .github/scripts/** above.
-      - name: "Gate 147 — a workspace bundle round-trips from the agent's job through the gate job to the publisher"
+      # Numbered 155, not 147: 141-146 were taken by spec 110's PR #982 and
+      # 147-148 by spec 112's PR #1003.
+      - name: "Gate 155 — a workspace bundle round-trips from the agent's job through the gate job to the publisher"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-bundle-roundtrip.py
-      - name: "Gate 147 self-test — a refs/* bundle fetch, a skipped head check and a full-history no-op bundle each fail"
+      - name: "Gate 155 self-test — a refs/* bundle fetch, a skipped head check and a full-history no-op bundle each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-bundle-roundtrip.py --self-test
 

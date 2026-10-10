@@ -34,8 +34,8 @@ What the existing gates assert about the in-job gate step (hot spot):
 Gate registration: a gate is a `verify-*.py` invoked from a
 `lint-workflows.yml` step (plain run plus `--self-test`) with path triggers;
 `wc_gate_registry.py` recovers argv from those steps and `run-local-gates.py`
-runs them, so one registration serves CI and local (FR-019/FR-021). Gates 141
-and 142 are the examples (Gate 143, `verify-composite-run-provenance.py`, is
+runs them, so one registration serves CI and local (FR-019/FR-021). Gates 149
+and 150 are the examples (Gate 151, `verify-composite-run-provenance.py`, is
 registered the same way).
 
 ## Job-split hazards found at implement cycle 4 (for T011-T014)
@@ -95,7 +95,7 @@ dispatch steps read -- into a job of its own. That is a restructuring of
 the stage's control flow, not a containment change, and it buys little
 while the implement agent still runs the same suite itself with the token
 in its environment (agent-invoked gates, deferred per research R6 and
-bounded by spec 111). Gate 144 holds the retry step as the one recorded
+bounded by spec 111). Gate 152 holds the retry step as the one recorded
 deferral, fails if any other credential-bearing step runs the suite, and
 fails if the deferral outlives its step.
 
@@ -111,8 +111,8 @@ fails if the deferral outlives its step.
   (the container env already uses `GIT_CONFIG_COUNT` for safe.directory,
   so a step-level copy would have to restate it), and an empty
   `GIT_CONFIG_GLOBAL` would also hide the action's own git setup. The
-  `.git/**` deny (Gate 146) removes the agent's own route to plant a hook or
-  config value; the deterministic push sites are hardened (Gate 142).
+  `.git/**` deny (Gate 154) removes the agent's own route to plant a hook or
+  config value; the deterministic push sites are hardened (Gate 150).
 - FR-015 beyond the push: git calls other than the push that run after an
   agent in the same credential-bearing job -- implement's bookkeeping
   `git reset`/`git commit` before the hardened truncated-count push, its
@@ -124,7 +124,7 @@ fails if the deferral outlives its step.
   environment after each agent step, which also switches off
   pr-conversation's own run-attribution `core.hooksPath` and changes the
   agent steps' git setup -- a trade-off for the owner. Until then the
-  `.git/**` deny (Gate 146) is the mitigation.
+  `.git/**` deny (Gate 154) is the mitigation.
 
 ## Read-access audit (T032, research R8)
 

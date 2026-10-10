@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 144 -- the gate suite runs in a credential-free job at every site
+"""Gate 152 -- the gate suite runs in a credential-free job at every site
 spec 095 names (FR-001, FR-004, FR-005, FR-006).
 
 WHY THIS EXISTS
@@ -41,6 +41,11 @@ a site whose jobs are missing.
 --self-test runs every fixture under fixtures/095-gate-suite/ (one per
 failure branch, plus a passing one) and a set of mutations of the shipped
 workflows, and asserts each is caught for its own reason.
+
+NOTE ON GATE NUMBERING: this gate was first registered as Gate 144. It is
+numbered 152, not 144: 141-146 were taken by spec 110's PR #982 and 147-148
+by spec 112's PR #1003, which claimed them first among the open
+lifecycle branches.
 
 Usage: python3 .github/scripts/verify-gate-suite-credential-free.py [--self-test]
 """
@@ -221,10 +226,10 @@ def run():
     else:
         problems = check(docs)
     for p in problems:
-        print("::error::Gate 144: " + p)
+        print("::error::Gate 152: " + p)
     if problems:
         return 1
-    print("Gate 144: the gate suite runs only in credential-free jobs at {0} site(s); "
+    print("Gate 152: the gate suite runs only in credential-free jobs at {0} site(s); "
           "{1} recorded deferral(s).".format(len(SITES), len(EXEMPT_GATE_SUITE_SITES)))
     return 0
 
@@ -342,10 +347,10 @@ def self_test():
         else:
             failures.append("mutation {0!r} not caught for {1!r}: {2}".format(label, expect, got))
     for f in failures:
-        print("::error::Gate 144 self-test: " + f)
+        print("::error::Gate 152 self-test: " + f)
     if failures:
         return 1
-    print("Gate 144 self-test: {0} fixture(s) and {1} mutation(s), each caught for its own "
+    print("Gate 152 self-test: {0} fixture(s) and {1} mutation(s), each caught for its own "
           "reason.".format(len(FIXTURE_CASES), len(_mutations())))
     return 0
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 146 -- every agent spec 095 covers is denied `.git/**` (FR-018,
+"""Gate 154 -- every agent spec 095 covers is denied `.git/**` (FR-018,
 first mitigation).
 
 WHY THIS EXISTS
@@ -10,7 +10,7 @@ them can plant a hook (`.git/hooks/pre-push`) or a config value
 (`core.hooksPath`, `url.<base>.insteadOf`) that a later git call in the
 same job -- one holding the App token -- runs or obeys. The harness
 enforces disallowed tools, so the deny is a real boundary (spec 095 Q3).
-The hardened push (Gate 142) is the second mitigation, for plants that
+The hardened push (Gate 150) is the second mitigation, for plants that
 arrive another way.
 
 WHAT IT CHECKS
@@ -32,6 +32,11 @@ WHAT IT CHECKS
 
 --self-test runs the fixtures under fixtures/095-agent-git-deny/ and
 mutations of the shipped workflows, and asserts each is caught.
+
+NOTE ON GATE NUMBERING: this gate was first registered as Gate 146. It is
+numbered 154, not 146: 141-146 were taken by spec 110's PR #982 and 147-148
+by spec 112's PR #1003, which claimed them first among the open
+lifecycle branches.
 
 Usage: python3 .github/scripts/verify-agent-git-deny.py [--self-test]
 """
@@ -188,10 +193,10 @@ def _shipped():
 def run():
     problems = check(_shipped())
     for p in problems:
-        print("::error::Gate 146: " + p)
+        print("::error::Gate 154: " + p)
     if problems:
         return 1
-    print("Gate 146: every covered agent is denied .git/** -- implement through its "
+    print("Gate 154: every covered agent is denied .git/** -- implement through its "
           "no-write-paths boundary, the others in their disallowed tools.")
     return 0
 
@@ -229,7 +234,7 @@ def self_test():
     def mutated(name, old, new):
         texts = dict(shipped)
         if old not in texts[name]:
-            sys.exit("::error::Gate 146 self-test: {0!r} not in {1}".format(old, name))
+            sys.exit("::error::Gate 154 self-test: {0!r} not in {1}".format(old, name))
         texts[name] = texts[name].replace(old, new, 1)
         return texts
 
@@ -258,10 +263,10 @@ def self_test():
         else:
             failures.append("mutation {0!r} not caught for {1!r}: {2}".format(label, expect, got))
     for f in failures:
-        print("::error::Gate 146 self-test: " + f)
+        print("::error::Gate 154 self-test: " + f)
     if failures:
         return 1
-    print("Gate 146 self-test: {0} fixture(s) and {1} mutation(s), each caught.".format(
+    print("Gate 154 self-test: {0} fixture(s) and {1} mutation(s), each caught.".format(
         len(cases), len(mutations)))
     return 0
 

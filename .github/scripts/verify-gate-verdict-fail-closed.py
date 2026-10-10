@@ -11,6 +11,11 @@ test (`!= 'failure'`) treats a skipped or cancelled gate job as green.
 The same rule is applied to every `if:` in the workflows that names a
 `needs.gate-suite*.result`, so a publisher added later is held to it.
 
+NOTE ON GATE NUMBERING: this gate was first registered as Gate 141. It is
+numbered 149, not 141: 141-146 were taken by spec 110's PR #982 and 147-148
+by spec 112's PR #1003, which claimed them first among the open
+lifecycle branches.
+
 Usage:
     python3 .github/scripts/verify-gate-verdict-fail-closed.py
     python3 .github/scripts/verify-gate-verdict-fail-closed.py --self-test

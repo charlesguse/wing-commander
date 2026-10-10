@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 142 -- pushes after agent code ran use the one hardened idiom (spec
+"""Gate 150 -- pushes after agent code ran use the one hardened idiom (spec
 095 FR-015..FR-017, FR-022).
 
 Static half:
@@ -25,6 +25,11 @@ And (c) a GIT_CONFIG_KEY_0 the caller already set (a container job's
 safe.directory) survives the hardening: its entries are appended, never
 written over -- overwriting it makes every git call in a container job
 refuse the workspace as dubious ownership.
+
+NOTE ON GATE NUMBERING: this gate was first registered as Gate 142. It is
+numbered 150, not 142: 141-146 were taken by spec 110's PR #982 and 147-148
+by spec 112's PR #1003, which claimed them first among the open
+lifecycle branches.
 
 Usage:
     python3 .github/scripts/verify-hardened-push.py
@@ -348,7 +353,7 @@ def run():
     errors = (static_errors(_load_workflows()) + check_behaviour(hardened_push)
               + check_preserves_caller_config() + check_shim_guards())
     for err in errors:
-        print("::error::Gate 142: " + err)
+        print("::error::Gate 150: " + err)
     if not errors:
         print("verify-hardened-push: ok")
     return 1 if errors else 0
@@ -407,7 +412,7 @@ def self_test():
         overwrite = os.path.join(tmp, "git-push-hardening.sh")
         old = 'n="${GIT_CONFIG_COUNT:-0}"'
         if old not in text:
-            sys.exit("::error::Gate 142 self-test: {0!r} not in git-push-hardening.sh".format(old))
+            sys.exit("::error::Gate 150 self-test: {0!r} not in git-push-hardening.sh".format(old))
         with open(overwrite, "w", encoding="utf-8") as fh:
             fh.write(text.replace(old, "n=0"))
         if not check_preserves_caller_config(overwrite):
@@ -421,7 +426,7 @@ def self_test():
                 ("the remote-tracking update", 'git update-ref "refs/remotes/origin/${branch}" "$sha"',
                  "true")):
             if old_text not in text:
-                sys.exit("::error::Gate 142 self-test: {0!r} not in git-push-hardening.sh"
+                sys.exit("::error::Gate 150 self-test: {0!r} not in git-push-hardening.sh"
                          .format(old_text))
             with open(overwrite, "w", encoding="utf-8") as fh:
                 fh.write(text.replace(old_text, new_text))
@@ -432,7 +437,7 @@ def self_test():
             ptext = fh.read()
         shim_call = 'wc_push_from_shim "$expected" "$branch" "$GITHUB_REPOSITORY" "${PUSH_TOKEN:-}"'
         if shim_call not in ptext:
-            sys.exit("::error::Gate 142 self-test: {0!r} not in hardened-push.sh".format(shim_call))
+            sys.exit("::error::Gate 150 self-test: {0!r} not in hardened-push.sh".format(shim_call))
         with open(shim_less, "w", encoding="utf-8") as fh:
             fh.write(ptext.replace(shim_call,
                                    'git push --no-verify "$PUSH_SERVER_URL/$GITHUB_REPOSITORY.git" '

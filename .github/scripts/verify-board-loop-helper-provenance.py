@@ -33,7 +33,7 @@ In each of fix-agent, fix, review, review-fixup-publish and readiness:
      "$RUNNER_TEMP/wc-pristine/scripts/", with no exception: the gate
      suite, which runs the agent's tree by design and was this rule's one
      carve-out, now runs in the credential-free gate-suite-fix and
-     gate-suite-review-fixup jobs (spec 095; Gate 144 holds it there), so
+     gate-suite-review-fixup jobs (spec 095; Gate 152 holds it there), so
      a run-local-gates.py call back in one of these jobs fails here as a
      working-tree script. The interpreter must be spelled exactly `python3`: a path
      to it (/usr/bin/python3, venv/bin/python3), a versioned name
