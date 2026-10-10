@@ -1,0 +1,2 @@
+cat <<w
+`echo hi`

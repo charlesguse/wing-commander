@@ -1,0 +1,10 @@
+{"mode": "pronly", "kind": "api", "min": "`gh api repos/{owner}/{repo}/issues \"$(\"\" #'\n)\"$(case A in a)esac)-XPATCH`"}
+{"mode": "pronly", "kind": "api", "min": "(gh api repos/{owner}/{repo}/issues $($($(case A in a)esac)'' #'\n))\"\"-X\"POST\")"}
+{"mode": "pronly", "kind": "verb", "min": "$(((())))\"\"\\'$((()) #'\n${$((()) #'\n) #'\ngh issue create"}
+{"mode": "pronly", "kind": "api", "min": "\"$(gh api repos/{owner}/{repo}/issues ''$(\"\"$(case A in a)esac)${|''}'')-XPOST)\""}
+{"mode": "pronly", "kind": "api", "min": "`gh api repos/{owner}/{repo}/issues -X\"POST\"\"\\`\"\"\"\"\\`\" #\\` -XT`\n(())"}
+{"mode": "pronly", "kind": "api", "min": "$((()${))``$(()) #\"\ngh api repos/{owner}/{repo}/issues \\#\"\"$(((2)*3))$(()) -XPOST"}
+{"mode": "pronly", "kind": "api", "min": "(())\n\"$(gh api repos/{owner}/{repo}/issues \"$(\"\" #'\n)\"$()$(case A in a)esac)``-XPOST)\""}
+{"mode": "pronly", "kind": "api", "min": "$(())\"$(gh api repos/{owner}/{repo}/issues ${{ x == '`' && 'a' || 'b' }}$(case A in a)esac) -XPOST)\""}
+{"mode": "pronly", "kind": "api", "min": "(gh api repos/{owner}/{repo}/issues \"$(\"\" #'\n)\"$(case A in a)esac)-XPATCH)"}
+{"mode": "pronly", "kind": "verb", "min": "(''''$(())$((()) #'\n\\#${''\"\"${{ x || ')' }} #')$((())))\nif true;then gh issue create;fi"}
