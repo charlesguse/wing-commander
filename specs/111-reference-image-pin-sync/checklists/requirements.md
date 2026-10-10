@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,10 +31,12 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain, matching the three owner
-  decisions in #985: FR-002 (this repository's own pin), FR-004 (write
-  credential), FR-007 (failure handling). They are posted to the lifecycle
-  issue for `/speckit-clarify`.
+- The three owner decisions in #985 are resolved (Clarifications, session
+  2026-10-10): FR-002 writes this repository's own pin automatically too,
+  FR-004 uses a dedicated token scoped to the sync set, and FR-007 fails
+  the build run and files or updates one deduplicated tracked issue.
+- FR-001 now also gates the sync on the agent start-up check from #974
+  (spec 112), recorded as a dependency under Assumptions.
 - Variable names, workflow file names and the prior specs are named because
   they are the subject of this maintenance feature, not implementation
   choices.
