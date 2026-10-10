@@ -114,9 +114,9 @@ Repository root; scripts in `.github/scripts/`, workflows in `.github/workflows/
 
 ## Phase 7: Polish & Cross-Cutting
 
-- [ ] T027 [P] Run the `container-shell-safety` and `review-step-gating` skills over the changed workflows and fix findings in this PR.
-- [ ] T028 Check no hardcoded repository/owner/image names or private consumer references were introduced (`grep` the diff; FR-011, public-repo rule).
-- [ ] T029 Run quickstart.md validation end to end; confirm `python .github/scripts/run-local-gates.py` is green.
+- [x] T027 [P] Run the `container-shell-safety` and `review-step-gating` skills over the changed workflows and fix findings in this PR.
+- [x] T028 Check no hardcoded repository/owner/image names or private consumer references were introduced (`grep` the diff; FR-011, public-repo rule).
+- [x] T029 Run quickstart.md validation end to end; confirm `python .github/scripts/run-local-gates.py` is green.
 - [ ] T030 After merge: `prove-after-merge` — dispatch the wrapper, confirm `classify-startup` ran on the changed path, and record the evidence on #974.
 
 ---
@@ -188,9 +188,9 @@ Task: "Add fixtures for the unclassified branches in .github/scripts/agent-start
 
 ## Maintainer Feedback
 
-- [ ] MF3 (T027) Run the container-shell-safety and review-step-gating skills over the changed workflows and fix findings in this PR.
-- [ ] MF4 (T028) Grep the diff for hardcoded repository/owner/image names or private consumer references (FR-011).
-- [ ] MF5 (T029) Run quickstart.md end to end and confirm `python .github/scripts/run-local-gates.py` is green.
+- [x] MF3 (T027) Run the container-shell-safety and review-step-gating skills over the changed workflows and fix findings in this PR.
+- [x] MF4 (T028) Grep the diff for hardcoded repository/owner/image names or private consumer references (FR-011).
+- [x] MF5 (T029) Run quickstart.md end to end and confirm `python .github/scripts/run-local-gates.py` is green.
 
 ## Maintainer Feedback
 
