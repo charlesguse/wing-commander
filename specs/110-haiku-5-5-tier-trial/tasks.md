@@ -321,3 +321,68 @@ MVP = Phase 1 + Phase 2 (T004) + Story 1 (T006–T012): the tier upgrade and its
   - .github/actions/_shared/trial-bound.py
 
   Detail: A restart with a new SINCE can be cut short by undated records from the previous window.
+
+## Review Gate Round 5 Findings
+
+- [ ] Review finding: Diagnose-shadow feature not wired into watchdog
+
+  watchdog.yml and its wrappers have no diagnose-shadow inputs, shadow step or trial-bound call, and no diagnose-agent composite exists, so only fixtures exercise gates 142-144.
+
+  - .github/actions/wing-commander-trial-record/action.yml
+
+  Detail: Setting WING_COMMANDER_DIAGNOSE_SHADOW_SINCE has no effect, so trial-summary always reports 'sample too small'. Tasks T019-T023 are unchecked while spec-meta says stage review.
+
+- [ ] Review finding: Comparator failure recorded as error hides bugs and keeps spending
+
+  A non-zero comparator exit is recorded as outcome=error with baseline_verdict null. These runs are excluded from the 300-run cap and from every summary denominator.
+
+  - .github/actions/wing-commander-trial-record/action.yml
+
+  Detail: A persistent comparator bug leaves the shadow running for the full 60 days and does not show in the verdict.
+
+- [ ] Review finding: Haiku branch hard-codes Sonnet escalation with the Haiku turn budget
+
+  The Haiku branch always escalates to Sonnet with the Haiku turn budget. With IMPLEMENT_HAIKU_MAX_TURNS=60 the retry gets 60 turns instead of the normal 180, and WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL is ignored.
+
+  - .github/workflows/wing-commander-5-implement.yml
+
+- [ ] Review finding: trial-summary and trial-bound count different windows
+
+  trial-summary counts every diagnose-shadow record on the metrics branch, but trial-bound counts only records on or after SINCE.
+
+  - .github/scripts/trial-summary.py
+  - .github/actions/_shared/trial-bound.py
+
+  Detail: After the owner restarts the trial with a new SINCE, the 200-run verdict and agreement percentages mix in the earlier window.
+
+- [ ] Review finding: Undated compared records always count toward the cap
+
+  trial-bound counts compared records with a missing or unparseable timestamp without checking SINCE, and no fixture covers that branch.
+
+  - .github/actions/_shared/trial-bound.py
+
+  Detail: Undated records from an earlier window count against a restarted trial's 300-run cap and stop it early.
+
+- [ ] Review finding: Haiku opt-in gate ordering check uses whole-file find
+
+  verify-implement-haiku-optin.py checks that opus comes before haiku with whole-file str.find. A comment or an earlier occurrence of the literal can satisfy it.
+
+  - .github/scripts/verify-implement-haiku-optin.py
+
+  Detail: Swapping the branches so model:haiku wins over model:opus can still pass.
+
+- [ ] Review finding: docs/setup.md omits new variables and is stale on escalation
+
+  The variables table has no rows for WING_COMMANDER_DIAGNOSE_SHADOW_SINCE or WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS, and the ESCALATION_MODEL row still says Opus.
+
+  - docs/setup.md
+
+  Detail: A model:haiku lifecycle ignores that variable and escalates to Sonnet. T031 is unchecked.
+
+- [ ] Review finding: trial-summary wrapper is untested and its vars are unchecked
+
+  The trial-summary workflow's metrics branch and path come from vars and are not checked against the metrics-persist composite. Nothing gates or tests the wrapper.
+
+  - .github/workflows/wing-commander-trial-summary.yml
+
+  Detail: Mismatched defaults would make the checkout or python step fail on a missing file.
