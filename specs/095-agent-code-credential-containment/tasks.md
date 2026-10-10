@@ -135,3 +135,85 @@
 - **MVP**: Phases 1–3 (US1): foundation plus the credential-free gate job at the board-loop and implement-cycle sites. This alone closes paths 1 and 2 in practice (token, snapshot rewrite, `$GITHUB_ENV`/`$GITHUB_PATH`).
 - **Incremental**: US2 (statement and gate), US3 (provenance gate), US4 (deny and hardened push), then Polish and post-merge proof.
 - Not in scope: agent-invoked gates and agent-composed pushes (deferred per research R6 and spec 111); anything in the already-closed list (FR-023).
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Gate suite passes when head lacks run-local-gates.py
+
+  The existence check for run-local-gates.py runs against the hostile head checkout, so an agent commit that deletes it yields outcome=pass and the publisher pushes ungated code.
+
+  - .github/actions/_shared/contained-gate-suite.sh
+
+  Detail: line ~88; check against trusted checkout or base_sha
+
+- [ ] Review finding: Verdict writer runs from workspace replaced by hostile head
+
+  wc_gate_verdict.py is resolved under the workspace, which `git checkout --detach head_sha` has already overwritten with the agent's copy, so a modified writer can emit any verdict.
+
+  - .github/actions/_shared/contained-gate-suite.sh
+
+  Detail: line ~49; copy trusted scripts out before the checkout
+
+- [ ] Review finding: Bundle fetch may lack base_sha prerequisite
+
+  A thin bundle needs base_sha in the trusted checkout. At the implement-cycle site the spec-branch head is not an ancestor of github.sha, and at the board-loop sites main may have advanced, so the fetch fails and valid work is rejected.
+
+  - .github/actions/_shared/contained-gate-suite.sh
+
+  Detail: line ~82; meta.json base_sha is never used by the consumer
+
+- [ ] Review finding: Empty bundle aborts producer when no new commits
+
+  `git bundle create base..HEAD HEAD` refuses to create an empty bundle when HEAD equals base_sha. set -e then aborts before upload and the failure reason is lost.
+
+  - .github/actions/_shared/build-gate-bundle.sh
+
+  Detail: line ~18
+
+- [ ] Review finding: bundle-artifact default hard-coded to board-fix
+
+  The default is wc-gate-bundle-board-fix instead of being derived from `site`, so a caller that omits bundle-artifact downloads the wrong bundle or none.
+
+  - .github/actions/wing-commander-contained-gate-suite/action.yml
+
+  Detail: line ~180
+
+- [ ] Review finding: Publisher-if gate rule is easy to evade
+
+  EXPLICIT_RE matches any outcome/result == pass|success anywhere in the expression, and only single-line `if:` values are checked. Expressions that still treat a skipped gate as green can pass the gate.
+
+  - .github/scripts/verify-gate-verdict-fail-closed.py
+
+  Detail: line ~452
+
+- [ ] Review finding: Raw-push detection too narrow and self-disabling
+
+  RAW_PUSH_RE only matches `git push` at the start of a line, so `if ! git push` is missed. Any mention of the composite skips the check for the whole file. COVERED_WORKFLOWS is empty, so the static check currently checks nothing. Comments that mention core.hooksPath are also flagged.
+
+  - .github/scripts/verify-hardened-push.py
+
+  Detail: line ~597
+
+- [ ] Review finding: first_failure starting with '-' breaks argparse
+
+  A first_failure value beginning with '-' is parsed as an option, so the writer exits 2 and no verdict file is written. The grep also matches benign lines such as '0 failures'.
+
+  - .github/actions/_shared/contained-gate-suite.sh
+
+  Detail: line ~100; use --first-failure="$4"
+
+- [ ] Review finding: read_verdict does not catch RecursionError/MemoryError
+
+  A deeply nested hostile JSON verdict crashes the reader with a traceback, contradicting the documented exits-0 contract. The site check is also skipped when --site is omitted.
+
+  - .github/scripts/wc_gate_verdict.py
+
+  Detail: line ~825
+
+- [ ] Review finding: Push token embedded in remote URL
+
+  On a failed push, git may echo the x-access-token URL to the job log. Passing the token via an extraheader or credential helper would avoid it.
+
+  - .github/actions/_shared/hardened-push.sh
+
+  Detail: line ~138
