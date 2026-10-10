@@ -921,9 +921,8 @@ jobs:
       # .github/scripts/run-local-gates.py (#935), so script-exists=false
       # forces ready=false and skips the tool checks, and the summary and
       # prompt below say there is no suite rather than that a tool is gone.
-      # Gate 62 (verify-gate-62.py) runs this step inside wing-commander's
-      # own e2e reference image, so that image cannot drop a prerequisite
-      # checked here without failing a PR (#989).
+      # Gate 62 runs this step inside wing-commander's own reference image
+      # (#989) -- see .github/docker/e2e-reference-image/Dockerfile.
       - name: "Preflight: gate-suite prerequisites (cycle)"
         id: gate-suite-preflight-cycle
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'

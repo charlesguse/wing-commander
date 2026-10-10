@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 62 - the e2e reference image's tool set agrees with required-tools.txt.
+"""Gate 62 - the e2e reference image has required-tools.txt and this repo's implement prerequisites.
 
 Gate 23's existing drift check is purely textual: it compares the
 `REQUIRED_TOOLS=` string literal embedded in each stage's
@@ -166,6 +166,29 @@ def check_tools(tag, tools):
     return missing, (proc.stdout + proc.stderr)
 
 
+def stray_optouts(root="."):
+    """-> problems: any workflow or composite other than implement.yml that
+    names DOCKERLESS_ENV, which would let that job skip this gate on CI."""
+    problems = []
+    found = []
+    for base in (".github/workflows", ".github/actions"):
+        for dirpath, _dirs, files in os.walk(os.path.join(root, base)):
+            for f in files:
+                if f.endswith((".yml", ".yaml", ".sh")):
+                    found.append(os.path.join(dirpath, f))
+    allowed = os.path.normpath(os.path.join(root, IMPLEMENT_WORKFLOW))
+    for path in sorted(found):
+        if os.path.normpath(path) == allowed:
+            continue
+        with io.open(path, encoding="utf-8", errors="replace") as fh:
+            if DOCKERLESS_ENV in fh.read():
+                problems.append(f"{os.path.relpath(path, root)} names {DOCKERLESS_ENV}; "
+                                f"only {IMPLEMENT_WORKFLOW}'s implement job may set "
+                                f"it, or that job's missing docker would skip this "
+                                f"gate on CI instead of failing it")
+    return problems
+
+
 def read_implement_subject(root=".", wf=None):
     """-> (preflight scripts {step name: run text}, prompted commands, problems).
 
@@ -185,7 +208,7 @@ def read_implement_subject(root=".", wf=None):
     index = {(st or {}).get("name"): i for i, st in enumerate(steps)}
     container_env = (job.get("container") or {}).get("env") or {} \
         if isinstance(job.get("container"), dict) else {}
-    if str(container_env.get(DOCKERLESS_ENV)) != "true":
+    if str(container_env.get(DOCKERLESS_ENV)).lower() != "true":
         problems.append(f"{IMPLEMENT_WORKFLOW} job {IMPLEMENT_JOB!r} no longer sets "
                         f"{DOCKERLESS_ENV}: \"true\" in its container: env, so "
                         f"this gate fails the gate suite the job runs in its "
@@ -306,6 +329,7 @@ def scan(root=".", tag=IMAGE_TAG):
     tools = read_required_tools(root)
     preflights, commands, problems = read_implement_subject(root)
     failures.extend(problems)
+    failures.extend(stray_optouts(root))
     wanted = [t for t in commands if t not in JOB_INSTALLED and t not in tools]
     ok, log = build_image(root, tag)
     if not ok:
@@ -383,6 +407,10 @@ def _static_self_test():
         wf["jobs"][IMPLEMENT_JOB]["container"]["env"].pop(DOCKERLESS_ENV)
     cases.append(("the container: env opt-out dropped", drop_env, DOCKERLESS_ENV))
 
+    def unquoted(wf):
+        wf["jobs"][IMPLEMENT_JOB]["container"]["env"][DOCKERLESS_ENV] = True
+    cases_ok = [("an unquoted YAML true for the opt-out", unquoted)]
+
     def late_install(wf):
         steps = wf["jobs"][IMPLEMENT_JOB]["steps"]
         i = next(i for i, st in enumerate(steps)
@@ -415,6 +443,19 @@ def _static_self_test():
             ("a clean exit with ready=false", "rc:0\noutput:ready=false\noutput:missing=pyyaml\n", False)):
         if (preflight_verdict(stdout) is None) != ok:
             problems.append(f"preflight_verdict misjudged {label}: {preflight_verdict(stdout)!r}")
+    if stray_optouts("."):
+        problems.append("the real tree already sets the opt-out outside implement.yml: "
+                        + "; ".join(stray_optouts(".")))
+    stray = tempfile.mkdtemp(prefix="verify_gate_62_")
+    try:
+        os.makedirs(os.path.join(stray, ".github", "workflows"))
+        with io.open(os.path.join(stray, ".github", "workflows", "lint.yml"), "w",
+                     encoding="utf-8") as fh:
+            fh.write("env:\n  {0}: \"true\"\n".format(DOCKERLESS_ENV))
+        if not any("lint.yml" in g for g in stray_optouts(stray)):
+            problems.append("a second workflow setting the opt-out was NOT reported")
+    finally:
+        shutil.rmtree(stray, ignore_errors=True)
     with io.open(IMPLEMENT_WORKFLOW, encoding="utf-8") as fh:
         parsed = yaml.safe_load(fh)
     for label, mutate, needle in cases:
@@ -424,6 +465,12 @@ def _static_self_test():
         if not any(needle in g for g in got):
             problems.append(f"{label} was NOT reported (expected a problem naming "
                             f"{needle!r}); got: {got}")
+    for label, mutate in cases_ok:
+        wf = copy.deepcopy(parsed)
+        mutate(wf)
+        _, _, got = read_implement_subject(wf=wf)
+        if got:
+            problems.append(f"{label} was wrongly reported: {got}")
     return problems
 
 
@@ -517,10 +564,13 @@ def main(argv):
         # see docker_missing_result. The implement.yml drift checks need no
         # image, so they still run here -- including where the skip itself
         # depends on implement.yml's opt-out.
-        if "--self-test" in argv:
-            static = _static_self_test()
+        try:
+            import yaml  # noqa: F401 -- the drift checks parse implement.yml
+        except ImportError:
+            static = []  # nothing to parse with; the skip below still reports
         else:
-            static = read_implement_subject(".")[2]
+            static = (_static_self_test() if "--self-test" in argv
+                      else read_implement_subject(".")[2] + stray_optouts("."))
         for p in static:
             print(f"::error::Gate 62: {p}")
         code, message = docker_missing_result(os.environ)

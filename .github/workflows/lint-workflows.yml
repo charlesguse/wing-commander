@@ -4140,14 +4140,13 @@ jobs:
       # installing a tool the text still claims to install. This gate
       # builds the reference image locally and runs the same tool-presence
       # probe every stage's verify-image-prerequisites job runs against an
-      # adopter's image, so it can actually fail on its own subject. This
-      # repository's own implement jobs run in that image too, so it also
-      # runs implement.yml's gate-suite preflight steps inside it and checks
-      # the lint tools the implement agent prompt names (#989).
-      - name: Gate 62 — the e2e reference image's tool set agrees with required-tools.txt
+      # adopter's image, so it can actually fail on its own subject. It also
+      # checks the image against this repository's own implement
+      # prerequisites (#989) -- see .github/docker/e2e-reference-image/Dockerfile.
+      - name: Gate 62 — the e2e reference image has required-tools.txt and this repo's implement prerequisites
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-62.py
-      - name: Gate 62 self-test — a Dockerfile that drops a required tool's install fails
+      - name: Gate 62 self-test — a Dockerfile that drops a required tool or an implement prerequisite fails
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-62.py --self-test
 
