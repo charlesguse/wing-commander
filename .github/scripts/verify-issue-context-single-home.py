@@ -3179,7 +3179,7 @@ def _self_test_gh_rationale_home(tmpdir):
          {GH_RATIONALE_HOME: f"- {GH_RATIONALE_HEADING}: no `gh` grant.\n\n"
                              f"## Later\n\n{_RATIONALE_SENTENCE}"}, "not under"),
         ("the claim pointing by a relative link",
-         {"docs/other.md": "`gh` reaches remote writes; see "
+         {f"docs/{spec}.md": "`gh` reaches remote writes; see "
                            "[why](agent-friendly-workflows.md).\n"}, None),
     )
     # git keeps the GIT_CONFIG_* entries a container's safe.directory comes
