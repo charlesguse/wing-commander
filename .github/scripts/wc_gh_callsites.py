@@ -42,12 +42,11 @@ class Token:
 
 
 GH_WORD = re.compile(r"(?<![\w./$@:%-])gh(?![\w-])")
-# A dynamic word holding a `${...}` whose value may be `gh` (`${X:-gh}`,
-# `"${X:+gh}"`, `${X:-"gh"}`, `${X:-${Y:-gh}}`, `${X/a/gh}`), followed only
-# by closers, quotes and plain expansions that may be empty: it may expand
-# to the command itself. `${X#gh}`/`${X%gh}` strip gh; `${X:-gh}/x` is a path.
-GH_IN_EXPANSION = re.compile(r"""\$\{[^}]*?[-+=?/]["']?gh["']?\}""")
-EXPANSION_TAIL = re.compile(r"""(?:\}|["']|\$\{?\w+\}?)*""")
+# A `gh` anywhere in a word that also holds a `${...}`: what such a word
+# expands to cannot be proved (`${X:-gh}`, `${GH:-${HOME}/bin/gh}`,
+# `${X:-gh}${Y:-}`), so as a command word it is a disallowed call (FR-006),
+# even where it could never be `gh` (`${X##*/gh}`).
+GH_IN_EXPANSION = re.compile(r"(?<![\w.$@%])gh(?![\w-])")
 TIME_GAP = re.compile(r"(?:[ \t]|\\\n)*")
 ASSIGN = re.compile(r"[A-Za-z_]\w*=")
 HEREDOC_DELIM = re.compile(r"\\?([^\s;&|<>()'\"`\\]+)")
@@ -427,9 +426,8 @@ class _Scan:
 
 
 def _expands_to_gh(w):
-    raw = w.raw.replace("\\\n", "")
-    m = w.lit is None and GH_IN_EXPANSION.search(raw)
-    return bool(m) and EXPANSION_TAIL.fullmatch(raw, m.end()) is not None
+    return (w.lit is None and "${" in w.raw
+            and GH_IN_EXPANSION.search(w.raw) is not None)
 
 
 def _argv_reason(argv):
