@@ -126,3 +126,12 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 - **Then** US2, then US3 (the guard that keeps both from regressing), then US4.
 - Keep concurrent local agents to two (CLAUDE.md usage-window rule). Every fix PR gets a code review. Run `spec-cross-reference` on the review, since the changed files are referenced by specs.
 - Out-of-scope findings go on the Maintenance backlog issue, not new issues.
+
+## Maintainer Feedback
+
+- [ ] T001 (PR #991 comment by charlesguse) Run `python .github/scripts/run-local-gates.py` on the branch and record the baseline result. The rebuilt implement image (#996) now includes PyYAML (#989).
+- [ ] T008 (PR #991 comment) Run `python .github/scripts/run-local-gates.py` and fix any workflow-comment or gate fallout from T004-T007.
+- [ ] T016 (PR #991 comment) Run `python .github/scripts/verify-issue-context-single-home.py --self-test`, then `python .github/scripts/run-local-gates.py`. Confirm the gate is invoked the same way locally as in `lint-workflows.yml`.
+- [ ] T022 (PR #991 comment) Add a single-home assertion for the rationale (research D6) to the nearest existing gate. The rationale's distinguishing sentence must occur in exactly one file. If no cheap deterministic form exists, record why in the PR description.
+- [ ] T024 (PR #991 comment) Run `python .github/scripts/run-local-gates.py` clean, then walk `quickstart.md`.
+- T025 stays a post-merge maintainer step and is not part of this change.
