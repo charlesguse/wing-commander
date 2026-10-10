@@ -32,13 +32,22 @@ This sentence must appear, verbatim or gate-verified-equivalent, in:
 | Job | Group (ordinary trigger) | Group (`pull_request: closed`) | Group (`directed-stage != ''`) | `cancel-in-progress` |
 |---|---|---|---|---|
 | `select` | `wing-commander-board-loop` | n/a | n/a — job is skipped for a directed dispatch | `false` |
-| `triage`, `route`, `fix`, `review`, `readiness` | `wing-commander-board-loop` | n/a | `wing-commander-board-loop` when directed-reachable (`triage`/`review`/`readiness` only, contracts/directed-proof-run.md) | `false` |
+| `triage`, `route`, `fix-agent`, `gate-suite-fix`, `fix`, `review`, `gate-suite-review-fixup`, `review-fixup-publish`, `readiness` | `wing-commander-board-loop` | n/a | `wing-commander-board-loop` when directed-reachable (`triage`/`review`/`readiness` only, contracts/directed-proof-run.md) | `false` |
 | `prove-gate`, `prove` | `wing-commander-board-loop` | `wing-commander-board-loop-prove-` (suffixed with the merged PR's own number; specs/096-durable-prove-entry replaced the old unconditional `wing-commander-board-loop` membership on this trigger) | `wing-commander-board-loop-directed-proof` | `false` |
 
 The directed group is shared across every directed dispatch (not
 per-attempt-token), so two merges proven close together contend for it
 rather than each getting an unshared slot — this is what makes FR-001a's
 busy-check meaningful (research.md D3's "Alternatives considered").
+
+specs/095-agent-code-credential-containment split `fix` into `fix-agent`
+→ `gate-suite-fix` → `fix`, and added `gate-suite-review-fixup` →
+`review-fixup-publish` after `review`. Each new job joins the ordinary
+group too. The jobs of one run follow each other through `needs:`, so
+sharing the group never makes one wait on another; and since the group is
+taken per job, the split adds handoff gaps in which another run's pending
+job can take it, as the gaps between `select`, `triage`, `route` and `fix`
+already allowed.
 
 ## Pre-dispatch checks
 

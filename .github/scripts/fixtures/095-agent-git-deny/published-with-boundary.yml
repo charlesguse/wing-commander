@@ -1,0 +1,15 @@
+# Passing shape: a published stage's agent carries .git/ in no-write-paths,
+# which tool-args applies after any override.
+on:
+  workflow_call: {}
+jobs:
+  act:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Write,Edit"
+          default-disallowed-tools: "WebSearch"
+          disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          no-write-paths: ".git/"
+          step-label: "fixture.act"

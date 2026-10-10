@@ -1507,9 +1507,11 @@ jobs:
 #   4. The post-agent credential-refresh triple, gated
 #      `if: "!cancelled() && steps.<agent-id>.outcome != 'skipped'"`:
 #        a. wing-commander-context (re-mint), continue-on-error: true.
-#        b. wing-commander-refresh-remote (only for a job that pushes a git
-#           remote, e.g. the fix step -- omitted elsewhere, per that
-#           composite's own refresh-outcome default).
+#        b. wing-commander-refresh-remote (only for a job that pushes through
+#           its own git remote -- none here since spec 095: fix and
+#           review-fixup-publish push from a fresh checkout through
+#           wing-commander-hardened-push, so it is omitted everywhere, per
+#           that composite's own refresh-outcome default).
 #        c. wing-commander-post-agent-credential-status, folding (a)/(b)'s
 #           outcomes into one `ok` this job's own outcome reporting reads.
 #   5. wing-commander-agent-verdict then wing-commander-metrics-summary,
@@ -2679,7 +2681,12 @@ jobs:
   # `main` fetched in this same run, the full local gate suite must be
   # green before anything is pushed (FR-024/FR-025), and the PR/issue
   # cross-link each other (FR-026, research.md D9).
-  fix:
+  # spec 095 (FR-001/FR-005/FR-006): the fixer's half of what was one fix
+  # job. It runs the fixer agent and hands its commits on as a workspace
+  # bundle; it never runs the gate suite (gate-suite-fix does, holding no
+  # credential) and never pushes (fix does, once it has read
+  # gate-suite-fix's verdict).
+  fix-agent:
     needs: [select, resolve-model, route]
     # Resume gating (#525): fix, review and readiness each have two entry
     # branches -- a same-run handoff from the job above, and a cross-run
@@ -2706,11 +2713,10 @@ jobs:
         || (needs.select.outputs.step == 'fix' && needs.select.outputs.branch != '' && needs.select.outputs.pr == '')
       ) && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'
     runs-on: ubuntu-latest
+    # The App token (wing-commander-context) does every write this job
+    # makes; the job's own GITHUB_TOKEN only reads the checkout.
     permissions:
-      contents: write
-      issues: write
-      pull-requests: write
-      actions: write
+      contents: read
     # One board item is in flight repository-wide. A directed proof run
     # and a merged item's own prove run — neither of which selects a
     # board item or opens a fix PR — are the only runs permitted to
@@ -2720,12 +2726,12 @@ jobs:
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
+    # fix's inputs: the branch and base this job cut or resumed, and the
+    # head SHA it bundled -- the one commit fix may restore and push.
     outputs:
-      pr-number: ${{ steps.push-pr.outputs.pr-number }}
-      # 'true' when the post-push backstop breached and this job filed a
-      # spec-request and stalled the item (#526): review's same-run branch
-      # must not pick up the stalled PR.
-      breach: ${{ steps.final-diff-backstop.outputs.breach }}
+      branch: ${{ steps.base.outputs.branch }}
+      base-sha: ${{ steps.base.outputs.base-sha }}
+      head-sha: ${{ steps.bundle.outputs.head-sha }}
     steps:
       # FR-054/contracts/fix-step.md "Guard against a second branch/PR": the
       # select job's own resume step (T011) already re-derived live branch/
@@ -2755,11 +2761,27 @@ jobs:
       # agent step -- never from the working tree. Each such python3 runs
       # with -I (isolated mode: neither the working directory nor PYTHON*
       # variables reach sys.path), so a json.py or re.py the agent writes
-      # into the workspace cannot shadow the stdlib. The gate-suite steps
-      # alone run the working tree's run-local-gates.py, since checking the
-      # agent's change is their job. A failure here fails the job before
-      # any agent runs. Gate 98 (verify-board-loop-helper-provenance.py)
-      # holds every step in fix, review and readiness to this.
+      # into the workspace cannot shadow the stdlib. A failure here fails
+      # the job before any agent runs. Gate 98
+      # (verify-board-loop-helper-provenance.py) holds every step in
+      # fix-agent, fix, review, review-fixup-publish and readiness to this.
+      #
+      # What the guarantee covers, and what it rests on (spec 095
+      # FR-009/FR-010): it covers every step of this job after this one,
+      # and the same step in each other job of this file covers that job.
+      # Read-only (chmod -R a-w) is not what makes it hold -- the runner
+      # user can chmod it back. It holds because no step of a job that
+      # holds the App token executes agent-authored code: the gate suite,
+      # the one step that ran the agent's tree, runs in a separate
+      # credential-free job (gate-suite-fix, gate-suite-review-fixup) that
+      # shares no filesystem, $GITHUB_ENV or $GITHUB_PATH with this one.
+      # (What an agent step's own tools may do is its tool list's
+      # business, and what its environment holds is spec 111's.) Runner
+      # assumption: every job gets a fresh virtual machine, as GitHub-hosted
+      # runners give; on a self-hosted runner this protection holds only if
+      # the runner is ephemeral (one job per machine, nothing surviving
+      # into the next job). verify-snapshot-integrity-statement.py holds
+      # this statement.
       - name: Snapshot helper scripts (before any agent runs)
         run: |
           set -euo pipefail
@@ -2790,14 +2812,6 @@ jobs:
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
-
-      # #488: see wing-commander-board-labels; continue-on-error so a
-      # missed create cannot block the fix job's push/PR/gate steps.
-      - name: Ensure board-loop's own labels exist
-        continue-on-error: true
-        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-labels
-        with:
-          token: ${{ env.WC_BOT_TOKEN }}
 
       # research.md D7: the same inline fetch-and-branch idiom
       # implement.yml's own steps.base.outputs.base-sha capture already
@@ -2866,7 +2880,7 @@ jobs:
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-tool-args
         with:
           default-allowed-tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*)"
-          default-disallowed-tools: "WebSearch,WebFetch,Bash(git push:*)"
+          default-disallowed-tools: "WebSearch,WebFetch,Bash(git push:*),Edit(.git/**),Write(.git/**)"
           step-label: "board-loop.fixer"
 
       - name: Compose commit-message guidance (board-loop.fixer)
@@ -2883,8 +2897,9 @@ jobs:
 
       # research.md D23: write tools granted, push deliberately NOT (FR-024
       # requires the gate suite green BEFORE any push -- pushing is the
-      # deterministic "Push and open the PR" step below, gated on that,
-      # never the agent itself). FR-055/FR-056/FR-057/FR-058 as elsewhere.
+      # deterministic "Push the fix branch" step in the fix job, after
+      # gate-suite-fix, never the agent itself). FR-055/FR-056/FR-057/FR-058
+      # as elsewhere.
       - name: Fixer
         id: fixer
         continue-on-error: true
@@ -2940,21 +2955,12 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
-      - name: Refresh authenticated remote (post-agent, fixer)
-        id: refresh-remote-fix
-        if: "!cancelled() && steps.fixer.outcome != 'skipped'"
-        continue-on-error: true
-        uses: ./.wc-pristine-repo/.github/actions/wing-commander-refresh-remote
-        with:
-          token: ${{ env.WC_BOT_TOKEN }}
-
       - name: Determine post-agent credential status (fixer)
         id: credential-status-fix
         if: "!cancelled() && steps.fixer.outcome != 'skipped'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-fix.outcome }}
-          refresh-outcome: ${{ steps.refresh-remote-fix.outcome }}
 
       - name: Compute agent run verdict (fixer)
         id: fix-verdict
@@ -2979,10 +2985,10 @@ jobs:
           spec-identity-is-own: 'false'
 
       # #499/Gate 23: continue-on-error: true (review-step-gating resolution
-      # 4), not a hard exit -- the gate-suite/push/PR steps below are this
-      # job's own fallback path and must still run (or safely no-op on a
-      # missing commit) and own this item's outcome even on a non-healthy
-      # agent verdict.
+      # 4), not a hard exit -- the bundle step below, and gate-suite-fix
+      # and fix after it, are this item's own fallback path and must still
+      # run (or safely no-op on a missing commit) and own this item's
+      # outcome even on a non-healthy agent verdict.
       - name: Fail loud on non-healthy agent verdict (fixer)
         id: fix-verdict-fail
         if: always() && steps.fixer.outcome != 'skipped' && steps.fix-verdict.outputs.verdict != 'healthy'
@@ -2994,24 +3000,237 @@ jobs:
           echo "::error::wing-commander board-loop fixer: agent step rejected -- verdict=$VERDICT: $REASON"
           exit 1
 
-      # FR-024/FR-025/research.md D8: the exact CI invocation, run
-      # deterministically -- before any push, not merely before any agent
-      # step (that already happened above).
-      - name: Run local gate suite (fixer)
-        id: gate-suite
+      # spec 095 (FR-001/FR-005/FR-006): the fixer's commits leave this job
+      # as a workspace bundle (contracts/workspace-bundle.md) for
+      # gate-suite-fix, which runs the suite holding no credential; no step
+      # of this job executes the fixer's tree. No `if:`: like the in-job
+      # gate-suite step it replaces, it runs whenever the steps above did,
+      # a non-healthy agent verdict included (#499).
+      - name: Bundle the fixer's commits for the credential-free gate suite
+        id: bundle
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-gate-bundle
+        with:
+          site: board-fix
+          base-sha: ${{ steps.base.outputs.base-sha }}
+
+      # specs/097-recorded-stop-point FR-015/SC-008: fix records what the
+      # item's fix did, but when this job fails fix never runs, so the
+      # failure is recorded here -- under the same artifact name, which fix
+      # then never uploads in this run.
+      - name: Record run outcome (fix, fixer job failed)
+        if: failure()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          run-label: 'fix: fixer job failed'
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-fix-outcome.json
+          spec-identity-is-own: 'false'
+
+      - name: Upload metrics record (fix outcome, fixer job failed)
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-fix-outcome
+          path: ${{ runner.temp }}/wing-commander-metrics-record-fix-outcome.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+  # spec 095 (FR-001/FR-004..FR-008): the one job that executes the
+  # fixer's tree -- run-local-gates.py and every verify-*.py the branch
+  # carries -- does so here, holding `contents: read` and no App token, on
+  # a runner of its own. It hands back only a verdict artifact bound to
+  # the head it judged and to github.sha; fix reads it fail-closed
+  # (wing-commander-gate-verdict), so a job that fails, times out or is
+  # cancelled before uploading one reads as a red suite, never a green
+  # one. It joins the board-loop group like every job from select to
+  # readiness. The group is held per job, not per run: between any two of
+  # those jobs another run's job can take it, as between route and fix
+  # before the split. What keeps two runs off one item is select's marker
+  # read, not the group.
+  gate-suite-fix:
+    needs: [fix-agent]
+    if: "!cancelled() && needs.fix-agent.result == 'success'"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
+    concurrency:
+      group: wing-commander-board-loop
+      cancel-in-progress: false
+    steps:
+      # A full-history checkout of github.sha, with no credential left in
+      # it: the bundle's prerequisite commits come from here, and nothing
+      # in this job can push with it.
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
+
+      - name: Run the gate suite on the fixer's commits (credential-free)
+        # A step timeout fails the step, so the upload after it finds no
+        # verdict and this job fails: a hung suite reads red. A job timeout
+        # would end the job as cancelled, which the publisher reads as a
+        # gate job replaced while pending -- no suite run, nothing reported.
+        timeout-minutes: 60
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-contained-gate-suite
+        with:
+          site: board-fix
+
+  # spec 095: the publishing half of what was one fix job. It acts only on
+  # gate-suite-fix's verdict, read fail-closed, and pushes only the commit
+  # that verdict judged -- restored from fix-agent's bundle and checked
+  # against fix-agent's own head-sha output. No step here executes the
+  # fixer's tree.
+  fix:
+    needs: [select, resolve-model, route, fix-agent, gate-suite-fix]
+    # Resume gating (#525) -- see fix-agent's job-level `if:`, repeated
+    # here with fix-agent's own success added: the commits this job
+    # publishes exist only once fix-agent succeeded. gate-suite-fix's
+    # result is deliberately NOT read: its verdict is (spec 095 FR-004).
+    # Nor is the pause variable: fix-agent already checked it, and a pause
+    # set since then is this job's killswitch-recheck's to find and record
+    # (specs/097 FR-014) -- a job-level check would skip the job with
+    # nothing recorded and the fixer's commits unpublished.
+    if: >-
+      !cancelled()
+      && needs.select.result == 'success'
+      && needs.resolve-model.result == 'success'
+      && needs.fix-agent.result == 'success'
+      && (
+        (needs.route.result == 'success' && needs.route.outputs.decision == 'fix')
+        || (needs.select.outputs.step == 'fix' && needs.select.outputs.branch != '' && needs.select.outputs.pr == '')
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      actions: write
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
+    concurrency:
+      group: wing-commander-board-loop
+      cancel-in-progress: false
+    outputs:
+      pr-number: ${{ steps.push-pr.outputs.pr-number }}
+      # 'true' when the post-push backstop breached and this job filed a
+      # spec-request and stalled the item (#526): review's same-run branch
+      # must not pick up the stalled PR.
+      breach: ${{ steps.final-diff-backstop.outputs.breach }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # #583: see the fix-agent job's "Snapshot helper scripts" step,
+      # including what the snapshot's guarantee covers and the runner it
+      # assumes.
+      - name: Snapshot helper scripts (before any agent runs)
         run: |
-          set +e
-          python3 .github/scripts/run-local-gates.py > "$RUNNER_TEMP/board-fix-gate-suite.log" 2>&1
-          rc=$?
-          cat "$RUNNER_TEMP/board-fix-gate-suite.log"
-          if [ "$rc" -eq 0 ]; then
-            echo "outcome=pass" >> "$GITHUB_OUTPUT"
-          else
-            first_failure="$(grep -m1 '^FAIL' "$RUNNER_TEMP/board-fix-gate-suite.log" || true)"
-            echo "outcome=fail" >> "$GITHUB_OUTPUT"
-            # #583: gate-suite output of the agent's tree -- control characters removed.
-            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_step_output.py" first-failure "${first_failure:-gate suite exited $rc}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          dest="$RUNNER_TEMP/wc-pristine"
+          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet origin "$GITHUB_SHA"
           fi
+          mkdir "$dest"
+          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
+          chmod -R a-w "$dest"
+
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
+      # #488: see wing-commander-board-labels; continue-on-error so a
+      # missed create cannot block the fix job's push/PR/gate steps.
+      - name: Ensure board-loop's own labels exist
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-labels
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
+      # The branch and base fix-agent cut or resumed, under the step id
+      # every step below already reads them from.
+      - name: Record the fixer's branch and base (from fix-agent)
+        id: base
+        env:
+          BRANCH: ${{ needs.fix-agent.outputs.branch }}
+          BASE_SHA: ${{ needs.fix-agent.outputs.base-sha }}
+        run: |
+          set -euo pipefail
+          printf 'branch=%s\nbase-sha=%s\n' "$BRANCH" "$BASE_SHA" >> "$GITHUB_OUTPUT"
+
+      # contracts/workspace-bundle.md, consumer 2: the fixer's commits,
+      # restored from the bundle fix-agent uploaded and refused unless HEAD
+      # is exactly fix-agent's own head-sha output. A failure here fails
+      # the job before any durable action (spec 095: a containment that
+      # cannot be established fails loudly, never falls back).
+      - name: Restore the fixer's commits from the workspace bundle
+        id: restore
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-gate-bundle
+        with:
+          mode: restore
+          site: board-fix
+          expected-head-sha: ${{ needs.fix-agent.outputs.head-sha }}
+          branch: ${{ steps.base.outputs.branch }}
+
+      # FR-024/FR-025/research.md D8: the exact CI invocation, run
+      # deterministically before any push -- in gate-suite-fix, holding no
+      # credential (spec 095). Its verdict is read here fail-closed: an
+      # absent, malformed or mis-bound verdict is outcome=fail, so the
+      # steps below take the red path (fenced comment, board:stalled, no
+      # push) on it. The step keeps the old in-job suite's id, so every
+      # reader of steps.gate-suite.outputs.* is unchanged.
+      - name: Read the gate suite's verdict (fixer)
+        id: gate-suite
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-gate-verdict
+        with:
+          site: board-fix
+          expected-head-sha: ${{ needs.fix-agent.outputs.head-sha }}
+          # A gate job replaced while pending in the board-loop group ran no
+          # suite: outcome=cancelled, so neither the push nor the red-suite
+          # report below fires (code review of #990).
+          gate-job-result: ${{ needs.gate-suite-fix.result }}
 
       - name: Comment the failing gate on the issue (fixer, gate suite red)
         if: steps.gate-suite.outputs.outcome == 'fail'
@@ -3061,8 +3280,8 @@ jobs:
           echo "board-loop: $STOP_CAUSE_PHRASE found immediately before fix's durable action -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
 
       # FR-026/research.md D9: push only on green, then cross-link.
-      - name: Push and open the PR
-        id: push-pr
+      - name: Hold a workflow-file fix for a maintainer (fix)
+        id: push-hold
         if: steps.gate-suite.outputs.outcome == 'pass' && steps.killswitch-recheck.outputs.paused != 'true'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
@@ -3084,10 +3303,33 @@ jobs:
           # names the real diff's contract effect in the hold comment.
           held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site fix --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS" --diff-base "$BASE_SHA" --branch "$BRANCH" --base-sha "$BASE_SHA")"
           if [ "$held" = "held" ]; then
-            exit 0
+            echo "held=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "held=false" >> "$GITHUB_OUTPUT"
           fi
-          git push origin "HEAD:refs/heads/$BRANCH"
 
+      # spec 095 FR-015..FR-017: the push goes through the one hardened
+      # idiom -- hooks off, pristine global/system config, an explicit
+      # URL -- and pushes only the head gate-suite-fix's verdict judged.
+      - name: Push the fix branch
+        id: push
+        if: steps.push-hold.outputs.held == 'false'
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-hardened-push
+        with:
+          branch: ${{ steps.base.outputs.branch }}
+          token: ${{ env.WC_BOT_TOKEN }}
+          expected-head-sha: ${{ needs.fix-agent.outputs.head-sha }}
+
+      - name: Open the PR
+        id: push-pr
+        if: steps.push.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
+          BRANCH: ${{ steps.base.outputs.branch }}
+          BASE_SHA: ${{ steps.base.outputs.base-sha }}
+        run: |
+          set -euo pipefail
           # One-line fallback (CLAUDE.md "shared logic has exactly one
           # home") for the case the composite step above never ran: this
           # step is `set -e`, so a missing board:owned would otherwise
@@ -3366,12 +3608,18 @@ jobs:
       # check) as 'converged' -- readiness's own if: already excludes it,
       # and this job's own continuation output stops lying about it too.
       outcome: ${{ steps.killswitch-recheck.outputs.paused == 'true' && 'stood-down' || steps.round.outputs.outcome }}
+      # spec 095: review-fixup-publish's inputs. fixup-head-sha is set only
+      # when the review-fixup path ran and its commits were bundled.
+      branch: ${{ steps.pr.outputs.branch }}
+      round: ${{ steps.pr.outputs.round }}
+      reviewed-sha: ${{ steps.checkout-pr.outputs.head-sha }}
+      fixup-head-sha: ${{ steps.fixup-bundle.outputs.head-sha }}
     steps:
       # A directed dispatch needs the issue marker read -- and therefore the
       # pristine snapshot below -- before it even knows which PR to check
       # out, so this checkout/snapshot pair runs first here rather than
       # after "Checkout the PR branch" as the ordinary trigger's flow used
-      # to. #583: see the fix job's "Snapshot helper scripts" step.
+      # to. #583: see the fix-agent job's "Snapshot helper scripts" step.
       - name: Checkout
         uses: actions/checkout@v5
         with:
@@ -3654,21 +3902,12 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
-      - name: Refresh authenticated remote (post-agent, reviewer)
-        id: refresh-remote-review
-        if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
-        continue-on-error: true
-        uses: ./.wc-pristine-repo/.github/actions/wing-commander-refresh-remote
-        with:
-          token: ${{ env.WC_BOT_TOKEN }}
-
       - name: Determine post-agent credential status (reviewer)
         id: credential-status-review
         if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-review.outcome }}
-          refresh-outcome: ${{ steps.refresh-remote-review.outcome }}
 
       - name: Compute agent run verdict (reviewer)
         id: review-verdict
@@ -4244,7 +4483,7 @@ jobs:
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-tool-args
         with:
           default-allowed-tools: "Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*)"
-          default-disallowed-tools: "WebSearch,WebFetch,Bash(git push:*)"
+          default-disallowed-tools: "WebSearch,WebFetch,Bash(git push:*),Edit(.git/**),Write(.git/**)"
           step-label: "board-loop.review-fixup"
 
       - name: Compose commit-message guidance (board-loop.review-fixup)
@@ -4315,21 +4554,12 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
-      - name: Refresh authenticated remote (post-agent, review-fixup)
-        id: refresh-remote-review-fixup
-        if: "!cancelled() && steps.review-fixup.outcome != 'skipped'"
-        continue-on-error: true
-        uses: ./.wc-pristine-repo/.github/actions/wing-commander-refresh-remote
-        with:
-          token: ${{ env.WC_BOT_TOKEN }}
-
       - name: Determine post-agent credential status (review-fixup)
         id: credential-status-review-fixup
         if: "!cancelled() && steps.review-fixup.outcome != 'skipped'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-agent-credential-status
         with:
           mint-outcome: ${{ steps.reestablish-review-fixup.outcome }}
-          refresh-outcome: ${{ steps.refresh-remote-review-fixup.outcome }}
 
       - name: Compute agent run verdict (review-fixup)
         id: review-fixup-verdict
@@ -4354,8 +4584,9 @@ jobs:
           spec-identity-is-own: 'false'
 
       # #499/Gate 23: continue-on-error: true (review-step-gating resolution
-      # 4), not a hard exit -- the gate-suite/push steps below are this
-      # job's own fallback path and must still run (or safely no-op on a
+      # 4), not a hard exit -- the bundle step below, and
+      # gate-suite-review-fixup and review-fixup-publish after it, are this
+      # item's own fallback path and must still run (or safely no-op on a
       # missing commit) and own this item's outcome even on a non-healthy
       # agent verdict.
       - name: Fail loud on non-healthy agent verdict (review-fixup)
@@ -4369,70 +4600,18 @@ jobs:
           echo "::error::wing-commander board-loop review-fixup: agent step rejected -- verdict=$VERDICT: $REASON"
           exit 1
 
+
       # FR-024's discipline applies to every push this loop makes, not only
-      # the first one.
-      - name: Run local gate suite (review-fixup)
-        id: gate-suite-review-fixup
+      # the first one. spec 095 (FR-001/FR-005/FR-006): the review-fixup's
+      # commits go to gate-suite-review-fixup as a workspace bundle; this
+      # job neither runs the suite nor pushes (review-fixup-publish does).
+      - name: Bundle the review-fixup commits for the credential-free gate suite
+        id: fixup-bundle
         if: steps.round.outputs.outcome == 'continue' && steps.killswitch-recheck.outputs.paused != 'true'
-        run: |
-          set +e
-          python3 .github/scripts/run-local-gates.py > "$RUNNER_TEMP/board-review-fixup-gate-suite.log" 2>&1
-          rc=$?
-          cat "$RUNNER_TEMP/board-review-fixup-gate-suite.log"
-          if [ "$rc" -eq 0 ]; then
-            echo "outcome=pass" >> "$GITHUB_OUTPUT"
-          else
-            first_failure="$(grep -m1 '^FAIL' "$RUNNER_TEMP/board-review-fixup-gate-suite.log" || true)"
-            echo "outcome=fail" >> "$GITHUB_OUTPUT"
-            # #583: gate-suite output of the agent's tree -- control characters removed.
-            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_step_output.py" first-failure "${first_failure:-gate suite exited $rc}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Push the follow-up commit and advance the round
-        if: steps.gate-suite-review-fixup.outputs.outcome == 'pass'
-        env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
-          PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
-          BRANCH: ${{ steps.pr.outputs.branch }}
-          CURRENT_ROUND: ${{ steps.pr.outputs.round }}
-          REVIEWED_SHA: ${{ steps.checkout-pr.outputs.head-sha }}
-          CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}
-        run: |
-          set -uo pipefail
-          # The fix job's pre-push hold, for review-fixup's own commit
-          # (found by the code review of #901) -- see fix's "Push and open
-          # the PR". Only the commits this push adds are checked: GitHub
-          # refuses them when they change a workflow file and the App holds
-          # no Workflows permission.
-          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site review-fixup --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS" --diff-base "$REVIEWED_SHA" --pr "$PR_NUMBER")" \
-            || exit 1
-          if [ "$held" = "held" ]; then
-            exit 0
-          fi
-          # The step's default shell is `bash -e`, so a refused push already
-          # stops it here; the check only names why in the annotation.
-          if ! git push origin "HEAD:refs/heads/$BRANCH"; then
-            echo "::error::board-loop review-fixup: the follow-up commit could not be pushed to $BRANCH -- the round is not advanced and no review-round comment is posted."
-            exit 1
-          fi
-          next_round=$((CURRENT_ROUND + 1))
-          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --round "$next_round" --pr "$PR_NUMBER" --branch "$BRANCH")" \
-            || { echo "::error::board-loop review-fixup: the follow-up is pushed to $BRANCH, but the round $next_round marker could not be rendered -- nothing is posted on issue #$ISSUE_NUMBER (#786)."; exit 1; }
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s: pushed a follow-up commit addressing the in-scope findings on PR #%s. Re-reviewing on a later run.\n\n%s' "$next_round" "$PR_NUMBER" "$marker")"
-
-      - name: Comment the failing gate on the issue (review-fixup, gate suite red)
-        if: steps.round.outputs.outcome == 'continue' && steps.killswitch-recheck.outputs.paused != 'true' && steps.gate-suite-review-fixup.outputs.outcome == 'fail'
-        env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
-          FIRST_FAILURE: ${{ steps.gate-suite-review-fixup.outputs.first-failure }}
-        run: |
-          set -uo pipefail
-          # #580: fenced -- see the fixer's own gate-suite comment.
-          failure="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_spec_request_body import fenced_section; print(fenced_section('First failing gate (gate suite output, shown as text):', os.environ['FIRST_FAILURE'], 4000))")" \
-            || failure="(the failing gate could not be rendered)"
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'A review-fixup follow-up commit failed the local gate suite before any push -- nothing was pushed, the PR is unchanged:\n\n%s' "$failure")"
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-gate-bundle
+        with:
+          site: board-review-fixup
+          base-sha: ${{ steps.checkout-pr.outputs.head-sha }}
 
       # specs/097-recorded-stop-point FR-015/SC-008
       # (contracts/metrics-classification.md): a second, separate record
@@ -4466,6 +4645,205 @@ jobs:
           path: ${{ runner.temp }}/wing-commander-metrics-record-review-outcome.json
           if-no-files-found: ignore
           retention-days: 90
+
+  # spec 095: gate-suite-fix's twin for review-fixup's commits -- see
+  # gate-suite-fix.
+  gate-suite-review-fixup:
+    needs: [review]
+    if: "!cancelled() && needs.review.result == 'success' && needs.review.outputs.fixup-head-sha != ''"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
+    concurrency:
+      group: wing-commander-board-loop
+      cancel-in-progress: false
+    steps:
+      # The checkout -- see gate-suite-fix above in this file.
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
+
+      - name: Run the gate suite on the review-fixup commits (credential-free)
+        # The step timeout -- see gate-suite-fix above in this file.
+        timeout-minutes: 60
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-contained-gate-suite
+        with:
+          site: board-review-fixup
+
+  # spec 095: the publishing half of review-fixup -- see fix. It pushes
+  # only the commit gate-suite-review-fixup's verdict judged, restored from
+  # review's bundle and checked against review's own fixup-head-sha.
+  review-fixup-publish:
+    needs: [select, review, gate-suite-review-fixup]
+    if: >-
+      !cancelled()
+      && needs.review.result == 'success'
+      && needs.review.outputs.fixup-head-sha != ''
+      && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    # The App token (wing-commander-context) does every write this job
+    # makes; the job's own GITHUB_TOKEN only reads the checkout.
+    permissions:
+      contents: read
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
+    concurrency:
+      group: wing-commander-board-loop
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # #583: see the fix-agent job's "Snapshot helper scripts" step,
+      # including what the snapshot's guarantee covers and the runner it
+      # assumes.
+      - name: Snapshot helper scripts (before any agent runs)
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/wc-pristine"
+          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet origin "$GITHUB_SHA"
+          fi
+          mkdir "$dest"
+          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
+          chmod -R a-w "$dest"
+
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
+      # #488: see wing-commander-board-labels; continue-on-error so a
+      # missed create cannot block the hold, push or red-suite comment below.
+      - name: Ensure board-loop's own labels exist
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-labels
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
+      - name: Restore the review-fixup commits from the workspace bundle
+        id: restore
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-gate-bundle
+        with:
+          mode: restore
+          site: board-review-fixup
+          expected-head-sha: ${{ needs.review.outputs.fixup-head-sha }}
+          branch: ${{ needs.review.outputs.branch }}
+
+      # spec 095 FR-002/FR-004 -- see fix's "Read the gate suite's verdict
+      # (fixer)".
+      - name: Read the gate suite's verdict (review-fixup)
+        id: gate-suite-review-fixup
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-gate-verdict
+        with:
+          site: board-review-fixup
+          expected-head-sha: ${{ needs.review.outputs.fixup-head-sha }}
+          # A replaced gate job -- see fix's "Read the gate suite's verdict
+          # (fixer)" above in this file.
+          gate-job-result: ${{ needs.gate-suite-review-fixup.result }}
+
+      - name: Hold a workflow-file follow-up for a maintainer (review-fixup)
+        id: push-hold
+        if: steps.gate-suite-review-fixup.outputs.outcome == 'pass'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
+          PR_NUMBER: ${{ needs.review.outputs.pr-number }}
+          REVIEWED_SHA: ${{ needs.review.outputs.reviewed-sha }}
+          CAN_PUSH_WORKFLOWS: ${{ vars.WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS == 'true' }}
+        run: |
+          set -uo pipefail
+          # The fix job's pre-push hold, for review-fixup's own commit
+          # (found by the code review of #901) -- see fix's "Hold a
+          # workflow-file fix for a maintainer (fix)". Only the commits this
+          # push adds are checked: GitHub refuses them when they change a
+          # workflow file and the App holds no Workflows permission.
+          held="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_workflow_scope_hold.py" --site review-fixup --issue "$ISSUE_NUMBER" --add-label "board:stalled" --can-push-workflows "$CAN_PUSH_WORKFLOWS" --diff-base "$REVIEWED_SHA" --pr "$PR_NUMBER")" \
+            || exit 1
+          if [ "$held" = "held" ]; then
+            echo "held=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "held=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # spec 095 FR-015..FR-017 -- see fix's "Push the fix branch". A
+      # refused push fails this step, so the round below never advances on
+      # a push that did not land.
+      - name: Push the follow-up commit
+        id: push
+        if: steps.push-hold.outputs.held == 'false'
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-hardened-push
+        with:
+          branch: ${{ needs.review.outputs.branch }}
+          token: ${{ env.WC_BOT_TOKEN }}
+          expected-head-sha: ${{ needs.review.outputs.fixup-head-sha }}
+
+      - name: Advance the round
+        if: steps.push.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
+          PR_NUMBER: ${{ needs.review.outputs.pr-number }}
+          BRANCH: ${{ needs.review.outputs.branch }}
+          CURRENT_ROUND: ${{ needs.review.outputs.round }}
+        run: |
+          set -uo pipefail
+          next_round=$((CURRENT_ROUND + 1))
+          marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step review --round "$next_round" --pr "$PR_NUMBER" --branch "$BRANCH")" \
+            || { echo "::error::board-loop review-fixup: the follow-up is pushed to $BRANCH, but the round $next_round marker could not be rendered -- nothing is posted on issue #$ISSUE_NUMBER (#786)."; exit 1; }
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round %s: pushed a follow-up commit addressing the in-scope findings on PR #%s. Re-reviewing on a later run.\n\n%s' "$next_round" "$PR_NUMBER" "$marker")"
+
+      - name: Comment the failing gate on the issue (review-fixup, gate suite red)
+        if: steps.gate-suite-review-fixup.outputs.outcome == 'fail'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
+          FIRST_FAILURE: ${{ steps.gate-suite-review-fixup.outputs.first-failure }}
+        run: |
+          set -uo pipefail
+          # #580: fenced -- see the fixer's own gate-suite comment.
+          failure="$(python3 -I -c "import os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_spec_request_body import fenced_section; print(fenced_section('First failing gate (gate suite output, shown as text):', os.environ['FIRST_FAILURE'], 4000))")" \
+            || failure="(the failing gate could not be rendered)"
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'A review-fixup follow-up commit failed the local gate suite before any push -- nothing was pushed, the PR is unchanged:\n\n%s' "$failure")"
 
   # Phase 7 (User Story 5, contracts/readiness-report.md): every condition
   # is re-derived against the PR's exact head SHA; the loop reports ready
@@ -4506,7 +4884,7 @@ jobs:
       # pristine snapshot below -- before it even knows which PR to check
       # out, so this checkout/snapshot pair runs first here rather than
       # after the PR branch checkout as the ordinary trigger's flow used to.
-      # #583: see the fix job's "Snapshot helper scripts" step.
+      # #583: see the fix-agent job's "Snapshot helper scripts" step.
       - name: Checkout
         uses: actions/checkout@v5
         with:
