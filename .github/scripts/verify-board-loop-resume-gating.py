@@ -171,8 +171,15 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 WORKFLOW = os.path.join(ROOT, ".github", "workflows", "board-loop.yml")
 BOT_LOGIN = "wing-commander-bot[bot]"
 
-RESUME_JOBS = ("fix", "review", "readiness")
-SIM_JOBS = ("select", "resolve-model", "triage", "route", "fix", "review", "readiness")
+# spec 095: fix-agent (the fixer) and fix (the publisher, after the
+# credential-free gate-suite-fix) carry the same resume gating.
+RESUME_JOBS = ("fix-agent", "fix", "review", "readiness")
+# spec 095: fix publishes what fix-agent wrote. A pause set between the two
+# is found by its own killswitch-recheck, which records the stand-down; a
+# job-level pause check would skip it silently (code review of #990).
+PAUSE_BY_STEP = ("fix",)
+SIM_JOBS = ("select", "resolve-model", "triage", "route", "fix-agent", "gate-suite-fix", "fix",
+            "review", "readiness")
 PAUSE_VAR = "vars.WING_COMMANDER_BOARD_LOOP_PAUSED"
 
 # specs/060-self-redrive-concurrency, PR #490 review (2026-09-28): select is
@@ -491,7 +498,18 @@ def static_findings(doc):
             if not ok:
                 findings.append(
                     "{0}: if: lacks top-level `needs.{1}.result == 'success'`".format(name, up))
-        if not any(_is_cmp(p, "!=", PAUSE_VAR, "true") for p in top):
+        if name in PAUSE_BY_STEP:
+            if any(_is_cmp(p, "!=", PAUSE_VAR, "true") for p in top):
+                findings.append(
+                    "{0}: if: checks `{1}` at job level -- a pause set after the job before "
+                    "it would skip this job with nothing recorded; its killswitch-recheck "
+                    "step finds and records it (spec 095)".format(name, PAUSE_VAR))
+            steps = job.get("steps") or []
+            if not any(isinstance(st, dict) and st.get("id") == "killswitch-recheck"
+                       and "wing-commander-board-stop-check" in str(st.get("uses", ""))
+                       for st in steps):
+                findings.append("{0}: no killswitch-recheck step to find a pause".format(name))
+        elif not any(_is_cmp(p, "!=", PAUSE_VAR, "true") for p in top):
             findings.append("{0}: if: lacks the `{1} != 'true'` pause check".format(name, PAUSE_VAR))
 
         reads = []
@@ -675,17 +693,31 @@ SCENARIOS = [
      {"outputs": {"select": _item("triage"), "triage": {"outcome": "proceed"},
                   "route": {"decision": "fix"}, "fix": {"pr-number": "42", "breach": "false"},
                   "review": {"pr-number": "42", "outcome": "continue"}}},
-     ("select", "resolve-model", "triage", "route", "fix", "review")),
+     ("select", "resolve-model", "triage", "route", "fix-agent", "gate-suite-fix", "fix", "review")),
     ("fresh: route=fix, post-push breach (#526)",
      {"outputs": {"select": _item("triage"), "triage": {"outcome": "proceed"},
                   "route": {"decision": "fix"}, "fix": {"pr-number": "42", "breach": "true"},
                   "review": {"pr-number": "42", "outcome": "converged"}}},
-     ("select", "resolve-model", "triage", "route", "fix")),
+     ("select", "resolve-model", "triage", "route", "fix-agent", "gate-suite-fix", "fix")),
     ("fresh: route=fix, fix job fails",
      {"fail": ("fix",),
       "outputs": {"select": _item("triage"), "triage": {"outcome": "proceed"},
                   "route": {"decision": "fix"}, "fix": {"pr-number": "42", "breach": "false"}}},
-     ("select", "resolve-model", "triage", "route", "fix")),
+     ("select", "resolve-model", "triage", "route", "fix-agent", "gate-suite-fix", "fix")),
+    # spec 095: the fixer's job failing skips its gate job and the
+    # publisher -- nothing is pushed and review never runs.
+    ("fresh: route=fix, fix-agent fails",
+     {"fail": ("fix-agent",),
+      "outputs": {"select": _item("triage"), "triage": {"outcome": "proceed"},
+                  "route": {"decision": "fix"}}},
+     ("select", "resolve-model", "triage", "route", "fix-agent")),
+    # A failed gate-suite job is a red verdict, not a skipped publisher:
+    # fix still runs and reads the (absent) verdict as a failure.
+    ("fresh: route=fix, gate-suite-fix fails",
+     {"fail": ("gate-suite-fix",),
+      "outputs": {"select": _item("triage"), "triage": {"outcome": "proceed"},
+                  "route": {"decision": "fix"}, "fix": {"pr-number": "", "breach": ""}}},
+     ("select", "resolve-model", "triage", "route", "fix-agent", "gate-suite-fix", "fix")),
     ("fresh: route=spec",
      {"outputs": {"select": _item("triage"), "triage": {"outcome": "proceed"},
                   "route": {"decision": "spec"}}},
@@ -707,12 +739,12 @@ SCENARIOS = [
      {"outputs": {"select": _item("fix", branch="board/396"),
                   "fix": {"pr-number": "42", "breach": "false"},
                   "review": {"pr-number": "42", "outcome": "converged"}}},
-     ("select", "resolve-model", "fix", "review", "readiness")),
+     ("select", "resolve-model", "fix-agent", "gate-suite-fix", "fix", "review", "readiness")),
     ("resume step=fix, fix job fails",
      {"fail": ("fix",),
       "outputs": {"select": _item("fix", branch="board/396"),
                   "fix": {"pr-number": "42", "breach": "false"}}},
-     ("select", "resolve-model", "fix")),
+     ("select", "resolve-model", "fix-agent", "gate-suite-fix", "fix")),
     ("resume step=review, round continues",
      {"outputs": {"select": _item("review", pr="42", branch="board/396", round_="2"),
                   "review": {"pr-number": "42", "outcome": "continue"}}},
@@ -749,7 +781,7 @@ SCENARIOS = [
       "outputs": {"select": _item("triage"), "triage": {"outcome": "proceed"},
                   "route": {"decision": "fix"}, "fix": {"pr-number": "42", "breach": "false"},
                   "review": {"pr-number": "42", "outcome": "converged"}}},
-     ("select", "resolve-model", "triage", "route", "fix", "review")),
+     ("select", "resolve-model", "triage", "route", "fix-agent", "gate-suite-fix", "fix", "review")),
     ("resume step=review, review fails after outcome=converged",
      {"fail": ("review",),
       "outputs": {"select": _item("review", pr="42", branch="board/396", round_="2"),
@@ -1994,6 +2026,10 @@ def _mutations(text):
         after="\n  review:\n")
     sub("fix without resolve-model.result guard",
         "      && needs.resolve-model.result == 'success'\n", "", after="\n  fix:\n")
+    sub("fix (the publisher) checks the pause at job level again (spec 095)",
+        "        || (needs.select.outputs.step == 'fix' && needs.select.outputs.branch != '' && needs.select.outputs.pr == '')\n      )\n",
+        "        || (needs.select.outputs.step == 'fix' && needs.select.outputs.branch != '' && needs.select.outputs.pr == '')\n      ) && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'\n",
+        after="\n  fix:\n")
     sub("readiness without the pause check",
         "      ) && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'\n", "      )\n",
         after="\n  readiness:\n")

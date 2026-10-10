@@ -37,6 +37,22 @@ inputs:
   fold-summary:
     description: One-line commit-message summary.
     required: true
+  push-token:
+    description: >-
+      Optional. A write token for an explicit push URL
+      (https://github.com/<this repository>), pushed from a shim repository
+      with no config of its own, so nothing an agent left in the checkout's
+      .git/config can redirect it (spec 095 FR-016/FR-017). Empty (the
+      default) keeps the bare `git push` to the caller's remote.
+    required: false
+    default: ""
+  branch:
+    description: >-
+      Optional. The branch the fold may push. When set, a checkout on any
+      other branch (or a detached HEAD) fails the step before the push.
+      Empty (the default) pushes whatever branch the checkout is on.
+    required: false
+    default: ""
   actor-login:
     description: Login to union into spec-meta.json's pending_re_review_from. Empty is tolerated (no human actor -- e.g. an automated review round's own fold) and adds nothing.
     required: true
@@ -69,6 +85,8 @@ runs:
         FOLD_ID: ${{ inputs.fold-id }}
         FOLD_SUMMARY: ${{ inputs.fold-summary }}
         ACTOR_LOGIN: ${{ inputs.actor-login }}
+        PUSH_TOKEN: ${{ inputs.push-token }}
+        EXPECTED_BRANCH: ${{ inputs.branch }}
       run: |
         set -euo pipefail
         if [ ! -s "$SECTION_FILE" ]; then
@@ -97,7 +115,25 @@ runs:
         git config user.email "${bot_login}@users.noreply.github.com"
         git add "$SPEC_DIR/tasks.md" "$SPEC_DIR/spec-meta.json"
         git commit -m "fold(${FOLD_ID}): ${FOLD_SUMMARY}"
-        git push
+        # spec 095 FR-015/FR-016: pr-conversation's act agent ran in this
+        # job before this push, so it runs with hooks, fsmonitor and
+        # global/system config neutralised -- see
+        # _shared/git-push-hardening.sh. Only the push: the commit above
+        # keeps the caller's own hooksPath (pr-conversation's
+        # run-attribution hook).
+        # shellcheck source=../_shared/git-push-hardening.sh
+        . "$GITHUB_ACTION_PATH/../_shared/git-push-hardening.sh"
+        wc_harden_git_env
+        branch="$(wc_current_branch)"
+        if [ -n "$EXPECTED_BRANCH" ] && [ "$branch" != "$EXPECTED_BRANCH" ]; then
+          echo "::error::wing-commander-fold-commit: the checkout is on '$branch', not '$EXPECTED_BRANCH' -- the fold is not pushed."
+          exit 1
+        fi
+        if [ -n "$PUSH_TOKEN" ]; then
+          wc_push_from_shim "$(git rev-parse HEAD)" "$branch" "$GITHUB_REPOSITORY" "$PUSH_TOKEN"
+        else
+          git push
+        fi
         echo "folded=true" >> "$GITHUB_OUTPUT"
         echo "commit-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
         echo "folded-json=$(jq -cn --arg id "$FOLD_ID" --arg summary "$FOLD_SUMMARY" '[{id: $id, summary: $summary}]')" >> "$GITHUB_OUTPUT"

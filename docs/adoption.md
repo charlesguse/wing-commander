@@ -819,7 +819,7 @@ things to know before you bind one:
   timer is paid once per job, not once per call. A job skipped by its own
   `if:` never prompts.
 
-  **Two documented exceptions, both registered and machine-checked by Gate
+  **Three documented exceptions, all registered and machine-checked by Gate
   7 — not oversights.**
 
   1. **`pr-conversation`'s `act` job.** It does **not** honour
@@ -843,6 +843,22 @@ things to know before you bind one:
      repository.
      The jobs it gates — the ones that actually run agents and push
      commits — are bound normally.
+  3. **`implement`'s `gate-suite-implement-cycle` job.** It runs the spec
+     branch's own local gate suite (code earlier cycles' agents wrote)
+     holding read-only permissions and no App token, and hands its verdict
+     to the `implement` job. It is deliberately unbound: binding it would
+     bring the environment's secrets into the one job built to hold none,
+     and cost a prompt per cycle for a job that writes nothing. The
+     `implement` job, which acts on the verdict, is bound normally. In a
+     repository with no `.github/scripts/run-local-gates.py` it only checks
+     out and reports that there is no suite. It holds no `id-token` either,
+     so where `github.job_workflow_sha` comes through empty it cannot find
+     the pipeline commit: set the `pipeline-ref` input, or the cycle-start
+     suite is reported as skipped for that reason. It checks the pipeline
+     repository out with its own read-only `GITHUB_TOKEN` only, never
+     `pipeline-repo-token`, so with a private pipeline repository that
+     token cannot read, the cycle-start suite is likewise skipped and named
+     (the agent can still run the suite itself).
 
   Counting the jobs that do run:
 
@@ -1328,9 +1344,11 @@ Findings filing: `findings-filing-enabled` (boolean, default `true`;
 [Stage-found defect filing](#stage-found-defect-filing).
 
 Write boundary: `no-write-paths` (string, comma-separated path prefixes,
-default `.claude/`; `WING_COMMANDER_IMPLEMENT_NO_WRITE_PATHS`) — paths this
-stage's agent may not target with `Edit`/`Write`, stated in its prompt
-before its first tool call. `write-boundary-label-prefix` (string, default
+default `.claude/,.git/`; `WING_COMMANDER_IMPLEMENT_NO_WRITE_PATHS`) — paths
+this stage's agent may not target with `Edit`/`Write`, stated in its prompt
+before its first tool call. Keep `.git/` in an override: it denies the
+agent's `Edit`/`Write` tools the repository's git hooks and config (a
+value planted by any other route is neutralised at the push instead). `write-boundary-label-prefix` (string, default
 `route-out-of-boundary`; `WING_COMMANDER_WRITE_BOUNDARY_LABEL_PREFIX`) —
 label prefix for a task routed out of the write boundary; deliberately
 distinct from `findings-label-prefix` so the board loop never treats a
