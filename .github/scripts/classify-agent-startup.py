@@ -91,15 +91,22 @@ def classify(text):
         return _unclassified("the log is empty or unreadable")
     lines = [TIMESTAMP.sub("", raw.rstrip("\r")) for raw in text.splitlines()]
     group = None
+    in_header = False
     action_seen = False
     setup_done = False
     for i, line in enumerate(lines):
         head = line.strip()
         if head.startswith("##[group]"):
             group = head[len("##[group]"):].strip()
+            in_header = True
             if ACTION_GROUP.search(group):
                 action_seen = True
-        elif SETUP_DONE.search(head) and action_seen:
+        elif head.startswith("##[endgroup]"):
+            in_header = False
+        elif SETUP_DONE.search(head) and action_seen and not in_header:
+            # Only runtime output: inside a group header the runner echoes
+            # the step's source and with:/env: dump, where the text (say an
+            # echo of it in a script) has not happened yet.
             setup_done = True
         elif head.startswith("##[error]"):
             error = _error_text(lines, i)

@@ -137,7 +137,7 @@ jobs:
 
           if ! missing=$(docker run --rm -e REQUIRED_TOOLS="$REQUIRED_TOOLS" \
             --entrypoint sh "$IMAGE" -c \
-            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done; if command -v git >/dev/null 2>&1; then v=$(git --version 2>/dev/null); n=${v#git version }; case "$n" in *.*) ;; *) n=;; esac; maj=${n%%.*}; r=${n#*.}; min=${r%%.*}; case "$maj.$min" in .|*[!0-9.]*|.*|*.) echo "could not parse git version from \"$v\"" >&2; exit 1;; esac; if [ "$maj" -lt 2 ] || { [ "$maj" -eq 2 ] && [ "$min" -lt 38 ]; }; then echo "git ${n%% *} is older than the 2.38 minimum" >&2; exit 1; fi; fi' \
+            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done; if command -v git >/dev/null 2>&1; then v=$(git --version 2>/dev/null); n=${v#git version }; n=${n%% *}; case "$n" in *.*) ;; *) n=;; esac; maj=${n%%.*}; r=${n#*.}; min=${r%%.*}; case "$maj.$min" in .|*[!0-9.]*|.*|*.) echo "could not parse git version from \"$v\"" >&2; exit 1;; esac; if [ "$maj" -lt 2 ] || { [ "$maj" -eq 2 ] && [ "$min" -lt 38 ]; }; then echo "git ${n%% *} is older than the 2.38 minimum" >&2; exit 1; fi; fi' \
             2>docker-inspect-error.log); then
             if grep -qE 'is older than the 2\.38 minimum|could not parse git version' docker-inspect-error.log; then
               echo "::error::wing-commander verify-image-prerequisites: $IMAGE failed the git version floor -- $(cat docker-inspect-error.log)${missing:+ (also missing required tool(s):$missing)}"
@@ -226,6 +226,8 @@ jobs:
           # --max-turns in claude_args); constitution II's counts (Gate 50)
           # are met by this note: --model claude-haiku-5-5 --max-turns 1
           claude_args: --model claude-haiku-5-5
+      # Gate 16: every agent step's execution log survives its failure.
+      # The credential-less run writes none, so this uploads nothing today.
       - name: Upload Claude execution log
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
         uses: actions/upload-artifact@v6
@@ -274,10 +276,15 @@ jobs:
           if [ "$AGENT_RESULT" != "skipped" ]; then
             # A lookup failure is named (e.g. a caller that did not grant
             # actions: read), not left to read as an empty log.
-            job_id=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate \
-              --jq '.jobs[] | select(.name | endswith("startup-agent")) | .id' 2>job-lookup-error.log | head -n 1) || job_id=""
-            if [ -z "$job_id" ]; then
-              echo "::warning::wing-commander classify-startup: could not find the startup-agent job in run $RUN_ID -- $(cat job-lookup-error.log 2>/dev/null)"
+            # More than one match (this workflow called twice in one run)
+            # is ambiguous: classify nothing rather than another call's log.
+            job_ids=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate \
+              --jq '.jobs[] | select(.name | endswith("startup-agent")) | .id' 2>job-lookup-error.log) || job_ids=""
+            job_id=""
+            if [ "$(printf '%s\n' "$job_ids" | grep -c .)" -eq 1 ]; then
+              job_id="$job_ids"
+            else
+              echo "::warning::wing-commander classify-startup: found $(printf '%s\n' "$job_ids" | grep -c .) startup-agent jobs in run $RUN_ID, not exactly one -- $(cat job-lookup-error.log 2>/dev/null)"
             fi
             # A just-finished job's log can 404 until it is archived; retry
             # before falling back to the empty (unclassified) log.

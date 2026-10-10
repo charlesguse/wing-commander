@@ -157,6 +157,8 @@ def check_workflow(path):
             errors.append("classify-startup needs timeout-minutes (a hung gh call would hold the job for 6 hours)")
         if "job-lookup-error.log" not in runs or "::warning::" not in runs:
             errors.append("classify-startup must name a failed job lookup or log fetch, not read it as an empty log")
+        if "head -n 1" in runs or not re.search(r"grep -c \.\)\" -eq 1", runs):
+            errors.append("classify-startup must refuse an ambiguous startup-agent lookup, not take the first match")
         if not re.search(r"for attempt in[^\n]*\n(?:.*\n)*?.*actions/jobs/\$job_id/logs(?:.*\n)*?.*sleep ", runs):
             errors.append("classify-startup must retry the job-log fetch (a just-finished job's log can 404)")
     if re.search(r"AUTH_MARKERS|failed at authentication", text):
@@ -222,6 +224,11 @@ def self_test():
                 if "uses" in s:
                     s.setdefault("with", {})["anthropic_api_key"] = "x"
 
+        def first_match(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
+                    s["run"] = s["run"].replace('grep -c .)" -eq 1', 'grep -c .)" -ge 1')
+
         def drop_timeout(jobs):
             jobs["classify-startup"].pop("timeout-minutes", None)
 
@@ -245,12 +252,14 @@ def self_test():
         def use_always(jobs):
             jobs["startup-agent"]["steps"][-1]["if"] = "always()"
 
+
         def drop_retry(jobs):
             for s in jobs["classify-startup"]["steps"]:
                 if "run" in s:
                     s["run"] = re.sub(r"for attempt in [^\n]*", "true", s["run"])
 
         expect("no timeout", mutated(drop_timeout), "timeout-minutes")
+        expect("first match", mutated(first_match), "ambiguous")
         expect("no prompt", mutated(drop_prompt), "needs a prompt")
         expect("no allowed_bots", mutated(drop_bots), "allowed_bots")
         expect("always()", mutated(use_always), "always()")

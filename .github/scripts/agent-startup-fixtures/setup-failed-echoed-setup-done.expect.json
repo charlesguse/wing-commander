@@ -1,0 +1,1 @@
+{"verdict": "setup-failed", "step": "Run # Do NOT pass --tsconfig-override here. It triggers a Bun runtime bug", "error_contains": "Failed to install Claude Code", "note": "synthetic: SETUP_DONE text inside the step's echoed source is not runtime output"}

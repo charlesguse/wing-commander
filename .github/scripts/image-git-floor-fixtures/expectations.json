@@ -26,5 +26,13 @@
   "no-minor": {
     "pass": false,
     "message": "could not parse git version from \"git version 2\""
+  },
+  "2.38.Apple": {
+    "pass": true,
+    "message": ""
+  },
+  "2.37.1.Apple-Git-137.1": {
+    "pass": false,
+    "message": "git 2.37.1 is older than the 2.38 minimum"
   }
 }

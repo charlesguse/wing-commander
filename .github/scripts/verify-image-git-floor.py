@@ -19,6 +19,7 @@ Usage: python3 .github/scripts/verify-image-git-floor.py [--self-test]
 """
 import glob
 import json
+import re
 import os
 import stat
 import subprocess
@@ -86,13 +87,21 @@ def check_cases(fragment, fixtures=FIXTURES):
 
 
 def stage_files(pattern=WORKFLOWS):
+    """Every workflow with a verify-image-prerequisites job -- found by the
+    job, not by the probe's own wording, so a reworded probe cannot drop a
+    stage out of the check."""
     out = []
     for path in sorted(glob.glob(pattern)):
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
-        if "REQUIRED_TOOLS=" in text and 'for t in $REQUIRED_TOOLS; do command -v "$t"' in text:
+        if re.search(r"(?m)^  verify-image-prerequisites:\s*$", text):
             out.append((path, text))
     return out
+
+
+def stage_files_from(pairs):
+    """stage_files()'s selection applied to in-memory (path, text) pairs."""
+    return [(p, t) for p, t in pairs if re.search(r"(?m)^  verify-image-prerequisites:\s*$", t)]
 
 
 def check_stages(fragment, stages):
@@ -132,6 +141,12 @@ def self_test():
         drifted = stages[:-1] + [(path, text.replace("${missing:+ (also missing", "${missing:+ (missing"))]
         if not any("HOST_BRANCH" in e for e in check_stages(fragment, drifted)):
             failures.append("a drifted git-floor failure report was not caught")
+    if stages:
+        path, text = stages[0]
+        reworded = [(path, text.replace(fragment, "true").replace(
+            'for t in $REQUIRED_TOOLS; do command -v "$t"', 'for t in $REQUIRED_TOOLS; do command -v -- "$t"'))] + stages[1:]
+        if not any(os.path.basename(path) in e for e in check_stages(fragment, stage_files_from(reworded))):
+            failures.append("a stage whose probe was reworded dropped out of the check")
     for f in failures:
         print("::error::Gate 148 self-test: " + f)
     if not failures:
