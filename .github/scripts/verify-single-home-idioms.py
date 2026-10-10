@@ -306,6 +306,11 @@ DECLARED_HOMES = {
     # Code review of #940: the GitHub-expression evaluator every gate that
     # evaluates a shipped `if:` uses -- see check_gha_expr_evaluator.
     "gha-expr-evaluator": ".github/scripts/wc_gha_expr.py",
+    # specs/113-gh-callsite-locator FR-011 (CLAUDE.md: "add the 'single home'
+    # check to the nearest existing gate"): the one module that finds `gh`
+    # call sites in a `run:` block. Gate 12 and Gate 28 import it; a script
+    # growing a shell scanner of its own is what this check catches.
+    "gh-callsite-locator": ".github/scripts/wc_gh_callsites.py",
     # specs/062-lifecycle-review-gate T031/T042: the append-tasks.md-
     # section/flip-stage/union-actor/commit+push fold sequence.
     # pr-conversation.yml's `act` job (T033) and lifecycle-review-gate.yml's
@@ -765,6 +770,36 @@ def check_gha_expr_evaluator(root="."):
         if m is not None:
             findings.append(Finding(path, "gha-expr-evaluator",
                                     line_of(text, m.start()), m.group(0)))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: gh-callsite-locator (file-wide, over .github/scripts -- specs/113
+# FR-011)
+# --------------------------------------------------------------------------
+# A shell scanner is a script that skips heredoc bodies (a regex opening
+# `<<-?[ \t]*` or `<<-?\s*` and capturing the delimiter) AND steps through
+# `$(` by index (`startswith("$(", i)`): the two things a scanner needs to
+# tell a command from text. Either sign alone is common -- a regex that
+# finds a heredoc to read its body, a `$(` search in a fixture -- so only
+# the pair is a second locator. Matched on the SOURCE text of the scanner.
+SCANNER_HEREDOC_RE = re.compile(r"<<-\?(?:\[ \\t\]|\\s)\*")
+SCANNER_SUBST_RE = re.compile(r"""startswith\(\s*["']\$\(["']\s*,""")
+
+
+def check_gh_callsite_locator(root="."):
+    home = DECLARED_HOMES["gh-callsite-locator"]
+    findings = []
+    for path in script_files(root):
+        # This gate names both signs itself, in this comment and its pastes.
+        if path in (home, THIS_GATE):
+            continue
+        text = read(root, path)
+        m = SCANNER_HEREDOC_RE.search(text)
+        if m is not None and SCANNER_SUBST_RE.search(text):
+            findings.append(Finding(
+                path, "gh-callsite-locator", line_of(text, m.start()),
+                "shell scanner: a heredoc-opener regex plus `$(` stepping"))
     return findings
 
 
@@ -1475,6 +1510,7 @@ ALL_CHECKS = {
     "board-stop-check": check_board_stop_check,
     "transcript-normalise": check_transcript_normalise,
     "gha-expr-evaluator": check_gha_expr_evaluator,
+    "gh-callsite-locator": check_gh_callsite_locator,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
@@ -1839,6 +1875,8 @@ def _clean_tree(root):
           "\"$cancel_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
     _write(root, DECLARED_HOMES["gha-expr-evaluator"],
           "def evaluate(expr, ctx):\n    return Parser(expr, ctx).parse()\n")
+    _write(root, DECLARED_HOMES["gh-callsite-locator"],
+          "def locate(script):\n    return []\n")
     _write(root, DECLARED_HOMES["transcript-normalise"],
           "#!/usr/bin/env bash\n"
           "jq -cs 'map(if type==\"array\" then .[] else . end) "
@@ -1952,6 +1990,24 @@ def selftest_third_paste_fails(check_key, paste_path, paste_content):
                 f"got: {findings}")
         else:
             note(f"[{case}] passed ({hits[0].path}:{hits[0].line})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_third_paste_passes(check_key, paste_path, paste_content):
+    case = f"{paste_path} carries one sign of {check_key} only and is not flagged"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        _write(tmp, paste_path, paste_content)
+        findings, hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == check_key and f.path == paste_path]
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif hits:
+            fail(f"[{case}] unexpected {check_key} finding: {hits[0]}")
+        else:
+            note(f"[{case}] passed")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -2708,6 +2764,21 @@ def run_selftest():
         selftest_third_paste_fails(
             "gha-expr-evaluator", f".github/scripts/verify-third-{slug}.py",
             "import re\n" + body)
+    # specs/113-gh-callsite-locator FR-011: a second shell scanner -- both
+    # signs together -- is caught; either sign alone is not.
+    selftest_third_paste_fails(
+        "gh-callsite-locator", ".github/scripts/verify-third-scanner.py",
+        "import re\n"
+        "HEREDOC = re.compile(r\"<<-?[ \\t]*\\\\?(['\\\"]?)([\\w]+)\\1\")\n"
+        "def scan(text, i):\n"
+        "    if text.startswith(\"$(\", i):\n        return i + 2\n")
+    selftest_third_paste_passes(
+        "gh-callsite-locator", ".github/scripts/verify-third-heredoc-only.py",
+        "import re\n"
+        "HEREDOC = re.compile(r\"<<-?[ \\t]*\\\\?(['\\\"]?)([\\w]+)\\1\")\n")
+    selftest_third_paste_passes(
+        "gh-callsite-locator", ".github/scripts/verify-third-subst-only.py",
+        "def scan(text, i):\n    if text.startswith(\"$(\", i):\n        return i + 2\n")
     selftest_third_paste_fails(
         "verdict-shape", ".github/workflows/third-verdict.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"

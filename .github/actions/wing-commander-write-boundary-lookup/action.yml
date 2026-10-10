@@ -80,7 +80,8 @@ runs:
           if gh issue list --repo "$GITHUB_REPOSITORY" --label "${LABEL_PREFIX}:implement" --state all --json number,url,state,body --limit 1000 > "$issues_file" 2>"$issues_err"; then
             :
           else
-            echo "::warning::wing-commander-write-boundary-lookup: gh issue list failed for label ${LABEL_PREFIX}:implement -- $(cat "$issues_err") -- treating as no routed items found this run; a routed item may reach the PR as orphan prose."
+            issues_err_text="$(cat "$issues_err")"
+            echo "::warning::wing-commander-write-boundary-lookup: gh issue list failed for label ${LABEL_PREFIX}:implement -- $issues_err_text -- treating as no routed items found this run; a routed item may reach the PR as orphan prose."
             echo "[]" > "$issues_file"
           fi
           # review-gate-round-3: every line below shares the same
