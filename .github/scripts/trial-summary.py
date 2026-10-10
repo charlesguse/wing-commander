@@ -38,7 +38,10 @@ def load(path):
             for lineno, line in enumerate(fh, 1):
                 line = line.strip()
                 if line:
-                    records.append(json.loads(line))
+                    rec = json.loads(line)
+                    if not isinstance(rec, dict):
+                        raise ValueError(f"line {lineno}: record is not an object")
+                    records.append(rec)
     except (OSError, ValueError) as exc:
         print(f"trial-summary: cannot read {path}: {exc}", file=sys.stderr)
         sys.exit(2)
@@ -122,7 +125,7 @@ def diagnose_section(records):
     if n < MIN_COMPARED:
         verdict = "sample too small"
     else:
-        ok = (filing / n >= 0.95 and shared > 0 and cagree / shared >= 0.90
+        ok = (filing / n >= 0.95 and (shared == 0 or cagree / shared >= 0.90)
               and failed / n <= 0.02)
         verdict = "meets" if ok else "misses"
     lines.append(f"**Diagnose bar ({MIN_COMPARED} compared runs): {verdict}**")

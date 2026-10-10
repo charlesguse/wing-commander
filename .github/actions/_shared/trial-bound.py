@@ -53,6 +53,9 @@ def compared_count(path, since):
             try:
                 when = parse_date(stamp)
             except (TypeError, ValueError):
+                # Fail closed: an undated compared record still counts toward
+                # the cap, so the cap can never stay open past 300 real runs.
+                n += 1
                 continue
             if when >= since:
                 n += 1

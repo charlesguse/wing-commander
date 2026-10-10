@@ -68,10 +68,13 @@ jobs:
           escalation="${ESCALATION_VAR:-claude-opus-5-5}"
           # Same value as implement.yml's max-turns input default.
           max_turns=180
-          labels="$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')" || labels=''
-          if printf '%s\n' "$labels" | grep -qx 'model:opus'; then
+          labels="$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')" || {
+            echo "::warning::could not read lifecycle issue labels; a model:opus / model:haiku opt-in is not applied this cycle"
+            labels=''
+          }
+          if grep -qx 'model:opus' <<< "$labels"; then
             tier="claude-opus-5-5"
-          elif printf '%s\n' "$labels" | grep -qx 'model:haiku'; then
+          elif grep -qx 'model:haiku' <<< "$labels"; then
             tier="claude-haiku-5-5"
             escalation="claude-sonnet-5-5"
             max_turns="${HAIKU_MAX_TURNS:-180}"

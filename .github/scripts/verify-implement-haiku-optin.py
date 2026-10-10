@@ -30,8 +30,8 @@ def check(texts):
     wrapper, stage = texts.get(WRAPPER), texts.get(STAGE)
     if wrapper is None or stage is None:
         return [f"{WRAPPER} or {STAGE} missing"]
-    lit = re.search(r"^\s*max_turns=(\d+)\s*$", wrapper, re.M)
-    default = re.search(r"^\s{6}max-turns:\n(?:\s{8}.*\n)*?\s{8}default:\s*(\d+)",
+    lit = re.search(r"^[ ]*max_turns=(\d+)[ ]*$", wrapper, re.M)
+    default = re.search(r"^[ ]{6}max-turns:\n(?:[ ]{8}.*\n)*?[ ]{8}default:[ ]*(\d+)",
                         stage, re.M)
     if not lit or not default:
         failures.append("cannot find the wrapper's max_turns literal or "

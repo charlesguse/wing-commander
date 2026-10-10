@@ -135,14 +135,14 @@ def compare(args, schema):
     if bv != "healthy":
         return trial("no-baseline", bv)
     if args.shadow_refusal == "true":
-        return trial("refused", bv)
+        return trial("refused", bv, False)
     if args.shadow_verdict == "exhausted":
-        return trial("exhausted", bv)
+        return trial("exhausted", bv, False)
     if args.shadow_verdict != "healthy":
         return trial("error", bv)
     shadow = load_findings(args.shadow_findings, "shadow findings")
     if shadow is None or not schema_valid(shadow, schema):
-        return trial("malformed", bv)
+        return trial("malformed", bv, False)
     baseline = load_findings(args.baseline_findings, "baseline findings")
     if baseline is None or not all(baseline_usable(f) for f in baseline):
         return trial("no-baseline", bv)
