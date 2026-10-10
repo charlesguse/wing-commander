@@ -2,10 +2,8 @@
   "issue": 974,
   "spec_dir": "specs/112-agent-startup-image-check",
   "feature_num": "112",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 5,
   "spec_branch": "spec/112-agent-startup-image-check",
-  "pending_re_review_from": [
-    "charlesguse"
-  ]
+  "pending_re_review_from": []
 }
