@@ -53,7 +53,7 @@
 - [x] T007 [US1] In `.github/actions/_shared/sync-reference-image-pin.sh` implement contract steps 1, 3, 5 (read-probe via `gh api repos/<r>/actions/variables/WING_COMMANDER_CONTAINER_IMAGE`) and 6: `CHECKS_PASSED != true` skip; superseded guard using `gh run list --workflow wing-commander-e2e-reference-image.yml --status success` and `RUN_NUMBER`; per repo compare to `<IMAGE>@<DIGEST>` → `current`, else `gh variable set WING_COMMANDER_CONTAINER_IMAGE --repo <r>` as the only write; E2E-unset behaviour (D7)
 - [x] T008 [US1] In `.github/workflows/wing-commander-e2e-reference-image.yml` change `startup-check` to find the dispatched run (created after dispatch, matched by digest input/title) and `gh run watch --exit-status` it, exposing job output `passed=true|false` (research D1/D2)
 - [x] T009 [US1] In the same workflow add job `sync-pins`: `needs: [build-and-publish, startup-check]` (and the prerequisite-check job if separate), `if: !cancelled()`-style condition that still runs on check failure so skip is reported, `concurrency: {group: reference-image-pin-sync, cancel-in-progress: false}`, least-privilege `permissions`, one step calling the shared script with env from step outputs (digest/regex-validated, never interpolated into shell), `shell: bash` if a `container:` is used (consult the `review-step-gating` skill)
-- [ ] T010 [US1] Run `python .github/scripts/run-local-gates.py` until T006 cases pass
+- [x] T010 [US1] Run `python .github/scripts/run-local-gates.py` until T006 cases pass (265/265 at f21facc5, Docker running for Gate 62)
 
 **Checkpoint**: MVP — happy path, skip paths and no-op work.
 
@@ -75,7 +75,7 @@
 - [x] T013 [US2] In the script implement contract steps 2 and the failure paths of 5–6: validate `DIGEST` against `^sha256:[0-9a-f]{64}$` and non-empty `IMAGE` before any API call; unset/unauthenticated `SYNC_TOKEN` → all `failed`; refused write → `failed` with held and expected; exit 1 iff any outcome is `failed`
 - [x] T014 [US2] In `sync-pins` add the `if: failure()` issue step building the body from the outcome JSON (repo, held, expected, reason; no secrets) and calling `wing-commander-durable-failure-issue`; add the close-on-success step and the final re-fail step (research D6); check dedup behaviour matches auto-release's `auto-release:failed` usage
 - [x] T015 [US2] Confirm `.github/workflows/auto-release.yml` neither calls nor reads the script and is unmodified (FR-009); add that assertion to the gate
-- [ ] T016 [US2] Run `python .github/scripts/run-local-gates.py` until T011–T012 pass
+- [x] T016 [US2] Run `python .github/scripts/run-local-gates.py` until T011–T012 pass (same run as T010)
 
 **Checkpoint**: Failures are loud and deduplicated.
 
@@ -100,7 +100,7 @@
 
 - [x] T021 [P] Update the `WING_COMMANDER_CONTAINER_IMAGE` row in `docs/setup.md` to describe the sync, add a row for `WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN` (Variables write on exactly this repo and the test repo), and what to do when the sync fails; remove the manual "copy the digest" step (FR-011, SC-005)
 - [x] T022 [P] Update the header comment of `.github/workflows/wing-commander-e2e-reference-image.yml` to match (workflow comments are gate-checked; treat as code)
-- [ ] T023 Run `python .github/scripts/run-local-gates.py` in full; fix any gate that byte-compares the edited comments; run the `review-step-gating` skill on the workflow change
+- [x] T023 Run `python .github/scripts/run-local-gates.py` in full; fix any gate that byte-compares the edited comments; run the `review-step-gating` skill on the workflow change (full suite 265/265; Gate 24 and `stranded-steps.py` clean on the e2e reference-image workflow. The post-merge proof, re-driving one build so both variables equal the digest (SC-001), stays a maintainer step after the sync token exists)
 - [x] T024 Walk through `specs/111-reference-image-pin-sync/quickstart.md` fixture steps; note the post-merge proof (`prove-after-merge`: re-drive one build, confirm both variables equal the digest — SC-001) for the PR description
 
 ---
