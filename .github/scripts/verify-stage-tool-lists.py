@@ -496,7 +496,22 @@ def _glob_has_match(root, pattern):
     else, or where git cannot answer, the on-disk files are read, which can
     let an untracked leftover satisfy a stale wildcard grant.
     """
-    return any(fnmatch.fnmatchcase(p, pattern) for p in repo_files(root))
+    return any(fnmatch.fnmatchcase(p, pattern) for p in _listing(root))
+
+
+_LISTING_CACHE = {}
+
+
+def _listing(root):
+    """repo_files(root), listed once per process for a real working tree
+    (one with its own `.git`, whose tracked set cannot change under a run).
+    A fixture directory is listed afresh: its files do change."""
+    if not os.path.exists(os.path.join(root, ".git")):
+        return repo_files(root)
+    key = os.path.realpath(root)
+    if key not in _LISTING_CACHE:
+        _LISTING_CACHE[key] = repo_files(root)
+    return _LISTING_CACHE[key]
 
 
 def _script_exists(root, rel):
@@ -1160,6 +1175,27 @@ def self_test(root="."):
               "staleness was not respected (expected 0 failures while "
               "untracked, 1 once git-tracked): untracked={0}, "
               "tracked={1}".format(found_untracked, found_tracked))
+
+    # A root with its own `.git` that git cannot read (a bogus .git file)
+    # must raise, not fall back to walking the disk.
+    tmp = tempfile.mkdtemp()
+    try:
+        with io.open(os.path.join(tmp, ".git"), "w", encoding="utf-8") as fh:
+            fh.write("not a gitdir\n")
+        try:
+            repo_files(tmp)
+            raised = False
+        except RuntimeError:
+            raised = True
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if raised:
+        print("[ok] mutation caught: repo_files in a working tree git cannot "
+              "read raises instead of walking the disk")
+    else:
+        bad += 1
+        print("[FAIL] repo_files fell back to os.walk in a root with a .git "
+              "git could not read")
 
     for name, m_sites, m_table, expect in _mutations(sites, table):
         found = compare(m_sites, m_table, relative)

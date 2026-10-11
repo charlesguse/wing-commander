@@ -15,7 +15,8 @@
 #                    listing failed or came back unparseable; absent when
 #                    the helper died before writing it)
 #   <job_id>.log     the raw log of one job, written ONLY when the read
-#                    succeeded and returned a non-empty body. An error message
+#                    succeeded and returned a non-empty body (an empty body is
+#                    not a failed read, it just owes no file). An error message
 #                    or an empty body is never written as log content, so a
 #                    log file that exists is always real evidence.
 #   reason.txt       only when the result is `failed`: `jobs-list` or
@@ -46,6 +47,12 @@ inputs:
   out-dir:
     description: Directory the job list and logs are written into.
     required: true
+  conclusions:
+    description: >-
+      Comma-separated job conclusions to fetch logs for (for example
+      `failure`). Empty fetches every job that is not skipped or cancelled.
+    required: false
+    default: ""
 outputs:
   result:
     description: "`ok` or `failed`."
@@ -60,6 +67,7 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         RUN_ID: ${{ inputs.run-id }}
         OUT_DIR: ${{ inputs.out-dir }}
+        CONCLUSIONS: ${{ inputs.conclusions }}
       run: |
         set -uo pipefail
         fetch_all() {
@@ -97,8 +105,18 @@ runs:
               rc=0
               gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" > "$OUT_DIR/$id.log.tmp" 2>/dev/null || rc=$?
             fi
-            if [ "$rc" != "0" ] || [ ! -s "$OUT_DIR/$id.log.tmp" ] \
-                || ! mv "$OUT_DIR/$id.log.tmp" "$OUT_DIR/$id.log"; then
+            if [ "$rc" != "0" ]; then
+              rm -f "$OUT_DIR/$id.log.tmp" "$OUT_DIR/$id.log"
+              return 1
+            fi
+            # A successful read with an empty body (a timed-out or never
+            # started job) owes no log: nothing is written and it is not a
+            # failed read. A caller that needs the log sees the missing file.
+            if [ ! -s "$OUT_DIR/$id.log.tmp" ]; then
+              rm -f "$OUT_DIR/$id.log.tmp" "$OUT_DIR/$id.log"
+              return 0
+            fi
+            if ! mv "$OUT_DIR/$id.log.tmp" "$OUT_DIR/$id.log"; then
               rm -f "$OUT_DIR/$id.log.tmp" "$OUT_DIR/$id.log"
               return 1
             fi
@@ -110,6 +128,14 @@ runs:
             case "$conclusion" in
               skipped|cancelled) continue ;;
             esac
+            # An optional caller filter: only jobs with a listed conclusion
+            # are fetched, so an irrelevant job's 404 cannot fail the read.
+            if [ -n "${CONCLUSIONS:-}" ]; then
+              case ",${CONCLUSIONS}," in
+                *",$conclusion,"*) ;;
+                *) continue ;;
+              esac
+            fi
             fetch_one "$job_id" || failed=1
           done
           if [ "$failed" != "0" ]; then

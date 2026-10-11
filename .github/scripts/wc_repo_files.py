@@ -10,8 +10,10 @@ developer's `.claude/worktrees/*` hold whole other checkouts; walking the
 filesystem scanned those copies and failed gates on every implement cycle
 (#808, #822, #823). Same idiom as verify-stage-tool-lists.py's
 _glob_has_match(). Outside a git working tree (a synthetic fixture), or
-when git cannot answer, the on-disk files stand in for tracked ones,
-`.git/` excluded. That only adds files: a gate that hunts for copies
+when git cannot answer in a root that has no `.git` of its own, the
+on-disk files stand in for tracked ones, `.git/` excluded; where the root
+has a `.git` and git cannot answer, RuntimeError is raised rather than
+walking. That only adds files: a gate that hunts for copies
 fails rather than passes, but one that asks whether a file exists can
 be satisfied by an untracked leftover. git runs without the variables that locate a repository
 (LOCATING_ENV), so a hook's GIT_DIR cannot point it at another one. The
@@ -53,6 +55,14 @@ def repo_files(root="."):
                 return sorted(os.fsdecode(p) for p in proc.stdout.split(b"\0") if p)
     except OSError:
         pass
+    # A root that carries its own `.git` IS a working tree, so git failing
+    # there (dubious ownership, a missing binary) must be reported: the walk
+    # would silently include the untracked pipeline checkout and bring back
+    # the failures behind #808, #822 and #823.
+    if os.path.exists(os.path.join(root, ".git")):
+        raise RuntimeError(
+            f"repo_files: {root!r} is a git working tree but git could not "
+            f"list its tracked files (dubious ownership? set safe.directory)")
     rels = []
     for dirpath, dirnames, filenames in os.walk(root):
         if ".git" in dirnames:

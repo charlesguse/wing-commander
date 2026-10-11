@@ -165,9 +165,9 @@ WHAT IT CHECKS
    write tool, deny what check 4 requires, and its agent step must pass the
    deny list, keep permission checks on, and name the wrapper in its
    prompt by the granted path. A listed site must grant the wrapper.
-   Since spec 101 it also grants no `gh` command in any spelling (first
-   whitespace-split token's basename `gh`, in any position so wrappers
-   count: `gh:*`, `gh*`, `gh api:*`, `/usr/bin/gh pr view:*`, `env gh:*`,
+   Since spec 101 it also grants no `gh` command in any spelling (the
+   command word's basename is `gh`, after skipping `env`/`command`-style
+   wrappers and `VAR=x` prefixes, so `ls docs/gh` is not a hit: `gh:*`, `gh*`, `gh api:*`, `/usr/bin/gh pr view:*`, `env gh:*`,
    `GH_TOKEN=x gh:*`, `command gh:*`): `gh` reaches remote writes, local file writes
    and, through `gh alias set`/`gh extension install`, arbitrary
    execution, so no per-subcommand list is safe on an agent that must not
@@ -549,6 +549,23 @@ def _tool_names(value):
     return names
 
 
+GRANT_WRAPPER_WORDS = frozenset(
+    ("env", "command", "exec", "sudo", "nohup", "time", "builtin"))
+ENV_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _command_word(tokens):
+    """Basename of the command a Bash grant runs: the first token that is
+    not a wrapper word (`env`, `command`, ...), an option of one, or a
+    `VAR=x` assignment. `ls docs/gh` runs `ls`, so it is not a `gh` grant."""
+    for t in tokens:
+        if (t.startswith("-") or ENV_ASSIGNMENT_RE.match(t)
+                or os.path.basename(t) in GRANT_WRAPPER_WORDS):
+            continue
+        return os.path.basename(t)
+    return ""
+
+
 def _bash_grant_problems(text, where, git_grant=GIT_READ_GRANT, strict=True,
                          gh_exempt=()):
     """Problems with the Bash grants in `text` for a read-only agent whose
@@ -565,8 +582,7 @@ def _bash_grant_problems(text, where, git_grant=GIT_READ_GRANT, strict=True,
             continue
         command = m.group(1).split(":", 1)[0].strip().rstrip("* ")
         tokens = command.split()
-        if (not strict
-                and any(os.path.basename(t) == "gh" for t in tokens)):
+        if not strict and _command_word(tokens) == "gh":
             problems.append(
                 f"{where} grants {grant} to a read-only agent. `gh` reaches "
                 f"remote writes, local file writes and (via `gh alias set` "
@@ -2594,6 +2610,9 @@ def _self_test_read_only_git(tmpdir):
         ("4b: inline agent step granting Bash(GH_TOKEN=x gh:*) wrapper spelling",
          _inline_fixture(allowed=f"Read,Bash(GH_TOKEN=x gh:*),{PUBLISHED_GIT_READ_GRANT}"),
          "claude_args grants Bash(GH_TOKEN=x gh:*) to a read-only agent", inline),
+        ("4b: a path argument ending in gh is not a gh grant",
+         _inline_fixture(allowed=f"Read,Bash(ls docs/gh:*),{PUBLISHED_GIT_READ_GRANT}"),
+         None, inline),
         ("4b: inline read-only agent step does not deny cd",
          _inline_fixture(denied=_FLEET_DENIED.replace(",Bash(cd:*)", "")),
          "does not deny Bash(cd:*)", inline),

@@ -99,6 +99,25 @@ AGENT_RAN = "steps.diagnose-shadow.outcome != 'skipped'"
 CLAUDE_SECRETS = {"claude-code-oauth-token", "anthropic-api-key"}
 
 
+_GH_WRAPPERS = {"env", "command", "exec", "sudo", "nohup", "time", "builtin"}
+
+
+def _grants_gh(tool):
+    """True for a Bash grant whose command word is `gh` in any spelling:
+    `Bash(gh:*)`, `Bash(/usr/bin/gh ...)`, `Bash(env gh ...)`,
+    `Bash(GH_TOKEN=x gh ...)`. Mirrors Gate 93 check 4b's detector."""
+    m = re.fullmatch(r"Bash\((.*)\)", tool)
+    if not m:
+        return False
+    for tok in m.group(1).split(":", 1)[0].split():
+        base = tok.rsplit("/", 1)[-1]
+        if (tok.startswith("-") or re.match(r"[A-Za-z_][A-Za-z0-9_]*=", tok)
+                or base in _GH_WRAPPERS):
+            continue
+        return base.rstrip("*") == "gh"
+    return False
+
+
 def load(path):
     with open(path, encoding="utf-8") as fh:
         # GitHub's `on:` parses as True under YAML 1.1; nothing here reads it.
@@ -283,7 +302,7 @@ def check(watchdog, wrapper):
             for t in allowed:
                 if t in FORBIDDEN_ALLOWED:
                     fail(f"the shadow may not be granted {t}")
-                if re.fullmatch(r"Bash\(gh\b[^)]*\)", t):
+                if _grants_gh(t):
                     fail(f"the shadow may hold no gh grant (spec 101), "
                          f"found {t}")
             for t in ("Write", "Edit"):
@@ -558,6 +577,21 @@ MUTATIONS = [
          "default-allowed-tools",
          _tool_step(wd)["with"]["default-allowed-tools"]
          + ",Bash(gh run view:*)")),
+    ("shadow granted gh by absolute path",
+     lambda wd, w: _tool_step(wd)["with"].__setitem__(
+         "default-allowed-tools",
+         _tool_step(wd)["with"]["default-allowed-tools"]
+         + ",Bash(/usr/bin/gh api:*)")),
+    ("shadow granted gh behind env",
+     lambda wd, w: _tool_step(wd)["with"].__setitem__(
+         "default-allowed-tools",
+         _tool_step(wd)["with"]["default-allowed-tools"]
+         + ",Bash(env gh api:*)")),
+    ("shadow granted gh behind a VAR=x prefix",
+     lambda wd, w: _tool_step(wd)["with"].__setitem__(
+         "default-allowed-tools",
+         _tool_step(wd)["with"]["default-allowed-tools"]
+         + ",Bash(GH_TOKEN=x gh api:*)")),
     ("a shadow upload drops overwrite",
      lambda wd, w: _family(wd)[-1]["with"].pop("overwrite")),
     ("shadow granted a writing gh subcommand",

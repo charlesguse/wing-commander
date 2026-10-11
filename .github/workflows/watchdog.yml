@@ -2518,6 +2518,7 @@ jobs:
           token: ${{ github.token }}
           run-id: ${{ inputs.run-id }}
           out-dir: ${{ runner.temp }}/dj-fetch
+          conclusions: failure
 
       - name: Stage failed-job logs
         id: stage-job-logs
