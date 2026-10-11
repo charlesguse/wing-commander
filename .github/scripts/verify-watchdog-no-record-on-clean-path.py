@@ -36,6 +36,7 @@ break an assertion.
 Wiring: lint-workflows.yml, Gate 74.
 """
 import os
+import re
 import shutil
 import stat
 import sys
@@ -54,6 +55,7 @@ ACTION = os.path.join(".github", "actions", "wing-commander-metrics-persist",
 ROLLUP_STEP = "Update cumulative rollup"
 RECORD_ARTIFACT_PREFIX = "metrics-record"
 DIAGNOSE_JOB = "diagnose"
+SHADOW_STEP_RE = re.compile(r"diagnose[ -]shadow", re.I)
 
 SPEC_DIR = "specs/058-per-job-minute-floor"
 # The inspection that emitted nothing. Its record key is what must be absent.
@@ -159,6 +161,12 @@ def emission_failures(subject):
         for job_id, step_name, step_if in subject["uploads"]:
             if job_id != DIAGNOSE_JOB:
                 continue          # already reported above
+            if want and SHADOW_STEP_RE.search(step_name):
+                # spec 110's diagnose shadow record is optional on the
+                # signal-bearing path (it exists only when the wrapper
+                # enables the shadow; Gate 146 owns its gating). Its
+                # clean-path absence is still asserted: want is False there.
+                continue
             emitted = job_runs
             if emitted and step_if.strip():
                 sctx = {"always()": True, "cancelled()": False,

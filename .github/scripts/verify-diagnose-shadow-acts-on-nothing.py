@@ -1,0 +1,673 @@
+#!/usr/bin/env python3
+"""Gate 146 -- the watchdog's diagnose shadow acts on nothing.
+
+WHY THIS EXISTS
+---------------
+spec 110 (FR-008, FR-009, FR-012, SC-003) and constitution Principle II
+(2.4.0): a trial shadow declares its own explicit Haiku model and turn
+budget, is bounded and off by default, and acts on nothing -- its output is
+recorded for comparison and never files, labels, comments, writes or
+decides. The shadow is a second agent step in watchdog.yml's `diagnose`
+job, the one job whose verdict does file and route, so every property that
+keeps it inert is a property of YAML that a later edit can quietly undo:
+one `if: always()`, one App-token reference, one adopter-extensible tool
+list, one job output wired to the wrong step. This gate holds each of them
+structurally, on every pull request.
+
+WHAT IT CHECKS (watchdog.yml unless named)
+-----------------------------------------
+1. Inputs: `diagnose-shadow-enabled` is a boolean defaulting to false;
+   `diagnose-shadow-model` defaults to claude-haiku-5-5;
+   `diagnose-shadow-max-turns` is a number.
+2. The shadow family -- every `diagnose` job step named "diagnose shadow"
+   or "diagnose-shadow" (case-insensitive; the same test
+   verify-watchdog-run.sh subtracts from the acting duration ceiling) --
+   is non-empty, holds exactly one agent step (id `diagnose-shadow`), and
+   is the job's contiguous TAIL: it runs after every step that reads back,
+   uploads or reports the acting verdict, and no unnamed step can hide
+   among it.
+3. Every family step is `continue-on-error: true`, and its `if:` is a
+   conjunction (no `||`, `failure()`, `success()`) gated on
+   `inputs.diagnose-shadow-enabled` -- the first step directly, every later
+   one through a family step that is. `always()`/`!cancelled()` (which
+   Gate 23 requires of the verdict and fail-loud steps) is allowed only
+   beside `steps.diagnose-shadow.outcome != 'skipped'`, so it can only
+   admit a run on which the shadow agent itself ran.
+4. The agent step: `timeout-minutes` <= 5, and the Diagnose step's own
+   timeout plus the shadow's plus OTHER_STEPS_MINUTES for every other step
+   fits the job's backstop (a job timeout would cancel the job, and with
+   it triage and act); `GH_TOKEN`
+   and `github_token` are exactly `${{ github.token }}`; `--model` is the
+   `diagnose-shadow-model` input; its prompt and `--json-schema` are
+   byte-equal to the Diagnose step's (the fallback research.md D7 names:
+   no composite may invoke the agent action, Gate 38).
+5. Its tool lists come from a family `wing-commander-tool-args` call with
+   no adopter extra/override input; the allowed list holds no Write, Edit,
+   NotebookEdit, bare Bash, Bash(gh:*), Bash(gh api:*) or Bash(git:*), and
+   every Bash(gh ...) grant is a read-only subcommand; the disallowed list
+   names Write and Edit.
+6. No family step reads the App token (`steps.ctx.outputs.token`,
+   `env.WC_BOT_TOKEN`), any `vars.*`, or a secret other than the two
+   Claude credentials; no non-family step and no `diagnose` job output
+   reads a family step's id.
+7. wing-commander-8-watchdog.yml passes `diagnose-shadow-enabled` as
+   exactly `${{ needs.trial-bound.outputs.enabled == 'true' }}` -- false
+   whenever the trial-bound job was skipped or failed.
+8. When the watchdog re-inspects one of its own runs, the shadow's traces
+   are not evidence: the shipped "Collect: execution-output artifacts"
+   step, run against a `claude-execution-output-diagnose-shadow` artifact
+   carrying a permission denial, emits no denied-tool signal (and the same
+   transcript under an acting artifact name does -- the positive control);
+   the annotations collector drops the marker the shadow's fail-loud
+   annotation carries, and every annotation the trial composites raise
+   carries it too.
+9. The shadow agent is called only with a healthy baseline: its tool-args
+   step (which gates the agent) tests the prep step's run-agent output; and
+   it cannot read the acting verdict: the prep step leaves neither
+   watchdog-findings.json nor the acting transcript readable in
+   $RUNNER_TEMP, and the baseline is unpacked only after the agent step.
+10. Every artifact-selection loop in watchdog.yml (`for f in
+   "$dl_dir"/*/*.json`) skips the shadow's artifact, so no collector can
+   take the shadow's record or transcript for the inspected run's own.
+
+Usage: verify-diagnose-shadow-acts-on-nothing.py [--self-test]
+Exit 0 = every check holds (self-test: every mutation is caught);
+exit 1 = otherwise.
+"""
+import copy
+import re
+import sys
+
+import yaml
+
+WATCHDOG = ".github/workflows/watchdog.yml"
+WRAPPER = ".github/workflows/wing-commander-8-watchdog.yml"
+FAMILY_RE = re.compile(r"diagnose[ -]shadow", re.I)
+AGENT_PREFIX = "anthropics/claude-code-action@"
+TOOL_ARGS = "wing-commander-tool-args"
+GITHUB_TOKEN = "${{ github.token }}"
+ENABLED = "inputs.diagnose-shadow-enabled"
+WRAPPER_ENABLED = "${{ needs.trial-bound.outputs.enabled == 'true' }}"
+SHADOW_MAX_TIMEOUT = 5
+OTHER_STEPS_MINUTES = 10
+# Read-only, and readable under this stage's github.token grant (issues,
+# actions, checks -- no pull-requests; Gate 12 holds the grant side).
+# No gh issue/pr reads: the acting verdict is already posted on the
+# lifecycle issue when the shadow runs, and reading it would be copying.
+READ_ONLY_GH = {"gh run view", "gh run list", "gh label list"}
+FORBIDDEN_ALLOWED = {"Write", "Edit", "NotebookEdit", "Bash", "Bash(*)",
+                     "Bash(gh:*)", "Bash(gh api:*)", "Bash(git:*)"}
+BAD_IF = re.compile(r"\|\||failure\(\)|success\(\)")
+STATUS_IF = re.compile(r"always\(\)|cancelled\(\)")
+AGENT_RAN = "steps.diagnose-shadow.outcome != 'skipped'"
+CLAUDE_SECRETS = {"claude-code-oauth-token", "anthropic-api-key"}
+
+
+def load(path):
+    with open(path, encoding="utf-8") as fh:
+        # GitHub's `on:` parses as True under YAML 1.1; nothing here reads it.
+        return yaml.safe_load(fh)
+
+
+def is_agent(step):
+    return str((step or {}).get("uses", "")).startswith(AGENT_PREFIX)
+
+
+def text_of(value):
+    return yaml.safe_dump(value, default_flow_style=True, width=10 ** 9) \
+        if not isinstance(value, str) else value
+
+
+def step_ids_referenced(text):
+    return set(re.findall(r"steps\.([A-Za-z0-9_-]+)\.", text))
+
+
+def arg_value(claude_args, flag):
+    """The value after `flag` in a claude_args block, quotes stripped; an
+    unquoted value runs to the end of its line."""
+    m = re.search(re.escape(flag) + r"[ \t]+('([^']*)'|\"([^\"]*)\"|([^\n]*\S))",
+                  claude_args or "")
+    if not m:
+        return None
+    return next(g for g in m.groups()[1:] if g is not None)
+
+
+def tools(text):
+    """Split a comma-joined tool list, keeping commas inside parentheses."""
+    out, depth, cur = [], 0, ""
+    for ch in text or "":
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        out.append(cur.strip())
+    return out
+
+
+def check(watchdog, wrapper):
+    failures = []
+    fail = failures.append
+
+    # 1. Inputs.
+    on = watchdog.get("on") or watchdog.get(True) or {}
+    inputs = ((on.get("workflow_call") or {}).get("inputs")) or {}
+    enabled = inputs.get("diagnose-shadow-enabled") or {}
+    if enabled.get("type") != "boolean" or enabled.get("default") is not False:
+        fail("input diagnose-shadow-enabled must be a boolean defaulting to "
+             "false (FR-012: off by default for adopters)")
+    if (inputs.get("diagnose-shadow-model") or {}).get("default") != "claude-haiku-5-5":
+        fail("input diagnose-shadow-model must default to claude-haiku-5-5 "
+             "(constitution II: the shadow declares an explicit Haiku model)")
+    if (inputs.get("diagnose-shadow-max-turns") or {}).get("type") != "number":
+        fail("input diagnose-shadow-max-turns must be a number (its own turn budget)")
+
+    job = ((watchdog.get("jobs") or {}).get("diagnose")) or {}
+    steps = list(job.get("steps") or [])
+    family_idx = [i for i, s in enumerate(steps)
+                  if FAMILY_RE.search(str((s or {}).get("name", "")))]
+    if not family_idx:
+        fail("no diagnose-shadow step found in the diagnose job -- the shadow "
+             "was removed or renamed; update this gate with it")
+        return failures
+    family = [steps[i] for i in family_idx]
+    family_ids = {s.get("id") for s in family if s.get("id")}
+
+    # 2. Exactly one agent step; the family is the job's contiguous tail.
+    agents = [s for s in family if is_agent(s)]
+    if len(agents) != 1 or agents[0].get("id") != "diagnose-shadow":
+        fail("the shadow family must hold exactly one agent step, id "
+             "diagnose-shadow")
+    if family_idx != list(range(len(steps) - len(family_idx), len(steps))):
+        first = family_idx[0]
+        stray = [s.get("name") for s in steps[first:] if s not in family]
+        fail("the shadow family must be the diagnose job's contiguous tail, "
+             "after every acting step; out of place: "
+             + (", ".join(map(str, stray)) or "a family step precedes an "
+                "acting step"))
+    acting = steps[:family_idx[0]]
+    diagnose = next((s for s in acting if s.get("id") == "diagnose"), None)
+    if diagnose is None or not is_agent(diagnose):
+        fail("the acting Diagnose step (id diagnose) must precede the shadow")
+
+    # 3. continue-on-error and enable-gated conjunctive ifs.
+    gated = set()
+    for s in family:
+        name = s.get("name")
+        if s.get("continue-on-error") is not True:
+            fail(f"shadow step {name!r} must be continue-on-error: true -- a "
+                 "failed shadow may not change the diagnose job's result")
+        cond = str(s.get("if") or "")
+        if not cond or BAD_IF.search(cond):
+            fail(f"shadow step {name!r} needs a conjunctive if: (no ||, "
+                 f"failure(), success()); got {cond!r}")
+            continue
+        if STATUS_IF.search(cond) and AGENT_RAN not in cond:
+            fail(f"shadow step {name!r} uses always()/!cancelled() without "
+                 f"{AGENT_RAN!r}; got {cond!r}")
+            continue
+        refs = step_ids_referenced(cond)
+        if ENABLED in cond or (refs & gated):
+            if s.get("id"):
+                gated.add(s["id"])
+        else:
+            fail(f"shadow step {name!r} is not gated on {ENABLED}, directly "
+                 "or through a family step that is")
+    if family and ENABLED not in str(family[0].get("if") or ""):
+        fail(f"the first shadow step must test {ENABLED} itself")
+
+    # 4/5. The agent step.
+    if agents:
+        agent = agents[0]
+        timeout = agent.get("timeout-minutes")
+        if not isinstance(timeout, (int, float)) or timeout > SHADOW_MAX_TIMEOUT:
+            fail(f"the shadow agent step needs timeout-minutes <= "
+                 f"{SHADOW_MAX_TIMEOUT}, got {timeout!r}")
+        acting_timeout = (diagnose or {}).get("timeout-minutes")
+        backstop = job.get("timeout-minutes")
+        if (isinstance(timeout, (int, float))
+                and isinstance(acting_timeout, (int, float))
+                and isinstance(backstop, (int, float))):
+            if acting_timeout + timeout + OTHER_STEPS_MINUTES > backstop:
+                fail(f"Diagnose ({acting_timeout}) + shadow ({timeout}) + "
+                     f"{OTHER_STEPS_MINUTES} for the other steps must fit "
+                     f"the job backstop "
+                     f"({backstop}), or a hung shadow can cost the acting "
+                     "path its outputs")
+        else:
+            fail("the Diagnose step, the shadow step and the diagnose job "
+                 "must each carry a numeric timeout-minutes")
+        env = agent.get("env") or {}
+        with_ = agent.get("with") or {}
+        if env.get("GH_TOKEN") != GITHUB_TOKEN:
+            fail("the shadow agent's GH_TOKEN must be exactly "
+                 f"{GITHUB_TOKEN}, never the App token")
+        if with_.get("github_token") != GITHUB_TOKEN:
+            fail("the shadow agent's github_token must be exactly "
+                 f"{GITHUB_TOKEN}, never the App token")
+        args = str(with_.get("claude_args") or "")
+        if arg_value(args, "--model") != "${{ inputs.diagnose-shadow-model }}":
+            fail("the shadow agent's --model must be the diagnose-shadow-model "
+                 "input")
+        dwith = (diagnose or {}).get("with") or {}
+        if with_.get("prompt") != dwith.get("prompt"):
+            fail("the shadow's prompt must be byte-equal to the Diagnose "
+                 "step's (research.md D7 fallback): paste the change into both")
+        if arg_value(args, "--json-schema") != arg_value(
+                str(dwith.get("claude_args") or ""), "--json-schema"):
+            fail("the shadow's --json-schema must be the Diagnose step's")
+        allowed_ref = arg_value(args, "--allowedTools") or ""
+        disallowed_ref = arg_value(args, "--disallowedTools") or ""
+        tool_steps = [s for s in family
+                      if TOOL_ARGS in str(s.get("uses", ""))]
+        tool_step = tool_steps[0] if len(tool_steps) == 1 else None
+        if tool_step is None:
+            fail("the shadow family must compose its tools with exactly one "
+                 f"{TOOL_ARGS} call")
+        else:
+            tid = tool_step.get("id")
+            if (allowed_ref != f"${{{{ steps.{tid}.outputs.allowed-tools }}}}"
+                    or disallowed_ref
+                    != f"${{{{ steps.{tid}.outputs.disallowed-tools }}}}"):
+                fail("the shadow agent's --allowedTools/--disallowedTools must "
+                     "be its own tool-args step's outputs")
+            twith = tool_step.get("with") or {}
+            extras = sorted(k for k in twith if k.startswith("extra-")
+                            or k.endswith("-override"))
+            if extras:
+                fail("the shadow's tool list is fixed read-only; no adopter "
+                     "extra/override may reach it: " + ", ".join(extras))
+            allowed = tools(twith.get("default-allowed-tools"))
+            disallowed = set(tools(twith.get("default-disallowed-tools")))
+            for t in allowed:
+                if t in FORBIDDEN_ALLOWED:
+                    fail(f"the shadow may not be granted {t}")
+                m = re.fullmatch(r"Bash\((gh[^:)]*)(?::\*)?\)", t)
+                if m and m.group(1).strip() not in READ_ONLY_GH:
+                    fail(f"the shadow's gh grant {t} is not a read-only "
+                         "subcommand")
+            for t in ("Write", "Edit"):
+                if t not in disallowed:
+                    fail(f"the shadow's disallowed list must name {t}")
+
+    # 6a. Re-runs keep the run id: every shadow upload overwrites.
+    for s in family:
+        if "actions/upload-artifact" in str(s.get("uses", "")) and \
+                (s.get("with") or {}).get("overwrite") is not True:
+            fail(f"shadow upload {s.get('name')!r} needs overwrite: true -- a "
+                 "re-run keeps the run id and would drop the re-run's record")
+
+    # 6. Credentials, ambient state, and nothing reads the shadow.
+    for s in family:
+        blob = text_of(s)
+        name = s.get("name")
+        if "steps.ctx.outputs.token" in blob or "WC_BOT_TOKEN" in blob:
+            fail(f"shadow step {name!r} reads the App token")
+        if re.search(r"\bvars\.", blob):
+            fail(f"shadow step {name!r} reads vars.* -- the wrapper decides "
+                 "(FR-012, Principle VII)")
+        for secret in re.findall(r"secrets\.([A-Za-z0-9_-]+)", blob):
+            if secret not in CLAUDE_SECRETS:
+                fail(f"shadow step {name!r} reads secrets.{secret}")
+    for s in acting:
+        hit = step_ids_referenced(text_of(s)) & family_ids
+        if hit:
+            fail(f"acting step {s.get('name')!r} reads shadow step(s) "
+                 f"{sorted(hit)}")
+    for out, value in (job.get("outputs") or {}).items():
+        hit = step_ids_referenced(str(value)) & family_ids
+        if hit:
+            fail(f"diagnose job output {out!r} reads shadow step(s) "
+                 f"{sorted(hit)}")
+
+    # 9. No agent call without a healthy baseline.
+    tool = next((s for s in family if TOOL_ARGS in str(s.get("uses", ""))),
+                None)
+    if tool is not None and RUN_AGENT not in str(tool.get("if") or ""):
+        fail(f"the shadow's tool-args step (which gates its agent) must "
+             f"test {RUN_AGENT}: with no healthy baseline the trial is "
+             "no-baseline whatever the shadow says, so it must not be called")
+
+    # 9b. The acting verdict is out of the shadow's reach while it runs.
+    prep = next((s for s in family if s.get("id") == "diagnose-shadow-prep"),
+                None)
+    prep_run = str((prep or {}).get("run") or "")
+    for acting_file in ("watchdog-findings.json", "claude-execution-output.json"):
+        if f'rm -f "$RUNNER_TEMP/{acting_file}"' not in prep_run:
+            fail(f"the prep step must take {acting_file} out of the shadow's "
+                 "reach (compress, then remove) before the agent runs")
+    unpack = [i for i, s in enumerate(steps)
+              if "watchdog-findings-baseline.json.gz" in str(s.get("run") or "")
+              and "gzip -dc" in str(s.get("run") or "")]
+    agent_at = next((i for i, s in enumerate(steps)
+                     if s.get("id") == "diagnose-shadow"), None)
+    if not unpack or agent_at is None or min(unpack) < agent_at:
+        fail("the acting baseline may be unpacked only after the shadow agent")
+
+    # 7. The wrapper's one-line false fallback.
+    wjob = ((wrapper.get("jobs") or {}).get("watchdog")) or {}
+    passed = (wjob.get("with") or {}).get("diagnose-shadow-enabled")
+    if passed != WRAPPER_ENABLED:
+        fail(f"{WRAPPER} must pass diagnose-shadow-enabled as exactly "
+             f"{WRAPPER_ENABLED!r}, got {passed!r}")
+    return failures
+
+
+MARKER = "(trial; acts on nothing)"
+TRIAL_COMPOSITES = (".github/actions/wing-commander-trial-record/action.yml",
+                    ".github/actions/wing-commander-trial-bound/action.yml")
+RUN_AGENT = "steps.diagnose-shadow-prep.outputs.run-agent == 'true'"
+EO_STEP = "Collect: execution-output artifacts"
+AN_STEP = "Collect: annotations"
+DENIAL = [{"type": "result", "subtype": "success", "is_error": False,
+           "permission_denials": [{"tool_name": "Bash", "tool_use_id": "t1",
+                                   "tool_input": {"command": "gh api x"}}]}]
+GH_STUB = """#!/usr/bin/env bash
+# gh run download <id> ... -D <dir>: materialise the fixture artifacts.
+dir=""; prev=""
+for a in "$@"; do [ "$prev" = "-D" ] && dir="$a"; prev="$a"; done
+cp -R "$WC_ARTIFACTS"/. "$dir"/
+"""
+
+
+LOOP_RE = re.compile(r'for f in "\$dl_dir"/\*/\*\.json')
+SKIP_RE = re.compile(r'case "\$f" in \*/[a-z-]+-diagnose-shadow/\*\) continue ;; esac')
+
+
+def loop_failures(text):
+    """Check 10: every artifact-selection loop skips the shadow's artifact
+    within its first lines -- the one rule, held at every copy."""
+    lines = text.splitlines()
+    loops = [i for i, line in enumerate(lines) if LOOP_RE.search(line)]
+    if not loops:
+        return ["no artifact-selection loop found in watchdog.yml; update "
+                "Gate 146's check 10 with the collectors"]
+    return [f"watchdog.yml:{i + 1}: artifact-selection loop does not skip the "
+            "diagnose shadow's artifact"
+            for i in loops
+            if not any(SKIP_RE.search(x) for x in lines[i + 1:i + 5])]
+
+
+def collector_failures(watchdog, text=None):
+    """Checks 8 and 10: run the shipped execution-output collector both
+    ways, and hold every artifact loop to the shadow skip."""
+    import json
+    import os
+    import tempfile
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from wc_shell_harness import ensure_jq, resolve_bash, run_step
+    steps = (watchdog.get("jobs") or {}).get("collect", {}).get("steps") or []
+    eo = next((x for x in steps if x.get("name") == EO_STEP), None)
+    an = next((x for x in steps if x.get("name") == AN_STEP), None)
+    if text is None:
+        text = open(WATCHDOG, encoding="utf-8").read()
+    failures = loop_failures(text)
+    if eo is None or an is None:
+        return failures + [f"collect job lost {EO_STEP!r} or {AN_STEP!r}"]
+    if f'contains("{MARKER}") | not' not in str(an.get("run")):
+        failures.append(f"{AN_STEP!r} must drop annotations carrying "
+                        f"{MARKER!r} (the shadow's fail-loud message)")
+    fam = [x for x in (watchdog.get("jobs") or {}).get("diagnose", {})
+           .get("steps") or [] if FAMILY_RE.search(str(x.get("name", "")))]
+    if not any(MARKER in str(x.get("run", "")) for x in fam):
+        failures.append(f"the shadow's fail-loud annotation must carry "
+                        f"{MARKER!r}, the text the annotations collector drops")
+    for comp in TRIAL_COMPOSITES:
+        for line in open(comp, encoding="utf-8"):
+            if re.search(r"::(error|warning)::", line) and MARKER not in line:
+                failures.append(f"{comp}: annotation without {MARKER!r}: "
+                                f"{line.strip()[:80]}")
+    ensure_jq()
+    bash = resolve_bash()
+    for artifact, want in (("claude-execution-output-diagnose-shadow", 0),
+                           ("claude-execution-output-cycle", 1)):
+        with tempfile.TemporaryDirectory() as tmp:
+            arts = os.path.join(tmp, "arts", artifact)
+            os.makedirs(arts)
+            with open(os.path.join(arts, "claude-execution-output.json"),
+                      "w", encoding="utf-8") as fh:
+                json.dump(DENIAL, fh)
+            bindir = os.path.join(tmp, "bin")
+            os.makedirs(bindir)
+            stub = os.path.join(bindir, "gh")
+            with open(stub, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(GH_STUB)
+            os.chmod(stub, 0o755)
+            rt = os.path.join(tmp, "rt")
+            os.makedirs(rt)
+            for name in ("signals.json", "collector-outcomes.json"):
+                with open(os.path.join(rt, name), "w", encoding="utf-8") as fh:
+                    fh.write("[]")
+            env = {"GH_TOKEN": "x", "ACTIONS_TOKEN": "x", "RUN_ID": "1",
+                   "RUN_CONCLUSION": "success", "INSPECTED_STAGE": "watchdog",
+                   "GITHUB_REPOSITORY": "o/r",
+                   "WC_ARTIFACTS": os.path.join(tmp, "arts"),
+                   "PATH": bindir + os.pathsep + os.environ["PATH"]}
+            rc, out, _o, _s = run_step(bash, eo["run"], tmp, env, rt)
+            with open(os.path.join(rt, "signals.json"), encoding="utf-8") as fh:
+                got = sum(1 for x in json.load(fh)
+                          if x.get("class-hint") == "denied-tool")
+            if rc != 0 or got != want:
+                failures.append(f"{EO_STEP!r} on a {artifact} artifact: "
+                                f"{got} denied-tool signal(s), expected {want} "
+                                f"(rc={rc}) {out.strip()[:200]}")
+    return failures
+
+
+# ── self-test ──────────────────────────────────────────────────────────────
+def _job(wd):
+    return wd["jobs"]["diagnose"]
+
+
+def _family(wd):
+    return [s for s in _job(wd)["steps"]
+            if FAMILY_RE.search(str(s.get("name", "")))]
+
+
+def _agent(wd):
+    return next(s for s in _family(wd) if s.get("id") == "diagnose-shadow")
+
+
+def _tool_step(wd):
+    return next(s for s in _family(wd) if TOOL_ARGS in str(s.get("uses", "")))
+
+
+def _move_family_before_upload(wd):
+    steps = _job(wd)["steps"]
+    fam = _family(wd)
+    rest = [s for s in steps if s not in fam]
+    at = next(i for i, s in enumerate(rest) if s.get("name") == "Upload findings")
+    _job(wd)["steps"] = rest[:at] + fam + rest[at:]
+
+
+def _unnamed_step_in_family(wd):
+    steps = _job(wd)["steps"]
+    at = steps.index(_agent(wd)) + 1
+    steps.insert(at, {"name": "Post the comparison", "continue-on-error": True,
+                      "if": "steps.diagnose-shadow.outcome != 'skipped'",
+                      "run": "gh issue comment 1 --body x"})
+
+
+def _acting_reads_shadow(wd):
+    step = next(s for s in _job(wd)["steps"]
+                if s.get("name") == 'Report "passed inspection" to lifecycle issue')
+    step.setdefault("env", {})["SHADOW"] = \
+        "${{ steps.diagnose-shadow-trial.outputs.outcome }}"
+
+
+MUTATIONS = [
+    ("enable input defaults to true",
+     lambda wd, w: wd.get("on", wd.get(True))["workflow_call"]["inputs"]
+     ["diagnose-shadow-enabled"].__setitem__("default", True)),
+    ("shadow model default drifts",
+     lambda wd, w: wd.get("on", wd.get(True))["workflow_call"]["inputs"]
+     ["diagnose-shadow-model"].__setitem__("default", "claude-opus-5-5")),
+    ("shadow agent step loses continue-on-error",
+     lambda wd, w: _agent(wd).pop("continue-on-error")),
+    ("a later shadow step loses continue-on-error",
+     lambda wd, w: _family(wd)[-1].pop("continue-on-error")),
+    ("a shadow step runs on always()",
+     lambda wd, w: _family(wd)[-2].__setitem__("if", "always()")),
+    ("a shadow step runs on always() gated only on its own predecessor",
+     lambda wd, w: _family(wd)[-1].__setitem__(
+         "if", "always() && steps.diagnose-shadow-metrics.outcome == 'success'")),
+    ("a shadow step's if: admits a run through ||",
+     lambda wd, w: _family(wd)[-1].__setitem__(
+         "if", "steps.diagnose-shadow-metrics.outcome == 'success' || "
+               "steps.diagnose.outcome == 'success'")),
+    ("the first shadow step is not gated on the enable input",
+     lambda wd, w: _family(wd)[0].__setitem__(
+         "if", "steps.diagnose.outcome != 'skipped'")),
+    ("shadow agent GH_TOKEN is the App token",
+     lambda wd, w: _agent(wd)["env"].__setitem__(
+         "GH_TOKEN", "${{ steps.ctx.outputs.token }}")),
+    ("shadow agent github_token is the App token",
+     lambda wd, w: _agent(wd)["with"].__setitem__(
+         "github_token", "${{ steps.ctx.outputs.token }}")),
+    ("shadow agent timeout removed",
+     lambda wd, w: _agent(wd).pop("timeout-minutes")),
+    ("shadow agent timeout pushes past the job backstop",
+     lambda wd, w: _agent(wd).__setitem__("timeout-minutes", 10)),
+    ("the acting timeout grows until the sum reaches the job backstop",
+     lambda wd, w: next(s for s in _job(wd)["steps"]
+                        if s.get("id") == "diagnose").__setitem__(
+         "timeout-minutes", 11)),
+    ("shadow agent runs the acting model",
+     lambda wd, w: _agent(wd)["with"].__setitem__(
+         "claude_args", _agent(wd)["with"]["claude_args"].replace(
+             "${{ inputs.diagnose-shadow-model }}",
+             "${{ steps.resolve-diagnose-model.outputs.model }}"))),
+    ("shadow prompt drifts from Diagnose's",
+     lambda wd, w: _agent(wd)["with"].__setitem__(
+         "prompt", _agent(wd)["with"]["prompt"] + "Also be brief.\n")),
+    ("shadow granted Write",
+     lambda wd, w: _tool_step(wd)["with"].__setitem__(
+         "default-allowed-tools",
+         _tool_step(wd)["with"]["default-allowed-tools"] + ",Write")),
+    ("shadow granted every gh command",
+     lambda wd, w: _tool_step(wd)["with"].__setitem__(
+         "default-allowed-tools",
+         _tool_step(wd)["with"]["default-allowed-tools"] + ",Bash(gh:*)")),
+    ("shadow granted the lifecycle issue's posted verdict",
+     lambda wd, w: _tool_step(wd)["with"].__setitem__(
+         "default-allowed-tools",
+         _tool_step(wd)["with"]["default-allowed-tools"]
+         + ",Bash(gh issue view:*)")),
+    ("a shadow upload drops overwrite",
+     lambda wd, w: _family(wd)[-1]["with"].pop("overwrite")),
+    ("shadow granted a writing gh subcommand",
+     lambda wd, w: _tool_step(wd)["with"].__setitem__(
+         "default-allowed-tools",
+         _tool_step(wd)["with"]["default-allowed-tools"]
+         + ",Bash(gh issue comment:*)")),
+    ("adopter extra tools reach the shadow",
+     lambda wd, w: _tool_step(wd)["with"].__setitem__(
+         "extra-allowed-tools", "${{ inputs.extra-allowed-tools }}")),
+    ("shadow reads a vars.* switch",
+     lambda wd, w: _family(wd)[0].__setitem__(
+         "if", _family(wd)[0]["if"]
+         + " && vars.WING_COMMANDER_DIAGNOSE_SHADOW_SINCE != ''")),
+    ("shadow family moved before the findings upload",
+     lambda wd, w: _move_family_before_upload(wd)),
+    ("an unnamed step hides inside the shadow family",
+     lambda wd, w: _unnamed_step_in_family(wd)),
+    ("an acting report step reads the shadow's outcome",
+     lambda wd, w: _acting_reads_shadow(wd)),
+    ("a diagnose job output reads the shadow",
+     lambda wd, w: _job(wd)["outputs"].__setitem__(
+         "shadow", "${{ steps.diagnose-shadow.outcome }}")),
+    ("the acting findings stay readable while the shadow runs",
+     lambda wd, w: _family(wd)[0].__setitem__("run", _family(wd)[0]["run"]
+         .replace('rm -f "$RUNNER_TEMP/watchdog-findings.json"', ":"))),
+    ("the baseline is unpacked before the shadow agent",
+     lambda wd, w: _family(wd)[0].__setitem__("run", _family(wd)[0]["run"]
+         + '\ngzip -dc "$RUNNER_TEMP/watchdog-findings-baseline.json.gz" > x\n')),
+    ("the shadow agent runs without a healthy baseline",
+     lambda wd, w: _tool_step(wd).__setitem__(
+         "if", "steps.diagnose-shadow-prep.outcome == 'success'")),
+    ("wrapper hard-codes the shadow on",
+     lambda wd, w: w["jobs"]["watchdog"]["with"].__setitem__(
+         "diagnose-shadow-enabled", True)),
+]
+
+
+def _eo_step(wd):
+    return next(x for x in wd["jobs"]["collect"]["steps"]
+                if x.get("name") == EO_STEP)
+
+
+def _an_step(wd):
+    return next(x for x in wd["jobs"]["collect"]["steps"]
+                if x.get("name") == AN_STEP)
+
+
+COLLECTOR_MUTATIONS = [
+    ("the cost-report collector's artifact loop loses its shadow skip",
+     "text"),
+    ("the execution-output collector reads the shadow's denials",
+     lambda wd: _eo_step(wd).__setitem__("run", _eo_step(wd)["run"].replace(
+         "*/claude-execution-output-diagnose-shadow/*) continue",
+         "*/no-such-artifact/*) continue"))),
+    ("the annotations collector keeps the shadow's annotation",
+     lambda wd: _an_step(wd).__setitem__("run", _an_step(wd)["run"].replace(
+         f'contains("{MARKER}") | not', "true"))),
+]
+
+
+def self_test(watchdog, wrapper):
+    bad = 0
+    base = check(watchdog, wrapper) + collector_failures(watchdog)
+    if base:
+        print("self-test: the shipped tree must pass first:")
+        for f in base:
+            print(f"  - {f}")
+        return 1
+    for name, mutate in MUTATIONS:
+        wd, w = copy.deepcopy(watchdog), copy.deepcopy(wrapper)
+        mutate(wd, w)
+        got = check(wd, w)
+        if got:
+            print(f"[ok] caught: {name} ({got[0][:90]})")
+        else:
+            bad += 1
+            print(f"[FAIL] not caught: {name}")
+    text = open(WATCHDOG, encoding="utf-8").read()
+    for name, mutate in COLLECTOR_MUTATIONS:
+        wd, t = copy.deepcopy(watchdog), text
+        if mutate == "text":
+            skip = 'case "$f" in */metrics-record-diagnose-shadow/*) continue ;; esac'
+            at = t.rindex(skip)
+            t = t[:at] + ":" + t[at + len(skip):]
+        else:
+            mutate(wd)
+        got = collector_failures(wd, t)
+        if got:
+            print(f"[ok] caught: {name} ({got[0][:90]})")
+        else:
+            bad += 1
+            print(f"[FAIL] not caught: {name}")
+    total = len(MUTATIONS) + len(COLLECTOR_MUTATIONS)
+    print(f"Gate 146 self-test: {total} mutation(s), {bad} missed")
+    return 1 if bad else 0
+
+
+def main(argv):
+    watchdog, wrapper = load(WATCHDOG), load(WRAPPER)
+    if "--self-test" in argv:
+        return self_test(watchdog, wrapper)
+    failures = check(watchdog, wrapper) + collector_failures(watchdog)
+    for f in failures:
+        print(f"::error::Gate 146: {f}")
+    if failures:
+        return 1
+    print("Gate 146: the diagnose shadow acts on nothing")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

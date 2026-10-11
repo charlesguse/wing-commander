@@ -1362,7 +1362,7 @@ or one-cycle-at-a-time manual.
 
 | | |
 |---|---|
-| Inputs | `spec-dir` (string, required); `issue-number` (number, required); `converged` (boolean, required); `summary-model` (string, `claude-haiku-4-5`); `max-turns` (number, `20`) |
+| Inputs | `spec-dir` (string, required); `issue-number` (number, required); `converged` (boolean, required); `summary-model` (string, `claude-haiku-5-5`); `max-turns` (number, `20`) |
 | Preconditions | full artifact set on `spec/NNN-slug`; branch has commits ahead of your default branch; no final PR exists yet (any state) |
 | Side effects | final PR `spec/NNN-slug` → default branch (summary, changed files, remaining-manual-work); same remaining-work list commented on the issue; `spec-meta.json` → `review`; `stage:review` label |
 | Outputs | `pr-number` |
@@ -1383,7 +1383,7 @@ issue instead of losing it as an orphan line.
 
 | | |
 |---|---|
-| Inputs | `head-ref`, `base-ref` (string, required); `merged` (boolean, required); `pr-number` (number, required); `merge-commit-sha` (string, `""`); `summary-model` (string, `claude-haiku-4-5`); `max-turns` (number, `20`) |
+| Inputs | `head-ref`, `base-ref` (string, required); `merged` (boolean, required); `pr-number` (number, required); `merge-commit-sha` (string, `""`); `summary-model` (string, `claude-haiku-5-5`); `max-turns` (number, `20`) |
 | Preconditions | matched spec's artifacts exist and self-identify consistently (identity refusal otherwise) |
 | Side effects | self-selects exactly one outcome from the raw PR facts: merged final PR → full teardown + issue closed (`teardown-done`); unmerged draft PR → draft deleted, issue left open (`teardown-rejected`); unmerged final/plan/tasks/impl PR (the `plan/`, `tasks/`, `impl/` prefixes are configurable defaults, set via `WING_COMMANDER_PLAN_PREFIX`/`WING_COMMANDER_TASKS_PREFIX`/`WING_COMMANDER_IMPL_PREFIX`) → marked stalled, nothing deleted (`mark-stalled`); everything else → no-op |
 | Outputs | `outcome` (`teardown-done` \| `teardown-rejected` \| `mark-stalled` \| `none`) |
@@ -1529,6 +1529,33 @@ jobs:
       speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
       speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 ```
+
+### watchdog
+
+Inspects one completed run (`run-id`) and files, routes or reports what its
+read-only diagnose agent finds. See [Stage 9 — Watchdog](architecture.md#stage-9--watchdog-watchdogyml-wrapper-wing-commander-8-watchdogyml)
+for the design. Only the diagnose inputs are listed here.
+
+| | |
+|---|---|
+| Inputs | `run-id` (string, required); `run-name` (string, `""`); `diagnose-model` (string, `claude-opus-5-5`); `diagnose-max-turns` (number, `30`); `diagnose-shadow-enabled` (boolean, `false`); `diagnose-shadow-model` (string, `claude-haiku-5-5`); `diagnose-shadow-max-turns` (number, `8`) |
+
+The three `diagnose-shadow-*` inputs (spec 110) run an optional second,
+read-only diagnose on the same evidence after the acting diagnose has
+filed, routed and reported everything. It acts on nothing: every step is
+`continue-on-error`, its credential is `github.token`, its tool list is
+fixed read-only and ignores your tool-list inputs, and its result only
+becomes a `trial` object on its own metrics record (`run_label:
+diagnose-shadow`, artifact `metrics-record-diagnose-shadow`). It is off
+unless your wrapper passes `diagnose-shadow-enabled: true`; the stage reads
+no repository variable for it. This repository's
+`wing-commander-8-watchdog.yml` computes the value in a `trial-bound` job
+from `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE` and the metrics branch (60 days
+or 300 compared runs, whichever comes first), and
+`wing-commander-trial-summary.yml` summarises the trial. A copy of that
+job in your wrapper references the composite from the pipeline repository
+(`charlesguse/wing-commander/.github/actions/wing-commander-trial-bound@<your pin>`)
+rather than by local path.
 
 ## Chaining payload contract
 
