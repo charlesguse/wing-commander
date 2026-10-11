@@ -101,7 +101,7 @@
 - [x] T021 [P] Update the `WING_COMMANDER_CONTAINER_IMAGE` row in `docs/setup.md` to describe the sync, add a row for `WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN` (Variables write on exactly this repo and the test repo), and what to do when the sync fails; remove the manual "copy the digest" step (FR-011, SC-005)
 - [x] T022 [P] Update the header comment of `.github/workflows/wing-commander-e2e-reference-image.yml` to match (workflow comments are gate-checked; treat as code)
 - [ ] T023 Run `python .github/scripts/run-local-gates.py` in full; fix any gate that byte-compares the edited comments; run the `review-step-gating` skill on the workflow change
-- [ ] T024 Walk through `specs/111-reference-image-pin-sync/quickstart.md` fixture steps; note the post-merge proof (`prove-after-merge`: re-drive one build, confirm both variables equal the digest — SC-001) for the PR description
+- [x] T024 Walk through `specs/111-reference-image-pin-sync/quickstart.md` fixture steps; note the post-merge proof (`prove-after-merge`: re-drive one build, confirm both variables equal the digest — SC-001) for the PR description
 
 ---
 
