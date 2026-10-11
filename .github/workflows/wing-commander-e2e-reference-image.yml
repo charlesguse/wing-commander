@@ -149,14 +149,15 @@ jobs:
           exit 1
 
   # Writes the pins after a passed check (specs/111-reference-image-pin-sync).
-  # Runs only then: GitHub keeps one pending job per concurrency group and
-  # cancels it when another queues, so a run whose check failed must not
-  # queue here and cancel a passed run's pending sync. A failed check is
-  # reported by startup-check's own summary and red job. The token is bound
-  # to the sync step only.
+  # Runs only then, and only for a default-branch build: GitHub keeps one
+  # pending job per concurrency group and cancels it when another queues, so
+  # a run whose check failed, or a branch build that may never pin, must not
+  # queue here and cancel a passed default-branch run's pending sync. A
+  # failed check is reported by startup-check's own summary and red job.
+  # The token is bound to the sync step only.
   sync-pins:
     needs: [build-and-publish, startup-check]
-    if: ${{ !cancelled() && needs.build-and-publish.result == 'success' && needs.startup-check.outputs.passed == 'true' }}
+    if: ${{ !cancelled() && needs.build-and-publish.result == 'success' && needs.startup-check.outputs.passed == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-latest
     concurrency:
       group: reference-image-pin-sync
@@ -310,8 +311,9 @@ jobs:
           #      and names that run to re-run;
           #    - its sync has not run yet: it queues after this one and will
           #      write its newer digest over this run's, so it does not stop
-          #      this write.
-          #    Any list or view that fails writes nothing.
+          #      this write, and its older attempts are not read.
+          #    Any list or view that fails, or a row that does not parse,
+          #    writes nothing.
           if ! runs="$(gh run list --repo "$THIS_REPO" --workflow "$WORKFLOW" --branch "$DEFAULT_BRANCH" \
             --limit 100 --json number,databaseId,attempt \
             --jq 'sort_by(.number) | reverse | .[] | "\(.number) \(.databaseId) \(.attempt)"' 2> "$ERRS")"; then
@@ -319,7 +321,11 @@ jobs:
             finish
           fi
           while read -r n id attempts; do
-            [[ "$n" =~ ^[0-9]+$ ]] && [[ "$id" =~ ^[0-9]+$ ]] && [[ "$attempts" =~ ^[0-9]+$ ]] || continue
+            [ -n "$n" ] || continue
+            if ! [[ "$n" =~ ^[0-9]+$ && "$id" =~ ^[0-9]+$ && "$attempts" =~ ^[0-9]+$ ]]; then
+              record_all failed "could not read this workflow's run list to rule out a newer sync (row: ${n} ${id} ${attempts})"
+              finish
+            fi
             [ "$n" -gt "$RUN_NUMBER" ] || break
             for ((a = attempts; a >= 1; a--)); do
               if ! verdicts="$(gh run view "$id" --repo "$THIS_REPO" --attempt "$a" --json jobs \
@@ -336,6 +342,7 @@ jobs:
                 record_all failed "newer run ${n} passed its check but its sync did not finish; re-run that run's sync-pins job, not this one"
                 finish
               fi
+              break
             done
           done <<< "$runs"
 

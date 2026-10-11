@@ -140,6 +140,18 @@ CASES = {
         runs=[8], jobs={8: [run_jobs("success", "success"), run_jobs(None, None, job=None)]},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=0, status={THIS: "skipped", E2E: "skipped"}, writes=[], reason="run 8"),
+    # A newer run re-run after its sync failed: attempt 2 passed its check
+    # and its sync is still pending, so it will write last; attempt 1's
+    # failure no longer decides.
+    "newer-rerun-pending": dict(
+        runs=[8], jobs={8: [run_jobs("success", "failure"), run_jobs("success", None, job=None)]},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=0, status={THIS: "written", E2E: "written"}, writes=[THIS, E2E]),
+    # A run-list row that does not parse fails closed.
+    "run-list-malformed": dict(
+        runs=[8], attempts_override={8: None},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[]),
     "e2e-is-this-repo": dict(
         env={"E2E_REPO": "OCTO/Wing"}, vars={THIS: OLD}, reach=[THIS],
         exit=0, status={THIS: "written", "test repository": "skipped"}, writes=[THIS]),
@@ -213,7 +225,7 @@ CASES = {
 # Cases whose outcome may close the failure issue (every sync-set repository
 # written or current); every other case must leave `synced` unset.
 SYNCED = {"both-written", "all-current", "exact-reach-case-insensitive",
-          "absent-variable", "not-superseded", "hand-set-held-value"}
+          "absent-variable", "not-superseded", "hand-set-held-value", "newer-rerun-pending"}
 
 
 def run_case(name, case, tmp, bash, script):
@@ -237,7 +249,8 @@ def run_case(name, case, tmp, bash, script):
     attempts = {n: (doc if isinstance(doc, list) else [doc])
                 for n, doc in case.get("jobs", {}).items()}
     with open(os.path.join(stub_dir, "runs.json"), "w") as f:
-        json.dump([{"number": n, "databaseId": 100 + n, "attempt": len(attempts.get(n, [1]))}
+        json.dump([{"number": n, "databaseId": 100 + n,
+                    "attempt": case.get("attempts_override", {}).get(n, len(attempts.get(n, [1])))}
                    for n in case.get("runs", [])], f)
     os.makedirs(os.path.join(stub_dir, "jobs"))
     for n, docs in attempts.items():
@@ -414,6 +427,10 @@ def check_verdict_step(bash):
     if "needs.startup-check.outputs.passed == 'true'" not in sync_if:
         errs.append("sync-pins must run only after a passed check (a queued job is cancelled "
                     "by the next to queue in its concurrency group)")
+    if "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)" \
+            not in sync_if:
+        errs.append("sync-pins must run only for a default-branch build (a branch build "
+                    "queued in the concurrency group cancels main's pending sync)")
     dogfood = os.path.join(GH_DIR, "workflows", "wing-commander-private-image-dogfood.yml")
     with open(dogfood) as f:
         df = f.read()
