@@ -195,8 +195,12 @@ def check_git_floor(root, tag):
                           capture_output=True, text=True)
     if proc.returncode == 0:
         return None
-    return (proc.stderr.strip() or proc.stdout.strip()
-            or "the git floor check exited {0}".format(proc.returncode))
+    err = proc.stderr.strip() or proc.stdout.strip()
+    # The fragment's own two messages are a floor failure; anything else is
+    # docker failing to run the probe, said as such.
+    if "is older than the 2.38 minimum" in err or "could not parse git version" in err:
+        return err
+    return "could not run the git floor probe (exit {0}) -- {1}".format(proc.returncode, err[-1000:])
 
 
 def _optout_sites(node, path=()):
@@ -423,7 +427,8 @@ def scan(root=".", tag=IMAGE_TAG):
         return failures
     try:
         # One container start probes required-tools.txt and the prompted
-        # commands together; the misses are reported per list.
+        # commands together; the misses are reported per list. The git
+        # floor (image-git-floor.sh) runs in a second start below.
         missing, log = check_tools(tag, tools + wanted)
         shell_ran = missing is not None
         if missing is None:

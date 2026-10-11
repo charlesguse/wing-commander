@@ -86,6 +86,9 @@ STEP_NAMES = [
     (re.compile(r"^Run # Do NOT pass --tsconfig-override"), "Run Claude Code Action"),
 ]
 RUN_STEP = "Run Claude Code Action"
+# Only these are setup: an error in any other step before the setup-done
+# line (say the job's own upload step) is not the image's setup failing.
+SETUP_STEPS = frozenset(name for _pattern, name in STEP_NAMES)
 
 
 def _step_name(group):
@@ -163,6 +166,9 @@ def classify(text):
                 return _unclassified(
                     "the action stopped in its own prepare checks, before setup "
                     "(an event, actor or input it refused)", error)
+            if not setup_done and _step_name(group) not in SETUP_STEPS:
+                return _unclassified(
+                    "an error in a step that is not the action's setup, before setup finished", error)
             if not setup_done:
                 step = _step_name(group)
                 return _result(

@@ -14,8 +14,9 @@
 # vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE so a repository that
 # hasn't built and pushed the dogfood image yet gets a clean no-op instead
 # of a permanently failing scheduled run -- unless a dispatch names an image
-# itself (the reference-image rebuild passes its digest,
-# specs/112-agent-startup-image-check), which also runs. Every run turns on
+# itself in this owner's GHCR namespace (the reference-image rebuild passes
+# its digest, specs/112-agent-startup-image-check), which also runs; any
+# other dispatched image is refused. Every run turns on
 # the agent start-up check (startup-check). Everything else (the
 # verify-image-prerequisites job, the credential binding) lives in the
 # published private-image-dogfood.yml, identical to what an adopter's own
@@ -28,13 +29,27 @@ on:
   workflow_dispatch:
     inputs:
       container-image:
-        description: "Image to check instead of the configured dogfood image (the reference-image rebuild passes its published digest)"
+        description: "Image to check instead of the configured dogfood image, inside ghcr.io/<owner>/ only (the reference-image rebuild passes its published digest)"
         required: false
         default: ""
 
 permissions: {}
 
 jobs:
+  # A dispatched image outside this owner's GHCR namespace is refused
+  # loudly, not silently skipped by the dogfood job's guard below.
+  refuse-foreign-image:
+    if: inputs.container-image != '' && !startsWith(inputs.container-image, format('ghcr.io/{0}/', github.repository_owner))
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Refuse an image outside this owner's GHCR namespace
+        env:
+          IMAGE: ${{ inputs.container-image }}
+        run: |
+          echo "::error::wing-commander private-image-dogfood: $IMAGE is outside ghcr.io/$GITHUB_REPOSITORY_OWNER/ -- not checked, so the registry credentials are not sent to its registry."
+          exit 1
+
   dogfood:
     # A dispatched image runs only inside this owner's own GHCR namespace:
     # a free-text input must not choose which registry receives the
