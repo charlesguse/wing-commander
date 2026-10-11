@@ -242,6 +242,8 @@ def run_collector(script, env, tmproot, listing, raw=False, logs=None,
         # composite staged (specs/101-read-only-gh-grants); hand the step
         # the helper's result.
         env = dict(env)
+        # The real step runs under `set -u`, in a runner that always sets this.
+        env.setdefault("GITHUB_REPOSITORY", "charlesguse/wing-commander")
         env["FETCH_RESULT"] = run_fetch(
             fetch or shipped_fetch(), listing,
             os.path.join(runner_temp, "cs-job-logs"),
@@ -369,7 +371,7 @@ def shipped_fetch():
 
 def run_fetch(fetch_script, listing, out_dir, tmproot, raw=False, logs=None,
               jobs_rc=0, fail_mv=False, crash_jq=False, stale=None,
-              crash_logs=False):
+              crash_logs=False, conclusions=""):
     """Run the shared helper against stub_gh. `listing` is jobs.json for the
     stub: printed as is when `raw`, else a `{"jobs": [...]}` page gh's own
     `--jq` is applied to; the listing exits `jobs_rc`. A listed job's log is
@@ -422,7 +424,8 @@ def run_fetch(fetch_script, listing, out_dir, tmproot, raw=False, logs=None,
             os.chmod(os.path.join(bindir, "mv"), 0o755)
         env = {"PATH": bindir + os.pathsep + os.environ["PATH"],
                "GITHUB_REPOSITORY": "charlesguse/wing-commander",
-               "RUN_ID": "1", "GH_TOKEN": "x", "OUT_DIR": out_dir}
+               "RUN_ID": "1", "GH_TOKEN": "x", "OUT_DIR": out_dir,
+               "CONCLUSIONS": conclusions}
         rc, _out, outs, _sum = run_step(
             BASH, fetch_script, workdir, env, runner_temp,
             shell=step_shell(FETCH_ACTION, FETCH_STEP))
@@ -659,6 +662,32 @@ def staging_suite(stage_script, fetch_script, collector, tmproot):
     if rc != 0 or got != ["failed"]:
         failures.append(f"{tag} collect-step-summary outcome(s) {got!r}, "
                         f"expected ['failed'] (FR-019).")
+
+    # The helper's conclusion filter and its empty-body rule, run directly.
+    listing = json.dumps({"jobs": FAILED_JOBS})
+    out_dir = os.path.join(tempfile.mkdtemp(dir=tmproot), "out")
+    _rc, result, _jobs, _reason, logs_left = run_fetch(
+        fetch_script, listing, out_dir, tmproot, logs={902: None},
+        conclusions="failure")
+    if result != "ok" or logs_left != ["901.log"]:
+        failures.append(f"[helper: a conclusions filter skips an unlisted "
+                        f"job's unreadable log] result {result!r}, logs "
+                        f"{logs_left!r}, expected 'ok' and ['901.log'].")
+    out_dir = os.path.join(tempfile.mkdtemp(dir=tmproot), "out")
+    _rc, result, _jobs, _reason, logs_left = run_fetch(
+        fetch_script, listing, out_dir, tmproot, logs={902: None})
+    if result != "failed":
+        failures.append(f"[helper: with no filter an unreadable log still "
+                        f"fails the read] result {result!r}, expected "
+                        f"'failed'.")
+    out_dir = os.path.join(tempfile.mkdtemp(dir=tmproot), "out")
+    _rc, result, _jobs, reason, logs_left = run_fetch(
+        fetch_script, listing, out_dir, tmproot, logs={901: ""})
+    if result != "ok" or reason is not None or "901.log" in logs_left:
+        failures.append(f"[helper: an empty log body is no file and no "
+                        f"failed read] result {result!r}, reason {reason!r}, "
+                        f"logs {logs_left!r}, expected 'ok', no reason, no "
+                        f"901.log.")
     return failures
 
 

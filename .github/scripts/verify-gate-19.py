@@ -59,9 +59,13 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (  # noqa: E402
-    ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
+    ensure_jq, find_step, resolve_bash, run_step, step_shell,
+    use_utf8_stdout)
 
 WATCHDOG = ".github/workflows/watchdog.yml"
+FETCH_ACTION = ".github/actions/wing-commander-fetch-job-logs/action.yml"
+FETCH_STEP_NAME = "Fetch job logs"
+_FETCH_STEP = []   # the shipped helper step, parsed once
 STEP = "Collect: annotations"
 # #330: the spec-slug step's one home. Both watchdog jobs `uses:` it.
 SPEC_SLUG_ACTION = ".github/actions/wing-commander-inspected-run-identity/action.yml"
@@ -2174,17 +2178,14 @@ def run_stepsum_one(script, env, sc, tmproot):
     # The collector reads what the wing-commander-fetch-job-logs composite
     # staged (specs/101-read-only-gh-grants); run the shared helper the way
     # that composite does, then hand the step its result.
-    import yaml
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
-                           "actions", "wing-commander-fetch-job-logs",
-                           "action.yml"), encoding="utf-8") as fh:
-        fetch_script = yaml.safe_load(fh)["runs"]["steps"][0]["run"]
+    if not _FETCH_STEP:
+        _FETCH_STEP.append(find_step(FETCH_ACTION, FETCH_STEP_NAME))
     _rc, _out, fetch_outputs, _sum = run_step(
-        BASH, fetch_script, workdir,
+        BASH, str(_FETCH_STEP[0]["run"]), workdir,
         dict(run_env, RUN_ID="1", GH_TOKEN="x",
              OUT_DIR=os.path.join(runner_temp, "cs-job-logs"),
              GITHUB_REPOSITORY="charlesguse/wing-commander"),
-        runner_temp)
+        runner_temp, shell=step_shell(FETCH_ACTION, FETCH_STEP_NAME))
     run_env["FETCH_RESULT"] = fetch_outputs.get("result", "")   # as Actions passes it
     for job_id, text in (sc.get("planted") or {}).items():
         with open(os.path.join(runner_temp, "cs-job-logs", f"{job_id}.log"), "w",

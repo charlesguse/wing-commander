@@ -10,8 +10,10 @@ forbids `gh` calls in `_shared/` scripts, and Gate 60 forbids a published stage
 resolving `_shared/`.
 
 Inputs: `token` (the `github.token`, passed by the caller as
-`${{ github.token }}`), `run-id`, `out-dir`. `GITHUB_REPOSITORY` comes from the
-runner environment.
+`${{ github.token }}`), `run-id`, `out-dir`, and the optional `conclusions`
+(comma-separated; only jobs with a listed conclusion are fetched, so diagnose
+passes `failure`; empty fetches every job that is not skipped or cancelled).
+`GITHUB_REPOSITORY` comes from the runner environment.
 
 Behaviour:
 
@@ -19,7 +21,9 @@ Behaviour:
   with `|| rc=`, never through a bare command substitution;
 - per job not `skipped`/`cancelled`: fetch the log; exactly one bounded retry
   per invocation after `sleep 10` on a non-zero status;
-- never writes an error message or empty body as log content;
+- never writes an error message or empty body as log content; an empty body
+  from a successful read writes no file and is not a failed read (the staging
+  step still records a missing log for a failed job as `log-read`);
 - outputs: writes `jobs.json`, per-job log files and (on failure) `reason.txt`
   (`jobs-list` or `log-read`) into the directory, and sets the `result` output
   (`ok` or `failed`); the step never fails the job, so failure travels in
