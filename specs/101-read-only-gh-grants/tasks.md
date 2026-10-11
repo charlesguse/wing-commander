@@ -379,3 +379,63 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
   The gh api --paginate jobs listing sends stderr to /dev/null, so a 403, 404 or rate limit is recorded only as reason jobs-list with no diagnostic. That undercuts the loud, attributable failure that FR-019 and FR-020 promise.
 
   - .github/actions/wing-commander-fetch-job-logs/action.yml
+
+## Review Gate Round 5 Findings
+
+- [ ] Review finding: Gate 93 check 4b bypasses shared gh-grant detector
+
+  _bash_grant_problems splits at the first colon and calls command_grants_gh without open_ended, so grants like Bash(PATH=/a:/b gh api:*) or Bash(env:*), Bash(bash:*) pass the fleet-wide read-only check; it should call grants_gh(grant) like the shadow gate.
+
+  - .github/scripts/verify-issue-context-single-home.py
+
+- [ ] Review finding: Fetch-job-logs retry is global, not per job
+
+  The header comment and the diagnose-staged-logs contract say one bounded retry per job, but the code uses a single shared retry_used flag, so one job's retry denies the next job its retry.
+
+  - .github/actions/wing-commander-fetch-job-logs/action.yml
+  - specs/101-read-only-gh-grants/contracts/diagnose-staged-logs.md
+
+- [ ] Review finding: Empty log body recorded as failed, contract says ok
+
+  watchdog.yml marks a failed job with an empty log after an ok fetch as outcome failed with reason log-empty, while the live contract's failure table says status stays ok with file null.
+
+  - .github/workflows/watchdog.yml
+  - specs/101-read-only-gh-grants/contracts/diagnose-staged-logs.md
+
+- [ ] Review finding: In-progress jobs no longer scanned for sentinels
+
+  The shared log helper skips jobs with no conclusion, but the watchdog collector previously fetched logs for all but skipped/cancelled jobs, so a stalled job's sentinel is silently lost with no failed-read record.
+
+  - .github/workflows/watchdog.yml
+  - .github/actions/wing-commander-fetch-job-logs/action.yml
+
+- [ ] Review finding: verify-stage-tool-lists re-implements repo file listing
+
+  _listing inlines the git ls-files -z / walk idiom even though this PR makes wc_repo_files the single home; the single-home check only flags files with both ls-files and os.walk so this copy passes.
+
+  - .github/scripts/verify-stage-tool-lists.py
+  - .github/scripts/verify-single-home-idioms.py
+
+- [ ] Review finding: Launcher words reported as gh grants with misleading reason
+
+  LAUNCHER_WORDS includes find, time, script, watch, ssh and tmux, so Bash(find:*) is reported as granting gh, and Bash(find . -name gh) is flagged because any token with basename gh counts; the message misattributes the cause.
+
+  - .github/scripts/wc_gh_grant.py
+
+- [ ] Review finding: Staged job logs prompt paragraph pasted twice in watchdog.yml
+
+  The 14-line staged job logs prompt paragraph is duplicated verbatim in the Diagnose and diagnose-shadow prompts, so an edit to one can drift from the other and the shadow would measure a different prompt.
+
+  - .github/workflows/watchdog.yml
+
+- [ ] Review finding: fetch-incomplete reason assignment order is fragile
+
+  The fetch-incomplete reason is set before the jobs-list/jobs.json branches and can be overwritten by log-read when no failed job has a log, naming a cause that did not occur.
+
+  - .github/workflows/watchdog.yml
+
+- [ ] Review finding: Check 6 rescans every tracked text file uncached
+
+  check_gh_rationale_home runs git ls-files and reads every tracked text file on each call, including about 25 self-test fixture calls, adding avoidable seconds to every gate run; a per-root cache is possible.
+
+  - .github/scripts/verify-issue-context-single-home.py
