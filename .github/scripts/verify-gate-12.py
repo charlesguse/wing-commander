@@ -143,6 +143,16 @@ FIXTURES = [
      mkcase("", "", [APP_ENV], ['gh run cancel "$RUN_ID"']),
      True, ("run cancel", "App token", f".github/workflows/w.yml :: work / step")),
 
+    ("a partly quoted owner/repo in a gh api path is still this repository",
+     mkcase("", "", [APP_ENV],
+            ['gh api -X POST repos/"$GITHUB_REPOSITORY"/actions/runs/1/cancel']),
+     True, ("App token",)),
+
+    ("a redirect's fd number is not an argument of the call",
+     mkcase("", "", [APP_ENV],
+            ["gh api 2>/dev/null -X POST repos/\"$GITHUB_REPOSITORY\"/actions/runs/1/cancel"]),
+     True, ("App token",)),
+
     ("a GH_TOKEN= prefix wins over the step's token",
      mkcase(ACTIONS_WRITE, "", [APP_ENV, "DISPATCH: ${{ github.token }}"],
             ['GH_TOKEN="$DISPATCH" gh run cancel "$RUN_ID"']),
@@ -525,6 +535,19 @@ LOCATOR_CASES = [
      []),
     ("line continuation", "gh issue \\\n  comment 5", [C_ST]),
     ("redirect target is no command", "echo x >gh", []),
+    ("a quoted heredoc fed to a shell is a script, not a mention",
+     "bash <<'EOF'\ngh api x\nEOF\ncat <<'EOF' | sudo sh -s\ngh a b\nEOF\n"
+     "cat <<'EOF'\ngh c d\nEOF",
+     [dis("unquoted-heredoc"), dis("unquoted-heredoc"), men("quoted-heredoc")]),
+    ("a quoted string piped or here-stringed to a shell is a script",
+     "echo 'gh api x' | bash; bash <<< 'gh a b'; echo 'gh c d'; bash script.sh 'gh e f'",
+     [dis("shell-stdin"), dis("shell-stdin"), men("quoted"), men("quoted")]),
+    ("find, ssh and docker run the rest of their words",
+     "find . -exec gh issue close {} \\;; ssh host gh a b; docker run img gh c d; "
+     "find . -exec sh -c 'gh x y' _ {} \\;",
+     [dis("unquoted-wrapper")] * 3 + [dis("unquoted-wrapper"), men("quoted")]),
+    ("a file descriptor is no word of the call", "gh api 2>/dev/null x; gh 2>&1 a b",
+     [C_ST, C_ST]),
     ("unclosed Actions openers are linear", "echo \"" + "`${{" * 20000 + "\"", None),
     ("unclosed array lists and tests are linear",
      "a=(x\n" * 30000 + "[[ a\n" * 30000 + "; gh a b", None),
@@ -541,16 +564,45 @@ def fmt(tok):
     return ("call", tok.position)
 
 
+SCALING_CASES = (
+    ("a large quoted heredoc", lambda n: "cat <<'EOF'\n" + "a b c\n" * n + "EOF\ngh a b"),
+    ("many words", lambda n: "echo " + "a " * n + "\ngh a b"),
+    ("nested brace lists", lambda n: "{x," * n + "a" + "}" * n + " api x"),
+    ("unclosed substitutions", lambda n: "echo $( " * (n // 100) + "x " * n),
+)
+
+
+def steps_ratio(make, n=2000):
+    """Python calls made by locate(make(4n)) over locate(make(n)). Counting
+    calls instead of seconds keeps the check the same on a loaded runner."""
+    def steps(script):
+        count = [0]
+
+        def prof(frame, event, arg):
+            count[0] += event == "call"
+        sys.setprofile(prof)
+        try:
+            loc.locate(script)
+        finally:
+            sys.setprofile(None)
+        return count[0]
+    return steps(make(4 * n)) / max(steps(make(n)), 1)
+
+
 def run_locator_cases():
     bad = []
     for name, script, expected in LOCATOR_CASES:
         t0 = time.time()
         got = [fmt(t) for t in loc.locate(script)]
         took = time.time() - t0
-        if took > 5:
-            bad.append((name, [f"took {took:.1f}s: not linear"]))
+        if took > 120:      # a hang guard only; linearity is judged by steps_ratio
+            bad.append((name, [f"took {took:.1f}s: locate() does not finish"]))
         elif expected is not None and got != expected:
             bad.append((name, [f"expected {expected}", f"got      {got}"]))
+    for name, make in SCALING_CASES:
+        ratio = steps_ratio(make)
+        if ratio > 6:       # 4x the input: linear is about 4, quadratic about 16
+            bad.append((f"scaling: {name}", [f"4x the input took {ratio:.1f}x the steps"]))
     toks = loc.locate('GH_TOKEN="$T" timeout 30 gh api -iX POST "repos/$R/issues" '
                       '-f a="$b" --jq .x')
     argv = toks[0].argv if toks else []
@@ -745,6 +797,14 @@ def differential():
                     rec = json.loads(line)
                     scripts.append((f"{fname}:{n} ({rec['kind']})", rec["min"]))
     failures, ran, invoked = [], 0, 0
+    with open(os.path.join(FUZZ_DIR, "manifest.json"), encoding="utf-8") as fh:
+        manifest = json.load(fh)
+    on_disk = {f for f in os.listdir(FUZZ_DIR) if f.endswith(".jsonl")}
+    if on_disk != set(manifest):
+        failures.append(("manifest", [
+            f"gate-12-fuzz/manifest.json and the .jsonl files disagree: "
+            f"unlisted {sorted(on_disk - set(manifest))}, "
+            f"missing {sorted(set(manifest) - on_disk)}"], ""))
     with tempfile.TemporaryDirectory() as td:
         bin_dir = harness.gh_argv_recording_stub(td)
         for label, script in scripts:

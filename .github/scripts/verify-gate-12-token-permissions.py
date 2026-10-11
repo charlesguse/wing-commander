@@ -15,7 +15,7 @@ Usage: python3 .github/scripts/verify-gate-12-token-permissions.py
 import glob, os, re, sys, yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_gh_callsites import Dynamic, api_parts, locate  # noqa: E402
+from wc_gh_callsites import Dynamic, Run, api_parts, locate, step_runs  # noqa: E402
 
 AUTHORING_RULE = "Authoring rule for `gh` call sites"
 AUTHORING_RULE_DOC = "CONTRIBUTING.md"
@@ -252,8 +252,8 @@ def norm_expr(raw):
     m = re.fullmatch(r"\$\{\{\s*(.*?)\s*\}\}", s)
     if m:
         return m.group(1).strip()
-    if s.startswith('"') and s.endswith('"') and len(s) >= 2:
-        s = s[1:-1]
+    if s.count('"') % 2 == 0:
+        s = s.replace('"', "")      # also `repos/"$GITHUB_REPOSITORY"/issues`
     return s
 
 
@@ -545,7 +545,7 @@ def check_gh_invocation(where, tok, assigns, tok_kind, tok_detail,
                app_perms, job_perms, failures, notes)
 
 
-def scan_run(run, path, first_line, failures):
+def scan_run(run, path, at, failures):
     """The `gh` calls of one run: block that this gate can check. A call in
     a form the locator cannot prove is a failure of its own, named by file
     and line, and is not checked further (FR-005)."""
@@ -556,44 +556,11 @@ def scan_run(run, path, first_line, failures):
         CALLS_LOCATED[0] += 1
         if tok.position == "disallowed":
             failures.append(
-                f"{path}:{first_line + tok.line - 1}: gh call in a form Gate 12 "
+                f"{path}:{at.line(tok.line)}: gh call in a form Gate 12 "
                 f"cannot verify ({tok.reason}) — rewrite it to the allowed form; "
                 f"see {AUTHORING_RULE}.")
         else:
             out.append(tok)
-    return out
-
-
-def _map_get(node, key):
-    if isinstance(node, yaml.MappingNode):
-        for k, v in node.value:
-            if getattr(k, "value", None) == key:
-                return v
-    return None
-
-
-def run_lines(path, in_jobs):
-    """{(job name or None, step index): 1-based line where that step's
-    run: text starts}, from the YAML node marks (safe_load drops them)."""
-    out = {}
-    try:
-        with open(path, encoding="utf-8") as fh:
-            root = yaml.compose(fh)
-    except Exception:
-        return out
-    if in_jobs:
-        jobs = _map_get(root, "jobs")
-        groups = [(k.value, _map_get(v, "steps")) for k, v in jobs.value
-                  ] if isinstance(jobs, yaml.MappingNode) else []
-    else:
-        groups = [(None, _map_get(_map_get(root, "runs"), "steps"))]
-    for jname, steps in groups:
-        if not isinstance(steps, yaml.SequenceNode):
-            continue
-        for idx, st in enumerate(steps.value):
-            run = _map_get(st, "run")
-            if isinstance(run, yaml.ScalarNode):
-                out[(jname, idx)] = run.start_mark.line + 1 + (run.style in ("|", ">"))
     return out
 
 
@@ -670,7 +637,7 @@ for f in sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workfl
     except Exception as e:
         failures.append(f"{f}: YAML parse failure: {e}")
         continue
-    wf_run_lines = run_lines(f, True)
+    wf_run_lines = step_runs(f, True)
 
     for jname, job in (wf.get("jobs") or {}).items():
         job = job or {}
@@ -718,7 +685,7 @@ for f in sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workfl
             run = step.get("run")
             if run:
                 assigns = collect_assignments(run)
-                for tok in scan_run(run, f, wf_run_lines.get((jname, sidx), 1),
+                for tok in scan_run(run, f, wf_run_lines.get((jname, sidx), Run()),
                                     failures):
                     where = f"{f} :: {jname} / {sname}"
                     tok_kind, tok_detail = resolve_token(
@@ -785,7 +752,7 @@ for af in action_files:
     comp_steps = [st or {} for st in (runs.get("steps") or [])]
     comp_app_exprs = app_token_exprs_for({"steps": comp_steps})
     comp_calls = []   # (step name, step env, located call, assigns)
-    comp_run_lines = run_lines(af, False)
+    comp_run_lines = step_runs(af, False)
     for sidx, st in enumerate(comp_steps):
         st_name = st.get("name") or st.get("id") or "<unnamed step>"
         st_uses = str(st.get("uses") or "")
@@ -798,7 +765,7 @@ for af in action_files:
         if not run:
             continue
         assigns = collect_assignments(run)
-        for tok in scan_run(run, afp, comp_run_lines.get((None, sidx), 1), failures):
+        for tok in scan_run(run, afp, comp_run_lines.get((None, sidx), Run()), failures):
             comp_calls.append((st_name, st.get("env") or {}, tok, assigns))
     if not comp_calls:
         continue

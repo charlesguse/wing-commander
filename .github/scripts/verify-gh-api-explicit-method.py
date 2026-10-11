@@ -127,7 +127,9 @@ class Detector(object):
         that ship an unstated method; the flag is quoted in the error."""
         found = []
         for tok in loc.locate(script):
-            if tok.kind != "call" or tok.position == "disallowed":
+            # A disallowed call is Gate 12's to report as a form, but its
+            # words are still the call's: an implicit POST in one counts.
+            if tok.kind != "call":
                 continue
             if tok.position == "subst_first" and not self.look_in_substitutions:
                 continue
@@ -147,7 +149,8 @@ class Detector(object):
     def scan_script(self, path, script, first_line=1):
         """Every failure line for one shell script, whose first line is line
         `first_line` of the file `path`."""
-        lines = script.splitlines()
+        lines = script.split("\n")      # the locator counts lines by \n alone
+        at = script.line if isinstance(script, loc.Run) else None
         failures = []
         for idx, flag in self.offenders(script):
             if self.honour_exemptions and _is_exempt(lines, idx):
@@ -161,7 +164,7 @@ class Detector(object):
                 "string); if it is a write, say `-X POST` out loud. An "
                 "intentional exception needs a same-line or "
                 "immediately-preceding `# wc-gh-method-exempt: <reason>` "
-                "comment.".format(path, first_line + idx, flag))
+                "comment.".format(path, at(idx + 1) if at else first_line + idx, flag))
         return failures
 
 
@@ -194,8 +197,21 @@ def subject_files():
              + glob.glob(".github/actions/**/action.yaml", recursive=True))
     shells = (glob.glob(".github/scripts/**/*.sh", recursive=True)
               + glob.glob(".github/actions/**/*.sh", recursive=True))
+    for p in (glob.glob(".github/scripts/**/*", recursive=True)
+              + glob.glob(".github/actions/**/*", recursive=True)):
+        if os.path.isfile(p) and "." not in os.path.basename(p) and _has_shell_shebang(p):
+            shells.append(p)        # an extensionless executable script
     return (sorted(set(posix(p) for p in yamls)),
             sorted(set(posix(p) for p in shells)))
+
+
+def _has_shell_shebang(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            first = fh.readline(200)
+    except (OSError, UnicodeDecodeError):
+        return False
+    return first.startswith("#!") and bool(re.search(r"\b(?:ba|da|z|k)?sh\b", first))
 
 
 def sweep():
@@ -213,8 +229,8 @@ def sweep():
                  "scripts at all. That is a broken sweep, not a clean tree.")
     failures = []
     for path in yamls:
-        for first_line, script in loc.run_blocks(path):
-            failures.extend(detector.scan_script(path, script, first_line))
+        for script in loc.run_blocks(path):
+            failures.extend(detector.scan_script(path, script))
     for path in shells:
         with open(path, encoding="utf-8") as fh:
             failures.extend(detector.scan_script(path, fh.read()))
@@ -232,10 +248,9 @@ def sweep():
 # the real files change for unrelated reasons, and a self-test that breaks on
 # every unrelated edit gets deleted rather than fixed.
 #
-# Every fixture line below that would itself trip the sweep carries the
-# exemption marker, because this file is inside the sweep's own scope? It is
-# not any more -- Python files are out of scope -- but the markers stay: they
-# are what a reader of the fixture sees to know the line is quoted text.
+# Python files are out of the sweep's scope, so no fixture line below needs
+# the exemption marker to pass. The markers stay anyway: they are what a
+# reader of the fixture sees to know the line is quoted text.
 
 SHIPPED_DEFECT = (  # wc-gh-method-exempt: the measured defect, quoted as a self-test fixture
     'issue=$(gh api "repos/$GITHUB_REPOSITORY/contents/$SPEC_DIR/spec-meta.json"'
@@ -368,6 +383,14 @@ CASES = [
 
     ("no false positive: a comment",
      "# gh api repos/x -f ref=main",
+     False, ()),
+
+    ("a call in a form Gate 12 rejects still counts here",  # wc-gh-method-exempt: self-test fixture text
+     'x="$(echo "$(gh api repos/x -f ref=main)")"',
+     True, ("-f",)),
+
+    ("an exemption on the right line despite a form feed in an earlier one",
+     "echo a\x0cb\n# wc-gh-method-exempt: fixture\ngh api repos/x -f ref=main",
      False, ()),
 
     ("a call after a heredoc is still seen",  # wc-gh-method-exempt: self-test fixture text

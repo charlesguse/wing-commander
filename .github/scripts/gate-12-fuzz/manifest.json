@@ -1,0 +1,11 @@
+{
+  "mins3.jsonl": "minimized repros kept from shrinker round 3; each record's `min` script is one the differential replays",
+  "mins3b.jsonl": "minimized repros kept from shrinker round 3b; replayed by the differential",
+  "mins3c.jsonl": "minimized repros kept from shrinker round 3c; replayed by the differential",
+  "mins5.jsonl": "minimized repros kept from shrinker round 5; replayed by the differential",
+  "mins6.jsonl": "minimized repros kept from shrinker round 6; replayed by the differential",
+  "mins7.jsonl": "minimized repros kept from shrinker round 7; replayed by the differential",
+  "mins8.jsonl": "minimized repros kept from shrinker round 8; replayed by the differential",
+  "mins9.jsonl": "minimized repros kept from shrinker round 9; replayed by the differential",
+  "mins10.jsonl": "minimized repros kept from shrinker round 10; replayed by the differential"
+}

@@ -74,7 +74,16 @@ RESERVED = frozenset(("if", "then", "elif", "else", "do", "while", "until", "!",
 WRAPPERS = frozenset(("env", "eval", "command", "exec", "sudo", "xargs", "nohup",
                       "nice", "stdbuf", "watch", "setsid", "timeout", "script",
                       "coproc", "builtin", "flock", "ionice", "taskset", "chrt", "doas",
-                      "time"))                # `X=1 time gh`: /usr/bin/time, not the keyword
+                      "time",                 # `X=1 time gh`: /usr/bin/time, not the keyword
+                      # Programs that run the rest of their words as a command
+                      # (`find -exec gh ...`, `ssh host 'gh ...'`). The list is
+                      # closed, so the authoring rule says to call gh directly.
+                      "find", "parallel", "ssh"))
+# Runners whose operands are mostly their own options (`docker login "${args[@]}"`):
+# only a literal `gh` word, or a literal shell string after `-c`, is a call.
+LITERAL_RUNNERS = frozenset(("docker", "podman", "kubectl", "chroot", "nsenter", "unshare",
+                             "runuser", "sg", "strace", "busybox"))
+REMOTE_SHELLS = frozenset(("ssh", "parallel"))      # every word is a shell string
 SHELL_RUNNERS = frozenset(("eval", "watch", "script"))     # run their words as a shell string
 SHELLS = frozenset(("bash", "sh", "dash", "zsh", "ksh", "su"))  # with `-c`, run one
 API_VALUED = frozenset(("-X", "--method", "-H", "--header", "-f", "--raw-field", "-F",
@@ -121,6 +130,8 @@ class _Scan:
         self.nl = [i for i, c in enumerate(text) if c == "\n"]
         self.no_expr = None                   # offset of the first unclosed `${{`
         self.braces = 0                       # `${...}` levels open right now
+        self.pipe = 0                         # index of the first token of this pipeline
+        self.shell_stdin = False              # the heredocs now pending feed a shell
 
     # ---------------------------------------------------------------- tokens
     def _note(self, off, kind, **kw):
@@ -335,6 +346,8 @@ class _Scan:
         t, n = self.t, self.n
         while self.pending and i < n:
             delim, quoted, strip = self.pending.pop(0)
+            if self.shell_stdin:                  # a shell runs the body: not data
+                quoted = False
             body = i
             while i < n:
                 e = t.find("\n", i)
@@ -351,6 +364,7 @@ class _Scan:
                 return n
         if i >= n:
             self.pending.clear()
+        self.shell_stdin = bool(self.pending) and self.shell_stdin
         return i
 
     def _redirect(self, i, ctx):
@@ -391,6 +405,7 @@ class _Scan:
             elif c == "\n":
                 self._end(words, ctx)
                 words, i = [], self._heredocs(i + 1)
+                self.pipe = len(self.toks)
             elif c == "#":
                 j = t.find("\n", i)
                 j = n if j < 0 else j
@@ -416,6 +431,8 @@ class _Scan:
                 if not j:
                     self._end(words, ctx)
                     ctx.parens += c == "("
+                    if c != "|" or t[i + 1:i + 2] == "|":
+                        self.pipe = len(self.toks)             # a pipeline ends here
                 words, i = [], j or i + 1
             elif c == ")" and ctx.pattern:                     # a case pattern's `)`
                 ctx.pattern, words, i = 0, [], i + 1
@@ -428,6 +445,8 @@ class _Scan:
                 words, i = [], i + 1
             else:
                 w, i = self._word(i, ctx)
+                if w.plain and w.lit.isdigit() and t[i:i + 1] in ("<", ">") and not ctx.pattern:
+                    continue                                   # `2>file`: a file descriptor
                 if ctx.pattern or (w.plain and w.lit == "in" and len(words) > 1
                                    and words[0].plain and words[0].lit == "case"):
                     if not ctx.pattern or ctx.pattern == 1 and w.plain and w.lit == "esac":
@@ -523,6 +542,8 @@ class _Scan:
         if k >= len(words):
             return
         head = words[k]
+        if _reads_stdin(words[k:]):
+            self._stdin_shell()
         if head.lit == "gh" or head.skel == "gh":      # `$(:)gh`, `""gh`, `\`\`gh`
             argv = [w.argv() for w in words[k + 1:]]
             reason = (("unsupported-prefix" if odd_prefix else None)
@@ -541,9 +562,20 @@ class _Scan:
                 EXP not in GLOB.sub(EXP, BRACE.sub(_unknown_braces, head.lit))
                 else "dynamic-command"):
             pass                                        # else its arguments are read below
+        elif _base(head.lit) in LITERAL_RUNNERS:
+            args = words[k + 1:]
+            for j, w in enumerate(args):
+                script = args[j + 1] if j + 1 < len(args) and _shell_string(
+                    w.lit if w.lit is not None else w.pre) else None
+                hit = (w if "gh" in (w.lit, w.skel) else
+                       script if script is not None and _eval_may_run_gh(script) else None)
+                if hit is not None and self._note_once(hit, "unquoted-wrapper"):
+                    break
         elif (head.lit is None                         # `$SUDO gh`: may expand to nothing
               or _base(head.lit) in WRAPPERS and not (
-                  head.lit == "command" and any(w.lit in ("-v", "-V") for w in words[k + 1:]))):
+                  head.lit == "command" and any(w.lit in ("-v", "-V") for w in words[k + 1:]))
+              and not (_base(head.lit) == "find" and not any(
+                  w.lit is not None and w.lit.startswith(("-exec", "-ok")) for w in words[k + 1:]))):
             why = "dynamic-command" if head.lit is None else "unquoted-wrapper"
             args = words[k + 1:]
             run = _wrapped_commands(args)
@@ -552,7 +584,7 @@ class _Scan:
             # dynamic command word's own arguments are not. eval, and a
             # wrapper or shell given a shell string, re-read their words.
             every = head.lit is not None
-            evals = any(_base(w.lit) in SHELL_RUNNERS
+            evals = _base(head.lit) in REMOTE_SHELLS or any(_base(w.lit) in SHELL_RUNNERS
                         or _shell_string(w.lit if w.lit is not None else w.pre)
                         for w in [head] + args)
             for w in args:
@@ -569,6 +601,16 @@ class _Scan:
                 if _eval_may_run_gh(w) and self._note_once(w, "unquoted-wrapper"):
                     break
 
+    def _stdin_shell(self):
+        """A shell that reads its script from stdin is running text this
+        scanner took for data: the quoted strings of its pipeline (`echo '...'
+        | bash`, `bash <<< '...'`) and any heredoc opened on its line."""
+        self.shell_stdin = self.shell_stdin or bool(self.pending)
+        for tok in self.toks[self.pipe:]:
+            if tok.kind == "mention" and tok.mention_clause == "quoted":
+                tok.kind, tok.position, tok.reason, tok.mention_clause = (
+                    "call", "disallowed", "shell-stdin", None)
+
     def _note_once(self, w, reason):
         """A disallowed call at word `w`, unless its own text already holds one
         (`${X:+gh}` is marked inside the expansion). -> whether it noted one."""
@@ -576,6 +618,18 @@ class _Scan:
             return False
         self._note(w.off, "call", position="disallowed", reason=reason)
         return True
+
+
+def _reads_stdin(words):
+    """Whether the command in `words` is a shell that reads its script from
+    stdin (`bash`, `sudo bash -s`) rather than from `-c` or a file."""
+    for j, w in enumerate(words):
+        if _base(w.lit) in SHELLS and w.lit != "su":
+            rest = words[j + 1:]
+            return not any(_shell_string(r.lit if r.lit is not None else r.pre) for r in rest) and (
+                all(r.lit is not None and r.lit.startswith("-") for r in rest)
+                or any(r.lit == "-s" for r in rest))
+    return False
 
 
 def _base(s):
@@ -900,9 +954,44 @@ def api_flags(args):
     return _api_scan(args)[3]
 
 
+class Run(str):
+    """The text of one `run:` scalar, knowing where it sits in its file. This
+    is the one home of the line arithmetic: `line(n)` is the file line of
+    line `n` of the text, as the locator counts it (by `\\n`). Only a literal
+    (`|`) scalar keeps its lines one to one; a folded, plain or quoted scalar
+    has no such mapping, so its tokens report the line the text starts on."""
+    first = 1
+    literal = False
+
+    def line(self, n):
+        return self.first + (n - 1 if self.literal else 0)
+
+
+def _run(node):
+    run = Run(node.value)
+    run.literal = node.style == "|"
+    run.first = node.start_mark.line + 1 + (node.style in ("|", ">"))
+    return run
+
+
+def _compose(path):
+    import yaml
+    with open(path, encoding="utf-8") as fh:
+        return yaml.compose(fh)
+
+
+def _map_get(node, key):
+    import yaml
+    if isinstance(node, yaml.MappingNode):
+        for k, v in node.value:
+            if getattr(k, "value", None) == key:
+                return v
+    return None
+
+
 def run_blocks(path):
-    """[(1-based line the run: text starts on, text)] for every `run:` scalar
-    in the workflow or composite-action YAML at `path`."""
+    """[Run] for every `run:` scalar in the workflow or composite-action YAML
+    at `path`."""
     import yaml
     out = []
 
@@ -910,15 +999,39 @@ def run_blocks(path):
         if isinstance(node, yaml.MappingNode):
             for k, v in node.value:
                 if getattr(k, "value", None) == "run" and isinstance(v, yaml.ScalarNode):
-                    out.append((v.start_mark.line + 1 + (v.style in ("|", ">")), v.value))
+                    out.append(_run(v))
                 else:
                     walk(v)
         elif isinstance(node, yaml.SequenceNode):
             for v in node.value:
                 walk(v)
 
-    with open(path, encoding="utf-8") as fh:
-        walk(yaml.compose(fh))
+    walk(_compose(path))
+    return out
+
+
+def step_runs(path, in_jobs):
+    """{(job name or None, step index): Run} for the step `run:` scalars of
+    the workflow (`in_jobs`) or composite action at `path`; {} when the file
+    does not parse."""
+    import yaml
+    out = {}
+    try:
+        root = _compose(path)
+    except Exception:
+        return out
+    if in_jobs:
+        jobs = _map_get(root, "jobs")
+        groups = [(k.value, _map_get(v, "steps")) for k, v in jobs.value
+                  ] if isinstance(jobs, yaml.MappingNode) else []
+    else:
+        groups = [(None, _map_get(_map_get(root, "runs"), "steps"))]
+    for jname, steps in groups:
+        if isinstance(steps, yaml.SequenceNode):
+            for idx, st in enumerate(steps.value):
+                run = _map_get(st, "run")
+                if isinstance(run, yaml.ScalarNode):
+                    out[(jname, idx)] = _run(run)
     return out
 
 

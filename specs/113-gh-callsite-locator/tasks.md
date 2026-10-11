@@ -131,7 +131,7 @@
 
 ## Review Gate Round 1 Findings
 
-- [ ] Review finding: Quoted stdin to a shell classified as inert mention
+- [x] Review finding: Quoted stdin to a shell classified as inert mention
 
   bash <<'EOF', here-strings, or echo '...' | bash bodies are treated as mentions so real gh calls are missed, contradicting the fail-closed contract.
 
@@ -139,7 +139,7 @@
 
   Detail: _heredocs marks the quoted heredoc as a mention; _end only treats bash/sh as running a string with -c/-S.
 
-- [ ] Review finding: Wrapper/shell list is a closed denylist
+- [x] Review finding: Wrapper/shell list is a closed denylist
 
   find -exec, parallel, ssh, docker exec and chroot are not recognised, so gh run through them is not flagged or checked.
 
@@ -147,7 +147,7 @@
 
   Detail: `find . -exec gh issue close {} \;` emits no token; the quoted sh -c variant becomes a mention.
 
-- [ ] Review finding: Partly quoted owner/repo in gh api path skipped as cross-repo
+- [x] Review finding: Partly quoted owner/repo in gh api path skipped as cross-repo
 
   norm_expr only strips quotes wrapping the whole word, so repos/"$GITHUB_REPOSITORY"/... is classified CROSS and its permission is never checked.
 
@@ -155,7 +155,7 @@
 
   Detail: check_gh_invocation skips CROSS paths, so the Actions-needs-permission 403 the gate exists to catch passes.
 
-- [ ] Review finding: Redirection fd number parsed as an argv word
+- [x] Review finding: Redirection fd number parsed as an argv word
 
   The 2 in 2>/dev/null becomes part of the gh call's argv and shifts the path or subcommand.
 
@@ -163,7 +163,7 @@
 
   Detail: `gh api 2>/dev/null "repos/$R/actions/runs"` gives argv ['api','2',...], so the real path is never checked.
 
-- [ ] Review finding: run_blocks line offset wrong for non-literal scalars
+- [x] Review finding: run_blocks line offset wrong for non-literal scalars
 
   start_mark.line + 1 + (style in '|>') is correct only for literal block scalars but is applied to folded, plain and quoted scalars.
 
@@ -171,7 +171,7 @@
 
   Detail: Folded newlines make locator line N differ from the file line, so Gate 28 annotations and wc-gh-method-exempt lookups use the wrong line.
 
-- [ ] Review finding: Duplicate run: scalar walk and line-offset formula
+- [x] Review finding: Duplicate run: scalar walk and line-offset formula
 
   run_lines() in Gate 12 re-implements what wc_gh_callsites.run_blocks() already provides, violating the single-home rule.
 
@@ -180,7 +180,7 @@
 
   Detail: Two copies of the line-offset formula can drift with nothing failing.
 
-- [ ] Review finding: splitlines vs newline-count mismatch in exemption lookup
+- [x] Review finding: splitlines vs newline-count mismatch in exemption lookup
 
   scan_script indexes script.splitlines() with a locator line number that counts only \n.
 
@@ -188,7 +188,7 @@
 
   Detail: \r, \x0b, \x0c, \x85 or \u2028 in a script yields extra lines, so _is_exempt checks the wrong line.
 
-- [ ] Review finding: Gate 28 scope narrowed and disallowed calls skipped
+- [x] Review finding: Gate 28 scope narrowed and disallowed calls skipped
 
   Python scripts and non-.sh executables are no longer scanned, and calls the locator marks disallowed are skipped on the assumption Gate 12 reports them.
 
@@ -196,7 +196,7 @@
 
   Detail: Gate 12 does not scan .github/scripts, so an implicit-POST gh api there can land unflagged.
 
-- [ ] Review finding: Wall-clock linear-time check and host-dependent differential
+- [x] Review finding: Wall-clock linear-time check and host-dependent differential
 
   run_locator_cases fails a case that takes over 5s as not linear, and differential() runs generated scripts under real bash, so the self-test can flake or depend on the host.
 
@@ -204,7 +204,7 @@
 
   Detail: A loaded runner can push the 60000-line heredoc case past 5s; a step-count or size-scaling check would be deterministic.
 
-- [ ] Review finding: Garbled gate comment and opaque fuzz repro files
+- [x] Review finding: Garbled gate comment and opaque fuzz repro files
 
   A half-edited self-correcting comment is left in a gate file's fixture header, and mins3/3b/3c/5-10 .jsonl files are added with no manifest saying which bug each guards.
 
