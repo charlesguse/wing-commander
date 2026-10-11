@@ -77,7 +77,7 @@ jobs:
             echo "\`unclassified\` when the check could not reach a verdict (a re-run helps"
             echo "only when that was transient). The \`sync-pins\` job writes"
             echo "\`${E2E_IMAGE}@${DIGEST}\` to the \`WING_COMMANDER_CONTAINER_IMAGE\`"
-            echo "variable only when that run passed."
+            echo "variable only when that run passed and this is a default-branch build."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The agent action does not support the `push` event this workflow runs
@@ -303,14 +303,14 @@ jobs:
           #    of it newest first, whose startup-check succeeded decides:
           #    - its sync step succeeded: it pinned a newer digest, so this
           #      run is superseded and writes nothing;
-          #    - its sync step failed, or its sync-pins job was cancelled
-          #      (GitHub cancels a pending job when another queues in the
-          #      concurrency group): it may have written part of a newer
-          #      digest, or never wrote one, so writing this older digest
-          #      could roll the pins back; this run fails, writes nothing,
-          #      and names that run to re-run;
-          #    - its sync has not run yet, or that attempt's check has not
-          #      finished: it will decide after this run and write last, so
+          #    - its sync-pins job ended any other way (sync step failed, job
+          #      cancelled while pending in the concurrency group -- see this
+          #      job's comment -- timed out, lost its runner): it may have
+          #      written part of a newer digest, or never wrote one, so
+          #      writing this older digest could roll the pins back; this
+          #      run fails, writes nothing, and names that run to re-run;
+          #    - its sync-pins job has not ended yet, or that attempt's check
+          #      has not finished: it will decide after this run and write last, so
           #      it does not stop this write; its older attempts can then
           #      only supersede (an older attempt's finished sync), and no
           #      lower-numbered run is read at all.
@@ -337,16 +337,20 @@ jobs:
                 record_all failed "could not read run ${n}'s jobs to rule out a newer sync$(http_status)"
                 finish
               fi
+              # sync-pins runs only after a passed check, so a finished sync
+              # step is proof enough (a "re-run failed jobs" attempt need
+              # not list the startup-check it did not re-run).
               check="$(sed -n 's/^startup-check //p' <<< "$verdicts" | head -n 1)"
-              if [ "$check" = success ] && grep -qx 'sync success' <<< "$verdicts"; then
+              sync_job="$(sed -n 's/^sync-job //p' <<< "$verdicts" | head -n 1)"
+              if grep -qx 'sync success' <<< "$verdicts"; then
                 record_all skipped "superseded by run ${n}"
                 finish
               fi
               [ -n "$pending" ] && continue
               case "$check" in
                 success)
-                  if grep -qx 'sync failure' <<< "$verdicts" || grep -qx 'sync-job cancelled' <<< "$verdicts"; then
-                    record_all failed "newer run ${n} passed its check but its sync did not finish; re-run that run's sync-pins job, not this one"
+                  if [ -n "$sync_job" ] && [ "$sync_job" != null ]; then
+                    record_all failed "newer run ${n} passed its check but its sync did not finish (${sync_job}); re-run that run's sync-pins job, not this one"
                     finish
                   fi
                   pending=1

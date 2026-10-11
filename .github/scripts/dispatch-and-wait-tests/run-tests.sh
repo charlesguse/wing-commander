@@ -162,7 +162,7 @@ run_wait_honored_case() {
 # an empty one dispatches on the default branch with no --ref at all.
 run_ref_case() {
   local name="$1" ref="$2" want="$3"
-  local out log
+  local out log args
   out="$(mktemp)"; log="$(mktemp)"
   PATH="$STUBDIR:$PATH" GH_STUB_MODE=found GH_TOKEN=x GH_STUB_DISPATCH_LOG="$log" \
     WORKFLOW_FILE=release.yml WORKFLOW_INPUTS='{}' ATTEMPT_TOKEN=tok-1 DISPATCH_REF="$ref" \

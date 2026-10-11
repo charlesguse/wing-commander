@@ -176,6 +176,21 @@ CASES = {
         runs=[8], jobs={8: [run_jobs("success", "failure"), run_jobs("failure", None, job="skipped")]},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[], reason="newer run 8"),
+    # A newer sync-pins that ended without a finished sync step (timed out,
+    # lost its runner, step cancelled) may have written part of a newer
+    # digest: fail closed rather than write over it.
+    "newer-sync-timed-out": dict(
+        runs=[8], jobs={8: run_jobs("success", "cancelled", job="failure")},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[], reason="(failure)"),
+    # A "re-run failed jobs" attempt that synced supersedes even when it
+    # does not list the startup-check it did not re-run.
+    "superseded-by-rerun-failed-jobs": dict(
+        runs=[8], jobs={8: [run_jobs("success", "failure"),
+                            {"jobs": [j for j in run_jobs("success", "success")["jobs"]
+                                      if j["name"] == "sync-pins"]}]},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=0, status={THIS: "skipped", E2E: "skipped"}, writes=[], reason="run 8"),
     # A run-list row that does not parse fails closed.
     "run-list-malformed": dict(
         runs=[8], attempts_override={8: None},
