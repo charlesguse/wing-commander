@@ -347,32 +347,25 @@ jobs:
                 finish
               fi
               [ -n "$pending" ] && continue
-              case "$sync_job" in
-                "" | null)
-                  # sync-pins has not ended: pending, unless this attempt's
-                  # check already failed (it never will run then), or this
-                  # attempt is over (only the newest attempt of a run that
-                  # is not completed can still write).
-                  if [ "$a" -eq "$attempts" ] && [ "$run_status" != completed ]; then
-                    case "$check" in
-                      success | "" | null) pending=1 ;;
-                    esac
-                  fi
-                  ;;
-                skipped) ;; # its check failed: the older attempts decide
-                *)
-                  # Ended without a finished sync step. Unless this attempt's
-                  # check itself failed or was cancelled (the run cancelled
-                  # before it passed), its check passed (see above), so it
-                  # may have written part of a newer digest.
-                  case "$check" in
-                    success | "" | null)
-                      record_all failed "newer run ${n} passed its check but its sync did not finish (${sync_job}); re-run that run's sync-pins job, not this one"
-                      finish
-                      ;;
-                  esac
-                  ;;
-              esac
+              # A check that passed, or is not listed or not finished yet.
+              check_open=""
+              [ "$check" = success ] || [ -z "$check" ] || [ "$check" = null ] && check_open=1
+              if [ -z "$sync_job" ] || [ "$sync_job" = null ]; then
+                # sync-pins has not ended: pending, unless this attempt's
+                # check already failed (it never will run then), or this
+                # attempt is over (only the newest attempt of a run that is
+                # not completed can still write).
+                if [ -n "$check_open" ] && [ "$a" -eq "$attempts" ] && [ "$run_status" != completed ]; then
+                  pending=1
+                fi
+              elif [ "$sync_job" != skipped ] && [ -n "$check_open" ]; then
+                # Ended without a finished sync step after a check that
+                # passed (see above), so it may have written part of a newer
+                # digest. A skipped sync-pins, or a check that failed or was
+                # cancelled, leaves the decision to the older attempts.
+                record_all failed "newer run ${n} passed its check but its sync did not finish (${sync_job}); re-run that run's sync-pins job, not this one"
+                finish
+              fi
             done
             [ -n "$pending" ] && break
           done <<< "$runs"
