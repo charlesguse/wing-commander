@@ -2957,9 +2957,18 @@ def _mutation_check_read_only_git():
 
 _PUB_GRANT_LIT = PUBLISHED_GIT_READ_GRANT
 # Diagnose's tool-args line is told from the diagnose shadow's (whose
-# allowed list is the same) by the disallowed list that follows it.
-_DIAGNOSE_TAIL = ('\n          default-disallowed-tools: '
-                  '"WebSearch,WebFetch,Write,Edit,Bash(git:*)')
+# allowed list is the same) by the disallowed list that follows it: the
+# shadow's denies NotebookEdit right after Edit, diagnose's does not. The
+# pushd mutations match each list from its head through `Bash(pushd:*),`
+# and nothing after it, so a deny added after pushd (as spec 101's
+# Bash(gh:*) was) leaves them applying; a deny added before pushd in
+# either list means re-spelling that list's needle.
+_DENY_HEAD = ('\n          default-disallowed-tools: '
+              '"WebSearch,WebFetch,Write,Edit,')
+_DIAGNOSE_TAIL = _DENY_HEAD + 'Bash(git:*)'
+_PUSHD_SPAN = "Bash(git:*),Bash(cd:*),Bash(pushd:*),"
+_DIAGNOSE_PUSHD_DENY = _DENY_HEAD + _PUSHD_SPAN
+_SHADOW_PUSHD_DENY = _DENY_HEAD + "NotebookEdit," + _PUSHD_SPAN
 
 # Each mutation rewrites a REAL workflow other than board-loop.yml in
 # memory the way a later edit could reopen #518; check 4b must catch
@@ -2990,8 +2999,12 @@ FLEET_READ_ONLY_GIT_MUTATIONS = (
      f'default-allowed-tools: "{_PUB_GRANT_LIT.replace(" -I", "")}"'),
     (".github/workflows/watchdog.yml",
      "diagnose stops denying pushd",
-     "Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git commit:*)",
-     "Bash(git:*),Bash(cd:*),Bash(popd:*),Bash(git commit:*)"),
+     _DIAGNOSE_PUSHD_DENY,
+     _DIAGNOSE_PUSHD_DENY.replace("Bash(pushd:*),", "", 1)),
+    (".github/workflows/watchdog.yml",
+     "diagnose shadow stops denying pushd",
+     _SHADOW_PUSHD_DENY,
+     _SHADOW_PUSHD_DENY.replace("Bash(pushd:*),", "", 1)),
     (".github/workflows/auto-update-spec-kit.yml",
      "evaluate-path's inline --allowedTools regains raw git diff (#518 review)",
      f'--allowedTools "Read,Grep,{_PUB_GRANT_LIT}"',
