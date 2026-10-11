@@ -140,6 +140,14 @@ SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
    `(==|!=)` alternation. A pattern-matching gate that only reads
    comparisons (verify-gate-24.py) splits on nothing and is not matched.
 
+9. repo-files (code review of spec 101's Gate 93 check 6): a gate script
+   that decides "which files are the repository" itself instead of
+   through `.github/scripts/wc_repo_files.py`. verify-agent-push-
+   credential-helper.py, verify-stage-tool-lists.py and Gate 93 each
+   carried one, and they disagreed on tracked-only listing, the toplevel
+   check and the environment git ran with (#808/#822/#823). Matched by a
+   `"ls-files"` argument and an `os.walk(` fallback in one file.
+
 Plus a promotion-prevention pass (FR-025): every `workflow_call`-only
 stage workflow and every non-underscore-prefixed composite action scanned
 for any reference resolving into a `_shared/` path.
@@ -306,6 +314,7 @@ DECLARED_HOMES = {
     # Code review of #940: the GitHub-expression evaluator every gate that
     # evaluates a shipped `if:` uses -- see check_gha_expr_evaluator.
     "gha-expr-evaluator": ".github/scripts/wc_gha_expr.py",
+    "repo-files": ".github/scripts/wc_repo_files.py",
     # specs/062-lifecycle-review-gate T031/T042: the append-tasks.md-
     # section/flip-stage/union-actor/commit+push fold sequence.
     # pr-conversation.yml's `act` job (T033) and lifecycle-review-gate.yml's
@@ -764,6 +773,24 @@ def check_gha_expr_evaluator(root="."):
             m = GHA_EXPR_SPLIT_RE.search(text)
         if m is not None:
             findings.append(Finding(path, "gha-expr-evaluator",
+                                    line_of(text, m.start()), m.group(0)))
+    return findings
+
+
+REPO_FILES_LS_RE = re.compile(r"""["']ls-files["']""")
+REPO_FILES_WALK_RE = re.compile(r"\bos\.walk\(")
+
+
+def check_repo_files(root="."):
+    home = DECLARED_HOMES["repo-files"]
+    findings = []
+    for path in script_files(root):
+        if path in (home, THIS_GATE):
+            continue
+        text = read(root, path)
+        m = REPO_FILES_LS_RE.search(text)
+        if m is not None and REPO_FILES_WALK_RE.search(text):
+            findings.append(Finding(path, "repo-files",
                                     line_of(text, m.start()), m.group(0)))
     return findings
 
@@ -1475,6 +1502,7 @@ ALL_CHECKS = {
     "board-stop-check": check_board_stop_check,
     "transcript-normalise": check_transcript_normalise,
     "gha-expr-evaluator": check_gha_expr_evaluator,
+    "repo-files": check_repo_files,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
@@ -1839,6 +1867,8 @@ def _clean_tree(root):
           "\"$cancel_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
     _write(root, DECLARED_HOMES["gha-expr-evaluator"],
           "def evaluate(expr, ctx):\n    return Parser(expr, ctx).parse()\n")
+    _write(root, DECLARED_HOMES["repo-files"],
+          "def repo_files(root):\n    return _git(root, \"ls-files\") or os.walk(root)\n")
     _write(root, DECLARED_HOMES["transcript-normalise"],
           "#!/usr/bin/env bash\n"
           "jq -cs 'map(if type==\"array\" then .[] else . end) "
@@ -2708,6 +2738,12 @@ def run_selftest():
         selftest_third_paste_fails(
             "gha-expr-evaluator", f".github/scripts/verify-third-{slug}.py",
             "import re\n" + body)
+    # Code review of spec 101: the tracked-files-else-walk listing three gate
+    # scripts each carried before wc_repo_files.py.
+    selftest_third_paste_fails(
+        "repo-files", ".github/scripts/verify-third-repo-files.py",
+        "proc = subprocess.run([\"git\", \"-C\", root, \"ls-files\", \"-z\"])\n"
+        "for d, _x, names in os.walk(root):\n    pass\n")
     selftest_third_paste_fails(
         "verdict-shape", ".github/workflows/third-verdict.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"

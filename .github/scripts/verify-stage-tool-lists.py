@@ -114,6 +114,9 @@ import tempfile
 
 import yaml
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_repo_files import git_env, repo_files  # noqa: E402
+
 _NL = chr(10)
 
 TABLE_DOC = "specs/010-reusable-pipeline/contracts/stage-interfaces.md"
@@ -465,7 +468,7 @@ def _git_tracked(root, rel):
     try:
         proc = subprocess.run(
             ["git", "-C", root, "ls-files", "--error-unmatch", "--", rel],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            env=git_env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError:
         return None
     if proc.returncode == 0:
@@ -488,21 +491,40 @@ def _glob_has_match(root, pattern):
     it (case-sensitively, `*` crossing `/` the same way the permission
     layer's own glob does). A glob that matches nothing is the same stale
     entry a missing script is. Outside a git working tree - this gate's own
-    synthetic self-test fixtures - on-disk files stand in for tracked ones.
+    synthetic self-test fixtures - on-disk files stand in for tracked ones
+    (wc_repo_files.repo_files). `root` is the repository's top: anywhere
+    else, or where git cannot answer, the on-disk files are read, which can
+    let an untracked leftover satisfy a stale wildcard grant.
     """
+    return any(fnmatch.fnmatchcase(p, pattern) for p in _listing(root))
+
+
+_LISTING_CACHE = {}
+
+
+def _listing(root):
+    """repo_files(root), listed once per process for a real working tree
+    (one with its own `.git`, whose tracked set cannot change under a run).
+    The cache key carries the mtime of the working tree's index, so a
+    fixture that `git init`s and then `git add`s is listed afresh, as is
+    a directory without a `.git`. A root that is a subdirectory of a
+    working tree (no `.git` of its own) lists git's tracked files under
+    it, never the on-disk leftovers. git failing on a real working tree is
+    a gate verdict, not a traceback."""
     try:
-        proc = subprocess.run(
-            ["git", "-C", root, "ls-files", "-z"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        tracked = proc.stdout.decode("utf-8").split("\0") \
-            if proc.returncode == 0 else None
-    except OSError:
-        tracked = None
-    if tracked is None:
-        tracked = [
-            os.path.relpath(os.path.join(d, f), root).replace(os.sep, "/")
-            for d, _dirs, files in os.walk(root) for f in files]
-    return any(p and fnmatch.fnmatchcase(p, pattern) for p in tracked)
+        if not os.path.exists(os.path.join(root, ".git")):
+            return repo_files(root, within_tree=True)
+        try:
+            stamp = os.stat(os.path.join(root, ".git", "index")).st_mtime_ns
+        except OSError:
+            stamp = None
+        key = (os.path.realpath(root), stamp)
+        if key not in _LISTING_CACHE:
+            _LISTING_CACHE[key] = repo_files(root)
+        return _LISTING_CACHE[key]
+    except RuntimeError as exc:
+        print(f"FAIL: {exc}")
+        sys.exit(1)
 
 
 def _script_exists(root, rel):
@@ -1166,6 +1188,27 @@ def self_test(root="."):
               "staleness was not respected (expected 0 failures while "
               "untracked, 1 once git-tracked): untracked={0}, "
               "tracked={1}".format(found_untracked, found_tracked))
+
+    # A root with its own `.git` that git cannot read (a bogus .git file)
+    # must raise, not fall back to walking the disk.
+    tmp = tempfile.mkdtemp()
+    try:
+        with io.open(os.path.join(tmp, ".git"), "w", encoding="utf-8") as fh:
+            fh.write("not a gitdir\n")
+        try:
+            repo_files(tmp)
+            raised = False
+        except RuntimeError:
+            raised = True
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if raised:
+        print("[ok] mutation caught: repo_files in a working tree git cannot "
+              "read raises instead of walking the disk")
+    else:
+        bad += 1
+        print("[FAIL] repo_files fell back to os.walk in a root with a .git "
+              "git could not read")
 
     for name, m_sites, m_table, expect in _mutations(sites, table):
         found = compare(m_sites, m_table, relative)
