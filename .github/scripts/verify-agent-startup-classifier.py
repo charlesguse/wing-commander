@@ -230,6 +230,12 @@ def check_workflow(path):
         if ("needs.verify-image-prerequisites.result" not in yaml.safe_dump(envs)
                 or "Image prerequisite check" not in runs):
             errors.append("classify-startup must report verify-image-prerequisites' result beside its verdict")
+        # Error logs reach ::warning:: only through the step's one-line
+        # helper; a bare cat/tr of one would split the annotation.
+        if ("oneline() {" not in runs
+                or re.search(r"\$\((cat|tr)\b[^)]*job-(lookup|log)-error\.log", runs)):
+            errors.append("classify-startup must quote job-lookup-error.log / job-log-error.log in a "
+                          "::warning:: only through its oneline helper")
         # It runs on the runner, not the image: a runner without gh/jq/python3,
         # or a classifier that was never checked out, is named as such rather
         # than read as an empty log and an "exited 2" verdict.
@@ -599,6 +605,13 @@ def self_test():
                     s["run"] = s["run"].replace('[ ! -f "$classifier" ]', "false")
 
         expect("no runner/classifier preflight", mutated(drop_preflight), "could not reach subject")
+
+        def raw_error_log(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
+                    s["run"] = s["run"].replace("$(oneline job-log-error.log)", "$(cat job-log-error.log 2>/dev/null)")
+
+        expect("error log quoted raw", mutated(raw_error_log), "oneline helper")
         expect("prereq result not reported", mutated(drop_prereq_report),
                "report verify-image-prerequisites' result")
         expect("no script call", mutated(drop_script), "must invoke classify-agent-startup.py")
