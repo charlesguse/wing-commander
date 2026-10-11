@@ -194,16 +194,20 @@ def check_wrapper(path=WRAPPER):
             doc = yaml.safe_load(fh)
     except (OSError, yaml.YAMLError) as exc:
         return ["cannot read %s: %s" % (path, exc)]
-    job = (((doc or {}).get("jobs") or {}).get("dogfood") or {})
-    cond = " ".join(str(job.get("if", "")).split())
-    # The one guard: the job runs on a dispatched image only inside this
-    # owner's GHCR namespace, and on the variable only when no image was
-    # dispatched -- so no other registry ever receives the secrets.
-    want = ("(inputs.container-image == '' && vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != '') "
-            "|| startsWith(inputs.container-image, format('ghcr.io/{0}/', github.repository_owner))")
-    if cond != want:
+    jobs = (doc or {}).get("jobs") or {}
+    refuse = jobs.get("refuse-foreign-image") or {}
+    job = jobs.get("dogfood") or {}
+    norm = lambda v: " ".join(str(v or "").split())
+    # The one namespace test lives on refuse-foreign-image, which fails for
+    # a foreign dispatched image; dogfood runs only when it was skipped.
+    want_refuse = ("inputs.container-image != '' && !startsWith(inputs.container-image, "
+                   "format('ghcr.io/{0}/', github.repository_owner))")
+    want_job = ("!cancelled() && needs.refuse-foreign-image.result == 'skipped' && "
+                "(inputs.container-image != '' || vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != '')")
+    if (norm(refuse.get("if")) != want_refuse or norm(job.get("needs")) != "refuse-foreign-image"
+            or norm(job.get("if")) != want_job):
         return ["the wrapper's dogfood job may run on a dispatched container-image outside this "
-                "owner's GHCR namespace, sending it the registry secrets (if: %r)" % cond]
+                "owner's GHCR namespace, sending it the registry secrets"]
     return []
 
 
@@ -329,7 +333,8 @@ def self_test():
             wsrc = fh.read()
         p_wrap = os.path.join(tmp, "wrapper.yml")
         with open(p_wrap, "w", encoding="utf-8") as fh:
-            fh.write(wsrc.replace("|| startsWith(inputs.container-image", "|| true || startsWith(inputs.container-image"))
+            fh.write(wsrc.replace("needs.refuse-foreign-image.result == 'skipped'",
+                                  "needs.refuse-foreign-image.result != 'cancelled'"))
         expect("unconstrained wrapper dispatch", check_wrapper(p_wrap), "outside this owner's GHCR namespace")
         expect("first match", mutated(first_match), "ambiguous")
         expect("no prompt", mutated(drop_prompt), "needs a prompt")

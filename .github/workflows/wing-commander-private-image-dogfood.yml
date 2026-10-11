@@ -53,10 +53,12 @@ jobs:
   dogfood:
     # A dispatched image runs only inside this owner's own GHCR namespace:
     # a free-text input must not choose which registry receives the
-    # registry credentials below (an image elsewhere is a no-op).
+    # registry credentials below. refuse-foreign-image holds the one
+    # namespace test; it is skipped exactly when the image may run.
+    needs: refuse-foreign-image
     if: >-
-      (inputs.container-image == '' && vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != '')
-      || startsWith(inputs.container-image, format('ghcr.io/{0}/', github.repository_owner))
+      !cancelled() && needs.refuse-foreign-image.result == 'skipped'
+      && (inputs.container-image != '' || vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != '')
     permissions:
       actions: read
       contents: read
