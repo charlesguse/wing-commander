@@ -422,11 +422,13 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 
   - .github/scripts/wc_gh_grant.py
 
-- [ ] Review finding: Staged job logs prompt paragraph pasted twice in watchdog.yml
+- [X] Review finding: Staged job logs prompt paragraph pasted twice in watchdog.yml
 
   The 14-line staged job logs prompt paragraph is duplicated verbatim in the Diagnose and diagnose-shadow prompts, so an edit to one can drift from the other and the shadow would measure a different prompt.
 
   - .github/workflows/watchdog.yml
+
+  Resolution: refuted, see round 6 finding 5.
 
 - [X] Review finding: fetch-incomplete reason assignment order is fragile
 
@@ -439,3 +441,15 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
   check_gh_rationale_home runs git ls-files and reads every tracked text file on each call, including about 25 self-test fixture calls, adding avoidable seconds to every gate run; a per-root cache is possible.
 
   - .github/scripts/verify-issue-context-single-home.py
+
+## Review Gate Round 6 Findings
+
+- [X] Finding 1: open-ended launcher grants with arguments are not flagged as gh grants (`.github/scripts/wc_gh_grant.py`). Resolution: backlog, for a checklist line on the Maintenance backlog issue; out of this pass's scope.
+- [X] Finding 2: `mut_fetch_log_in_place` does not model its named defect (`.github/scripts/verify-sentinel-collector.py`). Resolution: fixed. The mutation now makes all three edits in-place streaming needs (both reads write `$id.log`, the empty-body check reads it there, the move is gone) and applies all or none, so a rewrite reports it inapplicable; it is now killed by the mid-log crash scenario (a partial log left behind), not by every log being deleted.
+- [X] Finding 3: per-job `sleep 10` retry has no circuit breaker (`.github/actions/wing-commander-fetch-job-logs/action.yml`). Resolution: fixed. A circuit breaker bounds the waits: no retry once a read has failed 401/403 other than a secondary rate limit, none once a retry has failed before any read succeeded (every read failing is not a lag), and at most three waits per run; a lag after one good read still gets its retry. A token that cannot read logs now costs at most one wait. A failed read's HTTP status (not gh's message text, which a later watchdog could read as a sentinel) is echoed to the step log. verify-sentinel-collector.py counts the waits in five breaker scenarios, with mutations for each rule (no breaker, a 403 retried, a rate limit read as lost access, no cap, a failed retry denying later retries after a good read, a stray stderr file).
+- [X] Finding 4: staging step labels a dead helper as `log-read` (`.github/workflows/watchdog.yml`). Resolution: fixed. The branch names `log-read` only when the helper's reason.txt says so, behind the `[ -n "$reason" ]` guard; a helper that died leaves the reason to the `fetch-incomplete` rule. New staging scenarios (dead helper with a failed job: `fetch-incomplete`; helper that named `log-read`: `log-read`) and a mutation restoring the unguarded label.
+- [X] Finding 5: staged-logs prompt paragraph duplicated in Diagnose and diagnose-shadow (`.github/workflows/watchdog.yml`). Resolution: refuted. The duplication is required, not drift-prone: spec 110's T005 took research D7's byte-equality fallback because Gate 38 forbids any composite from invoking the agent action, so the shadow's prompt is pasted from Diagnose and Gate 146 (verify-diagnose-shadow-acts-on-nothing.py) fails on any byte of drift between the two. Same refutation as PR #982's rounds 7 and 9.
+- [X] Finding 6: the staged-logs contract contradicts the shipped helper (`specs/101-read-only-gh-grants/contracts/diagnose-staged-logs.md`). Resolution: fixed in the contract, which now describes what ships: unconcluded jobs are read best effort (one try, never a failed result) only when `conclusions` is empty, and the diagnose caller passes and stages `failure,timed_out,startup_failure`. That is FR-018's "failed jobs" (a timed-out or never-started job is a failed one) and keeps FR-020's degradation; the retry bullet also records the circuit breaker.
+- [X] Finding 7: check 6's cache keyed on `.git/index` mtime is stale in worktrees (`.github/scripts/verify-issue-context-single-home.py`). Resolution: backlog, for a checklist line on the Maintenance backlog issue.
+- [X] Finding 8: comment fused onto a frozenset's closing parens (`.github/scripts/wc_gh_grant.py`). Resolution: backlog (cosmetic), for a checklist line on the Maintenance backlog issue.
+- [X] Finding 9: lint-workflows' pull_request paths filter misses files check 6 scans (`.github/workflows/lint-workflows.yml`). Resolution: refuted. Decided when T022 was finished: check 6 runs on push to main and on the daily schedule, and only the rationale's home doc is in the PR filter, so a pasted copy elsewhere is caught on main by design.

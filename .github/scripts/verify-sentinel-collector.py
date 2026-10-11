@@ -48,6 +48,7 @@ Requires: bash, jq. See wc_shell_harness.py for running this on Windows.
 import copy
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -174,7 +175,8 @@ def render_step(step):
     return script, env
 
 
-def stub_gh(bindir, fixture_dir, raw=False, jobs_rc=0, crash_logs=False):
+def stub_gh(bindir, fixture_dir, raw=False, jobs_rc=0, crash_logs=False,
+            logs_error=None):
     """A `gh` that answers the two api calls the fetch helper makes, from files.
 
     `raw=True` skips the `--jq` below and prints jobs.json as is, with exit
@@ -182,7 +184,8 @@ def stub_gh(bindir, fixture_dir, raw=False, jobs_rc=0, crash_logs=False):
     reached it, which gh's exit status alone does not report. `jobs_rc`
     makes the listing exit with that status after printing (gh failing on a
     later page); `crash_logs` makes a log read print part of the log and
-    then kill the shell running it.
+    then kill the shell running it; `logs_error` makes every log read fail,
+    printing that message to stderr as gh does.
 
     The jobs listing is read with `--paginate --jq '.jobs[]'` (spec 036):
     under `--paginate` gh applies the filter to each page and emits one JSON
@@ -214,7 +217,9 @@ def stub_gh(bindir, fixture_dir, raw=False, jobs_rc=0, crash_logs=False):
             + f'    rc=$?; [ {int(jobs_rc)} = 0 ] || rc={int(jobs_rc)}; exit $rc ;;\n'
             '  */logs) id="${p#*/actions/jobs/}"; id="${id%/logs}"; '
             + ('head -c 5 "$d/log-$id.txt"; kill -KILL "$PPID"; exit 137 ;;\n'
-               if crash_logs else 'cat "$d/log-$id.txt" ;;\n')
+               if crash_logs else
+               f'echo "{logs_error}" >&2; exit 1 ;;\n'
+               if logs_error else 'cat "$d/log-$id.txt" ;;\n')
             +
             '  *) echo "unexpected gh api path: $p" >&2; exit 1 ;;\n'
             'esac\n')
@@ -371,7 +376,7 @@ def shipped_fetch():
 
 def run_fetch(fetch_script, listing, out_dir, tmproot, raw=False, logs=None,
               jobs_rc=0, fail_mv=False, crash_jq=False, stale=None,
-              crash_logs=False, conclusions=""):
+              crash_logs=False, conclusions="", logs_error=None, sleeps=None):
     """Run the shared helper against stub_gh. `listing` is jobs.json for the
     stub: printed as is when `raw`, else a `{"jobs": [...]}` page gh's own
     `--jq` is applied to; the listing exits `jobs_rc`. A listed job's log is
@@ -379,7 +384,9 @@ def run_fetch(fetch_script, listing, out_dir, tmproot, raw=False, logs=None,
     every `mv` fail; `crash_jq` makes the listing's `jq -s` print part of
     its output and then kill the shell running it, as a runner that dies
     mid-write would; `stale` is a jobs.json left in `out_dir` beforehand;
-    `crash_logs` kills it the same way during a log read. Returns
+    `crash_logs` kills it the same way during a log read; `logs_error` fails
+    every log read with that gh message; `sleeps`, a list, gets the number of retry
+    waits the helper took appended. Returns
     (step rc, `result` output or None, jobs.json text or None, reason.txt
     text or None, the .log files left in `out_dir`)."""
     workdir = tempfile.mkdtemp(dir=tmproot)
@@ -399,15 +406,18 @@ def run_fetch(fetch_script, listing, out_dir, tmproot, raw=False, logs=None,
                           encoding="utf-8", newline="\n") as fh:
                     fh.write(body)
         stub_gh(bindir, fixtures.replace("\\", "/"), raw=raw,
-                jobs_rc=jobs_rc, crash_logs=crash_logs)
+                jobs_rc=jobs_rc, crash_logs=crash_logs, logs_error=logs_error)
         if stale is not None:
             os.makedirs(out_dir, exist_ok=True)
             with open(os.path.join(out_dir, "jobs.json"), "w", encoding="utf-8") as fh:
                 fh.write(stale)
-        # The helper's one retry waits `sleep 10`; nothing here needs the wait.
+        # The helper's one retry waits `sleep 10`; nothing here needs the wait,
+        # but each wait is counted (the retry circuit breaker's evidence).
+        sleep_log = os.path.join(bindir, "sleep.count")
         with open(os.path.join(bindir, "sleep"), "w", encoding="utf-8",
                   newline="\n") as fh:
-            fh.write("#!/usr/bin/env bash\nexit 0\n")
+            fh.write("#!/usr/bin/env bash\n"
+                     f'echo x >> "{sleep_log.replace(chr(92), "/")}"\nexit 0\n')
         os.chmod(os.path.join(bindir, "sleep"), 0o755)
         if crash_jq:
             real_jq = shutil.which("jq")
@@ -438,6 +448,12 @@ def run_fetch(fetch_script, listing, out_dir, tmproot, raw=False, logs=None,
                 return None
         logs_left = sorted(f for f in (os.listdir(out_dir) if os.path.isdir(out_dir) else [])
                            if f.endswith(".log"))
+        if sleeps is not None:
+            try:
+                with open(sleep_log, encoding="utf-8") as fh:
+                    sleeps.append(len(fh.read().splitlines()))
+            except OSError:
+                sleeps.append(0)
         return (rc, outs.get("result"), text("jobs.json"), text("reason.txt"),
                 logs_left)
     finally:
@@ -477,6 +493,10 @@ def run_staging(stage_script, fetch_script, sc, tmproot):
             name = "jobs.json" if sc["jobs_json"] is not None else "jobs.json.tmp"
             with open(os.path.join(fetch_dir, name), "w", encoding="utf-8") as fh:
                 fh.write(sc["jobs_json"] or UNREADABLE_LISTING)
+            if sc.get("fetch_reason") is not None:
+                with open(os.path.join(fetch_dir, "reason.txt"), "w",
+                          encoding="utf-8") as fh:
+                    fh.write(sc["fetch_reason"])
             result = sc["fetch_result"]
             helper = None
         rc, _out, _, _ = run_step(BASH, stage_script, workdir,
@@ -568,6 +588,21 @@ STAGING_SCENARIOS = [
         jobs_json=json.dumps([FAILED_JOBS[1]]), fetch_result="",
         expect_outcome="failed", expect_reason="fetch-incomplete",
         expect_files={},
+    ),
+    dict(
+        # A dead helper set no result and named no log-read failure, so the
+        # failed job's missing log is an incomplete gather, not a failed read.
+        name="a helper that died before a failed job's log is incomplete",
+        jobs_json=json.dumps(FAILED_JOBS), fetch_result="",
+        expect_outcome="failed", expect_reason="fetch-incomplete",
+        expect_files={901: False},
+    ),
+    dict(
+        name="a helper that named a log-read failure is a log-read",
+        jobs_json=json.dumps(FAILED_JOBS), fetch_result="failed",
+        fetch_reason="log-read",
+        expect_outcome="failed", expect_reason="log-read",
+        expect_files={901: False},
     ),
     dict(
         name="a failed helper that left no reason is incomplete",
@@ -694,6 +729,36 @@ def staging_suite(stage_script, fetch_script, collector, tmproot):
                         f"failed read] result {result!r}, reason {reason!r}, "
                         f"logs {logs_left!r}, expected 'ok', no reason, no "
                         f"901.log.")
+
+    # The retry circuit breaker: a token that cannot read logs must not cost
+    # one 10s wait per job, yet a lag must still get its retry.
+    def breaker(name, ids, want_waits, want_logs=None, **kw):
+        listing = json.dumps({"jobs": [{"id": i, "name": f"j{i}",
+                                        "conclusion": "failure"} for i in ids]})
+        sleeps = []
+        out_dir = os.path.join(tempfile.mkdtemp(dir=tmproot), "out")
+        _rc, result, _jobs, _reason, logs_left = run_fetch(
+            fetch_script, listing, out_dir, tmproot, sleeps=sleeps, **kw)
+        errs = [f for f in os.listdir(out_dir) if f.endswith(".log.err")]
+        if (result != "failed" or sleeps != [want_waits] or errs
+                or (want_logs is not None and logs_left != want_logs)):
+            failures.append(f"[helper breaker: {name}] result {result!r}, "
+                            f"waits {sleeps!r}, logs {logs_left!r}, stray "
+                            f".err {errs!r}; expected 'failed', "
+                            f"[{want_waits}], logs {want_logs!r}, no .log.err.")
+    three = (911, 912, 913)
+    breaker("a 403 on a log read retries nothing", three, 0,
+            logs_error="gh: Resource not accessible by integration (HTTP 403)")
+    breaker("a rate-limit 403 is retried like a lag", three, 1,
+            logs_error="gh: You have exceeded a secondary rate limit (HTTP 403)")
+    breaker("a failed retry before any good read stops later retries", three, 1,
+            logs={i: None for i in three})
+    breaker("one unreadable log still lets the others through", three, 1,
+            want_logs=["912.log", "913.log"], logs={911: None})
+    six = (911, 912, 913, 914, 915, 916)
+    breaker("after a good read a failed retry keeps the next job's retry, "
+            "up to three waits", six, 3, want_logs=["911.log"],
+            logs={i: None for i in six[1:]})
     return failures
 
 
@@ -726,11 +791,74 @@ def mut_collect_trust_dead_helper(script):
     return script.replace('fetch_out="${FETCH_RESULT:-failed}"', 'fetch_out="${FETCH_RESULT:-ok}"')
 
 
+def _replace_each(script, pairs):
+    """Apply every (old, new) pair, or none: when any `old` no longer occurs
+    the script comes back unchanged, so the harness reports the mutation as
+    inapplicable instead of a partial edit passing for the defect."""
+    if any(old not in script for old, _new in pairs):
+        return script
+    for old, new in pairs:
+        script = script.replace(old, new)
+    return script
+
+
 def mut_fetch_log_in_place(script):
-    """Stream each log straight into place, not through a temp file."""
-    return script.replace('/logs" > "$OUT_DIR/$id.log.tmp"', '/logs" > "$OUT_DIR/$id.log"').replace(
-        '[ ! -s "$OUT_DIR/$id.log.tmp" ] \\\n                || ! mv "$OUT_DIR/$id.log.tmp" "$OUT_DIR/$id.log"',
-        '[ ! -s "$OUT_DIR/$id.log" ]')
+    """Stream each log straight into place, not through a temp file: both
+    reads write $id.log, the empty-body check reads it there, and the move
+    is gone. Only a read cut short mid-body tells this apart: it leaves a
+    partial log a caller would read as real evidence."""
+    return _replace_each(script, [
+        ('/logs" > "$OUT_DIR/$id.log.tmp"', '/logs" > "$OUT_DIR/$id.log"'),
+        ('if [ ! -s "$OUT_DIR/$id.log.tmp" ]; then',
+         'if [ ! -s "$OUT_DIR/$id.log" ]; then'),
+        ('if ! mv "$OUT_DIR/$id.log.tmp" "$OUT_DIR/$id.log"; then',
+         'if false; then'),
+    ])
+
+
+def mut_fetch_no_retry_breaker(script):
+    """Retry every job's failed read, however systematic the failure."""
+    return _replace_each(script, [(
+        '[ "$conclusion" != "in_progress" ] && [ "$retry_off" = "0" ]',
+        '[ "$conclusion" != "in_progress" ]')])
+
+
+def mut_fetch_retry_on_403(script):
+    """Read a 401/403 as a lag worth retrying."""
+    return _replace_each(script, [(
+        "grep -qE 'HTTP 40[13]'", "false && grep -qE 'HTTP 40[13]'")])
+
+
+def mut_fetch_403_rate_limit_systematic(script):
+    """Read a secondary rate limit's 403 as a token that cannot read logs."""
+    return _replace_each(script, [(
+        "! grep -qi 'rate limit'", "true || ! grep -qi 'rate limit'")])
+
+
+def mut_fetch_no_wait_cap(script):
+    """Let the waits grow with the number of failing jobs."""
+    return _replace_each(script, [(' && [ "$waits" -lt 3 ]', "")])
+
+
+def mut_fetch_breaker_ignores_good_read(script):
+    """Trip the breaker on any failed retry, so a lag after one denies the
+    next job its retry (round 5's global-retry shape)."""
+    return _replace_each(script, [(' || [ "$read_ok" = "1" ]', "")])
+
+
+def mut_fetch_keep_err(script):
+    """Leave a failed read's stderr file behind in out-dir."""
+    return _replace_each(script, [(
+        'rm -f "$OUT_DIR/$id.log.err" "$OUT_DIR/$id.log.tmp"',
+        'rm -f "$OUT_DIR/$id.log.tmp"')])
+
+
+def mut_stage_dead_helper_log_read(script):
+    """Label any non-ok helper's missing log `log-read` (round 6's finding)."""
+    # The run: block is dedented when read, so match its lines at any indent.
+    return re.sub(r'if \[ "\$fetch_reason" = "log-read" \]; then\n\s*'
+                  r'\[ -n "\$reason" \] \|\| reason="log-read"\n\s*fi\n',
+                  'reason="log-read"\n', script, count=1)
 
 
 def mut_stage_unchecked_read(script):
@@ -787,7 +915,18 @@ STAGING_MUTATIONS = [
     ("the collector dying on a missing log", "collect", mut_collect_unguarded_log_read),
     ("the collector dying on a missing jobs.json", "collect",
      mut_collect_unguarded_jobs_read),
+    ("staging labelling a dead helper's missing log log-read", "stage",
+     mut_stage_dead_helper_log_read),
     ("the helper streaming a log straight into place", "fetch", mut_fetch_log_in_place),
+    ("the helper retrying every job after a systematic failure", "fetch",
+     mut_fetch_no_retry_breaker),
+    ("the helper retrying a 403", "fetch", mut_fetch_retry_on_403),
+    ("the helper reading a rate limit as lost access", "fetch",
+     mut_fetch_403_rate_limit_systematic),
+    ("the helper waiting once per failing job", "fetch", mut_fetch_no_wait_cap),
+    ("the helper denying retries after one job's failed retry", "fetch",
+     mut_fetch_breaker_ignores_good_read),
+    ("the helper leaving a failed read's stderr behind", "fetch", mut_fetch_keep_err),
     ("the helper accepting an unparseable listing", "fetch",
      mut_fetch_no_listing_check),
     ("the helper ignoring gh's own listing status", "fetch",

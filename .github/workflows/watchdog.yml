@@ -2571,8 +2571,12 @@ jobs:
               if [ -s "$fetch_dir/$job_id.log" ] && cp "$fetch_dir/$job_id.log" "$log_dir/$job_id.log"; then
                 file="$log_dir/$job_id.log"
               elif [ "$fetch_out" != "ok" ]; then
+                # `log-read` only when the helper named it; a helper that died
+                # leaves the reason to the fetch-incomplete rule below.
                 outcome="failed"
-                reason="log-read"
+                if [ "$fetch_reason" = "log-read" ]; then
+                  [ -n "$reason" ] || reason="log-read"
+                fi
               else
                 # A missing log after an ok fetch is a successful read of an
                 # empty body (a timed-out or never-started job). The agent

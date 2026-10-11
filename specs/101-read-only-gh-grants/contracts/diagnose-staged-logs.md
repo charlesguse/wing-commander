@@ -12,8 +12,8 @@ resolving `_shared/`.
 Inputs: `token` (the `github.token`, passed by the caller as
 `${{ github.token }}`), `run-id`, `out-dir`, and the optional `conclusions`
 (comma-separated; only jobs with a listed conclusion are fetched, so diagnose
-passes `failure,timed_out,startup_failure`; empty fetches every job that has
-concluded and is not skipped or cancelled).
+passes `failure,timed_out,startup_failure`; empty fetches every job that is
+not skipped or cancelled, unconcluded jobs included, best effort).
 `GITHUB_REPOSITORY` comes from the runner environment.
 
 Behaviour:
@@ -21,8 +21,15 @@ Behaviour:
 - lists jobs for the run (`--paginate`), captures through a direct pipeline
   with `|| rc=`, never through a bare command substitution;
 - clears `*.log` files of an earlier run first;
-- per job not `skipped`/`cancelled`/unconcluded: fetch the log; one bounded
-  retry per job after `sleep 10` on a non-zero status;
+- per concluded job not `skipped`/`cancelled` (and, with `conclusions` set,
+  only one whose conclusion is listed): fetch the log; one bounded retry per
+  job after `sleep 10` on a non-zero status, under a circuit breaker: no
+  retry once a read has failed 401/403 other than a rate limit, none once a
+  retry has failed before any read succeeded, and at most three waits per
+  run, so a token that cannot read logs costs at most one wait;
+- per unconcluded job (queued or running), only when `conclusions` is empty:
+  one best-effort read, no retry, and a failed read does not fail the result
+  (a stalled job's partial log can still carry a sentinel);
 - never writes an error message or empty body as log content; an empty body
   from a successful read writes no file and is not a failed read (the staging
   step records `file: null` for it with status `ok`, and `log-read` only when
@@ -33,8 +40,9 @@ Behaviour:
   `result` and callers read that output rather than any stdout line.
 
 Callers: `collect-step-summary` (scans logs for sentinels; keeps its sentinel
-logic inline) and `Stage failed-job logs` (keeps jobs with conclusion
-`failure`).
+logic inline; passes no `conclusions`) and `Stage failed-job logs` (passes
+`conclusions: failure,timed_out,startup_failure` and stages the jobs with
+those conclusions; unconcluded jobs are never fetched for it).
 
 ## Staged files (diagnose job)
 
