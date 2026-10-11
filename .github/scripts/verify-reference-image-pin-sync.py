@@ -191,6 +191,14 @@ CASES = {
                                       if j["name"] == "sync-pins"]}]},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=0, status={THIS: "skipped", E2E: "skipped"}, writes=[], reason="run 8"),
+    # A "re-run failed jobs" attempt (no startup-check listed) whose sync
+    # failed again: it ended, so it may have written part of a newer digest.
+    "rerun-failed-jobs-sync-failed": dict(
+        runs=[8], jobs={8: [run_jobs("success", "failure"),
+                            {"jobs": [j for j in run_jobs("success", "failure")["jobs"]
+                                      if j["name"] == "sync-pins"]}]},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[], reason="newer run 8"),
     # A run-list row that does not parse fails closed.
     "run-list-malformed": dict(
         runs=[8], attempts_override={8: None},

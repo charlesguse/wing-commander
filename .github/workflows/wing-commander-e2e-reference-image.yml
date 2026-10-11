@@ -347,15 +347,22 @@ jobs:
                 finish
               fi
               [ -n "$pending" ] && continue
-              case "$check" in
-                success)
-                  if [ -n "$sync_job" ] && [ "$sync_job" != null ]; then
-                    record_all failed "newer run ${n} passed its check but its sync did not finish (${sync_job}); re-run that run's sync-pins job, not this one"
-                    finish
-                  fi
-                  pending=1
+              case "$sync_job" in
+                "" | null)
+                  # sync-pins has not ended: pending, unless this attempt's
+                  # check already failed (it never will run then).
+                  case "$check" in
+                    success | "" | null) pending=1 ;;
+                  esac
                   ;;
-                "" | null) pending=1 ;;
+                skipped) ;; # its check failed: the older attempts decide
+                *)
+                  # Ended without a finished sync step. sync-pins runs only
+                  # after a passed check, so this holds even for a "re-run
+                  # failed jobs" attempt that lists no startup-check.
+                  record_all failed "newer run ${n} passed its check but its sync did not finish (${sync_job}); re-run that run's sync-pins job, not this one"
+                  finish
+                  ;;
               esac
             done
             [ -n "$pending" ] && break
