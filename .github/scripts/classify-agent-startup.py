@@ -70,6 +70,23 @@ SETUP_DONE = re.compile(r"(?i)Claude Code installed successfully")
 TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z ?")
 
 
+# The runner's raw log heads a composite's steps "Run <uses or first script
+# line>", not their names; these map the action's own steps (action.yml at
+# v1) back to the names its job page shows. Anything else keeps its header.
+STEP_NAMES = [
+    (re.compile(r"^Run oven-sh/setup-bun@"), "Install Bun"),
+    (re.compile(r"^Run cd \$\{GITHUB_ACTION_PATH\}"), "Install Dependencies"),
+    (re.compile(r"^Run # Do NOT pass --tsconfig-override"), "Run Claude Code Action"),
+]
+
+
+def _step_name(group):
+    for pattern, name in STEP_NAMES:
+        if group and pattern.search(group):
+            return name
+    return group
+
+
 def _result(verdict, step=None, error=None, reason=""):
     return {"verdict": verdict, "step": step, "error": error, "reason": reason}
 
@@ -112,11 +129,6 @@ def classify(text):
                 action_seen = True
         elif head.startswith("##[endgroup]"):
             in_header = False
-        elif SETUP_DONE.search(head) and action_seen and not in_header:
-            # Only runtime output: inside a group header the runner echoes
-            # the step's source and with:/env: dump, where the text (say an
-            # echo of it in a script) has not happened yet.
-            setup_done = True
         elif head.startswith("##[error]"):
             error = _error_text(lines, i)
             if not action_seen:
@@ -131,12 +143,26 @@ def classify(text):
                     VERDICT_COMPLETED, None, error,
                     "failed at authentication, after setup",
                 )
+            if not setup_done and any(m.search(error) for m in AUTH_MARKERS):
+                # The credential check before the setup-done line: the
+                # action reworded that line or reordered its checks. Not
+                # the image's fault, and not proof of setup either.
+                return _unclassified(
+                    "the credential check failed before the setup-done line "
+                    "(the action's wording or order changed)", error)
             if not setup_done:
+                step = _step_name(group)
                 return _result(
-                    VERDICT_FAILED, group, error,
-                    '%s: step "%s" failed: %s' % (REASON_FAILED, group, error),
+                    VERDICT_FAILED, step, error,
+                    '%s: step "%s" failed: %s' % (REASON_FAILED, step, error),
                 )
             return _unclassified("an error after setup is not the authentication failure", error)
+        elif SETUP_DONE.search(head) and action_seen and not in_header:
+            # Only runtime output: inside a group header the runner echoes
+            # the step's source and with:/env: dump, where the text (say an
+            # echo of it in a script) has not happened yet. Tested after
+            # ##[error], so an error quoting the line is still an error.
+            setup_done = True
     if group is None:
         return _unclassified("no step groups in the log (the job may never have started)")
     if not action_seen:

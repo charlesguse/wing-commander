@@ -1,1 +1,1 @@
-{"verdict": "setup-failed", "step": "Run oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6", "error_contains": "Unable to locate executable file: unzip", "note": "synthetic: shaped on claude-code-action@v1 action.yml and run.ts at 1d6de8c"}
+{"verdict": "setup-failed", "step": "Install Bun", "error_contains": "Unable to locate executable file: unzip", "note": "synthetic: shaped on claude-code-action@v1 action.yml and run.ts at 1d6de8c"}

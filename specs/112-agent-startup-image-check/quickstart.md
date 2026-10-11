@@ -23,11 +23,11 @@ green.
 ## 3. Git floor
 
 ```
-python .github/scripts/run-local-gates.py   # includes Gate 23
+python .github/scripts/run-local-gates.py   # includes Gate 148
 ```
 
-On a throwaway copy of a stage with the fragment removed, Gate 23 fails. To
-see the probe itself: run it against `ubuntu:22.04` (git 2.34.1, expect a
+On a throwaway copy of a stage with the fragment removed, Gate 148
+(verify-image-git-floor.py) fails. To see the probe itself: run it against `ubuntu:22.04` (git 2.34.1, expect a
 failure naming 2.34.1) and `ubuntu:24.04` (expect pass).
 
 ## 4. End to end (SC-001, SC-002)

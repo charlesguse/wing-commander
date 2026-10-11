@@ -311,6 +311,6 @@ jobs:
           if [ "$rc" -ne 0 ]; then
             # A crashed classifier leaves no verdict: say so, not a blank reason.
             reason="$(jq -r '.reason // empty' verdict.json 2>/dev/null)"
-            echo "::error::wing-commander classify-startup: ${reason:-the classifier exited $rc without a verdict (see this step's log)}"
+            echo "::error::wing-commander classify-startup: ${reason:-the classifier exited $rc without a verdict (see the step log)}"
             exit 1
           fi
