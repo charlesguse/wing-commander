@@ -1477,9 +1477,12 @@ jobs:
 
           # FR-004(a) counts not-ready outcomes on the same PR: a count
           # earned on another PR does not follow the item to the one the
-          # fallback recovered.
+          # fallback recovered -- nor does the round a readiness or
+          # not-ready handover marker recorded for that other PR (D6).
           if pr_from_fallback and str(marker_full.get("pr") or "") != str(pr_number):
               nr_count_ = "0"
+              if marker_step == "readiness" or handover_marker:
+                  round_ = "0"
 
           print(json.dumps({
               "step": step,

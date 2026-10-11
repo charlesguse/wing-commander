@@ -1024,10 +1024,14 @@ RESUME_CASES = [
     # FR-004(a) counts outcomes on the same PR (code review of #1010): a
     # count earned on PR 42 does not follow the item to fallback PR 50, nor
     # into a fix that cuts a new PR; on the same PR it carries.
-    ("readiness marker nr_count 2 on PR 42, fallback recovers PR 50 -> count reset",
+    ("readiness marker nr_count 2 on PR 42, fallback recovers PR 50 -> count and round reset",
      _resume_env("readiness", "42", False, "OPEN", "50", from_fallback=True,
-                 marker_extra={"pr": 42}, nr_count="2"),
-     {"pr_number": "50", "nr_count": "0"}),
+                 marker_extra={"pr": 42}, nr_count="2", round_="4"),
+     {"pr_number": "50", "nr_count": "0", "round": "0"}),
+    ("not-ready handover on PR 42 (round 3), fallback recovers PR 60 -> round reset",
+     _resume_env("stalled", "42", False, "OPEN", "60", from_fallback=True,
+                 marker_extra={"pr": 42, "nr_head_sha": "deadbeef"}, round_="3"),
+     {"pr_number": "60", "round": "0"}),
     ("readiness marker nr_count 2 on PR 42, fallback recovers PR 42 -> count carried",
      _resume_env("readiness", "42", False, "OPEN", "42", from_fallback=True,
                  marker_extra={"pr": 42}, nr_count="2"),

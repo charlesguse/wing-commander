@@ -70,7 +70,7 @@ def _entry_state(entry):
     return (entry.get("state") or entry.get("conclusion") or entry.get("status") or "").upper()
 
 
-def _unmet_class(rollup, checks_green, other_unmet=False):
+def _unmet_class(rollup, checks_green):
     """specs/093-not-ready-board-release contracts/not-ready-hold.md,
     research.md D2: "self-clearing" when every rollup entry is either
     green (SUCCESS/NEUTRAL/SKIPPED) or not yet concluded, and at least one
@@ -80,11 +80,12 @@ def _unmet_class(rollup, checks_green, other_unmet=False):
     unmet reason that is not about checks_green at all: gate_suite_green,
     zero_open_findings, backstop_holds, kill_switch_clear). FR-005: derived
     only from the rollup's own per-entry states, never from an agent's
-    reading of them. `other_unmet`: a non-check condition (open findings, a
-    breached backstop, the kill switch) is also unmet, which no later run
-    clears on its own. (A paused loop writes no record at all -- FR-006 is
-    the workflow's kill-switch gating, research.md D9.)"""
-    if checks_green or other_unmet:
+    reading of them. The class of the checks alone: evaluate_from_snapshot()
+    makes the record durable whenever a non-check condition (open findings,
+    a breached backstop, the kill switch) is also unmet. (A paused loop
+    writes no record at all -- FR-006 is the workflow's kill-switch gating,
+    research.md D9.)"""
+    if checks_green:
         return "durable"
     if not rollup:
         return "durable"
