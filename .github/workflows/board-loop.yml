@@ -1441,8 +1441,13 @@ jobs:
                       if moved else "the head had not moved since the last converged review")
           elif branch:
               step = "fix"
-              # A fix cuts a new PR: the not-ready count starts again.
+              # A fix cuts a new PR: the not-ready count starts again, and
+              # so does the round a readiness marker carried (specs/093 D6
+              # puts the converged review's round on it), which belongs to
+              # the PR that is gone.
               nr_count_ = "0"
+              if marker_step == "readiness":
+                  round_ = "0"
           else:
               step = "triage"
               if marker_present and marker_step not in PRE_FIX_STEPS:

@@ -120,13 +120,15 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
         # Open findings, a breached backstop or the kill switch stay unmet
         # when the checks finish, so they are durable whatever the rollup
         # says.
-        unmet_class = _unmet_class(
-            rollup, checks_green,
-            other_unmet=not (zero_open_findings and backstop_holds and kill_switch_clear))
+        # The checks' own class, then the record's: the reason text below
+        # reads the first, the record carries the second.
+        checks_class = _unmet_class(rollup, checks_green)
+        other_unmet = not (zero_open_findings and backstop_holds and kill_switch_clear)
+        unmet_class = "durable" if other_unmet else checks_class
         if not checks_green:
             if not rollup:
                 unmet_reason = "no checks reported on head_sha {0}".format(head_sha)
-            elif _unmet_class(rollup, checks_green) == "self-clearing":
+            elif checks_class == "self-clearing":
                 # Only running checks: say so, so FR-009's nr_reason tells a
                 # pending outcome from a failed one on the same head.
                 unmet_reason = "checks still running on head_sha {0}".format(head_sha)
