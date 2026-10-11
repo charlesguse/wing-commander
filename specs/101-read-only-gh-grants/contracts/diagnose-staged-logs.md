@@ -58,6 +58,6 @@ watchdog-job-logs/<job_id>.log` and `.../watchdog-job-logs-status.json`.
 | listing read fails, what gh printed does not parse as JSON, or the move into place fails | helper `failed` with reason `jobs-list` and `jobs.json` `[]` (absent if even that write fails); status `failed`, reason `jobs-list`, `job-logs` added to untrusted collectors |
 | staged `jobs.json` non-empty but not an array of objects (not written by a helper that ran to completion) | status `failed`, reason `jobs-unreadable`, `job-logs` added to untrusted collectors |
 | a log read fails (after that job's one retry) | status `failed`, that job `file: null`, others still staged |
-| empty log body (successful read) | that job `file: null`, no empty file written, status stays `ok` |
+| empty log body (successful read) of a failed job | that job `file: null`, no empty file written; status `failed`, reason `log-empty`, `job-logs` added to untrusted collectors, so the agent cannot read a missing log as an unneeded one |
 | no failed jobs | status `ok`, empty `jobs` |
-| step crashes | `continue-on-error`; missing status file read as failed; a helper that failed without naming a log-read failure (it died, or could not write its reason) makes the status `failed`, reason `fetch-incomplete` unless a more specific reason (`jobs-list`, `jobs-unreadable`, `log-read`) applies |
+| step crashes | `continue-on-error`; missing status file read as failed; a helper that failed without naming a log-read failure (it died, or could not write its reason) makes the status `failed`, reason `fetch-incomplete` unless a more specific reason (`jobs-list`, `jobs-unreadable`, `log-read`, `log-empty`) applies |

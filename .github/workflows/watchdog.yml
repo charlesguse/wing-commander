@@ -2544,9 +2544,11 @@ jobs:
           reason=""
           # A helper that failed without naming a log-read failure (it died,
           # setting no result, or could not write its reason) left an
-          # incomplete gather; a more specific reason below replaces this one.
+          # incomplete gather; it is applied after the branches below, and only
+          # when none of them named a more specific reason.
           fetch_reason="$(cat "$fetch_dir/reason.txt" 2>/dev/null)" || fetch_reason=""
-          [ "$fetch_out" = "ok" ] || [ "$fetch_reason" = "log-read" ] || { outcome="failed"; reason="fetch-incomplete"; }
+          incomplete=0
+          [ "$fetch_out" = "ok" ] || [ "$fetch_reason" = "log-read" ] || incomplete=1
           jobs_arr='[]'
           if [ "$fetch_out" != "ok" ] && [ "$fetch_reason" = "jobs-list" ]; then
             outcome="failed"
@@ -2578,11 +2580,15 @@ jobs:
                 # reads as a gather that did not complete (job-logs is
                 # marked untrusted), never as an ok status with file null.
                 outcome="failed"
-                [ "$reason" = "log-read" ] || reason="log-empty"
+                [ -n "$reason" ] || reason="log-empty"
               fi
               jobs_arr="$(printf '%s' "$jobs_arr" | jq -c --argjson id "$job_id" --arg n "$job_name" --arg c "$job_conclusion" --arg f "$file" \
                 '. + [{id:$id,name:$n,conclusion:$c,file:(if $f == "" then null else $f end)}]')"
             done
+          fi
+          if [ "$incomplete" = "1" ] && [ -z "$reason" ]; then
+            outcome="failed"
+            reason="fetch-incomplete"
           fi
           jq -cn --arg o "$outcome" --arg r "$reason" --argjson j "$jobs_arr" \
             '{outcome:$o,jobs:$j,reason:(if $r == "" then null else $r end)}' > "$status"

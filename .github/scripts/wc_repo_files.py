@@ -42,14 +42,17 @@ def _git(root, *args):
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
-def repo_files(root="."):
-    """-> sorted repo-root-relative paths of the repository's files."""
+def repo_files(root=".", within_tree=False):
+    """-> sorted repo-root-relative paths of the repository's files.
+    `within_tree` also accepts a `root` that is a subdirectory of a working
+    tree, listing git's tracked files under it (paths relative to `root`)."""
     try:
         top = _git(root, "rev-parse", "--show-toplevel")
         # Only when root IS the top: a fixture directory nested inside some
         # other repository's work tree is not that repository.
         same = os.path.normcase(os.path.realpath(os.fsdecode(top.stdout).strip()))
-        if top.returncode == 0 and same == os.path.normcase(os.path.realpath(root)):
+        if top.returncode == 0 and (
+                within_tree or same == os.path.normcase(os.path.realpath(root))):
             proc = _git(root, "ls-files", "-z")
             if proc.returncode == 0:
                 return sorted(os.fsdecode(p) for p in proc.stdout.split(b"\0") if p)

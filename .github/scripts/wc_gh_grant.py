@@ -19,8 +19,7 @@ LAUNCHER_WORDS = frozenset((
     "sh", "zsh", "dash", "eval", "script", "chroot", "unshare", "flock",
     "strace", "ltrace", "busybox", "parallel", "find", "su", "runuser",
     "nsenter", "systemd-run", "taskset", "numactl", "tmux", "ssh", "perl",
-))
-# Interpreters run whatever their code argument says: only a script path is
+))# Interpreters run whatever their code argument says: only a script path is
 # safe to grant, so a `-c`/`-e` flag or no script at all can reach `gh`.
 INTERPRETER_WORDS = frozenset((
     "bash", "sh", "zsh", "dash", "python", "python3", "perl", "ruby", "node",

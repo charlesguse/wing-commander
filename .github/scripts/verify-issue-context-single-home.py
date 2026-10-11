@@ -260,7 +260,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import use_utf8_stdout  # noqa: E402
 from wc_published_stages import published_stages  # noqa: E402
 from wc_repo_files import git_env, repo_files  # noqa: E402
-from wc_gh_grant import command_grants_gh  # noqa: E402
+from wc_gh_grant import grants_gh  # noqa: E402
 
 BOARD_LOOP = ".github/workflows/board-loop.yml"
 ISSUE_CONTEXT_ACTION = ".github/actions/wing-commander-issue-context/action.yml"
@@ -566,12 +566,14 @@ def _bash_grant_problems(text, where, git_grant=GIT_READ_GRANT, strict=True,
             continue
         command = m.group(1).split(":", 1)[0].strip().rstrip("* ")
         tokens = command.split()
-        if not strict and command_grants_gh(command):
+        if not strict and grants_gh(grant):
             problems.append(
                 f"{where} grants {grant} to a read-only agent. `gh` reaches "
                 f"remote writes, local file writes and (via `gh alias set` "
                 f"/ `gh extension install`) arbitrary execution, so no `gh` "
-                f"grant is safe on an agent that must not write. Stage what "
+                f"grant is safe on an agent that must not write (a launcher "
+                f"grant such as find, env or bash counts: it can run `gh`). "
+                f"Stage what "
                 f"the agent needs as a file in a deterministic step "
                 f"instead; the rationale is in "
                 f"docs/agent-friendly-workflows.md (spec 101).")
@@ -1096,13 +1098,30 @@ LINE_MARKER_RE = re.compile(r"^[ \t]*(?:#+(?!\d)|//+|>+|\*+)?[ \t]*",
                             re.MULTILINE)
 
 
+_LIVE_FILES_CACHE = {}
+
+
 def _live_text_files(root):
     """Repository-relative paths of the live text files under `root` that
-    check 6 reads (see its docstring entry for what is not live)."""
-    return sorted(rel for rel in set(repo_files(root))
-                  if rel.endswith(RATIONALE_SCAN_EXTS)
-                  and not SPEC_DIR_RE.match(rel)
-                  and os.path.isfile(os.path.join(root, rel)))
+    check 6 reads (see its docstring entry for what is not live). Listed
+    once per process for a root with its own `.git`, keyed by its index
+    mtime; a directory without one (a self-test fixture) is listed afresh."""
+    key = None
+    if os.path.exists(os.path.join(root, ".git")):
+        try:
+            stamp = os.stat(os.path.join(root, ".git", "index")).st_mtime_ns
+        except OSError:
+            stamp = None
+        key = (os.path.realpath(root), stamp)
+        if key in _LIVE_FILES_CACHE:
+            return _LIVE_FILES_CACHE[key]
+    files = sorted(rel for rel in set(repo_files(root))
+                   if rel.endswith(RATIONALE_SCAN_EXTS)
+                   and not SPEC_DIR_RE.match(rel)
+                   and os.path.isfile(os.path.join(root, rel)))
+    if key is not None:
+        _LIVE_FILES_CACHE[key] = files
+    return files
 
 
 def _unwrapped(text):
@@ -2599,6 +2618,12 @@ def _self_test_read_only_git(tmpdir):
         ("4b: inline agent step granting Bash(GH_TOKEN=x gh:*) wrapper spelling",
          _inline_fixture(allowed=f"Read,Bash(GH_TOKEN=x gh:*),{PUBLISHED_GIT_READ_GRANT}"),
          "claude_args grants Bash(GH_TOKEN=x gh:*) to a read-only agent", inline),
+        ("4b: colon inside an env assignment and an open launcher grant",
+         _inline_fixture(allowed=f"Read,Bash(PATH=/a:/b gh api:*),{PUBLISHED_GIT_READ_GRANT}"),
+         "claude_args grants Bash(PATH=/a:/b gh api:*) to a read-only agent", inline),
+        ("4b: open-ended Bash(env:*) launcher grant",
+         _inline_fixture(allowed=f"Read,Bash(env:*),{PUBLISHED_GIT_READ_GRANT}"),
+         "claude_args grants Bash(env:*) to a read-only agent", inline),
         ("4b: a path argument ending in gh is not a gh grant",
          _inline_fixture(allowed=f"Read,Bash(ls docs/gh:*),{PUBLISHED_GIT_READ_GRANT}"),
          None, inline),

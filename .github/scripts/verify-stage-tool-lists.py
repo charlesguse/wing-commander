@@ -513,13 +513,7 @@ def _listing(root):
     a gate verdict, not a traceback."""
     try:
         if not os.path.exists(os.path.join(root, ".git")):
-            proc = subprocess.run(
-                ["git", "-C", root, "ls-files", "-z"], env=git_env(),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if proc.returncode == 0:
-                return sorted(os.fsdecode(p) for p in proc.stdout.split(b"\0")
-                              if p)
-            return repo_files(root)
+            return repo_files(root, within_tree=True)
         try:
             stamp = os.stat(os.path.join(root, ".git", "index")).st_mtime_ns
         except OSError:

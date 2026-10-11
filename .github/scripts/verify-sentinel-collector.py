@@ -707,7 +707,7 @@ def mut_stage_no_type_guard(script):
 def mut_stage_trust_dead_helper(script):
     """Read a helper that set no result as if it had finished."""
     return script.replace(
-        '[ "$fetch_out" = "ok" ] || [ "$fetch_reason" = "log-read" ] || { outcome="failed"; reason="fetch-incomplete"; }',
+        '[ "$fetch_out" = "ok" ] || [ "$fetch_reason" = "log-read" ] || incomplete=1',
         ":")
 
 
