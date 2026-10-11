@@ -250,6 +250,8 @@ HEREDOC_CASES = (
     "no-open-pr-falls-to-triage",
     "fresh-budget-after-readmission",
     "head-unmoved-resolves-readiness-live",
+    "not-ready-handover-head-matches-converged-review",
+    "not-ready-handover-head-moved-since-converged-review",
 )
 
 

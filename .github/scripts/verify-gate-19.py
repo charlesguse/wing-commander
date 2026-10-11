@@ -511,12 +511,14 @@ def mut_array_collecting_annotations(script):
     """Reintroduce the array-collecting --jq '[...]' shape (the T067 defect):
     wrapping the per-item filter in [...] makes gh emit one ARRAY per page
     under --paginate, instead of one value per line."""
-    old = ('--jq \'.[] | select(.annotation_level=="warning" or '
-           '.annotation_level=="failure") | {source:"annotations",'
-           '"class-hint":null,facts:{level:.annotation_level,message:.message}}\'')
-    new = ('--jq \'[.[] | select(.annotation_level=="warning" or '
-           '.annotation_level=="failure") | {source:"annotations",'
-           '"class-hint":null,facts:{level:.annotation_level,message:.message}}]\'')
+    # spec 110 added the diagnose-shadow marker drop to the per-item filter.
+    body = ('.[] | select(.annotation_level=="warning" or '
+            '.annotation_level=="failure") | select((.message // "") | '
+            'contains("(trial; acts on nothing)") | not) | '
+            '{source:"annotations",'
+            '"class-hint":null,facts:{level:.annotation_level,message:.message}}')
+    old = "--jq '" + body + "'"
+    new = "--jq '[" + body + "]'"
     return script.replace(old, new)
 
 

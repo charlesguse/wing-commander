@@ -76,7 +76,7 @@ on:
         description: "Model for the progress-comment and metrics-summary steps (constitution II tiering default)"
         type: string
         required: false
-        default: claude-haiku-4-5
+        default: claude-haiku-5-5
       max-iterations:
         description: "Hard cap on implement/converge cycles"
         type: number

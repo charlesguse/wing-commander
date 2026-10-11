@@ -28,6 +28,10 @@ inputs:
     description: Pass-through only -- never derived from the PR itself
     required: false
     default: ""
+  nr-count:
+    description: Pass-through only -- never derived from the PR itself
+    required: false
+    default: ""
 
 outputs:
   pr-number:
@@ -39,6 +43,9 @@ outputs:
   round:
     description: Echoes the round input
     value: ${{ steps.resolve.outputs.round }}
+  nr-count:
+    description: Echoes the nr-count input
+    value: ${{ steps.resolve.outputs.nr-count }}
 
 runs:
   using: composite
@@ -50,6 +57,7 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         PR_NUMBER: ${{ inputs.pr-number }}
         ROUND: ${{ inputs.round }}
+        NR_COUNT: ${{ inputs.nr-count }}
         REPO: ${{ github.repository }}
       run: |
         set -euo pipefail
@@ -62,4 +70,5 @@ runs:
           echo "pr-number=$PR_NUMBER"
           echo "branch=$branch"
           echo "round=$ROUND"
+          echo "nr-count=$NR_COUNT"
         } >> "$GITHUB_OUTPUT"

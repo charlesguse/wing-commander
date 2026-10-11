@@ -39,10 +39,19 @@ own dispatch-path invocation), once with a caller-supplied value (both the
 wrapper's own completion-path invocation and the compatibility case FR-020
 promises is unchanged) -- against a `gh` stub.
 
-Five mutations (the wrapper passes the WRONG run-name field, the wrapper
+One second job is allowed, and only in one shape: spec 110's
+`trial-bound` job (research.md D10 -- the diagnose shadow's bound is a
+composite, and a `uses:` job cannot run one), and only while its `if:`
+requires `vars.WING_COMMANDER_DIAGNOSE_SHADOW_SINCE != ''`. With the trial
+off it is skipped, so the inspection still allocates exactly one wrapper
+runner; with the trial on it is the bounded price of the trial.
+
+Eight mutations (the wrapper passes the WRONG run-name field, the wrapper
 drops run-name entirely, the wrapper regains a second job, the wrapper
-stops calling the stage directly, the stage's empty-input fallback
-dropped) must each break an assertion.
+stops calling the stage directly, the trial-bound job loses its switch
+guard or has it OR'd away, a trial-bound step without its own timeout,
+the stage's empty-input fallback dropped) must each break an
+assertion.
 
 Wiring: lint-workflows.yml, Gate 75.
 """
@@ -61,6 +70,8 @@ import yaml  # noqa: E402
 WRAPPER = os.path.join(".github", "workflows", "wing-commander-8-watchdog.yml")
 STAGE = os.path.join(".github", "workflows", "watchdog.yml")
 WRAPPER_JOB = "watchdog"
+TRIAL_JOB = "trial-bound"
+TRIAL_GUARD = "vars.WING_COMMANDER_DIAGNOSE_SHADOW_SINCE != ''"
 RESOLVE_STEP = "Fetch inspected run metadata"
 COLLECT_JOB = "collect"
 
@@ -106,10 +117,37 @@ def load_subject():
 def wrapper_failures(subject):
     broke = []
     jobs = subject["wrapper:jobs"]
-    if sorted(jobs) != [WRAPPER_JOB]:
+    extra = sorted(set(jobs) - {WRAPPER_JOB, TRIAL_JOB})
+    if WRAPPER_JOB not in jobs or extra:
         broke.append(f"{WRAPPER} declares job(s) {sorted(jobs)}; the fold "
-                     f"leaves exactly [{WRAPPER_JOB!r}] -- every extra job is a "
+                     f"leaves exactly [{WRAPPER_JOB!r}] (plus spec 110's "
+                     f"switch-guarded {TRIAL_JOB!r}) -- every extra job is a "
                      f"billed runner minute that only gates and forwards")
+    trial = jobs.get(TRIAL_JOB)
+    if trial is not None:
+        # 8b fails the inspection on any job not concluding success, so no
+        # trial-bound step may fail the job: each tolerates its own failure
+        # under its own timeout, all inside the job's.
+        steps = trial.get("steps") or []
+        budget = trial.get("timeout-minutes")
+        for st in steps:
+            if st.get("continue-on-error") is not True \
+                    or not isinstance(st.get("timeout-minutes"), int):
+                broke.append(f"{TRIAL_JOB!r} step {st.get('name')!r} needs "
+                             f"continue-on-error: true and its own "
+                             f"timeout-minutes -- a failing trial-bound job "
+                             f"turns the inspection red in 8b")
+        total = sum(st.get("timeout-minutes") or 0 for st in steps
+                    if isinstance(st.get("timeout-minutes"), int))
+        if not isinstance(budget, int) or total >= budget:
+            broke.append(f"{TRIAL_JOB!r} step timeouts ({total}) must stay "
+                         f"under the job's timeout-minutes ({budget})")
+    trial_if = str((trial or {}).get("if") or "")
+    # A conjunct, not merely a substring: `guard || true` contains it too.
+    if trial is not None and (TRIAL_GUARD not in trial_if or "||" in trial_if):
+        broke.append(f"the {TRIAL_JOB!r} job's if: must require {TRIAL_GUARD} "
+                     f"as a conjunct (no ||) -- with the trial off it must not "
+                     f"allocate a runner")
     job = jobs.get(WRAPPER_JOB) or {}
     if not str(job.get("uses") or "").strip():
         broke.append(f"the {WRAPPER_JOB!r} job is not a `uses:` call -- the "
@@ -254,6 +292,32 @@ def mut_wrapper_regains_a_resolve_job(subject):
     return s
 
 
+def mut_trial_bound_loses_its_switch_guard(subject):
+    s = dict(subject)
+    jobs = {k: dict(v) for k, v in subject["wrapper:jobs"].items()}
+    jobs[TRIAL_JOB]["if"] = "github.event.workflow_run.conclusion != 'skipped'"
+    s["wrapper:jobs"] = jobs
+    return s
+
+
+def mut_trial_bound_guard_or_true(subject):
+    s = dict(subject)
+    jobs = {k: dict(v) for k, v in subject["wrapper:jobs"].items()}
+    jobs[TRIAL_JOB]["if"] = jobs[TRIAL_JOB]["if"] + " || true"
+    s["wrapper:jobs"] = jobs
+    return s
+
+
+def mut_trial_bound_step_untolerated(subject):
+    s = dict(subject)
+    jobs = {k: dict(v) for k, v in subject["wrapper:jobs"].items()}
+    steps = [dict(x) for x in jobs[TRIAL_JOB]["steps"]]
+    steps[1].pop("timeout-minutes", None)
+    jobs[TRIAL_JOB]["steps"] = steps
+    s["wrapper:jobs"] = jobs
+    return s
+
+
 def mut_wrapper_stops_calling_the_stage(subject):
     s = dict(subject)
     jobs = {k: dict(v) for k, v in subject["wrapper:jobs"].items()}
@@ -278,6 +342,12 @@ MUTATIONS = [
     ("the wrapper regains a resolve job", mut_wrapper_regains_a_resolve_job),
     ("the wrapper stops calling the stage directly",
      mut_wrapper_stops_calling_the_stage),
+    ("the trial-bound job loses its switch guard",
+     mut_trial_bound_loses_its_switch_guard),
+    ("the trial-bound job's guard is OR'd away",
+     mut_trial_bound_guard_or_true),
+    ("a trial-bound step loses its own timeout",
+     mut_trial_bound_step_untolerated),
     ("the stage's empty-input fallback is dropped",
      mut_stage_drops_the_empty_input_fallback),
 ]

@@ -41,28 +41,52 @@ permissions: {}
 jobs:
   # Default tier from vars.WING_COMMANDER_IMPLEMENT_MODEL (claude-sonnet-5-5 when
   # unset); the model:opus label on the lifecycle issue escalates to
-  # claude-opus-5-5 regardless of the variable.
+  # claude-opus-5-5 regardless of the variable. The model:haiku label (spec
+  # 110, per lifecycle only, model:opus wins) runs the cycle on
+  # claude-haiku-5-5 with a claude-sonnet-5-5 escalation and a Haiku turn
+  # budget; no other stage reads that label and no default moves (FR-016).
   resolve-model:
     runs-on: ubuntu-latest
     permissions:
       issues: read
     outputs:
       model: ${{ steps.tier.outputs.tier }}
-      escalation-model: ${{ vars.WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL || 'claude-opus-5-5' }}
-      summary-model: ${{ vars.WING_COMMANDER_SUMMARY_MODEL || 'claude-haiku-4-5' }}
+      escalation-model: ${{ steps.tier.outputs.escalation }}
+      max-turns: ${{ steps.tier.outputs.max-turns }}
+      summary-model: ${{ vars.WING_COMMANDER_SUMMARY_MODEL || 'claude-haiku-5-5' }}
     steps:
       - name: Resolve model tier
         id: tier
         env:
           GH_TOKEN: ${{ github.token }}
           MODEL_VAR: ${{ vars.WING_COMMANDER_IMPLEMENT_MODEL }}
+          ESCALATION_VAR: ${{ vars.WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL }}
+          HAIKU_MAX_TURNS: ${{ vars.WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS }}
           ISSUE: ${{ inputs.issue }}
         run: |
           tier="${MODEL_VAR:-claude-sonnet-5-5}"
-          if gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' | grep -qx 'model:opus'; then
+          escalation="${ESCALATION_VAR:-claude-opus-5-5}"
+          # Same value as implement.yml's max-turns input default.
+          max_turns=180
+          labels="$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')" || {
+            echo "::warning::could not read lifecycle issue labels; a model:opus / model:haiku opt-in is not applied this cycle"
+            labels=''
+          }
+          if grep -qx 'model:opus' <<< "$labels"; then
             tier="claude-opus-5-5"
+          elif grep -qx 'model:haiku' <<< "$labels"; then
+            tier="claude-haiku-5-5"
+            escalation="claude-sonnet-5-5"
+            max_turns="${HAIKU_MAX_TURNS:-180}"
+            case "$max_turns" in
+              ''|*[!0-9]*|0|0[0-9]*) max_turns=180 ;;
+            esac
           fi
-          echo "tier=$tier" >> "$GITHUB_OUTPUT"
+          {
+            echo "tier=$tier"
+            echo "escalation=$escalation"
+            echo "max-turns=$max_turns"
+          } >> "$GITHUB_OUTPUT"
           echo "Implementation model for this cycle: $tier" >> "$GITHUB_STEP_SUMMARY"
 
   implement:
@@ -81,6 +105,7 @@ jobs:
       model: ${{ needs.resolve-model.outputs.model }}
       escalation-model: ${{ needs.resolve-model.outputs.escalation-model }}
       summary-model: ${{ needs.resolve-model.outputs.summary-model }}
+      max-turns: ${{ fromJSON(needs.resolve-model.outputs.max-turns) }}
       max-iterations: ${{ fromJSON(vars.WING_COMMANDER_MAX_ITERATIONS || '5') }}
       spec-prefix: ${{ vars.WING_COMMANDER_SPEC_PREFIX || 'spec/' }}
       self-workflow: wing-commander-5-implement.yml

@@ -105,6 +105,38 @@ rate_limited=false
 # the floor was scaled from.
 diagnose_conclusion="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose"))) | .conclusion] | first // empty' <<<"$jobs_json")"
 
+# epoch: an ISO-8601 time in any shape the API emits - whole seconds and
+# Z as observed, or fractional seconds and a +/-HH:MM offset as the REST
+# docs show (step times) - since bare fromdateiso8601 accepts only the
+# first and, on anything else, errors the whole program. One home for the
+# failed-step pointer below and the diagnose duration ceiling.
+JQ_EPOCH='def epoch: sub("\\.[0-9]+"; "")
+        | if test("[+-][0-9]{2}:[0-9]{2}$")
+          then .[-6:] as $o | (.[:-6] + "Z" | fromdateiso8601)
+               - (($o[0:1] + "1" | tonumber) * (($o[1:3] | tonumber) * 3600 + ($o[4:6] | tonumber) * 60))
+          else fromdateiso8601 end;'
+
+# The diagnose shadow's span (spec 110), in the one diagnose job check 1
+# times and check 8 reads the log of (the first): its steps -- every one
+# named "diagnose shadow"/"diagnose-shadow", together the diagnose job's
+# contiguous tail, both of which Gate 146 holds -- from the first start to
+# the last completion, skipped steps ignored, as "from_epoch to_epoch
+# from_date to_date". One home for check 1's duration ceiling and check
+# 8's log cut, so the two always leave out the same span; empty when no
+# shadow step ran or none has a time JQ_EPOCH can read.
+shadow_span="$(jq -r "$JQ_EPOCH"'
+  [[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))]
+   | first // {} | (.steps // [])[] | select((.name // "") | test("diagnose[ -]shadow"; "i"))
+       | select(.conclusion != "skipped")
+   | (try [(.started_at | epoch), (.completed_at | epoch)] catch empty)]
+  | if length == 0 then empty
+    else [(map(.[0]) | min), (map(.[1]) | max)]
+         | "\(.[0]) \(.[1]) \(.[0] | todate) \(.[1] | todate)" end' <<<"$jobs_json" 2>/dev/null)" || shadow_span=""
+shadow_from_epoch="" shadow_to_epoch="" shadow_from="" shadow_to=""
+if [ -n "$shadow_span" ]; then
+  read -r shadow_from_epoch shadow_to_epoch shadow_from shadow_to <<<"$shadow_span"
+fi
+
 # ── Check 2: runtime anomaly vs. this workflow's own successful history ────
 # Median of the last 20 successful runs (excluding this one). Bounds are
 # deliberately loose — this gates issue creation, and a run with real
@@ -187,9 +219,20 @@ if [ "$diagnose_conclusion" = "skipped" ]; then
     reason "diagnose was skipped but neither of collect's reporters ran — the run decided something and recorded nothing"
   fi
 else
-  d_secs="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
+  # The diagnose shadow (spec 110) runs last in this job under its own
+  # 5-minute bound and acts on nothing, so its span (shadow_span above,
+  # gaps between its steps included) is subtracted here: a slow shadow is
+  # not a stalled acting diagnose and must not file anything (SC-003). A
+  # step time JQ_EPOCH cannot read leaves no span and subtracts nothing,
+  # so the acting bound is never lost to it.
+  d_secs="$(jq -r '
+    [.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
     | select(.started_at != null and .completed_at != null)
-    | ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601))] | first // empty' <<<"$jobs_json")"
+    | ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601))
+    ] | first // empty' <<<"$jobs_json")"
+  if [ -n "$d_secs" ] && [ -n "$shadow_from_epoch" ]; then
+    d_secs=$(( d_secs - (shadow_to_epoch - shadow_from_epoch) ))
+  fi
   if [ -n "$d_secs" ] && [ "$d_secs" -gt 300 ]; then
     reason "the diagnose job ran ${d_secs}s (normal is under 75s; hard ceiling 300s) — the agent stalled"
   fi
@@ -272,6 +315,16 @@ rm -rf "$tmpdir"
 diagnose_job_id="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose"))) | .id] | first // empty' <<<"$jobs_json")"
 if [ -n "$diagnose_job_id" ] && [ "$diagnose_conclusion" != "skipped" ]; then
   if dlog="$(api "actions/jobs/$diagnose_job_id/logs" 2>/dev/null)"; then
+    # spec 110: the diagnose shadow runs in this job and acts on nothing,
+    # so a shadow that crashes or exhausts its turns is not a crashed
+    # diagnose (SC-003). Log lines stamped strictly inside the shadow's
+    # span (shadow_span above: after its first start's second, before its
+    # last completion's) are left out; every other line, including the
+    # boundary seconds an acting step may share, is read.
+    if [ -n "$shadow_span" ]; then
+      dlog="$(printf '%s\n' "$dlog" | awk -v from="${shadow_from%Z}" -v to="${shadow_to%Z}" \
+        '/^[0-9][0-9][0-9][0-9]-/ { ts = substr($0, 1, 19); if (ts > from && ts < to) next } { print }')"
+    fi
     if printf '%s' "$dlog" | grep -aEq '##\[error\]Action failed with error|SDK execution error|Workflow initiated by non-human actor|json-schema is not valid JSON'; then
       reason "diagnose job log carries an agent crash signature that continue-on-error hid from every API conclusion"
     fi
@@ -332,18 +385,9 @@ if [ "${CREATE_ISSUE:-false}" = "true" ]; then
   failed_step="$(jq -r "$diag"' [diag | .steps[]? | select(.conclusion == "failure")
     | "\(.number)|\(.name)"] | first // empty' <<<"$jobs_json")"
   step_how="its jobs-API conclusion is failure"
-  # epoch: an ISO-8601 time in any shape the API emits - whole seconds and
-  # Z as observed, or fractional seconds and a +/-HH:MM offset as the REST
-  # docs show - since bare fromdateiso8601 accepts only the first and, on
-  # anything else, errors the whole program into "no step". A step whose
-  # times still cannot be read is skipped on its own.
+  # A step whose times cannot be read (see JQ_EPOCH) is skipped on its own.
   if [ -z "$failed_step" ] && [ -n "$first_error" ]; then
-    failed_step="$(jq -r --arg ts "${first_error%% *}" "$diag"'
-      def epoch: sub("\\.[0-9]+"; "")
-        | if test("[+-][0-9]{2}:[0-9]{2}$")
-          then .[-6:] as $o | (.[:-6] + "Z" | fromdateiso8601)
-               - (($o[0:1] + "1" | tonumber) * (($o[1:3] | tonumber) * 3600 + ($o[4:6] | tonumber) * 60))
-          else fromdateiso8601 end;
+    failed_step="$(jq -r --arg ts "${first_error%% *}" "$diag$JQ_EPOCH"'
       ($ts | epoch) as $t
       | [diag | .steps[]? | select(.started_at != null and .completed_at != null)
          | select(try ((.started_at | epoch) <= $t and (.completed_at | epoch) >= $t) catch false)
