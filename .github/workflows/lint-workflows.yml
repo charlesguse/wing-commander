@@ -5724,7 +5724,7 @@ jobs:
       # behind the start-up check run dispatched for this digest through
       # wing-commander-dispatch-and-wait; and no
       # other workflow or composite carries the pin write. Path triggers:
-      # .github/workflows/** and .github/scripts/** above.
+      # .github/workflows/**, .github/actions/** and .github/scripts/** above.
       - name: "Gate 156 — the reference-image pin sync writes only after a passed check, only on exactly the sync set, and fails loudly otherwise"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-reference-image-pin-sync.py

@@ -357,11 +357,16 @@ jobs:
                   ;;
                 skipped) ;; # its check failed: the older attempts decide
                 *)
-                  # Ended without a finished sync step. sync-pins runs only
-                  # after a passed check, so this holds even for a "re-run
-                  # failed jobs" attempt that lists no startup-check.
-                  record_all failed "newer run ${n} passed its check but its sync did not finish (${sync_job}); re-run that run's sync-pins job, not this one"
-                  finish
+                  # Ended without a finished sync step. Unless this attempt's
+                  # check itself failed or was cancelled (the run cancelled
+                  # before it passed), its check passed (see above), so it
+                  # may have written part of a newer digest.
+                  case "$check" in
+                    success | "" | null)
+                      record_all failed "newer run ${n} passed its check but its sync did not finish (${sync_job}); re-run that run's sync-pins job, not this one"
+                      finish
+                      ;;
+                  esac
                   ;;
               esac
             done

@@ -199,6 +199,12 @@ CASES = {
                                       if j["name"] == "sync-pins"]}]},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[], reason="newer run 8"),
+    # A newer run cancelled before its check passed never synced: the
+    # cancelled sync-pins it records does not block this write.
+    "newer-cancelled-before-check": dict(
+        runs=[8], jobs={8: run_jobs("cancelled", None, job="cancelled")},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=0, status={THIS: "written", E2E: "written"}, writes=[THIS, E2E]),
     # A run-list row that does not parse fails closed.
     "run-list-malformed": dict(
         runs=[8], attempts_override={8: None},
@@ -278,7 +284,8 @@ CASES = {
 # written or current); every other case must leave `synced` unset.
 SYNCED = {"both-written", "all-current", "exact-reach-case-insensitive",
           "absent-variable", "not-superseded", "hand-set-held-value", "newer-rerun-pending",
-          "newer-pending-shadows-lower", "newer-rerun-check-running", "newer-rerun-check-null"}
+          "newer-pending-shadows-lower", "newer-rerun-check-running", "newer-rerun-check-null",
+          "newer-cancelled-before-check"}
 
 
 def run_case(name, case, tmp, bash, script):
