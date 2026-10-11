@@ -425,12 +425,14 @@ def scan(root=".", tag=IMAGE_TAG):
         # One container start probes required-tools.txt and the prompted
         # commands together; the misses are reported per list.
         missing, log = check_tools(tag, tools + wanted)
+        shell_ran = missing is not None
         if missing is None:
             failures.append(
                 f"could not run a POSIX shell inside the built image to check its "
                 f"prerequisites -- {log[-1000:]}")
             missing = []
-        floor = check_git_floor(root, tag)
+        # Only when a shell started: a shell-less image is already reported.
+        floor = check_git_floor(root, tag) if shell_ran else None
         if floor:
             failures.append(
                 f"the reference image built from {DOCKERFILE_DIR}/Dockerfile fails the "
@@ -471,6 +473,7 @@ def _copy_subject(dst):
     shutil.copy(REQUIRED_TOOLS_FILE, os.path.join(dst, REQUIRED_TOOLS_FILE))
     os.makedirs(os.path.dirname(os.path.join(dst, IMPLEMENT_WORKFLOW)), exist_ok=True)
     shutil.copy(IMPLEMENT_WORKFLOW, os.path.join(dst, IMPLEMENT_WORKFLOW))
+    shutil.copy(GIT_FLOOR_FRAGMENT, os.path.join(dst, GIT_FLOOR_FRAGMENT))
 
 
 def _drop_installs(root, packages):

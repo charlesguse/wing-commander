@@ -151,8 +151,9 @@ def check_workflow(path):
         # The whole job but its registry credentials (container.credentials,
         # the image pull's own secrets): job env, container env and steps.
         scoped = {k: v for k, v in agent.items() if k != "container"}
-        scoped["container"] = {k: v for k, v in (agent.get("container") or {}).items()
-                               if k != "credentials"}
+        container = agent.get("container")
+        scoped["container"] = ({k: v for k, v in container.items() if k != "credentials"}
+                               if isinstance(container, dict) else container)
         job_text = yaml.safe_dump(scoped)
         if "secrets." in job_text:
             errors.append("startup-agent references a secret outside its registry credentials; "
@@ -193,12 +194,17 @@ def check_wrapper(path=WRAPPER):
             doc = yaml.safe_load(fh)
     except (OSError, yaml.YAMLError) as exc:
         return ["cannot read %s: %s" % (path, exc)]
-    secrets = (((doc or {}).get("jobs") or {}).get("dogfood") or {}).get("secrets") or {}
-    errors = []
-    for name, value in secrets.items():
-        if "secrets." in str(value) and "startsWith(inputs.container-image, format('ghcr.io/{0}/', github.repository_owner))" not in str(value):
-            errors.append("the wrapper sends %s to whatever registry a dispatched container-image names" % name)
-    return errors
+    job = (((doc or {}).get("jobs") or {}).get("dogfood") or {})
+    cond = " ".join(str(job.get("if", "")).split())
+    # The one guard: the job runs on a dispatched image only inside this
+    # owner's GHCR namespace, and on the variable only when no image was
+    # dispatched -- so no other registry ever receives the secrets.
+    want = ("(inputs.container-image == '' && vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != '') "
+            "|| startsWith(inputs.container-image, format('ghcr.io/{0}/', github.repository_owner))")
+    if cond != want:
+        return ["the wrapper's dogfood job may run on a dispatched container-image outside this "
+                "owner's GHCR namespace, sending it the registry secrets (if: %r)" % cond]
+    return []
 
 
 def run_checks(classifier=CLASSIFIER, fixtures=FIXTURES, workflow=WORKFLOW):
@@ -323,8 +329,8 @@ def self_test():
             wsrc = fh.read()
         p_wrap = os.path.join(tmp, "wrapper.yml")
         with open(p_wrap, "w", encoding="utf-8") as fh:
-            fh.write(wsrc.replace("startsWith(inputs.container-image", "contains(inputs.container-image"))
-        expect("unconstrained wrapper secrets", check_wrapper(p_wrap), "whatever registry")
+            fh.write(wsrc.replace("|| startsWith(inputs.container-image", "|| true || startsWith(inputs.container-image"))
+        expect("unconstrained wrapper dispatch", check_wrapper(p_wrap), "outside this owner's GHCR namespace")
         expect("first match", mutated(first_match), "ambiguous")
         expect("no prompt", mutated(drop_prompt), "needs a prompt")
         expect("no allowed_bots", mutated(drop_bots), "allowed_bots")

@@ -9,11 +9,14 @@ job log and returns exactly one verdict:
 
   setup-completed  exit 0  the first error came after setup and matches the
                            authentication marker table (positive evidence)
-  setup-failed     exit 1  the first error is inside a setup group; the
-                           group is named and the error line quoted verbatim
+  setup-failed     exit 1  the first error is in a setup step (Install Bun,
+                           Install Dependencies, the Claude Code install);
+                           the step is named and the error quoted verbatim
   unclassified     exit 2  anything else: empty/missing/truncated log, no
-                           error, a non-auth error after setup, an image that
-                           was never pulled, no group markers
+                           error, an error before the action started (image
+                           never pulled), the action's own prepare refusing
+                           the run, the credential check before the setup-
+                           done line, a non-credential error after setup
 
 Evidence note (research D3 / task T001): the fixtures under
 agent-startup-fixtures/ are `# synthetic` -- hand-written from the

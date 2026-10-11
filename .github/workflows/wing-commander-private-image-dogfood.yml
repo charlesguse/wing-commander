@@ -36,7 +36,12 @@ permissions: {}
 
 jobs:
   dogfood:
-    if: vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != '' || inputs.container-image != ''
+    # A dispatched image runs only inside this owner's own GHCR namespace:
+    # a free-text input must not choose which registry receives the
+    # registry credentials below (an image elsewhere is a no-op).
+    if: >-
+      (inputs.container-image == '' && vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != '')
+      || startsWith(inputs.container-image, format('ghcr.io/{0}/', github.repository_owner))
     permissions:
       actions: read
       contents: read
@@ -44,9 +49,6 @@ jobs:
     with:
       container-image: ${{ inputs.container-image || vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE }}
       startup-check: true
-    # A dispatched image gets the registry credentials only inside this
-    # owner's own GHCR namespace: a free-text input must not choose which
-    # registry receives them.
     secrets:
-      container-registry-username: ${{ (inputs.container-image == '' || startsWith(inputs.container-image, format('ghcr.io/{0}/', github.repository_owner))) && secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME || '' }}
-      container-registry-password: ${{ (inputs.container-image == '' || startsWith(inputs.container-image, format('ghcr.io/{0}/', github.repository_owner))) && secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD || '' }}
+      container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+      container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}

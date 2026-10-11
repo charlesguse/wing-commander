@@ -50,6 +50,17 @@ Exit 0 only for `setup-completed`; 1 for `setup-failed`; 2 for `unclassified`.
 Stdout: the Verdict (data-model.md). A missing, unreadable or empty `--log`
 is `unclassified`, exit 2.
 
+Rules, against claude-code-action@v1's own shape (one `run.ts` step that
+prepares, installs Claude Code, then checks the model credential):
+`setup-completed` needs the install's own success line and then the
+credential check's error. `setup-failed` is an error after the action's
+step started and before that success line, in a setup step (Install Bun,
+Install Dependencies, or the Claude Code install itself), named as the job
+page names it. `unclassified` is anything else: an error before the action
+started (job set-up, image pull), the action's own prepare refusing the run
+before it installs anything, the credential check before the success line,
+a non-credential error after it, no error, or no log.
+
 ## Image probe addition (FR-013)
 
 Inside the existing `docker run --entrypoint sh` probe of every
@@ -62,10 +73,15 @@ Inside the existing `docker run --entrypoint sh` probe of every
   "<output>"`.
 
 Gate 148 (`verify-image-git-floor.py`) fails a stage whose probe lacks the
-fragment, or the host-side report of a floor failure, verbatim.
+fragment, or the host-side report of a floor failure, verbatim. Gate 62
+runs the same fragment against the reference image it builds.
 
 ## Gate
 
-`verify-agent-startup-classifier.py [--self-test]`, registered in
+`verify-agent-startup-classifier.py [--self-test]` (Gate 147), registered in
 `lint-workflows.yml`: runs the classifier over the fixture set and fails on
-any mismatch or on a verdict branch with no fixture.
+any mismatch or on a verdict branch with no fixture. It also pins the jobs:
+no secret or model-credential variable reaches startup-agent outside its
+registry credentials, classify-startup fails closed and names a failed
+lookup or a crashed classifier, and the dogfood wrapper runs a dispatched
+`container-image` only inside the owner's GHCR namespace.

@@ -125,7 +125,7 @@ def check_gate_62(path=GATE_62):
     there before any digest is pinned."""
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
-    if "image-git-floor.sh" not in text or "check_git_floor(root, tag)" not in text:
+    if "image-git-floor.sh" not in text or "floor = check_git_floor(root, tag) if shell_ran else None" not in text:
         return ["verify-gate-62.py does not run image-git-floor.sh against the reference image"]
     return []
 
@@ -160,7 +160,7 @@ def self_test():
         with open(GATE_62, encoding="utf-8") as fh:
             src = fh.read()
         with open(p, "w", encoding="utf-8") as fh:
-            fh.write(src.replace("check_git_floor(root, tag)", "None"))
+            fh.write(src.replace("floor = check_git_floor(root, tag) if shell_ran else None", "floor = None"))
         if not check_gate_62(p):
             failures.append("a Gate 62 that never runs the git floor was not caught")
     if stages:
