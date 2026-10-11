@@ -48,9 +48,8 @@ EXPECTED_CASES = {
     # self-clearing (stale-check-summary); a failed check, or open findings
     # behind a still-running check, is durable.
     "failed-check", "pending-check-open-findings",
-    # Every check green but lint-workflows not registered yet: clears on
-    # its own (code review of #1010).
-    "lint-not-registered",
+    # The kill switch is never self-clearing, even behind a pending check.
+    "pending-check-kill-switch",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"

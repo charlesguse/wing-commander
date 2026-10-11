@@ -20,9 +20,8 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
     Adds "unmet_class" to the returned dict: "self-clearing" when every
     rollup entry blocking checks_green is in a not-yet-concluded state
     (QUEUED, IN_PROGRESS, WAITING, REQUESTED, PENDING, EXPECTED -- a
-    CheckRun's `status` when it has no `conclusion` yet), or every check
-    is green and only the lint-workflows CheckRun has not registered yet;
-    "durable" for any other
+    CheckRun's `status` when it has no `conclusion` yet); "durable" for
+    any other
     unmet reason (a terminal failing check state, an empty rollup, an
     open finding, a backstop breach, or the kill switch), and null when
     ready. FR-005: derived only from the rollup's own per-entry states,
@@ -211,9 +210,11 @@ extended decision (research.md D2), and:
 `select` names every item a not-ready hold passed over, and why, in its
 step summary, from `board_eligibility.py`'s own `not_ready_held` output
 (FR-011). A PR known to be CLOSED or MERGED, or one select's lookup found
-gone (404, no state), is never held; resume routes it
-(a fresh triage, for a merged handover too: nothing in the job graph
-consumes a bare prove resolution, `_merged_fix_holds()`, #532).
+gone (404, no state), is never held; resume routes it as it routes any
+marker whose PR is not open (resume-recovery.md): a fresh triage, or fix
+on the marker's branch when one is still recorded -- never prove for a
+merged handover, which nothing in the job graph consumes
+(`_merged_fix_holds()`, #532).
 
 Every durable action above stays behind
 `steps.killswitch-recheck.outputs.paused == 'false'`, unchanged (research.md

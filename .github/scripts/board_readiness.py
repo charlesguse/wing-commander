@@ -43,16 +43,6 @@ def _checks_green(rollup):
     return True
 
 
-def _gate_suite_entry(rollup):
-    """The lint-workflows CheckRun in `rollup`, or None (see
-    _gate_suite_green() for how it is found)."""
-    for entry in rollup:
-        name = entry.get("name") or entry.get("context") or ""
-        if name == "lint" and "workflow" in (entry.get("workflowName") or "").lower():
-            return entry
-    return None
-
-
 def _gate_suite_green(rollup):
     """research.md D13: read from the lint-workflows entry within the same
     fresh rollup, never a second local re-run. A CheckRun's own `name` is
@@ -82,7 +72,7 @@ def _entry_state(entry):
     return (entry.get("state") or entry.get("conclusion") or entry.get("status") or "").upper()
 
 
-def _unmet_class(rollup, checks_green, other_unmet=False, gate_suite_reported=True):
+def _unmet_class(rollup, checks_green, other_unmet=False):
     """specs/093-not-ready-board-release contracts/not-ready-hold.md,
     research.md D2: "self-clearing" when every rollup entry is either
     green (SUCCESS/NEUTRAL/SKIPPED) or not yet concluded, and at least one
@@ -94,13 +84,8 @@ def _unmet_class(rollup, checks_green, other_unmet=False, gate_suite_reported=Tr
     only from the rollup's own per-entry states, never from an agent's
     reading of them. `other_unmet`: a non-check condition (open findings, a
     breached backstop) is also unmet, which no later run clears on its own."""
-    if other_unmet:
+    if checks_green or other_unmet:
         return "durable"
-    if checks_green:
-        # Every reported check is green and only the lint-workflows check
-        # is missing: it has not registered yet (queued behind its
-        # concurrency group), which clears without anyone's work.
-        return "durable" if gate_suite_reported else "self-clearing"
     if not rollup:
         return "durable"
     for entry in rollup:
@@ -134,9 +119,9 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
     if not ready:
         # Open findings or a breached backstop stay unmet when the checks
         # finish, so they are durable whatever the rollup says.
-        unmet_class = _unmet_class(rollup, checks_green,
-                                   other_unmet=not (zero_open_findings and backstop_holds),
-                                   gate_suite_reported=_gate_suite_entry(rollup) is not None)
+        unmet_class = _unmet_class(
+            rollup, checks_green,
+            other_unmet=not (zero_open_findings and backstop_holds and kill_switch_clear))
         if not checks_green:
             if not rollup:
                 unmet_reason = "no checks reported on head_sha {0}".format(head_sha)

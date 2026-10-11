@@ -460,7 +460,10 @@ def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number,
     equals the record's own head_sha (unchanged head holds), and when a
     readiness marker names an nr_class but its record does not parse
     (FR-011: passed over, never admitted). False
-    otherwise -- including when there is no not-ready record at all, a
+    otherwise -- including a PR known CLOSED or MERGED, or one select's
+    lookup found gone (absent from a supplied pr_state_by_number: it can
+    never close or move, so a hold would be forever), no not-ready record
+    at all, a
     "self-clearing" record (FR-005: never held), or a durable record
     whose head has moved (admitted, not merely un-held -- resume's own
     step-resolution logic decides review vs. readiness, never this
