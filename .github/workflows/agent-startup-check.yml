@@ -319,10 +319,11 @@ jobs:
             # startup-agent.
             # One annotation per failure: each error log goes on one line
             # (a multi-line one would end the ::warning:: command early).
+            oneline() { tr '\r\n' '  ' 2>/dev/null < "$1" || true; }
             listed=true
             if ! { gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[]' > run-jobs.ndjson 2>job-lookup-error.log \
                    && jq -s '{jobs: .}' run-jobs.ndjson > run-jobs.json 2>>job-lookup-error.log; }; then
-              echo "::warning::wing-commander classify-startup: could not list run $RUN_ID's jobs (does the caller grant actions: read?) -- $(tr '\r\n' '  ' < job-lookup-error.log 2>/dev/null)"
+              echo "::warning::wing-commander classify-startup: could not list run $RUN_ID's jobs -- $(oneline job-lookup-error.log)"
               listed=false
             fi
             job_id=""
@@ -338,7 +339,7 @@ jobs:
               if [ "$(printf '%s\n' "$job_ids" | grep -c .)" -eq 1 ]; then
                 job_id="$job_ids"
               else
-                echo "::warning::wing-commander classify-startup: found $(printf '%s\n' "$job_ids" | grep -c .) startup-agent jobs in run $RUN_ID, not exactly one -- $(tr '\r\n' '  ' < job-lookup-error.log 2>/dev/null)"
+                echo "::warning::wing-commander classify-startup: found $(printf '%s\n' "$job_ids" | grep -c .) startup-agent jobs in run $RUN_ID, not exactly one -- $(oneline job-lookup-error.log)"
               fi
             fi
             # A just-finished job's log can 404 until it is archived; retry
@@ -351,7 +352,7 @@ jobs:
                 : > startup-agent.log
                 [ "$attempt" -eq 6 ] || sleep 10
               done
-              [ -s startup-agent.log ] || echo "::warning::wing-commander classify-startup: could not fetch job $job_id's log -- $(tr '\r\n' '  ' < job-log-error.log 2>/dev/null)"
+              [ -s startup-agent.log ] || echo "::warning::wing-commander classify-startup: could not fetch job $job_id's log -- $(oneline job-log-error.log)"
             fi
           fi
           rc=0
