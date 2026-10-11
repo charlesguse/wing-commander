@@ -2018,12 +2018,15 @@ def not_ready_report_findings(doc):
                         "(specs/093 FR-003/FR-004(a))")
     directed = re.search(r'if \[ -n "\$DIRECTED_STAGE" \]; then\n(.*?)\n\s*fi\n', run, re.S)
     backstop = run.find('if [ "$BACKSTOP_HOLDS" != "true" ]')
+    # The breach branch's own `else` (the plain not-ready branch) opens at
+    # the same indentation as its `if`.
+    plain = run.find("\nelse\n", backstop) if backstop >= 0 else -1
     handover = run.find("not_ready_handover_due(")
     # Inside the plain not-ready branch: after the backstop-breach branch
     # (a directed breach still files its spec-request), before the record.
     if (not directed or "exit 0" not in directed.group(1) or "--nr-count" in directed.group(1)
-            or backstop < 0 or handover < 0
-            or not backstop < directed.start() < handover):
+            or plain < 0 or handover < 0
+            or not plain < directed.start() < handover):
         findings.append("readiness: a directed proof run's not-ready outcome writes a record or reaches the "
                         "handover -- it selects no board item (code review of #1010)")
     if not any("--step readiness" in ln and "--nr-reason" in ln for ln in lines):
@@ -2037,13 +2040,18 @@ def not_ready_report_findings(doc):
     if nr_env.strip() != "${{ steps.pr.outputs.nr-count }}":
         findings.append("readiness: NR_COUNT is not the PR step's own nr-count -- a second chain "
                         "decides which upstream count readiness writes")
+    # A directed review carries the marker's count; a directed readiness
+    # run writes no record, so its PR step takes nothing from the marker.
     for job in ("review", "readiness"):
         for s in (jobs.get(job) or {}).get("steps") or []:
             if isinstance(s, dict) and s.get("id") == "pr":
-                w = s.get("with") or {}
-                for key in (("nr-count",) if job == "review" else ()):
-                    if "steps.resolve-directed-pr.outputs." + key not in str(w.get(key, "")):
-                        findings.append("{0}: the PR step's {1} does not fall back to resolve-directed-pr's".format(job, key))
+                w = " ".join(str(v) for v in (s.get("with") or {}).values())
+                carried = "steps.resolve-directed-pr.outputs.nr-count" in str((s.get("with") or {}).get("nr-count", ""))
+                if job == "review" and not carried:
+                    findings.append("review: the PR step's nr-count does not fall back to resolve-directed-pr's")
+                if job == "readiness" and "steps.resolve-directed-pr.outputs.nr-count" in w:
+                    findings.append("readiness: the PR step takes a directed run's count, though a directed "
+                                    "readiness run writes no record")
     for ln in lines:
         if "gh issue comment" in ln and "--body \"$body\"" in ln and "|| {" not in ln:
             findings.append("readiness: a not-ready comment post is unchecked -- a failed post "

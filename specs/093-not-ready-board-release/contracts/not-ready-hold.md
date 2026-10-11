@@ -101,7 +101,7 @@ def write_marker(step, round, pr, branch, base_sha,
 
 Two readers join it: `same_not_ready_comment_id(comments, bot_login, pr,
 head_sha, unmet_reason)` (FR-009's match, below) and `directed_carry(comments,
-bot_login)` (the pr, round and not-ready count a directed run carries).
+bot_login)` (the pr and not-ready count a directed review carries).
 
 `main()`'s CLI gains `--nr-count`, `--nr-head-sha`, `--nr-class`,
 `--nr-reason` (the unmet condition, FR-002), each
@@ -193,8 +193,9 @@ extended decision (research.md D2), and:
      (`PATCH /repos/:owner/:repo/issues/comments/:id`), updating its
      embedded marker to the new count, instead of appending a new one
      (research.md D8); otherwise post a new comment as today. The count
-     and round reach this step from select or from review (which carries
-     a directed review's count from the marker it reads).
+     and round reach this step from select or, on a same-run handoff, from
+     review. (A directed review carries the marker's count into the
+     converged marker it writes, which a later ordinary run reads.)
      A directed proof run (`directed-stage`) selects no board item: its
      not-ready outcome is reported, as before this feature, with no record,
      no count and no handover.
