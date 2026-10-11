@@ -5716,6 +5716,16 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-bundle-roundtrip.py --self-test
 
+      # Gate 156 — specs/111-reference-image-pin-sync
+      # (contracts/pin-sync-script.md): the pin-sync script runs against a
+      # stubbed `gh` for every skip, failure and containment case, the
+      # e2e reference-image workflow wires the sync behind the start-up
+      # check, and no other workflow or composite carries the pin write.
+      # Path triggers: .github/actions/** and .github/scripts/** above.
+      - name: "Gate 156 — the reference-image pin sync writes only after a passed check, only on exactly the sync set, and fails loudly otherwise"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-reference-image-pin-sync.py
+
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate

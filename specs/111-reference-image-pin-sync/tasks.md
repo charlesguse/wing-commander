@@ -21,8 +21,8 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm spec 112's agent start-up check is present in `.github/workflows/wing-commander-private-image-dogfood.yml` and dispatched by `startup-check` in `.github/workflows/wing-commander-e2e-reference-image.yml`; if absent, stop (spec Assumptions: no pin may be written without it)
-- [ ] T002 [P] Create the stubbed-`gh` fixture scaffold in `.github/scripts/tests/reference-image-pin-sync/` (a stub `gh` executable that replays per-case canned responses for `api user/repos`, `api repos/<r>/actions/variables/...`, `variable get`, `variable set`, `run list`, and records every invocation to a log)
+- [x] T001 Confirm spec 112's agent start-up check is present in `.github/workflows/wing-commander-private-image-dogfood.yml` and dispatched by `startup-check` in `.github/workflows/wing-commander-e2e-reference-image.yml`; if absent, stop (spec Assumptions: no pin may be written without it)
+- [x] T002 [P] Create the stubbed-`gh` fixture scaffold in `.github/scripts/tests/reference-image-pin-sync/` (a stub `gh` executable that replays per-case canned responses for `api user/repos`, `api repos/<r>/actions/variables/...`, `variable get`, `variable set`, `run list`, and records every invocation to a log)
 
 ---
 
@@ -30,9 +30,9 @@
 
 **Purpose**: Script skeleton and gate harness all stories build on.
 
-- [ ] T003 Create `.github/actions/_shared/sync-reference-image-pin.sh` (`set -euo pipefail`) reading env `SYNC_TOKEN`, `IMAGE`, `DIGEST`, `THIS_REPO`, `E2E_REPO`, `CHECKS_PASSED`, `RUN_NUMBER`, `OUTCOME_FILE`, `GITHUB_STEP_SUMMARY` per contracts/pin-sync-script.md; build the sync set (this repo, plus `E2E_REPO` when non-empty, case-insensitive); implement outcome-JSON writing (array of `{repo,status,reason,held,expected}`) and the summary-table append (FR-008); never echo `SYNC_TOKEN`; export it as `GH_TOKEN` only for the script's own `gh` calls
-- [ ] T004 Create `.github/scripts/verify-reference-image-pin-sync.py` harness: runs the script with the stub `gh` on `PATH` for a named fixture case, parses `OUTCOME_FILE`, asserts exit code, outcomes, the set of recorded writes, and that the token value appears nowhere in stdout/stderr/summary/outcome file
-- [ ] T005 Register the gate in `.github/workflows/lint-workflows.yml` so `python .github/scripts/run-local-gates.py` picks it up
+- [x] T003 Create `.github/actions/_shared/sync-reference-image-pin.sh` (`set -euo pipefail`) reading env `SYNC_TOKEN`, `IMAGE`, `DIGEST`, `THIS_REPO`, `E2E_REPO`, `CHECKS_PASSED`, `RUN_NUMBER`, `OUTCOME_FILE`, `GITHUB_STEP_SUMMARY` per contracts/pin-sync-script.md; build the sync set (this repo, plus `E2E_REPO` when non-empty, case-insensitive); implement outcome-JSON writing (array of `{repo,status,reason,held,expected}`) and the summary-table append (FR-008); never echo `SYNC_TOKEN`; export it as `GH_TOKEN` only for the script's own `gh` calls
+- [x] T004 Create `.github/scripts/verify-reference-image-pin-sync.py` harness: runs the script with the stub `gh` on `PATH` for a named fixture case, parses `OUTCOME_FILE`, asserts exit code, outcomes, the set of recorded writes, and that the token value appears nowhere in stdout/stderr/summary/outcome file
+- [x] T005 Register the gate in `.github/workflows/lint-workflows.yml` so `python .github/scripts/run-local-gates.py` picks it up
 
 **Checkpoint**: Harness runs an empty case.
 
@@ -46,13 +46,13 @@
 
 ### Fixture cases (write first, expect failure)
 
-- [ ] T006 [US1] Add gate cases in `.github/scripts/verify-reference-image-pin-sync.py` with fixtures: `both-written` (two `variable set WING_COMMANDER_CONTAINER_IMAGE` calls, statuses `written`), `all-current` (no writes, statuses `current`), `checks-failed` (`CHECKS_PASSED=false` → every repo `skipped` "image check did not pass", exit 0, no API call), `e2e-unset` (this repo only written, E2E skipped "no test repository configured", exit 0), `superseded` (higher-numbered successful run → `skipped`, exit 0)
+- [x] T006 [US1] Add gate cases in `.github/scripts/verify-reference-image-pin-sync.py` with fixtures: `both-written` (two `variable set WING_COMMANDER_CONTAINER_IMAGE` calls, statuses `written`), `all-current` (no writes, statuses `current`), `checks-failed` (`CHECKS_PASSED=false` → every repo `skipped` "image check did not pass", exit 0, no API call), `e2e-unset` (this repo only written, E2E skipped "no test repository configured", exit 0), `superseded` (higher-numbered successful run → `skipped`, exit 0)
 
 ### Implementation
 
-- [ ] T007 [US1] In `.github/actions/_shared/sync-reference-image-pin.sh` implement contract steps 1, 3, 5 (read-probe via `gh api repos/<r>/actions/variables/WING_COMMANDER_CONTAINER_IMAGE`) and 6: `CHECKS_PASSED != true` skip; superseded guard using `gh run list --workflow wing-commander-e2e-reference-image.yml --status success` and `RUN_NUMBER`; per repo compare to `<IMAGE>@<DIGEST>` → `current`, else `gh variable set WING_COMMANDER_CONTAINER_IMAGE --repo <r>` as the only write; E2E-unset behaviour (D7)
-- [ ] T008 [US1] In `.github/workflows/wing-commander-e2e-reference-image.yml` change `startup-check` to find the dispatched run (created after dispatch, matched by digest input/title) and `gh run watch --exit-status` it, exposing job output `passed=true|false` (research D1/D2)
-- [ ] T009 [US1] In the same workflow add job `sync-pins`: `needs: [build-and-publish, startup-check]` (and the prerequisite-check job if separate), `if: !cancelled()`-style condition that still runs on check failure so skip is reported, `concurrency: {group: reference-image-pin-sync, cancel-in-progress: false}`, least-privilege `permissions`, one step calling the shared script with env from step outputs (digest/regex-validated, never interpolated into shell), `shell: bash` if a `container:` is used (consult the `review-step-gating` skill)
+- [x] T007 [US1] In `.github/actions/_shared/sync-reference-image-pin.sh` implement contract steps 1, 3, 5 (read-probe via `gh api repos/<r>/actions/variables/WING_COMMANDER_CONTAINER_IMAGE`) and 6: `CHECKS_PASSED != true` skip; superseded guard using `gh run list --workflow wing-commander-e2e-reference-image.yml --status success` and `RUN_NUMBER`; per repo compare to `<IMAGE>@<DIGEST>` → `current`, else `gh variable set WING_COMMANDER_CONTAINER_IMAGE --repo <r>` as the only write; E2E-unset behaviour (D7)
+- [x] T008 [US1] In `.github/workflows/wing-commander-e2e-reference-image.yml` change `startup-check` to find the dispatched run (created after dispatch, matched by digest input/title) and `gh run watch --exit-status` it, exposing job output `passed=true|false` (research D1/D2)
+- [x] T009 [US1] In the same workflow add job `sync-pins`: `needs: [build-and-publish, startup-check]` (and the prerequisite-check job if separate), `if: !cancelled()`-style condition that still runs on check failure so skip is reported, `concurrency: {group: reference-image-pin-sync, cancel-in-progress: false}`, least-privilege `permissions`, one step calling the shared script with env from step outputs (digest/regex-validated, never interpolated into shell), `shell: bash` if a `container:` is used (consult the `review-step-gating` skill)
 - [ ] T010 [US1] Run `python .github/scripts/run-local-gates.py` until T006 cases pass
 
 **Checkpoint**: MVP — happy path, skip paths and no-op work.
@@ -67,14 +67,14 @@
 
 ### Fixture cases
 
-- [ ] T011 [US2] Add gate cases: `token-unset` (all `failed`, names the credential not its value, no write), `one-write-refused` (one `written`, one `failed` with `held`/`expected`, exit 1), `malformed-digest` (all `failed`, exit 1, no variables API call), `empty-image`, `probe-failed` (no write)
-- [ ] T012 [US2] Add workflow-wiring assertions in the gate: failure-filing step is guarded to the sync step's failure only, uses `.github/actions/wing-commander-durable-failure-issue` with label `reference-image-sync:failed` and `issues: write`, a later step re-fails the job, and a fully successful sync closes the issue (`operation: close`)
+- [x] T011 [US2] Add gate cases: `token-unset` (all `failed`, names the credential not its value, no write), `one-write-refused` (one `written`, one `failed` with `held`/`expected`, exit 1), `malformed-digest` (all `failed`, exit 1, no variables API call), `empty-image`, `probe-failed` (no write)
+- [x] T012 [US2] Add workflow-wiring assertions in the gate: failure-filing step is guarded to the sync step's failure only, uses `.github/actions/wing-commander-durable-failure-issue` with label `reference-image-sync:failed` and `issues: write`, a later step re-fails the job, and a fully successful sync closes the issue (`operation: close`)
 
 ### Implementation
 
-- [ ] T013 [US2] In the script implement contract steps 2 and the failure paths of 5–6: validate `DIGEST` against `^sha256:[0-9a-f]{64}$` and non-empty `IMAGE` before any API call; unset/unauthenticated `SYNC_TOKEN` → all `failed`; refused write → `failed` with held and expected; exit 1 iff any outcome is `failed`
-- [ ] T014 [US2] In `sync-pins` add the `if: failure()` issue step building the body from the outcome JSON (repo, held, expected, reason; no secrets) and calling `wing-commander-durable-failure-issue`; add the close-on-success step and the final re-fail step (research D6); check dedup behaviour matches auto-release's `auto-release:failed` usage
-- [ ] T015 [US2] Confirm `.github/workflows/auto-release.yml` neither calls nor reads the script and is unmodified (FR-009); add that assertion to the gate
+- [x] T013 [US2] In the script implement contract steps 2 and the failure paths of 5–6: validate `DIGEST` against `^sha256:[0-9a-f]{64}$` and non-empty `IMAGE` before any API call; unset/unauthenticated `SYNC_TOKEN` → all `failed`; refused write → `failed` with held and expected; exit 1 iff any outcome is `failed`
+- [x] T014 [US2] In `sync-pins` add the `if: failure()` issue step building the body from the outcome JSON (repo, held, expected, reason; no secrets) and calling `wing-commander-durable-failure-issue`; add the close-on-success step and the final re-fail step (research D6); check dedup behaviour matches auto-release's `auto-release:failed` usage
+- [x] T015 [US2] Confirm `.github/workflows/auto-release.yml` neither calls nor reads the script and is unmodified (FR-009); add that assertion to the gate
 - [ ] T016 [US2] Run `python .github/scripts/run-local-gates.py` until T011–T012 pass
 
 **Checkpoint**: Failures are loud and deduplicated.
@@ -87,10 +87,10 @@
 
 **Independent Test**: `over-reach` and `under-permission` fixtures produce zero writes; correctly scoped token syncs.
 
-- [ ] T017 [US3] Add gate cases: `over-reach` (reachable set includes one extra repo → all `failed` "credential reaches <names>", zero writes, SC-004), `under-permission` (a probe on one sync-set repo fails → zero writes), `exact-reach` (writes proceed), case-insensitive name match
-- [ ] T018 [US3] In the script implement contract step 4: `gh api user/repos?affiliation=owner,collaborator,organization_member --paginate --jq '.[].full_name'`, compare sorted lower-cased set to the sync set, mismatch → all `failed`, exit 1, before any probe or write; when `E2E_REPO` is empty the set is this repo alone
-- [ ] T019 [US3] In `sync-pins` pass the secret `WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN` as `SYNC_TOKEN` to the sync step only (no other step receives it)
-- [ ] T020 [US3] Add a gate assertion that the token secret is referenced only by that step, and the single-home check: no other workflow or `run:` block contains `gh variable set WING_COMMANDER_CONTAINER_IMAGE` (FR-003, CLAUDE.md "one home")
+- [x] T017 [US3] Add gate cases: `over-reach` (reachable set includes one extra repo → all `failed` "credential reaches <names>", zero writes, SC-004), `under-permission` (a probe on one sync-set repo fails → zero writes), `exact-reach` (writes proceed), case-insensitive name match
+- [x] T018 [US3] In the script implement contract step 4: `gh api user/repos?affiliation=owner,collaborator,organization_member --paginate --jq '.[].full_name'`, compare sorted lower-cased set to the sync set, mismatch → all `failed`, exit 1, before any probe or write; when `E2E_REPO` is empty the set is this repo alone
+- [x] T019 [US3] In `sync-pins` pass the secret `WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN` as `SYNC_TOKEN` to the sync step only (no other step receives it)
+- [x] T020 [US3] Add a gate assertion that the token secret is referenced only by that step, and the single-home check: no other workflow or `run:` block contains `gh variable set WING_COMMANDER_CONTAINER_IMAGE` (FR-003, CLAUDE.md "one home")
 
 **Checkpoint**: Containment enforced.
 
@@ -98,8 +98,8 @@
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T021 [P] Update the `WING_COMMANDER_CONTAINER_IMAGE` row in `docs/setup.md` to describe the sync, add a row for `WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN` (Variables write on exactly this repo and the test repo), and what to do when the sync fails; remove the manual "copy the digest" step (FR-011, SC-005)
-- [ ] T022 [P] Update the header comment of `.github/workflows/wing-commander-e2e-reference-image.yml` to match (workflow comments are gate-checked; treat as code)
+- [x] T021 [P] Update the `WING_COMMANDER_CONTAINER_IMAGE` row in `docs/setup.md` to describe the sync, add a row for `WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN` (Variables write on exactly this repo and the test repo), and what to do when the sync fails; remove the manual "copy the digest" step (FR-011, SC-005)
+- [x] T022 [P] Update the header comment of `.github/workflows/wing-commander-e2e-reference-image.yml` to match (workflow comments are gate-checked; treat as code)
 - [ ] T023 Run `python .github/scripts/run-local-gates.py` in full; fix any gate that byte-compares the edited comments; run the `review-step-gating` skill on the workflow change
 - [ ] T024 Walk through `specs/111-reference-image-pin-sync/quickstart.md` fixture steps; note the post-merge proof (`prove-after-merge`: re-drive one build, confirm both variables equal the digest — SC-001) for the PR description
 

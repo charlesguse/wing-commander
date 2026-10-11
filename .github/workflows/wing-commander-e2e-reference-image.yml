@@ -5,12 +5,15 @@
 # tooling, the same category auto-release.yml and watchdog.yml's wrapper
 # already occupy (Constitution VII, "consuming instrument").
 #
-# This workflow never writes the end-to-end test repository's
-# WING_COMMANDER_CONTAINER_IMAGE variable -- no mechanism exists for
-# wing-commander to write an arbitrary test repository's configuration,
-# and none is added here. A maintainer copies the digest this workflow
-# prints in its job summary into that variable by hand (docs/setup.md);
-# the image is pinned there by digest, never by the moving `:latest` tag.
+# Once the dispatched start-up check has passed on the published digest,
+# the `sync-pins` job writes WING_COMMANDER_CONTAINER_IMAGE
+# (<image>@<digest>) to this repository and to the end-to-end test
+# repository, through .github/actions/_shared/sync-reference-image-pin.sh
+# and a dedicated Variables-write token that the script checks reaches
+# exactly those two repositories (specs/111-reference-image-pin-sync). The
+# image is pinned by digest, never by the moving `:latest` tag. A failed
+# sync fails this run and files one `reference-image-sync:failed` issue;
+# docs/setup.md says what to do about it.
 name: "Wing Commander · e2e reference image"
 
 on:
@@ -66,17 +69,14 @@ jobs:
             echo ""
             echo "Digest: \`${DIGEST}\`"
             echo ""
-            echo "Copy \`${E2E_IMAGE}@${DIGEST}\` into the"
-            echo "end-to-end test repository's \`WING_COMMANDER_CONTAINER_IMAGE\` variable"
-            echo "(docs/setup.md) -- this workflow does not write it for you."
-            echo ""
             echo "This run's \`startup-check\` job dispatches the agent start-up check"
             echo "against this digest as a separate \`wing-commander-private-image-dogfood.yml\`"
-            echo "run. Read that run before copying the digest: its \`classify-startup\`"
-            echo "summary says \`setup-failed\` when the agent cannot start in the image, and"
-            echo "\`unclassified\` when the check could not reach a verdict; its reason and"
-            echo "quoted error say why (a re-run helps only when that was transient). A"
-            echo "failed \`startup-check\` job here means no check ran."
+            echo "run and waits for its verdict; its \`classify-startup\` summary says"
+            echo "\`setup-failed\` when the agent cannot start in the image, and"
+            echo "\`unclassified\` when the check could not reach a verdict (a re-run helps"
+            echo "only when that was transient). The \`sync-pins\` job writes"
+            echo "\`${E2E_IMAGE}@${DIGEST}\` to the \`WING_COMMANDER_CONTAINER_IMAGE\`"
+            echo "variable only when that run passed."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The agent action does not support the `push` event this workflow runs
@@ -86,18 +86,131 @@ jobs:
   startup-check:
     needs: build-and-publish
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      passed: ${{ steps.watch.outputs.passed }}
     permissions:
       actions: write
       contents: read
     steps:
       - name: Dispatch the start-up check against the published digest
+        id: dispatch
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           DIGEST: ${{ needs.build-and-publish.outputs.digest }}
         run: |
           set -euo pipefail
+          echo "since=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           # The wrapper and classifier from this run's own ref, so a
           # dispatched rebuild on a branch is checked by that branch's check.
           gh workflow run wing-commander-private-image-dogfood.yml --ref "$GITHUB_REF_NAME" \
             -f "container-image=${E2E_IMAGE}@${DIGEST}"
+
+      # Waits for the dispatched run's verdict: `passed` is true only when
+      # that whole run (the prerequisite check and the start-up check)
+      # concluded success. sync-pins writes the pins only on `true`.
+      - name: Wait for the start-up check verdict
+        id: watch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SINCE: ${{ steps.dispatch.outputs.since }}
+        run: |
+          set -uo pipefail
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+          run_id=""
+          for _ in $(seq 1 24); do
+            run_id="$(gh run list --workflow wing-commander-private-image-dogfood.yml \
+              --event workflow_dispatch --branch "$GITHUB_REF_NAME" --created ">=${SINCE}" \
+              --json databaseId,createdAt --jq 'sort_by(.createdAt) | .[0].databaseId // empty')" || run_id=""
+            [ -n "$run_id" ] && break
+            sleep 5
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::the dispatched start-up check run was not found"
+            exit 0
+          fi
+          if gh run watch "$run_id" --exit-status > /dev/null; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::the start-up check run ${run_id} did not pass"
+          fi
+
+      - name: Fail when the start-up check did not pass
+        if: steps.watch.outputs.passed != 'true'
+        run: exit 1
+
+  # Writes the pins after a passed check (specs/111-reference-image-pin-sync).
+  # Runs even when startup-check failed so the skip is reported; the script
+  # skips every repository then. The token is bound to the sync step only.
+  sync-pins:
+    needs: [build-and-publish, startup-check]
+    if: ${{ !cancelled() && needs.build-and-publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: reference-image-pin-sync
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Sync the reference-image pins
+        id: sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SYNC_TOKEN: ${{ secrets.WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN }}
+          IMAGE: ${{ env.E2E_IMAGE }}
+          DIGEST: ${{ needs.build-and-publish.outputs.digest }}
+          THIS_REPO: ${{ github.repository }}
+          E2E_REPO: ${{ vars.WING_COMMANDER_AUTO_RELEASE_E2E_REPO }}
+          CHECKS_PASSED: ${{ needs.startup-check.outputs.passed }}
+          RUN_NUMBER: ${{ github.run_number }}
+          OUTCOME_FILE: ${{ runner.temp }}/pin-sync-outcome.json
+        run: bash .github/actions/_shared/sync-reference-image-pin.sh
+
+      - name: Build the failure issue body
+        if: ${{ failure() && steps.sync.outcome == 'failure' }}
+        run: |
+          set -uo pipefail
+          {
+            echo "The reference-image pin sync failed in run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+            echo ""
+            echo "| Repository | Status | Reason | Held | Expected |"
+            echo "|---|---|---|---|---|"
+            jq -r '.[] | "| `\(.repo)` | \(.status) | \(.reason) | `\(.held)` | `\(.expected)` |"' \
+              "${RUNNER_TEMP}/pin-sync-outcome.json"
+          } > "${RUNNER_TEMP}/pin-sync-failure-body.md"
+
+      - name: File or update the sync failure issue
+        if: ${{ failure() && steps.sync.outcome == 'failure' }}
+        uses: ./.github/actions/wing-commander-durable-failure-issue
+        with:
+          token: ${{ github.token }}
+          operation: report
+          label: reference-image-sync:failed
+          label-color: B60205
+          label-description: "wing-commander: the reference-image pin sync failed"
+          title: Reference-image pin sync failed
+          body-file: ${{ runner.temp }}/pin-sync-failure-body.md
+
+      - name: Close the sync failure issue on success
+        if: ${{ steps.sync.outcome == 'success' && needs.startup-check.outputs.passed == 'true' }}
+        uses: ./.github/actions/wing-commander-durable-failure-issue
+        with:
+          token: ${{ github.token }}
+          operation: close
+          label: reference-image-sync:failed
+          label-color: B60205
+          label-description: "wing-commander: the reference-image pin sync failed"
+          close-comment: A later sync wrote or confirmed both pins.
+
+      - name: Fail the job when the sync failed
+        if: ${{ failure() && steps.sync.outcome == 'failure' }}
+        run: exit 1
