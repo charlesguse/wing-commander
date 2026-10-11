@@ -43,9 +43,10 @@ WHAT IT CHECKS (watchdog.yml unless named)
    no composite may invoke the agent action, Gate 38).
 5. Its tool lists come from a family `wing-commander-tool-args` call with
    no adopter extra/override input; the allowed list holds no Write, Edit,
-   NotebookEdit, bare Bash, Bash(gh:*), Bash(gh api:*) or Bash(git:*), and
-   every Bash(gh ...) grant is a read-only subcommand; the disallowed list
-   names Write and Edit.
+   NotebookEdit, bare Bash, Bash(git:*), or any Bash(gh ...) grant at all
+   (spec 101: no `gh` grant is safe on an agent that must not write; the
+   shadow reads the same staged job logs the Diagnose step does); the
+   disallowed list names Write and Edit.
 6. No family step reads the App token (`steps.ctx.outputs.token`,
    `env.WC_BOT_TOKEN`), any `vars.*`, or a secret other than the two
    Claude credentials; no non-family step and no `diagnose` job output
@@ -90,11 +91,6 @@ ENABLED = "inputs.diagnose-shadow-enabled"
 WRAPPER_ENABLED = "${{ needs.trial-bound.outputs.enabled == 'true' }}"
 SHADOW_MAX_TIMEOUT = 5
 OTHER_STEPS_MINUTES = 10
-# Read-only, and readable under this stage's github.token grant (issues,
-# actions, checks -- no pull-requests; Gate 12 holds the grant side).
-# No gh issue/pr reads: the acting verdict is already posted on the
-# lifecycle issue when the shadow runs, and reading it would be copying.
-READ_ONLY_GH = {"gh run view", "gh run list", "gh label list"}
 FORBIDDEN_ALLOWED = {"Write", "Edit", "NotebookEdit", "Bash", "Bash(*)",
                      "Bash(gh:*)", "Bash(gh api:*)", "Bash(git:*)"}
 BAD_IF = re.compile(r"\|\||failure\(\)|success\(\)")
@@ -287,10 +283,9 @@ def check(watchdog, wrapper):
             for t in allowed:
                 if t in FORBIDDEN_ALLOWED:
                     fail(f"the shadow may not be granted {t}")
-                m = re.fullmatch(r"Bash\((gh[^:)]*)(?::\*)?\)", t)
-                if m and m.group(1).strip() not in READ_ONLY_GH:
-                    fail(f"the shadow's gh grant {t} is not a read-only "
-                         "subcommand")
+                if re.fullmatch(r"Bash\(gh\b[^)]*\)", t):
+                    fail(f"the shadow may hold no gh grant (spec 101), "
+                         f"found {t}")
             for t in ("Write", "Edit"):
                 if t not in disallowed:
                     fail(f"the shadow's disallowed list must name {t}")
@@ -558,6 +553,11 @@ MUTATIONS = [
          "default-allowed-tools",
          _tool_step(wd)["with"]["default-allowed-tools"]
          + ",Bash(gh issue view:*)")),
+    ("shadow granted a read-only gh subcommand",
+     lambda wd, w: _tool_step(wd)["with"].__setitem__(
+         "default-allowed-tools",
+         _tool_step(wd)["with"]["default-allowed-tools"]
+         + ",Bash(gh run view:*)")),
     ("a shadow upload drops overwrite",
      lambda wd, w: _family(wd)[-1]["with"].pop("overwrite")),
     ("shadow granted a writing gh subcommand",

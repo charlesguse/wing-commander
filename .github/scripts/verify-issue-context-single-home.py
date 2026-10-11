@@ -2941,6 +2941,11 @@ def _mutation_check_read_only_git():
 
 
 _PUB_GRANT_LIT = PUBLISHED_GIT_READ_GRANT
+# Diagnose's tool-args line is told from the diagnose shadow's (whose
+# allowed list is the same) by the disallowed list that follows it.
+_DIAGNOSE_TAIL = ('\n          default-disallowed-tools: '
+                  '"WebSearch,WebFetch,Write,Edit,Bash(git:*)')
+
 # Each mutation rewrites a REAL workflow other than board-loop.yml in
 # memory the way a later edit could reopen #518; check 4b must catch
 # every one.
@@ -2997,16 +3002,16 @@ FLEET_READ_ONLY_GIT_MUTATIONS = (
      f"`python3 -I {GIT_READ_WRAPPER}`\n            with `log`"),
     (".github/workflows/watchdog.yml",
      "diagnose regains raw Bash(git diff:*) beside the wrapper",
-     f'"Read,Grep,{_PUB_GRANT_LIT}"',
-     f'"Read,Grep,Bash(git diff:*),{_PUB_GRANT_LIT}"'),
+     f'"Read,Grep,{_PUB_GRANT_LIT}"' + _DIAGNOSE_TAIL,
+     f'"Read,Grep,Bash(git diff:*),{_PUB_GRANT_LIT}"' + _DIAGNOSE_TAIL),
     (".github/workflows/watchdog.yml",
      "diagnose is granted board-loop's repo-local wrapper path",
-     f'"Read,Grep,{_PUB_GRANT_LIT}"',
-     f'"Read,Grep,{GIT_READ_GRANT}"'),
+     f'"Read,Grep,{_PUB_GRANT_LIT}"' + _DIAGNOSE_TAIL,
+     f'"Read,Grep,{GIT_READ_GRANT}"' + _DIAGNOSE_TAIL),
     (".github/workflows/watchdog.yml",
      "diagnose regains Bash(gh:*) (spec 101)",
-     f'"Read,Grep,{_PUB_GRANT_LIT}"',
-     f'"Read,Grep,Bash(gh:*),{_PUB_GRANT_LIT}"'),
+     f'"Read,Grep,{_PUB_GRANT_LIT}"' + _DIAGNOSE_TAIL,
+     f'"Read,Grep,Bash(gh:*),{_PUB_GRANT_LIT}"' + _DIAGNOSE_TAIL),
     (".github/workflows/watchdog.yml",
      "diagnose's claude_args appends raw git",
      '--allowedTools "${{ steps.tool-args-diagnose.outputs.allowed-tools }}"',
