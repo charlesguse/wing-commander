@@ -569,8 +569,8 @@ EXEMPT_JOBS = {
     (".github/workflows/private-image-dogfood.yml", "startup-agent"): ExemptionEntry(
         reason=(
             "credential-free start-up probe (spec 112): no model credential "
-            "is minted, so nothing exists to refresh -- the agent step "
-            "carries timeout-minutes: 10"),
+            "is minted, so nothing exists to refresh -- the startup-agent "
+            "job carries timeout-minutes: 10"),
         issue=(),
         permanent=True,
         permanent_reason=(

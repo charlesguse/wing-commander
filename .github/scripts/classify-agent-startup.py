@@ -51,16 +51,20 @@ REASON_UNCLASSIFIED = "could not reach subject"
 
 # The action's no-credential failure, as run.ts reports it (the first
 # ##[error] line plus its continuation lines).
+# Only the model-credential check's own wording: a generic "authentication
+# failed" (a GitHub or git auth error after setup) is not this boundary.
 AUTH_MARKERS = [
     re.compile(r"(?i)\bEnvironment variable validation failed\b"),
     re.compile(r"(?i)\bANTHROPIC_API_KEY\b.*\b(not set|missing|required)\b"),
     re.compile(r"(?i)\bCLAUDE_CODE_OAUTH_TOKEN\b.*\b(not set|missing|required)\b"),
-    re.compile(r"(?i)\bno (api key|credential|oauth token)\b"),
-    re.compile(r"(?i)\bauthentication (failed|error)\b"),
 ]
 
 # The step that runs the action; errors before it are not the image's setup.
 ACTION_GROUP = re.compile(r"(?i)claude-code-action")
+# The runner opens each step's log with a "Run <uses or first script line>"
+# group holding the echoed source and with:/env: dump; any other group
+# after the action started is one the step printed while running.
+STEP_HEADER = re.compile(r"Run ")
 # run.ts's log line once its Claude Code install finished: the end of setup.
 SETUP_DONE = re.compile(r"(?i)Claude Code installed successfully")
 TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z ?")
@@ -97,7 +101,12 @@ def classify(text):
     for i, line in enumerate(lines):
         head = line.strip()
         if head.startswith("##[group]"):
-            group = head[len("##[group]"):].strip()
+            name = head[len("##[group]"):].strip()
+            if action_seen and not STEP_HEADER.match(name):
+                # A group the running step printed itself (core.startGroup):
+                # runtime output, not a new step and not an echoed header.
+                continue
+            group = name
             in_header = True
             if ACTION_GROUP.search(group):
                 action_seen = True

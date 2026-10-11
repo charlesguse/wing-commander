@@ -70,10 +70,11 @@ jobs:
             echo "end-to-end test repository's \`WING_COMMANDER_CONTAINER_IMAGE\` variable"
             echo "(docs/setup.md) -- this workflow does not write it for you."
             echo ""
-            echo "The agent start-up check runs against this digest as a separate"
-            echo "\`wing-commander-private-image-dogfood.yml\` run (dispatched below); a red"
-            echo "\`classify-startup\` job there means the agent cannot start in it, so check"
-            echo "that run before copying the digest."
+            echo "This run's \`startup-check\` job dispatches the agent start-up check"
+            echo "against this digest as a separate \`wing-commander-private-image-dogfood.yml\`"
+            echo "run. Read that run before copying the digest: a red \`classify-startup\` job"
+            echo "means the agent cannot start in it, and a failed \`startup-check\` job here"
+            echo "means no check ran."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The agent action does not support the `push` event this workflow runs

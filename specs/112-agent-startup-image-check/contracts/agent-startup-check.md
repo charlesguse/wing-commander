@@ -21,7 +21,9 @@ input, secret or output (spec Assumptions).
 
 ## Jobs added to `private-image-dogfood.yml`
 
-1. `startup-agent` — `if: inputs.startup-check && inputs.container-image != ''`,
+1. `startup-agent` — `needs: verify-image-prerequisites`, `if: !cancelled()
+   && needs.verify-image-prerequisites.result != 'failure' &&
+   inputs.startup-check && inputs.container-image != ''`,
    same `runs-on`/`container`/`credentials` binding as `dogfood`
    (Gates 7/22). One step: `uses: anthropics/claude-code-action@v1`,
    `continue-on-error: true`, `github_token: ${{ github.token }}`, a fixed
@@ -29,8 +31,8 @@ input, secret or output (spec Assumptions).
    The prompt is required: without one the action's agent mode exits 0 before
    installing Claude Code. It never reaches a model because the action stops
    at its credential check.
-2. `classify-startup` — `needs: startup-agent`, `if: !cancelled() &&
-   inputs.startup-check && inputs.container-image != ''`, `permissions:
+2. `classify-startup` — `needs: [verify-image-prerequisites, startup-agent]`,
+   `if:` the same as startup-agent's, `timeout-minutes: 10`, `permissions:
    actions: read`. Fetches the agent job's log, runs
    `classify-agent-startup.py`, writes the verdict to the job summary, exits
    non-zero unless `setup-completed`.

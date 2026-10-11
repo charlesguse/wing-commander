@@ -28,7 +28,9 @@ claimed them first among the open lifecycle branches.
 
 Usage: python3 .github/scripts/verify-agent-startup-classifier.py [--self-test]
 """
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -99,7 +101,8 @@ def check_fixtures(mod, fixtures_dir):
 
 def check_missing_log(mod):
     errors = []
-    rc = mod.main(["--log", os.path.join(tempfile.gettempdir(), "no-such-agent-startup-log.txt")])
+    with contextlib.redirect_stdout(io.StringIO()):
+        rc = mod.main(["--log", os.path.join(tempfile.gettempdir(), "no-such-agent-startup-log.txt")])
     if rc != 2:
         errors.append("a missing --log exited %s, expected 2 (unclassified)" % rc)
     return errors
@@ -155,6 +158,8 @@ def check_workflow(path):
             errors.append("classify-startup must invoke classify-agent-startup.py")
         if not classify.get("timeout-minutes"):
             errors.append("classify-startup needs timeout-minutes (a hung gh call would hold the job for 6 hours)")
+        if "without a verdict" not in runs:
+            errors.append("classify-startup must name a crashed classifier, not print a blank reason")
         if "job-lookup-error.log" not in runs or "::warning::" not in runs:
             errors.append("classify-startup must name a failed job lookup or log fetch, not read it as an empty log")
         if "head -n 1" in runs or not re.search(r"grep -c \.\)\" -eq 1", runs):
