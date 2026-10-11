@@ -1,0 +1,7 @@
+[
+  {
+    "created_at": "2026-01-05T00:00:00Z",
+    "body": "Review round 2 converged -- zero open in-scope findings on PR #42 (head 1111111111111111111111111111111111111a). Proceeding to readiness.\n\n<!-- wing-commander-board-item: {\"step\": \"readiness\"} -->",
+    "user": {"login": "wing-commander-bot[bot]", "type": "Bot"}
+  }
+]
