@@ -191,7 +191,8 @@ def check_workflow(path):
             errors.append("classify-startup must name a crashed classifier, not print a blank reason")
         if "job-lookup-error.log" not in runs or "::warning::" not in runs:
             errors.append("classify-startup must name a failed job lookup or log fetch, not read it as an empty log")
-        if "head -n 1" in runs or not re.search(r"grep -c \.\)\" -eq 1", runs):
+        if ("head -n 1" in runs or "tail -n 1" in runs
+                or not re.search(r'printf \'%s\\n\' "\$job_ids" \| grep -c \.\)" -eq 1', runs)):
             errors.append("classify-startup must refuse an ambiguous startup-agent lookup, not take the first match")
         if not re.search(r"for attempt in[^\n]*\n(?:.*\n)*?.*actions/jobs/\$job_id/logs(?:.*\n)*?.*sleep ", runs):
             errors.append("classify-startup must retry the job-log fetch (a just-finished job's log can 404)")
@@ -232,7 +233,7 @@ def check_workflow(path):
         # It runs on the runner, not the image: a runner without gh/jq/python3,
         # or a classifier that was never checked out, is named as such rather
         # than read as an empty log and an "exited 2" verdict.
-        if ('for t in jq python3 gh; do command -v "$t"' not in runs
+        if ('for t in jq python3 gh; do' not in runs or 'command -v "$t"' not in runs
                 or '[ ! -f "$classifier" ]' not in runs or "could not reach subject" not in runs):
             errors.append("classify-startup must name a runner missing gh/jq/python3 or a classifier "
                           "that was not checked out (could not reach subject) before classifying")
@@ -536,6 +537,14 @@ def self_test():
         expect("refusal step skipped", wrapper_mutated(lambda j: j["steps"][0].update({"if": "false"})),
                "does not fail")
         expect("first match", mutated(first_match), "ambiguous")
+
+        def last_match(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
+                    s["run"] = s["run"].replace("""if [ "$(printf '%s\\n' "$job_ids" | grep -c .)" -eq 1 ]; then""",
+                                                """if [ -n "$job_ids" ]; then job_ids=$(echo "$job_ids" | sed '$!d')""")
+
+        expect("last match (only the self-name count left)", mutated(last_match), "ambiguous")
         expect("no prompt", mutated(drop_prompt), "needs a prompt")
         expect("no allowed_bots", mutated(drop_bots), "allowed_bots")
         expect("always()", mutated(use_always), "always()")

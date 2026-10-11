@@ -291,7 +291,12 @@ jobs:
           # reading either as an empty log.
           classifier=.wing-commander-pipeline/.github/scripts/classify-agent-startup.py
           missing_tools=""
-          for t in jq python3 gh; do command -v "$t" >/dev/null 2>&1 || missing_tools="$missing_tools $t"; done
+          # gh is only called when startup-agent ran; a skipped one leaves
+          # the classifier's own "unclassified" reason, which is more specific.
+          for t in jq python3 gh; do
+            [ "$t" != gh ] || [ "$AGENT_RESULT" != "skipped" ] || continue
+            command -v "$t" >/dev/null 2>&1 || missing_tools="$missing_tools $t"
+          done
           if [ -n "$missing_tools" ] || [ ! -f "$classifier" ]; then
             why="${missing_tools:+the runner (not the image) lacks:$missing_tools}"
             [ -f "$classifier" ] || why="${why:+$why; }the classifier was not checked out (see the steps above)"
@@ -317,8 +322,11 @@ jobs:
             # rather than another call's log.
             # One listing, read twice: this job's own name, then its
             # startup-agent.
-            gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[]' 2>job-lookup-error.log \
-              | jq -s '{jobs: .}' > run-jobs.json || echo '{"jobs": []}' > run-jobs.json
+            if ! { gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[]' > run-jobs.ndjson 2>job-lookup-error.log \
+                   && jq -s '{jobs: .}' run-jobs.ndjson > run-jobs.json 2>>job-lookup-error.log; }; then
+              echo "::warning::wing-commander classify-startup: could not list run $RUN_ID's jobs (does the caller grant actions: read?) -- $(cat job-lookup-error.log 2>/dev/null)"
+              echo '{"jobs": []}' > run-jobs.json
+            fi
             self_name=$(jq -r '.jobs[] | select(.status == "in_progress" and .runner_name == env.RUNNER_NAME) | .name' run-jobs.json 2>>job-lookup-error.log) || self_name=""
             prefix=""
             if [ "$(printf '%s\n' "$self_name" | grep -c .)" -eq 1 ] && [ "${self_name%classify-startup}" != "$self_name" ]; then
