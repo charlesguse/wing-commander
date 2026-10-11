@@ -240,6 +240,8 @@ def check_workflow(path):
             if re.match(r"\s*oneline\(\) \{", l):
                 continue
             rest = re.sub(r"\$\(oneline [\w.-]+-error\.log\)", "", l)
+            # Writing stderr to an error log is not reading it.
+            rest = re.sub(r"2>>?\s*[\w.-]+-error\.log", "", rest)
             if (re.search(r"\$\((cat|tr|head|tail|sed|jq)\b[^)]*-error\.log|\$\(<\s*[\w.-]+-error\.log", rest)
                     or (re.search(r"::(warning|error|notice)::", rest) and "-error.log" in rest)):
                 raw.append(l.strip())
@@ -648,6 +650,14 @@ def self_test():
                     s["run"] = s["run"].replace("self_err=$(oneline self-lookup-error.log)",
                                                 "self_err=$(cat self-lookup-error.log)")
 
+        # A stderr redirect into an error log is not a raw read of it.
+        def simple_self_lookup(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s and "listed=true\n" in s["run"]:
+                    s["run"] = s["run"].replace("listed=true\n", "listed=true\nnames=$(jq -r '.jobs[].name' run-jobs.json 2>names-error.log) || names=\"\"\n", 1)
+
+        if any("oneline helper" in e for e in mutated(simple_self_lookup)):
+            failures.append("a jq lookup writing stderr to an error log was flagged as a raw read")
         expect("helper redefined without escaping", mutated(helper_redefined), "oneline helper")
         expect("error log read raw into a variable", mutated(raw_via_variable), "oneline helper")
         expect("prereq result not reported", mutated(drop_prereq_report),
