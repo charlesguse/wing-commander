@@ -241,3 +241,79 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
   - .github/workflows/lint-workflows.yml
 
   Detail: This is the Gate 124 failure mode CLAUDE.md warns about.
+
+## Review Gate Round 3 Findings
+
+- [ ] Review finding: Empty-but-successful job log reported as log-read failure
+
+  The fetch helper writes no file for an empty log body, but the staging loop in watchdog.yml treats a missing or empty log as outcome=failed/log-read and marks job-logs untrusted, so timed-out or runner-lost jobs are misreported as unreadable.
+
+  - .github/workflows/watchdog.yml
+  - .github/actions/wing-commander-fetch-job-logs/action.yml
+
+  Detail: watchdog.yml ~line 2275
+
+- [ ] Review finding: Single retry budget shared across all jobs in fetch-job-logs
+
+  `retried` is set once by the first failing job, so later jobs hitting the same log-lag get no retry and the whole result is marked failed.
+
+  - .github/actions/wing-commander-fetch-job-logs/action.yml
+
+  Detail: ~line 108
+
+- [ ] Review finding: Stale <id>.log files in out-dir are not cleared
+
+  Only jobs.json and reason.txt are removed up front, so a pre-existing <id>.log can be read as current evidence by callers that test only for file existence, contradicting the header's 'a log file that exists is always real evidence'.
+
+  - .github/actions/wing-commander-fetch-job-logs/action.yml
+
+  Detail: ~line 81
+
+- [ ] Review finding: _grants_gh detector bypassed by option-taking wrappers and other launchers
+
+  Tokens starting with '-' are skipped and the next token is taken as the command word, so `env -u X gh` or `sudo -u root gh` miss the gh grant, and launchers such as xargs, timeout and bash -c are not in _GH_WRAPPERS, so the shadow gate can pass while holding a gh grant.
+
+  - .github/scripts/verify-diagnose-shadow-acts-on-nothing.py
+
+  Detail: ~line 256
+
+- [ ] Review finding: Command-word/wrapper detection duplicated across two gates
+
+  verify-issue-context-single-home.py re-implements _command_word and GRANT_WRAPPER_WORDS separately from _grants_gh and _GH_WRAPPERS in verify-diagnose-shadow-acts-on-nothing.py, against the 'shared logic has exactly one home' rule.
+
+  - .github/scripts/verify-issue-context-single-home.py
+  - .github/scripts/verify-diagnose-shadow-acts-on-nothing.py
+
+  Detail: ~line 520
+
+- [ ] Review finding: repo_files now raises where callers used to fall back to disk walk
+
+  When git cannot answer in a root with a .git (dubious ownership or git missing), repo_files raises RuntimeError, and verify-agent-push-credential-helper.py and verify-stage-tool-lists.py do not catch it, so they crash with a traceback instead of giving a gate verdict.
+
+  - .github/scripts/wc_repo_files.py
+
+  Detail: ~line 2057
+
+- [ ] Review finding: gate-19 harness runs the fetch helper without a sleep stub
+
+  run_stepsum_one runs the real helper under a stub gh without stubbing sleep, so each scenario with a failing log read waits 10 seconds on the retry and slows the PR gate suite.
+
+  - .github/scripts/verify-gate-19.py
+
+  Detail: ~line 376
+
+- [ ] Review finding: Unfiltered fetch includes in-progress/queued jobs whose logs 404
+
+  With empty `conclusions`, only skipped and cancelled are excluded, so a job with a null conclusion has its log fetched, the fetch 404s and the whole result is marked failed, which the shared helper's contract now makes look intended.
+
+  - .github/actions/wing-commander-fetch-job-logs/action.yml
+
+  Detail: ~line 133
+
+- [ ] Review finding: Diagnose log fetch limited to conclusion=failure drops timed_out/startup_failure jobs
+
+  The diagnose staging uses `conclusions: failure`, so timed-out or startup-failure jobs get no staged log yet the status reports outcome=ok, silently removing log access the agent previously had.
+
+  - .github/workflows/watchdog.yml
+
+  Detail: ~line 2232
