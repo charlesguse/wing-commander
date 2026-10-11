@@ -1,0 +1,85 @@
+name: wing-commander-trial-record
+description: >
+  Adds the additive top-level `trial` object (specs/110-haiku-5-5-tier-trial/
+  contracts/trial-record.md) to a metrics record written by
+  wing-commander-metrics-summary, comparing the diagnose shadow against the
+  acting diagnose agent with _shared/compare-diagnose-shadow.py. Everything
+  else in the record (schema_version, outcome, per_model) is left untouched.
+
+inputs:
+  record-path:
+    description: The shadow's metrics record file, rewritten in place.
+    required: true
+  baseline-findings:
+    description: Path to the acting diagnose agent's findings JSON.
+    required: true
+  baseline-verdict:
+    description: The acting diagnose agent's verdict (healthy, exhausted, ...).
+    required: true
+  shadow-findings:
+    description: Path to the shadow's findings JSON.
+    required: true
+  shadow-verdict:
+    description: The shadow's verdict.
+    required: true
+  schema-json:
+    description: >
+      The diagnose findings JSON schema itself (the class-vocabulary step's
+      `schema` output), written to a temporary file for the comparator.
+    required: true
+
+outputs:
+  outcome:
+    description: The trial outcome written into the record.
+    value: ${{ steps.trial.outputs.outcome }}
+
+runs:
+  using: composite
+  steps:
+    - name: Write the trial object into the record
+      id: trial
+      shell: bash
+      env:
+        RECORD_PATH: ${{ inputs.record-path }}
+        BASELINE_FINDINGS: ${{ inputs.baseline-findings }}
+        BASELINE_VERDICT: ${{ inputs.baseline-verdict }}
+        SHADOW_FINDINGS: ${{ inputs.shadow-findings }}
+        SHADOW_VERDICT: ${{ inputs.shadow-verdict }}
+        SCHEMA_JSON: ${{ inputs.schema-json }}
+      run: |
+        set -uo pipefail
+        refusal="$(jq -r '.refusal // false' "$RECORD_PATH" 2>/dev/null)" || refusal=false
+        # candidate_model equals the record's own top-level model (FR-011).
+        model="$(jq -r '.model // empty' "$RECORD_PATH" 2>/dev/null)" || model=''
+        model="${model:-claude-haiku-5-5}"
+        schema="$(mktemp)"
+        printf '%s' "$SCHEMA_JSON" > "$schema"
+        if ! trial="$(python3 -I "$GITHUB_ACTION_PATH/../_shared/compare-diagnose-shadow.py" \
+            --baseline-findings "$BASELINE_FINDINGS" \
+            --baseline-verdict "$BASELINE_VERDICT" \
+            --shadow-findings "$SHADOW_FINDINGS" \
+            --shadow-verdict "$SHADOW_VERDICT" \
+            --shadow-refusal "$refusal" \
+            --candidate-model "$model" \
+            --schema "$schema")"; then
+          # The comparator itself failed (exit 2: unreadable arguments, or
+          # a crash). Recorded as an error trial rather than none, and
+          # marked error_source "comparator": that marks a defect in this
+          # pipeline, not infrastructure, so trial-bound counts it toward
+          # the 300-run cap (a broken comparator cannot keep the shadow
+          # spending for the whole window) and trial-summary reports it on
+          # its own line. contracts/trial-record.md.
+          echo "::error::compare-diagnose-shadow failed; the trial is recorded as a comparator error (trial; acts on nothing)"
+          trial="$(jq -cn --arg bv "$BASELINE_VERDICT" --arg m "$model" '{step:"watchdog.diagnose",candidate_model:$m,baseline_run_label:"diagnose",outcome:"error",error_source:"comparator",baseline_verdict:(if $bv == "" then null else $bv end),filing_agree:null,class_shared:null,class_agree:null,differing_fields:[]}')"
+        fi
+        rm -f "$schema"
+        if updated="$(jq --argjson trial "$trial" '. + {trial: $trial}' "$RECORD_PATH")"; then
+          printf '%s\n' "$updated" > "$RECORD_PATH"
+        else
+          # A record without its trial object would be silently dropped by
+          # the summary and the bound, so fail the step instead.
+          echo "outcome=error" >> "$GITHUB_OUTPUT"
+          echo "::error::could not merge the trial object into $RECORD_PATH (trial; acts on nothing)"
+          exit 1
+        fi
+        echo "outcome=$(printf '%s' "$trial" | jq -r .outcome)" >> "$GITHUB_OUTPUT"
