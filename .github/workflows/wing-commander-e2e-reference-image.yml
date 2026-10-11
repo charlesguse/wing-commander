@@ -318,15 +318,15 @@ jobs:
           #    run's older attempts. Any list or view that fails, or a row
           #    that does not parse, writes nothing.
           if ! runs="$(gh run list --repo "$THIS_REPO" --workflow "$WORKFLOW" --branch "$DEFAULT_BRANCH" \
-            --limit 100 --json number,databaseId,attempt \
-            --jq 'sort_by(.number) | reverse | .[] | "\(.number) \(.databaseId) \(.attempt)"' 2> "$ERRS")"; then
+            --limit 100 --json number,databaseId,attempt,status \
+            --jq 'sort_by(.number) | reverse | .[] | "\(.number) \(.databaseId) \(.attempt) \(.status)"' 2> "$ERRS")"; then
             record_all failed "could not list this workflow's runs to rule out a newer sync$(http_status)"
             finish
           fi
-          while read -r n id attempts; do
+          while read -r n id attempts run_status; do
             [ -n "$n" ] || continue
-            if ! [[ "$n" =~ ^[0-9]+$ && "$id" =~ ^[0-9]+$ && "$attempts" =~ ^[0-9]+$ ]]; then
-              record_all failed "could not read this workflow's run list to rule out a newer sync (row: ${n} ${id} ${attempts})"
+            if ! [[ "$n" =~ ^[0-9]+$ && "$id" =~ ^[0-9]+$ && "$attempts" =~ ^[0-9]+$ && -n "$run_status" ]]; then
+              record_all failed "could not read this workflow's run list to rule out a newer sync (row: ${n} ${id} ${attempts} ${run_status})"
               finish
             fi
             [ "$n" -gt "$RUN_NUMBER" ] || break
@@ -350,10 +350,14 @@ jobs:
               case "$sync_job" in
                 "" | null)
                   # sync-pins has not ended: pending, unless this attempt's
-                  # check already failed (it never will run then).
-                  case "$check" in
-                    success | "" | null) pending=1 ;;
-                  esac
+                  # check already failed (it never will run then), or this
+                  # attempt is over (only the newest attempt of a run that
+                  # is not completed can still write).
+                  if [ "$a" -eq "$attempts" ] && [ "$run_status" != completed ]; then
+                    case "$check" in
+                      success | "" | null) pending=1 ;;
+                    esac
+                  fi
                   ;;
                 skipped) ;; # its check failed: the older attempts decide
                 *)

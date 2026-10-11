@@ -205,6 +205,16 @@ CASES = {
         runs=[8], jobs={8: run_jobs("cancelled", None, job="cancelled")},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=0, status={THIS: "written", E2E: "written"}, writes=[THIS, E2E]),
+    # A completed newer run that never created its sync-pins job (cancelled
+    # before its dependents existed) is not pending: the scan reads on, and
+    # the run below it whose sync failed after a possible write decides.
+    "completed-run-without-sync-job": dict(
+        runs=[8, 9], jobs={9: {"jobs": [{"name": "build-and-publish", "conclusion": "cancelled",
+                                         "steps": []}]},
+                           8: run_jobs("success", "failure")},
+        status_override={9: "completed"},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[], reason="newer run 8"),
     # A run-list row that does not parse fails closed.
     "run-list-malformed": dict(
         runs=[8], attempts_override={8: None},
@@ -309,8 +319,18 @@ def run_case(name, case, tmp, bash, script):
     attempts = {n: (doc if isinstance(doc, list) else [doc])
                 for n, doc in case.get("jobs", {}).items()}
     with open(os.path.join(stub_dir, "runs.json"), "w") as f:
+        # A run is in progress while its newest attempt has a job with no
+        # conclusion yet, unless the case says otherwise.
+        def run_status(n):
+            if n in case.get("status_override", {}):
+                return case["status_override"][n]
+            docs = attempts.get(n)
+            if docs and any(j.get("conclusion") in (None, "") for j in docs[-1]["jobs"]):
+                return "in_progress"
+            return "completed"
         json.dump([{"number": n, "databaseId": 100 + n,
-                    "attempt": case.get("attempts_override", {}).get(n, len(attempts.get(n, [1])))}
+                    "attempt": case.get("attempts_override", {}).get(n, len(attempts.get(n, [1]))),
+                    "status": run_status(n)}
                    for n in case.get("runs", [])], f)
     os.makedirs(os.path.join(stub_dir, "jobs"))
     for n, docs in attempts.items():
