@@ -242,7 +242,7 @@ def check_workflow(path):
             rest = re.sub(r"\$\(oneline [\w.-]+-error\.log\)", "", l)
             # Writing an error log (any fd redirect or tee, quoted or under a
             # directory) is not reading it.
-            rest = re.sub(r"(\d?>[>|]?|&>>?|\btee((\s+-[a-z]+|\s+--append)*\s+[\w./-]+)*?\s)\s*"
+            rest = re.sub(r"(\d?>[>|]?|&>>?|\btee(\s+--?[\w-]+)*(\s+[\w./][\w./-]*)*?\s)\s*"
                           r"\"?(\$\{?\w+\}?/)?[\w./-]*-error\.log\"?", "", rest)
             if (re.search(r"\$\((cat|tr|head|tail|sed|jq)\b[^)]*-error\.log|\$\(<\s*[\w.-]+-error\.log", rest)
                     or (re.search(r"::(warning|error|notice)::", rest) and "-error.log" in rest)):
@@ -677,10 +677,19 @@ def self_test():
         def read_after_arrow(jobs):
             for s in jobs["classify-startup"]["steps"]:
                 if "run" in s:
-                    s["run"] = s["run"].replace("jobs -- $(oneline job-lookup-error.log)", "jobs ->$(<job-lookup-error.log)", 1)
+                    anchor = "read) -- $(oneline job-lookup-error.log)"
+                    if anchor in s["run"]:
+                        s["run"] = s["run"].replace(anchor, "read) ->$(<job-lookup-error.log)", 1)
+                        return
+            failures.append("read_after_arrow: no listing-warning anchor in classify-startup")
+
+        def read_as_tee_input(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
                     s["run"] = s["run"].replace("$(oneline job-log-error.log)", "$(tee <job-log-error.log)", 1)
 
-        expect("raw read right after a '>' or as tee's input", mutated(read_after_arrow), "oneline helper")
+        expect("raw read right after a '>'", mutated(read_after_arrow), "oneline helper")
+        expect("raw read as tee's input", mutated(read_as_tee_input), "oneline helper")
         expect("helper redefined without escaping", mutated(helper_redefined), "oneline helper")
         expect("error log read raw into a variable", mutated(raw_via_variable), "oneline helper")
         expect("prereq result not reported", mutated(drop_prereq_report),
