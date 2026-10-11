@@ -590,6 +590,12 @@ STAGING_SCENARIOS = [
         expect_files={901: True},
     ),
     dict(
+        name="a failed job with no log after an ok fetch is not an ok status",
+        jobs_json=json.dumps([FAILED_JOBS[0]]), fetch_result="ok",
+        expect_outcome="failed", expect_reason="log-empty",
+        expect_files={901: False},
+    ),
+    dict(
         name="control: a readable listing with no failed job is ok and empty",
         jobs_json=json.dumps([FAILED_JOBS[1]]), fetch_result="ok",
         expect_outcome="ok", expect_reason=None, expect_files={},

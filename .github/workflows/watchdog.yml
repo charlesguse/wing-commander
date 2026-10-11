@@ -2567,10 +2567,15 @@ jobs:
               elif [ "$fetch_out" != "ok" ]; then
                 outcome="failed"
                 reason="log-read"
+              else
+                # A missing log after an ok fetch is a successful read of an
+                # empty body (a timed-out or never-started job). The agent
+                # still cannot tell that from a log nobody needed, so it
+                # reads as a gather that did not complete (job-logs is
+                # marked untrusted), never as an ok status with file null.
+                outcome="failed"
+                [ "$reason" = "log-read" ] || reason="log-empty"
               fi
-              # A missing log after an ok fetch is a successful read of an
-              # empty body (a timed-out or never-started job): no evidence
-              # to stage, not a gather failure.
               jobs_arr="$(printf '%s' "$jobs_arr" | jq -c --argjson id "$job_id" --arg n "$job_name" --arg c "$job_conclusion" --arg f "$file" \
                 '. + [{id:$id,name:$n,conclusion:$c,file:(if $f == "" then null else $f end)}]')"
             done
@@ -2699,7 +2704,7 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
           default-allowed-tools: "Read,Grep,Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)"
-          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git commit:*),Bash(git push:*)"
+          default-disallowed-tools: "WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(gh:*),Bash(git commit:*),Bash(git push:*)"
           extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}

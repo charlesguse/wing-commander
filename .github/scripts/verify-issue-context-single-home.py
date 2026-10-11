@@ -1154,7 +1154,12 @@ def check_gh_rationale_home(root="."):
             f"{GH_RATIONALE_HOME}: the `gh` rationale's distinguishing "
             f"sentence is not under {GH_RATIONALE_HEADING}, the entry every "
             f"pointer names (spec 101 FR-017).")
-    for rel in _live_text_files(root):
+    try:
+        live_files = _live_text_files(root)
+    except RuntimeError as exc:
+        # git could not list a real working tree: a verdict, not a traceback.
+        return problems + [f"check 6 could not list the tracked files: {exc}"]
+    for rel in live_files:
         if rel == GH_RATIONALE_HOME:
             continue
         try:

@@ -17,8 +17,16 @@ LAUNCHER_WORDS = frozenset((
     "env", "command", "exec", "sudo", "nohup", "time", "builtin", "xargs",
     "timeout", "nice", "ionice", "setsid", "stdbuf", "watch", "doas", "bash",
     "sh", "zsh", "dash", "eval", "script", "chroot", "unshare", "flock",
-    "strace", "ltrace", "busybox", "parallel", "find",
+    "strace", "ltrace", "busybox", "parallel", "find", "su", "runuser",
+    "nsenter", "systemd-run", "taskset", "numactl", "tmux", "ssh", "perl",
 ))
+# Interpreters run whatever their code argument says: only a script path is
+# safe to grant, so a `-c`/`-e` flag or no script at all can reach `gh`.
+INTERPRETER_WORDS = frozenset((
+    "bash", "sh", "zsh", "dash", "python", "python3", "perl", "ruby", "node",
+))
+CODE_FLAGS = frozenset(("-c", "-e", "-E", "-m", "-p"))
+SEGMENT_SPLIT_RE = re.compile(r"&&|\|\||[;&|\n`]|\$\(")
 ENV_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 BASH_RE = re.compile(r"Bash\((.*)\)", re.S)
 
@@ -40,14 +48,42 @@ def grants_gh(tool):
     m = BASH_RE.fullmatch(tool.strip())
     if not m:
         return False
-    return command_grants_gh(m.group(1).split(":", 1)[0])
+    body = m.group(1)
+    # Only a trailing `:*` (or bare `:`) is the prefix-match suffix; a colon
+    # elsewhere (`PATH=/a:/b gh`) belongs to the command.
+    open_ended = False
+    for suffix in (":*", ":"):
+        if body.endswith(suffix):
+            body = body[:-len(suffix)]
+            open_ended = True
+            break
+    return command_grants_gh(body, open_ended)
 
 
-def command_grants_gh(command):
-    tokens = command.replace("'", " ").replace('"', " ").split()
+def command_grants_gh(command, open_ended=False):
+    """`open_ended` is True when the grant ended in `:*`, so a launcher or
+    interpreter with no further arguments can still be given any command."""
+    for segment in SEGMENT_SPLIT_RE.split(command):
+        if _segment_grants_gh(segment, open_ended):
+            return True
+    return False
+
+
+def _segment_grants_gh(segment, open_ended):
+    tokens = segment.replace("'", " ").replace('"', " ").split()
     word = command_word(tokens)
     if word.rstrip("*") == "gh":
         return True
-    if word in LAUNCHER_WORDS:
-        return any(os.path.basename(t).rstrip("*;") == "gh" for t in tokens)
+    if word in LAUNCHER_WORDS or word in INTERPRETER_WORDS:
+        if any(os.path.basename(t).rstrip("*;") == "gh" for t in tokens):
+            return True
+        args = tokens[[i for i, t in enumerate(tokens)
+                       if os.path.basename(t) == word][0] + 1:]
+        if word in INTERPRETER_WORDS:
+            if any(a in CODE_FLAGS for a in args):
+                return True
+            if open_ended and not [a for a in args if not a.startswith("-")]:
+                return True
+        elif open_ended and not args:
+            return True
     return False

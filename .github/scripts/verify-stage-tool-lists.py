@@ -505,12 +505,26 @@ _LISTING_CACHE = {}
 def _listing(root):
     """repo_files(root), listed once per process for a real working tree
     (one with its own `.git`, whose tracked set cannot change under a run).
-    A fixture directory is listed afresh: its files do change. git failing
-    on a real working tree is a gate verdict, not a traceback."""
+    The cache key carries the mtime of the working tree's index, so a
+    fixture that `git init`s and then `git add`s is listed afresh, as is
+    a directory without a `.git`. A root that is a subdirectory of a
+    working tree (no `.git` of its own) lists git's tracked files under
+    it, never the on-disk leftovers. git failing on a real working tree is
+    a gate verdict, not a traceback."""
     try:
         if not os.path.exists(os.path.join(root, ".git")):
+            proc = subprocess.run(
+                ["git", "-C", root, "ls-files", "-z"], env=git_env(),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if proc.returncode == 0:
+                return sorted(os.fsdecode(p) for p in proc.stdout.split(b"\0")
+                              if p)
             return repo_files(root)
-        key = os.path.realpath(root)
+        try:
+            stamp = os.stat(os.path.join(root, ".git", "index")).st_mtime_ns
+        except OSError:
+            stamp = None
+        key = (os.path.realpath(root), stamp)
         if key not in _LISTING_CACHE:
             _LISTING_CACHE[key] = repo_files(root)
         return _LISTING_CACHE[key]
