@@ -1418,7 +1418,15 @@ and `specs/044-private-registry-credentials/research.md` D9/D10 for why a
 called workflow can't use a forwarded `GITHUB_TOKEN` for this). The
 wrapper's `dogfood` job is gated on the image variable being non-empty, so a
 repository that hasn't built and pushed the dogfood image yet gets a clean
-scheduled no-op instead of a permanently failing run.
+scheduled no-op instead of a permanently failing run. A `workflow_dispatch`
+may instead name a `container-image` inside this owner's `ghcr.io`
+namespace, which runs even with the variable unset (the e2e reference-image
+rebuild dispatches its new digest this way); an image anywhere else is
+refused by the `refuse-foreign-image` job, so a free-text input never
+chooses which registry receives the credentials. Every run sets the
+stage's `startup-check` input: `startup-agent` runs the real agent action's
+setup in the image with no model credential and `classify-startup` reads
+its log (`specs/112-agent-startup-image-check`).
 
 ## Auto-Release (`auto-release.yml`)
 

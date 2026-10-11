@@ -198,17 +198,24 @@ def check_wrapper(path=WRAPPER):
     refuse = jobs.get("refuse-foreign-image") or {}
     job = jobs.get("dogfood") or {}
     norm = lambda v: " ".join(str(v or "").split())
+    needs = job.get("needs")
+    needs = needs if isinstance(needs, list) else [needs]
     # The one namespace test lives on refuse-foreign-image, which fails for
     # a foreign dispatched image; dogfood runs only when it was skipped.
     want_refuse = ("inputs.container-image != '' && !startsWith(inputs.container-image, "
                    "format('ghcr.io/{0}/', github.repository_owner))")
     want_job = ("!cancelled() && needs.refuse-foreign-image.result == 'skipped' && "
                 "(inputs.container-image != '' || vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != '')")
-    if (norm(refuse.get("if")) != want_refuse or norm(job.get("needs")) != "refuse-foreign-image"
-            or norm(job.get("if")) != want_job):
-        return ["the wrapper's dogfood job may run on a dispatched container-image outside this "
-                "owner's GHCR namespace, sending it the registry secrets"]
-    return []
+    errors = []
+    if norm(refuse.get("if")) != want_refuse:
+        errors.append("the wrapper's refuse-foreign-image job no longer holds the namespace test "
+                      "(if: %r)" % norm(refuse.get("if")))
+    if "refuse-foreign-image" not in needs:
+        errors.append("the wrapper's dogfood job does not need refuse-foreign-image (needs: %r)" % needs)
+    if norm(job.get("if")) != want_job:
+        errors.append("the wrapper's dogfood job may run on a dispatched container-image outside this "
+                      "owner's GHCR namespace (if: %r)" % norm(job.get("if")))
+    return errors
 
 
 def run_checks(classifier=CLASSIFIER, fixtures=FIXTURES, workflow=WORKFLOW):
@@ -336,6 +343,12 @@ def self_test():
             fh.write(wsrc.replace("needs.refuse-foreign-image.result == 'skipped'",
                                   "needs.refuse-foreign-image.result != 'cancelled'"))
         expect("unconstrained wrapper dispatch", check_wrapper(p_wrap), "outside this owner's GHCR namespace")
+        with open(p_wrap, "w", encoding="utf-8") as fh:
+            fh.write(wsrc.replace("&& !startsWith(inputs.container-image", "&& startsWith(inputs.container-image"))
+        expect("refuse test inverted", check_wrapper(p_wrap), "namespace test")
+        with open(p_wrap, "w", encoding="utf-8") as fh:
+            fh.write(wsrc.replace("    needs: refuse-foreign-image\n", ""))
+        expect("dogfood without needs", check_wrapper(p_wrap), "does not need refuse-foreign-image")
         expect("first match", mutated(first_match), "ambiguous")
         expect("no prompt", mutated(drop_prompt), "needs a prompt")
         expect("no allowed_bots", mutated(drop_bots), "allowed_bots")

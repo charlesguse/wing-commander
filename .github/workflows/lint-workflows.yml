@@ -5542,7 +5542,7 @@ jobs:
       - name: "Gate 148 — every stage's image probe enforces the git 2.38 floor, verbatim from image-git-floor.sh"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-image-git-floor.py
-      - name: "Gate 148 self-test — a lowered floor and a probe missing the fragment each fail"
+      - name: "Gate 148 self-test — a lowered floor, a probe missing the fragment or its host report, and a Gate 62 that skips or drifts from the floor each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-image-git-floor.py --self-test
 

@@ -9,7 +9,10 @@ image-git-floor-fixtures/ and asserts pass/fail and the exact failure message
 from "<output>"`), and (b) asserts every published stage's
 verify-image-prerequisites probe (found by its REQUIRED_TOOLS list) contains
 the fragment byte for byte, and the host-side failure report (HOST_BRANCH)
-too, so the 14 pasted copies cannot drift.
+too, so the 14 pasted copies cannot drift; and (c) asserts Gate 62
+(verify-gate-62.py) runs the fragment against the reference image and
+classifies its result with FLOOR_MESSAGES, which must be the fragment's own
+two messages.
 
 NOTE ON GATE NUMBERING: this gate was first registered as Gate 142. It is
 numbered 148, not 142: 141-146 were taken by spec 110's PR #982, which
@@ -132,6 +135,8 @@ def check_gate_62(path=GATE_62):
     copies = re.findall(r'"([^"]+)"', m.group(1)) if m else []
     if len(copies) != 2 or any(c not in fragment for c in copies):
         return ["verify-gate-62.py's FLOOR_MESSAGES %r are not image-git-floor.sh's own messages" % copies]
+    if "if any(m in err for m in FLOOR_MESSAGES):" not in text:
+        return ["verify-gate-62.py's check_git_floor does not classify with FLOOR_MESSAGES"]
     return []
 
 
@@ -172,6 +177,11 @@ def self_test():
             fh.write(src.replace("is older than the 2.38 minimum", "is too old"))
         if not check_gate_62(p):
             failures.append("a Gate 62 whose floor messages drifted from the fragment was not caught")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(src.replace("if any(m in err for m in FLOOR_MESSAGES):",
+                                 'if "is older than the 2.40 minimum" in err:'))
+        if not check_gate_62(p):
+            failures.append("a Gate 62 classifying with an inline literal was not caught")
     if stages:
         path, text = stages[0]
         reworded = [(path, text.replace(fragment, "true").replace(
