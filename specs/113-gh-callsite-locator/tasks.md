@@ -128,3 +128,86 @@
 ## Phase 9: Review Fixes
 
 - [x] T031 (code review of PR #1004) Fail closed on a command word that could expand to `gh` across an expansion (FR-006). `${X:-g}h api …` was located as nothing at all, which is a silent pass. In `.github/scripts/wc_gh_callsites.py`, each word now records its literal text with a marker for each expansion (`_Word.pat`). In that record a `$'…'` is decoded (cut at a NUL as bash does, or, when it cannot be decoded, counted as an unknown command word), a `{a,b}` brace list is spelled out, and a glob or a sequence brace (`{g..g}`) becomes a marker. `_may_run_gh` uses it to decide whether a command word could be `gh`. The literal text after the last marker must be `gh` after a `/` (`$HOME/bin/gh`, `/usr/bin/gh`), or else a suffix of `gh` that the marker could complete (`${X:-g}h`, `g$X`, `$(printf g)h`, `{g,}h`, `h$X`). A word made only of markers counts when it holds a `${…}` or more than one marker (`${CMD}`, `${X}${Y}`). The word that runs also counts when it holds an unquoted expansion that may split off a first word `gh` (`${X}g` with X=`gh `). Such a word is a disallowed call; a literal `/usr/bin/gh` gets the new reason `gh-by-path`. The same check now applies in four more places: every word of a literal wrapper, because its operands come before the command (`flock FILE`, `timeout 5s`); the word a dynamic command word runs, and the word after one of its options; each command-like piece of a string re-read as shell, by `eval`, `watch` or `script`, by a wrapper's `-c`/`-S` (combined flags such as `-lc` included), or by `bash -c`/`sh -c`; and `$"…"`, which is read as the quoted string it is. A lone bare `$CMD` or `$(…)` is left out because the scanner reads the `$(…)` inside `$(( $(…) ))` as a command word, and the authoring rule says so. Accepted false failures, per FR-006: `sudo -u ${U} make`, `sudo chown "$U:$G" f`, `sudo ln -s … /usr/local/bin/gh`, and `eval "x=${y}"`. Accepted gap: a dynamic command word's arguments past the first are not checked, so a variable holding a wrapper (`"$PY" lockfile g$F`) passes. So that lines which run nothing do not fail, the scanner now reads four constructs as data instead of command words: an array assignment's list (`a=("$x")`, `declare -A m=(…)`; the assignment stays a prefix, so `GH_TOKEN=(t) gh` is an unsupported prefix), a subscripted assignment (`a[$k]=…`, read as an assignment prefix), a case pattern (`*/*|/*)`), and the operands of a `[[ … ]]` test (`=~ ^([0-9]+)*$`). Their expansions are still read, and that includes a process substitution in a test. A case pattern cut short by `;` or a newline is unprovable. The first word of each command (after any keyword, and every word after a wrapper) in a backtick body, and in the `$(…)` spans of an unquoted heredoc body (nested ones included), is checked the same way. A `time` that is not the leading word, as in `X=1 time gh`, is `/usr/bin/time` and is treated as a wrapper. A test or list that cannot be read to its close is unprovable: each `gh` or may-be-`gh` word in it, and every `gh` after it, becomes a disallowed call. Nothing is read twice, so `locate` stays linear. Gates 12 and 28 stay green on the repository. Thirty-nine new Gate 12 locator cases in `.github/scripts/verify-gate-12.py` cover these forms, and the forms that ran `gh` unseen fail without the change. The authoring rule in `CONTRIBUTING.md` and `contracts/authoring-rule.md` names the forms. `verify-gate-12.py`'s differential (0 unaccounted, and 0 over 8000 extra seeds) and mutation (caught) checks still pass.
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Quoted stdin to a shell classified as inert mention
+
+  bash <<'EOF', here-strings, or echo '...' | bash bodies are treated as mentions so real gh calls are missed, contradicting the fail-closed contract.
+
+  - .github/scripts/wc_gh_callsites.py
+
+  Detail: _heredocs marks the quoted heredoc as a mention; _end only treats bash/sh as running a string with -c/-S.
+
+- [ ] Review finding: Wrapper/shell list is a closed denylist
+
+  find -exec, parallel, ssh, docker exec and chroot are not recognised, so gh run through them is not flagged or checked.
+
+  - .github/scripts/wc_gh_callsites.py
+
+  Detail: `find . -exec gh issue close {} \;` emits no token; the quoted sh -c variant becomes a mention.
+
+- [ ] Review finding: Partly quoted owner/repo in gh api path skipped as cross-repo
+
+  norm_expr only strips quotes wrapping the whole word, so repos/"$GITHUB_REPOSITORY"/... is classified CROSS and its permission is never checked.
+
+  - .github/scripts/verify-gate-12-token-permissions.py
+
+  Detail: check_gh_invocation skips CROSS paths, so the Actions-needs-permission 403 the gate exists to catch passes.
+
+- [ ] Review finding: Redirection fd number parsed as an argv word
+
+  The 2 in 2>/dev/null becomes part of the gh call's argv and shifts the path or subcommand.
+
+  - .github/scripts/wc_gh_callsites.py
+
+  Detail: `gh api 2>/dev/null "repos/$R/actions/runs"` gives argv ['api','2',...], so the real path is never checked.
+
+- [ ] Review finding: run_blocks line offset wrong for non-literal scalars
+
+  start_mark.line + 1 + (style in '|>') is correct only for literal block scalars but is applied to folded, plain and quoted scalars.
+
+  - .github/scripts/wc_gh_callsites.py
+
+  Detail: Folded newlines make locator line N differ from the file line, so Gate 28 annotations and wc-gh-method-exempt lookups use the wrong line.
+
+- [ ] Review finding: Duplicate run: scalar walk and line-offset formula
+
+  run_lines() in Gate 12 re-implements what wc_gh_callsites.run_blocks() already provides, violating the single-home rule.
+
+  - .github/scripts/verify-gate-12-token-permissions.py
+  - .github/scripts/wc_gh_callsites.py
+
+  Detail: Two copies of the line-offset formula can drift with nothing failing.
+
+- [ ] Review finding: splitlines vs newline-count mismatch in exemption lookup
+
+  scan_script indexes script.splitlines() with a locator line number that counts only \n.
+
+  - .github/scripts/verify-gh-api-explicit-method.py
+
+  Detail: \r, \x0b, \x0c, \x85 or \u2028 in a script yields extra lines, so _is_exempt checks the wrong line.
+
+- [ ] Review finding: Gate 28 scope narrowed and disallowed calls skipped
+
+  Python scripts and non-.sh executables are no longer scanned, and calls the locator marks disallowed are skipped on the assumption Gate 12 reports them.
+
+  - .github/scripts/verify-gh-api-explicit-method.py
+
+  Detail: Gate 12 does not scan .github/scripts, so an implicit-POST gh api there can land unflagged.
+
+- [ ] Review finding: Wall-clock linear-time check and host-dependent differential
+
+  run_locator_cases fails a case that takes over 5s as not linear, and differential() runs generated scripts under real bash, so the self-test can flake or depend on the host.
+
+  - .github/scripts/verify-gate-12.py
+
+  Detail: A loaded runner can push the 60000-line heredoc case past 5s; a step-count or size-scaling check would be deterministic.
+
+- [ ] Review finding: Garbled gate comment and opaque fuzz repro files
+
+  A half-edited self-correcting comment is left in a gate file's fixture header, and mins3/3b/3c/5-10 .jsonl files are added with no manifest saying which bug each guards.
+
+  - .github/scripts/verify-gh-api-explicit-method.py
+
+  Detail: Comments in gate files are load-bearing; every .jsonl in gate-12-fuzz/ is replayed with no manifest.
