@@ -961,15 +961,16 @@ know before you set either:
   consume `anthropics/claude-code-action@v1`, so the action's own
   dependencies can change under an image that passed the tool-presence check.
   The image prerequisite probe also requires **git >= 2.38** (it names the
-  version found). Separately, `private-image-dogfood.yml` has an optional
-  `startup-check` input (boolean, default `false`) that runs the real
-  action's setup in the image with no model credential and classifies the
-  log (`classify-agent-startup.py`): a red `classify-startup` job names the
-  failing setup step and quotes its error. The caller must grant
-  `actions: read`; the classifier script comes from the caller's own
-  checkout, so only a repository carrying `.github/scripts/classify-agent-startup.py`
-  (this one) should turn it on. This repository runs it on the daily dogfood
-  run, so a dependency change that breaks an image surfaces within a day.
+  version found). Separately, the published
+  [`agent-startup-check.yml`](#agent-startup-check) runs the real action's
+  setup in your image with no model credential and classifies the log: a
+  red `classify-startup` job either names the failing setup step and quotes
+  its error (`setup-failed`) or says it could not reach its subject (the
+  image did not pull or start, for example). It is opt-in, a workflow of its own that you call on a schedule;
+  no stage calls it, so a wrapper that does not call it changes nothing.
+  This repository calls it from its daily dogfood run and on every
+  reference-image rebuild, so a dependency change that breaks an image
+  surfaces within a day.
 - **`container-image` runs every job of the stage inside that image**,
   exactly as written (registry, repository, tag or digest — whatever you'd
   hand `docker pull`). Before any agent-bearing job's own container is
@@ -1569,6 +1570,50 @@ or 300 compared runs, whichever comes first), and
 job in your wrapper references the composite from the pipeline repository
 (`charlesguse/wing-commander/.github/actions/wing-commander-trial-bound@<your pin>`)
 rather than by local path.
+
+### agent-startup-check
+
+Runs `anthropics/claude-code-action@v1` (the reference every stage uses)
+inside `container-image` with no model credential, and classifies its log
+with `classify-agent-startup.py`, checked out from the pipeline repository
+at the running workflow's own commit. It never reaches a model: with no
+credential the action stops at its credential check, which is the "setup
+completed" evidence. Not a lifecycle stage: none of the Common inputs about
+agents, spec-kit, the App or chaining apply, and it takes no model
+credential. Contract: [agent-startup-check.md](../specs/112-agent-startup-image-check/contracts/agent-startup-check.md).
+
+| | |
+|---|---|
+| Inputs | `container-image` (string, `""` = the whole workflow is a no-op); `runner`, `environment`, `environment-deployment`, `pipeline-repo`, `pipeline-ref` (as in Common inputs, except that this workflow holds no `id-token`, so set `pipeline-ref` whenever `github.job_workflow_sha` comes through empty) |
+| Secrets | `container-registry-username` / `container-registry-password` (optional, for a private image); `pipeline-repo-token` (optional, only for a [private pipeline repository](#private-pipeline-repository)) |
+| Permissions | The calling job grants `actions: read` (classify-startup reads the startup-agent job's log) and `contents: read` |
+| Jobs | `verify-image-prerequisites` (the same tool-list and git-floor probe every stage runs), `startup-agent` (inside `container-image`), `classify-startup` (on `runner` directly, not in the image, so it can report on an image that cannot start a shell; it needs `gh`, `jq` and `python3` on the runner, which GitHub's hosted runners carry) |
+
+```yaml
+jobs:
+  agent-startup-check:
+    permissions:
+      actions: read
+      contents: read
+    uses: charlesguse/wing-commander/.github/workflows/agent-startup-check.yml@v2
+    with:
+      container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE }}
+    secrets:
+      container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+      container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
+```
+
+Trigger it on a `schedule` or `workflow_dispatch`: the agent action does
+not support `push`. It exists from the first release that ships spec 112;
+an older pin has no such file. A matrix over several images works:
+`classify-startup` finds its own call's `startup-agent` job by the job-name
+prefix it shares with it, and reports an ambiguous lookup as
+`unclassified` rather than guessing. `classify-startup`'s job summary carries the verdict
+(`setup-completed`, `setup-failed` with the step and quoted error, or
+`unclassified` when the check could not reach its subject) and the
+`verify-image-prerequisites` result beside it. The start-up check runs
+whatever the prerequisite check found: an image that fails both shows two
+red jobs, each with its own reason, and neither result hides the other.
 
 ## Chaining payload contract
 

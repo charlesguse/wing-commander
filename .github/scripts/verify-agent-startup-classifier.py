@@ -14,13 +14,29 @@ fixture in .github/scripts/agent-startup-fixtures/:
     subject";
   * a missing --log is unclassified, exit 2.
 
-It also pins the workflow side in private-image-dogfood.yml: the
+It also pins the workflow side in agent-startup-check.yml: the
 startup-agent job carries continue-on-error: true on the action step, no
 model credential, a prompt and the github-actions bot in allowed_bots (else
 the action skips setup), and no always() gate; classify-startup retries the
 job-log fetch; classify-startup's `if:` contains !cancelled(); the
 classifier is invoked as a script (single home) and no inline copy of its
 marker or verdict logic appears in the workflow.
+
+Both start-up jobs run whatever verify-image-prerequisites found, and
+classify-startup reports that result beside its verdict: spec 112's edge
+case ("the required-tool list and the start-up check disagree ... both
+results are reported; neither silently overrides the other"), and SC-001's
+proof (an image without `unzip`, which the tool list also rejects) is
+unreachable otherwise. An `if:` that reads the prerequisite check's result
+fails here.
+
+FR-010 / SC-005: the start-up jobs live in their own reusable workflow
+because GitHub checks every nested job's permissions when a reusable
+workflow starts, skipped jobs included. private-image-dogfood.yml must stay
+callable with `permissions: {}`, as it was before spec 112: its top level
+and every job declare `permissions: {}` (or nothing), so a grant there
+fails here. The dogfood wrapper's dogfood call grants nothing, and its
+start-up call carries the same GHCR-namespace guard.
 
 NOTE ON GATE NUMBERING: this gate was first registered as Gate 141. It is
 numbered 147, not 141: 141-146 were taken by spec 110's PR #982, which
@@ -44,7 +60,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 CLASSIFIER = os.path.join(HERE, "classify-agent-startup.py")
 FIXTURES = os.path.join(HERE, "agent-startup-fixtures")
-WORKFLOW = os.path.join(ROOT, ".github", "workflows", "private-image-dogfood.yml")
+WORKFLOW = os.path.join(ROOT, ".github", "workflows", "agent-startup-check.yml")
+DOGFOOD = os.path.join(ROOT, ".github", "workflows", "private-image-dogfood.yml")
 
 VERDICTS = ("setup-completed", "setup-failed", "unclassified")
 CREDENTIAL_INPUTS = ("anthropic_api_key", "claude_code_oauth_token", "anthropic_auth_token")
@@ -123,7 +140,7 @@ def check_workflow(path):
     agent = jobs.get("startup-agent")
     classify = jobs.get("classify-startup")
     if agent is None:
-        errors.append("private-image-dogfood.yml has no startup-agent job")
+        errors.append("agent-startup-check.yml has no startup-agent job")
     else:
         steps = agent.get("steps") or []
         action = [s for s in steps if str(s.get("uses", "")).startswith("anthropics/claude-code-action")]
@@ -161,7 +178,7 @@ def check_workflow(path):
         if MODEL_CREDENTIAL_ENV.search(job_text):
             errors.append("startup-agent sets a model-credential variable")
     if classify is None:
-        errors.append("private-image-dogfood.yml has no classify-startup job")
+        errors.append("agent-startup-check.yml has no classify-startup job")
     else:
         if "!cancelled()" not in str(classify.get("if", "")):
             errors.append("classify-startup's if: must contain !cancelled()")
@@ -179,7 +196,69 @@ def check_workflow(path):
         if not re.search(r"for attempt in[^\n]*\n(?:.*\n)*?.*actions/jobs/\$job_id/logs(?:.*\n)*?.*sleep ", runs):
             errors.append("classify-startup must retry the job-log fetch (a just-finished job's log can 404)")
     if re.search(r"AUTH_MARKERS|failed at authentication", text):
-        errors.append("private-image-dogfood.yml carries an inline copy of the classifier's marker logic")
+        errors.append("agent-startup-check.yml carries an inline copy of the classifier's marker logic")
+    # Spec 112's edge case: the tool-list result never gates the start-up
+    # check; both are reported.
+    for name in ("startup-agent", "classify-startup"):
+        job = jobs.get(name)
+        if isinstance(job, dict) and "verify-image-prerequisites.result" in str(job.get("if", "")):
+            errors.append("%s's if: reads verify-image-prerequisites' result, so a failed tool-list check "
+                          "hides the start-up verdict (spec 112 edge case: both are reported)" % name)
+    if classify is not None:
+        if "container" in classify:
+            errors.append("classify-startup must run on the runner, not in the image under test: there it "
+                          "cannot report on an image without a shell, python3 or gh, or one that fails to pull")
+        runs_on = " ".join(str(classify.get("runs-on", "")).split())
+        # The same literal Gate 22 compares its registered exception against.
+        if runs_on != "${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}":
+            errors.append("classify-startup must keep the runner passthrough (the exact inputs.runner ternary)")
+        runs = "\n".join(str(s.get("run", "")) for s in classify.get("steps") or [])
+        # The classifier ships with this workflow, not the caller's repo.
+        checkout = [s for s in classify.get("steps") or []
+                    if str(s.get("uses", "")).startswith("actions/checkout")]
+        cwith = (checkout[0].get("with") or {}) if len(checkout) == 1 else {}
+        if (" ".join(str(cwith.get("repository", "")).split()) != "${{ inputs.pipeline-repo }}"
+                or "steps.pipeline-ref.outputs.ref" not in str(cwith.get("ref", ""))
+                or "classifier=.wing-commander-pipeline/.github/scripts/classify-agent-startup.py" not in runs
+                or 'python3 "$classifier"' not in runs):
+            errors.append("classify-startup must check the classifier out of inputs.pipeline-repo at the "
+                          "resolved pipeline ref and run that copy, not the caller's repository's")
+        if 'env.PREFIX + "startup-agent"' not in runs or "env.RUNNER_NAME" not in runs:
+            errors.append("classify-startup must scope its startup-agent lookup to its own call's job-name prefix")
+        envs = [s.get("env") or {} for s in classify.get("steps") or []]
+        if ("needs.verify-image-prerequisites.result" not in yaml.safe_dump(envs)
+                or "Image prerequisite check" not in runs):
+            errors.append("classify-startup must report verify-image-prerequisites' result beside its verdict")
+        # It runs on the runner, not the image: a runner without gh/jq/python3,
+        # or a classifier that was never checked out, is named as such rather
+        # than read as an empty log and an "exited 2" verdict.
+        if ('for t in jq python3 gh; do command -v "$t"' not in runs
+                or '[ ! -f "$classifier" ]' not in runs or "could not reach subject" not in runs):
+            errors.append("classify-startup must name a runner missing gh/jq/python3 or a classifier "
+                          "that was not checked out (could not reach subject) before classifying")
+    return errors
+
+
+def check_dogfood_permissions(path=DOGFOOD):
+    """FR-010 / SC-005: private-image-dogfood.yml stays callable with
+    `permissions: {}`, as before spec 112 -- no job may need a grant."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        return ["cannot read %s: %s" % (path, exc)]
+    errors = []
+    if doc.get("permissions") != {}:
+        errors.append("private-image-dogfood.yml's top-level permissions are %r, not {}" % doc.get("permissions"))
+    jobs = doc.get("jobs") or {}
+    if not jobs:
+        errors.append("private-image-dogfood.yml has no jobs")
+    for name, job in sorted(jobs.items()):
+        perms = (job or {}).get("permissions", {})
+        if perms not in ({}, None):
+            errors.append("private-image-dogfood.yml job %s declares permissions %r: GitHub checks every "
+                          "job's permissions when the workflow starts, skipped or not, so a caller granting "
+                          "permissions: {} would fail (FR-010, SC-005)" % (name, perms))
     return errors
 
 
@@ -196,10 +275,7 @@ def check_wrapper(path=WRAPPER):
         return ["cannot read %s: %s" % (path, exc)]
     jobs = (doc or {}).get("jobs") or {}
     refuse = jobs.get("refuse-foreign-image") or {}
-    job = jobs.get("dogfood") or {}
     norm = lambda v: " ".join(str(v or "").split())
-    needs = job.get("needs")
-    needs = needs if isinstance(needs, list) else [needs]
     # The one namespace test lives on refuse-foreign-image, which fails for
     # a foreign dispatched image; dogfood runs only when it was skipped.
     want_refuse = ("inputs.container-image != '' && !startsWith(inputs.container-image, "
@@ -218,18 +294,47 @@ def check_wrapper(path=WRAPPER):
             or not re.search(r"(?m)^\s*exit 1\s*$", refuse_runs)):
         errors.append("the wrapper's refuse-foreign-image job does not fail (::error:: and exit 1, "
                       "no continue-on-error, no step if:)")
-    if "refuse-foreign-image" not in needs:
-        errors.append("the wrapper's dogfood job does not need refuse-foreign-image (needs: %r)" % needs)
-    if norm(job.get("if")) != want_job:
-        errors.append("the wrapper's dogfood job may run on a dispatched container-image outside this "
-                      "owner's GHCR namespace (if: %r)" % norm(job.get("if")))
+    calls = (("dogfood", "./.github/workflows/private-image-dogfood.yml"),
+             ("startup-check", "./.github/workflows/agent-startup-check.yml"))
+    for name, uses in calls:
+        job = jobs.get(name) or {}
+        needs = job.get("needs")
+        needs = needs if isinstance(needs, list) else [needs]
+        if job.get("uses") != uses:
+            errors.append("the wrapper's %s job does not call %s (uses: %r)" % (name, uses, job.get("uses")))
+        if "refuse-foreign-image" not in needs:
+            errors.append("the wrapper's %s job does not need refuse-foreign-image (needs: %r)" % (name, needs))
+        if norm(job.get("if")) != want_job:
+            errors.append("the wrapper's %s job may run on a dispatched container-image outside this "
+                          "owner's GHCR namespace (if: %r)" % (name, norm(job.get("if"))))
+    perms = (jobs.get("startup-check") or {}).get("permissions") or {}
+    granted = (perms in ("read-all", "write-all") if isinstance(perms, str)
+               else isinstance(perms, dict) and all(perms.get(k) in ("read", "write")
+                                                    for k in ("actions", "contents")))
+    if not granted:
+        errors.append("the wrapper's startup-check job must grant actions: read and contents: read "
+                      "(the called jobs request both; GitHub refuses a call granting less)")
+    # Both calls check the same image with the same credentials.
+    dog, start = jobs.get("dogfood") or {}, jobs.get("startup-check") or {}
+    if ((dog.get("with") or {}).get("container-image") != (start.get("with") or {}).get("container-image")
+            or dog.get("secrets") != start.get("secrets")):
+        errors.append("the wrapper's dogfood and startup-check calls must pass the same container-image "
+                      "and registry secrets")
+    if " ".join(str(((jobs.get("startup-check") or {}).get("with") or {}).get("pipeline-repo", "")).split()) \
+            != "${{ github.repository }}":
+        errors.append("the wrapper's startup-check job must pass pipeline-repo: ${{ github.repository }} "
+                      "(a fork's commit is not in the default pipeline repository)")
+    # The dogfood call is the adopter who never opted in: it grants nothing.
+    if (jobs.get("dogfood") or {}).get("permissions") != {}:
+        errors.append("the wrapper's dogfood job must call private-image-dogfood.yml with permissions: {} "
+                      "(FR-010: an adopter who changes nothing keeps working)")
     return errors
 
 
 def run_checks(classifier=CLASSIFIER, fixtures=FIXTURES, workflow=WORKFLOW):
     mod = load_classifier(classifier)
     return (check_fixtures(mod, fixtures) + check_missing_log(mod) + check_workflow(workflow)
-            + check_wrapper())
+            + check_dogfood_permissions() + check_wrapper())
 
 
 def self_test():
@@ -293,7 +398,7 @@ def self_test():
             jobs["classify-startup"].pop("timeout-minutes", None)
 
         def drop_cancelled(jobs):
-            jobs["classify-startup"]["if"] = "inputs.startup-check"
+            jobs["classify-startup"]["if"] = "inputs.container-image != ''"
 
         def drop_script(jobs):
             for s in jobs["classify-startup"]["steps"]:
@@ -356,6 +461,64 @@ def self_test():
         with open(p_wrap, "w", encoding="utf-8") as fh:
             fh.write(wsrc.replace("    needs: refuse-foreign-image\n", ""))
         expect("dogfood without needs", check_wrapper(p_wrap), "does not need refuse-foreign-image")
+        with open(p_wrap, "w", encoding="utf-8") as fh:
+            fh.write(wsrc.replace("    needs: refuse-foreign-image\n", "", 1))
+        expect("dogfood (only) without needs", check_wrapper(p_wrap), "dogfood job does not need")
+        def wrapper_jobs(fn):
+            m = yaml.safe_load(wsrc)
+            fn(m["jobs"])
+            with open(p_wrap, "w", encoding="utf-8") as fh:
+                yaml.safe_dump(m, fh)
+            return check_wrapper(p_wrap)
+
+        expect("startup call unguarded",
+               wrapper_jobs(lambda j: j["startup-check"].update({"if": "!cancelled()"})),
+               "startup-check job may run")
+        expect("startup call dropped", wrapper_jobs(lambda j: j.pop("startup-check")),
+               "startup-check job does not call")
+        expect("startup call without pipeline-repo",
+               wrapper_jobs(lambda j: j["startup-check"]["with"].pop("pipeline-repo")),
+               "pipeline-repo")
+        read_all = wrapper_jobs(lambda j: j["startup-check"].update({"permissions": "read-all"}))
+        if any("actions: read" in e for e in read_all):
+            failures.append("startup call with permissions: read-all was refused: %r" % read_all)
+        expect("startup call without contents: read",
+               wrapper_jobs(lambda j: j["startup-check"].update({"permissions": {"actions": "read"}})),
+               "contents: read")
+        expect("startup call on another image",
+               wrapper_jobs(lambda j: j["startup-check"]["with"].update({"container-image": "x"})),
+               "same container-image")
+        expect("startup call without actions: read",
+               wrapper_jobs(lambda j: j["startup-check"].update({"permissions": {}})),
+               "must grant actions: read")
+        expect("dogfood call granted",
+               wrapper_jobs(lambda j: j["dogfood"].update({"permissions": {"actions": "read"}})),
+               "permissions: {}")
+        # O1 regression (FR-010 / SC-005): a grant on any
+        # private-image-dogfood.yml job, the shape spec 112 first shipped.
+        with open(DOGFOOD, encoding="utf-8") as fh:
+            dsrc = fh.read()
+        p_dog = os.path.join(tmp, "dogfood.yml")
+
+        def dogfood_mutated(fn):
+            m = yaml.safe_load(dsrc)
+            fn(m)
+            with open(p_dog, "w", encoding="utf-8") as fh:
+                yaml.safe_dump(m, fh)
+            return check_dogfood_permissions(p_dog)
+
+        expect("dogfood job granted actions: read",
+               dogfood_mutated(lambda m: m["jobs"]["dogfood"].update(
+                   {"permissions": {"actions": "read", "contents": "read"}})),
+               "job dogfood declares permissions")
+        expect("dogfood gains a start-up job with a grant",
+               dogfood_mutated(lambda m: m["jobs"].update(
+                   {"startup-agent": {"if": "false", "permissions": {"contents": "read"},
+                                      "runs-on": "x", "steps": [{"run": "true"}]}})),
+               "job startup-agent declares permissions")
+        expect("dogfood top level granted",
+               dogfood_mutated(lambda m: m.update({"permissions": {"contents": "read"}})),
+               "top-level permissions")
         def wrapper_mutated(fn):
             m = yaml.safe_load(wsrc)
             fn(m["jobs"]["refuse-foreign-image"])
@@ -380,6 +543,55 @@ def self_test():
         expect("no continue-on-error", mutated(drop_coe), "continue-on-error")
         expect("credential input", mutated(add_key), "model credential input")
         expect("no !cancelled", mutated(drop_cancelled), "!cancelled()")
+
+        # O2 regression: the start-up jobs gated on the tool-list result, the
+        # shape that made SC-001's image-without-unzip proof unreachable.
+        def gate_on_prereq(name):
+            def fn(jobs):
+                jobs[name]["if"] = ("!cancelled() && needs.verify-image-prerequisites.result != 'failure' "
+                                    "&& inputs.container-image != ''")
+            return fn
+
+        expect("startup-agent gated on prereqs", mutated(gate_on_prereq("startup-agent")),
+               "startup-agent's if: reads verify-image-prerequisites")
+        expect("classify-startup gated on prereqs", mutated(gate_on_prereq("classify-startup")),
+               "classify-startup's if: reads verify-image-prerequisites")
+
+        def drop_prereq_report(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                (s.get("env") or {}).pop("PREREQ_RESULT", None)
+
+        def classify_in_image(jobs):
+            jobs["classify-startup"]["container"] = {"image": "${{ inputs.container-image }}"}
+
+        expect("classify-startup in the image", mutated(classify_in_image), "must run on the runner")
+        expect("classify-startup off the runner passthrough",
+               mutated(lambda j: j["classify-startup"].update({"runs-on": "ubuntu-latest"})),
+               "runner passthrough")
+        def caller_checkout(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if str(s.get("uses", "")).startswith("actions/checkout"):
+                    s["with"] = {"sparse-checkout": ".github/scripts"}
+                if "run" in s:
+                    s["run"] = s["run"].replace(".wing-commander-pipeline/.github/scripts/", ".github/scripts/")
+                    s["run"] = s["run"].replace('python3 "$classifier"', "python3 .github/scripts/classify-agent-startup.py")
+
+        expect("classifier from the caller's checkout", mutated(caller_checkout), "inputs.pipeline-repo")
+
+        def unscoped_lookup(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
+                    s["run"] = s["run"].replace('env.PREFIX + "startup-agent"', '"startup-agent"')
+
+        expect("unscoped lookup", mutated(unscoped_lookup), "own call's job-name prefix")
+        def drop_preflight(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
+                    s["run"] = s["run"].replace('[ ! -f "$classifier" ]', "false")
+
+        expect("no runner/classifier preflight", mutated(drop_preflight), "could not reach subject")
+        expect("prereq result not reported", mutated(drop_prereq_report),
+               "report verify-image-prerequisites' result")
         expect("no script call", mutated(drop_script), "must invoke classify-agent-startup.py")
     for f in failures:
         print("::error::Gate 147 self-test: " + f)

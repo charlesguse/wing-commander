@@ -74,7 +74,7 @@ the 14 pasted `verify-image-prerequisites` probes, Gate 23, docs
 | IV Automation-first | Pass | Scheduled and rebuild-triggered, no manual step |
 | V Security | Pass | Agent step gets no model credential; job `permissions` limited to `contents: read`, `actions: read` for the log read; no fork heads |
 | VI Portability | Pass | Image arrives as a declared input; nothing repo-specific in the stage |
-| VII Two interfaces | Pass, with care | New `startup-check` input (default `false`) on `private-image-dogfood.yml` is additive and optional; wrapper owns turning it on. Classifier lives in `.github/scripts/` (this repo's instrument), not in the published surface |
+| VII Two interfaces | Pass, with care | New opt-in published workflow `agent-startup-check.yml` is additive (corrected in review: an optional `startup-check` input on `private-image-dogfood.yml` made every caller of that workflow grant the start-up jobs' permissions, since GitHub checks skipped jobs' permissions too); the wrapper owns calling it. Classifier lives in `.github/scripts/` (this repo's instrument), not in the published surface |
 | VIII Green check | Pass | Positive-evidence pass only; every branch has a fixture; gate registered in `lint-workflows.yml` and run by `run-local-gates.py` |
 | IX Deterministic judgment | Pass | Classification is code, not a prompt |
 | X Bounded autonomy | Pass (n/a) | Not touched |
@@ -107,9 +107,10 @@ specs/112-agent-startup-image-check/
 │   ├── image-git-floor.sh                 # NEW: canonical git-floor probe fragment
 │   └── required-tools.txt                 # header note on git floor / unzip basis
 ├── workflows/
-│   ├── private-image-dogfood.yml          # +startup-check input, +job
-│   ├── wing-commander-private-image-dogfood.yml  # wrapper opts in
-│   ├── wing-commander-e2e-reference-image.yml    # +job calling the dogfood stage
+│   ├── agent-startup-check.yml            # NEW published workflow: the start-up jobs
+│   ├── private-image-dogfood.yml          # git-floor fragment only; permissions unchanged
+│   ├── wing-commander-private-image-dogfood.yml  # wrapper calls agent-startup-check.yml
+│   ├── wing-commander-e2e-reference-image.yml    # +job dispatching the dogfood wrapper
 │   ├── lint-workflows.yml                 # register new gate; Gate 23 probe check
 │   └── <14 stage files>                   # git-floor fragment in the probe
 docs/adoption.md, docs/setup.md            # git floor + @v1 policy + startup check

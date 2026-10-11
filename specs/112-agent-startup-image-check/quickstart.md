@@ -5,9 +5,9 @@ shapes: [data-model.md](data-model.md).
 
 ## 1. Calibrate against the real action (once, before fixtures are final)
 
-Run `wing-commander-private-image-dogfood.yml` with `workflow_dispatch` on a
-branch that sets `startup-check: true`, against the current reference image.
-Save the `startup-agent` job log; its no-credential failure line becomes the
+Run `wing-commander-private-image-dogfood.yml` with `workflow_dispatch`
+against the current reference image (its `startup-check` job calls
+`agent-startup-check.yml`). Save the `startup-agent` job log; its no-credential failure line becomes the
 auth marker, and the log becomes the `setup-completed` fixture.
 
 ## 2. Local gate run
@@ -34,8 +34,14 @@ failure naming 2.34.1) and `ubuntu:24.04` (expect pass).
 
 1. Dispatch the dogfood wrapper against the reference image: `classify-startup`
    passes, no model call appears in the run.
-2. Dispatch against an image built without `unzip`: `classify-startup` fails
-   naming "Install Bun" and `Unable to locate executable file: unzip`.
+2. Dispatch against an image built without `unzip`, pushed inside this
+   owner's `ghcr.io/<owner>/` namespace (the wrapper refuses any other
+   image): `classify-startup` fails naming "Install Bun" and
+   `Unable to locate executable file: unzip`. `verify-image-prerequisites`
+   fails too, naming `unzip`; the start-up jobs run regardless, and
+   `classify-startup`'s summary shows both results (spec edge case: neither
+   overrides the other). An earlier draft skipped the start-up jobs
+   here, so this step could not be reached.
 3. Push a Dockerfile change to main (or dispatch the reference-image
    workflow): its new check job passes on the published digest.
 

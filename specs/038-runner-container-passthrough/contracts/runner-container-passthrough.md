@@ -253,8 +253,9 @@ caught by the agent start-up check on the next daily dogfood run, not by
 pinning. The probe additionally requires **git >= 2.38**
 (`.github/scripts/image-git-floor.sh`, verbatim in every stage's probe,
 enforced by Gate 148), failing with `git <found> is older than the 2.38
-minimum`. `private-image-dogfood.yml` gains one additive, optional input,
-`startup-check` (boolean, default `false`); no new secret.
+minimum`. The start-up check is its own opt-in published workflow,
+`agent-startup-check.yml` (spec 112's contract); no existing stage, and not
+`private-image-dogfood.yml`, gains an input, secret or permission.
 
 Kept in agreement with reality by Gate 23 (below), not by convention alone
 (FR-011a): Gate 23 parses this table and fails on any set difference against
@@ -338,8 +339,14 @@ rather than the tool names — so until review of PR #222 the twelve copies
 agreed by hand-coordination alone, with no CI signal if one edit missed a
 file.
 
-**Registered exceptions** (FR-015): none exist for Gate 22 or Gate 23. A
-job that must deviate — mirroring Gate 7's existing `pr-conversation.act`
+**Registered exceptions** (FR-015): one each for Gate 22 and Gate 23, both
+in spec 112's `agent-startup-check.yml`. Gate 22: `classify-startup` runs
+on the runner with no `container:`, because it only reads another job's log
+and must still report when the image under test cannot start a shell or be
+pulled. Gate 23: `startup-agent` and `classify-startup` run past a failed
+`verify-image-prerequisites` (still needing it, under `!cancelled()`),
+because spec 112's edge case requires the start-up verdict to be reported
+beside the tool-list result, not hidden by it. A job that must deviate — mirroring Gate 7's existing `pr-conversation.act`
 exception (`docs/adoption.md`, "Deployment environments") — carries a
 registered reason in the gate's own exception table, checked by the same
 mechanism, never an undeclared deviation and never a code comment alone

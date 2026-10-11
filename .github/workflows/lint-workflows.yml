@@ -2685,11 +2685,20 @@ jobs:
           # (workflow filename, job name) -> reason. Constitution VII: a job
           # that must deviate carries a registered, machine-checked
           # exception naming the reason — never an undeclared one. None
-          # exist yet at plan time (contract's own "Registered exceptions"
+          # existed at plan time (contract's own "Registered exceptions"
           # section) — T014 registered no deviation for pr-conversation.act
           # either, since runs-on:/container: bind uniformly with no
           # exception, unlike that job's orthogonal environment: exception.
-          EXCEPTIONS = {}
+          # The one entry: spec 112's classify-startup reads another job's
+          # log through the API and must report even when the image under
+          # test cannot start a shell, so it runs on the runner (Gate 147
+          # pins its runner ternary and its missing container:).
+          EXCEPTIONS = {
+              ("agent-startup-check.yml", "classify-startup"):
+                  "reads startup-agent's log through the API; inside the image "
+                  "under test it could not report on the images the prerequisite "
+                  "check rejects (spec 112 edge case)",
+          }
 
           def norm_expr(s):
               """Collapse whitespace inside every dollar-brace-brace
@@ -2817,6 +2826,15 @@ jobs:
 
                   reason = EXCEPTIONS.get((os.path.basename(f), jname))
                   if reason is not None:
+                      # Excepted from the container: binding only; the
+                      # runner passthrough still holds (FR-002/FR-003).
+                      if norm_expr(job.get("runs-on")) != EXPECTED_RUNS_ON:
+                          print(f"::error file={f}::job {jname!r} is a registered "
+                                f"Gate 22 exception for its container: binding only, "
+                                f"but its runs-on: {job.get('runs-on')!r} is not the "
+                                f"exact runner-passthrough ternary (FR-002/FR-003).")
+                          failures += 1
+                          continue
                       print(f"note: {f}: job {jname!r} is a registered Gate 22 "
                             f"exception — {reason}")
                       bound += 1
@@ -3002,6 +3020,18 @@ jobs:
               iftext = " ".join(str((spec or {}).get("if", "") or "").split())
               return "needs.verify-image-prerequisites.result != 'failure'" in iftext
 
+          # Jobs that run past a FAILED image check on purpose, named by
+          # file and job: spec 112's start-up check is a second opinion on
+          # the same image, and its edge case says the two results are both
+          # reported, neither overriding the other (an image without
+          # `unzip` fails both, and SC-001 needs the start-up verdict).
+          # They must still need the check and carry !cancelled(); Gate 147
+          # pins that their if: never reads its result.
+          REPORTED_BESIDE_IMAGE_CHECK = {
+              ("agent-startup-check.yml", "startup-agent"),
+              ("agent-startup-check.yml", "classify-startup"),
+          }
+
           failures = 0
           stages = 0
           embedded = {}
@@ -3111,6 +3141,22 @@ jobs:
                             f"does not name it. A real image-check failure would "
                             f"never stop this job (FR-010/FR-011).")
                       failures += 1
+                      continue
+
+                  if (os.path.basename(f), jname) in REPORTED_BESIDE_IMAGE_CHECK:
+                      iftext = " ".join(str(job.get("if", "") or "").split())
+                      if iftext != "!cancelled() && inputs.container-image != ''":
+                          print(f"::error file={f}::job {jname!r} runs beside "
+                                f"verify-image-prerequisites (spec 112) but its if: "
+                                f"({job.get('if')!r}) is not exactly \"!cancelled() && "
+                                f"inputs.container-image != ''\": without '!cancelled()' "
+                                f"a failed image check skips it after all, and without "
+                                f"the image guard it runs with no image instead of "
+                                f"being a clean no-op.")
+                          failures += 1
+                      else:
+                          print(f"note: {f}: job {jname!r} runs beside the image "
+                                f"check, not behind it (spec 112 edge case)")
                       continue
 
                   if is_entry:
@@ -5524,9 +5570,11 @@ jobs:
 
       # Gate 147 — specs/112-agent-startup-image-check (FR-008, SC-003): the
       # agent start-up classifier is driven over a checked-in log fixture per
-      # verdict branch, private-image-dogfood.yml's startup-agent /
-      # classify-startup jobs keep their no-credential, fail-closed shape,
-      # and wing-commander-private-image-dogfood.yml refuses (fails) a
+      # verdict branch, agent-startup-check.yml's startup-agent /
+      # classify-startup jobs keep their no-credential, fail-closed shape and
+      # run beside (not behind) the image prerequisite check,
+      # private-image-dogfood.yml grants no permission (FR-010), and
+      # wing-commander-private-image-dogfood.yml refuses (fails) a
       # dispatched image outside the owner's GHCR namespace.
       # Numbered 147, not 141: 141-146 were taken by spec 110's PR #982,
       # which claimed them first among the open lifecycle branches.

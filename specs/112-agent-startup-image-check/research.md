@@ -6,13 +6,17 @@ the owner and are flagged for review.
 
 ## D1 — Where the check runs
 
-- **Decision**: A job in `private-image-dogfood.yml` behind a new optional
-  boolean input `startup-check` (default `false`). The scheduled wrapper sets
-  it `true`. The reference-image workflow adds a job that calls the same
-  stage with the freshly published image and `startup-check: true`.
-- **Rationale**: A job with `container:` cannot be inside a composite, so the
-  stage file is the one home; both triggers reuse it (CLAUDE.md "one home").
-  Default `false` keeps adopters unchanged (FR-010).
+- **Decision** (corrected in review): the start-up jobs live in their own
+  published reusable workflow, `agent-startup-check.yml`. The daily dogfood
+  wrapper calls it; the reference-image rebuild dispatches that wrapper with
+  the freshly published digest (the agent action does not support `push`).
+  The first draft put the jobs in `private-image-dogfood.yml` behind an
+  optional `startup-check` input; GitHub checks every job's permissions when
+  a reusable workflow starts, skipped jobs included, so every caller of that
+  workflow would have had to grant `actions: read` (FR-010, SC-005).
+- **Rationale**: A job with `container:` cannot be inside a composite, so a
+  workflow file is the one home; both triggers reuse it (CLAUDE.md "one
+  home"). An adopter who does not call it is unchanged (FR-010).
 - **Alternatives**: a per-stage preflight (rejected in clarification);
   a copy of the job in the reference-image workflow (pasted copy, rejected).
 
@@ -31,7 +35,8 @@ the owner and are flagged for review.
 - **Alternatives**: parse the step conclusion alone (cannot tell setup from
   auth failure, fails FR-003); replay setup by hand (clarification chose the
   real action). Cost: the caller must grant `actions: read` to this job; the
-  wrapper does, an adopter who leaves `startup-check` off needs nothing.
+  wrapper does, an adopter who does not call `agent-startup-check.yml`
+  needs nothing.
 
 ## D3 — Classification rules (decision without owner)
 

@@ -1456,9 +1456,18 @@ namespace, which runs even with the variable unset (the e2e reference-image
 rebuild dispatches its new digest this way); an image anywhere else is
 refused by the `refuse-foreign-image` job, so a free-text input never
 chooses which registry receives the credentials. Every run that reaches
-the stage sets its `startup-check` input: `startup-agent` runs the real agent action's
-setup in the image with no model credential and `classify-startup` reads
-its log (`specs/112-agent-startup-image-check`).
+the stage also calls the published `agent-startup-check.yml` on the same
+image (its `startup-check` job, under the same namespace guard):
+`startup-agent` runs the real agent action's setup in the image with no
+model credential and `classify-startup` reads its log
+(`specs/112-agent-startup-image-check`). It is a workflow of its own, not
+jobs inside `private-image-dogfood.yml`, because GitHub checks every job's
+permissions when a reusable workflow starts, skipped jobs included: the
+dogfood call stays callable with `permissions: {}` (FR-010), and only the
+start-up call grants `actions: read`. The start-up jobs run whatever
+`verify-image-prerequisites` found, and `classify-startup` reports both
+results (spec 112's edge case), so an image missing `unzip` gets the
+start-up verdict too.
 
 ## Auto-Release (`auto-release.yml`)
 

@@ -566,7 +566,7 @@ EXEMPT_JOBS = {
         decided_by=(558,),
         condition=_wall_clock_bound_ok,
     ),
-    (".github/workflows/private-image-dogfood.yml", "startup-agent"): ExemptionEntry(
+    (".github/workflows/agent-startup-check.yml", "startup-agent"): ExemptionEntry(
         reason=(
             "credential-free start-up probe (spec 112): no model credential "
             "is minted, so nothing exists to refresh -- the startup-agent "

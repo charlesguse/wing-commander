@@ -1,0 +1,371 @@
+# Published stage — agent-startup-check (specs/112-agent-startup-image-check,
+# FR-001..FR-006). on: workflow_call only, no trigger of its own: the caller
+# owns the schedule. Unnumbered, like private-image-dogfood.yml -- not a
+# lifecycle stage, outside the intake->cleanup numbered chain.
+#
+# Runs the real agent action's setup inside container-image with NO model
+# credential, then classifies the job log: setup-completed (the action
+# reached its credential check), setup-failed (a setup step failed, named
+# and quoted) or unclassified (could not reach its subject). No model call is
+# reachable, because there is no credential.
+#
+# Its own reusable workflow, not jobs inside private-image-dogfood.yml:
+# GitHub checks every job's permissions when a reusable workflow starts,
+# skipped jobs included, so start-up jobs holding actions: read inside
+# private-image-dogfood.yml made every caller of that workflow grant it
+# (FR-010, SC-005). Only a caller of this file grants actions: read.
+#
+# The start-up check runs whatever the image prerequisite check found: the
+# two can disagree (an image missing `unzip` fails both), and the spec's
+# edge case says both results are reported, neither overriding the other.
+# Gate 23 exempts exactly these two jobs from its result guard for that
+# reason; Gate 147 pins that they keep running past it. classify-startup
+# runs on the runner, not in the image (Gate 22's registered exception), so
+# it can still report when the image cannot start a shell or be pulled.
+#
+# Consumers: uses: <owner>/wing-commander/.github/workflows/agent-startup-check.yml@<ref>
+name: "reusable · agent-startup-check"
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: >
+          Name of a GitHub deployment environment (in the consuming
+          repository) to bind every job in this stage to, applying its
+          protection rules before any step in the job runs. Empty (default)
+          is a verified true no-op (specs/038-runner-container-passthrough
+          FR-001/FR-003, applied uniformly to every published stage).
+        type: string
+        required: false
+        default: ""
+      environment-deployment:
+        description: >
+          Whether binding to `environment` creates a GitHub deployment
+          record. true (default) mirrors GitHub's own default; false keeps
+          the gate but suppresses the deployment record.
+        type: boolean
+        required: false
+        default: true
+      runner:
+        description: >
+          Runner label(s) for every job in this stage. A single label
+          (e.g. ubuntu-latest) or a JSON array of labels applied as a
+          conjunction — a value starting with "[" is parsed as JSON,
+          anything else is used verbatim
+          (specs/038-runner-container-passthrough).
+        type: string
+        required: false
+        default: ubuntu-latest
+      container-image:
+        description: >
+          The image under test: the agent action's setup runs inside it.
+          Empty (default) makes the whole workflow a clean no-op.
+        type: string
+        required: false
+        default: ""
+      pipeline-repo:
+        description: >
+          Repository to check out for the start-up classifier script
+          (.github/scripts/classify-agent-startup.py). Only forks that
+          republish need to set it.
+        type: string
+        required: false
+        default: charlesguse/wing-commander
+      pipeline-ref:
+        description: >
+          Ref of the pipeline repository to check out for the classifier.
+          Empty = the exact commit of the running reusable workflow
+          (github.job_workflow_sha). This workflow holds no id-token, so
+          there is no OIDC fallback: set it when that comes through empty
+          (a cross-repository branch-ref call); it MUST match your uses: pin.
+        type: string
+        required: false
+        default: ""
+    secrets:
+      container-registry-username:
+        description: "Username for container-image's registry, if private. Inert when container-image is empty."
+        required: false
+      container-registry-password:
+        description: "Password or token for container-image's registry, if private. Inert when container-image is empty."
+        required: false
+      pipeline-repo-token:
+        description: "Token that can read pipeline-repo, only when it is private (docs/adoption.md#private-pipeline-repository). Used by classify-startup's checkout alone."
+        required: false
+
+permissions: {}
+
+# Pins bash for every run: step without its own shell:, a caller-supplied
+# container included -- see pr-conversation.yml.
+defaults:
+  run:
+    shell: bash -e {0}
+
+jobs:
+  # specs/038-runner-container-passthrough: every published stage carries
+  # this exact job (Gate 7/22/23). Here it is reported beside the start-up
+  # verdict, not in front of it (see the header).
+  verify-image-prerequisites:
+    # This job now carries `if: inputs.container-image != ''` and reports
+    # `skipped` (billing nothing) when no image is configured -- #224's old
+    # "must never skip" invariant no longer holds, because every direct
+    # dependent's `if:` now tolerates that skip explicitly -- see
+    # specs/058-per-job-minute-floor/contracts/image-check-shape-delta.md.
+    if: inputs.container-image != ''
+    permissions: {}
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    steps:
+      - name: Pull image and verify prerequisites
+        if: inputs.container-image != ''
+        env:
+          IMAGE: ${{ inputs.container-image }}
+          REGISTRY_USERNAME: ${{ secrets.container-registry-username }}
+          REGISTRY_PASSWORD: ${{ secrets.container-registry-password }}
+        run: |
+          REQUIRED_TOOLS="git gh jq curl python3 bash node timeout unzip"
+
+          if [ -n "$REGISTRY_USERNAME" ] && [ -n "$REGISTRY_PASSWORD" ]; then
+            candidate=""
+            case "$IMAGE" in
+              */*) candidate="${IMAGE%%/*}" ;;
+            esac
+            case "$candidate" in
+              *.*|*:*|localhost) login_args=("$candidate") ;;
+              *) login_args=() ;;
+            esac
+            if ! echo "$REGISTRY_PASSWORD" | docker login "${login_args[@]}" --username "$REGISTRY_USERNAME" --password-stdin 2>docker-login-error.log; then
+              echo "::error::wing-commander verify-image-prerequisites: the registry rejected the supplied credentials for $IMAGE -- $(cat docker-login-error.log)"
+              exit 1
+            fi
+          fi
+
+          if ! docker pull "$IMAGE" 2>docker-pull-error.log; then
+            if [ -z "$REGISTRY_USERNAME" ] && [ -z "$REGISTRY_PASSWORD" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- no credentials were supplied for this image. $(cat docker-pull-error.log)"
+            elif [ -z "$REGISTRY_USERNAME" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- container-registry-username was not supplied (container-registry-password was), so no login was attempted. $(cat docker-pull-error.log)"
+            elif [ -z "$REGISTRY_PASSWORD" ]; then
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- container-registry-password was not supplied (container-registry-username was), so no login was attempted. $(cat docker-pull-error.log)"
+            else
+              echo "::error::wing-commander verify-image-prerequisites: failed to pull $IMAGE -- the registry rejected the supplied credentials or image reference. $(cat docker-pull-error.log)"
+            fi
+            exit 1
+          fi
+
+          if ! missing=$(docker run --rm -e REQUIRED_TOOLS="$REQUIRED_TOOLS" \
+            --entrypoint sh "$IMAGE" -c \
+            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done; if command -v git >/dev/null 2>&1; then v=$(git --version 2>/dev/null); n=${v#git version }; n=${n%% *}; case "$n" in *.*) ;; *) n=;; esac; maj=${n%%.*}; r=${n#*.}; min=${r%%.*}; case "$maj.$min" in .|*[!0-9.]*|.*|*.) echo "could not parse git version from \"$v\"" >&2; exit 1;; esac; if [ "$maj" -lt 2 ] || { [ "$maj" -eq 2 ] && [ "$min" -lt 38 ]; }; then echo "git $n is older than the 2.38 minimum" >&2; exit 1; fi; fi' \
+            2>docker-inspect-error.log); then
+            if grep -qE 'is older than the 2\.38 minimum|could not parse git version' docker-inspect-error.log; then
+              echo "::error::wing-commander verify-image-prerequisites: $IMAGE failed the git version floor -- $(cat docker-inspect-error.log)${missing:+ (also missing required tool(s):$missing)}"
+            else
+              echo "::error::wing-commander verify-image-prerequisites: could not run a POSIX shell inside $IMAGE to check its prerequisites -- $(cat docker-inspect-error.log)"
+            fi
+            exit 1
+          fi
+
+          if [ -n "$missing" ]; then
+            echo "::error::wing-commander verify-image-prerequisites: $IMAGE is missing required tool(s):$missing"
+            exit 1
+          fi
+
+  # Runs the real agent action's setup in the image with NO model credential.
+  # The action stops at authentication, so no model call is reachable;
+  # classify-startup reads this job's log. No result guard on the image
+  # check: see the header (spec 112's edge case, Gate 23's exemption).
+  startup-agent:
+    needs: verify-image-prerequisites
+    if: "!cancelled() && inputs.container-image != ''"
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - name: Run the agent action's setup without a model credential
+        id: agent
+        uses: anthropics/claude-code-action@v1
+        continue-on-error: true
+        with:
+          github_token: ${{ github.token }}
+          # Without a prompt the action's agent mode (schedule and
+          # workflow_dispatch) logs "No trigger found" and exits 0 before it
+          # installs Claude Code, so setup is never finished and auth never
+          # reached. The rebuild-dispatched run's actor is github-actions[bot],
+          # which the action's human-actor check rejects unless allowed.
+          # Neither can reach a model: there is no credential.
+          prompt: "Start-up check: no model credential is supplied, so this prompt is never sent."
+          allowed_bots: github-actions
+          # No model call is reachable without a credential, so there is no
+          # turn ceiling to derive and no verdict to read (Gate 23 scopes on
+          # --max-turns in claude_args); constitution II's counts (Gate 50)
+          # are met by this note: --model claude-haiku-5-5 --max-turns 1
+          claude_args: --model claude-haiku-5-5
+      # Gate 16: every agent step's execution log survives its failure.
+      # The credential-less run writes none, so this uploads nothing today.
+      - name: Upload Claude execution log
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        uses: actions/upload-artifact@v6
+        with:
+          name: claude-execution-output
+          path: ${{ runner.temp }}/claude-execution-output.json
+          if-no-files-found: ignore
+          retention-days: 90
+          # Several calls in one run (a matrix over images) share this name;
+          # the last log wins rather than a 409 failing the job.
+          overwrite: true
+
+  classify-startup:
+    needs: [verify-image-prerequisites, startup-agent]
+    if: "!cancelled() && inputs.container-image != ''"
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    # No container: this job only reads the startup-agent job's log through
+    # the API, and running it inside the image under test would lose the
+    # verdict on exactly the images the prerequisite check rejects (no bash,
+    # python3 or gh, or a pull that fails) -- the results it exists to
+    # report beside each other (Gate 22's registered exception).
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    permissions:
+      actions: read
+      contents: read
+    timeout-minutes: 10
+    steps:
+      # The classifier ships with this workflow, not with the caller's
+      # repository: check out the pipeline at the running workflow's own
+      # commit, never a branch -- see specs/010-reusable-pipeline/research.md.
+      # The stages' OIDC fallback is left out: this job holds no id-token,
+      # so, like implement's gate-suite job, it needs pipeline-ref instead.
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander classify-startup: could not reach subject -- github.job_workflow_sha is empty, so the classifier's commit is unknown. Set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - name: Check out the start-up classifier
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          # A private pipeline repository is not readable by the caller's
+          # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      # !cancelled(): a failed ref resolution or checkout still leaves the
+      # prerequisite result in the summary, with "no verdict" beside it.
+      - name: Classify the agent start-up log
+        if: "!cancelled()"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          AGENT_RESULT: ${{ needs.startup-agent.result }}
+          PREREQ_RESULT: ${{ needs.verify-image-prerequisites.result }}
+        run: |
+          # This job runs on the runner, not in the image: name what the
+          # runner lacks, or the step that left no classifier, rather than
+          # reading either as an empty log.
+          classifier=.wing-commander-pipeline/.github/scripts/classify-agent-startup.py
+          missing_tools=""
+          for t in jq python3 gh; do command -v "$t" >/dev/null 2>&1 || missing_tools="$missing_tools $t"; done
+          if [ -n "$missing_tools" ] || [ ! -f "$classifier" ]; then
+            why="${missing_tools:+the runner (not the image) lacks:$missing_tools}"
+            [ -f "$classifier" ] || why="${why:+$why; }the classifier was not checked out (see the steps above)"
+            {
+              echo "### Agent start-up check"
+              echo
+              echo "Image prerequisite check (\`verify-image-prerequisites\`): \`$PREREQ_RESULT\`"
+              echo
+              echo "No start-up verdict: could not reach subject -- $why."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::wing-commander classify-startup: could not reach subject -- $why"
+            exit 1
+          fi
+          : > startup-agent.log
+          if [ "$AGENT_RESULT" != "skipped" ]; then
+            # A lookup failure is named (e.g. a caller that did not grant
+            # actions: read), not left to read as an empty log.
+            # This call's own jobs share one name prefix ("<caller job>
+            # [(<matrix>)] / "): read it off this job, found by its runner,
+            # so a matrix or a second call in the run matches its own
+            # startup-agent. Without it, any job ending "startup-agent"
+            # matches. More than one match is ambiguous: classify nothing
+            # rather than another call's log.
+            # One listing, read twice: this job's own name, then its
+            # startup-agent.
+            gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[]' 2>job-lookup-error.log \
+              | jq -s '{jobs: .}' > run-jobs.json || echo '{"jobs": []}' > run-jobs.json
+            self_name=$(jq -r '.jobs[] | select(.status == "in_progress" and .runner_name == env.RUNNER_NAME) | .name' run-jobs.json 2>>job-lookup-error.log) || self_name=""
+            prefix=""
+            if [ "$(printf '%s\n' "$self_name" | grep -c .)" -eq 1 ] && [ "${self_name%classify-startup}" != "$self_name" ]; then
+              prefix="${self_name%classify-startup}"
+            else
+              echo "::warning::wing-commander classify-startup: could not find this job by runner name ($RUNNER_NAME) in run $RUN_ID, so the startup-agent lookup is not scoped to this call"
+            fi
+            job_ids=$(PREFIX="$prefix" jq -r '.jobs[] | select(.name | if env.PREFIX != "" then . == env.PREFIX + "startup-agent" else endswith("startup-agent") end) | .id' run-jobs.json 2>>job-lookup-error.log) || job_ids=""
+            job_id=""
+            if [ "$(printf '%s\n' "$job_ids" | grep -c .)" -eq 1 ]; then
+              job_id="$job_ids"
+            else
+              echo "::warning::wing-commander classify-startup: found $(printf '%s\n' "$job_ids" | grep -c .) startup-agent jobs in run $RUN_ID, not exactly one -- $(cat job-lookup-error.log 2>/dev/null)"
+            fi
+            # A just-finished job's log can 404 until it is archived; retry
+            # before falling back to the empty (unclassified) log.
+            if [ -n "$job_id" ]; then
+              for attempt in 1 2 3 4 5 6; do
+                if gh api "repos/$REPO/actions/jobs/$job_id/logs" > startup-agent.log 2>job-log-error.log && [ -s startup-agent.log ]; then
+                  break
+                fi
+                : > startup-agent.log
+                [ "$attempt" -eq 6 ] || sleep 10
+              done
+              [ -s startup-agent.log ] || echo "::warning::wing-commander classify-startup: could not fetch job $job_id's log -- $(cat job-log-error.log 2>/dev/null)"
+            fi
+          fi
+          rc=0
+          python3 "$classifier" --log startup-agent.log --json > verdict.json || rc=$?
+          # Both results, side by side: the tool-list check and the start-up
+          # check can disagree, and neither overrides the other (spec 112's
+          # edge cases). A failed image check stays red on its own job.
+          {
+            echo "### Agent start-up check"
+            echo
+            echo "Image prerequisite check (\`verify-image-prerequisites\`): \`$PREREQ_RESULT\`"
+            echo
+            echo '```json'
+            cat verdict.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PREREQ_RESULT" = "failure" ]; then
+            echo "::warning::wing-commander classify-startup: the image prerequisite check failed on this image too; its own job reports why, and the start-up verdict here is reported beside it, not instead of it."
+          fi
+          if [ "$rc" -ne 0 ]; then
+            # A crashed classifier leaves no verdict: say so, not a blank reason.
+            reason="$(jq -r '.reason // empty' verdict.json 2>/dev/null)"
+            echo "::error::wing-commander classify-startup: ${reason:-the classifier exited $rc without a verdict (see the step log)}"
+            exit 1
+          fi

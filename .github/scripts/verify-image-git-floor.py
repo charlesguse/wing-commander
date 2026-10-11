@@ -9,7 +9,7 @@ image-git-floor-fixtures/ and asserts pass/fail and the exact failure message
 from "<output>"`), and (b) asserts every published stage's
 verify-image-prerequisites probe (found by its REQUIRED_TOOLS list) contains
 the fragment byte for byte, and the host-side failure report (HOST_BRANCH)
-too, so the 14 pasted copies cannot drift; and (c) asserts Gate 62
+too, so the pasted copies cannot drift; and (c) asserts Gate 62
 (verify-gate-62.py) runs the fragment against the reference image and
 classifies its result with FLOOR_MESSAGES, which must be the fragment's own
 two messages.
@@ -39,7 +39,7 @@ WORKFLOWS = os.path.join(ROOT, ".github", "workflows", "*.yml")
 # The host side of the probe: a floor failure is reported under its own
 # name (not "could not run a POSIX shell"), and still lists any tools the
 # presence loop found missing before the fragment exited. Pinned here so the
-# 14 pasted copies cannot drift (FR-013, T033).
+# pasted copies cannot drift (FR-013, T033).
 HOST_BRANCH = (
     "if grep -qE 'is older than the 2\\.38 minimum|could not parse git version' docker-inspect-error.log; then\n"
     "              echo \"::error::wing-commander verify-image-prerequisites: $IMAGE failed the git version floor -- "

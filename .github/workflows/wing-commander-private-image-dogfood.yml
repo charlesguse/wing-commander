@@ -17,10 +17,15 @@
 # itself in this owner's GHCR namespace (the reference-image rebuild passes
 # its digest, specs/112-agent-startup-image-check), which also runs; any
 # other dispatched image is refused. Every run that reaches the stage
-# turns on the agent start-up check (startup-check). Everything else (the
+# also calls the published agent-startup-check.yml on the same image
+# (specs/112-agent-startup-image-check, FR-005): daily here, and on every
+# reference-image rebuild through that dispatch. Everything else (the
 # verify-image-prerequisites job, the credential binding) lives in the
-# published private-image-dogfood.yml, identical to what an adopter's own
-# wrapper would call.
+# published private-image-dogfood.yml and agent-startup-check.yml,
+# identical to what an adopter's own wrapper would call. The dogfood call
+# grants nothing (permissions: {}), the way an adopter who never opts into
+# the start-up check calls it (FR-010); only the start-up call grants
+# actions: read.
 name: "Wing Commander · private-image-dogfood"
 
 on:
@@ -59,13 +64,31 @@ jobs:
     if: >-
       !cancelled() && needs.refuse-foreign-image.result == 'skipped'
       && (inputs.container-image != '' || vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != '')
-    permissions:
-      actions: read
-      contents: read
+    permissions: {}
     uses: ./.github/workflows/private-image-dogfood.yml
     with:
       container-image: ${{ inputs.container-image || vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE }}
-      startup-check: true
+    secrets:
+      container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+      container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
+
+  # The agent start-up check on the same image, under the same namespace
+  # guard as dogfood (refuse-foreign-image). classify-startup reads the
+  # startup-agent job's log, hence actions: read.
+  startup-check:
+    needs: refuse-foreign-image
+    if: >-
+      !cancelled() && needs.refuse-foreign-image.result == 'skipped'
+      && (inputs.container-image != '' || vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE != '')
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/agent-startup-check.yml
+    with:
+      container-image: ${{ inputs.container-image || vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE }}
+      # The classifier from this repository at this run's commit, so a
+      # fork's commit is looked up in the fork.
+      pipeline-repo: ${{ github.repository }}
     secrets:
       container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
       container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
