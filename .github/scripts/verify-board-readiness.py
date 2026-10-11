@@ -50,6 +50,9 @@ EXPECTED_CASES = {
     "failed-check", "pending-check-open-findings",
     # The kill switch is never self-clearing, even behind a pending check.
     "pending-check-kill-switch",
+    # Every check green but no lint-workflows entry: durable, since that
+    # check may never run for a PR outside its paths (code review of #1010).
+    "lint-missing-durable",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"

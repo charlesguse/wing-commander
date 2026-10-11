@@ -1,21 +1,21 @@
 {
   "snapshot": {
-    "headRefOid": "ffff666",
+    "headRefOid": "eeee555",
     "statusCheckRollup": [
       {
-        "name": "lint",
+        "name": "harness-tests",
         "workflowName": "lint · workflows",
-        "status": "IN_PROGRESS",
-        "conclusion": ""
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS"
       }
     ]
   },
   "open_in_scope_findings": 0,
   "backstop_holds": true,
-  "kill_switch_paused": true,
+  "kill_switch_paused": false,
   "expected": {
     "ready": false,
-    "reason_contains": "the kill switch is set",
+    "reason_contains": "lint-workflows",
     "unmet_class": "durable"
   }
 }

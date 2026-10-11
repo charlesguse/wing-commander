@@ -211,9 +211,10 @@ extended decision (research.md D2), and:
 step summary, from `board_eligibility.py`'s own `not_ready_held` output
 (FR-011). A PR known to be CLOSED or MERGED, or one select's lookup found
 gone (404, no state), is never held; resume routes it as it routes any
-marker whose PR is not open (resume-recovery.md): a fresh triage, or fix
-on the marker's branch when one is still recorded -- never prove for a
-merged handover, which nothing in the job graph consumes
+marker whose PR is not open (resume-recovery.md): prove for a readiness
+marker's merged PR, otherwise a fresh triage, or fix on the marker's
+branch when one is still recorded. A merged not-ready handover goes to
+triage, not prove, which nothing in the job graph would consume for it
 (`_merged_fix_holds()`, #532).
 
 Every durable action above stays behind

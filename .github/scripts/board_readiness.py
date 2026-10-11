@@ -83,7 +83,9 @@ def _unmet_class(rollup, checks_green, other_unmet=False):
     zero_open_findings, backstop_holds, kill_switch_clear). FR-005: derived
     only from the rollup's own per-entry states, never from an agent's
     reading of them. `other_unmet`: a non-check condition (open findings, a
-    breached backstop) is also unmet, which no later run clears on its own."""
+    breached backstop, the kill switch) is also unmet, which no later run
+    clears on its own. (A paused loop writes no record at all -- FR-006 is
+    the workflow's kill-switch gating, research.md D9.)"""
     if checks_green or other_unmet:
         return "durable"
     if not rollup:
@@ -117,8 +119,9 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
     unmet_reason = None
     unmet_class = None
     if not ready:
-        # Open findings or a breached backstop stay unmet when the checks
-        # finish, so they are durable whatever the rollup says.
+        # Open findings, a breached backstop or the kill switch stay unmet
+        # when the checks finish, so they are durable whatever the rollup
+        # says.
         unmet_class = _unmet_class(
             rollup, checks_green,
             other_unmet=not (zero_open_findings and backstop_holds and kill_switch_clear))
@@ -133,6 +136,8 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
                 unmet_reason += "; {0} open in-scope finding(s)".format(open_in_scope_findings)
             if not backstop_holds:
                 unmet_reason += "; the size-and-path backstop does not hold on the final diff"
+            if not kill_switch_clear:
+                unmet_reason += "; the kill switch is set"
         elif not gate_suite_green:
             unmet_reason = "the lint-workflows check is not green on head_sha {0}".format(head_sha)
         elif not zero_open_findings:
