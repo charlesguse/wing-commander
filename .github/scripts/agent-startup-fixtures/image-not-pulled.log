@@ -1,0 +1,11 @@
+2026-10-10T00:00:00.0000000Z ##[group]Operating System
+2026-10-10T00:00:01.0000000Z Ubuntu
+2026-10-10T00:00:02.0000000Z ##[endgroup]
+2026-10-10T00:00:03.0000000Z ##[group]GITHUB_TOKEN Permissions
+2026-10-10T00:00:04.0000000Z Contents: read
+2026-10-10T00:00:05.0000000Z ##[endgroup]
+2026-10-10T00:00:06.0000000Z ##[group]Checking docker version
+2026-10-10T00:00:07.0000000Z ##[endgroup]
+2026-10-10T00:00:08.0000000Z ##[group]Starting job container
+2026-10-10T00:00:09.0000000Z Error response from daemon: manifest unknown
+2026-10-10T00:00:10.0000000Z ##[error]Docker pull failed with exit code 1

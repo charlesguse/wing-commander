@@ -195,6 +195,11 @@ BOUND_MATRIX_LEG = """\
       image: pinned-image:latest
 """
 
+# Spec 112's classify-startup: the runner ternary, and no container: at all.
+RUNNER_ONLY = f"""\
+    runs-on: ${{{{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}}}
+"""
+
 
 # The one job Gate 22 special-cases: no container: of its own (it invokes
 # Docker directly on the runner, before any other job's container exists),
@@ -344,15 +349,35 @@ CASES = [
                    + job("only", BOUND)},
      True, ("does not declare",)),
 
-    # Constitution VII: an EXCEPTIONS entry, if one ever exists, must not
-    # read as "any job with this shape passes" or "any job in this file
-    # passes" — but Gate 22 ships with an EMPTY EXCEPTIONS dict (contract:
-    # "none exist yet at plan time"), so a deviating job must fail exactly
-    # like any other unbound job, with no registered escape hatch yet.
-    ("no exception is registered yet, so a deviating job still fails "
-     "even in a file/job name that would plausibly be exempted later",
+    # Constitution VII: an EXCEPTIONS entry must not read as "any job with
+    # this shape passes" or "any job in this file passes". The one entry is
+    # spec 112's (agent-startup-check.yml, classify-startup); a deviating
+    # job anywhere else fails exactly like any other unbound job.
+    ("no exception is registered for pr-conversation.act, so a deviating "
+     "job still fails even in a file/job name that would plausibly be "
+     "exempted later",
      {"pr-conversation.yml": stage(job("act", BOUND_MATRIX_LEG))},
      True, ("'act'",)),
+
+    ("the registered spec 112 exception: classify-startup in "
+     "agent-startup-check.yml runs with no container",
+     {"agent-startup-check.yml": stage(job("classify-startup", RUNNER_ONLY))},
+     False, ()),
+
+    ("the spec 112 exception covers the container: binding only: a "
+     "classify-startup off the runner ternary still fails",
+     {"agent-startup-check.yml": stage(job("classify-startup", "    runs-on: ubuntu-latest\n"))},
+     True, ("'classify-startup'", "runner-passthrough ternary")),
+
+    ("the spec 112 exception is scoped to its file: classify-startup "
+     "elsewhere is checked like any job",
+     {"stage.yml": stage(job("classify-startup", RUNNER_ONLY))},
+     True, ("'classify-startup'",)),
+
+    ("the spec 112 exception is scoped to its job: another unbound job in "
+     "agent-startup-check.yml still fails",
+     {"agent-startup-check.yml": stage(job("startup-agent", RUNNER_ONLY))},
+     True, ("'startup-agent'",)),
 
     # The verify-image-prerequisites carve-out. Gate 22 exempts this job
     # from the container: check — it must invoke Docker on the runner, not

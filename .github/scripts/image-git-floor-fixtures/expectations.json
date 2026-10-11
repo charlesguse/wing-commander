@@ -1,0 +1,38 @@
+{
+  "2.34.1": {
+    "pass": false,
+    "message": "git 2.34.1 is older than the 2.38 minimum"
+  },
+  "2.38.0": {
+    "pass": true,
+    "message": ""
+  },
+  "2.43.0": {
+    "pass": true,
+    "message": ""
+  },
+  "2.39.5.Apple-Git-154": {
+    "pass": true,
+    "message": ""
+  },
+  "unparseable": {
+    "pass": false,
+    "message": "could not parse git version from \"garbage\""
+  },
+  "empty": {
+    "pass": false,
+    "message": "could not parse git version from \"\""
+  },
+  "no-minor": {
+    "pass": false,
+    "message": "could not parse git version from \"git version 2\""
+  },
+  "2.38.Apple": {
+    "pass": true,
+    "message": ""
+  },
+  "2.37.1.Apple-Git-137.1": {
+    "pass": false,
+    "message": "git 2.37.1 is older than the 2.38 minimum"
+  }
+}

@@ -1,0 +1,1 @@
+{"verdict": "unclassified", "step": null, "error_contains": "Authentication failed for", "note": "synthetic: a GitHub auth error after setup is not the model-credential check"}
