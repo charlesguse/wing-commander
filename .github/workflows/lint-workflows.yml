@@ -5718,10 +5718,11 @@ jobs:
 
       # Gate 156 — specs/111-reference-image-pin-sync
       # (contracts/pin-sync-script.md): the sync-pins job's inline sync
-      # step, the failure-body step and startup-check's verdict wait run
+      # step, the failure-body step and startup-check's verdict step run
       # verbatim against a stubbed `gh` for every skip, failure and
       # containment case; the e2e reference-image workflow wires the sync
-      # behind the start-up check run dispatched for this digest; and no
+      # behind the start-up check run dispatched for this digest through
+      # wing-commander-dispatch-and-wait; and no
       # other workflow or composite carries the pin write. Path triggers:
       # .github/workflows/** and .github/scripts/** above.
       - name: "Gate 156 — the reference-image pin sync writes only after a passed check, only on exactly the sync set, and fails loudly otherwise"

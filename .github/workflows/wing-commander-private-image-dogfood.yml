@@ -27,11 +27,11 @@
 # the start-up check calls it (FR-010); only the start-up call grants
 # actions: read.
 name: "Wing Commander · private-image-dogfood"
-# Ends with the dispatched container-image, so the reference-image rebuild's
-# startup-check job can tell its own dispatched run from any other
-# (wing-commander-e2e-reference-image.yml, `Wait for the start-up check
-# verdict`; specs/111-reference-image-pin-sync FR-001).
-run-name: ${{ inputs.container-image && format('Wing Commander · private-image-dogfood · {0}', inputs.container-image) || 'Wing Commander · private-image-dogfood' }}
+# A dispatch carrying an attempt-token (the reference-image rebuild's
+# startup-check job, through wing-commander-dispatch-and-wait) is titled with
+# the image it checks and that token, which is how the composite finds this
+# run and no other (specs/111-reference-image-pin-sync FR-001).
+run-name: ${{ inputs.attempt-token && format('Wing Commander · private-image-dogfood · {0} [attempt:{1}]', inputs.container-image, inputs.attempt-token) || 'Wing Commander · private-image-dogfood' }}
 
 on:
   schedule:
@@ -40,6 +40,10 @@ on:
     inputs:
       container-image:
         description: "Image to check instead of the configured dogfood image, inside ghcr.io/<owner>/ only (the reference-image rebuild passes its published digest)"
+        required: false
+        default: ""
+      attempt-token:
+        description: "Correlation token wing-commander-dispatch-and-wait adds to a dispatch; leave empty by hand"
         required: false
         default: ""
 

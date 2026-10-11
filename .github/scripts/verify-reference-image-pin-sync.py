@@ -20,13 +20,16 @@ WHAT IT CHECKS
    writes, which token every gh call ran under, and that the token value
    appears in no output. The block is inline rather than an _shared/
    script so Gate 12 can resolve each call's token.
-2. Workflow wiring (wing-commander-e2e-reference-image.yml): sync-pins needs
-   build-and-publish and startup-check, serialises on its own concurrency
-   group, startup-check exposes `passed`, the secret is bound to the one
+2. Workflow wiring (wing-commander-e2e-reference-image.yml): startup-check
+   dispatches and waits through wing-commander-dispatch-and-wait and its
+   verdict step (run verbatim) passes only a found, successful run;
+   sync-pins needs build-and-publish and startup-check, runs only after a
+   passed check, serialises on its own concurrency group, the secret is bound to the one
    sync step, the failure steps are guarded to that step's failure, the
    issue is closed on success, and a last step re-fails the job.
-3. Single home: the e2e reference-image workflow carries exactly one
-   `gh variable set`, in the sync step, and no other workflow or composite
+3. Single home: every `gh variable set` in the e2e reference-image
+   workflow is in the sync step (the FR-005 permission probe and the
+   write), and no other workflow or composite
    carries a write of the variable (auto-release.yml included).
    (provision-e2e-target.sh pins a freshly provisioned target at its own
    creation and is a different mechanism, outside .github/workflows and
@@ -62,6 +65,21 @@ NEW = IMAGE + "@" + DIGEST
 TOKEN = "ghp_SECRETTOKENVALUE123"
 AMBIENT = "ambient-workflow-token"
 
+def run_jobs(check, sync_step, job="same"):
+    """`gh run view --json jobs` for a run: startup-check concluded `check`,
+    and sync-pins' sync step `sync_step` (None: not run yet). `job` is the
+    sync-pins job's own conclusion: "same" as the step, None while it is
+    still running, or a later step's failure."""
+    sync_job = sync_step if job == "same" else job
+    return {"jobs": [
+        {"name": "build-and-publish", "conclusion": "success", "steps": []},
+        {"name": "startup-check", "conclusion": check, "steps": []},
+        {"name": "sync-pins", "conclusion": sync_job, "steps": [
+            {"name": "Checkout", "conclusion": "success"},
+            {"name": "Sync the reference-image pins", "conclusion": sync_step}]},
+    ]}
+
+
 # name: env overrides + stub state -> expectations
 CASES = {
     "both-written": dict(
@@ -77,35 +95,33 @@ CASES = {
         env={"E2E_REPO": ""}, vars={THIS: OLD}, reach=[THIS],
         exit=0, status={THIS: "written", "test repository": "skipped"}, writes=[THIS]),
     "superseded": dict(
-        runs=["3 3", "99 99"],
-        jobs={"99": ["startup-check success", "sync-pins success"]},
+        runs=[3, 99], jobs={99: run_jobs("success", "success")},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=0, status={THIS: "skipped", E2E: "skipped"}, writes=[], reason="run 99"),
-    # FR-010: a newer run whose check passed and whose sync-pins has ended
-    # (still finishing, or failed after a write it may have made) has moved
-    # the pins; an older run must not move them back.
+    # FR-010: a newer run still finishing (its sync-pins job not yet
+    # concluded) whose check passed and whose sync step succeeded has moved
+    # the pins; so has one whose sync-pins job failed in a later step.
     "superseded-newer-still-finishing": dict(
-        runs=["8 108"],
-        jobs={"108": ["build-and-publish success", "startup-check success", "sync-pins success"]},
+        runs=[8], jobs={8: run_jobs("success", "success", job=None)},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=0, status={THIS: "skipped", E2E: "skipped"}, writes=[], reason="run 8"),
-    "superseded-newer-sync-failed": dict(
-        runs=["8 108"],
-        jobs={"108": ["startup-check success", "sync-pins failure"]},
+    "superseded-newer-close-failed": dict(
+        runs=[8], jobs={8: run_jobs("success", "success", job="failure")},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=0, status={THIS: "skipped", E2E: "skipped"}, writes=[], reason="run 8"),
-    # A newer run whose check failed, whose sync has not ended or was
-    # cancelled, or an older run, does not supersede this one.
+    # A newer run whose check failed, whose sync step failed (it changed
+    # nothing: every write is proven first), was cancelled or has not run,
+    # does not supersede; the search stops at the first run not newer.
     "not-superseded": dict(
-        runs=["8 108", "9 109", "10 110", "5 105"],
-        jobs={"108": ["startup-check failure", "sync-pins success"],
-              "109": ["startup-check success", "sync-pins null"],
-              "110": ["startup-check success", "sync-pins cancelled"],
-              "105": ["startup-check success", "sync-pins success"]},
+        runs=[5, 8, 9, 10, 11],
+        jobs={8: run_jobs("failure", "success"), 9: run_jobs("success", "failure"),
+              10: run_jobs("success", "cancelled"), 11: run_jobs("success", None),
+              5: run_jobs("success", "success")},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
-        exit=0, status={THIS: "written", E2E: "written"}, writes=[THIS, E2E]),
+        exit=0, status={THIS: "written", E2E: "written"}, writes=[THIS, E2E],
+        never_viewed=[5]),
     "run-view-error": dict(
-        runs=["8 108"],
+        runs=[8],
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[]),
     # A hand-set held value cannot break the table's columns.
@@ -116,10 +132,25 @@ CASES = {
         env={"SYNC_TOKEN": ""}, vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
         reason="WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN"),
-    "one-write-refused": dict(
+    # FR-005: a token that can read but not write one repository's
+    # variables changes nothing on either; the refusal is proven first.
+    "write-permission-missing": dict(
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E], set_fail=[E2E],
-        exit=1, status={THIS: "written", E2E: "failed"}, writes=[THIS],
-        held={E2E: OLD}),
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
+        reason="cannot write WING_COMMANDER_CONTAINER_IMAGE on octo/e2e (HTTP 403); nothing was changed"),
+    # A repository with no value yet is written first, so its refusal still
+    # changes nothing anywhere.
+    "absent-variable-refused": dict(
+        vars={THIS: OLD}, reach=[THIS, E2E], set_fail=[E2E],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[]),
+    # A write refused after the probe passed: nothing after it is written.
+    "write-refused-after-probe": dict(
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E], set_fail_expected=[THIS],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
+        held={THIS: OLD, E2E: OLD}, reason="not written: the write on octo/wing was refused"),
+    "token-rejected": dict(
+        reach_fail=True, vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[], reason="(HTTP 401)"),
     "malformed-digest": dict(
         env={"DIGEST": "sha256:xyz"}, vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[], no_api=True),
@@ -174,17 +205,20 @@ def run_case(name, case, tmp, bash, script):
         with open(os.path.join(stub_dir, "vars", repo.replace("/", "__")), "w") as f:
             f.write(value)
     for fname, items in (("reach", case.get("reach", [])),
-                         ("runs", case.get("runs", [])),
                          ("probe_fail", case.get("probe_fail", [])),
-                         ("set_fail", case.get("set_fail", []))):
+                         ("set_fail", case.get("set_fail", [])),
+                         ("set_fail_expected", case.get("set_fail_expected", []))):
         with open(os.path.join(stub_dir, fname), "w") as f:
             f.write("".join(f"{i}\n" for i in items))
+    with open(os.path.join(stub_dir, "runs.json"), "w") as f:
+        json.dump([{"number": n, "databaseId": 100 + n} for n in case.get("runs", [])], f)
     os.makedirs(os.path.join(stub_dir, "jobs"))
-    for rid, lines in case.get("jobs", {}).items():
-        with open(os.path.join(stub_dir, "jobs", rid), "w") as f:
-            f.write("".join(f"{l}\n" for l in lines))
-    if case.get("run_list_fail"):
-        open(os.path.join(stub_dir, "run_list_fail"), "w").close()
+    for n, doc in case.get("jobs", {}).items():
+        with open(os.path.join(stub_dir, "jobs", f"{100 + n}.json"), "w") as f:
+            json.dump(doc, f)
+    for flag in ("run_list_fail", "reach_fail"):
+        if case.get(flag):
+            open(os.path.join(stub_dir, flag), "w").close()
     open(os.path.join(stub_dir, "log"), "w").close()
     outcome = os.path.join(tmp, "outcome.json")
     table = os.path.join(tmp, "table.md")
@@ -203,13 +237,17 @@ def run_case(name, case, tmp, bash, script):
         bash, script, workdir, env, tmp, shell=H.step_shell(WORKFLOW, SYNC_STEP))
     with open(os.path.join(stub_dir, "log")) as f:
         log = f.read().splitlines()
-    return rc, output, outputs, outcome, table, summary, log
+    final = {}
+    for repo in (THIS, E2E):
+        vf = os.path.join(stub_dir, "vars", repo.replace("/", "__"))
+        final[repo] = open(vf).read() if os.path.exists(vf) else None
+    return rc, output, outputs, outcome, table, summary, log, final
 
 
 def check_case(name, case, bash, script):
     errs = []
     with tempfile.TemporaryDirectory() as tmp:
-        rc, output, outputs, outcome, table, summary, log = run_case(name, case, tmp, bash, script)
+        rc, output, outputs, outcome, table, summary, log, final = run_case(name, case, tmp, bash, script)
         if rc != case["exit"]:
             errs.append(f"exit {rc}, want {case['exit']} ({output.strip()})")
         try:
@@ -228,19 +266,27 @@ def check_case(name, case, bash, script):
                 errs.append(f"{repo}: held/expected {r.get('held')!r}/{r.get('expected')!r}")
         if "reason" in case and not any(case["reason"] in r["reason"] for r in rows):
             errs.append(f"no reason names {case['reason']!r}")
-        writes = []
+        # Writes are judged by where the pins end up (the stub keeps what
+        # was written), and every set call must be the one variable, written
+        # with the new value or with the value that repository already held
+        # (the FR-005 permission probe).
+        initial = case.get("vars", {})
+        writes = [r for r in (THIS, E2E) if final[r] == NEW and initial.get(r) != NEW]
+        for r in (THIS, E2E):
+            if final[r] not in (NEW, initial.get(r)):
+                errs.append(f"{r} ends holding {final[r]!r}")
         for line in log:
-            if re.search(r"\bvariable\b", line):
-                m = re.search(r"variable set (\S+) --repo (\S+)", line)
+            if re.search(r"\bvariable\b", line) and not line.startswith("REFUSED "):
+                m = re.search(r"variable set (\S+) --repo (\S+) --body (.*)$", line)
                 if not m or m.group(1) != "WING_COMMANDER_CONTAINER_IMAGE":
                     errs.append(f"a gh variable call that is not the one write: {line}")
-                else:
-                    writes.append(m.group(2))
-        for line in log:
-            if line.startswith("REFUSED "):
-                writes.remove(line.split()[1])
+                elif m.group(3) not in (NEW, initial.get(m.group(2))):
+                    errs.append(f"a write of a value that is neither new nor held: {line}")
         if sorted(writes) != sorted(case["writes"]):
             errs.append(f"writes {writes}, want {case['writes']}")
+        for n in case.get("never_viewed", []):
+            if any(f"run view {100 + n} " in line for line in log):
+                errs.append(f"run {n} is not newer and must not be read")
         if case.get("no_api") and any(re.search(r"\bapi\b", line) for line in log):
             errs.append("a gh api call was made before validation/skip")
         for line in log:
@@ -249,8 +295,8 @@ def check_case(name, case, bash, script):
             if "run list" in line or "run view" in line:
                 if not line.startswith(f"GH_TOKEN={AMBIENT} "):
                     errs.append("run list/view did not use the ambient workflow token")
-                if "run list" in line and "--branch main" not in line:
-                    errs.append("run list must count only default-branch runs as newer")
+                if "run list" in line and ("--branch main" not in line or "--limit 100" not in line):
+                    errs.append("run list must read the last 100 default-branch runs")
             elif not line.startswith(f"GH_TOKEN={TOKEN} "):
                 errs.append(f"a sync call did not run under the sync token: {line}")
         blob = output + summary
@@ -276,7 +322,7 @@ def check_case(name, case, bash, script):
 
 
 BODY_STEP = "Build the failure issue body"
-WATCH_STEP = "Wait for the start-up check verdict"
+VERDICT_STEP = "Record the start-up check verdict"
 
 
 def check_body_step(bash):
@@ -307,82 +353,60 @@ def check_body_step(bash):
     return errs
 
 
-WATCH_STUB = r"""#!/usr/bin/env bash
-echo "$*" >> "${STUB_DIR}/log"
-case "${1:-} ${2:-}" in
-  "run list")
-    expr=""; prev=""
-    for a in "$@"; do [ "$prev" = "--jq" ] && expr="$a"; prev="$a"; done
-    jq -r "$expr" "${STUB_DIR}/runs.json"
-    ;;
-  "run watch") exit 0 ;;
-  *) exit 2 ;;
-esac
-"""
-
-
-def check_watch_step(bash):
-    """The verdict wait watches the run dispatched for THIS image, never an
-    earlier dogfood run in the same window, and polls at >= 30s."""
+def check_verdict_step(bash):
+    """startup-check dispatches and waits through the dispatch-and-wait
+    single home (correlated by its attempt token, on this run's ref), and
+    reports passed=true only for a found run that concluded success."""
+    import yaml
     errs = []
-    script = str(H.find_step(WORKFLOW, WATCH_STEP).get("run") or "")
-    mine = IMAGE + "@" + DIGEST
-    runs = [
-        {"databaseId": 11, "createdAt": "2026-01-01T00:00:01Z",
-         "displayTitle": "Wing Commander · private-image-dogfood"},
-        {"databaseId": 10, "createdAt": "2026-01-01T00:00:00Z",
-         "displayTitle": "Wing Commander · private-image-dogfood · " + mine},
-        {"databaseId": 12, "createdAt": "2026-01-01T00:00:02Z",
-         "displayTitle": "Wing Commander · private-image-dogfood · " + OLD},
-        {"databaseId": 13, "createdAt": "2026-01-01T00:00:03Z",
-         "displayTitle": "Wing Commander · private-image-dogfood · " + mine},
-    ]
-    with tempfile.TemporaryDirectory() as tmp:
-        stub_dir = os.path.join(tmp, "stub")
-        bin_dir = os.path.join(tmp, "bin")
-        os.makedirs(stub_dir)
-        os.makedirs(bin_dir)
-        with open(os.path.join(stub_dir, "runs.json"), "w") as f:
-            json.dump(runs, f)
-        open(os.path.join(stub_dir, "log"), "w").close()
-        gh = os.path.join(bin_dir, "gh")
-        with open(gh, "w", newline="\n") as f:
-            f.write(WATCH_STUB)
-        os.chmod(gh, os.stat(gh).st_mode | stat.S_IXUSR)
-        work = os.path.join(tmp, "work")
-        os.makedirs(work)
-        env = {"PATH": bin_dir + os.pathsep + os.environ["PATH"], "STUB_DIR": stub_dir,
-               "SINCE": "2026-01-01T00:00:00Z", "CHECKED_IMAGE": mine,
-               "GITHUB_REF_NAME": "main", "GH_TOKEN": AMBIENT}
-        rc, out, outputs, _s = H.run_step(bash, script, work, env, tmp,
-                                          shell=H.step_shell(WORKFLOW, WATCH_STEP))
-        with open(os.path.join(stub_dir, "log")) as f:
-            log = f.read().splitlines()
-    watched = [l for l in log if l.startswith("run watch")]
-    listed = [l for l in log if l.startswith("run list")]
-    for flag in ("--event workflow_dispatch", "--branch main",
-                 "--created >=2026-01-01T00:00:00Z"):
-        if not listed or flag not in listed[0]:
-            errs.append(f"the verdict wait's run list must filter on {flag!r}")
-    dispatch = str(H.find_step(WORKFLOW, "Dispatch the start-up check against the published digest")
-                   .get("run") or "")
-    if not re.search(r"since=\$\(date -u -d '-\d+ minutes?'", dispatch):
-        errs.append("SINCE must be taken a margin early (runner and server clocks differ)")
-    if outputs.get("passed") != "true":
-        errs.append(f"watch step did not report passed=true ({out.strip()})")
-    if len(watched) != 1 or not watched[0].startswith("run watch 13 "):
-        errs.append(f"watch step must watch run 13 (the newest dispatched for this digest), "
-                    f"watched {watched}")
-    m = re.search(r"--interval\s+(\d+)", watched[0] if watched else "")
-    if not m or int(m.group(1)) < 30:
-        errs.append("gh run watch must poll at --interval 30 or more (github.token rate limit)")
+    with open(WORKFLOW) as f:
+        wf = yaml.safe_load(f)
+    jobs = wf.get("jobs") or {}
+    steps = (jobs.get("startup-check") or {}).get("steps") or []
+    check = [st for st in steps if st.get("id") == "check"]
+    if len(check) != 1 or check[0].get("uses") != "./.github/actions/wing-commander-dispatch-and-wait":
+        return ["startup-check must dispatch and wait through wing-commander-dispatch-and-wait"]
+    w = check[0].get("with") or {}
+    if w.get("workflow-file") != "wing-commander-private-image-dogfood.yml":
+        errs.append("the composite must dispatch wing-commander-private-image-dogfood.yml")
+    if "needs.build-and-publish.outputs.digest" not in str(w.get("workflow-inputs")) or \
+            "container-image" not in str(w.get("workflow-inputs")):
+        errs.append("the dispatch must pass the published digest as container-image")
+    if "github.run_id" not in str(w.get("attempt-token")):
+        errs.append("the attempt-token must be this run's own id")
+    if "github.ref_name" not in str(w.get("ref")):
+        errs.append("the check must be dispatched on this run's own ref")
+    if int(w.get("poll-interval-seconds", 0)) < 30:
+        errs.append("poll-interval-seconds must be 30 or more (github.token rate limit)")
+    if int(w.get("poll-interval-seconds", 0)) * int(w.get("wait-attempts", 0)) > 55 * 60:
+        errs.append("the wait must end inside startup-check's 60-minute timeout")
+    if not any(str(st.get("uses", "")).startswith("actions/checkout@") for st in steps[:steps.index(check[0])]):
+        errs.append("startup-check must check out before using a local composite")
+    sync_if = str((jobs.get("sync-pins") or {}).get("if"))
+    if "needs.startup-check.outputs.passed == 'true'" not in sync_if:
+        errs.append("sync-pins must run only after a passed check (a queued job is cancelled "
+                    "by the next to queue in its concurrency group)")
     dogfood = os.path.join(GH_DIR, "workflows", "wing-commander-private-image-dogfood.yml")
     with open(dogfood) as f:
         df = f.read()
-    if not re.search(r"^run-name:.*format\('Wing Commander · private-image-dogfood · \{0\}', "
-                     r"inputs\.container-image\)", df, re.M):
-        errs.append("wing-commander-private-image-dogfood.yml's run-name must end with "
-                    "' · <container-image>' for the watch step to find its run")
+    if not re.search(r"^run-name:.*\{0\} \[attempt:\{1\}\]', inputs\.container-image, "
+                     r"inputs\.attempt-token\)", df, re.M):
+        errs.append("wing-commander-private-image-dogfood.yml's run-name must carry the "
+                    "container-image and '[attempt:<attempt-token>]'")
+    script = str(H.find_step(WORKFLOW, VERDICT_STEP).get("run") or "")
+    for corr, concl, want in (("found", "success", "true"), ("found", "failure", None),
+                              ("ambiguous", "", None), ("not-observed", "", None),
+                              ("found", "timeout", None)):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = os.path.join(tmp, "work")
+            os.makedirs(work)
+            env = {"CORRELATION": corr, "CONCLUSION": concl, "RUN_URL": "https://x/runs/1"}
+            rc, out, outputs, summary = H.run_step(bash, script, work, env, tmp,
+                                                   shell=H.step_shell(WORKFLOW, VERDICT_STEP))
+        if outputs.get("passed") != want or (rc == 0) != (want == "true"):
+            errs.append(f"verdict {corr}/{concl!r}: passed={outputs.get('passed')!r} rc={rc}")
+        if want is None and "no `WING_COMMANDER_CONTAINER_IMAGE` pin was written" not in summary:
+            errs.append(f"verdict {corr}/{concl!r}: the summary must say the sync was skipped")
     return errs
 
 
@@ -458,9 +482,9 @@ def check_single_home():
         wf_body = f.read()
     n_wf = len(re.findall(r"\bgh variable set\b", wf_body))
     n_step = len(re.findall(r"\bgh variable set\b", sync_run))
-    if n_step != 1 or n_wf != 1:
+    if n_step < 1 or n_wf != n_step:
         errs.append(f"the e2e reference-image workflow carries {n_wf} `gh variable set` "
-                    f"call(s), {n_step} in the sync step; want exactly one, in the sync step")
+                    f"call(s), {n_step} in the sync step; want every one in the sync step")
     paths = glob.glob(os.path.join(GH_DIR, "workflows", "*.yml"))
     paths += [p for p in glob.glob(os.path.join(GH_DIR, "actions", "**", "*"), recursive=True)
               if os.path.isfile(p)]
@@ -520,7 +544,7 @@ def main():
     failures += [f"single-home: {e}" for e in check_single_home()]
     failures += [f"single-home detector: {e}" for e in check_pin_write_detector()]
     failures += [f"body step: {e}" for e in check_body_step(bash)]
-    failures += [f"watch step: {e}" for e in check_watch_step(bash)]
+    failures += [f"startup-check: {e}" for e in check_verdict_step(bash)]
     if failures:
         for f in failures:
             print("FAIL " + f)

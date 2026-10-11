@@ -94,71 +94,69 @@ jobs:
       actions: write
       contents: read
     steps:
-      - name: Dispatch the start-up check against the published digest
-        id: dispatch
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # Dispatches the check against the published digest and waits for
+      # its verdict through the dispatch-and-wait single home: the run is
+      # found by this attempt's own token in its run-name (never by
+      # recency), so a hand dispatch or another rebuild's check is never
+      # mistaken for this digest's. The wrapper and classifier come from
+      # this run's own ref, so a dispatched rebuild on a branch is checked
+      # by that branch's check. 30s polls for up to 55 minutes keep the
+      # wait's share of github.token's rate limit small.
+      - name: Dispatch the start-up check and wait for its verdict
+        id: check
+        uses: ./.github/actions/wing-commander-dispatch-and-wait
+        with:
+          token: ${{ github.token }}
+          workflow-file: wing-commander-private-image-dogfood.yml
+          workflow-inputs: >-
+            {"container-image": "${{ env.E2E_IMAGE }}@${{ needs.build-and-publish.outputs.digest }}"}
+          attempt-token: ${{ github.run_id }}-${{ github.run_attempt }}
+          ref: ${{ github.ref_name }}
+          poll-interval-seconds: "30"
+          wait-attempts: "110"
+
+      # `passed` is true only when that whole run (the prerequisite check
+      # and the start-up check) concluded success; sync-pins runs only then.
+      - name: Record the start-up check verdict
+        id: watch
+        if: "!cancelled()"
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          DIGEST: ${{ needs.build-and-publish.outputs.digest }}
+          CORRELATION: ${{ steps.check.outputs.correlation }}
+          CONCLUSION: ${{ steps.check.outputs.conclusion }}
+          RUN_URL: ${{ steps.check.outputs.run-url }}
         run: |
           set -euo pipefail
-          # Two minutes early: the runner's clock and GitHub's createdAt can
-          # disagree, and the run-name match below already narrows the
-          # window's runs to this digest.
-          echo "since=$(date -u -d '-2 minutes' +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-          # The wrapper and classifier from this run's own ref, so a
-          # dispatched rebuild on a branch is checked by that branch's check.
-          gh workflow run wing-commander-private-image-dogfood.yml --ref "$GITHUB_REF_NAME" \
-            -f "container-image=${E2E_IMAGE}@${DIGEST}"
-
-      # Waits for the dispatched run's verdict: `passed` is true only when
-      # that whole run (the prerequisite check and the start-up check)
-      # concluded success. sync-pins writes the pins only on `true`. The run
-      # is found by its run-name, which wing-commander-private-image-dogfood.yml
-      # ends with the dispatched container-image, so a hand dispatch or
-      # another rebuild's check in the same window is never mistaken for
-      # this digest's (the newest such run is watched; any of them checks
-      # this exact digest). `--interval 30` keeps an hour-long watch's share
-      # of github.token's repository-wide rate limit small.
-      - name: Wait for the start-up check verdict
-        id: watch
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          SINCE: ${{ steps.dispatch.outputs.since }}
-          CHECKED_IMAGE: ${{ env.E2E_IMAGE }}@${{ needs.build-and-publish.outputs.digest }}
-        run: |
-          set -uo pipefail
-          echo "passed=false" >> "$GITHUB_OUTPUT"
-          run_id=""
-          for _ in $(seq 1 24); do
-            run_id="$(gh run list --workflow wing-commander-private-image-dogfood.yml \
-              --event workflow_dispatch --branch "$GITHUB_REF_NAME" --created ">=${SINCE}" \
-              --json databaseId,createdAt,displayTitle \
-              --jq '[.[] | select(.displayTitle | endswith(" · " + env.CHECKED_IMAGE))] | sort_by(.createdAt) | .[-1].databaseId // empty')" || run_id=""
-            [ -n "$run_id" ] && break
-            sleep 5
-          done
-          if [ -z "$run_id" ]; then
-            echo "::error::the dispatched start-up check run for ${CHECKED_IMAGE} was not found"
+          if [ "$CORRELATION" = found ] && [ "$CONCLUSION" = success ]; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if gh run watch "$run_id" --exit-status --interval 30 > /dev/null; then
-            echo "passed=true" >> "$GITHUB_OUTPUT"
+          if [ "$CORRELATION" = found ]; then
+            why="the start-up check run ${RUN_URL} concluded ${CONCLUSION:-with no conclusion}"
           else
-            echo "::error::the start-up check run ${run_id} did not pass"
+            why="the dispatched start-up check run was not found (correlation: ${CORRELATION:-none})"
           fi
-
-      - name: Fail when the start-up check did not pass
-        if: steps.watch.outputs.passed != 'true'
-        run: exit 1
+          echo "::error::${why}"
+          {
+            echo "### Reference-image pin sync"
+            echo ""
+            echo "Skipped: ${why}, so no \`WING_COMMANDER_CONTAINER_IMAGE\` pin was written."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
   # Writes the pins after a passed check (specs/111-reference-image-pin-sync).
-  # Runs even when startup-check failed so the skip is reported; the script
-  # skips every repository then. The token is bound to the sync step only.
+  # Runs only then: GitHub keeps one pending job per concurrency group and
+  # cancels it when another queues, so a run whose check failed must not
+  # queue here and cancel a passed run's pending sync. A failed check is
+  # reported by startup-check's own summary and red job. The token is bound
+  # to the sync step only.
   sync-pins:
     needs: [build-and-publish, startup-check]
-    if: ${{ !cancelled() && needs.build-and-publish.result == 'success' }}
+    if: ${{ !cancelled() && needs.build-and-publish.result == 'success' && needs.startup-check.outputs.passed == 'true' }}
     runs-on: ubuntu-latest
     concurrency:
       group: reference-image-pin-sync
@@ -229,6 +227,15 @@ jobs:
               '{repo:$repo,status:$status,reason:$reason,held:$held,expected:$expected}' >> "$RECORDS"
           }
 
+          # " (HTTP NNN)" from the last gh call's stderr, if it named one: the
+          # status alone, never the message, so no credential can leak.
+          http_status() {
+            local s
+            s="$(grep -oE 'HTTP [0-9]{3}' "$ERRS" 2> /dev/null | tail -n 1)" || true
+            [ -n "$s" ] && printf ' (%s)' "$s"
+            return 0
+          }
+
           record_all() { # status reason
             local r
             for r in "${SYNC_SET[@]}"; do record "$r" "$1" "$2" "" "$EXPECTED"; done
@@ -290,34 +297,33 @@ jobs:
 
           # 3. A newer default-branch run has already synced: do not move the
           #    pin back (FR-010). A higher-numbered run supersedes this one
-          #    once its own startup-check succeeded and its sync-pins job ran
-          #    to an end (success, or failure after a write it may have
-          #    made), whether or not that run reads as completed yet: this
-          #    job's concurrency group lets it start the moment that
-          #    sync-pins ends. Any list or view that fails writes nothing.
-          newer=""
+          #    once its own startup-check succeeded and its sync step (this
+          #    step, in that run) succeeded, whether or not that run reads as
+          #    completed yet: this job's concurrency group lets it start the
+          #    moment that sync-pins ends. A newer sync step that failed did
+          #    not move the pins (step 5b proves every write first), so it
+          #    does not supersede. Runs are read newest first; the first
+          #    that supersedes ends the search. Any list or view that fails
+          #    writes nothing.
           if ! runs="$(gh run list --repo "$THIS_REPO" --workflow "$WORKFLOW" --branch "$DEFAULT_BRANCH" \
-            --json number,databaseId --jq '.[] | "\(.number) \(.databaseId)"' 2> /dev/null)"; then
-            record_all failed "could not list this workflow's runs to rule out a newer sync"
+            --limit 100 --json number,databaseId \
+            --jq 'sort_by(.number) | reverse | .[] | "\(.number) \(.databaseId)"' 2> "$ERRS")"; then
+            record_all failed "could not list this workflow's runs to rule out a newer sync$(http_status)"
             finish
           fi
           while read -r n id; do
-            [[ "$n" =~ ^[0-9]+$ ]] && [[ "$id" =~ ^[0-9]+$ ]] && [ "$n" -gt "$RUN_NUMBER" ] || continue
-            if ! jobs="$(gh run view "$id" --repo "$THIS_REPO" --json jobs \
-              --jq '.jobs[] | "\(.name) \(.conclusion)"' 2> /dev/null)"; then
-              record_all failed "could not read run ${n}'s jobs to rule out a newer sync"
+            [[ "$n" =~ ^[0-9]+$ ]] && [[ "$id" =~ ^[0-9]+$ ]] || continue
+            [ "$n" -gt "$RUN_NUMBER" ] || break
+            if ! verdicts="$(gh run view "$id" --repo "$THIS_REPO" --json jobs \
+              --jq '.jobs[] | if .name == "sync-pins" then (.steps[] | select(.name == "Sync the reference-image pins") | "sync \(.conclusion)") else "\(.name) \(.conclusion)" end' 2> "$ERRS")"; then
+              record_all failed "could not read run ${n}'s jobs to rule out a newer sync$(http_status)"
               finish
             fi
-            grep -qx 'startup-check success' <<< "$jobs" || continue
-            grep -qxE 'sync-pins (success|failure)' <<< "$jobs" || continue
-            if [ -z "$newer" ] || [ "$n" -gt "$newer" ]; then
-              newer="$n"
+            if grep -qx 'startup-check success' <<< "$verdicts" && grep -qx 'sync success' <<< "$verdicts"; then
+              record_all skipped "superseded by run ${n}"
+              finish
             fi
           done <<< "$runs"
-          if [ -n "$newer" ]; then
-            record_all skipped "superseded by run ${newer}"
-            finish
-          fi
 
           # 4. The credential must reach exactly the sync set.
           if [ -z "$SYNC_TOKEN" ]; then
@@ -325,8 +331,8 @@ jobs:
             finish
           fi
           if ! reach="$(GH_TOKEN="$SYNC_TOKEN" gh api 'user/repos?affiliation=owner,collaborator,organization_member' \
-            --paginate --jq '.[].full_name' 2> /dev/null)"; then
-            record_all failed "WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN was rejected when listing reachable repositories"
+            --paginate --jq '.[].full_name' 2> "$ERRS")"; then
+            record_all failed "WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN was rejected when listing reachable repositories$(http_status)"
             finish
           fi
           reach_sorted="$(printf '%s\n' "$reach" | tr '[:upper:]' '[:lower:]' | sed '/^$/d' | sort -u)"
@@ -350,20 +356,45 @@ jobs:
             elif grep -q 'HTTP 404' "$ERRS"; then
               HELD["$r"]=""
             else
-              record_all failed "could not read ${VAR} on ${r}"
+              record_all failed "could not read ${VAR} on ${r}$(http_status)"
               finish
             fi
           done
 
-          # 6. Write only what differs.
+          # 5b. Prove the write permission before changing anything (FR-005):
+          #     rewrite each held value that will change with itself. A
+          #     refusal here leaves every pin as it was. A repository with no
+          #     value yet has nothing to rewrite, so it is written first in
+          #     step 6, where its refusal still changes nothing.
+          ORDER=()
           for r in "${SYNC_SET[@]}"; do
             held="${HELD[$r]}"
-            if [ "$held" = "$EXPECTED" ]; then
-              record "$r" current "already current" "$held" "$EXPECTED"
-            elif GH_TOKEN="$SYNC_TOKEN" gh variable set "$VAR" --repo "$r" --body "$EXPECTED" > /dev/null 2>&1; then
+            [ "$held" = "$EXPECTED" ] && continue
+            if [ -z "$held" ]; then
+              ORDER=("$r" "${ORDER[@]}")
+              continue
+            fi
+            ORDER+=("$r")
+            if ! GH_TOKEN="$SYNC_TOKEN" gh variable set "$VAR" --repo "$r" --body "$held" > /dev/null 2> "$ERRS"; then
+              record_all failed "WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN cannot write ${VAR} on ${r}$(http_status); nothing was changed"
+              finish
+            fi
+          done
+
+          # 6. Write only what differs; after a refusal, write nothing more.
+          for r in "${SYNC_SET[@]}"; do
+            [ "${HELD[$r]}" = "$EXPECTED" ] && record "$r" current "already current" "$EXPECTED" "$EXPECTED"
+          done
+          refused=""
+          for r in "${ORDER[@]}"; do
+            held="${HELD[$r]}"
+            if [ -n "$refused" ]; then
+              record "$r" failed "not written: the write on ${refused} was refused" "$held" "$EXPECTED"
+            elif GH_TOKEN="$SYNC_TOKEN" gh variable set "$VAR" --repo "$r" --body "$EXPECTED" > /dev/null 2> "$ERRS"; then
               record "$r" written "pin updated" "$held" "$EXPECTED"
             else
-              record "$r" failed "write refused" "$held" "$EXPECTED"
+              record "$r" failed "write refused$(http_status)" "$held" "$EXPECTED"
+              refused="$r"
             fi
           done
 

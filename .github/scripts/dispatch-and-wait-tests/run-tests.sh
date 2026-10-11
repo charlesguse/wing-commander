@@ -49,6 +49,7 @@ cat > "$STUBDIR/gh" <<'GHSTUB'
 #!/usr/bin/env bash
 set -uo pipefail
 if [ "$1" = "workflow" ] && [ "$2" = "run" ]; then
+  [ -n "${GH_STUB_DISPATCH_LOG:-}" ] && echo "$*" >> "$GH_STUB_DISPATCH_LOG"
   if [ "$GH_STUB_MODE" = "rejected" ]; then
     exit 1
   fi
@@ -156,6 +157,29 @@ run_wait_honored_case() {
     FAILURES=$((FAILURES + 1))
   fi
 }
+
+# The optional `ref` input reaches `gh workflow run --ref` (specs/111), and
+# an empty one dispatches on the default branch with no --ref at all.
+run_ref_case() {
+  local name="$1" ref="$2" want="$3"
+  local out log
+  out="$(mktemp)"; log="$(mktemp)"
+  PATH="$STUBDIR:$PATH" GH_STUB_MODE=found GH_TOKEN=x GH_STUB_DISPATCH_LOG="$log" \
+    WORKFLOW_FILE=release.yml WORKFLOW_INPUTS='{}' ATTEMPT_TOKEN=tok-1 DISPATCH_REF="$ref" \
+    POLL_ATTEMPTS=2 POLL_INTERVAL_SECONDS=0 WAIT_ATTEMPTS=2 UNCORRELATED_WAIT_SECONDS=0 \
+    GITHUB_OUTPUT="$out" bash "$SCRIPT" > /dev/null
+  args="$(cat "$log")"
+  rm -f "$out" "$log"
+  if [ "$want" = "none" ]; then
+    case "$args" in *--ref*) echo "::error::[$name] dispatched with --ref: $args"; FAILURES=$((FAILURES + 1)); return ;; esac
+  else
+    case "$args" in *"--ref $want "*) ;; *) echo "::error::[$name] want --ref $want, dispatched: $args"; FAILURES=$((FAILURES + 1)); return ;; esac
+  fi
+  echo "[ok] $name: $args"
+}
+
+run_ref_case "ref passes through to --ref" feature/x feature/x
+run_ref_case "empty ref dispatches on the default branch" "" none
 
 run_case "successful correlation" found true success false found true
 run_case "ambiguous correlation" ambiguous false "" false ambiguous false
