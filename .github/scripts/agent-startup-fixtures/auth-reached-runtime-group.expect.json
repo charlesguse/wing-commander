@@ -1,0 +1,1 @@
+{"verdict": "setup-completed", "step": null, "error_contains": "ANTHROPIC_API_KEY", "note": "synthetic: a group the step prints while running is runtime output"}

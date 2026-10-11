@@ -1,0 +1,38 @@
+2026-10-10T00:00:00.0000000Z ##[group]Operating System
+2026-10-10T00:00:01.0000000Z Ubuntu
+2026-10-10T00:00:02.0000000Z ##[endgroup]
+2026-10-10T00:00:03.0000000Z ##[group]GITHUB_TOKEN Permissions
+2026-10-10T00:00:04.0000000Z Contents: read
+2026-10-10T00:00:05.0000000Z ##[endgroup]
+2026-10-10T00:00:06.0000000Z ##[group]Checking docker version
+2026-10-10T00:00:07.0000000Z ##[endgroup]
+2026-10-10T00:00:08.0000000Z ##[group]Starting job container
+2026-10-10T00:00:09.0000000Z /usr/bin/docker pull ghcr.io/example/image@sha256:0
+2026-10-10T00:00:10.0000000Z ##[endgroup]
+2026-10-10T00:00:11.0000000Z ##[group]Run anthropics/claude-code-action@v1
+2026-10-10T00:00:12.0000000Z with:
+2026-10-10T00:00:13.0000000Z   github_token: ***
+2026-10-10T00:00:14.0000000Z   prompt: start-up check
+2026-10-10T00:00:15.0000000Z ##[endgroup]
+2026-10-10T00:00:16.0000000Z ##[group]Run oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+2026-10-10T00:00:17.0000000Z with:
+2026-10-10T00:00:18.0000000Z   bun-version: 1.3.14
+2026-10-10T00:00:19.0000000Z ##[endgroup]
+2026-10-10T00:00:20.0000000Z Downloading a new version of Bun: https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip
+2026-10-10T00:00:21.0000000Z ##[group]Run cd ${GITHUB_ACTION_PATH}
+2026-10-10T00:00:22.0000000Z cd ${GITHUB_ACTION_PATH}
+2026-10-10T00:00:23.0000000Z bun install --production
+2026-10-10T00:00:24.0000000Z ##[endgroup]
+2026-10-10T00:00:25.0000000Z installed 42 packages
+2026-10-10T00:00:26.0000000Z ##[group]Run # Do NOT pass --tsconfig-override here. It triggers a Bun runtime bug
+2026-10-10T00:00:27.0000000Z bun --no-env-file \
+2026-10-10T00:00:28.0000000Z ##[endgroup]
+2026-10-10T00:00:29.0000000Z Auto-detected mode: agent for event: workflow_dispatch
+2026-10-10T00:00:30.0000000Z Trigger result: true
+2026-10-10T00:00:31.0000000Z Installing Claude Code v2.1.296...
+2026-10-10T00:00:32.0000000Z Installation attempt 1...
+2026-10-10T00:00:33.0000000Z Claude Code installed successfully
+2026-10-10T00:00:34.0000000Z ##[error]Action failed with error: Environment variable validation failed:
+2026-10-10T00:00:35.0000000Z   - Either ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or workload identity federation (ANTHROPIC_FEDERATION_RULE_ID and ANTHROPIC_ORGANIZATION_ID) is required when using direct Anthropic API.
+2026-10-10T00:00:36.0000000Z ##[group]Run actions/upload-artifact@v6
+2026-10-10T00:00:37.0000000Z ##[endgroup]

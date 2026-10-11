@@ -1,3 +1,9 @@
-{"issue": 974, "spec_dir": "specs/112-agent-startup-image-check",
- "feature_num": "112", "stage": "spec", "iteration": 0,
- "spec_branch": null}
+{
+  "issue": 974,
+  "spec_dir": "specs/112-agent-startup-image-check",
+  "feature_num": "112",
+  "stage": "review",
+  "iteration": 5,
+  "spec_branch": "spec/112-agent-startup-image-check",
+  "pending_re_review_from": []
+}

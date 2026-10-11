@@ -1,0 +1,1 @@
+{"verdict": "setup-failed", "step": "Run Claude Code Action", "error_contains": "binary is missing", "note": "synthetic: an error line quoting the setup-done text is still the first error"}

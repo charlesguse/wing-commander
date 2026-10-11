@@ -1,0 +1,1 @@
+{"verdict": "unclassified", "step": null, "error_contains": "non-human actor", "note": "synthetic: run.ts's own prepare check refused the run before installing anything"}

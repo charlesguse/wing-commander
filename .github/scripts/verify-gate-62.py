@@ -182,6 +182,33 @@ def check_tools(tag, tools):
     return missing, (proc.stdout + proc.stderr)
 
 
+GIT_FLOOR_FRAGMENT = os.path.join(".github", "scripts", "image-git-floor.sh")
+
+
+# image-git-floor.sh's own two failure messages; Gate 148 checks both are
+# still in the fragment, so this copy cannot drift from it.
+FLOOR_MESSAGES = ("is older than the 2.38 minimum", "could not parse git version")
+
+
+def check_git_floor(root, tag):
+    """-> None when the built image's git meets the floor every stage's
+    probe enforces (specs/112-agent-startup-image-check FR-013), else
+    ("floor", the fragment's own message) or ("docker", why the probe could
+    not run). Runs image-git-floor.sh itself, its one home."""
+    with open(os.path.join(root, GIT_FLOOR_FRAGMENT), encoding="utf-8") as fh:
+        fragment = fh.read().strip()
+    proc = subprocess.run(["docker", "run", "--rm", "--entrypoint", "sh", tag, "-c", fragment],
+                          capture_output=True, text=True)
+    if proc.returncode == 0:
+        return None
+    err = proc.stderr.strip() or proc.stdout.strip()
+    # The fragment's own two messages are a floor failure; anything else is
+    # docker failing to run the probe, said as such.
+    if any(m in err for m in FLOOR_MESSAGES):
+        return ("floor", err)
+    return ("docker", "exit {0} -- {1}".format(proc.returncode, err[-1000:] or "no output"))
+
+
 def _optout_sites(node, path=()):
     """Yield the key path of every place `node` sets DOCKERLESS_ENV: as a
     mapping key (an env: entry) or in a string writing `NAME=` (a run:
@@ -406,13 +433,24 @@ def scan(root=".", tag=IMAGE_TAG):
         return failures
     try:
         # One container start probes required-tools.txt and the prompted
-        # commands together; the misses are reported per list.
+        # commands together; the misses are reported per list. The git
+        # floor (image-git-floor.sh) runs in a second start below.
         missing, log = check_tools(tag, tools + wanted)
+        shell_ran = missing is not None
         if missing is None:
             failures.append(
                 f"could not run a POSIX shell inside the built image to check its "
                 f"prerequisites -- {log[-1000:]}")
             missing = []
+        # Only when a shell started: a shell-less image is already reported.
+        floor = check_git_floor(root, tag) if shell_ran else None
+        if floor and floor[0] == "floor":
+            failures.append(
+                f"the reference image built from {DOCKERFILE_DIR}/Dockerfile fails the "
+                f"git floor every stage's image probe enforces -- {floor[1]}")
+        elif floor:
+            failures.append(
+                f"could not run the git floor probe in the built image -- {floor[1]}")
         req_missing = [t for t in missing if t in tools]
         if req_missing:
             failures.append(
@@ -449,6 +487,7 @@ def _copy_subject(dst):
     shutil.copy(REQUIRED_TOOLS_FILE, os.path.join(dst, REQUIRED_TOOLS_FILE))
     os.makedirs(os.path.dirname(os.path.join(dst, IMPLEMENT_WORKFLOW)), exist_ok=True)
     shutil.copy(IMPLEMENT_WORKFLOW, os.path.join(dst, IMPLEMENT_WORKFLOW))
+    shutil.copy(GIT_FLOOR_FRAGMENT, os.path.join(dst, GIT_FLOOR_FRAGMENT))
 
 
 def _drop_installs(root, packages):

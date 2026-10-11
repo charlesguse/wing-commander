@@ -1,0 +1,1 @@
+{"verdict": "setup-failed", "step": "Run Claude Code Action", "error_contains": "Failed to install Claude Code", "note": "synthetic: SETUP_DONE text inside the step's echoed source is not runtime output"}
