@@ -5524,20 +5524,25 @@ jobs:
 
       # Gate 147 — specs/112-agent-startup-image-check (FR-008, SC-003): the
       # agent start-up classifier is driven over a checked-in log fixture per
-      # verdict branch, and private-image-dogfood.yml's startup-agent /
-      # classify-startup jobs keep their no-credential, fail-closed shape.
+      # verdict branch, private-image-dogfood.yml's startup-agent /
+      # classify-startup jobs keep their no-credential, fail-closed shape,
+      # and wing-commander-private-image-dogfood.yml refuses (fails) a
+      # dispatched image outside the owner's GHCR namespace.
       # Numbered 147, not 141: 141-146 were taken by spec 110's PR #982,
       # which claimed them first among the open lifecycle branches.
-      - name: "Gate 147 — the agent start-up classifier has a fixture per branch and the start-up jobs stay credential-free and fail-closed"
+      - name: "Gate 147 — the agent start-up classifier has a fixture per branch, the start-up jobs stay credential-free and fail-closed, and the dogfood wrapper refuses a foreign image"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-startup-classifier.py
-      - name: "Gate 147 self-test — a missing expect file, a fixture-less verdict, a drifted verdict, and each start-up job mutation fail"
+      - name: "Gate 147 self-test — a missing expect file, a fixture-less verdict, a drifted verdict, and each start-up job and dogfood-wrapper mutation fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-agent-startup-classifier.py --self-test
 
       # Gate 148 — specs/112-agent-startup-image-check (FR-013): the git >=
       # 2.38 floor fragment (image-git-floor.sh) is driven against stubbed
-      # `git --version` outputs and found verbatim in every stage's probe.
+      # `git --version` outputs and found verbatim in every stage's probe,
+      # with its host-side failure report; and verify-gate-62.py (Gate 62)
+      # runs the same fragment on the reference image and classifies with
+      # the fragment's own messages.
       # Numbered 148, not 142: 141-146 were taken by spec 110's PR #982.
       - name: "Gate 148 — every stage's image probe enforces the git 2.38 floor, verbatim from image-git-floor.sh"
         if: "!cancelled()"

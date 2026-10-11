@@ -1423,8 +1423,8 @@ may instead name a `container-image` inside this owner's `ghcr.io`
 namespace, which runs even with the variable unset (the e2e reference-image
 rebuild dispatches its new digest this way); an image anywhere else is
 refused by the `refuse-foreign-image` job, so a free-text input never
-chooses which registry receives the credentials. Every run sets the
-stage's `startup-check` input: `startup-agent` runs the real agent action's
+chooses which registry receives the credentials. Every run that reaches
+the stage sets its `startup-check` input: `startup-agent` runs the real agent action's
 setup in the image with no model credential and `classify-startup` reads
 its log (`specs/112-agent-startup-image-check`).
 

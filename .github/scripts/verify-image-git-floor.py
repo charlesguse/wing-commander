@@ -135,7 +135,8 @@ def check_gate_62(path=GATE_62):
     copies = re.findall(r'"([^"]+)"', m.group(1)) if m else []
     if len(copies) != 2 or any(c not in fragment for c in copies):
         return ["verify-gate-62.py's FLOOR_MESSAGES %r are not image-git-floor.sh's own messages" % copies]
-    if "if any(m in err for m in FLOOR_MESSAGES):" not in text:
+    body = re.search(r"^def check_git_floor\(.*?(?=^def |\Z)", text, re.M | re.S)
+    if not body or not re.search(r"(?m)^\s+if any\(m in err for m in FLOOR_MESSAGES\):", body.group(0)):
         return ["verify-gate-62.py's check_git_floor does not classify with FLOOR_MESSAGES"]
     return []
 

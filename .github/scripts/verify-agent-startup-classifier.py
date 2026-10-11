@@ -210,6 +210,9 @@ def check_wrapper(path=WRAPPER):
     if norm(refuse.get("if")) != want_refuse:
         errors.append("the wrapper's refuse-foreign-image job no longer holds the namespace test "
                       "(if: %r)" % norm(refuse.get("if")))
+    refuse_runs = "\n".join(str(s.get("run", "")) for s in refuse.get("steps") or [])
+    if "::error::" not in refuse_runs or not re.search(r"(?m)^\s*exit 1\s*$", refuse_runs):
+        errors.append("the wrapper's refuse-foreign-image job does not fail (::error:: and exit 1)")
     if "refuse-foreign-image" not in needs:
         errors.append("the wrapper's dogfood job does not need refuse-foreign-image (needs: %r)" % needs)
     if norm(job.get("if")) != want_job:
@@ -349,6 +352,9 @@ def self_test():
         with open(p_wrap, "w", encoding="utf-8") as fh:
             fh.write(wsrc.replace("    needs: refuse-foreign-image\n", ""))
         expect("dogfood without needs", check_wrapper(p_wrap), "does not need refuse-foreign-image")
+        with open(p_wrap, "w", encoding="utf-8") as fh:
+            fh.write(wsrc.replace("          exit 1\n", "", 1) if "refuse" in wsrc else wsrc)
+        expect("refusal that does not fail", check_wrapper(p_wrap), "does not fail")
         expect("first match", mutated(first_match), "ambiguous")
         expect("no prompt", mutated(drop_prompt), "needs a prompt")
         expect("no allowed_bots", mutated(drop_bots), "allowed_bots")
