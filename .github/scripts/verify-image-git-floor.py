@@ -116,9 +116,23 @@ def check_stages(fragment, stages):
     return errors
 
 
+GATE_62 = os.path.join(HERE, "verify-gate-62.py")
+
+
+def check_gate_62(path=GATE_62):
+    """Gate 62 builds the reference image and probes it like a stage does;
+    it must run the same fragment, so a base image with old git fails
+    there before any digest is pinned."""
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    if "image-git-floor.sh" not in text or "check_git_floor(root, tag)" not in text:
+        return ["verify-gate-62.py does not run image-git-floor.sh against the reference image"]
+    return []
+
+
 def run_checks():
     fragment = read_fragment()
-    return check_cases(fragment) + check_stages(fragment, stage_files())
+    return check_cases(fragment) + check_stages(fragment, stage_files()) + check_gate_62()
 
 
 def self_test():
@@ -141,6 +155,14 @@ def self_test():
         drifted = stages[:-1] + [(path, text.replace("${missing:+ (also missing", "${missing:+ (missing"))]
         if not any("HOST_BRANCH" in e for e in check_stages(fragment, drifted)):
             failures.append("a drifted git-floor failure report was not caught")
+    with tempfile.TemporaryDirectory() as tmp:
+        p = os.path.join(tmp, "g62.py")
+        with open(GATE_62, encoding="utf-8") as fh:
+            src = fh.read()
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(src.replace("check_git_floor(root, tag)", "None"))
+        if not check_gate_62(p):
+            failures.append("a Gate 62 that never runs the git floor was not caught")
     if stages:
         path, text = stages[0]
         reworded = [(path, text.replace(fragment, "true").replace(

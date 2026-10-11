@@ -182,6 +182,23 @@ def check_tools(tag, tools):
     return missing, (proc.stdout + proc.stderr)
 
 
+GIT_FLOOR_FRAGMENT = os.path.join(".github", "scripts", "image-git-floor.sh")
+
+
+def check_git_floor(root, tag):
+    """-> None when the built image's git meets the floor every stage's
+    probe enforces (specs/112-agent-startup-image-check FR-013), else the
+    fragment's own message. Runs image-git-floor.sh itself, its one home."""
+    with open(os.path.join(root, GIT_FLOOR_FRAGMENT), encoding="utf-8") as fh:
+        fragment = fh.read().strip()
+    proc = subprocess.run(["docker", "run", "--rm", "--entrypoint", "sh", tag, "-c", fragment],
+                          capture_output=True, text=True)
+    if proc.returncode == 0:
+        return None
+    return (proc.stderr.strip() or proc.stdout.strip()
+            or "the git floor check exited {0}".format(proc.returncode))
+
+
 def _optout_sites(node, path=()):
     """Yield the key path of every place `node` sets DOCKERLESS_ENV: as a
     mapping key (an env: entry) or in a string writing `NAME=` (a run:
@@ -413,6 +430,11 @@ def scan(root=".", tag=IMAGE_TAG):
                 f"could not run a POSIX shell inside the built image to check its "
                 f"prerequisites -- {log[-1000:]}")
             missing = []
+        floor = check_git_floor(root, tag)
+        if floor:
+            failures.append(
+                f"the reference image built from {DOCKERFILE_DIR}/Dockerfile fails the "
+                f"git floor every stage's image probe enforces -- {floor}")
         req_missing = [t for t in missing if t in tools]
         if req_missing:
             failures.append(

@@ -65,6 +65,10 @@ ACTION_GROUP = re.compile(r"(?i)claude-code-action")
 # group holding the echoed source and with:/env: dump; any other group
 # after the action started is one the step printed while running.
 STEP_HEADER = re.compile(r"Run ")
+# run.ts's log line as it starts installing Claude Code: anything that fails
+# in its step before this is the action's own prepare/trigger checks (an
+# event or actor it refuses), not the image.
+INSTALL_START = re.compile(r"(?i)Installing Claude Code v")
 # run.ts's log line once its Claude Code install finished: the end of setup.
 SETUP_DONE = re.compile(r"(?i)Claude Code installed successfully")
 TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.]+Z ?")
@@ -78,6 +82,7 @@ STEP_NAMES = [
     (re.compile(r"^Run cd \$\{GITHUB_ACTION_PATH\}"), "Install Dependencies"),
     (re.compile(r"^Run # Do NOT pass --tsconfig-override"), "Run Claude Code Action"),
 ]
+RUN_STEP = "Run Claude Code Action"
 
 
 def _step_name(group):
@@ -114,6 +119,7 @@ def classify(text):
     group = None
     in_header = False
     action_seen = False
+    install_started = False
     setup_done = False
     for i, line in enumerate(lines):
         head = line.strip()
@@ -150,6 +156,10 @@ def classify(text):
                 return _unclassified(
                     "the credential check failed before the setup-done line "
                     "(the action's wording or order changed)", error)
+            if not setup_done and _step_name(group) == RUN_STEP and not install_started:
+                return _unclassified(
+                    "the action stopped in its own prepare checks, before setup "
+                    "(an event, actor or input it refused)", error)
             if not setup_done:
                 step = _step_name(group)
                 return _result(
@@ -157,6 +167,8 @@ def classify(text):
                     '%s: step "%s" failed: %s' % (REASON_FAILED, step, error),
                 )
             return _unclassified("an error after setup is not the authentication failure", error)
+        elif INSTALL_START.search(head) and action_seen and not in_header:
+            install_started = True
         elif SETUP_DONE.search(head) and action_seen and not in_header:
             # Only runtime output: inside a group header the runner echoes
             # the step's source and with:/env: dump, where the text (say an

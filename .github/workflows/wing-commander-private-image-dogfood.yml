@@ -13,7 +13,10 @@
 # research.md D9/D10 for the measured failure. Gated on
 # vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE so a repository that
 # hasn't built and pushed the dogfood image yet gets a clean no-op instead
-# of a permanently failing scheduled run. Everything else (the
+# of a permanently failing scheduled run -- unless a dispatch names an image
+# itself (the reference-image rebuild passes its digest,
+# specs/112-agent-startup-image-check), which also runs. Every run turns on
+# the agent start-up check (startup-check). Everything else (the
 # verify-image-prerequisites job, the credential binding) lives in the
 # published private-image-dogfood.yml, identical to what an adopter's own
 # wrapper would call.
@@ -41,6 +44,9 @@ jobs:
     with:
       container-image: ${{ inputs.container-image || vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE }}
       startup-check: true
+    # A dispatched image gets the registry credentials only inside this
+    # owner's own GHCR namespace: a free-text input must not choose which
+    # registry receives them.
     secrets:
-      container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
-      container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
+      container-registry-username: ${{ (inputs.container-image == '' || startsWith(inputs.container-image, format('ghcr.io/{0}/', github.repository_owner))) && secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME || '' }}
+      container-registry-password: ${{ (inputs.container-image == '' || startsWith(inputs.container-image, format('ghcr.io/{0}/', github.repository_owner))) && secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD || '' }}

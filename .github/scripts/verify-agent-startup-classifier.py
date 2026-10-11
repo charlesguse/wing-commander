@@ -48,6 +48,9 @@ WORKFLOW = os.path.join(ROOT, ".github", "workflows", "private-image-dogfood.yml
 
 VERDICTS = ("setup-completed", "setup-failed", "unclassified")
 CREDENTIAL_INPUTS = ("anthropic_api_key", "claude_code_oauth_token", "anthropic_auth_token")
+MODEL_CREDENTIAL_ENV = re.compile(
+    r"\b(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY)"
+    r"|AWS_BEARER_TOKEN_BEDROCK|ANTHROPIC_FEDERATION_RULE_ID)\b")
 
 
 def load_classifier(path=CLASSIFIER):
@@ -145,9 +148,17 @@ def check_workflow(path):
         for s in steps:
             if "always()" in str(s.get("if", "")):
                 errors.append("startup-agent step %r uses always(); use !cancelled()" % s.get("name"))
-        steps_text = yaml.safe_dump(steps)
-        if "secrets." in steps_text:
-            errors.append("startup-agent steps reference a secret; no model credential may reach them")
+        # The whole job but its registry credentials (container.credentials,
+        # the image pull's own secrets): job env, container env and steps.
+        scoped = {k: v for k, v in agent.items() if k != "container"}
+        scoped["container"] = {k: v for k, v in (agent.get("container") or {}).items()
+                               if k != "credentials"}
+        job_text = yaml.safe_dump(scoped)
+        if "secrets." in job_text:
+            errors.append("startup-agent references a secret outside its registry credentials; "
+                          "no model credential may reach it")
+        if MODEL_CREDENTIAL_ENV.search(job_text):
+            errors.append("startup-agent sets a model-credential variable")
     if classify is None:
         errors.append("private-image-dogfood.yml has no classify-startup job")
     else:
@@ -171,9 +182,29 @@ def check_workflow(path):
     return errors
 
 
+WRAPPER = os.path.join(ROOT, ".github", "workflows", "wing-commander-private-image-dogfood.yml")
+
+
+def check_wrapper(path=WRAPPER):
+    """The wrapper's dispatch input names an image; the registry secrets go
+    with it only inside this owner's own GHCR namespace."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+    except (OSError, yaml.YAMLError) as exc:
+        return ["cannot read %s: %s" % (path, exc)]
+    secrets = (((doc or {}).get("jobs") or {}).get("dogfood") or {}).get("secrets") or {}
+    errors = []
+    for name, value in secrets.items():
+        if "secrets." in str(value) and "startsWith(inputs.container-image, format('ghcr.io/{0}/', github.repository_owner))" not in str(value):
+            errors.append("the wrapper sends %s to whatever registry a dispatched container-image names" % name)
+    return errors
+
+
 def run_checks(classifier=CLASSIFIER, fixtures=FIXTURES, workflow=WORKFLOW):
     mod = load_classifier(classifier)
-    return check_fixtures(mod, fixtures) + check_missing_log(mod) + check_workflow(workflow)
+    return (check_fixtures(mod, fixtures) + check_missing_log(mod) + check_workflow(workflow)
+            + check_wrapper())
 
 
 def self_test():
@@ -263,7 +294,37 @@ def self_test():
                 if "run" in s:
                     s["run"] = re.sub(r"for attempt in [^\n]*", "true", s["run"])
 
+        def job_env_secret(jobs):
+            jobs["startup-agent"]["env"] = {"CLAUDE_CODE_OAUTH_TOKEN": "${{ secrets.X }}"}
+
+        def container_env_secret(jobs):
+            jobs["startup-agent"]["container"].setdefault("env", {})["ANTHROPIC_API_KEY"] = "x"
+
+        def drop_warning(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
+                    s["run"] = s["run"].replace("::warning::", "")
+
+        def drop_no_verdict(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
+                    s["run"] = s["run"].replace("without a verdict", "")
+
+        expect("job env secret", mutated(job_env_secret), "outside its registry credentials")
+        expect("container env credential", mutated(container_env_secret), "model-credential variable")
+        expect("no lookup warning", mutated(drop_warning), "name a failed job lookup")
+        expect("no crash reason", mutated(drop_no_verdict), "crashed classifier")
+        p_inline = os.path.join(tmp, "inline.yml")
+        with open(p_inline, "w", encoding="utf-8") as fh:
+            fh.write(src + "\n# AUTH_MARKERS = [...]\n")
+        expect("inline marker copy", check_workflow(p_inline), "inline copy")
         expect("no timeout", mutated(drop_timeout), "timeout-minutes")
+        with open(WRAPPER, encoding="utf-8") as fh:
+            wsrc = fh.read()
+        p_wrap = os.path.join(tmp, "wrapper.yml")
+        with open(p_wrap, "w", encoding="utf-8") as fh:
+            fh.write(wsrc.replace("startsWith(inputs.container-image", "contains(inputs.container-image"))
+        expect("unconstrained wrapper secrets", check_wrapper(p_wrap), "whatever registry")
         expect("first match", mutated(first_match), "ambiguous")
         expect("no prompt", mutated(drop_prompt), "needs a prompt")
         expect("no allowed_bots", mutated(drop_bots), "allowed_bots")

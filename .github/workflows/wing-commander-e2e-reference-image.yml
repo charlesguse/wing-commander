@@ -72,9 +72,10 @@ jobs:
             echo ""
             echo "This run's \`startup-check\` job dispatches the agent start-up check"
             echo "against this digest as a separate \`wing-commander-private-image-dogfood.yml\`"
-            echo "run. Read that run before copying the digest: a red \`classify-startup\` job"
-            echo "means the agent cannot start in it, and a failed \`startup-check\` job here"
-            echo "means no check ran."
+            echo "run. Read that run before copying the digest: its \`classify-startup\`"
+            echo "summary says \`setup-failed\` when the agent cannot start in the image, and"
+            echo "\`unclassified\` when the check could not reach its subject (re-run it). A"
+            echo "failed \`startup-check\` job here means no check ran."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The agent action does not support the `push` event this workflow runs
