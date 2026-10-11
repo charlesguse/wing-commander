@@ -1218,7 +1218,7 @@ jobs:
           sys.path.insert(0, ".github/scripts")
           from board_eligibility import (
               PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP, BREACH_STEP,
-              is_not_ready_handover, not_ready_head_moved)
+              is_not_ready_handover, not_ready_head_moved, readmission_round)
           from board_item_marker import STALLED_STEP, head_moved_since_last_review, is_loop_branch
 
           marker_step = os.environ.get("MARKER_STEP") or None
@@ -1343,12 +1343,9 @@ jobs:
                       pr_number, marker_full.get("nr_head_sha"))
               else:
                   step = "review"
-                  # FR-007/SC-009: like clause 0.5b below, a moved head
-                  # spends one round of the continued budget.
-                  try:
-                      round_ = str(int(round_ or "0") + 1)
-                  except ValueError:
-                      round_ = "0"
+                  # FR-007/SC-009: a moved head spends one round of the
+                  # continued budget (board_eligibility.readmission_round()).
+                  round_ = readmission_round(round_)
                   note = "recorded pr {0} was handed off not-ready at head_sha {1}; head has moved -- resuming at review, round {2}".format(
                       pr_number, marker_full.get("nr_head_sha"), round_)
           elif (marker_step == "readiness" and pr_from_marker and pr_state == "OPEN"
@@ -1368,10 +1365,7 @@ jobs:
               # SC-009: each re-admission spends one round of the budget. A
               # converged review records the round it ran at, so resuming at
               # that same round would let every human push buy a free review.
-              try:
-                  round_ = str(int(round_ or "0") + 1)
-              except ValueError:
-                  round_ = "0"
+              round_ = readmission_round(round_)
               note = "recorded pr {0} was not ready at head_sha {1}; head has moved -- resuming at review, round {2}".format(
                   pr_number, marker_full.get("nr_head_sha"), round_)
           elif pr_from_marker and marker_step and (
@@ -1420,6 +1414,10 @@ jobs:
               base_sha = ""
               nr_count_ = "0"
           elif pr_from_fallback:
+              # FR-004(a) counts not-ready outcomes on the same PR: a count
+              # earned on another PR does not follow the item to this one.
+              if str(marker_full.get("pr") or "") != str(pr_number):
+                  nr_count_ = "0"
               if marker_step == BREACH_STEP:
                   # #530: a breach marker whose own PR did not resolve
                   # still never reviews the PR the fallback finds.
@@ -1445,6 +1443,8 @@ jobs:
                       if moved else "the head had not moved since the last converged review")
           elif branch:
               step = "fix"
+              # A fix cuts a new PR: the not-ready count starts again.
+              nr_count_ = "0"
           else:
               step = "triage"
               if marker_present and marker_step not in PRE_FIX_STEPS:
@@ -3800,9 +3800,10 @@ jobs:
 
           with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
               comments = json.load(fh)
-          # specs/093-not-ready-board-release: a directed run carries the
-          # marker's not-ready count and round forward like select does,
-          # rather than restarting the FR-004(a) bound at 0.
+          # specs/093-not-ready-board-release: board_item_marker.directed_carry()
+          # gives a directed run the marker's not-ready count (and round,
+          # which only readiness uses -- a directed review starts at 0)
+          # like select does, rather than restarting the FR-004(a) bound.
           print(json.dumps(directed_carry(comments, os.environ["BOT_LOGIN"])))
           PYEOF
           )"
@@ -5086,9 +5087,10 @@ jobs:
 
           with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
               comments = json.load(fh)
-          # specs/093-not-ready-board-release: a directed run carries the
-          # marker's not-ready count and round forward like select does,
-          # rather than restarting the FR-004(a) bound at 0.
+          # specs/093-not-ready-board-release: board_item_marker.directed_carry()
+          # gives a directed run the marker's not-ready count (and round,
+          # which only readiness uses -- a directed review starts at 0)
+          # like select does, rather than restarting the FR-004(a) bound.
           print(json.dumps(directed_carry(comments, os.environ["BOT_LOGIN"])))
           PYEOF
           )"
@@ -5421,6 +5423,7 @@ jobs:
           # specs/093-not-ready-board-release research.md D5: carried-in
           # count only -- never derived from anything but the marker.
           NR_COUNT: ${{ steps.pr.outputs.nr-count }}
+          DIRECTED_STAGE: ${{ inputs.directed-stage }}
           DEDUP_COMMENTS_FETCHED: ${{ steps.not-ready-comments.outputs.fetched }}
           DIRECTED_ATTRIBUTION: >-
             ${{ inputs.directed-stage != '' && format('_Directed proof run
@@ -5473,6 +5476,16 @@ jobs:
               --reason "$(printf '%s on PR #%s (measured: %s)' "$breach_what" "$PR_NUMBER" "$MEASURED")" \
               || { echo "::error::board-loop readiness (backstop breach): spec-request $spec_url was filed but disposing of issue #$ISSUE_NUMBER as a duplicate failed. Whether a later run finishes it depends on this site and on the step that failed (specs/108-routed-original-disposition/contracts/duplicate-disposition.md, failure semantics)."; exit 1; }
           else
+            # A directed proof run selects no board item: it reports, as
+            # before this feature, but writes no not-ready record, advances
+            # no count and never hands the live item over (code review of
+            # #1010).
+            if [ -n "$DIRECTED_STAGE" ]; then
+              body="$(printf '%s\n\nNot ready on PR #%s: %s.' "$DIRECTED_ATTRIBUTION" "$PR_NUMBER" "$unmet")"
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body" \
+                || { echo "::error::board-loop readiness (not ready, directed): the report could not be posted on issue #$ISSUE_NUMBER."; exit 1; }
+              exit 0
+            fi
             # specs/093-not-ready-board-release FR-004(a)/FR-008/FR-009:
             # never a second hardcoded 3 -- the count rule's one home is
             # board_eligibility.not_ready_handover_due() (NOT_READY_THRESHOLD,

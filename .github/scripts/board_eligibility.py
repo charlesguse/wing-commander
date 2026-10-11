@@ -169,6 +169,16 @@ def marker_names_live_pr(marker):
     return bool(marker) and (marker.get("step") in FIX_OR_LATER_STEPS or is_not_ready_handover(marker))
 
 
+def readmission_round(round_):
+    """FR-007/SC-009: the round a re-admitted item resumes review at -- one
+    past the marker's own, so each re-admission on a moved head spends a
+    round of the continued budget. "0" when the round does not parse."""
+    try:
+        return str(int(round_ or "0") + 1)
+    except (TypeError, ValueError):
+        return "0"
+
+
 def not_ready_handover_due(nr_count):
     """FR-004(a): True when `nr_count` has reached NOT_READY_THRESHOLD."""
     return nr_count >= NOT_READY_THRESHOLD
@@ -430,8 +440,8 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_
             # though the OPEN check above would otherwise qualify it --
             # unlike _awaiting_merge_holds()/_unowned_open_pr_holds(), this
             # predicate must be called explicitly here (contracts/not-ready-hold.md).
-            if step == "readiness" and _not_ready_passes_over(
-                    number, marker, pr_state_by_number, pr_head_sha_by_number, passed_over):
+            if step == "readiness" and _not_ready_holds(
+                    marker, pr_state_by_number, pr_head_sha_by_number, number, passed_over):
                 continue
             candidates.append((created_at, number))
     if not candidates:
@@ -440,17 +450,8 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_
     return candidates[-1][1], len(candidates) > 1
 
 
-def _not_ready_passes_over(number, marker, pr_state_by_number, pr_head_sha_by_number, passed_over):
-    """_not_ready_holds() at a selection site, recording the reason in
-    `passed_over` ({issue: reason}) when the item is held -- FR-011's
-    record of why, made where the decision is, never recomputed."""
-    reason = not_ready_hold_reason(marker, pr_state_by_number, pr_head_sha_by_number)
-    if reason is not None and passed_over is not None:
-        passed_over.setdefault(number, reason)
-    return reason is not None
-
-
-def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number):
+def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number,
+                     number=None, passed_over=None):
     """specs/093-not-ready-board-release FR-001/FR-003/FR-004(b)/FR-005/
     FR-011. True (held) when `marker` carries a parsable not-ready record
     (not_ready_record()) whose class is "durable" AND the PR's current
@@ -465,7 +466,12 @@ def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number):
     step-resolution logic decides review vs. readiness, never this
     predicate). Mirrors _awaiting_merge_holds()/_unowned_open_pr_holds()'s
     existing shape beside it (contracts/not-ready-hold.md)."""
-    return not_ready_hold_reason(marker, pr_state_by_number, pr_head_sha_by_number) is not None
+    reason = not_ready_hold_reason(marker, pr_state_by_number, pr_head_sha_by_number)
+    # FR-011: a selection site passes `passed_over` ({issue: reason}) so the
+    # run records why, where the decision is made -- never recomputed.
+    if reason is not None and passed_over is not None:
+        passed_over.setdefault(number, reason)
+    return reason is not None
 
 
 def not_ready_hold_reason(marker, pr_state_by_number, pr_head_sha_by_number):
@@ -624,8 +630,8 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
             continue
         if pair is not None and _merged_fix_holds(pair[1], pr_state_by_number):
             continue
-        if pair is not None and _not_ready_passes_over(
-                number, pair[1], pr_state_by_number, pr_head_sha_by_number, passed_over):
+        if pair is not None and _not_ready_holds(
+                pair[1], pr_state_by_number, pr_head_sha_by_number, number, passed_over):
             continue
         labeled_events = labeled_events_by_issue.get(number, [])
         if classify_issue(issue, labeled_events) != "ineligible":

@@ -892,7 +892,7 @@ def _exec_heredoc(code, env, scripts_root):
 
 def _resume_env(step, marker_pr, pr_from_marker, pr_state, pr_number,
                 from_fallback=False, branch="fix/396-board-item", round_="2", base_sha="abc1234",
-                pr_owned=True, marker_extra=None, pr_head_sha=""):
+                pr_owned=True, marker_extra=None, pr_head_sha="", nr_count=""):
     marker = {"step": step} if step else None
     if marker is not None and marker_extra:
         marker.update(marker_extra)
@@ -902,7 +902,7 @@ def _resume_env(step, marker_pr, pr_from_marker, pr_state, pr_number,
         "PR_FROM_MARKER": "true" if pr_from_marker else "false",
         "PR_FROM_FALLBACK": "true" if from_fallback else "false",
         "PR_STATE": pr_state, "PR_NUMBER": pr_number, "PR_HEAD_SHA": pr_head_sha,
-        "MARKER_ROUND": round_, "MARKER_BASE_SHA": base_sha,
+        "MARKER_ROUND": round_, "MARKER_BASE_SHA": base_sha, "MARKER_NR_COUNT": nr_count,
         "PR_OWNED": "true" if pr_owned else "false", "ISSUE_NUMBER": "396",
         # spec 100 FR-006b: clause 2b reads COMMENTS_PATH unconditionally
         # once pr_from_fallback fires (board_item_marker.
@@ -1021,6 +1021,20 @@ RESUME_CASES = [
      _resume_env("stalled", "42", True, "CLOSED", "42", branch="",
                  marker_extra={"pr": 42, "nr_head_sha": "deadbeef"}, pr_head_sha="deadbeef"),
      {"step": "triage", "pr_number": ""}),
+    # FR-004(a) counts outcomes on the same PR (code review of #1010): a
+    # count earned on PR 42 does not follow the item to fallback PR 50, nor
+    # into a fix that cuts a new PR; on the same PR it carries.
+    ("readiness marker nr_count 2 on PR 42, fallback recovers PR 50 -> count reset",
+     _resume_env("readiness", "42", False, "OPEN", "50", from_fallback=True,
+                 marker_extra={"pr": 42}, nr_count="2"),
+     {"pr_number": "50", "nr_count": "0"}),
+    ("readiness marker nr_count 2 on PR 42, fallback recovers PR 42 -> count carried",
+     _resume_env("readiness", "42", False, "OPEN", "42", from_fallback=True,
+                 marker_extra={"pr": 42}, nr_count="2"),
+     {"pr_number": "42", "nr_count": "2"}),
+    ("review marker nr_count 2, branch but no PR -> fix, count reset",
+     _resume_env("review", "", False, "", "", nr_count="2"),
+     {"step": "fix", "nr_count": "0"}),
     # FR-015: a stalled marker from any other stall site keeps pr: null and
     # is unaffected -- still resolved by the generic board:owned fallback
     # clause, never triage.
@@ -2002,6 +2016,11 @@ def not_ready_report_findings(doc):
         findings.append("readiness: the handover decision is not board_eligibility.not_ready_handover_due()'s, "
                         "or an unanswered call is not refused -- the handover would be silently skipped "
                         "(specs/093 FR-003/FR-004(a))")
+    directed = re.search(r'if \[ -n "\$DIRECTED_STAGE" \]; then\n(.*?)\n\s*fi\n', run, re.S)
+    if (not directed or "exit 0" not in directed.group(1) or "--nr-count" in directed.group(1)
+            or run.index("$DIRECTED_STAGE") > run.index("not_ready_handover_due(")):
+        findings.append("readiness: a directed proof run's not-ready outcome writes a record or reaches the "
+                        "handover -- it selects no board item (code review of #1010)")
     if not any("--step readiness" in ln and "--nr-reason" in ln for ln in lines):
         findings.append("readiness: the not-ready record no longer carries --nr-reason, the unmet "
                         "condition FR-002 requires (and FR-009's dedup reads)")
@@ -2292,7 +2311,7 @@ def _mutations(text):
         '--nr-count "$new_count" ', "")
     # Code review of #1010.
     sub("not-ready dedup ignores the unmet condition (nr_reason)",
-        '\n                      and marker.get("nr_reason") == os.environ["UNMET"]', "")
+        'os.environ["HEAD_SHA"], os.environ["UNMET"])', 'os.environ["HEAD_SHA"], None)')
     sub("not-ready handover decision left unguarded",
         "*) echo \"::error::board-loop readiness (not ready): board_eligibility.not_ready_handover_due() gave no answer",
         "XX) echo \"::error::board-loop readiness (not ready): board_eligibility.not_ready_handover_due() gave no answer")
@@ -2304,6 +2323,8 @@ def _mutations(text):
         after="\n  review-fixup-publish:\n")
     sub("directed readiness nr-count restarts at 0",
         "steps.resolve-directed-pr.outputs.nr-count || 0 }}", "0 }}", after="\n  readiness:\n")
+    sub("directed not-ready run writes the record",
+        'if [ -n "$DIRECTED_STAGE" ]; then', 'if false; then')
     sub("not-ready comment post left unchecked",
         '--body "$body" \\\n                    || { echo "::error::board-loop readiness (not ready): the not-ready comment could not be posted',
         '--body "$body"\n                    true || { echo "::error::board-loop readiness (not ready): the not-ready comment could not be posted')

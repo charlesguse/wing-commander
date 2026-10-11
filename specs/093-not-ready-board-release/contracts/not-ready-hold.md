@@ -128,8 +128,11 @@ The resume step's clauses for this feature are canonical in
 a head unmoved since the last converged review, else review with the round
 advanced by one) and 0.5b (a readiness marker with a not-ready record of
 either class whose head moved: review, round + 1). A handover whose PR was
-merged or closed since falls to a fresh triage. See that file; this one
-does not restate it.
+merged or closed since falls to a fresh triage. The round a re-admission
+resumes at is `board_eligibility.readmission_round()`. The not-ready count
+belongs to one PR: resume carries it only while the item stays on the PR
+the marker names (a fallback-recovered other PR, or a fix that cuts a new
+one, starts it at 0). See that file; this one does not restate it.
 
 The PR lookup above covers a handover marker's PR too
 (`board_eligibility.marker_names_live_pr()`), so a PR a human took over
@@ -188,6 +191,9 @@ extended decision (research.md D2), and:
      (research.md D8); otherwise post a new comment as today. The count
      and round reach this step on every path: from select, from review,
      or, on a directed run, from the marker the directed run itself reads.
+     A directed proof run (`directed-stage`) selects no board item: its
+     not-ready outcome is reported, as before this feature, with no record,
+     no count and no handover.
      The comment says what happens next: a durable outcome is held until
      the PR's head moves (a push re-admits it at review), a self-clearing
      one is picked up again on a later run.
