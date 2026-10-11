@@ -93,7 +93,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import board_item_marker  # noqa: E402
 from board_eligibility import (  # noqa: E402
-    AWAITING_MERGE_STEP, FIX_OR_LATER_STEPS, classify_issue, in_flight_candidate, select)
+    AWAITING_MERGE_STEP, FIX_OR_LATER_STEPS, NOT_READY_THRESHOLD, classify_issue,
+    in_flight_candidate, not_ready_handover_due, select)
 
 BOT_LOGIN = "wing-commander-bot[bot]"
 
@@ -156,6 +157,29 @@ IN_FLIGHT_CASES = {
     # failure. Not selected even with a pre-fix marker on it; the newer
     # pipeline-defect is.
     "auto-release-failure-not-selected",
+    "not-ready-durable-unmoved-held",
+    "not-ready-durable-moved-admitted",
+    "not-ready-self-clearing-not-held",
+    "not-ready-head-unresolvable",
+    "not-ready-two-held-one-eligible",
+    # FR-011: a readiness marker naming an nr_class whose record does not
+    # parse (nr_count "one", no nr_head_sha) is passed over, not admitted,
+    # even with the PR's head resolvable.
+    "not-ready-record-unparsable-held",
+    # Code review of #1010: a durable record on a PR closed since is not a
+    # hold -- the item falls through to resume's fresh triage, as before.
+    "not-ready-durable-pr-closed-not-held",
+    # specs/093 D7 (code review of #1010): a not-ready handover whose PR a
+    # human took over (board:owned removed, board:stalled removed) is held
+    # as an unowned open PR, not re-selected every run; and the FR-011
+    # not-ready report does not claim it.
+    "not-ready-handover-pr-taken-over-held",
+    # FR-011's report names only items the hold passed over: an issue
+    # excluded for its own reason (here board:stalled) is not listed.
+    "not-ready-durable-excluded-not-reported",
+    # A PR that 404s (no state from select's lookup) can never close or
+    # move: not held, so resume triages it as before (code review of #1010).
+    "not-ready-pr-gone-not-held",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)
@@ -202,6 +226,7 @@ def run_in_flight_cases():
         open_issues_path = os.path.join(case_dir, "open_issues.json")
         comments_path = os.path.join(case_dir, "comments_by_issue.json")
         pr_state_path = os.path.join(case_dir, "pr_state_by_number.json")
+        pr_head_sha_path = os.path.join(case_dir, "pr_head_sha_by_number.json")
         expected_path = os.path.join(case_dir, "expected.json")
         if not all(os.path.isfile(p) for p in
                    (open_issues_path, comments_path, pr_state_path, expected_path)):
@@ -220,6 +245,13 @@ def run_in_flight_cases():
             int(number): state
             for number, state in _load(pr_state_path).items()
         }
+        # specs/093-not-ready-board-release D4: optional -- absent means no
+        # case in this fixture set needs a PR head SHA (every case that
+        # predates this feature).
+        pr_head_sha_by_number = {
+            int(number): head_sha
+            for number, head_sha in (_load(pr_head_sha_path) if os.path.isfile(pr_head_sha_path) else {}).items()
+        }
         # spec 108 (contracts/eligibility-and-readmission-delta.md): optional
         # per case, like main()'s own tolerant-default stdin key -- most
         # cases carry no disposition:duplicate issue at all and need none.
@@ -232,7 +264,7 @@ def run_in_flight_cases():
 
         issue_number, multiple_found = in_flight_candidate(
             open_issues, comments_by_issue, pr_state_by_number, BOT_LOGIN,
-            spec_request_state_by_number)
+            spec_request_state_by_number, pr_head_sha_by_number)
         got = {"issue_number": issue_number, "multiple_found": multiple_found}
         expected_in_flight = {
             "issue_number": expected.get("issue_number"),
@@ -259,7 +291,7 @@ def run_in_flight_cases():
             }
             selected = select(open_issues, labeled_events_by_issue,
                                comments_by_issue, pr_state_by_number, BOT_LOGIN,
-                               spec_request_state_by_number)
+                               spec_request_state_by_number, pr_head_sha_by_number)
             expected_selected = expected["select_issue_number"]
             if selected != expected_selected:
                 failures += 1
@@ -269,6 +301,30 @@ def run_in_flight_cases():
             else:
                 print("[ok] in-flight/{0}: select() == {1!r} (oldest-first "
                       "fallback)".format(case, selected))
+
+        # specs/093-not-ready-board-release FR-011: main() records which
+        # items a not-ready hold passed over, and why.
+        if "not_ready_held" in expected:
+            script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "board_eligibility.py")
+            payload = {"open_issues": open_issues, "labeled_events_by_issue": {},
+                       "comments_by_issue": {str(k): v for k, v in comments_by_issue.items()},
+                       "pr_state_by_number": {str(k): v for k, v in pr_state_by_number.items()},
+                       "pr_head_sha_by_number": {str(k): v for k, v in pr_head_sha_by_number.items()},
+                       "bot_login": BOT_LOGIN}
+            proc = subprocess.run([sys.executable, script], input=json.dumps(payload),
+                                  text=True, capture_output=True)
+            try:
+                held = [h["issue"] for h in json.loads(proc.stderr).get("not_ready_held", [])
+                        if h.get("reason")]
+            except (ValueError, AttributeError, KeyError, TypeError):
+                held = None
+            if held != expected["not_ready_held"]:
+                failures += 1
+                print("::error::verify-board-eligibility: in-flight/{0}: main() not_ready_held "
+                      "expected {1!r}, got {2!r} (stderr {3!r}).".format(
+                          case, expected["not_ready_held"], held, proc.stderr[-300:]))
+            else:
+                print("[ok] in-flight/{0}: main() records not_ready_held == {1!r}".format(case, held))
     return failures
 
 
@@ -409,6 +465,19 @@ def run():
               "eligible again (#532).")
     else:
         print("[ok] AWAITING_MERGE_STEP is in FIX_OR_LATER_STEPS (select looks up its PR)")
+
+    # specs/093-not-ready-board-release FR-004(a)/FR-013: the handover
+    # threshold is spec 093's stated value (3 not-ready outcomes per PR);
+    # the workflow asks not_ready_handover_due(), so a drifted value
+    # would silently move when a human is reached.
+    if (NOT_READY_THRESHOLD != 3 or not_ready_handover_due(2)
+            or not not_ready_handover_due(3)):
+        failures += 1
+        print("::error::verify-board-eligibility: NOT_READY_THRESHOLD is {0}, or "
+              "not_ready_handover_due() disagrees with it -- spec 093 FR-004(a) "
+              "hands a PR over on its 3rd not-ready outcome.".format(NOT_READY_THRESHOLD))
+    else:
+        print("[ok] NOT_READY_THRESHOLD == 3 and not_ready_handover_due() agrees")
 
     failures += author_mutation_check()
     failures += marker_rule_mutation_check()

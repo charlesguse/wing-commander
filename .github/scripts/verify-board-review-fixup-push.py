@@ -117,7 +117,10 @@ def run(steps, touched, can_push="false", refuse=False):
                "GH_TOKEN": "x", "GITHUB_REPOSITORY": "o/r", "STUB_LOG": log,
                "ISSUE_NUMBER": "7", "PR_NUMBER": "70", "BRANCH": BRANCH,
                "CURRENT_ROUND": "1", "REVIEWED_SHA": reviewed,
-               "CAN_PUSH_WORKFLOWS": can_push}
+               "CAN_PUSH_WORKFLOWS": can_push,
+               # The advance step's env: block always defines NR_COUNT
+               # (specs/093-not-ready-board-release); empty is "no record".
+               "NR_COUNT": ""}
         rc, output, outputs, summary = run_step(BASH, hold, work, env, runner_temp)
         push_outcome = "skipped"
         if rc == 0 and outputs.get("held") == "false":

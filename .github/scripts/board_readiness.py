@@ -22,6 +22,9 @@ CONDITIONS = ("checks_green", "gate_suite_green", "zero_open_findings",
               "backstop_holds", "kill_switch_clear")
 
 
+GREEN_STATES = ("SUCCESS", "NEUTRAL", "SKIPPED")
+
+
 def _checks_green(rollup):
     """FR-036/FR-037: an empty rollup is not green (a docs-only PR with no
     triggered checks is never reported ready), and every entry must have
@@ -36,11 +39,7 @@ def _checks_green(rollup):
     catch it."""
     if not rollup:
         return False
-    for entry in rollup:
-        state = (entry.get("state") or entry.get("conclusion") or "").upper()
-        if state not in ("SUCCESS", "NEUTRAL", "SKIPPED"):
-            return False
-    return True
+    return all(_entry_state(entry) in GREEN_STATES for entry in rollup)
 
 
 def _gate_suite_green(rollup):
@@ -55,9 +54,46 @@ def _gate_suite_green(rollup):
         name = entry.get("name") or entry.get("context") or ""
         workflow_name = (entry.get("workflowName") or "").lower()
         if name == "lint" and "workflow" in workflow_name:
-            state = (entry.get("state") or entry.get("conclusion") or "").upper()
-            return state in ("SUCCESS", "NEUTRAL", "SKIPPED")
+            return _entry_state(entry) in GREEN_STATES
     return False
+
+
+# A legacy StatusContext carries `state` (PENDING/EXPECTED); an Actions
+# CheckRun that has not concluded carries `status` (QUEUED/IN_PROGRESS/
+# WAITING/REQUESTED/PENDING) with an empty `conclusion` and no `state`.
+NOT_CONCLUDED_STATES = ("QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "PENDING", "EXPECTED")
+
+
+def _entry_state(entry):
+    """A rollup entry's state: a concluded CheckRun's `conclusion`, a
+    StatusContext's `state`, else a not-yet-concluded CheckRun's `status`."""
+    return (entry.get("state") or entry.get("conclusion") or entry.get("status") or "").upper()
+
+
+def _unmet_class(rollup, checks_green):
+    """specs/093-not-ready-board-release contracts/not-ready-hold.md,
+    research.md D2: "self-clearing" when every rollup entry is either
+    green (SUCCESS/NEUTRAL/SKIPPED) or not yet concluded, and at least one
+    is not yet concluded (checks_green false because something has not
+    finished, not because anything failed) -- "durable"
+    otherwise (a terminal failing check state, an empty rollup, or an
+    unmet reason that is not about checks_green at all: gate_suite_green,
+    zero_open_findings, backstop_holds, kill_switch_clear). FR-005: derived
+    only from the rollup's own per-entry states, never from an agent's
+    reading of them. The class of the checks alone: evaluate_from_snapshot()
+    makes the record durable whenever a non-check condition (open findings,
+    a breached backstop, the kill switch) is also unmet. (A paused loop
+    writes no record at all -- FR-006 is the workflow's kill-switch gating,
+    research.md D9.)"""
+    if checks_green:
+        return "durable"
+    if not rollup:
+        return "durable"
+    for entry in rollup:
+        state = _entry_state(entry)
+        if state not in GREEN_STATES and state not in NOT_CONCLUDED_STATES:
+            return "durable"
+    return "self-clearing"
 
 
 def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
@@ -66,7 +102,8 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
     "conclusion": str, "name"|"context": str, "workflowName": str}, ...]}
     -- the `gh pr view --json headRefOid,statusCheckRollup` shape, fetched
     fresh by the caller. Returns the ReadinessDecision dict
-    (data-model.md)."""
+    (data-model.md), now including "unmet_class" (specs/093-not-ready-board-release):
+    "self-clearing" | "durable" | None (when ready)."""
     head_sha = snapshot.get("headRefOid")
     rollup = snapshot.get("statusCheckRollup") or []
 
@@ -79,12 +116,33 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
              and backstop_holds and kill_switch_clear)
 
     unmet_reason = None
+    unmet_class = None
     if not ready:
+        # Open findings, a breached backstop or the kill switch stay unmet
+        # when the checks finish, so they are durable whatever the rollup
+        # says.
+        # The checks' own class, then the record's: the reason text below
+        # reads the first, the record carries the second.
+        checks_class = _unmet_class(rollup, checks_green)
+        other_unmet = not (zero_open_findings and backstop_holds and kill_switch_clear)
+        unmet_class = "durable" if other_unmet else checks_class
         if not checks_green:
             if not rollup:
                 unmet_reason = "no checks reported on head_sha {0}".format(head_sha)
+            elif checks_class == "self-clearing":
+                # Only running checks: say so, so FR-009's nr_reason tells a
+                # pending outcome from a failed one on the same head.
+                unmet_reason = "checks still running on head_sha {0}".format(head_sha)
             else:
                 unmet_reason = "checks not green on head_sha {0} (stale or failing)".format(head_sha)
+            # A condition no later run clears on its own is named too, so a
+            # durable record never blames only a check that is still running.
+            if not zero_open_findings:
+                unmet_reason += "; {0} open in-scope finding(s)".format(open_in_scope_findings)
+            if not backstop_holds:
+                unmet_reason += "; the size-and-path backstop does not hold on the final diff"
+            if not kill_switch_clear:
+                unmet_reason += "; the kill switch is set"
         elif not gate_suite_green:
             unmet_reason = "the lint-workflows check is not green on head_sha {0}".format(head_sha)
         elif not zero_open_findings:
@@ -102,6 +160,7 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
         "backstop_holds": backstop_holds,
         "ready": ready,
         "unmet_reason": unmet_reason,
+        "unmet_class": unmet_class,
     }
 
 
