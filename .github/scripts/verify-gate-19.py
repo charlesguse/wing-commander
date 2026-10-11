@@ -2124,11 +2124,10 @@ def write_stepsum_fixtures(fixture_dir, jobs, logs):
 
 # Attribution invariant (spec 024 FR-026), applied per-job like annotations:
 # a job that itself never ran owes no step-summary sentinel, even if sibling
-# jobs in the same run did. The skipped/cancelled sibling's log fixture is
-# deliberately OMITTED (rather than seeded and asserted absent) so that, if
-# the per-job guard is ever removed, fetching it fails on "no fixture" and
-# flips this collector's own outcome to "failed" — a second, independent
-# tripwire alongside the missing sentinel itself.
+# jobs in the same run did. The fetch helper never reads a skipped or
+# cancelled job's log, so each scenario plants one for the sibling straight
+# into the collector's log directory (`planted`), carrying a sentinel: only
+# the collector's own per-job guard keeps it out of the signals.
 STEPSUM_SCENARIOS = [
     dict(
         name="a sibling job is skipped: its log is never fetched, only the "
@@ -2136,6 +2135,7 @@ STEPSUM_SCENARIOS = [
         jobs=[job(1, "build", conclusion="success"),
               job(2, "cleanup", conclusion="skipped")],
         logs={1: "2026-08-24T00:00:00.0000000Z WC-SENTINEL: stalled - job build stalled\n"},
+        planted={2: "2026-08-24T00:00:00.0000000Z WC-SENTINEL: stalled - job cleanup\n"},
         expect=[("build", "stalled")],
         expect_outcome="ok",
     ),
@@ -2144,6 +2144,7 @@ STEPSUM_SCENARIOS = [
         jobs=[job(1, "build", conclusion="success"),
               job(2, "cleanup", conclusion="cancelled")],
         logs={1: "2026-08-24T00:00:00.0000000Z WC-SENTINEL: stalled - job build stalled\n"},
+        planted={2: "2026-08-24T00:00:00.0000000Z WC-SENTINEL: stalled - job cleanup\n"},
         expect=[("build", "stalled")],
         expect_outcome="ok",
     ),
@@ -2182,7 +2183,11 @@ def run_stepsum_one(script, env, sc, tmproot):
              OUT_DIR=os.path.join(runner_temp, "cs-job-logs"),
              GITHUB_REPOSITORY="charlesguse/wing-commander"),
         runner_temp)
-    run_env["FETCH_RESULT"] = fetch_outputs.get("result", "failed")
+    run_env["FETCH_RESULT"] = fetch_outputs.get("result", "")   # as Actions passes it
+    for job_id, text in (sc.get("planted") or {}).items():
+        with open(os.path.join(runner_temp, "cs-job-logs", f"{job_id}.log"), "w",
+                  encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
 
     rc, out, _, _ = run_step(BASH, script, workdir, run_env, runner_temp)
     with open(os.path.join(runner_temp, "signals.json"), encoding="utf-8") as fh:

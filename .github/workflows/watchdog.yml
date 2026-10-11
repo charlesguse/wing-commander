@@ -1227,7 +1227,8 @@ jobs:
       # job's logs in the inspected run (the Actions API has no dedicated
       # step-summary-content endpoint; job logs are the closest retrievable
       # surface, and every step that writes a step-summary sentinel also logs
-      # around it). A job whose log cannot be fetched is skipped, not failed.
+      # around it). A job whose log cannot be fetched yields no signal, and
+      # the collector's outcome is then recorded failed.
       - name: "Collect: fetch job logs"
         id: cs-fetch
         continue-on-error: true
@@ -1270,12 +1271,15 @@ jobs:
           # collector never actually found a sentinel. The fetch itself
           # (token, direct-pipeline capture, the one bounded retry for logs
           # that lag the jobs API) lives in the shared helper, which diagnose's
-          # `Stage failed-job logs` step also calls; it prints `ok` or
-          # `failed` on its last line and always returns 0, so a failed
-          # read is recorded below rather than aborting this step.
+          # `Stage failed-job logs` step also calls; it sets its `result`
+          # output to `ok` or `failed` (a helper step that dies sets none,
+          # read here as `failed`), so a failed read is recorded below
+          # rather than aborting this step.
           cs_dir="$RUNNER_TEMP/cs-job-logs"
           fetch_out="${FETCH_RESULT:-failed}"
-          jobs_json="$(cat "$cs_dir/jobs.json" 2>/dev/null)"
+          # Under the runner's `bash -e` a failed read must reassign, or the
+          # step dies before it records its outcome.
+          jobs_json="$(cat "$cs_dir/jobs.json" 2>/dev/null)" || jobs_json=""
           [ -n "$jobs_json" ] || jobs_json='[]'
           so_failed=0
           [ "$fetch_out" = "ok" ] || so_failed=1
@@ -1290,7 +1294,7 @@ jobs:
               skipped|cancelled) continue ;;
             esac
             # No log file means the helper's read failed or came back empty.
-            log="$(cat "$cs_dir/$job_id.log" 2>/dev/null)"
+            log="$(cat "$cs_dir/$job_id.log" 2>/dev/null)" || log=""
             [ -n "$log" ] || continue
             # Match RUNTIME OUTPUT only. Actions echoes every step's own
             # script source and env/with blocks into the log between
@@ -2487,15 +2491,27 @@ jobs:
           fetch_out="${FETCH_RESULT:-failed}"
           outcome="ok"
           reason=""
+          # A helper that failed without naming a log-read failure (it died,
+          # setting no result, or could not write its reason) left an
+          # incomplete gather; a more specific reason below replaces this one.
+          fetch_reason="$(cat "$fetch_dir/reason.txt" 2>/dev/null)" || fetch_reason=""
+          [ "$fetch_out" = "ok" ] || [ "$fetch_reason" = "log-read" ] || { outcome="failed"; reason="fetch-incomplete"; }
           jobs_arr='[]'
-          if [ "$fetch_out" != "ok" ] && [ "$(cat "$fetch_dir/reason.txt" 2>/dev/null)" = "jobs-list" ]; then
+          if [ "$fetch_out" != "ok" ] && [ "$fetch_reason" = "jobs-list" ]; then
             outcome="failed"
             reason="jobs-list"
           elif [ ! -s "$fetch_dir/jobs.json" ]; then
             outcome="failed"
             reason="jobs-list"
+          # The helper moves a complete listing into place, or writes `[]`
+          # and reason `jobs-list` on failure. This step still refuses to
+          # read as "no failed jobs" a file that is not an array of objects
+          # (FR-019): it does not assume who wrote the file.
+          elif ! failed_ids="$(jq -r 'if type == "array" then .[] else error("not a job list") end | if type == "object" then . else error("not a job") end | select(.conclusion == "failure") | .id' "$fetch_dir/jobs.json" 2>/dev/null)"; then
+            outcome="failed"
+            reason="jobs-unreadable"
           else
-            for job_id in $(jq -r '.[] | select(.conclusion == "failure") | .id' "$fetch_dir/jobs.json"); do
+            for job_id in $failed_ids; do
               job_name="$(jq -r --arg id "$job_id" '.[] | select((.id|tostring) == $id) | .name' "$fetch_dir/jobs.json")"
               file=""
               if [ -s "$fetch_dir/$job_id.log" ] && cp "$fetch_dir/$job_id.log" "$log_dir/$job_id.log"; then
