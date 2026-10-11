@@ -242,7 +242,8 @@ def check_workflow(path):
             rest = re.sub(r"\$\(oneline [\w.-]+-error\.log\)", "", l)
             # Writing an error log (any fd redirect or tee, quoted or under a
             # directory) is not reading it.
-            rest = re.sub(r"(\d?>>?|&>>?|\btee(\s+-a)?)\s*\"?[^\s\")|;]*-error\.log\"?", "", rest)
+            rest = re.sub(r"(\d?>[>|]?|&>>?|\btee((\s+-[a-z]+|\s+--append)*\s+[\w./-]+)*?\s)\s*"
+                          r"\"?(\$\{?\w+\}?/)?[\w./-]*-error\.log\"?", "", rest)
             if (re.search(r"\$\((cat|tr|head|tail|sed|jq)\b[^)]*-error\.log|\$\(<\s*[\w.-]+-error\.log", rest)
                     or (re.search(r"::(warning|error|notice)::", rest) and "-error.log" in rest)):
                 raw.append(l.strip())
@@ -663,12 +664,23 @@ def self_test():
                         "listed=true\n"
                         "names=$(jq -r '.jobs[].name' run-jobs.json 2>names-error.log) || names=\"\"\n"
                         "n2=$(jq -r '.jobs[].name' run-jobs.json 2>\"$RUNNER_TEMP/n2-error.log\") || n2=\"\"\n"
-                        "n3=$(jq -r '.jobs[].name' run-jobs.json 2>&1 | tee n3-error.log) || n3=\"\"\n"), 1)
+                        "n3=$(jq -r '.jobs[].name' run-jobs.json 2>&1 | tee n3-error.log) || n3=\"\"\n"
+                        "n4=$(jq -r '.jobs[].name' run-jobs.json 2>&1 | tee -a n4-error.log) || n4=\"\"\n"
+                        "n5=$(jq -r '.jobs[].name' run-jobs.json &>>n5-error.log) || n5=\"\"\n"
+                        "n6=$(jq -r '.jobs[].name' run-jobs.json 2>|n6-error.log) || n6=\"\"\n"), 1)
                     return
-            raise AssertionError("writes_error_logs: no listed=true anchor in classify-startup")
+            failures.append("writes_error_logs: no listed=true anchor in classify-startup")
 
-        expect_clean("stderr written to error logs (bare, quoted path, tee)", mutated(writes_error_logs),
-                     "oneline helper")
+        expect_clean("stderr written to error logs (bare, quoted path, tee, tee -a, &>>, >|)",
+                     mutated(writes_error_logs), "oneline helper")
+
+        def read_after_arrow(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
+                    s["run"] = s["run"].replace("jobs -- $(oneline job-lookup-error.log)", "jobs ->$(<job-lookup-error.log)", 1)
+                    s["run"] = s["run"].replace("$(oneline job-log-error.log)", "$(tee <job-log-error.log)", 1)
+
+        expect("raw read right after a '>' or as tee's input", mutated(read_after_arrow), "oneline helper")
         expect("helper redefined without escaping", mutated(helper_redefined), "oneline helper")
         expect("error log read raw into a variable", mutated(raw_via_variable), "oneline helper")
         expect("prereq result not reported", mutated(drop_prereq_report),
