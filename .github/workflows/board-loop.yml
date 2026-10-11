@@ -5080,27 +5080,21 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
             --jq '.[] | {created_at, body, user}' | jq -s '.' > "$RUNNER_TEMP/board-directed-issue-comments.json"
 
-          directed="$(COMMENTS_PATH="$RUNNER_TEMP/board-directed-issue-comments.json" python3 -I - <<'PYEOF'
+          pr="$(COMMENTS_PATH="$RUNNER_TEMP/board-directed-issue-comments.json" python3 -I - <<'PYEOF'
           import json
           import os
           import sys
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
-          from board_item_marker import directed_carry
+          from board_item_marker import read_marker
 
           with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
               comments = json.load(fh)
-          # specs/093-not-ready-board-release: board_item_marker.directed_carry()
-          # gives a directed review the marker's not-ready count, as select
-          # does for an ordinary run (a directed review still starts at
-          # round 0; a directed readiness run writes no not-ready record).
-          print(json.dumps(directed_carry(comments, os.environ["BOT_LOGIN"])))
+          marker = read_marker(comments, os.environ["BOT_LOGIN"])
+          print((marker or {}).get("pr") or "")
           PYEOF
           )"
-          {
-            echo "pr=$(printf '%s' "$directed" | jq -r '.pr')"
-            echo "nr-count=$(printf '%s' "$directed" | jq -r '.nr_count')"
-          } >> "$GITHUB_OUTPUT"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
 
       - name: Resolve the PR under readiness
         id: pr
@@ -5552,7 +5546,11 @@ jobs:
                                                  os.environ["HEAD_SHA"], os.environ["UNMET"])
           print(comment_id if comment_id is not None else "")
           PYEOF
-          )"
+          )" || {
+                  # A failed match is named, not silently a duplicate post.
+                  echo "::warning::board-loop readiness (not ready): the FR-009 dedup match failed on issue #$ISSUE_NUMBER -- posting a new comment."
+                  same_comment_id=""
+                }
                 if [ -n "$same_comment_id" ]; then
                   # Edited by the next step: Gate 93 keeps REST calls out of
                   # this spec-request site.

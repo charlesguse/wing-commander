@@ -487,6 +487,11 @@ def not_ready_hold_reason(marker, pr_state_by_number, pr_head_sha_by_number):
         pr = None
     if pr is not None and (pr_state_by_number or {}).get(pr) in ("CLOSED", "MERGED"):
         return None
+    # select's lookup leaves no state only for a PR that 404s (any other
+    # failure stops the run): a PR that no longer exists can never close
+    # or move, so holding it would be forever. Resume triages it, as before.
+    if pr is not None and pr_state_by_number is not None and pr not in pr_state_by_number:
+        return None
     record = not_ready_record(marker)
     if record is None:
         # FR-011: a readiness marker that names a not-ready class but whose

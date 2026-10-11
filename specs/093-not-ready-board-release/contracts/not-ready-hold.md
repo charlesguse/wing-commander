@@ -19,7 +19,10 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
     """... (unchanged conditions) ...
     Adds "unmet_class" to the returned dict: "self-clearing" when every
     rollup entry blocking checks_green is in a not-yet-concluded state
-    (QUEUED, IN_PROGRESS, PENDING, EXPECTED), "durable" for any other
+    (QUEUED, IN_PROGRESS, WAITING, REQUESTED, PENDING, EXPECTED -- a
+    CheckRun's `status` when it has no `conclusion` yet), or every check
+    is green and only the lint-workflows CheckRun has not registered yet;
+    "durable" for any other
     unmet reason (a terminal failing check state, an empty rollup, an
     open finding, a backstop breach, or the kill switch), and null when
     ready. FR-005: derived only from the rollup's own per-entry states,
@@ -54,7 +57,9 @@ def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number,
     un-held -- resume's step resolution decides review vs. readiness, not
     this predicate). Also True for a readiness marker that names an
     nr_class but whose record does not parse (FR-011: passed over, never
-    admitted). Never True for a PR known CLOSED or MERGED."""
+    admitted). Never True for a PR known CLOSED or MERGED, or absent from
+    a supplied pr_state_by_number (select's lookup 404'd: it can never
+    close or move)."""
 
 def not_ready_head_moved(marker, pr_head_sha):
     """FR-007/SC-010. True when marker carries a not-ready record of either
@@ -205,7 +210,8 @@ extended decision (research.md D2), and:
 
 `select` names every item a not-ready hold passed over, and why, in its
 step summary, from `board_eligibility.py`'s own `not_ready_held` output
-(FR-011). A PR known to be CLOSED or MERGED is never held; resume routes it
+(FR-011). A PR known to be CLOSED or MERGED, or one select's lookup found
+gone (404, no state), is never held; resume routes it
 (a fresh triage, for a merged handover too: nothing in the job graph
 consumes a bare prove resolution, `_merged_fix_holds()`, #532).
 

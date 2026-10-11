@@ -177,6 +177,9 @@ IN_FLIGHT_CASES = {
     # FR-011's report names only items the hold passed over: an issue
     # excluded for its own reason (here board:stalled) is not listed.
     "not-ready-durable-excluded-not-reported",
+    # A PR that 404s (no state from select's lookup) can never close or
+    # move: not held, so resume triages it as before (code review of #1010).
+    "not-ready-pr-gone-not-held",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)

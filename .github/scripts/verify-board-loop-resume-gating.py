@@ -2114,6 +2114,8 @@ def not_ready_dedup_findings(doc, scripts_root=ROOT):
     if code is None:
         return ["readiness: no `same_comment_id` dedup heredoc in the not-ready report (specs/093 FR-009)"]
     findings = []
+    if "the FR-009 dedup match failed" not in run:
+        findings.append("readiness: a failed FR-009 dedup match is not named (it silently posts a duplicate)")
     if "--edit-last" in run:
         findings.append("readiness: the not-ready dedup edits with --edit-last, not by the matched comment's id")
     if not any(isinstance(s, dict) and "dedup-comment-id" in str(s.get("if", ""))
