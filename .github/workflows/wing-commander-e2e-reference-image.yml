@@ -309,11 +309,14 @@ jobs:
           #      digest, or never wrote one, so writing this older digest
           #      could roll the pins back; this run fails, writes nothing,
           #      and names that run to re-run;
-          #    - its sync has not run yet: it queues after this one and will
-          #      write its newer digest over this run's, so it does not stop
-          #      this write, and its older attempts are not read.
-          #    Any list or view that fails, or a row that does not parse,
-          #    writes nothing.
+          #    - its sync has not run yet, or that attempt's check has not
+          #      finished: it will decide after this run and write last, so
+          #      it does not stop this write; its older attempts can then
+          #      only supersede (an older attempt's finished sync), and no
+          #      lower-numbered run is read at all.
+          #    An attempt whose check failed leaves the decision to the
+          #    run's older attempts. Any list or view that fails, or a row
+          #    that does not parse, writes nothing.
           if ! runs="$(gh run list --repo "$THIS_REPO" --workflow "$WORKFLOW" --branch "$DEFAULT_BRANCH" \
             --limit 100 --json number,databaseId,attempt \
             --jq 'sort_by(.number) | reverse | .[] | "\(.number) \(.databaseId) \(.attempt)"' 2> "$ERRS")"; then
@@ -327,23 +330,31 @@ jobs:
               finish
             fi
             [ "$n" -gt "$RUN_NUMBER" ] || break
+            pending=""
             for ((a = attempts; a >= 1; a--)); do
               if ! verdicts="$(gh run view "$id" --repo "$THIS_REPO" --attempt "$a" --json jobs \
                 --jq '.jobs[] | if .name == "sync-pins" then "sync-job \(.conclusion)", ((.steps // [])[] | select(.name == "Sync the reference-image pins") | "sync \(.conclusion)") else "\(.name) \(.conclusion)" end' 2> "$ERRS")"; then
                 record_all failed "could not read run ${n}'s jobs to rule out a newer sync$(http_status)"
                 finish
               fi
-              grep -qx 'startup-check success' <<< "$verdicts" || continue
-              if grep -qx 'sync success' <<< "$verdicts"; then
+              check="$(sed -n 's/^startup-check //p' <<< "$verdicts" | head -n 1)"
+              if [ "$check" = success ] && grep -qx 'sync success' <<< "$verdicts"; then
                 record_all skipped "superseded by run ${n}"
                 finish
               fi
-              if grep -qx 'sync failure' <<< "$verdicts" || grep -qx 'sync-job cancelled' <<< "$verdicts"; then
-                record_all failed "newer run ${n} passed its check but its sync did not finish; re-run that run's sync-pins job, not this one"
-                finish
-              fi
-              break
+              [ -n "$pending" ] && continue
+              case "$check" in
+                success)
+                  if grep -qx 'sync failure' <<< "$verdicts" || grep -qx 'sync-job cancelled' <<< "$verdicts"; then
+                    record_all failed "newer run ${n} passed its check but its sync did not finish; re-run that run's sync-pins job, not this one"
+                    finish
+                  fi
+                  pending=1
+                  ;;
+                "" | null) pending=1 ;;
+              esac
             done
+            [ -n "$pending" ] && break
           done <<< "$runs"
 
           # 4. The credential must reach exactly the sync set.

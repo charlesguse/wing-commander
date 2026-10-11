@@ -147,6 +147,35 @@ CASES = {
         runs=[8], jobs={8: [run_jobs("success", "failure"), run_jobs("success", None, job=None)]},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=0, status={THIS: "written", E2E: "written"}, writes=[THIS, E2E]),
+    # A newer run whose sync is still pending writes last, so no lower run
+    # (here one whose pending sync was cancelled) is read at all.
+    "newer-pending-shadows-lower": dict(
+        runs=[8, 9], jobs={9: run_jobs("success", None, job=None),
+                           8: run_jobs("success", None, job="cancelled")},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=0, status={THIS: "written", E2E: "written"}, writes=[THIS, E2E],
+        never_viewed=[8]),
+    # A newer run re-run in full after its sync failed: attempt 2's check
+    # is still running (gh reports an empty conclusion), so attempt 1's
+    # failure no longer decides...
+    "newer-rerun-check-running": dict(
+        runs=[8], jobs={8: [run_jobs("success", "failure"), run_jobs("", None, job=None)]},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=0, status={THIS: "written", E2E: "written"}, writes=[THIS, E2E]),
+    "newer-rerun-check-null": dict(
+        runs=[8], jobs={8: [run_jobs("success", "failure"), run_jobs(None, None, job=None)]},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=0, status={THIS: "written", E2E: "written"}, writes=[THIS, E2E]),
+    # ...but an older attempt's finished sync still supersedes.
+    "newer-rerun-check-running-after-sync": dict(
+        runs=[8], jobs={8: [run_jobs("success", "success"), run_jobs("", None, job=None)]},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=0, status={THIS: "skipped", E2E: "skipped"}, writes=[], reason="run 8"),
+    # A newer attempt whose check failed leaves the decision to older ones.
+    "newer-rerun-check-failed": dict(
+        runs=[8], jobs={8: [run_jobs("success", "failure"), run_jobs("failure", None, job="skipped")]},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[], reason="newer run 8"),
     # A run-list row that does not parse fails closed.
     "run-list-malformed": dict(
         runs=[8], attempts_override={8: None},
@@ -225,7 +254,8 @@ CASES = {
 # Cases whose outcome may close the failure issue (every sync-set repository
 # written or current); every other case must leave `synced` unset.
 SYNCED = {"both-written", "all-current", "exact-reach-case-insensitive",
-          "absent-variable", "not-superseded", "hand-set-held-value", "newer-rerun-pending"}
+          "absent-variable", "not-superseded", "hand-set-held-value", "newer-rerun-pending",
+          "newer-pending-shadows-lower", "newer-rerun-check-running", "newer-rerun-check-null"}
 
 
 def run_case(name, case, tmp, bash, script):
