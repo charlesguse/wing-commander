@@ -163,3 +163,81 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
   - specs/101-read-only-gh-grants/contracts/diagnose-staged-logs.md
 
   Detail: Around line 2357 of the diff.
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: Fetch helper downloads logs for every job, not just failed ones
+
+  wing-commander-fetch-job-logs fetches every non-skipped, non-cancelled job's log, though diagnose only uses failure jobs; this wastes time, can spend the single retry on an irrelevant job, and lets an irrelevant 404 mark the whole read failed.
+
+  - .github/actions/wing-commander-fetch-job-logs/action.yml
+
+  Detail: Needs a caller-supplied job filter or conclusion list; all logs also remain readable under RUNNER_TEMP/dj-fetch.
+
+- [ ] Review finding: Empty log body now treated as failed read
+
+  The helper treats an empty log (! -s) as log-read failure, so timed_out/neutral/never-started jobs returning HTTP 200 with an empty body set result=failed and produce spurious untrusted-collector caveats.
+
+  - .github/actions/wing-commander-fetch-job-logs/action.yml
+
+  Detail: The old collector treated an rc=0 empty log as nothing to scan.
+
+- [ ] Review finding: gh-grant detector is overbroad
+
+  The detector flags any whitespace token whose basename is gh, not just the command word, so grants like Bash(ls docs/gh:*) or Bash(echo gh:*) are false positives.
+
+  - .github/scripts/verify-issue-context-single-home.py
+
+  Detail: It should match the command word after skipping env, command and VAR=x prefixes.
+
+- [ ] Review finding: Shadow gate no-gh rule only matches Bash(gh prefix
+
+  The shadow gate misses Bash(/usr/bin/gh ...), Bash(env gh ...) and Bash(GH_TOKEN=x gh ...) because it requires gh immediately after Bash(.
+
+  - .github/scripts/verify-diagnose-shadow-acts-on-nothing.py
+
+  Detail: Spec 101's total rule then rests entirely on Gate 93's detector.
+
+- [ ] Review finding: repo_files silently falls back to os.walk
+
+  When git fails (for example dubious ownership), repo_files falls back to os.walk with no report, which includes the untracked pipeline checkout the module exists to exclude.
+
+  - .github/scripts/wc_repo_files.py
+
+  Detail: This brings back the gate failures behind #808, #822 and #823.
+
+- [ ] Review finding: _glob_has_match re-lists repo on every call and changes root semantics
+
+  Each call spawns two git subprocesses with no cache, and a root that is not the repo top now yields every on-disk file instead of tracked files relative to root.
+
+  - .github/scripts/verify-stage-tool-lists.py
+
+- [ ] Review finding: verify-gate-19 runs the fetch helper without step_shell
+
+  run_stepsum_one calls run_step without shell=step_shell(...), so the helper is not run under the real composite's bash -e, and it re-imports yaml and re-parses action.yml for every scenario.
+
+  - .github/scripts/verify-gate-19.py
+
+  Detail: verify-sentinel-collector.py passes step_shell(FETCH_ACTION, FETCH_STEP).
+
+- [ ] Review finding: run_collector env lacks GITHUB_REPOSITORY and PATH setup
+
+  run_collector no longer sets the GITHUB_REPOSITORY and PATH stubs that run_one added, so the test environment differs from the real step's, which runs under set -u.
+
+  - .github/scripts/verify-sentinel-collector.py
+
+  Detail: A mutation can read as caught for the wrong reason.
+
+- [ ] Review finding: Collector and diagnose disagree on the same helper result
+
+  If the helper returns failed/log-read because of a non-failure job and all failure jobs are staged, diagnose reports ok and does not add job-logs to the untrusted collectors, while the collector records the read as failed.
+
+  - .github/workflows/watchdog.yml
+
+- [ ] Review finding: Check 6 paths filter too narrow for repo-wide scan
+
+  Check 6 scans every live tracked text file, but the pull_request paths filter lists only docs/agent-friendly-workflows.md, so a pasted duplicate elsewhere does not fail the PR and turns main red later.
+
+  - .github/workflows/lint-workflows.yml
+
+  Detail: This is the Gate 124 failure mode CLAUDE.md warns about.
