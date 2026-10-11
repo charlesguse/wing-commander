@@ -1218,7 +1218,7 @@ jobs:
           sys.path.insert(0, ".github/scripts")
           from board_eligibility import (
               PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP, BREACH_STEP,
-              not_ready_head_moved)
+              is_not_ready_handover, not_ready_head_moved)
           from board_item_marker import STALLED_STEP, head_moved_since_last_review, is_loop_branch
 
           marker_step = os.environ.get("MARKER_STEP") or None
@@ -1244,8 +1244,7 @@ jobs:
           note = ""
           # specs/093-not-ready-board-release D7: the not-ready threshold's
           # own stalled handover marker is the one stall marker naming a pr.
-          handover_marker = bool(marker_step == STALLED_STEP and marker_full.get("pr") is not None
-                                 and marker_full.get("nr_head_sha"))
+          handover_marker = is_not_ready_handover(marker_full)
 
           # Issue #555: a marker's branch is adopted only when it has this
           # loop's own fix/<issue>-<slug> name, and its PR only when that PR
@@ -1344,8 +1343,14 @@ jobs:
                       pr_number, marker_full.get("nr_head_sha"))
               else:
                   step = "review"
-                  note = "recorded pr {0} was handed off not-ready at head_sha {1}; head has moved -- resuming at review".format(
-                      pr_number, marker_full.get("nr_head_sha"))
+                  # FR-007/SC-009: like clause 0.5b below, a moved head
+                  # spends one round of the continued budget.
+                  try:
+                      round_ = str(int(round_ or "0") + 1)
+                  except ValueError:
+                      round_ = "0"
+                  note = "recorded pr {0} was handed off not-ready at head_sha {1}; head has moved -- resuming at review, round {2}".format(
+                      pr_number, marker_full.get("nr_head_sha"), round_)
           elif (marker_step == "readiness" and pr_from_marker and pr_state == "OPEN"
                 and not_ready_head_moved(marker_full, pr_head_sha)):
               # specs/093-not-ready-board-release FR-001/FR-007 (US3): a
@@ -3817,7 +3822,10 @@ jobs:
         with:
           pr-number: ${{ needs.fix.outputs.pr-number || needs.select.outputs.pr || steps.resolve-directed-pr.outputs.pr }}
           token: ${{ github.token }}
-          round: ${{ needs.select.outputs.round || steps.resolve-directed-pr.outputs.round || 0 }}
+          # A directed review starts at round 0, as before: the newest
+          # marker's round may be a handover's spent budget. Only the
+          # not-ready count is carried (specs/093).
+          round: ${{ needs.select.outputs.round || 0 }}
           nr-count: ${{ needs.select.outputs.nr-count || steps.resolve-directed-pr.outputs.nr-count || 0 }}
 
       # Gate 98 holds this job to exactly one actions/checkout@ step (the
@@ -5514,7 +5522,8 @@ jobs:
               # The comments were read by the step above (Gate 93: this
               # spec-request site never reads the issue itself).
               if [ "$DEDUP_COMMENTS_FETCHED" != "true" ]; then
-                gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
+                gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body" \
+                  || { echo "::error::board-loop readiness (not ready): the not-ready comment could not be posted on issue #$ISSUE_NUMBER -- no record is written, so the next run re-reports (specs/093-not-ready-board-release FR-002)."; exit 1; }
               else
                 same_comment_id="$(COMMENTS_PATH="$RUNNER_TEMP/board-not-ready-comments.json" HEAD_SHA="$head_sha" UNMET="$unmet" python3 -I - <<'PYEOF'
           import json
@@ -5537,7 +5546,8 @@ jobs:
                   printf '%s' "$body" > "$RUNNER_TEMP/board-not-ready-dedup-body.md"
                   echo "dedup-comment-id=$same_comment_id" >> "$GITHUB_OUTPUT"
                 else
-                  gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
+                  gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body" \
+                    || { echo "::error::board-loop readiness (not ready): the not-ready comment could not be posted on issue #$ISSUE_NUMBER -- no record is written, so the next run re-reports (specs/093-not-ready-board-release FR-002)."; exit 1; }
                 fi
               fi
             fi

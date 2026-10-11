@@ -365,7 +365,8 @@ def is_excluded(issue, spec_request_state_by_number=None, duplicate_marker=None)
 # workflow's run: step or in a second module; point back at this comment
 # instead (contracts/in-flight-detection.md).
 def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_login,
-                        spec_request_state_by_number=None, pr_head_sha_by_number=None):
+                        spec_request_state_by_number=None, pr_head_sha_by_number=None,
+                        passed_over=None):
     """FR-001/FR-002/FR-003/FR-005. Returns (issue_number, multiple_found).
     bot_login: the loop's own App login; only its comments' markers are
     read (board_item_marker.is_loop_marker_author(), issue #555).
@@ -429,14 +430,24 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_
             # though the OPEN check above would otherwise qualify it --
             # unlike _awaiting_merge_holds()/_unowned_open_pr_holds(), this
             # predicate must be called explicitly here (contracts/not-ready-hold.md).
-            if step == "readiness" and _not_ready_holds(
-                    marker, pr_state_by_number, pr_head_sha_by_number):
+            if step == "readiness" and _not_ready_passes_over(
+                    number, marker, pr_state_by_number, pr_head_sha_by_number, passed_over):
                 continue
             candidates.append((created_at, number))
     if not candidates:
         return None, False
     candidates.sort(key=lambda pair: pair[0])
     return candidates[-1][1], len(candidates) > 1
+
+
+def _not_ready_passes_over(number, marker, pr_state_by_number, pr_head_sha_by_number, passed_over):
+    """_not_ready_holds() at a selection site, recording the reason in
+    `passed_over` ({issue: reason}) when the item is held -- FR-011's
+    record of why, made where the decision is, never recomputed."""
+    reason = not_ready_hold_reason(marker, pr_state_by_number, pr_head_sha_by_number)
+    if reason is not None and passed_over is not None:
+        passed_over.setdefault(number, reason)
+    return reason is not None
 
 
 def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number):
@@ -569,7 +580,7 @@ def _merged_fix_holds(marker, pr_state_by_number):
 
 
 def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number, bot_login,
-           spec_request_state_by_number=None, pr_head_sha_by_number=None):
+           spec_request_state_by_number=None, pr_head_sha_by_number=None, passed_over=None):
     """FR-004/FR-011: consults in_flight_candidate() first; falls through to
     the existing oldest-first/classify_issue/is_excluded scan when it
     returns (None, ...). That fallback carries the same `prove`-marker skip
@@ -592,7 +603,7 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
     specs/093-not-ready-board-release FR-003/FR-004)."""
     in_flight, _multiple_found = in_flight_candidate(
         open_issues, comments_by_issue, pr_state_by_number, bot_login, spec_request_state_by_number,
-        pr_head_sha_by_number)
+        pr_head_sha_by_number, passed_over)
     if in_flight is not None:
         return in_flight
 
@@ -613,7 +624,8 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
             continue
         if pair is not None and _merged_fix_holds(pair[1], pr_state_by_number):
             continue
-        if pair is not None and _not_ready_holds(pair[1], pr_state_by_number, pr_head_sha_by_number):
+        if pair is not None and _not_ready_passes_over(
+                number, pair[1], pr_state_by_number, pr_head_sha_by_number, passed_over):
             continue
         labeled_events = labeled_events_by_issue.get(number, [])
         if classify_issue(issue, labeled_events) != "ineligible":
@@ -665,25 +677,11 @@ def main():
     in_flight_issue, multiple_found = in_flight_candidate(
         open_issues, comments_by_issue, pr_state_by_number, bot_login, spec_request_state_by_number,
         pr_head_sha_by_number)
+    passed_over = {}
     selected = select(open_issues, labeled_events_by_issue, comments_by_issue,
                       pr_state_by_number, bot_login, spec_request_state_by_number,
-                      pr_head_sha_by_number)
-    held = []
-    for issue in open_issues:
-        number = issue.get("number")
-        comments = comments_by_issue.get(number, [])
-        pair = read_marker_with_timestamp(comments, bot_login)
-        # Only items no other rule already set aside: an excluded issue or
-        # an unowned PR is passed over for its own reason, not this one.
-        if is_excluded(issue, spec_request_state_by_number,
-                       _find_duplicate_marker(issue, comments, bot_login))[0]:
-            continue
-        if pair is not None and _unowned_open_pr_holds(pair[1], pr_state_by_number):
-            continue
-        reason = not_ready_hold_reason(pair[1] if pair else None, pr_state_by_number,
-                                       pr_head_sha_by_number)
-        if reason is not None:
-            held.append({"issue": number, "reason": reason})
+                      pr_head_sha_by_number, passed_over)
+    held = [{"issue": number, "reason": reason} for number, reason in passed_over.items()]
     print(json.dumps({
         "decided_by_marker": in_flight_issue is not None and in_flight_issue == selected,
         "multiple_found": multiple_found,

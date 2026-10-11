@@ -126,6 +126,12 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
                 unmet_reason = "no checks reported on head_sha {0}".format(head_sha)
             else:
                 unmet_reason = "checks not green on head_sha {0} (stale or failing)".format(head_sha)
+            # A condition no later run clears on its own is named too, so a
+            # durable record never blames only a check that is still running.
+            if not zero_open_findings:
+                unmet_reason += "; {0} open in-scope finding(s)".format(open_in_scope_findings)
+            if not backstop_holds:
+                unmet_reason += "; the size-and-path backstop does not hold on the final diff"
         elif not gate_suite_green:
             unmet_reason = "the lint-workflows check is not green on head_sha {0}".format(head_sha)
         elif not zero_open_findings:

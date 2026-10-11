@@ -122,26 +122,18 @@ call.
 
 ### `select` job — resume step
 
-`step_resolution_json`'s clause that resolves a `readiness`-step marker
-(today: `pr_from_marker and marker_step in FIX_OR_LATER_STEPS and pr_state
-== "OPEN"` → `step = marker_step`) is unchanged for `readiness` when there
-is no not-ready record on the marker, or the record is self-clearing, or
-the record is durable but the head has moved (all three: `step =
-"review"` when the head has moved with a durable record — the automatic
-re-admission path, FR-007 US3; `step = "readiness"` in every other case
-covered by this clause, unchanged).
+The resume step's clauses for this feature are canonical in
+`specs/061-marker-owned-in-flight/contracts/resume-recovery.md`, clauses
+0.5a (this feature's own stalled handover marker, its PR open: readiness on
+a head unmoved since the last converged review, else review with the round
+advanced by one) and 0.5b (a readiness marker with a not-ready record of
+either class whose head moved: review, round + 1). A handover whose PR was
+merged or closed since falls to a fresh triage. See that file; this one
+does not restate it.
 
-A **new** clause is inserted ahead of the existing generic board:owned
-fallback clause (which today unconditionally resolves any recovered
-fallback PR to `step = "review"`, except `BREACH_STEP`): when
-`marker_step == "stalled"` AND the marker carries both `pr` and
-`nr_head_sha` (this feature's own handover shape, research.md D7) AND the
-fallback recovers that same PR: resolve `step = "readiness"` when the
-recovered PR's current head equals `nr_head_sha`, else fall through to
-the existing fallback clause (`step = "review"`). A `stalled` marker
-lacking either field (every other stall site, and every stall recorded
-before this feature shipped) is unaffected and keeps resolving `review`
-via the unchanged existing clause (FR-015).
+The PR lookup above covers a handover marker's PR too
+(`board_eligibility.marker_names_live_pr()`), so a PR a human took over
+(board:owned removed) holds as unowned.
 
 ### `review` job — three marker-writing sites
 
@@ -149,7 +141,8 @@ via the unchanged existing clause (FR-015).
    adds `--round "$ROUND"` (research.md D6) and `--nr-count
    "$NR_COUNT"` (carried through unchanged from `needs.select.outputs.nr-count`
    or this run's own prior value on a same-run handoff).
-2. "Push the follow-up commit and advance the round" (`continue`): adds
+2. review-fixup-publish's "Advance the round" (`continue`; spec 095 moved
+   the push and round advance out of the review job): adds
    `--nr-count "$NR_COUNT"`, carried through unchanged (the round already
    advances here; the not-ready count does not — only readiness's own
    not-ready outcome advances it, research.md D5).
@@ -202,7 +195,8 @@ extended decision (research.md D2), and:
 `select` names every item a not-ready hold passed over, and why, in its
 step summary, from `board_eligibility.py`'s own `not_ready_held` output
 (FR-011). A PR known to be CLOSED or MERGED is never held; resume routes it
-(fresh triage, or prove for a merged handover).
+(a fresh triage, for a merged handover too: nothing in the job graph
+consumes a bare prove resolution, `_merged_fix_holds()`, #532).
 
 Every durable action above stays behind
 `steps.killswitch-recheck.outputs.paused == 'false'`, unchanged (research.md
@@ -244,12 +238,16 @@ New `RESUME_CASES` entries (FR-013):
 - A `readiness` marker with a durable, unmoved-head not-ready record →
   `step = "readiness"` (unchanged from today, but now exercised with the
   new fields present rather than absent).
-- The same marker with a moved head → `step = "review"`, `round` equal to
-  the marker's own preserved `round` (research.md D6), not `0`.
+- The same marker with a moved head → `step = "review"`, `round` one past
+  the marker's own `round` (research.md D6 continues the budget; each
+  re-admission spends one round, SC-009), never `0`. A self-clearing
+  record's moved head resolves the same way (SC-010).
 - This feature's own `stalled` handover marker (`pr` + `nr_head_sha` set),
-  fallback-recovered PR head unmoved → `step = "readiness"`.
-- The same handover marker, fallback-recovered PR head moved → `step =
-  "review"`.
+  its PR resolved OPEN by number and head unmoved since the last converged
+  review → `step = "readiness"`.
+- The same handover marker, head moved → `step = "review"`, round + 1.
+- The same handover marker, its PR merged or closed since → `step =
+  "triage"`, PR cleared.
 - A `stalled` marker from any other stall site (`pr` absent) → `step =
   "review"`, unchanged (regression case, FR-015).
 

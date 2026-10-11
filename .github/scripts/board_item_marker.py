@@ -188,9 +188,18 @@ def same_not_ready_comment_id(issue_comments, bot_login, pr_number, head_sha, un
     if not (marker.get("step") == "readiness" and marker.get("pr") == pr_number
             and marker.get("nr_head_sha") == head_sha and marker.get("nr_reason") == unmet_reason):
         return None
+    # The comment that carries THIS marker: same timestamp is not enough
+    # (two loop comments can share a second).
     for comment in issue_comments or []:
-        if (is_loop_marker_author(comment, bot_login) and comment.get("created_at") == created_at
+        if not (is_loop_marker_author(comment, bot_login) and comment.get("created_at") == created_at
                 and str(comment.get("id") or "").isdigit()):
+            continue
+        match = last_marker_match(comment.get("body") or "")
+        try:
+            carried = json.loads(match.group(1)) if match else None
+        except ValueError:
+            carried = None
+        if carried == marker:
             return int(comment["id"])
     return None
 

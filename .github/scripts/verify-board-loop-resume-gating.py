@@ -1005,10 +1005,10 @@ RESUME_CASES = [
     # converged review comment, no gh stub) only pins the safe default.
     # The readiness side lives in verify-board-loop-readmission.py's
     # not-ready-handover-* fixtures.
-    ("not-ready handover (stalled, pr+nr_head_sha), no converged review resolvable -> review",
+    ("not-ready handover (stalled, pr+nr_head_sha), no converged review resolvable -> review, round + 1",
      _resume_env("stalled", "42", True, "OPEN", "42",
                  marker_extra={"pr": 42, "nr_head_sha": "deadbeef"}, pr_head_sha="deadbeef"),
-     {"step": "review", "pr_number": "42"}),
+     {"step": "review", "pr_number": "42", "round": "3"}),
     # A handover whose PR was merged or closed since is not resumed on that
     # PR (code review of #1010): it falls to a fresh triage with the PR
     # cleared, like any pr-less stall with no open PR -- never prove, which
@@ -2017,9 +2017,13 @@ def not_ready_report_findings(doc):
         for s in (jobs.get(job) or {}).get("steps") or []:
             if isinstance(s, dict) and s.get("id") == "pr":
                 w = s.get("with") or {}
-                for key in ("nr-count", "round"):
+                for key in (("nr-count",) if job == "review" else ("nr-count", "round")):
                     if "steps.resolve-directed-pr.outputs." + key not in str(w.get(key, "")):
                         findings.append("{0}: the PR step's {1} does not fall back to resolve-directed-pr's".format(job, key))
+    for ln in lines:
+        if "gh issue comment" in ln and "--body \"$body\"" in ln and "|| {" not in ln:
+            findings.append("readiness: a not-ready comment post is unchecked -- a failed post "
+                            "silently writes no record (specs/093 FR-002)")
     publish = "\n".join(_logical_lines("\n".join(
         str(s.get("run", "")) for s in (jobs.get("review-fixup-publish") or {}).get("steps") or []
         if isinstance(s, dict))))
@@ -2057,6 +2061,9 @@ _NR = {"step": "readiness", "pr": 42, "nr_head_sha": "deadbeef", "nr_class": "se
 DEDUP_CASES = [
     ("same pr/head/reason, a later marker-less bot comment -> the marker comment's id",
      [_dedup_comment(111, "2026-01-01T00:00:00Z", _NR), _dedup_comment(222, "2026-01-02T00:00:00Z", None)],
+     "111"),
+    ("a marker-less loop comment in the same second as the marker comment -> the marker comment's id",
+     [_dedup_comment(333, "2026-01-01T00:00:00Z", None), _dedup_comment(111, "2026-01-01T00:00:00Z", _NR)],
      "111"),
     ("different unmet condition -> new comment",
      [_dedup_comment(111, "2026-01-01T00:00:00Z", dict(_NR, nr_reason="1 open in-scope finding(s)"))], ""),
@@ -2297,6 +2304,9 @@ def _mutations(text):
         after="\n  review-fixup-publish:\n")
     sub("directed readiness nr-count restarts at 0",
         "steps.resolve-directed-pr.outputs.nr-count || 0 }}", "0 }}", after="\n  readiness:\n")
+    sub("not-ready comment post left unchecked",
+        '--body "$body" \\\n                    || { echo "::error::board-loop readiness (not ready): the not-ready comment could not be posted',
+        '--body "$body"\n                    true || { echo "::error::board-loop readiness (not ready): the not-ready comment could not be posted')
     sub("not-ready handover drops its nr_head_sha",
         '--step stalled --pr "$PR_NUMBER" --round "$ROUND" --nr-head-sha "$head_sha" ',
         '--step stalled --round "$ROUND" ')
