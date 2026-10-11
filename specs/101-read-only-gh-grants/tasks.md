@@ -317,3 +317,65 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
   - .github/workflows/watchdog.yml
 
   Detail: ~line 2232
+
+## Review Gate Round 4 Findings
+
+- [ ] Review finding: Per-job log retry sleep multiplies on systematic failure
+
+  The fetch-job-logs helper retries with a 10s sleep per job, so a token that gets a 403 on every log costs N x 10s and can hit the collect job timeout; the removed collector comment said the retry was once per step for this reason.
+
+  - .github/actions/wing-commander-fetch-job-logs/action.yml
+
+- [ ] Review finding: Gate 93 check 6 does not catch RuntimeError from repo_files
+
+  check_gh_rationale_home reaches repo_files through _live_text_files without catching RuntimeError, so an unreadable git root produces a traceback instead of a FAIL verdict. The other two callers do catch it.
+
+  - .github/scripts/verify-issue-context-single-home.py
+
+- [ ] Review finding: gh-grant detector misses launcher and interpreter grants that can run gh
+
+  grants_gh only flags grants that name gh as a token, so Bash(env:*), Bash(xargs:*), Bash(bash:*), Bash(python3 -c:*) and 'echo x; gh api' pass, and LAUNCHER_WORDS omits su, runuser, nsenter, systemd-run, taskset, numactl, tmux, ssh and perl.
+
+  - .github/scripts/wc_gh_grant.py
+
+- [ ] Review finding: grants_gh splits on first colon and misses env assignments containing a colon
+
+  Bash(PATH=/a:/b gh api:*) is cut to the command PATH=/a, whose tokens are only an assignment, so command_word returns an empty string and the gh grant is not flagged.
+
+  - .github/scripts/wc_gh_grant.py
+
+- [ ] Review finding: _listing cache contradicts its docstring for git-init fixtures
+
+  _listing caches the tracked-file list per real working tree, but the docstring says a fixture directory is listed afresh. A git-init fixture takes the cached path and returns a stale listing after git add.
+
+  - .github/scripts/verify-stage-tool-lists.py
+
+- [ ] Review finding: _glob_has_match no longer limited to tracked files for a subdirectory root
+
+  When root is not the repo top and has no .git, repo_files falls back to os.walk, so untracked leftovers can satisfy a stale wildcard grant. The old code ran git ls-files and returned tracked files only.
+
+  - .github/scripts/verify-stage-tool-lists.py
+
+- [ ] Review finding: Watchdog log status is ok with file null for a failed job whose log is empty
+
+  Diagnose stages logs only for failed jobs. A timed_out or startup_failure job with an empty 200 body records outcome ok and file null, and job-logs is not marked untrusted, so the agent cannot tell a missing log from an unneeded one.
+
+  - .github/workflows/watchdog.yml
+
+- [ ] Review finding: Shadow denies Bash(gh:*) but the Diagnose agent does not, and no gate checks the deny side
+
+  Only the shadow's disallowed list includes Bash(gh:*). A gh grant added to Diagnose through extra-allowed-tools or a later edit is not denied, and Gate 93 4b reads only shipped defaults.
+
+  - .github/workflows/watchdog.yml
+
+- [ ] Review finding: Check 6 of Gate 93 is outside the PR path filter, so it can turn main red after merge
+
+  Check 6 scans every live tracked text file but only the home document is in the PR paths filter, so a pasted duplicate elsewhere passes the PR and fails on the push to main or the daily run.
+
+  - .github/scripts/verify-issue-context-single-home.py
+
+- [ ] Review finding: Jobs-list failure discards gh stderr, so the failure is not attributable
+
+  The gh api --paginate jobs listing sends stderr to /dev/null, so a 403, 404 or rate limit is recorded only as reason jobs-list with no diagnostic. That undercuts the loud, attributable failure that FR-019 and FR-020 promise.
+
+  - .github/actions/wing-commander-fetch-job-logs/action.yml
