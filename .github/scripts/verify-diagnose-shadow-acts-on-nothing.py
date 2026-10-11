@@ -76,10 +76,14 @@ Exit 0 = every check holds (self-test: every mutation is caught);
 exit 1 = otherwise.
 """
 import copy
+import os
 import re
 import sys
 
 import yaml
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_gh_grant import grants_gh  # noqa: E402
 
 WATCHDOG = ".github/workflows/watchdog.yml"
 WRAPPER = ".github/workflows/wing-commander-8-watchdog.yml"
@@ -99,23 +103,7 @@ AGENT_RAN = "steps.diagnose-shadow.outcome != 'skipped'"
 CLAUDE_SECRETS = {"claude-code-oauth-token", "anthropic-api-key"}
 
 
-_GH_WRAPPERS = {"env", "command", "exec", "sudo", "nohup", "time", "builtin"}
-
-
-def _grants_gh(tool):
-    """True for a Bash grant whose command word is `gh` in any spelling:
-    `Bash(gh:*)`, `Bash(/usr/bin/gh ...)`, `Bash(env gh ...)`,
-    `Bash(GH_TOKEN=x gh ...)`. Mirrors Gate 93 check 4b's detector."""
-    m = re.fullmatch(r"Bash\((.*)\)", tool)
-    if not m:
-        return False
-    for tok in m.group(1).split(":", 1)[0].split():
-        base = tok.rsplit("/", 1)[-1]
-        if (tok.startswith("-") or re.match(r"[A-Za-z_][A-Za-z0-9_]*=", tok)
-                or base in _GH_WRAPPERS):
-            continue
-        return base.rstrip("*") == "gh"
-    return False
+_grants_gh = grants_gh  # the one detector, shared with Gate 93 check 4b
 
 
 def load(path):

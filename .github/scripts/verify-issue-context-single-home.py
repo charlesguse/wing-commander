@@ -260,6 +260,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import use_utf8_stdout  # noqa: E402
 from wc_published_stages import published_stages  # noqa: E402
 from wc_repo_files import git_env, repo_files  # noqa: E402
+from wc_gh_grant import command_grants_gh  # noqa: E402
 
 BOARD_LOOP = ".github/workflows/board-loop.yml"
 ISSUE_CONTEXT_ACTION = ".github/actions/wing-commander-issue-context/action.yml"
@@ -549,23 +550,6 @@ def _tool_names(value):
     return names
 
 
-GRANT_WRAPPER_WORDS = frozenset(
-    ("env", "command", "exec", "sudo", "nohup", "time", "builtin"))
-ENV_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-
-
-def _command_word(tokens):
-    """Basename of the command a Bash grant runs: the first token that is
-    not a wrapper word (`env`, `command`, ...), an option of one, or a
-    `VAR=x` assignment. `ls docs/gh` runs `ls`, so it is not a `gh` grant."""
-    for t in tokens:
-        if (t.startswith("-") or ENV_ASSIGNMENT_RE.match(t)
-                or os.path.basename(t) in GRANT_WRAPPER_WORDS):
-            continue
-        return os.path.basename(t)
-    return ""
-
-
 def _bash_grant_problems(text, where, git_grant=GIT_READ_GRANT, strict=True,
                          gh_exempt=()):
     """Problems with the Bash grants in `text` for a read-only agent whose
@@ -582,7 +566,7 @@ def _bash_grant_problems(text, where, git_grant=GIT_READ_GRANT, strict=True,
             continue
         command = m.group(1).split(":", 1)[0].strip().rstrip("* ")
         tokens = command.split()
-        if not strict and _command_word(tokens) == "gh":
+        if not strict and command_grants_gh(command):
             problems.append(
                 f"{where} grants {grant} to a read-only agent. `gh` reaches "
                 f"remote writes, local file writes and (via `gh alias set` "

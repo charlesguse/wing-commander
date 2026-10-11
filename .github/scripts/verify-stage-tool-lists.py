@@ -505,13 +505,18 @@ _LISTING_CACHE = {}
 def _listing(root):
     """repo_files(root), listed once per process for a real working tree
     (one with its own `.git`, whose tracked set cannot change under a run).
-    A fixture directory is listed afresh: its files do change."""
-    if not os.path.exists(os.path.join(root, ".git")):
-        return repo_files(root)
-    key = os.path.realpath(root)
-    if key not in _LISTING_CACHE:
-        _LISTING_CACHE[key] = repo_files(root)
-    return _LISTING_CACHE[key]
+    A fixture directory is listed afresh: its files do change. git failing
+    on a real working tree is a gate verdict, not a traceback."""
+    try:
+        if not os.path.exists(os.path.join(root, ".git")):
+            return repo_files(root)
+        key = os.path.realpath(root)
+        if key not in _LISTING_CACHE:
+            _LISTING_CACHE[key] = repo_files(root)
+        return _LISTING_CACHE[key]
+    except RuntimeError as exc:
+        print(f"FAIL: {exc}")
+        sys.exit(1)
 
 
 def _script_exists(root, rel):

@@ -344,7 +344,13 @@ def _repo_files(root="."):
     git-tracked files, so the untracked `.wing-commander-pipeline/`
     checkout an implement run places beside the tree is not scanned --
     #808, #822, #823)."""
-    return repo_files(root)
+    try:
+        return repo_files(root)
+    except RuntimeError as exc:
+        # git could not list a real working tree: a gate verdict, not a
+        # traceback (and never a silent walk of untracked checkouts).
+        print(f"FAIL: {exc}")
+        sys.exit(1)
 
 
 def check_no_jwt_construction(root="."):

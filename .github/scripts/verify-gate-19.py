@@ -2171,6 +2171,11 @@ def run_stepsum_one(script, env, sc, tmproot):
     write_stepsum_fixtures(fixtures, sc["jobs"], sc["logs"])
     stub_stepsum_gh(bindir, fixtures.replace("\\", "/"))
     stub_jq(bindir)
+    # The helper's per-job retry waits `sleep 10`; nothing here needs the wait.
+    with open(os.path.join(bindir, "sleep"), "w", encoding="utf-8",
+              newline="\n") as fh:
+        fh.write("#!/usr/bin/env bash\nexit 0\n")
+    os.chmod(os.path.join(bindir, "sleep"), 0o755)
 
     run_env = with_actions_defaults(env)
     run_env["PATH"] = bindir + os.pathsep + os.environ["PATH"]

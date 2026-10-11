@@ -2518,7 +2518,7 @@ jobs:
           token: ${{ github.token }}
           run-id: ${{ inputs.run-id }}
           out-dir: ${{ runner.temp }}/dj-fetch
-          conclusions: failure
+          conclusions: failure,timed_out,startup_failure
 
       - name: Stage failed-job logs
         id: stage-job-logs
@@ -2554,21 +2554,25 @@ jobs:
           # and reason `jobs-list` on failure. This step still refuses to
           # read as "no failed jobs" a file that is not an array of objects
           # (FR-019): it does not assume who wrote the file.
-          elif ! failed_ids="$(jq -r 'if type == "array" then .[] else error("not a job list") end | if type == "object" then . else error("not a job") end | select(.conclusion == "failure") | .id' "$fetch_dir/jobs.json" 2>/dev/null)"; then
+          elif ! failed_ids="$(jq -r 'if type == "array" then .[] else error("not a job list") end | if type == "object" then . else error("not a job") end | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "startup_failure") | .id' "$fetch_dir/jobs.json" 2>/dev/null)"; then
             outcome="failed"
             reason="jobs-unreadable"
           else
             for job_id in $failed_ids; do
               job_name="$(jq -r --arg id "$job_id" '.[] | select((.id|tostring) == $id) | .name' "$fetch_dir/jobs.json")"
+              job_conclusion="$(jq -r --arg id "$job_id" '.[] | select((.id|tostring) == $id) | .conclusion' "$fetch_dir/jobs.json")"
               file=""
               if [ -s "$fetch_dir/$job_id.log" ] && cp "$fetch_dir/$job_id.log" "$log_dir/$job_id.log"; then
                 file="$log_dir/$job_id.log"
-              else
+              elif [ "$fetch_out" != "ok" ]; then
                 outcome="failed"
                 reason="log-read"
               fi
-              jobs_arr="$(printf '%s' "$jobs_arr" | jq -c --argjson id "$job_id" --arg n "$job_name" --arg f "$file" \
-                '. + [{id:$id,name:$n,conclusion:"failure",file:(if $f == "" then null else $f end)}]')"
+              # A missing log after an ok fetch is a successful read of an
+              # empty body (a timed-out or never-started job): no evidence
+              # to stage, not a gather failure.
+              jobs_arr="$(printf '%s' "$jobs_arr" | jq -c --argjson id "$job_id" --arg n "$job_name" --arg c "$job_conclusion" --arg f "$file" \
+                '. + [{id:$id,name:$n,conclusion:$c,file:(if $f == "" then null else $f end)}]')"
             done
           fi
           jq -cn --arg o "$outcome" --arg r "$reason" --argjson j "$jobs_arr" \
