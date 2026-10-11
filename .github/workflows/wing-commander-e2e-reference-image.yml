@@ -102,7 +102,10 @@ jobs:
           DIGEST: ${{ needs.build-and-publish.outputs.digest }}
         run: |
           set -euo pipefail
-          echo "since=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          # Two minutes early: the runner's clock and GitHub's createdAt can
+          # disagree, and the run-name match below already narrows the
+          # window's runs to this digest.
+          echo "since=$(date -u -d '-2 minutes' +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           # The wrapper and classifier from this run's own ref, so a
           # dispatched rebuild on a branch is checked by that branch's check.
           gh workflow run wing-commander-private-image-dogfood.yml --ref "$GITHUB_REF_NAME" \
@@ -114,8 +117,9 @@ jobs:
       # is found by its run-name, which wing-commander-private-image-dogfood.yml
       # ends with the dispatched container-image, so a hand dispatch or
       # another rebuild's check in the same window is never mistaken for
-      # this digest's. `--interval 30` keeps an hour-long watch inside
-      # github.token's API rate limit.
+      # this digest's (the newest such run is watched; any of them checks
+      # this exact digest). `--interval 30` keeps an hour-long watch's share
+      # of github.token's repository-wide rate limit small.
       - name: Wait for the start-up check verdict
         id: watch
         env:
@@ -131,7 +135,7 @@ jobs:
             run_id="$(gh run list --workflow wing-commander-private-image-dogfood.yml \
               --event workflow_dispatch --branch "$GITHUB_REF_NAME" --created ">=${SINCE}" \
               --json databaseId,createdAt,displayTitle \
-              --jq '[.[] | select(.displayTitle | endswith(" · " + env.CHECKED_IMAGE))] | sort_by(.createdAt) | .[0].databaseId // empty')" || run_id=""
+              --jq '[.[] | select(.displayTitle | endswith(" · " + env.CHECKED_IMAGE))] | sort_by(.createdAt) | .[-1].databaseId // empty')" || run_id=""
             [ -n "$run_id" ] && break
             sleep 5
           done
@@ -240,13 +244,15 @@ jobs:
             {
               echo "| Repository | Status | Reason | Held | Expected |"
               echo "|---|---|---|---|---|"
-              jq -r '.[] | "| `\(.repo)` | \(.status) | \(.reason) | `\(.held)` | `\(.expected)` |"' "$OUTCOME_FILE"
+              # Cells are escaped: a held value is whatever was set by hand.
+              jq -r 'def c: tostring | gsub("[\r\n]+"; " ") | gsub("\\|"; "\\|") | gsub("`"; "'"'"'");
+                .[] | "| `\(.repo | c)` | \(.status) | \(.reason | c) | `\(.held | c)` | `\(.expected | c)` |"' "$OUTCOME_FILE"
             } > "$TABLE_FILE"
             { echo "### Reference-image pin sync"; echo ""; cat "$TABLE_FILE"; } >> "$SUMMARY"
-            # synced=true only when every sync-set repository is written or
-            # current: the only outcome that may close the failure issue.
-            if jq -e --argjson n "${#SYNC_SET[@]}" \
-                '[.[] | select(.status == "written" or .status == "current")] | length == $n' \
+            # synced=true only when every outcome, the test repository's
+            # included, is written or current: the only state that may close
+            # the failure issue. An unset test repository is not synced.
+            if jq -e 'all(.[]; .status == "written" or .status == "current")' \
                 "$OUTCOME_FILE" > /dev/null; then
               echo "synced=true" >> "${GITHUB_OUTPUT:-/dev/null}"
             fi
@@ -283,31 +289,27 @@ jobs:
           fi
 
           # 3. A newer default-branch run has already synced: do not move the
-          #    pin back (FR-010). Newer means a higher run number that either
-          #    concluded success, or is still finishing but whose own
-          #    startup-check and sync-pins jobs both already succeeded (this
-          #    job's concurrency group lets it start the moment that run's
-          #    sync-pins ends, before the run itself reads as completed). Any
-          #    list or view that fails writes nothing.
+          #    pin back (FR-010). A higher-numbered run supersedes this one
+          #    once its own startup-check succeeded and its sync-pins job ran
+          #    to an end (success, or failure after a write it may have
+          #    made), whether or not that run reads as completed yet: this
+          #    job's concurrency group lets it start the moment that
+          #    sync-pins ends. Any list or view that fails writes nothing.
           newer=""
           if ! runs="$(gh run list --repo "$THIS_REPO" --workflow "$WORKFLOW" --branch "$DEFAULT_BRANCH" \
-            --json number,databaseId,status,conclusion \
-            --jq '.[] | "\(.number) \(.databaseId) \(.status) \(.conclusion)"' 2> /dev/null)"; then
+            --json number,databaseId --jq '.[] | "\(.number) \(.databaseId)"' 2> /dev/null)"; then
             record_all failed "could not list this workflow's runs to rule out a newer sync"
             finish
           fi
-          while read -r n id st concl; do
+          while read -r n id; do
             [[ "$n" =~ ^[0-9]+$ ]] && [[ "$id" =~ ^[0-9]+$ ]] && [ "$n" -gt "$RUN_NUMBER" ] || continue
-            if [ "$st" = completed ]; then
-              [ "$concl" = success ] || continue
-            else
-              if ! jobs="$(gh run view "$id" --repo "$THIS_REPO" --json jobs \
-                --jq '.jobs[] | "\(.name) \(.conclusion)"' 2> /dev/null)"; then
-                record_all failed "could not read run ${n}'s jobs to rule out a newer sync"
-                finish
-              fi
-              grep -qx 'startup-check success' <<< "$jobs" && grep -qx 'sync-pins success' <<< "$jobs" || continue
+            if ! jobs="$(gh run view "$id" --repo "$THIS_REPO" --json jobs \
+              --jq '.jobs[] | "\(.name) \(.conclusion)"' 2> /dev/null)"; then
+              record_all failed "could not read run ${n}'s jobs to rule out a newer sync"
+              finish
             fi
+            grep -qx 'startup-check success' <<< "$jobs" || continue
+            grep -qxE 'sync-pins (success|failure)' <<< "$jobs" || continue
             if [ -z "$newer" ] || [ "$n" -gt "$newer" ]; then
               newer="$n"
             fi
@@ -405,7 +407,7 @@ jobs:
           label: reference-image-sync:failed
           label-color: B60205
           label-description: "wing-commander: the reference-image pin sync failed"
-          close-comment: A later sync wrote or confirmed both pins.
+          close-comment: A later sync wrote or confirmed every pin.
 
       - name: Fail the job when the sync failed
         if: ${{ failure() && steps.sync.outcome == 'failure' }}

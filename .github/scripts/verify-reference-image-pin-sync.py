@@ -77,29 +77,41 @@ CASES = {
         env={"E2E_REPO": ""}, vars={THIS: OLD}, reach=[THIS],
         exit=0, status={THIS: "written", "test repository": "skipped"}, writes=[THIS]),
     "superseded": dict(
-        runs=["3 3 completed success", "99 99 completed success"],
+        runs=["3 3", "99 99"],
+        jobs={"99": ["startup-check success", "sync-pins success"]},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=0, status={THIS: "skipped", E2E: "skipped"}, writes=[], reason="run 99"),
-    # FR-010: a newer run still finishing, whose check passed and whose own
-    # sync-pins already ended, has synced; an older run must not undo it.
+    # FR-010: a newer run whose check passed and whose sync-pins has ended
+    # (still finishing, or failed after a write it may have made) has moved
+    # the pins; an older run must not move them back.
     "superseded-newer-still-finishing": dict(
-        runs=["8 108 in_progress null"],
+        runs=["8 108"],
         jobs={"108": ["build-and-publish success", "startup-check success", "sync-pins success"]},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=0, status={THIS: "skipped", E2E: "skipped"}, writes=[], reason="run 8"),
-    # A newer run whose check failed, or that has not synced yet, or that
-    # failed outright, or an older success, does not supersede this one.
+    "superseded-newer-sync-failed": dict(
+        runs=["8 108"],
+        jobs={"108": ["startup-check success", "sync-pins failure"]},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=0, status={THIS: "skipped", E2E: "skipped"}, writes=[], reason="run 8"),
+    # A newer run whose check failed, whose sync has not ended or was
+    # cancelled, or an older run, does not supersede this one.
     "not-superseded": dict(
-        runs=["8 108 in_progress null", "9 109 in_progress null",
-              "10 110 completed failure", "5 105 completed success"],
+        runs=["8 108", "9 109", "10 110", "5 105"],
         jobs={"108": ["startup-check failure", "sync-pins success"],
-              "109": ["startup-check success", "sync-pins null"]},
+              "109": ["startup-check success", "sync-pins null"],
+              "110": ["startup-check success", "sync-pins cancelled"],
+              "105": ["startup-check success", "sync-pins success"]},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=0, status={THIS: "written", E2E: "written"}, writes=[THIS, E2E]),
     "run-view-error": dict(
-        runs=["8 108 in_progress null"],
+        runs=["8 108"],
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[]),
+    # A hand-set held value cannot break the table's columns.
+    "hand-set-held-value": dict(
+        vars={THIS: "a|b`c", E2E: OLD}, reach=[THIS, E2E],
+        exit=0, status={THIS: "written", E2E: "written"}, writes=[THIS, E2E]),
     "token-unset": dict(
         env={"SYNC_TOKEN": ""}, vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
@@ -146,8 +158,8 @@ CASES = {
 
 # Cases whose outcome may close the failure issue (every sync-set repository
 # written or current); every other case must leave `synced` unset.
-SYNCED = {"both-written", "all-current", "e2e-unset", "exact-reach-case-insensitive",
-          "absent-variable", "not-superseded"}
+SYNCED = {"both-written", "all-current", "exact-reach-case-insensitive",
+          "absent-variable", "not-superseded", "hand-set-held-value"}
 
 
 def run_case(name, case, tmp, bash, script):
@@ -253,6 +265,9 @@ def check_case(name, case, bash, script):
                 tbl = f.read()
             if tbl not in summary or not tbl.startswith("| Repository |"):
                 errs.append("the job summary must carry the one rendered TABLE_FILE")
+            for row in tbl.splitlines():
+                if len(re.findall(r"(?<!\\)\|", row)) != 6:
+                    errs.append(f"table row does not have exactly 5 cells: {row!r}")
         else:
             errs.append("TABLE_FILE was not written")
         if TOKEN in blob:
@@ -315,6 +330,8 @@ def check_watch_step(bash):
     runs = [
         {"databaseId": 11, "createdAt": "2026-01-01T00:00:01Z",
          "displayTitle": "Wing Commander · private-image-dogfood"},
+        {"databaseId": 10, "createdAt": "2026-01-01T00:00:00Z",
+         "displayTitle": "Wing Commander · private-image-dogfood · " + mine},
         {"databaseId": 12, "createdAt": "2026-01-01T00:00:02Z",
          "displayTitle": "Wing Commander · private-image-dogfood · " + OLD},
         {"databaseId": 13, "createdAt": "2026-01-01T00:00:03Z",
@@ -342,10 +359,20 @@ def check_watch_step(bash):
         with open(os.path.join(stub_dir, "log")) as f:
             log = f.read().splitlines()
     watched = [l for l in log if l.startswith("run watch")]
+    listed = [l for l in log if l.startswith("run list")]
+    for flag in ("--event workflow_dispatch", "--branch main",
+                 "--created >=2026-01-01T00:00:00Z"):
+        if not listed or flag not in listed[0]:
+            errs.append(f"the verdict wait's run list must filter on {flag!r}")
+    dispatch = str(H.find_step(WORKFLOW, "Dispatch the start-up check against the published digest")
+                   .get("run") or "")
+    if not re.search(r"since=\$\(date -u -d '-\d+ minutes?'", dispatch):
+        errs.append("SINCE must be taken a margin early (runner and server clocks differ)")
     if outputs.get("passed") != "true":
         errs.append(f"watch step did not report passed=true ({out.strip()})")
     if len(watched) != 1 or not watched[0].startswith("run watch 13 "):
-        errs.append(f"watch step must watch run 13 (dispatched for this digest), watched {watched}")
+        errs.append(f"watch step must watch run 13 (the newest dispatched for this digest), "
+                    f"watched {watched}")
     m = re.search(r"--interval\s+(\d+)", watched[0] if watched else "")
     if not m or int(m.group(1)) < 30:
         errs.append("gh run watch must poll at --interval 30 or more (github.token rate limit)")
@@ -402,7 +429,7 @@ def check_wiring():
         want = 1 if os.path.abspath(wf) == os.path.abspath(WORKFLOW) else 0
         if n != want:
             errs.append(f"{os.path.basename(wf)} references the token secret {n} times, want {want}")
-    jq_row = r'"| `\(.repo)` |'
+    jq_row = r'"| `\(.repo'
     if text.count(jq_row) != 1:
         errs.append(f"the outcome table's row rendering appears {text.count(jq_row)} times; "
                     f"want once (finish() writes TABLE_FILE, every reader cats it)")

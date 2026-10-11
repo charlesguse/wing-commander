@@ -28,7 +28,7 @@ can see it. `verify-reference-image-pin-sync.py` runs the block verbatim.
 0. `REF` is not `refs/heads/<DEFAULT_BRANCH>` → every repo `skipped` ("built from <ref>, not the default branch"); exit 0; no API call.
 1. `CHECKS_PASSED != true` → every repo `skipped` ("image check did not pass"); exit 0 (the failed check run is itself the signal).
 2. Malformed `DIGEST` or empty `IMAGE` → every repo `failed`; exit 1; no call to the variables API.
-3. Superseded by a higher-numbered default-branch run → `skipped`, exit 0. A higher run supersedes when it concluded `success`, or when it is still finishing but its own `startup-check` and `sync-pins` jobs both already concluded `success` (FR-010). If the run list, or a still-finishing run's jobs, cannot be read → every repo `failed`, exit 1, no write.
+3. Superseded by a higher-numbered default-branch run → `skipped`, exit 0. A higher run supersedes once its own `startup-check` job concluded `success` and its `sync-pins` job concluded `success` or `failure` (it may have written before failing), whether or not the run itself has completed (FR-010). If the run list, or a newer run's jobs, cannot be read → every repo `failed`, exit 1, no write.
 4. Reach check: sorted reachable set must equal the sync set, else all `failed` ("credential reaches <names>"), exit 1, no write.
 5. Probe each repo (read the variable); a 404 means not set yet (held `""`, written in step 6); any other failure → all `failed`, no write.
 6. Per repo: equal → `current`; else write only `WING_COMMANDER_CONTAINER_IMAGE`; refused → `failed` with held/expected.
@@ -37,7 +37,7 @@ can see it. `verify-reference-image-pin-sync.py` runs the block verbatim.
 ## Outputs
 - `OUTCOME_FILE`: JSON array of `{repo,status,reason,held,expected}`.
 - `TABLE_FILE`: the markdown table, header included.
-- Step output `synced=true` only when every sync-set repository is `written` or `current`; only then is the failure issue closed.
+- Step output `synced=true` only when every outcome, the test repository's included, is `written` or `current`; only then is the failure issue closed. Table cells are escaped (`|`, backticks, newlines).
 - Exit 0 unless any outcome is `failed`.
 
 ## Invariants
