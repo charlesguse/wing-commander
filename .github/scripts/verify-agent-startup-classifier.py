@@ -232,11 +232,18 @@ def check_workflow(path):
             errors.append("classify-startup must report verify-image-prerequisites' result beside its verdict")
         # Error logs reach ::warning:: only through the step's one-line
         # helper; a bare cat/tr of one would split the annotation.
-        helper = re.search(r"(?m)^\s*oneline\(\) \{(.*)\}\s*$", runs)
-        raw = [l.strip() for l in runs.splitlines()
-               if re.search(r"::(warning|error)::", l) and "-error.log" in l
-               and not re.search(r"\$\(oneline [\w.-]+-error\.log\)", l)]
-        if (not helper or "s/%/%25/g" not in helper.group(1) or "tr '\\r\\n'" not in helper.group(1)
+        helpers = re.findall(r"(?m)^\s*oneline\(\) \{(.*)\}\s*$", runs)
+        # Any read of an error log outside oneline() itself or a $(oneline
+        # ...) call, annotation line or not (a variable could carry it).
+        raw = []
+        for l in runs.splitlines():
+            if re.match(r"\s*oneline\(\) \{", l):
+                continue
+            rest = re.sub(r"\$\(oneline [\w.-]+-error\.log\)", "", l)
+            if (re.search(r"\$\((cat|tr|head|tail|sed|jq)\b[^)]*-error\.log|\$\(<\s*[\w.-]+-error\.log", rest)
+                    or (re.search(r"::(warning|error|notice)::", rest) and "-error.log" in rest)):
+                raw.append(l.strip())
+        if (len(helpers) != 1 or "s/%/%25/g" not in helpers[0] or "tr '\\r\\n'" not in helpers[0]
                 or raw):
             errors.append("classify-startup must quote its error logs in a ::warning:: only through its "
                           "oneline helper, which escapes %% and flattens CR/LF (raw: %r)" % raw)
@@ -629,6 +636,20 @@ def self_test():
 
         expect("lookup error read raw", mutated(lookup_log_redirect), "oneline helper")
         expect("helper stops escaping %", mutated(helper_unescaped), "oneline helper")
+
+        def helper_redefined(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s and "oneline() {" in s["run"]:
+                    s["run"] = s["run"].replace("listed=true\n", "oneline() { cat \"$1\"; }\nlisted=true\n", 1)
+
+        def raw_via_variable(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
+                    s["run"] = s["run"].replace("self_err=$(oneline self-lookup-error.log)",
+                                                "self_err=$(cat self-lookup-error.log)")
+
+        expect("helper redefined without escaping", mutated(helper_redefined), "oneline helper")
+        expect("error log read raw into a variable", mutated(raw_via_variable), "oneline helper")
         expect("prereq result not reported", mutated(drop_prereq_report),
                "report verify-image-prerequisites' result")
         expect("no script call", mutated(drop_script), "must invoke classify-agent-startup.py")

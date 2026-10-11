@@ -336,7 +336,8 @@ jobs:
               if [ "$(printf '%s\n' "$self_name" | grep -c .)" -eq 1 ] && [ "${self_name%classify-startup}" != "$self_name" ]; then
                 prefix="${self_name%classify-startup}"
               else
-                echo "::warning::wing-commander classify-startup: could not find this job by runner name ($RUNNER_NAME) in run $RUN_ID, so the startup-agent lookup is not scoped to this call$( [ ! -s self-lookup-error.log ] || echo " -- $(oneline self-lookup-error.log)")"
+                self_err=$(oneline self-lookup-error.log)
+                echo "::warning::wing-commander classify-startup: could not find this job by runner name ($RUNNER_NAME) in run $RUN_ID, so the startup-agent lookup is not scoped to this call${self_err:+ -- $self_err}"
               fi
               job_ids=$(PREFIX="$prefix" jq -r '.jobs[] | select(.name | if env.PREFIX != "" then . == env.PREFIX + "startup-agent" else endswith("startup-agent") end) | .id' run-jobs.json 2>>job-lookup-error.log) || job_ids=""
               if [ "$(printf '%s\n' "$job_ids" | grep -c .)" -eq 1 ]; then
