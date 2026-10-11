@@ -1247,6 +1247,7 @@ jobs:
           # specs/093-not-ready-board-release D7: the not-ready threshold's
           # own stalled handover marker is the one stall marker naming a pr.
           handover_marker = is_not_ready_handover(marker_full)
+          new_pr = False
 
           # Issue #555: a marker's branch is adopted only when it has this
           # loop's own fix/<issue>-<slug> name, and its PR only when that PR
@@ -1441,13 +1442,8 @@ jobs:
                       if moved else "the head had not moved since the last converged review")
           elif branch:
               step = "fix"
-              # A fix cuts a new PR: the not-ready count starts again, and
-              # so does the round a readiness marker carried (specs/093 D6
-              # puts the converged review's round on it), which belongs to
-              # the PR that is gone.
-              nr_count_ = "0"
-              if marker_step == "readiness":
-                  round_ = "0"
+              # A fix cuts a new PR (the per-PR reset below).
+              new_pr = True
           else:
               step = "triage"
               if marker_present and marker_step not in PRE_FIX_STEPS:
@@ -1475,11 +1471,12 @@ jobs:
                   base_sha = ""
                   nr_count_ = "0"
 
-          # FR-004(a) counts not-ready outcomes on the same PR: a count
-          # earned on another PR does not follow the item to the one the
-          # fallback recovered -- nor does the round a readiness or
-          # not-ready handover marker recorded for that other PR (D6).
-          if pr_from_fallback and str(marker_full.get("pr") or "") != str(pr_number):
+          # The one per-PR reset (specs/093): when the item moves to a PR
+          # other than the one the marker names -- a fix cutting a new one,
+          # or the fallback recovering another -- FR-004(a)'s not-ready
+          # count starts again, and so does the round a readiness or
+          # not-ready handover marker recorded for the gone PR (D6).
+          if new_pr or (pr_from_fallback and str(marker_full.get("pr") or "") != str(pr_number)):
               nr_count_ = "0"
               if marker_step == "readiness" or handover_marker:
                   round_ = "0"
