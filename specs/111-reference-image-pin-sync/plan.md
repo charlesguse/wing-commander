@@ -47,7 +47,7 @@ one shared script; auto-release is untouched.
 - VIII A green check means what it says: a failed sync fails the run and files an issue; "already current" and "skipped" are reported distinctly. PASS.
 - IX Deterministic code gates durable actions: the decision to write is a script with fixture tests, no model judgment. PASS.
 - X Bounded autonomy: the write is confined to one variable on two named repositories. PASS.
-- Shared logic one home (CLAUDE.md): sync logic in one `_shared/` script; failure filing reuses the existing composite; a gate checks no copy appears elsewhere. PASS.
+- Shared logic one home (CLAUDE.md): sync logic in one workflow step; failure filing reuses the existing composite; a gate checks no copy appears elsewhere. PASS.
 
 No violations; Complexity Tracking is empty.
 
@@ -71,19 +71,19 @@ specs/111-reference-image-pin-sync/
 ```text
 .github/
 ├── workflows/
-│   ├── wing-commander-e2e-reference-image.yml   # startup-check waits for verdict; new sync-pins job; header comment
+│   ├── wing-commander-e2e-reference-image.yml   # startup-check waits for verdict; new sync-pins job whose sync step is the single home of the write; header comment
 │   └── lint-workflows.yml                       # register the new gate
-├── actions/_shared/
-│   └── sync-reference-image-pin.sh              # containment, compare, write, outcome table (single home)
 └── scripts/
     ├── verify-reference-image-pin-sync.py       # fixture gate: script behaviour + workflow wiring + single-home
     └── tests/reference-image-pin-sync/          # stubbed-gh fixtures
 docs/setup.md                                    # WING_COMMANDER_CONTAINER_IMAGE row + new secret row
 ```
 
-**Structure Decision**: One new job in the existing build workflow calling one
-`_shared` script, mirroring how auto-release keeps its containment logic and
-verdict helpers; no new composite is needed because there is one call site.
+**Structure Decision**: One new job in the existing build workflow whose sync
+step carries the logic inline, so Gate 12 can resolve each `gh` call's token
+(it rejects `gh` calls inside `.github/actions/_shared/` scripts); the
+fixture gate runs that block verbatim. No new composite is needed because
+there is one call site.
 
 ## Complexity Tracking
 

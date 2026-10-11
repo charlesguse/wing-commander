@@ -27,6 +27,11 @@
 # the start-up check calls it (FR-010); only the start-up call grants
 # actions: read.
 name: "Wing Commander · private-image-dogfood"
+# Ends with the dispatched container-image, so the reference-image rebuild's
+# startup-check job can tell its own dispatched run from any other
+# (wing-commander-e2e-reference-image.yml, `Wait for the start-up check
+# verdict`; specs/111-reference-image-pin-sync FR-001).
+run-name: ${{ inputs.container-image && format('Wing Commander · private-image-dogfood · {0}', inputs.container-image) || 'Wing Commander · private-image-dogfood' }}
 
 on:
   schedule:

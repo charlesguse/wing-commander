@@ -2,9 +2,11 @@
 # Stubbed `gh` for verify-reference-image-pin-sync.py. The harness copies it
 # to <tmp>/bin/gh and points STUB_DIR at a per-case directory:
 #   reach           one full_name per line: what `api user/repos` returns
-#   runs            one run number per line: what `run list` returns
+#   runs            one "<number> <id> <status> <conclusion>" line per run: what `run list` returns
+#   jobs/<id>       "<job name> <conclusion>" lines: what `run view <id>` returns (absent: it fails)
 #   vars/<o>__<r>   the held value of the variable (absent: the read 404s)
-#   probe_fail      repositories (one per line) whose variable read fails
+#   probe_fail      repositories (one per line) whose variable read is refused (403)
+#   run_list_fail   present: `run list` fails
 #   set_fail        repositories (one per line) whose variable write is refused
 #   log             every invocation, one line each, appended here
 set -u
@@ -20,9 +22,15 @@ case "${1:-} ${2:-}" in
   "api repos/"*)
     repo="${2#repos/}"
     repo="${repo%%/actions/*}"
-    listed probe_fail "$repo" && exit 1
+    if listed probe_fail "$repo"; then
+      echo "gh: Resource not accessible by personal access token (HTTP 403)" >&2
+      exit 1
+    fi
     f="${STUB_DIR}/vars/${repo/\//__}"
-    [ -f "$f" ] || exit 1
+    if [ ! -f "$f" ]; then
+      echo "gh: Not Found (HTTP 404)" >&2
+      exit 1
+    fi
     cat "$f"
     echo
     exit 0
@@ -40,7 +48,14 @@ case "${1:-} ${2:-}" in
     fi
     exit 0
     ;;
+  "run view")
+    f="${STUB_DIR}/jobs/${3:-}"
+    [ -f "$f" ] || exit 1
+    cat "$f"
+    exit 0
+    ;;
   "run list")
+    [ -f "${STUB_DIR}/run_list_fail" ] && exit 1
     [ -f "${STUB_DIR}/runs" ] && cat "${STUB_DIR}/runs"
     exit 0
     ;;

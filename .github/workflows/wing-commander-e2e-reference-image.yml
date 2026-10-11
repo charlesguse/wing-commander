@@ -8,9 +8,10 @@
 # Once the dispatched start-up check has passed on the published digest,
 # the `sync-pins` job writes WING_COMMANDER_CONTAINER_IMAGE
 # (<image>@<digest>) to this repository and to the end-to-end test
-# repository, through .github/actions/_shared/sync-reference-image-pin.sh
-# and a dedicated Variables-write token that the script checks reaches
-# exactly those two repositories (specs/111-reference-image-pin-sync). The
+# repository, through the job's one sync step (the single home of the
+# write, contracts/pin-sync-script.md) and a dedicated Variables-write
+# token that step checks reaches exactly those two repositories
+# (specs/111-reference-image-pin-sync). The
 # image is pinned by digest, never by the moving `:latest` tag. A failed
 # sync fails this run and files one `reference-image-sync:failed` issue;
 # docs/setup.md says what to do about it.
@@ -109,13 +110,19 @@ jobs:
 
       # Waits for the dispatched run's verdict: `passed` is true only when
       # that whole run (the prerequisite check and the start-up check)
-      # concluded success. sync-pins writes the pins only on `true`.
+      # concluded success. sync-pins writes the pins only on `true`. The run
+      # is found by its run-name, which wing-commander-private-image-dogfood.yml
+      # ends with the dispatched container-image, so a hand dispatch or
+      # another rebuild's check in the same window is never mistaken for
+      # this digest's. `--interval 30` keeps an hour-long watch inside
+      # github.token's API rate limit.
       - name: Wait for the start-up check verdict
         id: watch
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           SINCE: ${{ steps.dispatch.outputs.since }}
+          CHECKED_IMAGE: ${{ env.E2E_IMAGE }}@${{ needs.build-and-publish.outputs.digest }}
         run: |
           set -uo pipefail
           echo "passed=false" >> "$GITHUB_OUTPUT"
@@ -123,15 +130,16 @@ jobs:
           for _ in $(seq 1 24); do
             run_id="$(gh run list --workflow wing-commander-private-image-dogfood.yml \
               --event workflow_dispatch --branch "$GITHUB_REF_NAME" --created ">=${SINCE}" \
-              --json databaseId,createdAt --jq 'sort_by(.createdAt) | .[0].databaseId // empty')" || run_id=""
+              --json databaseId,createdAt,displayTitle \
+              --jq '[.[] | select(.displayTitle | endswith(" · " + env.CHECKED_IMAGE))] | sort_by(.createdAt) | .[0].databaseId // empty')" || run_id=""
             [ -n "$run_id" ] && break
             sleep 5
           done
           if [ -z "$run_id" ]; then
-            echo "::error::the dispatched start-up check run was not found"
+            echo "::error::the dispatched start-up check run for ${CHECKED_IMAGE} was not found"
             exit 0
           fi
-          if gh run watch "$run_id" --exit-status > /dev/null; then
+          if gh run watch "$run_id" --exit-status --interval 30 > /dev/null; then
             echo "passed=true" >> "$GITHUB_OUTPUT"
           else
             echo "::error::the start-up check run ${run_id} did not pass"
@@ -161,6 +169,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # The single home of the pin write (contracts/pin-sync-script.md);
+      # verify-reference-image-pin-sync.py runs this block verbatim against
+      # a stubbed gh. It stays inline, not in an _shared/ script, so Gate 12
+      # sees each gh call's token: GH_TOKEN (the workflow token) only lists
+      # this workflow's runs, and every other call names
+      # GH_TOKEN="$SYNC_TOKEN" on its own command line. Never echo SYNC_TOKEN.
       - name: Sync the reference-image pins
         id: sync
         env:
@@ -173,19 +187,201 @@ jobs:
           CHECKS_PASSED: ${{ needs.startup-check.outputs.passed }}
           RUN_NUMBER: ${{ github.run_number }}
           OUTCOME_FILE: ${{ runner.temp }}/pin-sync-outcome.json
-        run: bash .github/actions/_shared/sync-reference-image-pin.sh
+          TABLE_FILE: ${{ runner.temp }}/pin-sync-table.md
+          REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          : "${OUTCOME_FILE:?OUTCOME_FILE is required}"
+          : "${TABLE_FILE:?TABLE_FILE is required}"
+          SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          VAR=WING_COMMANDER_CONTAINER_IMAGE
+          WORKFLOW=wing-commander-e2e-reference-image.yml
+          SYNC_TOKEN="${SYNC_TOKEN:-}"
+          E2E_REPO="${E2E_REPO:-}"
+          THIS_REPO="${THIS_REPO:-}"
+          IMAGE="${IMAGE:-}"
+          DIGEST="${DIGEST:-}"
+          CHECKS_PASSED="${CHECKS_PASSED:-}"
+          RUN_NUMBER="${RUN_NUMBER:-0}"
+          REF="${REF:-}"
+          DEFAULT_BRANCH="${DEFAULT_BRANCH:-}"
+          EXPECTED="${IMAGE}@${DIGEST}"
+
+          RECORDS="$(mktemp)"
+          ERRS="$(mktemp)"
+          trap 'rm -f "$RECORDS" "$ERRS"' EXIT
+
+          # The sync set: this repository, plus the test repository when configured.
+          SYNC_SET=("$THIS_REPO")
+          if [ -n "$E2E_REPO" ] && [ "${E2E_REPO,,}" != "${THIS_REPO,,}" ]; then
+            SYNC_SET+=("$E2E_REPO")
+          fi
+
+          record() { # repo status reason held expected
+            jq -cn --arg repo "$1" --arg status "$2" --arg reason "$3" \
+              --arg held "$4" --arg expected "$5" \
+              '{repo:$repo,status:$status,reason:$reason,held:$held,expected:$expected}' >> "$RECORDS"
+          }
+
+          record_all() { # status reason
+            local r
+            for r in "${SYNC_SET[@]}"; do record "$r" "$1" "$2" "" "$EXPECTED"; done
+          }
+
+          finish() {
+            if [ -z "$E2E_REPO" ]; then
+              record "test repository" skipped "no test repository configured" "" ""
+            fi
+            jq -s '.' "$RECORDS" > "$OUTCOME_FILE"
+            # The one rendering of the table: the summary and the failure
+            # issue body both read TABLE_FILE.
+            {
+              echo "| Repository | Status | Reason | Held | Expected |"
+              echo "|---|---|---|---|---|"
+              jq -r '.[] | "| `\(.repo)` | \(.status) | \(.reason) | `\(.held)` | `\(.expected)` |"' "$OUTCOME_FILE"
+            } > "$TABLE_FILE"
+            { echo "### Reference-image pin sync"; echo ""; cat "$TABLE_FILE"; } >> "$SUMMARY"
+            # synced=true only when every sync-set repository is written or
+            # current: the only outcome that may close the failure issue.
+            if jq -e --argjson n "${#SYNC_SET[@]}" \
+                '[.[] | select(.status == "written" or .status == "current")] | length == $n' \
+                "$OUTCOME_FILE" > /dev/null; then
+              echo "synced=true" >> "${GITHUB_OUTPUT:-/dev/null}"
+            fi
+            if jq -e 'any(.[]; .status == "failed")' "$OUTCOME_FILE" > /dev/null; then
+              exit 1
+            fi
+            exit 0
+          }
+
+          # 0. Only a build of the default branch may move the pins: a
+          #    rebuild dispatched on another branch is checked, never pinned.
+          if [ -z "$DEFAULT_BRANCH" ] || [ "$REF" != "refs/heads/${DEFAULT_BRANCH}" ]; then
+            record_all skipped "built from ${REF:-an unknown ref}, not the default branch"
+            finish
+          fi
+
+          # 1. The image checks must have passed.
+          if [ "$CHECKS_PASSED" != "true" ]; then
+            record_all skipped "image check did not pass"
+            finish
+          fi
+
+          # 2. Validate the inputs before any API call.
+          repo_re='^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'
+          bad=""
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || bad="digest is not sha256:<64 hex>"
+          [[ "$IMAGE" =~ ^[A-Za-z0-9._/:-]+$ ]] || bad="image name is empty or malformed"
+          for r in "${SYNC_SET[@]}"; do
+            [[ "$r" =~ $repo_re ]] || bad="repository name is malformed"
+          done
+          if [ -n "$bad" ]; then
+            record_all failed "$bad"
+            finish
+          fi
+
+          # 3. A newer default-branch run has already synced: do not move the
+          #    pin back (FR-010). Newer means a higher run number that either
+          #    concluded success, or is still finishing but whose own
+          #    startup-check and sync-pins jobs both already succeeded (this
+          #    job's concurrency group lets it start the moment that run's
+          #    sync-pins ends, before the run itself reads as completed). Any
+          #    list or view that fails writes nothing.
+          newer=""
+          if ! runs="$(gh run list --repo "$THIS_REPO" --workflow "$WORKFLOW" --branch "$DEFAULT_BRANCH" \
+            --json number,databaseId,status,conclusion \
+            --jq '.[] | "\(.number) \(.databaseId) \(.status) \(.conclusion)"' 2> /dev/null)"; then
+            record_all failed "could not list this workflow's runs to rule out a newer sync"
+            finish
+          fi
+          while read -r n id st concl; do
+            [[ "$n" =~ ^[0-9]+$ ]] && [[ "$id" =~ ^[0-9]+$ ]] && [ "$n" -gt "$RUN_NUMBER" ] || continue
+            if [ "$st" = completed ]; then
+              [ "$concl" = success ] || continue
+            else
+              if ! jobs="$(gh run view "$id" --repo "$THIS_REPO" --json jobs \
+                --jq '.jobs[] | "\(.name) \(.conclusion)"' 2> /dev/null)"; then
+                record_all failed "could not read run ${n}'s jobs to rule out a newer sync"
+                finish
+              fi
+              grep -qx 'startup-check success' <<< "$jobs" && grep -qx 'sync-pins success' <<< "$jobs" || continue
+            fi
+            if [ -z "$newer" ] || [ "$n" -gt "$newer" ]; then
+              newer="$n"
+            fi
+          done <<< "$runs"
+          if [ -n "$newer" ]; then
+            record_all skipped "superseded by run ${newer}"
+            finish
+          fi
+
+          # 4. The credential must reach exactly the sync set.
+          if [ -z "$SYNC_TOKEN" ]; then
+            record_all failed "WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN is not set"
+            finish
+          fi
+          if ! reach="$(GH_TOKEN="$SYNC_TOKEN" gh api 'user/repos?affiliation=owner,collaborator,organization_member' \
+            --paginate --jq '.[].full_name' 2> /dev/null)"; then
+            record_all failed "WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN was rejected when listing reachable repositories"
+            finish
+          fi
+          reach_sorted="$(printf '%s\n' "$reach" | tr '[:upper:]' '[:lower:]' | sed '/^$/d' | sort -u)"
+          want_sorted="$(printf '%s\n' "${SYNC_SET[@]}" | tr '[:upper:]' '[:lower:]' | sort -u)"
+          if [ "$reach_sorted" != "$want_sorted" ]; then
+            extra="$(comm -13 <(printf '%s\n' "$want_sorted") <(printf '%s\n' "$reach_sorted") | paste -sd, -)"
+            missing="$(comm -23 <(printf '%s\n' "$want_sorted") <(printf '%s\n' "$reach_sorted") | paste -sd, -)"
+            msg="credential reaches ${extra:-nothing extra}"
+            [ -n "$missing" ] && msg="${msg}; does not reach ${missing}"
+            record_all failed "$msg"
+            finish
+          fi
+
+          # 5. Probe every repository before writing any. A 404 is a
+          #    variable not set yet (held ""), which the write creates; any
+          #    other failure writes nothing.
+          declare -A HELD
+          for r in "${SYNC_SET[@]}"; do
+            if held="$(GH_TOKEN="$SYNC_TOKEN" gh api "repos/${r}/actions/variables/${VAR}" --jq .value 2> "$ERRS")"; then
+              HELD["$r"]="$held"
+            elif grep -q 'HTTP 404' "$ERRS"; then
+              HELD["$r"]=""
+            else
+              record_all failed "could not read ${VAR} on ${r}"
+              finish
+            fi
+          done
+
+          # 6. Write only what differs.
+          for r in "${SYNC_SET[@]}"; do
+            held="${HELD[$r]}"
+            if [ "$held" = "$EXPECTED" ]; then
+              record "$r" current "already current" "$held" "$EXPECTED"
+            elif GH_TOKEN="$SYNC_TOKEN" gh variable set "$VAR" --repo "$r" --body "$EXPECTED" > /dev/null 2>&1; then
+              record "$r" written "pin updated" "$held" "$EXPECTED"
+            else
+              record "$r" failed "write refused" "$held" "$EXPECTED"
+            fi
+          done
+
+          # 7. Report.
+          finish
 
       - name: Build the failure issue body
         if: ${{ failure() && steps.sync.outcome == 'failure' }}
+        env:
+          TABLE_FILE: ${{ runner.temp }}/pin-sync-table.md
         run: |
           set -uo pipefail
           {
             echo "The reference-image pin sync failed in run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
             echo ""
-            echo "| Repository | Status | Reason | Held | Expected |"
-            echo "|---|---|---|---|---|"
-            jq -r '.[] | "| `\(.repo)` | \(.status) | \(.reason) | `\(.held)` | `\(.expected)` |"' \
-              "${RUNNER_TEMP}/pin-sync-outcome.json"
+            if [ -s "$TABLE_FILE" ]; then
+              cat "$TABLE_FILE"
+            else
+              echo "The sync step ended before it recorded an outcome for each repository; its log in that run says why."
+            fi
           } > "${RUNNER_TEMP}/pin-sync-failure-body.md"
 
       - name: File or update the sync failure issue
@@ -201,7 +397,7 @@ jobs:
           body-file: ${{ runner.temp }}/pin-sync-failure-body.md
 
       - name: Close the sync failure issue on success
-        if: ${{ steps.sync.outcome == 'success' && needs.startup-check.outputs.passed == 'true' }}
+        if: ${{ steps.sync.outcome == 'success' && steps.sync.outputs.synced == 'true' }}
         uses: ./.github/actions/wing-commander-durable-failure-issue
         with:
           token: ${{ github.token }}

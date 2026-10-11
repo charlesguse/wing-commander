@@ -12,7 +12,7 @@
 
 ## Path Conventions
 
-- Script: `.github/actions/_shared/sync-reference-image-pin.sh`
+- Script: the `Sync the reference-image pins` step's inline `run:` block in `.github/workflows/wing-commander-e2e-reference-image.yml` (first written as `.github/actions/_shared/sync-reference-image-pin.sh`; moved inline because Gate 12 rejects `gh` calls in `_shared/` scripts)
 - Workflow: `.github/workflows/wing-commander-e2e-reference-image.yml`
 - Gate: `.github/scripts/verify-reference-image-pin-sync.py`; fixtures: `.github/scripts/tests/reference-image-pin-sync/`
 - Gate registration: `.github/workflows/lint-workflows.yml`
