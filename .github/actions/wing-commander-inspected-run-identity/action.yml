@@ -344,8 +344,9 @@ runs:
     # data-model.md table so every FR-002 consumer can read one
     # resolved-stage output instead of matching a display name itself.
     # Wing Commander · 8 watchdog IS included (maintainer review, fold
-    # leg-3): the only watchdog record (metrics-record-diagnose) is written
-    # when diagnose runs, so a clean or early-failed watchdog run leaves
+    # leg-3): the watchdog's records (metrics-record-diagnose, and spec
+    # 110's metrics-record-diagnose-shadow when the trial is on) are
+    # written only when diagnose runs, so a clean or early-failed watchdog run leaves
     # record-stage empty and must still resolve here, or the self-dispatch
     # cap guard (Self-dispatch depth's if:) and four collectors skip
     # unresolved for every such run.

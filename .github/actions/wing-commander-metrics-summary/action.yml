@@ -319,6 +319,7 @@ runs:
             --argjson per_model "${per_model_json:-[]}" \
             --argjson per_model_available "${per_model_available:-false}" \
             --arg emitted_at "$EMITTED_AT" \
+            --argjson refusal "${refusal:-false}" \
             --argjson branch_advance_available "$branch_advance_available" \
             --arg branch "$BRANCH" \
             --arg before_sha "$BEFORE_SHA" \
@@ -373,6 +374,7 @@ runs:
               per_model: $per_model,
               per_model_available: $per_model_available,
               emitted_at: $emitted_at,
+              refusal: $refusal,
               branch_advance: {
                 available: $branch_advance_available,
                 branch: (if $branch_advance_available then strOrNull($branch) else null end),
@@ -497,6 +499,10 @@ runs:
         cost_usd="$(jqget '.total_cost_usd')"
         usage_json="$(printf '%s' "$result_json" | jq -c '.usage // empty' 2>/dev/null || true)"
         model_usage_json="$(printf '%s' "$result_json" | jq -c '.modelUsage // empty' 2>/dev/null || true)"
+        # spec 110 trial-record contract: true iff the terminal result carries
+        # stop_reason "refusal"; any other value or absence is false.
+        refusal=false
+        [ "$(jqget '.stop_reason')" = "refusal" ] && refusal=true
         cost_available=false
         is_number "$cost_usd" && cost_available=true
         duration_available=false

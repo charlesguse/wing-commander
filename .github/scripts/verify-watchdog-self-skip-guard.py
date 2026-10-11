@@ -91,7 +91,10 @@ def load_subject():
 
 def source_ctx(paused, conclusion):
     """Stage 8's context: event-driven (conclusion set) or dispatch (None)."""
-    ctx = {PAUSE_VAR: "true" if paused else ""}
+    # The watchdog job's `!cancelled()` (spec 110: it waits on the
+    # switch-guarded trial-bound job and must run whatever that job's
+    # result) is false for every scenario here: none cancels stage 8.
+    ctx = {PAUSE_VAR: "true" if paused else "", "cancelled()": False}
     if conclusion is None:
         ctx.update({"github.event_name": "workflow_dispatch", "inputs.run-id": "17712345678"})
     else:
