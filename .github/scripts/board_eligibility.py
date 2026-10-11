@@ -124,6 +124,65 @@ TERMINAL_STEPS = frozenset({"closed", "stalled", "proven", DUPLICATE_STEP})
 # hold for it is never re-selected every run.
 UNOWNED_OPEN_PR_STATE = "OPEN_UNOWNED"
 
+# specs/093-not-ready-board-release, contracts/not-ready-hold.md,
+# spec.md Assumptions -- "Threshold value: 3 not-ready outcomes per PR", a
+# value, not a mechanism (FR-004(a)).
+NOT_READY_THRESHOLD = 3
+NOT_READY_CLASSES = frozenset({"self-clearing", "durable"})
+
+
+def not_ready_record(marker):
+    """specs/093-not-ready-board-release FR-002/FR-011: {"pr": int,
+    "head_sha": str, "class": "self-clearing"|"durable", "count": int}
+    read from `marker`'s pr/nr_head_sha/nr_class/nr_count fields, or None
+    when `marker` is None, its step is not "readiness", or any of the
+    three nr_* fields is missing or malformed -- fail-safe: degrade to "no
+    record", never guess a class or count."""
+    if marker is None or marker.get("step") != "readiness":
+        return None
+    nr_class = marker.get("nr_class")
+    if nr_class not in NOT_READY_CLASSES:
+        return None
+    try:
+        pr = int(marker.get("pr"))
+        count = int(marker.get("nr_count"))
+    except (TypeError, ValueError):
+        return None
+    head_sha = marker.get("nr_head_sha")
+    if not isinstance(head_sha, str) or not head_sha:
+        return None
+    return {"pr": pr, "head_sha": head_sha, "class": nr_class, "count": count}
+
+
+def is_not_ready_handover(marker):
+    """specs/093-not-ready-board-release D7: the threshold's own stalled
+    handover marker -- the one stall marker that names a pr (with its
+    nr_head_sha). select looks that PR up like a fix-or-later marker's, so
+    a PR a human has taken over (board:owned removed) still holds."""
+    return bool(marker and marker.get("step") == "stalled" and marker.get("pr") is not None
+                and marker.get("nr_head_sha"))
+
+
+def marker_names_live_pr(marker):
+    """True when select must look up the PR `marker` names: a fix-or-later
+    step's, or a not-ready handover's."""
+    return bool(marker) and (marker.get("step") in FIX_OR_LATER_STEPS or is_not_ready_handover(marker))
+
+
+def readmission_round(round_):
+    """FR-007/SC-009: the round a re-admitted item resumes review at -- one
+    past the marker's own, so each re-admission on a moved head spends a
+    round of the continued budget. "0" when the round does not parse."""
+    try:
+        return str(int(round_ or "0") + 1)
+    except (TypeError, ValueError):
+        return "0"
+
+
+def not_ready_handover_due(nr_count):
+    """FR-004(a): True when `nr_count` has reached NOT_READY_THRESHOLD."""
+    return nr_count >= NOT_READY_THRESHOLD
+
 
 def _label_names(issue):
     return [(label or {}).get("name") or "" for label in issue.get("labels") or []]
@@ -316,7 +375,8 @@ def is_excluded(issue, spec_request_state_by_number=None, duplicate_marker=None)
 # workflow's run: step or in a second module; point back at this comment
 # instead (contracts/in-flight-detection.md).
 def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_login,
-                         spec_request_state_by_number=None):
+                        spec_request_state_by_number=None, pr_head_sha_by_number=None,
+                        passed_over=None):
     """FR-001/FR-002/FR-003/FR-005. Returns (issue_number, multiple_found).
     bot_login: the loop's own App login; only its comments' markers are
     read (board_item_marker.is_loop_marker_author(), issue #555).
@@ -346,6 +406,10 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_
     and no job consumes that step. Treating it as in-flight while its PR
     was open re-selected the same item every run, re-posted an identical
     readiness report, and starved every other issue until a human merged.
+
+    pr_head_sha_by_number (specs/093-not-ready-board-release): a `readiness`
+    marker's open PR is additionally excluded when _not_ready_holds() is
+    True -- a durable, unmoved-head not-ready hold (FR-001/FR-003).
     """
     candidates = []
     for issue in open_issues:
@@ -369,12 +433,104 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_
                 pr = int(marker.get("pr"))
             except (TypeError, ValueError):
                 continue
-            if pr_state_by_number.get(pr) == "OPEN":
-                candidates.append((created_at, number))
+            if pr_state_by_number.get(pr) != "OPEN":
+                continue
+            # specs/093-not-ready-board-release FR-001/FR-014: an open,
+            # durable, unmoved-head not-ready hold excludes this issue even
+            # though the OPEN check above would otherwise qualify it --
+            # unlike _awaiting_merge_holds()/_unowned_open_pr_holds(), this
+            # predicate must be called explicitly here (contracts/not-ready-hold.md).
+            if step == "readiness" and _not_ready_holds(
+                    marker, pr_state_by_number, pr_head_sha_by_number, number, passed_over):
+                continue
+            candidates.append((created_at, number))
     if not candidates:
         return None, False
     candidates.sort(key=lambda pair: pair[0])
     return candidates[-1][1], len(candidates) > 1
+
+
+def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number,
+                     number=None, passed_over=None):
+    """specs/093-not-ready-board-release FR-001/FR-003/FR-004(b)/FR-005/
+    FR-011. True (held) when `marker` carries a parsable not-ready record
+    (not_ready_record()) whose class is "durable" AND the PR's current
+    head SHA (pr_head_sha_by_number.get(pr)) either cannot be determined
+    at all (fail-safe: unknown degrades to held, never to admitted) or
+    equals the record's own head_sha (unchanged head holds), and when a
+    readiness marker names an nr_class but its record does not parse
+    (FR-011: passed over, never admitted). False
+    otherwise -- including a PR known CLOSED or MERGED, or one select's
+    lookup found gone (absent from a supplied pr_state_by_number: it can
+    never close or move, so a hold would be forever), no not-ready record
+    at all, a
+    "self-clearing" record (FR-005: never held), or a durable record
+    whose head has moved (admitted, not merely un-held -- resume's own
+    step-resolution logic decides review vs. readiness, never this
+    predicate). Mirrors _awaiting_merge_holds()/_unowned_open_pr_holds()'s
+    existing shape beside it (contracts/not-ready-hold.md)."""
+    reason = not_ready_hold_reason(marker, pr_state_by_number, pr_head_sha_by_number)
+    # FR-011: a selection site passes `passed_over` ({issue: reason}) so the
+    # run records why, where the decision is made -- never recomputed.
+    if reason is not None and passed_over is not None:
+        passed_over.setdefault(number, reason)
+    return reason is not None
+
+
+def not_ready_hold_reason(marker, pr_state_by_number, pr_head_sha_by_number):
+    """_not_ready_holds()'s decision with its reason (FR-011: the run
+    records why an item was passed over), or None when not held. A PR
+    known to be CLOSED or MERGED, or gone (404), is never held by this
+    rule; the rules beside it decide as they did before this feature (a
+    MERGED one is passed over by _merged_fix_holds() and recovered by the
+    displacement scan; a closed or gone one resumes at triage, or fix on a
+    recorded branch)."""
+    if marker is None or marker.get("step") != "readiness":
+        return None
+    try:
+        pr = int(marker.get("pr"))
+    except (TypeError, ValueError):
+        pr = None
+    if pr is not None and (pr_state_by_number or {}).get(pr) in ("CLOSED", "MERGED"):
+        return None
+    # select's lookup leaves no state only for a PR that 404s (any other
+    # failure stops the run): a PR that no longer exists can never close
+    # or move, so holding it would be forever. Resume triages it, as before.
+    if pr is not None and pr_state_by_number is not None and pr not in pr_state_by_number:
+        return None
+    record = not_ready_record(marker)
+    if record is None:
+        # FR-011: a readiness marker that names a not-ready class but whose
+        # record does not parse is passed over, never admitted -- admitting
+        # it would re-report the same outcome with nothing changed. Closing
+        # the PR releases it (above).
+        if "nr_class" in marker:
+            return "its not-ready record does not parse"
+        return None
+    if record["class"] != "durable":
+        return None
+    current_head_sha = (pr_head_sha_by_number or {}).get(record["pr"])
+    if current_head_sha is None:
+        return "PR #{0}'s current head could not be resolved (durable not-ready record)".format(record["pr"])
+    if current_head_sha == record["head_sha"]:
+        return "held not-ready on PR #{0} at head {1} until the head moves".format(
+            record["pr"], record["head_sha"])
+    return None
+
+
+def not_ready_head_moved(marker, pr_head_sha):
+    """specs/093-not-ready-board-release FR-007/SC-010: True when `marker`
+    carries a not-ready record of either class and the PR's live head
+    `pr_head_sha` is known and differs from the record's -- commits no
+    review covered, so the item resumes at review, never readiness. For a
+    durable record this is exactly the end of _not_ready_holds()'s hold
+    (re-admission); a self-clearing record is never held, but its moved
+    head needs the same review. The resume step calls this rather than
+    comparing head SHAs itself (FR-003: one home)."""
+    record = not_ready_record(marker)
+    if record is None or not pr_head_sha:
+        return False
+    return pr_head_sha != record["head_sha"]
 
 
 def _awaiting_merge_holds(marker, pr_state_by_number):
@@ -404,9 +560,10 @@ def _awaiting_merge_holds(marker, pr_state_by_number):
 
 
 def _unowned_open_pr_holds(marker, pr_state_by_number):
-    """True when `marker` records a fix-or-later step whose PR the select
-    job's lookup reported as UNOWNED_OPEN_PR_STATE (issue #555)."""
-    if (marker or {}).get("step") not in FIX_OR_LATER_STEPS:
+    """True when `marker` records a fix-or-later step (or a not-ready
+    handover, specs/093) whose PR the select job's lookup reported as
+    UNOWNED_OPEN_PR_STATE (issue #555)."""
+    if not marker_names_live_pr(marker):
         return False
     try:
         pr = int(marker.get("pr"))
@@ -440,7 +597,7 @@ def _merged_fix_holds(marker, pr_state_by_number):
 
 
 def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_number, bot_login,
-           spec_request_state_by_number=None):
+           spec_request_state_by_number=None, pr_head_sha_by_number=None, passed_over=None):
     """FR-004/FR-011: consults in_flight_candidate() first; falls through to
     the existing oldest-first/classify_issue/is_excluded scan when it
     returns (None, ...). That fallback carries the same `prove`-marker skip
@@ -458,9 +615,12 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
     to `step = "prove"` with no durable write and no consumer in select's
     own job graph, so re-admitting it here would just re-resolve it to the
     same dead end every tick; the displacement step's own independent scan
-    is what actually recovers it instead."""
+    is what actually recovers it instead. It also passes over an issue whose
+    marker is a durable, unmoved-head not-ready hold (_not_ready_holds(),
+    specs/093-not-ready-board-release FR-003/FR-004)."""
     in_flight, _multiple_found = in_flight_candidate(
-        open_issues, comments_by_issue, pr_state_by_number, bot_login, spec_request_state_by_number)
+        open_issues, comments_by_issue, pr_state_by_number, bot_login, spec_request_state_by_number,
+        pr_head_sha_by_number, passed_over)
     if in_flight is not None:
         return in_flight
 
@@ -481,6 +641,9 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
             continue
         if pair is not None and _merged_fix_holds(pair[1], pr_state_by_number):
             continue
+        if pair is not None and _not_ready_holds(
+                pair[1], pr_state_by_number, pr_head_sha_by_number, number, passed_over):
+            continue
         labeled_events = labeled_events_by_issue.get(number, [])
         if classify_issue(issue, labeled_events) != "ineligible":
             return number
@@ -490,7 +653,8 @@ def select(open_issues, labeled_events_by_issue, comments_by_issue, pr_state_by_
 def main():
     """Runtime entry point: reads `{"open_issues": [...],
     "labeled_events_by_issue": {...}, "comments_by_issue": {...},
-    "pr_state_by_number": {...}, "bot_login": "<slug>[bot]"}` from stdin
+    "pr_state_by_number": {...}, "pr_head_sha_by_number": {...},
+    "bot_login": "<slug>[bot]"}` from stdin
     (bot_login is required: it exits non-zero without one, or with a bare
     "[bot]", issue #555),
     prints the selected issue
@@ -523,13 +687,23 @@ def main():
         int(number): state
         for number, state in (payload.get("spec_request_state_by_number") or {}).items()
     }
+    pr_head_sha_by_number = {
+        int(number): head_sha
+        for number, head_sha in (payload.get("pr_head_sha_by_number") or {}).items()
+    }
     in_flight_issue, multiple_found = in_flight_candidate(
-        open_issues, comments_by_issue, pr_state_by_number, bot_login, spec_request_state_by_number)
+        open_issues, comments_by_issue, pr_state_by_number, bot_login, spec_request_state_by_number,
+        pr_head_sha_by_number)
+    passed_over = {}
     selected = select(open_issues, labeled_events_by_issue, comments_by_issue,
-                      pr_state_by_number, bot_login, spec_request_state_by_number)
+                      pr_state_by_number, bot_login, spec_request_state_by_number,
+                      pr_head_sha_by_number, passed_over)
+    held = [{"issue": number, "reason": reason} for number, reason in passed_over.items()]
     print(json.dumps({
         "decided_by_marker": in_flight_issue is not None and in_flight_issue == selected,
         "multiple_found": multiple_found,
+        # FR-011: every item a not-ready hold passed over, and why.
+        "not_ready_held": held,
     }), file=sys.stderr)
     if selected is not None:
         print(selected)

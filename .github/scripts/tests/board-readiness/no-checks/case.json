@@ -6,5 +6,9 @@
   "open_in_scope_findings": 0,
   "backstop_holds": true,
   "kill_switch_paused": false,
-  "expected": {"ready": false, "reason_contains": "no checks"}
+  "expected": {
+    "ready": false,
+    "reason_contains": "no checks",
+    "unmet_class": "durable"
+  }
 }

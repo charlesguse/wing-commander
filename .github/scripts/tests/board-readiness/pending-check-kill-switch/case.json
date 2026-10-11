@@ -1,0 +1,21 @@
+{
+  "snapshot": {
+    "headRefOid": "ffff666",
+    "statusCheckRollup": [
+      {
+        "name": "lint",
+        "workflowName": "lint · workflows",
+        "status": "IN_PROGRESS",
+        "conclusion": ""
+      }
+    ]
+  },
+  "open_in_scope_findings": 0,
+  "backstop_holds": true,
+  "kill_switch_paused": true,
+  "expected": {
+    "ready": false,
+    "reason_contains": "the kill switch is set",
+    "unmet_class": "durable"
+  }
+}
