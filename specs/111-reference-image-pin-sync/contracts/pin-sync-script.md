@@ -28,7 +28,7 @@ can see it. `verify-reference-image-pin-sync.py` runs the block verbatim.
 0. `REF` is not `refs/heads/<DEFAULT_BRANCH>` → every repo `skipped` ("built from <ref>, not the default branch"); exit 0; no API call.
 1. `CHECKS_PASSED != true` → every repo `skipped` ("image check did not pass"); exit 0. Defensive: the `sync-pins` job runs only after a passed check (a failed-check run must not queue in the concurrency group, where it would cancel a passed run's pending sync), and `startup-check`'s verdict step writes the skip to the summary itself.
 2. Malformed `DIGEST` or empty `IMAGE` → every repo `failed`; exit 1; no call to the variables API.
-3. Superseded by a higher-numbered default-branch run → `skipped`, exit 0. The last 100 runs are read newest first. A higher run supersedes once its own `startup-check` job concluded `success` and its sync step concluded `success`, whether or not its `sync-pins` job or the run itself has completed (FR-010); a sync step that failed changed nothing (steps 5b and 6), so it does not supersede. If the run list, or a newer run's jobs, cannot be read → every repo `failed`, exit 1, no write.
+3. Never move the pins back (FR-010). The last 100 default-branch runs are read newest first, and each higher-numbered run's attempts newest first; an attempt whose `startup-check` concluded `success` decides: its sync step `success` → this run `skipped` ("superseded by run N"), exit 0; its sync step `failure`, or its `sync-pins` job `cancelled` (a pending job cancelled by a later one queueing in the concurrency group) → every repo `failed` ("newer run N passed its check but its sync did not finish; re-run that run's sync-pins job"), exit 1, no write, since this older digest could roll back a partial newer write; its sync not run yet → no decision (it queues after this run and writes last). If the run list, or a newer run's jobs, cannot be read → every repo `failed`, exit 1, no write.
 4. Reach check: sorted reachable set must equal the sync set, else all `failed` ("credential reaches <names>"), exit 1, no write.
 5. Probe each repo (read the variable); a 404 means not set yet (held `""`, written in step 6); any other failure → all `failed`, no write.
 5b. Write-permission proof (FR-005): each repo whose held value is non-empty and differs is rewritten with that same held value; a refusal → all `failed`, exit 1, nothing changed.
@@ -37,7 +37,7 @@ can see it. `verify-reference-image-pin-sync.py` runs the block verbatim.
 
 ## Outputs
 - `OUTCOME_FILE`: JSON array of `{repo,status,reason,held,expected}`.
-- `TABLE_FILE`: the markdown table, header included.
+- `TABLE_FILE`: the markdown table, header included. A test repository that is unset, or names this repository, gets a `skipped` row.
 - Step output `synced=true` only when every outcome, the test repository's included, is `written` or `current`; only then is the failure issue closed. Table cells are escaped (`|`, backticks, newlines).
 - Exit 0 unless any outcome is `failed`.
 

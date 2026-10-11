@@ -244,6 +244,8 @@ jobs:
           finish() {
             if [ -z "$E2E_REPO" ]; then
               record "test repository" skipped "no test repository configured" "" ""
+            elif [ "${E2E_REPO,,}" = "${THIS_REPO,,}" ]; then
+              record "test repository" skipped "WING_COMMANDER_AUTO_RELEASE_E2E_REPO names this repository" "" ""
             fi
             jq -s '.' "$RECORDS" > "$OUTCOME_FILE"
             # The one rendering of the table: the summary and the failure
@@ -295,34 +297,46 @@ jobs:
             finish
           fi
 
-          # 3. A newer default-branch run has already synced: do not move the
-          #    pin back (FR-010). A higher-numbered run supersedes this one
-          #    once its own startup-check succeeded and its sync step (this
-          #    step, in that run) succeeded, whether or not that run reads as
-          #    completed yet: this job's concurrency group lets it start the
-          #    moment that sync-pins ends. A newer sync step that failed did
-          #    not move the pins (step 5b proves every write first), so it
-          #    does not supersede. Runs are read newest first; the first
-          #    that supersedes ends the search. Any list or view that fails
-          #    writes nothing.
+          # 3. Never move the pins back (FR-010). Every higher-numbered
+          #    default-branch run (the last 100, newest first), every attempt
+          #    of it newest first, whose startup-check succeeded decides:
+          #    - its sync step succeeded: it pinned a newer digest, so this
+          #      run is superseded and writes nothing;
+          #    - its sync step failed, or its sync-pins job was cancelled
+          #      (GitHub cancels a pending job when another queues in the
+          #      concurrency group): it may have written part of a newer
+          #      digest, or never wrote one, so writing this older digest
+          #      could roll the pins back; this run fails, writes nothing,
+          #      and names that run to re-run;
+          #    - its sync has not run yet: it queues after this one and will
+          #      write its newer digest over this run's, so it does not stop
+          #      this write.
+          #    Any list or view that fails writes nothing.
           if ! runs="$(gh run list --repo "$THIS_REPO" --workflow "$WORKFLOW" --branch "$DEFAULT_BRANCH" \
-            --limit 100 --json number,databaseId \
-            --jq 'sort_by(.number) | reverse | .[] | "\(.number) \(.databaseId)"' 2> "$ERRS")"; then
+            --limit 100 --json number,databaseId,attempt \
+            --jq 'sort_by(.number) | reverse | .[] | "\(.number) \(.databaseId) \(.attempt)"' 2> "$ERRS")"; then
             record_all failed "could not list this workflow's runs to rule out a newer sync$(http_status)"
             finish
           fi
-          while read -r n id; do
-            [[ "$n" =~ ^[0-9]+$ ]] && [[ "$id" =~ ^[0-9]+$ ]] || continue
+          while read -r n id attempts; do
+            [[ "$n" =~ ^[0-9]+$ ]] && [[ "$id" =~ ^[0-9]+$ ]] && [[ "$attempts" =~ ^[0-9]+$ ]] || continue
             [ "$n" -gt "$RUN_NUMBER" ] || break
-            if ! verdicts="$(gh run view "$id" --repo "$THIS_REPO" --json jobs \
-              --jq '.jobs[] | if .name == "sync-pins" then (.steps[] | select(.name == "Sync the reference-image pins") | "sync \(.conclusion)") else "\(.name) \(.conclusion)" end' 2> "$ERRS")"; then
-              record_all failed "could not read run ${n}'s jobs to rule out a newer sync$(http_status)"
-              finish
-            fi
-            if grep -qx 'startup-check success' <<< "$verdicts" && grep -qx 'sync success' <<< "$verdicts"; then
-              record_all skipped "superseded by run ${n}"
-              finish
-            fi
+            for ((a = attempts; a >= 1; a--)); do
+              if ! verdicts="$(gh run view "$id" --repo "$THIS_REPO" --attempt "$a" --json jobs \
+                --jq '.jobs[] | if .name == "sync-pins" then "sync-job \(.conclusion)", ((.steps // [])[] | select(.name == "Sync the reference-image pins") | "sync \(.conclusion)") else "\(.name) \(.conclusion)" end' 2> "$ERRS")"; then
+                record_all failed "could not read run ${n}'s jobs to rule out a newer sync$(http_status)"
+                finish
+              fi
+              grep -qx 'startup-check success' <<< "$verdicts" || continue
+              if grep -qx 'sync success' <<< "$verdicts"; then
+                record_all skipped "superseded by run ${n}"
+                finish
+              fi
+              if grep -qx 'sync failure' <<< "$verdicts" || grep -qx 'sync-job cancelled' <<< "$verdicts"; then
+                record_all failed "newer run ${n} passed its check but its sync did not finish; re-run that run's sync-pins job, not this one"
+                finish
+              fi
+            done
           done <<< "$runs"
 
           # 4. The credential must reach exactly the sync set.

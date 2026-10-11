@@ -5,8 +5,8 @@
 #   reach_fail         present: `api user/repos` fails with HTTP 401
 #   runs.json          the JSON array `run list` filters with its own --jq
 #   run_list_fail      present: `run list` fails
-#   jobs/<id>.json     the JSON object `run view <id>` filters with its own
-#                      --jq (absent: the view fails)
+#   jobs/<id>-<a>.json the JSON object `run view <id> --attempt <a>` filters
+#                      with its own --jq (absent: the view fails)
 #   vars/<o>__<r>      the held value of the variable (absent: the read 404s)
 #   probe_fail         repositories (one per line) whose variable read is refused (403)
 #   set_fail           repositories (one per line) refusing every variable write (403)
@@ -66,15 +66,14 @@ case "${1:-} ${2:-}" in
     exit 0
     ;;
   "run view")
-    f="${STUB_DIR}/jobs/${3:-}.json"
+    f="${STUB_DIR}/jobs/${3:-}-$(arg_after --attempt "$@").json"
     [ -f "$f" ] || exit 1
-    jq -r "$(arg_after --jq "$@")" "$f"
-    exit 0
+    exec jq -r "$(arg_after --jq "$@")" "$f"
     ;;
   "run list")
     [ -f "${STUB_DIR}/run_list_fail" ] && exit 1
     if [ -f "${STUB_DIR}/runs.json" ]; then
-      jq -r "$(arg_after --jq "$@")" "${STUB_DIR}/runs.json"
+      exec jq -r "$(arg_after --jq "$@")" "${STUB_DIR}/runs.json"
     fi
     exit 0
     ;;

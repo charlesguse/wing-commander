@@ -71,12 +71,13 @@ def run_jobs(check, sync_step, job="same"):
     sync-pins job's own conclusion: "same" as the step, None while it is
     still running, or a later step's failure."""
     sync_job = sync_step if job == "same" else job
+    sync_steps = None if sync_step is None else [
+        {"name": "Checkout", "conclusion": "success"},
+        {"name": "Sync the reference-image pins", "conclusion": sync_step}]
     return {"jobs": [
         {"name": "build-and-publish", "conclusion": "success", "steps": []},
         {"name": "startup-check", "conclusion": check, "steps": []},
-        {"name": "sync-pins", "conclusion": sync_job, "steps": [
-            {"name": "Checkout", "conclusion": "success"},
-            {"name": "Sync the reference-image pins", "conclusion": sync_step}]},
+        {"name": "sync-pins", "conclusion": sync_job, "steps": sync_steps},
     ]}
 
 
@@ -109,17 +110,39 @@ CASES = {
         runs=[8], jobs={8: run_jobs("success", "success", job="failure")},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=0, status={THIS: "skipped", E2E: "skipped"}, writes=[], reason="run 8"),
-    # A newer run whose check failed, whose sync step failed (it changed
-    # nothing: every write is proven first), was cancelled or has not run,
-    # does not supersede; the search stops at the first run not newer.
+    # A newer run whose check failed, or whose sync has not run yet (it
+    # queues after this one and writes the newer digest last), does not stop
+    # this write; the search stops at the first run that is not newer.
     "not-superseded": dict(
-        runs=[5, 8, 9, 10, 11],
-        jobs={8: run_jobs("failure", "success"), 9: run_jobs("success", "failure"),
-              10: run_jobs("success", "cancelled"), 11: run_jobs("success", None),
+        runs=[5, 8, 9, 11],
+        jobs={8: run_jobs("failure", "success"), 9: run_jobs("failure", "cancelled"),
+              11: run_jobs("success", None, job=None),
               5: run_jobs("success", "success")},
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=0, status={THIS: "written", E2E: "written"}, writes=[THIS, E2E],
         never_viewed=[5]),
+    # A newer run that passed its check but whose sync step failed (it may
+    # have written part of its newer digest) or whose pending sync-pins was
+    # cancelled: writing this older digest could roll the pins back.
+    "newer-sync-failed": dict(
+        runs=[8], jobs={8: run_jobs("success", "failure")},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
+        reason="re-run that run's sync-pins job"),
+    "newer-sync-cancelled": dict(
+        runs=[8], jobs={8: run_jobs("success", None, job="cancelled")},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
+        reason="newer run 8"),
+    # A newer run re-run after it synced: attempt 2 has not decided yet,
+    # attempt 1 synced.
+    "superseded-by-earlier-attempt": dict(
+        runs=[8], jobs={8: [run_jobs("success", "success"), run_jobs(None, None, job=None)]},
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
+        exit=0, status={THIS: "skipped", E2E: "skipped"}, writes=[], reason="run 8"),
+    "e2e-is-this-repo": dict(
+        env={"E2E_REPO": "OCTO/Wing"}, vars={THIS: OLD}, reach=[THIS],
+        exit=0, status={THIS: "written", "test repository": "skipped"}, writes=[THIS]),
     "run-view-error": dict(
         runs=[8],
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
@@ -210,12 +233,17 @@ def run_case(name, case, tmp, bash, script):
                          ("set_fail_expected", case.get("set_fail_expected", []))):
         with open(os.path.join(stub_dir, fname), "w") as f:
             f.write("".join(f"{i}\n" for i in items))
+    # jobs: {run number: one jobs document, or a list of them per attempt}
+    attempts = {n: (doc if isinstance(doc, list) else [doc])
+                for n, doc in case.get("jobs", {}).items()}
     with open(os.path.join(stub_dir, "runs.json"), "w") as f:
-        json.dump([{"number": n, "databaseId": 100 + n} for n in case.get("runs", [])], f)
+        json.dump([{"number": n, "databaseId": 100 + n, "attempt": len(attempts.get(n, [1]))}
+                   for n in case.get("runs", [])], f)
     os.makedirs(os.path.join(stub_dir, "jobs"))
-    for n, doc in case.get("jobs", {}).items():
-        with open(os.path.join(stub_dir, "jobs", f"{100 + n}.json"), "w") as f:
-            json.dump(doc, f)
+    for n, docs in attempts.items():
+        for i, doc in enumerate(docs, 1):
+            with open(os.path.join(stub_dir, "jobs", f"{100 + n}-{i}.json"), "w") as f:
+                json.dump(doc, f)
     for flag in ("run_list_fail", "reach_fail"):
         if case.get(flag):
             open(os.path.join(stub_dir, flag), "w").close()
