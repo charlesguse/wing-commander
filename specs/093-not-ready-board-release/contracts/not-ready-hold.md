@@ -210,12 +210,12 @@ extended decision (research.md D2), and:
 `select` names every item a not-ready hold passed over, and why, in its
 step summary, from `board_eligibility.py`'s own `not_ready_held` output
 (FR-011). A PR known to be CLOSED or MERGED, or one select's lookup found
-gone (404, no state), is never held; resume routes it as it routes any
-marker whose PR is not open (resume-recovery.md): prove for a readiness
-marker's merged PR, otherwise a fresh triage, or fix on the marker's
-branch when one is still recorded. A merged not-ready handover goes to
-triage, not prove, which nothing in the job graph would consume for it
-(`_merged_fix_holds()`, #532).
+gone (404, no state), is never held by this rule; the rules beside it
+decide as before this feature: a readiness marker's merged PR is passed
+over by `_merged_fix_holds()` and recovered by the displacement scan
+(#532); a closed or gone one resumes at a fresh triage, or fix on the
+marker's branch when one is still recorded. A merged not-ready handover
+goes to triage (resume-recovery.md clause 0.5a).
 
 Every durable action above stays behind
 `steps.killswitch-recheck.outputs.paused == 'false'`, unchanged (research.md

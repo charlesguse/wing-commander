@@ -480,10 +480,11 @@ def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number,
 def not_ready_hold_reason(marker, pr_state_by_number, pr_head_sha_by_number):
     """_not_ready_holds()'s decision with its reason (FR-011: the run
     records why an item was passed over), or None when not held. A PR
-    known to be CLOSED or MERGED, or gone (404), is never held: resume's own
-    clauses route it as they did before this feature (resume-recovery.md:
-    prove for a merged fix-or-later marker's PR, else a fresh triage or fix
-    on a recorded branch)."""
+    known to be CLOSED or MERGED, or gone (404), is never held by this
+    rule; the rules beside it decide as they did before this feature (a
+    MERGED one is passed over by _merged_fix_holds() and recovered by the
+    displacement scan; a closed or gone one resumes at triage, or fix on a
+    recorded branch)."""
     if marker is None or marker.get("step") != "readiness":
         return None
     try:

@@ -22,6 +22,9 @@ CONDITIONS = ("checks_green", "gate_suite_green", "zero_open_findings",
               "backstop_holds", "kill_switch_clear")
 
 
+GREEN_STATES = ("SUCCESS", "NEUTRAL", "SKIPPED")
+
+
 def _checks_green(rollup):
     """FR-036/FR-037: an empty rollup is not green (a docs-only PR with no
     triggered checks is never reported ready), and every entry must have
@@ -36,11 +39,7 @@ def _checks_green(rollup):
     catch it."""
     if not rollup:
         return False
-    for entry in rollup:
-        state = (entry.get("state") or entry.get("conclusion") or "").upper()
-        if state not in ("SUCCESS", "NEUTRAL", "SKIPPED"):
-            return False
-    return True
+    return all(_entry_state(entry) in GREEN_STATES for entry in rollup)
 
 
 def _gate_suite_green(rollup):
@@ -55,8 +54,7 @@ def _gate_suite_green(rollup):
         name = entry.get("name") or entry.get("context") or ""
         workflow_name = (entry.get("workflowName") or "").lower()
         if name == "lint" and "workflow" in workflow_name:
-            state = (entry.get("state") or entry.get("conclusion") or "").upper()
-            return state in ("SUCCESS", "NEUTRAL", "SKIPPED")
+            return _entry_state(entry) in GREEN_STATES
     return False
 
 
@@ -92,7 +90,7 @@ def _unmet_class(rollup, checks_green, other_unmet=False):
         return "durable"
     for entry in rollup:
         state = _entry_state(entry)
-        if state not in ("SUCCESS", "NEUTRAL", "SKIPPED") and state not in NOT_CONCLUDED_STATES:
+        if state not in GREEN_STATES and state not in NOT_CONCLUDED_STATES:
             return "durable"
     return "self-clearing"
 
@@ -128,6 +126,10 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
         if not checks_green:
             if not rollup:
                 unmet_reason = "no checks reported on head_sha {0}".format(head_sha)
+            elif _unmet_class(rollup, checks_green) == "self-clearing":
+                # Only running checks: say so, so FR-009's nr_reason tells a
+                # pending outcome from a failed one on the same head.
+                unmet_reason = "checks still running on head_sha {0}".format(head_sha)
             else:
                 unmet_reason = "checks not green on head_sha {0} (stale or failing)".format(head_sha)
             # A condition no later run clears on its own is named too, so a
