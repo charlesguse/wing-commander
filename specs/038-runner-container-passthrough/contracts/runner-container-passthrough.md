@@ -247,6 +247,16 @@ The list `verify-image-prerequisites` checks against a named image:
 | `timeout` | Direct invocation, required since **v2.5.1** (`1d1452c`): `wing-commander-lifecycle-gate` wraps its `gh issue view` read in `timeout "$read_timeout" ...` so a hung read becomes a retryable 124 rather than a stalled stage (specs/039-lifecycle-gate-retry). That composite runs inside the adopter's container at the entry of six stages. Previously assumed present under Gate 23's `ALWAYS_AVAILABLE` coreutils set, which is how a hard dependency reached eleven stages undeclared. |
 | `unzip` | *Indirect*, through `anthropics/claude-code-action@v1`: its first step, "Install Bun" (`oven-sh/setup-bun`), downloads `bun-linux-x64.zip` and extracts it with `unzip`, so an image without it fails every agent-bearing job before Claude Code starts. Observed on wing-commander's own e2e reference image (intake run 37866026318: "Unable to locate executable file: unzip.") after this check had passed it. Previously assumed present under Gate 23's `ALWAYS_AVAILABLE` set, as `timeout` was. |
 
+**Agent action policy and git floor (specs/112-agent-startup-image-check).**
+The agent action stays on the floating `@v1` tag; its dependency changes are
+caught by the agent start-up check on the next daily dogfood run, not by
+pinning. The probe additionally requires **git >= 2.38**
+(`.github/scripts/image-git-floor.sh`, verbatim in every stage's probe,
+enforced by Gate 148), failing with `git <found> is older than the 2.38
+minimum`. The start-up check is its own opt-in published workflow,
+`agent-startup-check.yml` (spec 112's contract); no existing stage, and not
+`private-image-dogfood.yml`, gains an input, secret or permission.
+
 Kept in agreement with reality by Gate 23 (below), not by convention alone
 (FR-011a): Gate 23 parses this table and fails on any set difference against
 `.github/scripts/required-tools.txt`, in both directions. Before that, "kept
@@ -329,8 +339,14 @@ rather than the tool names — so until review of PR #222 the twelve copies
 agreed by hand-coordination alone, with no CI signal if one edit missed a
 file.
 
-**Registered exceptions** (FR-015): none exist for Gate 22 or Gate 23. A
-job that must deviate — mirroring Gate 7's existing `pr-conversation.act`
+**Registered exceptions** (FR-015): one each for Gate 22 and Gate 23, both
+in spec 112's `agent-startup-check.yml`. Gate 22: `classify-startup` runs
+on the runner with no `container:`, because it only reads another job's log
+and must still report when the image under test cannot start a shell or be
+pulled. Gate 23: `startup-agent` and `classify-startup` run past a failed
+`verify-image-prerequisites` (still needing it, under `!cancelled()`),
+because spec 112's edge case requires the start-up verdict to be reported
+beside the tool-list result, not hidden by it. A job that must deviate — mirroring Gate 7's existing `pr-conversation.act`
 exception (`docs/adoption.md`, "Deployment environments") — carries a
 registered reason in the gate's own exception table, checked by the same
 mechanism, never an undeclared deviation and never a code comment alone

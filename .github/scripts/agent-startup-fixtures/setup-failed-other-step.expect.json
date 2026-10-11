@@ -1,0 +1,1 @@
+{"verdict": "setup-failed", "step": "Install Dependencies", "error_contains": "exit code 127", "note": "synthetic: shaped on claude-code-action@v1 action.yml and run.ts at 1d6de8c"}

@@ -25,9 +25,16 @@ permissions:
   contents: read
   packages: write
 
+# The one place this image's name is written; the tags, the summary and the
+# start-up check dispatch all read it.
+env:
+  E2E_IMAGE: ghcr.io/charlesguse/wing-commander-e2e-image
+
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -46,8 +53,8 @@ jobs:
           context: .github/docker/e2e-reference-image
           push: true
           tags: |
-            ghcr.io/charlesguse/wing-commander-e2e-image:latest
-            ghcr.io/charlesguse/wing-commander-e2e-image:${{ github.sha }}
+            ${{ env.E2E_IMAGE }}:latest
+            ${{ env.E2E_IMAGE }}:${{ github.sha }}
 
       - name: Print the published digest
         env:
@@ -59,7 +66,38 @@ jobs:
             echo ""
             echo "Digest: \`${DIGEST}\`"
             echo ""
-            echo "Copy \`ghcr.io/charlesguse/wing-commander-e2e-image@${DIGEST}\` into the"
+            echo "Copy \`${E2E_IMAGE}@${DIGEST}\` into the"
             echo "end-to-end test repository's \`WING_COMMANDER_CONTAINER_IMAGE\` variable"
             echo "(docs/setup.md) -- this workflow does not write it for you."
+            echo ""
+            echo "This run's \`startup-check\` job dispatches the agent start-up check"
+            echo "against this digest as a separate \`wing-commander-private-image-dogfood.yml\`"
+            echo "run. Read that run before copying the digest: its \`classify-startup\`"
+            echo "summary says \`setup-failed\` when the agent cannot start in the image, and"
+            echo "\`unclassified\` when the check could not reach a verdict; its reason and"
+            echo "quoted error say why (a re-run helps only when that was transient). A"
+            echo "failed \`startup-check\` job here means no check ran."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # The agent action does not support the `push` event this workflow runs
+  # on (Gate 6), so the start-up check is dispatched as a
+  # `workflow_dispatch` run of the private-image-dogfood wrapper against
+  # the digest just published (specs/112-agent-startup-image-check).
+  startup-check:
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch the start-up check against the published digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DIGEST: ${{ needs.build-and-publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          # The wrapper and classifier from this run's own ref, so a
+          # dispatched rebuild on a branch is checked by that branch's check.
+          gh workflow run wing-commander-private-image-dogfood.yml --ref "$GITHUB_REF_NAME" \
+            -f "container-image=${E2E_IMAGE}@${DIGEST}"

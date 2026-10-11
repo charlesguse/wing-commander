@@ -1,0 +1,1 @@
+{"verdict": "setup-failed", "step": "Install Bun", "error_contains": "authentication failed", "note": "synthetic: an auth-looking error before setup finished is setup's, not the credential check"}

@@ -655,6 +655,56 @@ WIRING_CASES = [
     ("no false positive: a job that calls another workflow needs no wiring",
      {"stage.yml": stage(HEALTHY_ENTRY) + CALLER_JOB},
      False, ()),
+
+    # Spec 112's start-up check runs beside the image check, not behind it
+    # (both results reported; neither overrides the other). The exemption
+    # is by file AND job name, and still needs the check and !cancelled().
+    ("spec 112: agent-startup-check.yml's start-up jobs run past a failed "
+     "image check without the result guard",
+     {"agent-startup-check.yml": stage(
+         job("startup-agent", needs="verify-image-prerequisites",
+             if_expr="!cancelled() && inputs.container-image != ''"),
+         job("classify-startup", needs=["verify-image-prerequisites", "startup-agent"],
+             if_expr="!cancelled() && inputs.container-image != ''"))},
+     False, ()),
+
+    ("the spec 112 exemption is scoped to its file: a startup-agent job "
+     "elsewhere still needs the result guard",
+     {"stage.yml": stage(job("startup-agent", needs="verify-image-prerequisites",
+                             if_expr="!cancelled() && inputs.container-image != ''"))},
+     True, ("'startup-agent'", "is an entry job")),
+
+    ("the spec 112 exemption is scoped to its jobs: another job in "
+     "agent-startup-check.yml still needs the result guard",
+     {"agent-startup-check.yml": stage(
+         job("other", needs="verify-image-prerequisites",
+             if_expr="!cancelled() && inputs.container-image != ''"))},
+     True, ("'other'", "is an entry job")),
+
+    ("an exempt start-up job without !cancelled() is skipped by a failed "
+     "image check after all",
+     {"agent-startup-check.yml": stage(
+         job("startup-agent", needs="verify-image-prerequisites",
+             if_expr="inputs.container-image != ''"))},
+     True, ("'startup-agent'", "is not exactly")),
+
+    ("an exempt start-up job whose clauses are or-ed admits the no-image run",
+     {"agent-startup-check.yml": stage(
+         job("startup-agent", needs="verify-image-prerequisites",
+             if_expr="!cancelled() || inputs.container-image != ''"))},
+     True, ("'startup-agent'", "is not exactly")),
+
+    ("an exempt start-up job without the container-image guard would run "
+     "with no image instead of being a no-op",
+     {"agent-startup-check.yml": stage(
+         job("startup-agent", needs="verify-image-prerequisites",
+             if_expr="!cancelled()"))},
+     True, ("'startup-agent'", "clean no-op")),
+
+    ("an exempt start-up job must still need the image check",
+     {"agent-startup-check.yml": stage(
+         job("startup-agent", if_expr="!cancelled() && inputs.container-image != ''"))},
+     True, ("'startup-agent'", "must directly depend")),
 ]
 
 DRIFT_CASES = [
