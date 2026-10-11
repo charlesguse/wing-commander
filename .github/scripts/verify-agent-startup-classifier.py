@@ -240,8 +240,9 @@ def check_workflow(path):
             if re.match(r"\s*oneline\(\) \{", l):
                 continue
             rest = re.sub(r"\$\(oneline [\w.-]+-error\.log\)", "", l)
-            # Writing stderr to an error log is not reading it.
-            rest = re.sub(r"2>>?\s*[\w.-]+-error\.log", "", rest)
+            # Writing an error log (any fd redirect or tee, quoted or under a
+            # directory) is not reading it.
+            rest = re.sub(r"(\d?>>?|&>>?|\btee(\s+-a)?)\s*\"?[^\s\")|;]*-error\.log\"?", "", rest)
             if (re.search(r"\$\((cat|tr|head|tail|sed|jq)\b[^)]*-error\.log|\$\(<\s*[\w.-]+-error\.log", rest)
                     or (re.search(r"::(warning|error|notice)::", rest) and "-error.log" in rest)):
                 raw.append(l.strip())
@@ -359,6 +360,10 @@ def run_checks(classifier=CLASSIFIER, fixtures=FIXTURES, workflow=WORKFLOW):
 
 def self_test():
     failures = []
+
+    def expect_clean(label, errs, needle):
+        if any(needle in e for e in errs):
+            failures.append("%s: flagged (%r) but should be clean" % (label, errs))
 
     def expect(label, errs, needle):
         if not any(needle in e for e in errs):
@@ -651,13 +656,19 @@ def self_test():
                                                 "self_err=$(cat self-lookup-error.log)")
 
         # A stderr redirect into an error log is not a raw read of it.
-        def simple_self_lookup(jobs):
+        def writes_error_logs(jobs):
             for s in jobs["classify-startup"]["steps"]:
                 if "run" in s and "listed=true\n" in s["run"]:
-                    s["run"] = s["run"].replace("listed=true\n", "listed=true\nnames=$(jq -r '.jobs[].name' run-jobs.json 2>names-error.log) || names=\"\"\n", 1)
+                    s["run"] = s["run"].replace("listed=true\n", (
+                        "listed=true\n"
+                        "names=$(jq -r '.jobs[].name' run-jobs.json 2>names-error.log) || names=\"\"\n"
+                        "n2=$(jq -r '.jobs[].name' run-jobs.json 2>\"$RUNNER_TEMP/n2-error.log\") || n2=\"\"\n"
+                        "n3=$(jq -r '.jobs[].name' run-jobs.json 2>&1 | tee n3-error.log) || n3=\"\"\n"), 1)
+                    return
+            raise AssertionError("writes_error_logs: no listed=true anchor in classify-startup")
 
-        if any("oneline helper" in e for e in mutated(simple_self_lookup)):
-            failures.append("a jq lookup writing stderr to an error log was flagged as a raw read")
+        expect_clean("stderr written to error logs (bare, quoted path, tee)", mutated(writes_error_logs),
+                     "oneline helper")
         expect("helper redefined without escaping", mutated(helper_redefined), "oneline helper")
         expect("error log read raw into a variable", mutated(raw_via_variable), "oneline helper")
         expect("prereq result not reported", mutated(drop_prereq_report),
