@@ -291,12 +291,7 @@ jobs:
           # reading either as an empty log.
           classifier=.wing-commander-pipeline/.github/scripts/classify-agent-startup.py
           missing_tools=""
-          # gh is only called when startup-agent ran; a skipped one leaves
-          # the classifier's own "unclassified" reason, which is more specific.
-          for t in jq python3 gh; do
-            [ "$t" != gh ] || [ "$AGENT_RESULT" != "skipped" ] || continue
-            command -v "$t" >/dev/null 2>&1 || missing_tools="$missing_tools $t"
-          done
+          for t in jq python3 gh; do command -v "$t" >/dev/null 2>&1 || missing_tools="$missing_tools $t"; done
           if [ -n "$missing_tools" ] || [ ! -f "$classifier" ]; then
             why="${missing_tools:+the runner (not the image) lacks:$missing_tools}"
             [ -f "$classifier" ] || why="${why:+$why; }the classifier was not checked out (see the steps above)"
@@ -322,24 +317,29 @@ jobs:
             # rather than another call's log.
             # One listing, read twice: this job's own name, then its
             # startup-agent.
+            # One annotation per failure: each error log goes on one line
+            # (a multi-line one would end the ::warning:: command early).
+            listed=true
             if ! { gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate --jq '.jobs[]' > run-jobs.ndjson 2>job-lookup-error.log \
                    && jq -s '{jobs: .}' run-jobs.ndjson > run-jobs.json 2>>job-lookup-error.log; }; then
-              echo "::warning::wing-commander classify-startup: could not list run $RUN_ID's jobs (does the caller grant actions: read?) -- $(cat job-lookup-error.log 2>/dev/null)"
-              echo '{"jobs": []}' > run-jobs.json
+              echo "::warning::wing-commander classify-startup: could not list run $RUN_ID's jobs (does the caller grant actions: read?) -- $(tr '\r\n' '  ' < job-lookup-error.log 2>/dev/null)"
+              listed=false
             fi
-            self_name=$(jq -r '.jobs[] | select(.status == "in_progress" and .runner_name == env.RUNNER_NAME) | .name' run-jobs.json 2>>job-lookup-error.log) || self_name=""
-            prefix=""
-            if [ "$(printf '%s\n' "$self_name" | grep -c .)" -eq 1 ] && [ "${self_name%classify-startup}" != "$self_name" ]; then
-              prefix="${self_name%classify-startup}"
-            else
-              echo "::warning::wing-commander classify-startup: could not find this job by runner name ($RUNNER_NAME) in run $RUN_ID, so the startup-agent lookup is not scoped to this call"
-            fi
-            job_ids=$(PREFIX="$prefix" jq -r '.jobs[] | select(.name | if env.PREFIX != "" then . == env.PREFIX + "startup-agent" else endswith("startup-agent") end) | .id' run-jobs.json 2>>job-lookup-error.log) || job_ids=""
             job_id=""
-            if [ "$(printf '%s\n' "$job_ids" | grep -c .)" -eq 1 ]; then
-              job_id="$job_ids"
-            else
-              echo "::warning::wing-commander classify-startup: found $(printf '%s\n' "$job_ids" | grep -c .) startup-agent jobs in run $RUN_ID, not exactly one -- $(cat job-lookup-error.log 2>/dev/null)"
+            if [ "$listed" = true ]; then
+              self_name=$(jq -r '.jobs[] | select(.status == "in_progress" and .runner_name == env.RUNNER_NAME) | .name' run-jobs.json 2>>job-lookup-error.log) || self_name=""
+              prefix=""
+              if [ "$(printf '%s\n' "$self_name" | grep -c .)" -eq 1 ] && [ "${self_name%classify-startup}" != "$self_name" ]; then
+                prefix="${self_name%classify-startup}"
+              else
+                echo "::warning::wing-commander classify-startup: could not find this job by runner name ($RUNNER_NAME) in run $RUN_ID, so the startup-agent lookup is not scoped to this call"
+              fi
+              job_ids=$(PREFIX="$prefix" jq -r '.jobs[] | select(.name | if env.PREFIX != "" then . == env.PREFIX + "startup-agent" else endswith("startup-agent") end) | .id' run-jobs.json 2>>job-lookup-error.log) || job_ids=""
+              if [ "$(printf '%s\n' "$job_ids" | grep -c .)" -eq 1 ]; then
+                job_id="$job_ids"
+              else
+                echo "::warning::wing-commander classify-startup: found $(printf '%s\n' "$job_ids" | grep -c .) startup-agent jobs in run $RUN_ID, not exactly one -- $(tr '\r\n' '  ' < job-lookup-error.log 2>/dev/null)"
+              fi
             fi
             # A just-finished job's log can 404 until it is archived; retry
             # before falling back to the empty (unclassified) log.
@@ -351,7 +351,7 @@ jobs:
                 : > startup-agent.log
                 [ "$attempt" -eq 6 ] || sleep 10
               done
-              [ -s startup-agent.log ] || echo "::warning::wing-commander classify-startup: could not fetch job $job_id's log -- $(cat job-log-error.log 2>/dev/null)"
+              [ -s startup-agent.log ] || echo "::warning::wing-commander classify-startup: could not fetch job $job_id's log -- $(tr '\r\n' '  ' < job-log-error.log 2>/dev/null)"
             fi
           fi
           rc=0

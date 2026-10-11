@@ -50,8 +50,8 @@ told apart; an ambiguous lookup is `unclassified`.
    at its credential check.
 2. `classify-startup` — `needs: [verify-image-prerequisites, startup-agent]`,
    `if:` the same as startup-agent's, `timeout-minutes: 10`, `permissions:
-   actions: read, contents: read` (the checkout of the classifier needs the
-   second; a caller granting less fails at workflow start). Runs on `runner` with no `container:` (Gate 22's one
+   actions: read, contents: read` (the classifier's checkout needs the
+   second). Runs on `runner` with no `container:` (Gate 22's one
    registered exception): it only reads another job's log, and inside the
    image under test it could not report on an image without a shell,
    python3 or gh, or one that fails to pull. Checks out the classifier from `pipeline-repo` at the

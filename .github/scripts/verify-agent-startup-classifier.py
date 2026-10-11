@@ -233,7 +233,7 @@ def check_workflow(path):
         # It runs on the runner, not the image: a runner without gh/jq/python3,
         # or a classifier that was never checked out, is named as such rather
         # than read as an empty log and an "exited 2" verdict.
-        if ('for t in jq python3 gh; do' not in runs or 'command -v "$t"' not in runs
+        if ('for t in jq python3 gh; do command -v "$t"' not in runs
                 or '[ ! -f "$classifier" ]' not in runs or "could not reach subject" not in runs):
             errors.append("classify-startup must name a runner missing gh/jq/python3 or a classifier "
                           "that was not checked out (could not reach subject) before classifying")
