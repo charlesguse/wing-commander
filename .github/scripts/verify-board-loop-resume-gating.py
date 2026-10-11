@@ -2017,8 +2017,13 @@ def not_ready_report_findings(doc):
                         "or an unanswered call is not refused -- the handover would be silently skipped "
                         "(specs/093 FR-003/FR-004(a))")
     directed = re.search(r'if \[ -n "\$DIRECTED_STAGE" \]; then\n(.*?)\n\s*fi\n', run, re.S)
+    backstop = run.find('if [ "$BACKSTOP_HOLDS" != "true" ]')
+    handover = run.find("not_ready_handover_due(")
+    # Inside the plain not-ready branch: after the backstop-breach branch
+    # (a directed breach still files its spec-request), before the record.
     if (not directed or "exit 0" not in directed.group(1) or "--nr-count" in directed.group(1)
-            or run.index("$DIRECTED_STAGE") > run.index("not_ready_handover_due(")):
+            or backstop < 0 or handover < 0
+            or not backstop < directed.start() < handover):
         findings.append("readiness: a directed proof run's not-ready outcome writes a record or reaches the "
                         "handover -- it selects no board item (code review of #1010)")
     if not any("--step readiness" in ln and "--nr-reason" in ln for ln in lines):
@@ -2036,7 +2041,7 @@ def not_ready_report_findings(doc):
         for s in (jobs.get(job) or {}).get("steps") or []:
             if isinstance(s, dict) and s.get("id") == "pr":
                 w = s.get("with") or {}
-                for key in (("nr-count",) if job == "review" else ("nr-count", "round")):
+                for key in (("nr-count",) if job == "review" else ()):
                     if "steps.resolve-directed-pr.outputs." + key not in str(w.get(key, "")):
                         findings.append("{0}: the PR step's {1} does not fall back to resolve-directed-pr's".format(job, key))
     for ln in lines:
@@ -2321,8 +2326,8 @@ def _mutations(text):
     sub("review-fixup-publish round advance drops --nr-count",
         '--branch "$BRANCH" --nr-count "$NR_COUNT")"', '--branch "$BRANCH")"',
         after="\n  review-fixup-publish:\n")
-    sub("directed readiness nr-count restarts at 0",
-        "steps.resolve-directed-pr.outputs.nr-count || 0 }}", "0 }}", after="\n  readiness:\n")
+    sub("directed review nr-count restarts at 0",
+        "steps.resolve-directed-pr.outputs.nr-count || 0 }}", "0 }}", after="\n  review:\n")
     sub("directed not-ready run writes the record",
         'if [ -n "$DIRECTED_STAGE" ]; then', 'if false; then')
     sub("not-ready comment post left unchecked",

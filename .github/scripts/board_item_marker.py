@@ -206,12 +206,11 @@ def same_not_ready_comment_id(issue_comments, bot_login, pr_number, head_sha, un
 
 def directed_carry(issue_comments, bot_login):
     """A directed review/readiness run's view of the issue's newest marker:
-    the PR it names and the round and not-ready count to carry forward
-    (specs/093-not-ready-board-release), as select does for an ordinary
-    run. Returns {"pr", "nr_count", "round"}; "" / 0 when absent."""
+    the PR it names and the not-ready count a directed review carries
+    forward (specs/093-not-ready-board-release), as select does for an
+    ordinary run. Returns {"pr", "nr_count"}; "" / 0 when absent."""
     marker = read_marker(issue_comments, bot_login) or {}
-    return {"pr": marker.get("pr") or "", "nr_count": marker.get("nr_count") or 0,
-            "round": marker.get("round") or 0}
+    return {"pr": marker.get("pr") or "", "nr_count": marker.get("nr_count") or 0}
 
 
 def read_marker(issue_comments, bot_login):

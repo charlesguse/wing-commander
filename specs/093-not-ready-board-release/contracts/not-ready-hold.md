@@ -38,8 +38,12 @@ def not_ready_record(marker):
     nr_* fields is missing/malformed (FR-011 fail-safe: degrade to "no
     record", never guess)."""
 
-def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number):
-    """FR-001/FR-004(b)/FR-005/FR-011. True (held) when not_ready_record(marker)
+def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number,
+                     number=None, passed_over=None):
+    """FR-001/FR-004(b)/FR-005/FR-011. Both selection paths call it with
+    the issue `number` and their `passed_over` dict, into which it records
+    not_ready_hold_reason()'s reason for a held item (FR-011's record of
+    why, made where the decision is). True (held) when not_ready_record(marker)
     is not None, its class is "durable", and pr_head_sha_by_number.get(pr)
     either is missing (unresolvable this run) or differs from... no --
     EQUALS head_sha (unchanged head holds; an unresolvable head_sha is the
@@ -50,7 +54,7 @@ def _not_ready_holds(marker, pr_state_by_number, pr_head_sha_by_number):
     un-held -- resume's step resolution decides review vs. readiness, not
     this predicate). Also True for a readiness marker that names an
     nr_class but whose record does not parse (FR-011: passed over, never
-    admitted)."""
+    admitted). Never True for a PR known CLOSED or MERGED."""
 
 def not_ready_head_moved(marker, pr_head_sha):
     """FR-007/SC-010. True when marker carries a not-ready record of either
@@ -189,8 +193,8 @@ extended decision (research.md D2), and:
      (`PATCH /repos/:owner/:repo/issues/comments/:id`), updating its
      embedded marker to the new count, instead of appending a new one
      (research.md D8); otherwise post a new comment as today. The count
-     and round reach this step on every path: from select, from review,
-     or, on a directed run, from the marker the directed run itself reads.
+     and round reach this step from select or from review (which carries
+     a directed review's count from the marker it reads).
      A directed proof run (`directed-stage`) selects no board item: its
      not-ready outcome is reported, as before this feature, with no record,
      no count and no handover.
