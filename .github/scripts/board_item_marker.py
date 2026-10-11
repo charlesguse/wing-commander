@@ -174,6 +174,37 @@ def find_latest_marker_matching(issue_comments, bot_login, predicate,
     return dated_matches[-1] if dated_matches else None
 
 
+def same_not_ready_comment_id(issue_comments, bot_login, pr_number, head_sha, unmet_reason):
+    """specs/093-not-ready-board-release FR-009: the id of the comment that
+    carries the newest loop marker when that marker records a not-ready
+    outcome for the same PR, head SHA and unmet condition (its own pr/
+    nr_head_sha/nr_reason, never the comment's prose), else None. The
+    readiness report edits that comment in place instead of posting a
+    duplicate."""
+    pair = read_marker_with_timestamp(issue_comments, bot_login)
+    if pair is None:
+        return None
+    created_at, marker = pair
+    if not (marker.get("step") == "readiness" and marker.get("pr") == pr_number
+            and marker.get("nr_head_sha") == head_sha and marker.get("nr_reason") == unmet_reason):
+        return None
+    for comment in issue_comments or []:
+        if (is_loop_marker_author(comment, bot_login) and comment.get("created_at") == created_at
+                and str(comment.get("id") or "").isdigit()):
+            return int(comment["id"])
+    return None
+
+
+def directed_carry(issue_comments, bot_login):
+    """A directed review/readiness run's view of the issue's newest marker:
+    the PR it names and the round and not-ready count to carry forward
+    (specs/093-not-ready-board-release), as select does for an ordinary
+    run. Returns {"pr", "nr_count", "round"}; "" / 0 when absent."""
+    marker = read_marker(issue_comments, bot_login) or {}
+    return {"pr": marker.get("pr") or "", "nr_count": marker.get("nr_count") or 0,
+            "round": marker.get("round") or 0}
+
+
 def read_marker(issue_comments, bot_login):
     """As read_marker_with_timestamp(), returning only the marker dict (or
     None)."""

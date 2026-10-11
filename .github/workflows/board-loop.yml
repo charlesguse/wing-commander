@@ -719,7 +719,7 @@ jobs:
           import sys
 
           sys.path.insert(0, ".github/scripts")
-          from board_eligibility import FIX_OR_LATER_STEPS
+          from board_eligibility import marker_names_live_pr
           from board_item_marker import read_marker_with_timestamp
 
           with open(os.environ["COMMENTS_BY_ISSUE_PATH"], encoding="utf-8") as fh:
@@ -731,7 +731,9 @@ jobs:
               if pair is None:
                   continue
               _created_at, marker = pair
-              if marker.get("step") not in FIX_OR_LATER_STEPS:
+              # A fix-or-later step's PR, or a not-ready handover's
+              # (specs/093 D7) -- board_eligibility.marker_names_live_pr().
+              if not marker_names_live_pr(marker):
                   continue
               try:
                   pr_numbers.add(int(marker.get("pr")))
@@ -1330,8 +1332,10 @@ jobs:
               # other stall site. The moved/unmoved call is the one shared
               # head_moved_since_last_review() determination (FR-007), not
               # a second comparison against nr_head_sha. Only an OPEN PR:
-              # one merged since the handover goes to prove (the merged-fix
-              # clause below), one closed to a fresh triage.
+              # one merged or closed since the handover falls to a fresh
+              # triage, like any pr-less stall with no open PR -- not to
+              # prove, which nothing in this job graph consumes (the #532
+              # wedge _merged_fix_holds() describes).
               with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
                   comments = json.load(fh)
               if not head_moved_since_last_review(pr_number, comments, os.environ.get("BOT_LOGIN") or ""):
@@ -1349,21 +1353,28 @@ jobs:
               # record was measured -- automatically re-admitted, at
               # review (never readiness, a human's new commits have not
               # been through an independent review), continuing rather
-              # than resetting round_/nr_count_ (both already carried
-              # through unchanged above -- research.md D5/D6). A
+              # than resetting round_/nr_count_ (research.md D5/D6; the
+              # round advances by one, below). A
               # self-clearing record's moved head goes to review too
               # (SC-010: nothing reported ready on unreviewed commits).
               # No not-ready record, or an unchanged head, is unaffected
               # and still resolves step = marker_step below.
               step = "review"
-              note = "recorded pr {0} was not ready at head_sha {1}; head has moved -- resuming at review".format(
-                  pr_number, marker_full.get("nr_head_sha"))
+              # SC-009: each re-admission spends one round of the budget. A
+              # converged review records the round it ran at, so resuming at
+              # that same round would let every human push buy a free review.
+              try:
+                  round_ = str(int(round_ or "0") + 1)
+              except ValueError:
+                  round_ = "0"
+              note = "recorded pr {0} was not ready at head_sha {1}; head has moved -- resuming at review, round {2}".format(
+                  pr_number, marker_full.get("nr_head_sha"), round_)
           elif pr_from_marker and marker_step and (
               marker_step in PRE_FIX_STEPS
               or (marker_step in FIX_OR_LATER_STEPS and pr_state == "OPEN")
           ):
               step = marker_step
-          elif pr_from_marker and (marker_step in FIX_OR_LATER_STEPS or handover_marker) and pr_state == "MERGED":
+          elif pr_from_marker and marker_step in FIX_OR_LATER_STEPS and pr_state == "MERGED":
               # specs/096-durable-prove-entry research.md D7/FR-007/FR-008/
               # FR-009: resolved by number, MERGED, and the issue is still
               # open -- the loop's own fix landed but nothing proved it yet
@@ -3780,16 +3791,14 @@ jobs:
           import sys
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
-          from board_item_marker import read_marker
+          from board_item_marker import directed_carry
 
           with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
               comments = json.load(fh)
-          marker = read_marker(comments, os.environ["BOT_LOGIN"]) or {}
           # specs/093-not-ready-board-release: a directed run carries the
           # marker's not-ready count and round forward like select does,
           # rather than restarting the FR-004(a) bound at 0.
-          print(json.dumps({"pr": marker.get("pr") or "", "nr_count": marker.get("nr_count") or 0,
-                            "round": marker.get("round") or 0}))
+          print(json.dumps(directed_carry(comments, os.environ["BOT_LOGIN"])))
           PYEOF
           )"
           {
@@ -5065,16 +5074,14 @@ jobs:
           import sys
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
-          from board_item_marker import read_marker
+          from board_item_marker import directed_carry
 
           with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
               comments = json.load(fh)
-          marker = read_marker(comments, os.environ["BOT_LOGIN"]) or {}
           # specs/093-not-ready-board-release: a directed run carries the
           # marker's not-ready count and round forward like select does,
           # rather than restarting the FR-004(a) bound at 0.
-          print(json.dumps({"pr": marker.get("pr") or "", "nr_count": marker.get("nr_count") or 0,
-                            "round": marker.get("round") or 0}))
+          print(json.dumps(directed_carry(comments, os.environ["BOT_LOGIN"])))
           PYEOF
           )"
           {
@@ -5093,6 +5100,9 @@ jobs:
           # through so a not-ready outcome's marker rewrite never drops the
           # fix->review round budget (FR-007).
           round: ${{ needs.review.outputs.round || needs.select.outputs.round || steps.resolve-directed-pr.outputs.round || 0 }}
+          # Same precedence as round: the count readiness writes comes from
+          # this one chain.
+          nr-count: ${{ needs.review.outputs.nr-count || needs.select.outputs.nr-count || steps.resolve-directed-pr.outputs.nr-count || 0 }}
 
       # Gate 98 holds this job to exactly one actions/checkout@ step (the
       # first one, taken before the pristine snapshot above) -- switching
@@ -5402,7 +5412,7 @@ jobs:
           ISSUE_CONTEXT_FILE: ${{ steps.issue-context-readiness.outputs.context-file }}
           # specs/093-not-ready-board-release research.md D5: carried-in
           # count only -- never derived from anything but the marker.
-          NR_COUNT: ${{ needs.select.outputs.nr-count || needs.review.outputs.nr-count || steps.resolve-directed-pr.outputs.nr-count || 0 }}
+          NR_COUNT: ${{ steps.pr.outputs.nr-count }}
           DEDUP_COMMENTS_FETCHED: ${{ steps.not-ready-comments.outputs.fetched }}
           DIRECTED_ATTRIBUTION: >-
             ${{ inputs.directed-stage != '' && format('_Directed proof run
@@ -5512,24 +5522,13 @@ jobs:
           import sys
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
-          from board_item_marker import find_latest_marker, is_loop_marker_author
+          from board_item_marker import same_not_ready_comment_id
 
           with open(os.environ["COMMENTS_PATH"], encoding="utf-8") as fh:
               comments = json.load(fh)
-          bot_login = os.environ["BOT_LOGIN"]
-          pr_number = int(os.environ["PR_NUMBER"])
-          pair = find_latest_marker(comments, bot_login)
-          if pair is not None:
-              created_at, marker = pair
-              if (marker.get("step") == "readiness" and marker.get("pr") == pr_number
-                      and marker.get("nr_head_sha") == os.environ["HEAD_SHA"]
-                      and marker.get("nr_reason") == os.environ["UNMET"]):
-                  for comment in comments:
-                      if (is_loop_marker_author(comment, bot_login) and comment.get("created_at") == created_at
-                              and str(comment.get("id") or "").isdigit()):
-                          print(comment["id"])
-                          sys.exit(0)
-          print("")
+          comment_id = same_not_ready_comment_id(comments, os.environ["BOT_LOGIN"], int(os.environ["PR_NUMBER"]),
+                                                 os.environ["HEAD_SHA"], os.environ["UNMET"])
+          print(comment_id if comment_id is not None else "")
           PYEOF
           )"
                 if [ -n "$same_comment_id" ]; then

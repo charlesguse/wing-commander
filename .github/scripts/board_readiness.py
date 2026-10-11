@@ -74,9 +74,10 @@ def _entry_state(entry):
 
 def _unmet_class(rollup, checks_green, other_unmet=False):
     """specs/093-not-ready-board-release contracts/not-ready-hold.md,
-    research.md D2: "self-clearing" only when every rollup entry is in a
-    not-yet-concluded state (rollup non-empty, checks_green false because
-    nothing has finished yet, not because anything failed) -- "durable"
+    research.md D2: "self-clearing" when every rollup entry is either
+    green (SUCCESS/NEUTRAL/SKIPPED) or not yet concluded, and at least one
+    is not yet concluded (checks_green false because something has not
+    finished, not because anything failed) -- "durable"
     otherwise (a terminal failing check state, an empty rollup, or an
     unmet reason that is not about checks_green at all: gate_suite_green,
     zero_open_findings, backstop_holds, kill_switch_clear). FR-005: derived

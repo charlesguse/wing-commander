@@ -62,6 +62,11 @@ def not_ready_head_moved(marker, pr_head_sha):
 
 def not_ready_handover_due(nr_count):
     """FR-004(a). True when nr_count >= NOT_READY_THRESHOLD."""
+
+def is_not_ready_handover(marker): ...   # the D7 stalled marker naming a pr
+def marker_names_live_pr(marker): ...    # FIX_OR_LATER step, or the above:
+                                         # select looks that PR up, so an
+                                         # unowned (taken-over) PR holds
 ```
 
 `in_flight_candidate()` gains one more skip condition alongside its
@@ -89,6 +94,10 @@ def write_marker(step, round, pr, branch, base_sha,
     markers and new no-not-ready-record markers byte-identical in every
     field that already existed)."""
 ```
+
+Two readers join it: `same_not_ready_comment_id(comments, bot_login, pr,
+head_sha, unmet_reason)` (FR-009's match, below) and `directed_carry(comments,
+bot_login)` (the pr, round and not-ready count a directed run carries).
 
 `main()`'s CLI gains `--nr-count`, `--nr-head-sha`, `--nr-class`,
 `--nr-reason` (the unmet condition, FR-002), each
@@ -178,7 +187,8 @@ extended decision (research.md D2), and:
      (`unmet_class`), `--nr-reason` (the unmet condition), plus the
      unchanged `--pr`/`--branch`. Before posting the comment, compare
      `(pr, head_sha, unmet_reason)` against the newest loop marker's own
-     `pr`/`nr_head_sha`/`nr_reason` (FR-009, never the comment's prose); on
+     `pr`/`nr_head_sha`/`nr_reason` (FR-009, never the comment's prose --
+     `board_item_marker.same_not_ready_comment_id()`); on
      an exact match, edit THAT comment by its id
      (`PATCH /repos/:owner/:repo/issues/comments/:id`), updating its
      embedded marker to the new count, instead of appending a new one

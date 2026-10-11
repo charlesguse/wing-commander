@@ -169,6 +169,14 @@ IN_FLIGHT_CASES = {
     # Code review of #1010: a durable record on a PR closed since is not a
     # hold -- the item falls through to resume's fresh triage, as before.
     "not-ready-durable-pr-closed-not-held",
+    # specs/093 D7 (code review of #1010): a not-ready handover whose PR a
+    # human took over (board:owned removed, board:stalled removed) is held
+    # as an unowned open PR, not re-selected every run; and the FR-011
+    # not-ready report does not claim it.
+    "not-ready-handover-pr-taken-over-held",
+    # FR-011's report names only items the hold passed over: an issue
+    # excluded for its own reason (here board:stalled) is not listed.
+    "not-ready-durable-excluded-not-reported",
 }
 
 # (name, replacement for board_item_marker.is_loop_marker_author)

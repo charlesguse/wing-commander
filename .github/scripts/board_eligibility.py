@@ -154,6 +154,21 @@ def not_ready_record(marker):
     return {"pr": pr, "head_sha": head_sha, "class": nr_class, "count": count}
 
 
+def is_not_ready_handover(marker):
+    """specs/093-not-ready-board-release D7: the threshold's own stalled
+    handover marker -- the one stall marker that names a pr (with its
+    nr_head_sha). select looks that PR up like a fix-or-later marker's, so
+    a PR a human has taken over (board:owned removed) still holds."""
+    return bool(marker and marker.get("step") == "stalled" and marker.get("pr") is not None
+                and marker.get("nr_head_sha"))
+
+
+def marker_names_live_pr(marker):
+    """True when select must look up the PR `marker` names: a fix-or-later
+    step's, or a not-ready handover's."""
+    return bool(marker) and (marker.get("step") in FIX_OR_LATER_STEPS or is_not_ready_handover(marker))
+
+
 def not_ready_handover_due(nr_count):
     """FR-004(a): True when `nr_count` has reached NOT_READY_THRESHOLD."""
     return nr_count >= NOT_READY_THRESHOLD
@@ -517,9 +532,10 @@ def _awaiting_merge_holds(marker, pr_state_by_number):
 
 
 def _unowned_open_pr_holds(marker, pr_state_by_number):
-    """True when `marker` records a fix-or-later step whose PR the select
-    job's lookup reported as UNOWNED_OPEN_PR_STATE (issue #555)."""
-    if (marker or {}).get("step") not in FIX_OR_LATER_STEPS:
+    """True when `marker` records a fix-or-later step (or a not-ready
+    handover, specs/093) whose PR the select job's lookup reported as
+    UNOWNED_OPEN_PR_STATE (issue #555)."""
+    if not marker_names_live_pr(marker):
         return False
     try:
         pr = int(marker.get("pr"))
@@ -655,7 +671,15 @@ def main():
     held = []
     for issue in open_issues:
         number = issue.get("number")
-        pair = read_marker_with_timestamp(comments_by_issue.get(number, []), bot_login)
+        comments = comments_by_issue.get(number, [])
+        pair = read_marker_with_timestamp(comments, bot_login)
+        # Only items no other rule already set aside: an excluded issue or
+        # an unowned PR is passed over for its own reason, not this one.
+        if is_excluded(issue, spec_request_state_by_number,
+                       _find_duplicate_marker(issue, comments, bot_login))[0]:
+            continue
+        if pair is not None and _unowned_open_pr_holds(pair[1], pr_state_by_number):
+            continue
         reason = not_ready_hold_reason(pair[1] if pair else None, pr_state_by_number,
                                        pr_head_sha_by_number)
         if reason is not None:
