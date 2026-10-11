@@ -9,8 +9,8 @@ A published composite with its own step, not a `_shared/` script: Gate 12
 forbids `gh` calls in `_shared/` scripts, and Gate 60 forbids a published stage
 resolving `_shared/`.
 
-Inputs: `token` (the `github.token`, passed by the caller from
-`ACTIONS_TOKEN`), `run-id`, `out-dir`. `GITHUB_REPOSITORY` comes from the
+Inputs: `token` (the `github.token`, passed by the caller as
+`${{ github.token }}`), `run-id`, `out-dir`. `GITHUB_REPOSITORY` comes from the
 runner environment.
 
 Behaviour:

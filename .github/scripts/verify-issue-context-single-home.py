@@ -166,8 +166,9 @@ WHAT IT CHECKS
    deny list, keep permission checks on, and name the wrapper in its
    prompt by the granted path. A listed site must grant the wrapper.
    Since spec 101 it also grants no `gh` command in any spelling (first
-   whitespace-split token's basename `gh`: `gh:*`, `gh*`, `gh api:*`,
-   `/usr/bin/gh pr view:*`): `gh` reaches remote writes, local file writes
+   whitespace-split token's basename `gh`, in any position so wrappers
+   count: `gh:*`, `gh*`, `gh api:*`, `/usr/bin/gh pr view:*`, `env gh:*`,
+   `GH_TOKEN=x gh:*`, `command gh:*`): `gh` reaches remote writes, local file writes
    and, through `gh alias set`/`gh extension install`, arbitrary
    execution, so no per-subcommand list is safe on an agent that must not
    write. Exemptions live in EXEMPT_GH_READ_ONLY (one site, the exact
@@ -564,8 +565,8 @@ def _bash_grant_problems(text, where, git_grant=GIT_READ_GRANT, strict=True,
             continue
         command = m.group(1).split(":", 1)[0].strip().rstrip("* ")
         tokens = command.split()
-        if (not strict and tokens
-                and os.path.basename(tokens[0]) == "gh"):
+        if (not strict
+                and any(os.path.basename(t) == "gh" for t in tokens)):
             problems.append(
                 f"{where} grants {grant} to a read-only agent. `gh` reaches "
                 f"remote writes, local file writes and (via `gh alias set` "
@@ -2587,6 +2588,12 @@ def _self_test_read_only_git(tmpdir):
         ("4b: inline-only agent step granting Bash(gh api:*) (spec 101)",
          _inline_fixture(allowed=f"Read,Bash(gh api:*),{PUBLISHED_GIT_READ_GRANT}"),
          "claude_args grants Bash(gh api:*) to a read-only agent", inline),
+        ("4b: inline agent step granting Bash(env gh api:*) wrapper spelling",
+         _inline_fixture(allowed=f"Read,Bash(env gh api:*),{PUBLISHED_GIT_READ_GRANT}"),
+         "claude_args grants Bash(env gh api:*) to a read-only agent", inline),
+        ("4b: inline agent step granting Bash(GH_TOKEN=x gh:*) wrapper spelling",
+         _inline_fixture(allowed=f"Read,Bash(GH_TOKEN=x gh:*),{PUBLISHED_GIT_READ_GRANT}"),
+         "claude_args grants Bash(GH_TOKEN=x gh:*) to a read-only agent", inline),
         ("4b: inline read-only agent step does not deny cd",
          _inline_fixture(denied=_FLEET_DENIED.replace(",Bash(cd:*)", "")),
          "does not deny Bash(cd:*)", inline),

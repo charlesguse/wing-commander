@@ -148,7 +148,7 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 
 ## Review Gate Round 1 Findings
 
-- [ ] Review finding: gh-grant gate misses wrapper spellings such as env gh or GH_TOKEN=x gh
+- [X] Review finding: gh-grant gate misses wrapper spellings such as env gh or GH_TOKEN=x gh
 
   Check 4b only inspects the first whitespace token of a Bash grant, so Bash(env gh api:*), Bash(command gh:*) and similar grants for a read-only agent pass the gate.
 
@@ -156,7 +156,7 @@ Workflow comments are load-bearing (gates byte-compare them): after any edit und
 
   Detail: Around line 456.
 
-- [ ] Review finding: Live contract still says the token comes from ACTIONS_TOKEN
+- [X] Review finding: Live contract still says the token comes from ACTIONS_TOKEN
 
   The diagnose-staged-logs contract says the token is passed from ACTIONS_TOKEN, but this PR removed ACTIONS_TOKEN from collect-step-summary and the callers now pass github.token as the token: input. Live contracts are fixed like code.
 
