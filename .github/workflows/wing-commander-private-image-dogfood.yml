@@ -16,8 +16,8 @@
 # of a permanently failing scheduled run -- unless a dispatch names an image
 # itself in this owner's GHCR namespace (the reference-image rebuild passes
 # its digest, specs/112-agent-startup-image-check), which also runs; any
-# other dispatched image is refused. Every run turns on
-# the agent start-up check (startup-check). Everything else (the
+# other dispatched image is refused. Every run that reaches the stage
+# turns on the agent start-up check (startup-check). Everything else (the
 # verify-image-prerequisites job, the credential binding) lives in the
 # published private-image-dogfood.yml, identical to what an adopter's own
 # wrapper would call.

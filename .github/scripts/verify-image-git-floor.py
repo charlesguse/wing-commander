@@ -183,6 +183,12 @@ def self_test():
                                  'if "is older than the 2.40 minimum" in err:'))
         if not check_gate_62(p):
             failures.append("a Gate 62 classifying with an inline literal was not caught")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(src.replace("if any(m in err for m in FLOOR_MESSAGES):",
+                                 'if "is older than the 2.40 minimum" in err:')
+                     + "\n\ndef _elsewhere(err):\n    if any(m in err for m in FLOOR_MESSAGES):\n        return err\n")
+        if not check_gate_62(p):
+            failures.append("a FLOOR_MESSAGES test moved out of check_git_floor was not caught")
     if stages:
         path, text = stages[0]
         reworded = [(path, text.replace(fragment, "true").replace(

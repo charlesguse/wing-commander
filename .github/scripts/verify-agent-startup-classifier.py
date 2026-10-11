@@ -210,9 +210,14 @@ def check_wrapper(path=WRAPPER):
     if norm(refuse.get("if")) != want_refuse:
         errors.append("the wrapper's refuse-foreign-image job no longer holds the namespace test "
                       "(if: %r)" % norm(refuse.get("if")))
-    refuse_runs = "\n".join(str(s.get("run", "")) for s in refuse.get("steps") or [])
-    if "::error::" not in refuse_runs or not re.search(r"(?m)^\s*exit 1\s*$", refuse_runs):
-        errors.append("the wrapper's refuse-foreign-image job does not fail (::error:: and exit 1)")
+    refuse_steps = refuse.get("steps") or []
+    refuse_runs = "\n".join(str(s.get("run", "")) for s in refuse_steps)
+    tolerated = refuse.get("continue-on-error") or any(
+        s.get("continue-on-error") or "if" in s for s in refuse_steps)
+    if (tolerated or "::error::" not in refuse_runs
+            or not re.search(r"(?m)^\s*exit 1\s*$", refuse_runs)):
+        errors.append("the wrapper's refuse-foreign-image job does not fail (::error:: and exit 1, "
+                      "no continue-on-error, no step if:)")
     if "refuse-foreign-image" not in needs:
         errors.append("the wrapper's dogfood job does not need refuse-foreign-image (needs: %r)" % needs)
     if norm(job.get("if")) != want_job:
@@ -261,7 +266,6 @@ def self_test():
         # Workflow mutations.
         with open(WORKFLOW, encoding="utf-8") as fh:
             src = fh.read()
-        doc = yaml.safe_load(src)
 
         def mutated(fn):
             m = yaml.safe_load(src)
@@ -352,9 +356,22 @@ def self_test():
         with open(p_wrap, "w", encoding="utf-8") as fh:
             fh.write(wsrc.replace("    needs: refuse-foreign-image\n", ""))
         expect("dogfood without needs", check_wrapper(p_wrap), "does not need refuse-foreign-image")
-        with open(p_wrap, "w", encoding="utf-8") as fh:
-            fh.write(wsrc.replace("          exit 1\n", "", 1) if "refuse" in wsrc else wsrc)
-        expect("refusal that does not fail", check_wrapper(p_wrap), "does not fail")
+        def wrapper_mutated(fn):
+            m = yaml.safe_load(wsrc)
+            fn(m["jobs"]["refuse-foreign-image"])
+            with open(p_wrap, "w", encoding="utf-8") as fh:
+                yaml.safe_dump(m, fh)
+            return check_wrapper(p_wrap)
+
+        def no_exit(job):
+            for s in job["steps"]:
+                s["run"] = s["run"].replace("exit 1", "true")
+
+        expect("refusal that does not fail", wrapper_mutated(no_exit), "does not fail")
+        expect("refusal tolerated", wrapper_mutated(lambda j: j.update({"continue-on-error": True})),
+               "does not fail")
+        expect("refusal step skipped", wrapper_mutated(lambda j: j["steps"][0].update({"if": "false"})),
+               "does not fail")
         expect("first match", mutated(first_match), "ambiguous")
         expect("no prompt", mutated(drop_prompt), "needs a prompt")
         expect("no allowed_bots", mutated(drop_bots), "allowed_bots")
@@ -364,7 +381,6 @@ def self_test():
         expect("credential input", mutated(add_key), "model credential input")
         expect("no !cancelled", mutated(drop_cancelled), "!cancelled()")
         expect("no script call", mutated(drop_script), "must invoke classify-agent-startup.py")
-        del doc
     for f in failures:
         print("::error::Gate 147 self-test: " + f)
     if not failures:
