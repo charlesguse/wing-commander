@@ -232,10 +232,14 @@ def check_workflow(path):
             errors.append("classify-startup must report verify-image-prerequisites' result beside its verdict")
         # Error logs reach ::warning:: only through the step's one-line
         # helper; a bare cat/tr of one would split the annotation.
-        if ("oneline() {" not in runs
-                or re.search(r"\$\((cat|tr)\b[^)]*job-(lookup|log)-error\.log", runs)):
-            errors.append("classify-startup must quote job-lookup-error.log / job-log-error.log in a "
-                          "::warning:: only through its oneline helper")
+        helper = re.search(r"(?m)^\s*oneline\(\) \{(.*)\}\s*$", runs)
+        raw = [l.strip() for l in runs.splitlines()
+               if re.search(r"::(warning|error)::", l) and "-error.log" in l
+               and not re.search(r"\$\(oneline [\w.-]+-error\.log\)", l)]
+        if (not helper or "s/%/%25/g" not in helper.group(1) or "tr '\\r\\n'" not in helper.group(1)
+                or raw):
+            errors.append("classify-startup must quote its error logs in a ::warning:: only through its "
+                          "oneline helper, which escapes %% and flattens CR/LF (raw: %r)" % raw)
         # It runs on the runner, not the image: a runner without gh/jq/python3,
         # or a classifier that was never checked out, is named as such rather
         # than read as an empty log and an "exited 2" verdict.
@@ -612,6 +616,19 @@ def self_test():
                     s["run"] = s["run"].replace("$(oneline job-log-error.log)", "$(cat job-log-error.log 2>/dev/null)")
 
         expect("error log quoted raw", mutated(raw_error_log), "oneline helper")
+
+        def lookup_log_redirect(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
+                    s["run"] = s["run"].replace("$(oneline job-lookup-error.log)", "$(<job-lookup-error.log)", 1)
+
+        def helper_unescaped(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
+                    s["run"] = s["run"].replace("sed 's/%/%25/g' 2>/dev/null < \"$1\" | ", "cat \"$1\" | ")
+
+        expect("lookup error read raw", mutated(lookup_log_redirect), "oneline helper")
+        expect("helper stops escaping %", mutated(helper_unescaped), "oneline helper")
         expect("prereq result not reported", mutated(drop_prereq_report),
                "report verify-image-prerequisites' result")
         expect("no script call", mutated(drop_script), "must invoke classify-agent-startup.py")
