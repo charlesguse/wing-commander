@@ -404,3 +404,62 @@
 
   - .github/actions/wing-commander-durable-failure-issue/action.yml
   - .github/actions/write-boundary-lookup/action.yml
+
+## Review Gate Round 5 Findings
+
+- [ ] Review finding: Gate 12 differential check can hide missed calls
+
+  accounted() returns True for every recorded argv once the script contains any disallowed call, and differential() only fails when invoked == 0, so locator misses go unreported and a low ran/invoked ratio still passes.
+
+  - .github/scripts/verify-gate-12.py
+
+  Detail: accounted() near line 816; add a minimum ran/invoked ratio and per-invocation matching.
+
+- [ ] Review finding: Linearity guard cannot see C-level quadratic work
+
+  steps_ratio() counts only Python-level call events via sys.setprofile, so quadratic regex or str.find behaviour stays green; only the 120s and 30s timeouts remain.
+
+  - .github/scripts/verify-gate-12.py
+
+  Detail: steps_ratio near line 652
+
+- [ ] Review finding: _in_url makes locate() quadratic
+
+  _in_url runs rfind/find over the whole script for each gh match and for each of three whitespace characters, so a script with a bare command word and many gh mentions does O(n*m) work, contradicting the one-linear-pass docstring.
+
+  - .github/scripts/wc_gh_callsites.py
+
+  Detail: near line 1166; no SCALING_CASES reaches this path
+
+- [ ] Review finding: Gate 28 coverage narrowed
+
+  verify-gh-api-explicit-method.py no longer sweeps .py scripts or raw lines (composite if:, docs) and reads only run: scalars reached through steps, so implicit-POST gh api calls can re-enter unchecked.
+
+  - .github/scripts/verify-gh-api-explicit-method.py
+
+  Detail: No other gate replaces the dropped coverage.
+
+- [ ] Review finding: verify-gate-wiring still calls Gate 12 a heredoc gate
+
+  Comments (around line 284) and the pr_time_inline_steps failure message (around line 499) still say Gate 12 is a lint-workflows.yml python heredoc, but it moved to verify-gate-12-token-permissions.py.
+
+  - .github/scripts/verify-gate-wiring.py
+
+  Detail: CLAUDE.md treats comment edits as code edits.
+
+- [ ] Review finding: Default-branch resolver pasted into 10+ places
+
+  The same two-line default-branch fallback run: block is copied across 8 workflows (4 in auto-update-spec-kit.yml) and the scoped-app-token composite, and the issues_err_text line is added to two composites, violating the single-home rule.
+
+  - .github/workflows/intake.yml
+  - .github/workflows/auto-update-spec-kit.yml
+
+  Detail: CLAUDE.md 'Shared logic has exactly one home'; move it into a composite.
+
+- [ ] Review finding: judge() over-accepts changed_from_969 scenarios
+
+  A scenario counts as the permitted FR-014 change whenever the gate fails and the DISALLOWED text appears anywhere in the output, without checking the failing reason or that no other failure fired.
+
+  - .github/scripts/verify-gate-12.py
+
+  Detail: judge() near line 734; must_mention and the reason are never compared.
