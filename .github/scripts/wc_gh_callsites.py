@@ -56,7 +56,9 @@ GH_IN_EXPANSION = re.compile(r"(?<![\w.$@%])gh(?![\w-])")
 # expansion: `g""h`, `g\\h`, `g$X`, `${X:-g}h`, `$(printf g)h`, `${X:-gh}`.
 SPELLED = re.compile(r"(?<![\w$@%])g(?:[\"'\\]*h(?![\w-])|[\"'\\]*[$`])"
                      r"|(?:[})`]|\$\w+[\"'\\])[\"'\\]*h(?![\w-])")
-BLANK_WORD = re.compile(r"[^ \t\n]+")
+# A URL: the scheme to the first character that could end it or start shell
+# syntax (`;`, `&`, `|`, a quote, `$`...), so a gh joined on after it is seen.
+URL = re.compile(r"[A-Za-z][\w+.-]*://[^\s;&|<>()`'\"\\$]*")
 # `<<` or `<<-`, then the delimiter word; an unterminated quote ends it.
 HEREDOC = re.compile(r"<<(-?)[ \t]*((?:'[^']*'|\"[^\"]*\"|\\.|[^\s;&|<>()`'\"\\])*)")
 DELIM_PIECE = re.compile(r"'([^']*)'|\"([^\"]*)\"|\\(.)")
@@ -83,7 +85,15 @@ WRAPPERS = frozenset(("env", "command", "exec", "sudo", "xargs", "nohup", "nice"
                       "time",                 # `X=1 time gh`: /usr/bin/time, not the keyword
                       )) | EVALUATORS
 SHELLS = frozenset(("bash", "sh", "dash", "zsh", "ksh", "mksh", "ash", "yash", "posh",
-                    "su"))                  # with `-c`, run a string
+                    "csh", "tcsh", "fish", "su")) | frozenset(("pwsh", "powershell"))
+PWSH = frozenset(("pwsh", "powershell"))    # `-Command`/`-EncodedCommand`, any case
+# Options that take the next word as their value: a shell's (`-o pipefail`,
+# `--rcfile F`), and sudo's (`-u root`, `--user root`).
+SHELL_VALUED = frozenset(("-o", "-O", "+o", "+O", "--rcfile", "--init-file"))
+SUDO_VALUED = frozenset(("-u", "-g", "-U", "-C", "-D", "-h", "-p", "-r", "-t", "-T",
+                         "--user", "--group", "--other-user", "--close-from", "--chdir",
+                         "--chroot", "--host", "--prompt", "--role", "--type",
+                         "--command-timeout"))
 
 
 class _Word:
@@ -120,8 +130,7 @@ class _Scan:
         self.t, self.n = text, len(text)
         # Where to look for gh: the text with each URL blanked (it names gh,
         # it never runs it).
-        self.g = BLANK_WORD.sub(lambda m: " " * len(m.group()) if "://" in m.group()
-                                else m.group(), text)
+        self.g = URL.sub(lambda m: " " * len(m.group()), text)
         self.by_off, self.pending, self.broken = {}, [], None
         self.nl = [i for i, c in enumerate(text) if c == "\n"]
         self.no_expr = None                   # offset of the first unclosed `${{`
@@ -579,7 +588,7 @@ class _Scan:
                 or not (dynamic or base in WRAPPERS or base in SHELLS)):
             return
         if dynamic or any(_base(w.lit) in EVALUATORS or _shell_string(
-                w.lit if w.lit is not None else w.pre) for w in [head] + args):
+                w.lit if w.lit is not None else w.pre, base in PWSH) for w in [head] + args):
             self._condemn(head.off + len(head.raw),      # the head word is judged above
                           "dynamic-command" if dynamic else "unquoted-wrapper")
             self.bare.append(head.off)
@@ -599,39 +608,39 @@ def _reads_stdin(words):
     """Whether the command in `words` runs a script it reads from stdin: a
     shell given no `-c` string and no script file (`bash`, `bash -o
     pipefail`, `sudo bash -s`, `bash /dev/stdin`, `bash <(...)`), `su`,
-    `ssh` or `sudo -s`/`-i` given no `-c` string, a leading `source`/`.` of
-    stdin or of a process substitution, or `xargs`/`parallel` handing what
-    it reads to a shell or evaluator."""
+    `ssh` or `sudo -s`/`-i`/`--login` given no `-c` string, PowerShell
+    however called, a leading `source`/`.` of stdin or of a process
+    substitution, or `xargs`/`parallel` handing what it reads to a shell or
+    evaluator. Each word is looked at a bounded number of times: linear."""
+    n = len(words)
+    later = [False] * (n + 2)       # later[j]: a word at j or after hands a string over
+    login = [False] * (n + 2)       # login[j]: sudo's options from j ask for a shell
+    for j in range(n - 1, -1, -1):
+        w = words[j]
+        later[j] = later[j + 1] or _shell_string(w.lit if w.lit is not None else w.pre)
+        if (w.lit or "").startswith("-"):
+            login[j] = (w.lit in ("--login", "--shell") or w.lit[1:2] not in ("-", "")
+                        and ("s" in w.lit or "i" in w.lit)) or (
+                            login[j + 2] if w.lit in SUDO_VALUED else login[j + 1])
     feeds = False
-    for j, w in enumerate(words):               # stops at the first shell: linear
-        rest, b = words[j + 1:], _base(w.lit)
-        strings = any(_shell_string(r.lit if r.lit is not None else r.pre) for r in rest
-                      ) if b in SHELLS or b in ("ssh", "sudo", "doas") else None
+    for j, w in enumerate(words):
+        b = _base(w.lit)
         if w.lit in ("source", ".") and (j == 0 or words[j - 1].lit in ("builtin", "command")):
-            return not rest or _dev_file(rest[0])
+            return j + 1 >= n or _dev_file(words[j + 1])
         if b in ("xargs", "parallel"):
             feeds = True
         elif feeds and (b in SHELLS or b in EVALUATORS):
             return True
+        elif b in PWSH:
+            return True                 # `-Command -` and `-File -` read it too
         elif b in SHELLS and b != "su":
+            rest = words[j + 1:]        # once: this returns
             ops = [r for k, r in enumerate(rest) if (r.lit is None or r.lit[:1] not in "-+")
-                   and (k == 0 or rest[k - 1].lit not in ("-o", "-O", "+o", "+O"))]
-            return not strings and (not ops or _dev_file(ops[0]) or
-                                    any(r.lit == "-s" for r in rest))
-        elif b in ("su", "ssh") or b in ("sudo", "doas") and _login_shell(rest):
-            return not strings
-    return False
-
-
-def _login_shell(rest):
-    """Whether sudo's options `rest` ask for a shell (`-s`, `-i`, `-is`)."""
-    for k, r in enumerate(rest):
-        if (r.lit or "").startswith("-"):
-            if r.lit != "--" and r.lit[1:2] != "-" and ("s" in r.lit or "i" in r.lit):
-                return True
-        elif k == 0 or rest[k - 1].lit not in ("-u", "-g", "-U", "-C", "-D", "-h", "-p", "-r",
-                                                "-t", "-T"):
-            return False
+                   and (k == 0 or rest[k - 1].lit not in SHELL_VALUED)]
+            return not later[j + 1] and (not ops or _dev_file(ops[0]) or
+                                         any(r.lit == "-s" for r in rest))
+        elif b in ("su", "ssh") or b in ("sudo", "doas") and login[j + 1]:
+            return not later[j + 1]
     return False
 
 
@@ -646,12 +655,14 @@ def _base(s):
     return (s or "").rsplit("/", 1)[-1]
 
 
-def _shell_string(s):
+def _shell_string(s, pwsh=False):
     """Whether literal word `s` hands a shell string over: `-c`, `-lc`,
-    `-S...`, `--split-string`, `--command`."""
+    `-S...`, `--split-string`, `--command`; with `pwsh`, also PowerShell's
+    `-Command`/`-EncodedCommand` and their abbreviations, in any case."""
     s = s or ""
     return (s.startswith(("--split-string", "--command", "-S"))
-            or (SHELL_STRING.fullmatch(s) is not None and "c" in s))
+            or (SHELL_STRING.fullmatch(s) is not None and "c" in s)
+            or pwsh and s.lower().startswith(("-c", "-e")))
 
 
 def _may_be_gh(w, split=True):

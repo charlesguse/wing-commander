@@ -664,6 +664,38 @@ LOCATOR_CASES = [
      '"$PY" x.py; gh issue view 5; echo "gh x"', [C_ST, men("quoted")]),
     ("a large heredoc is linear", "cat <<'EOF'\n" + "a b c\n" * 200000 + "EOF\ngh a b",
      [C_ST]),
+    # review-until-clean pass 2: a URL is blanked only up to shell syntax, so
+    # a gh joined on after it in text a shell runs is still seen.
+    ("pass 2: a gh joined to a URL in a -c string",
+     "bash -c 'curl -s https://x;gh api -X DELETE y'", [dis("unquoted-wrapper")]),
+    ("pass 2: a gh joined to a URL in an eval string",
+     "eval 'true https://x&&gh api x'", [dis("unquoted-wrapper")]),
+    ("pass 2: a gh joined to a URL in a backtick", "x=`echo https://a;gh api x`",
+     [dis("backtick")]),
+    ("pass 2: a gh joined to a URL piped to a shell", "echo 'https://a|gh api x' | bash",
+     [dis("shell-stdin")]),
+    ("pass 2: a gh joined to a URL in an unquoted heredoc",
+     "cat <<E\nhttps://a;$(gh api x)\nE", [dis("unquoted-heredoc")]),
+    # sudo's long options and a shell's valued long options.
+    ("pass 2: sudo --login reads its heredoc", "sudo --login <<'E'\ngh api x -X DELETE\nE",
+     [dis("unquoted-heredoc")]),
+    ("pass 2: sudo --shell reads its pipe", "echo 'gh a b' | sudo --shell",
+     [dis("shell-stdin")]),
+    ("pass 2: sudo --user root -s reads its heredoc", "sudo --user root -s <<'E'\ngh a b\nE",
+     [dis("unquoted-heredoc")]),
+    ("pass 2: bash --rcfile F reads its heredoc", "bash --rcfile x <<'E'\ngh api x\nE",
+     [dis("unquoted-heredoc")]),
+    ("pass 2: bash --init-file F reads its heredoc", "bash --init-file x <<'E'\ngh a b\nE",
+     [dis("unquoted-heredoc")]),
+    # Shells outside the sh family.
+    ("pass 2: tcsh reads its heredoc", "tcsh <<'E'\ngh a b\nE", [dis("unquoted-heredoc")]),
+    ("pass 2: tcsh reads its pipe", "echo 'gh a b' | tcsh", [dis("shell-stdin")]),
+    ("pass 2: fish -c runs its string", "fish -c 'gh a b'", [dis("unquoted-wrapper")]),
+    ("pass 2: csh -c runs its string", "csh -c 'gh a b'", [dis("unquoted-wrapper")]),
+    ("pass 2: pwsh -Command runs its string", "pwsh -NoProfile -Command 'gh a b'",
+     [dis("shell-stdin")]),
+    ("pass 2: pwsh reads its pipe", "echo 'gh a b' | pwsh -NonInteractive",
+     [dis("shell-stdin")]),
 ]
 
 
@@ -681,7 +713,30 @@ SCALING_CASES = (
     ("nested brace lists", lambda n: "{x," * n + "a" + "}" * n + " api x"),
     ("unclosed substitutions", lambda n: "echo $( " * (n // 100) + "x " * n),
     ("a long literal script a shell runs", lambda n: "bash -c '" + "a b; " * n + "'"),
+    ("many sudo words", lambda n: "sudo " * n + "x\ngh a b"),
+    ("many sudo -u options", lambda n: "sudo -u " * n + "x\ngh a b"),
 )
+
+
+class CopyCounting(list):
+    """A word list that counts the words its slices copy: C-level copying
+    makes no profile event, so steps_ratio cannot see it."""
+    copied = 0
+
+    def __getitem__(self, i):
+        got = list.__getitem__(self, i)
+        if isinstance(i, slice):
+            CopyCounting.copied += len(got)
+        return got
+
+
+def stdin_copies(n=2000):
+    """Words _reads_stdin copies for an n-word command ending in a shell."""
+    words = CopyCounting(loc._Word(w, w, 0, True, w, "", False, w)
+                         for w in ["echo"] + ["a"] * n + ["bash"])
+    CopyCounting.copied = 0
+    loc._reads_stdin(words)
+    return CopyCounting.copied
 
 
 def steps_ratio(make, n=2000):
@@ -715,6 +770,10 @@ def run_locator_cases():
         ratio = steps_ratio(make)
         if ratio > 6:       # 4x the input: linear is about 4, quadratic about 16
             bad.append((f"scaling: {name}", [f"4x the input took {ratio:.1f}x the steps"]))
+    copies = stdin_copies()
+    if copies > 2 * 2002:   # one copy of the words is linear; one per word is not
+        bad.append(("scaling: _reads_stdin copies", [f"{copies} words copied for a "
+                                                     f"2,002-word command"]))
     toks = loc.locate('GH_TOKEN="$T" timeout 30 gh api -iX POST "repos/$R/issues" '
                       '-f a="$b" --jq .x')
     argv = toks[0].argv if toks else []
@@ -854,6 +913,19 @@ def exec_method(argv):
     return meth
 
 
+def could_be(located, argv):
+    """Whether a located call's words could have run as `argv`: each literal
+    word equal, each quoted expansion one word starting with its literal
+    text, and from the first word the shell may split on, anything."""
+    for k, w in enumerate(located):
+        if isinstance(w, loc.Dynamic) and w.split:
+            return True
+        if k >= len(argv) or (argv[k] != str(w) if not isinstance(w, loc.Dynamic)
+                              else not argv[k].startswith(w.pre)):
+            return False
+    return len(argv) == len(located)
+
+
 def accounted(tokens, argv):
     """How the locator accounts for this invocation bash actually ran:
     "exact" (a located call matches it), "blanket" (it matches none, but
@@ -861,13 +933,13 @@ def accounted(tokens, argv):
     accepts) or None (a miss)."""
     calls = [t for t in tokens if t.kind == "call"]
     for t in calls:
-        words = [str(w) for w in t.argv]
+        if not could_be(t.argv, argv):
+            continue
         if argv[:1] == ["api"]:
-            if words[:1] == ["api"]:
-                methods = [str(m) for m in loc.api_parts(t.argv[1:])[1]]
-                if (methods[-1] if methods else "GET") == exec_method(argv):
-                    return "exact"
-        elif words[:2] == argv[:2]:
+            methods = [str(m) for m in loc.api_parts(t.argv[1:])[1]]
+            if (methods[-1] if methods else "GET") == exec_method(argv):
+                return "exact"
+        else:
             return "exact"
     if any(t.position == "disallowed" for t in calls):
         return "blanket"
@@ -919,6 +991,14 @@ def differential():
     if accounted(loc.locate('gh api "$P"'), ["issue", "close", "1"]) is not None:
         failures.append(("oracle", ["accounted() vouches for `gh issue close 1` "
                                     "from an unrelated `gh api \"$P\"` call"], ""))
+    # Nor does a sibling with the same verbs or method (review-until-clean
+    # pass 2): only a call whose words could be the invocation's.
+    for script, argv in (("gh issue close 1", ["issue", "close", "2"]),
+                         ("gh api repos/a", ["api", "repos/b"]),
+                         ('gh api "repos/$R/a"', ["api", "x/a"])):
+        if accounted(loc.locate(script), argv) is not None:
+            failures.append(("oracle", [f"accounted() vouches for `gh {' '.join(argv)}` "
+                                        f"from the unrelated call `{script}`"], ""))
     with open(os.path.join(FUZZ_DIR, "manifest.json"), encoding="utf-8") as fh:
         manifest = json.load(fh)
     on_disk = {f for f in os.listdir(FUZZ_DIR) if f.endswith(".jsonl")}
