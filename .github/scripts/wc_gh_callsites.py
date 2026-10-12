@@ -65,13 +65,14 @@ CASE_WORD = re.compile(r"\bcase\b")
 CMD_SEP = re.compile(r"[;&|()\n]+")
 HEREDOC_DELIM = re.compile(r"\\?([^\s;&|<>()'\"`\\]+)")
 VAR = re.compile(r"\$(?:[A-Za-z_]\w*|[0-9@*#?!$-])")
+NAMED_FD = re.compile(r"\{[A-Za-z_]\w*\}")
 QUOTED_VAR = re.compile(r'"\$(?:\w+|\{\w+\})"')
 NOT_ARITHMETIC = re.compile(r"[\"'`;\n]|\$\(")
 MAX_DEPTH = 40          # of nested substitutions, well inside Python's recursion limit
 CLOSERS = frozenset(("fi", "done", "esac"))
 RESERVED = frozenset(("if", "then", "elif", "else", "do", "while", "until", "!", "{",
                       "}", "time"))
-WRAPPERS = frozenset(("env", "eval", "command", "exec", "sudo", "xargs", "nohup",
+WRAPPERS = frozenset(("env", "eval", "trap", "command", "exec", "sudo", "xargs", "nohup",
                       "nice", "stdbuf", "watch", "setsid", "timeout", "script",
                       "coproc", "builtin", "flock", "ionice", "taskset", "chrt", "doas",
                       "time",                 # `X=1 time gh`: /usr/bin/time, not the keyword
@@ -84,7 +85,7 @@ WRAPPERS = frozenset(("env", "eval", "command", "exec", "sudo", "xargs", "nohup"
 LITERAL_RUNNERS = frozenset(("docker", "podman", "kubectl", "chroot", "nsenter", "unshare",
                              "runuser", "sg", "strace", "busybox"))
 REMOTE_SHELLS = frozenset(("ssh", "parallel"))      # every word is a shell string
-SHELL_RUNNERS = frozenset(("eval", "watch", "script"))     # run their words as a shell string
+SHELL_RUNNERS = frozenset(("eval", "trap", "watch", "script"))   # run their words as a shell string
 SHELLS = frozenset(("bash", "sh", "dash", "zsh", "ksh", "su"))  # with `-c`, run one
 API_VALUED = frozenset(("-X", "--method", "-H", "--header", "-f", "--raw-field", "-F",
                         "--field", "-q", "--jq", "-t", "--template", "-p", "--preview",
@@ -131,6 +132,7 @@ class _Scan:
         self.no_expr = None                   # offset of the first unclosed `${{`
         self.braces = 0                       # `${...}` levels open right now
         self.pipe = 0                         # index of the first token of this pipeline
+        self.groups = []                      # self.pipe where each open `(`/`{` group began
         self.shell_stdin = False              # the heredocs now pending feed a shell
 
     # ---------------------------------------------------------------- tokens
@@ -217,7 +219,10 @@ class _Scan:
         if ctx.depth >= MAX_DEPTH:
             self._unsure(i, "nested-substitution")
             return self.n
-        return self._cmds(i + 2, _Ctx(ctx.depth + 1, i, ctx.forced))
+        pipe = self.pipe                    # `bash <(echo 'gh x'; :)`: one pipeline
+        end = self._cmds(i + 2, _Ctx(ctx.depth + 1, i, ctx.forced))
+        self.pipe = min(pipe, self.pipe)
+        return end
 
     def _dollar(self, i, ctx):
         """Index after the `$` expansion at i."""
@@ -433,7 +438,9 @@ class _Scan:
                     ctx.parens += c == "("
                     if c != "|" or t[i + 1:i + 2] == "|":
                         self.pipe = len(self.toks)             # a pipeline ends here
-                words, i = [], j or i + 1
+                    if c == "(":
+                        self.groups.append(self.pipe)
+                words, i = [], j or i + 1 + t.startswith("|&", i)   # `|&` pipes too
             elif c == ")" and ctx.pattern:                     # a case pattern's `)`
                 ctx.pattern, words, i = 0, [], i + 1
             elif c == ")":
@@ -441,12 +448,15 @@ class _Scan:
                     self._end(words, ctx)
                     if ctx.depth and not ctx.parens:
                         return i + 1
+                    if ctx.parens and self.groups:             # `(a; b) | bash`: one pipeline
+                        self.pipe = min(self.pipe, self.groups.pop())
                     ctx.parens = max(ctx.parens - 1, 0)
                 words, i = [], i + 1
             else:
                 w, i = self._word(i, ctx)
-                if w.plain and w.lit.isdigit() and t[i:i + 1] in ("<", ">") and not ctx.pattern:
-                    continue                                   # `2>file`: a file descriptor
+                if (w.plain and (w.lit.isdigit() or NAMED_FD.fullmatch(w.lit))
+                        and t[i:i + 1] in ("<", ">") and not ctx.pattern):
+                    continue                                   # `2>file`, `{fd}>file`: a file descriptor
                 if ctx.pattern or (w.plain and w.lit == "in" and len(words) > 1
                                    and words[0].plain and words[0].lit == "case"):
                     if not ctx.pattern or ctx.pattern == 1 and w.plain and w.lit == "esac":
@@ -471,6 +481,10 @@ class _Scan:
                     timed = i
                     continue
                 timed = i if lead == "time" else None
+                if lead == "{":                                # `{ a; b; } | bash`: one pipeline
+                    self.groups.append(self.pipe)
+                elif lead == "}" and self.groups:
+                    self.pipe = min(self.pipe, self.groups.pop())
                 if lead not in RESERVED:
                     words.append(w)
         self._end(words, ctx)
@@ -568,7 +582,7 @@ class _Scan:
                 script = args[j + 1] if j + 1 < len(args) and _shell_string(
                     w.lit if w.lit is not None else w.pre) else None
                 hit = (w if "gh" in (w.lit, w.skel) else
-                       script if script is not None and _eval_may_run_gh(script) else None)
+                       script if script is not None and _script_may_run_gh(script) else None)
                 if hit is not None and self._note_once(hit, "unquoted-wrapper"):
                     break
         elif (head.lit is None                         # `$SUDO gh`: may expand to nothing
@@ -592,13 +606,13 @@ class _Scan:
                         or (((every or w.off in run) and not ASSIGN.match(w.raw))
                             and _may_run_gh(w, True, w.off in run))
                         or _gh_in_expansion(w)
-                        or (evals and _eval_may_run_gh(w))) and self._note_once(w, why):
+                        or (evals and _script_may_run_gh(w))) and self._note_once(w, why):
                     break
 
         elif _base(head.lit) in SHELLS and any(
                 _shell_string(w.lit if w.lit is not None else w.pre) for w in words[k + 1:]):
             for w in words[k + 1:]:                     # `bash -c '...'` re-reads it
-                if _eval_may_run_gh(w) and self._note_once(w, "unquoted-wrapper"):
+                if _script_may_run_gh(w) and self._note_once(w, "unquoted-wrapper"):
                     break
 
     def _stdin_shell(self):
@@ -622,14 +636,24 @@ class _Scan:
 
 def _reads_stdin(words):
     """Whether the command in `words` is a shell that reads its script from
-    stdin (`bash`, `sudo bash -s`) rather than from `-c` or a file."""
+    stdin (`bash`, `sudo bash -s`, `bash /dev/stdin`, `bash <(...)`) rather
+    than from `-c` or a file, or a leading `source`/`.` of stdin or of a
+    process substitution (`. <(...)`, `source /dev/stdin`)."""
     for j, w in enumerate(words):
+        rest = words[j + 1:]
+        if w.lit in ("source", ".") and (j == 0 or words[j - 1].lit in ("builtin", "command")):
+            return not rest or _dev_file(rest[0])
         if _base(w.lit) in SHELLS and w.lit != "su":
-            rest = words[j + 1:]
             return not any(_shell_string(r.lit if r.lit is not None else r.pre) for r in rest) and (
                 all(r.lit is not None and r.lit.startswith("-") for r in rest)
-                or any(r.lit == "-s" for r in rest))
+                or any(r.lit == "-s" or _dev_file(r) for r in rest))
     return False
+
+
+def _dev_file(w):
+    """A literal `/dev/...` or `/proc/.../fd/...` operand: stdin or a pipe."""
+    return w.lit is not None and (w.lit.startswith("/dev/") or
+                                  (w.lit.startswith("/proc/") and "/fd/" in w.lit))
 
 
 def _base(s):
@@ -789,6 +813,30 @@ def _eval_unknowns(text):
             out.append("" if c in "\\'\"" else c)
             i += 1
     return "".join(out)
+
+
+def _script_may_run_gh(w):
+    """Whether word `w`, which a shell re-reads as a script (`sh -c '...'`,
+    `eval`, `trap`, a remote shell's words), could run `gh`. A literal
+    word's text is exactly the script, so this locator reads it like any
+    `run:` block: a call in it counts, and so does every `gh` in it that is
+    not a provable mention (`X=gh`). `sh -c 'command -v "$t"'` runs nothing.
+    A string glued to its flag (`-S'gh api x'`, `--command=...`) is read
+    without the flag too. A word holding an expansion is judged piece by
+    piece (_eval_may_run_gh)."""
+    if w.lit is None:
+        return _eval_may_run_gh(w)
+    texts = [w.lit]
+    m = SHELL_FLAG.match(w.lit) or re.match(r"--(?:split-string|command)=", w.lit)
+    if m:
+        texts.append(w.lit[m.end():])
+    for text in texts:
+        toks = locate(text)
+        inert = {tok.offset for tok in toks if tok.kind == "mention"}
+        if (any(tok.kind == "call" for tok in toks)
+                or any(g.start() not in inert for g in GH_WORD.finditer(text))):
+            return True
+    return False
 
 
 def _eval_may_run_gh(w):

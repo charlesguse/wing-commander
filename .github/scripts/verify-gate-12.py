@@ -148,6 +148,22 @@ FIXTURES = [
             ['gh api -X POST repos/"$GITHUB_REPOSITORY"/actions/runs/1/cancel']),
      True, ("App token",)),
 
+    ("a single-quoted piece of a gh api path is still this repository",
+     mkcase("", "", [APP_ENV],
+            ["gh api -X POST 'repos/'\"$GITHUB_REPOSITORY\"'/actions/runs/1/cancel'"]),
+     True, ("App token",)),
+
+    ("a single-quoted gh api path held in a variable is still this repository",
+     mkcase("", "", [APP_ENV],
+            ["P='repos/{owner}/{repo}/actions/runs/1/cancel'",
+             'gh api -X POST "$P"']),
+     True, ("App token",)),
+
+    ("a named fd redirect is not the path of the call",
+     mkcase("", "", [APP_ENV],
+            ['gh api {fd}>/dev/null -X POST repos/"$GITHUB_REPOSITORY"/actions/runs/1/cancel']),
+     True, ("App token",)),
+
     ("a redirect's fd number is not an argument of the call",
      mkcase("", "", [APP_ENV],
             ["gh api 2>/dev/null -X POST repos/\"$GITHUB_REPOSITORY\"/actions/runs/1/cancel"]),
@@ -546,6 +562,21 @@ LOCATOR_CASES = [
      "find . -exec gh issue close {} \\;; ssh host gh a b; docker run img gh c d; "
      "find . -exec sh -c 'gh x y' _ {} \\;",
      [dis("unquoted-wrapper")] * 3 + [dis("unquoted-wrapper"), men("quoted")]),
+    ("a literal script a shell runs is read as a script: only its commands count",
+     "docker run --rm i sh -c 'for t in $T; do command -v \"$t\"; done; "
+     "n=${v#git version }; case \"$a.$b\" in .) exit 1;; esac'; "
+     "bash -c 'echo \"gh is missing\"'; trap 'rm -f \"${T}\"' EXIT",
+     [men("quoted")]),
+    ("a literal script a shell runs still fails on gh it may run",
+     "sh -c 'X=gh; $X api'; trap 'gh a b' EXIT; docker run i sh -c 'echo \"${X}\"; gh c d'",
+     [dis("unquoted-wrapper"), men("quoted")] * 3),
+    ("a group, |&, a process substitution or /dev/stdin still feed a shell",
+     "echo 'gh a' |& bash; { echo 'gh b'; } | sh; (echo 'gh c'; :) | bash; "
+     "bash <(echo 'gh d'; :); echo 'gh e' | bash /dev/stdin; . <(echo 'gh f')",
+     [dis("shell-stdin")] * 6),
+    ("a group that ends before the pipe feeds no shell",
+     "{ echo 'gh x'; }; echo 'gh y' | cat; (echo 'gh z'); bash s.sh",
+     [men("quoted")] * 3),
     ("a file descriptor is no word of the call", "gh api 2>/dev/null x; gh 2>&1 a b",
      [C_ST, C_ST]),
     ("unclosed Actions openers are linear", "echo \"" + "`${{" * 20000 + "\"", None),

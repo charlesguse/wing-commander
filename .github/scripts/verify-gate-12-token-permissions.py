@@ -272,6 +272,10 @@ def resolve_paths(path, assigns, depth=0):
     path = norm_expr(path)
     if depth > 5 or path.startswith(EXPR_OPEN):
         return [path]
+    # Shell quotes are no part of the path gh sees: `'repos/'"$R"'/actions'`
+    # and `P='repos/{owner}/{repo}/...'` are this repository's paths, never
+    # a different owner/repo pair (CROSS) that the permission check skips.
+    path = path.replace("'", "").replace('"', "")
     if path.startswith("$("):
         return [None]
     if path.startswith("$"):
