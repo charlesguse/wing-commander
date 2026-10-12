@@ -125,6 +125,7 @@ def mkcase(job_perms, job_env, env_lines, run_lines, docs=DOCS_OK):
 # line on line 12 of w.yml; a failure must name exactly that line (FR-005).
 FIRST_RUN_LINE = 12
 DISALLOWED = "gh call in a form Gate 12 cannot verify"
+MIN_EXACT_PERCENT = 25   # differential: share of invocations matched exactly
 UNUSED_COMPOSITE = {
     ".github/actions/wing-commander-probe/action.yml":
         "name: probe" + _N + "description: fixture" + _N + "runs:" + _N +
@@ -731,8 +732,12 @@ def judge(name, fired, out, timed_out, expect_fail, must_mention, changed=False)
     if timed_out:
         return [f"the gate did not finish within {CASE_TIMEOUT_S}s"]
     problems = []
-    if changed and not expect_fail and fired and DISALLOWED in out:
-        return problems              # the one change FR-014 allows
+    if changed and not expect_fail and fired:
+        # The one change FR-014 allows: pass -> disallowed form, and nothing
+        # else firing alongside it.
+        errors = [ln for ln in out.splitlines() if ln.startswith("::error")]
+        if errors and all(DISALLOWED in ln for ln in errors):
+            return problems
     if fired != expect_fail:
         problems.append(f"expected the gate to {'FAIL' if expect_fail else 'PASS'}, "
                         f"it {'FAILED' if fired else 'PASSED'}")
@@ -810,23 +815,25 @@ def exec_method(argv):
 
 
 def accounted(tokens, argv):
-    """True when the locator found (or rejected as disallowed) this
-    invocation bash actually ran."""
+    """How the locator accounts for this invocation bash actually ran:
+    "exact" (a located call matches it), "blanket" (it matches none, but
+    the script holds a call rejected as disallowed, which US3 scenario 2
+    accepts) or None (a miss)."""
     calls = [t for t in tokens if t.kind == "call"]
-    if any(t.position == "disallowed" for t in calls):
-        return True
     for t in calls:
         words = [str(w) for w in t.argv]
         if any(isinstance(w, loc.Dynamic) for w in t.argv[:2]):
-            return True
+            return "exact"
         if argv[:1] == ["api"]:
             if words[:1] == ["api"]:
                 methods = [str(m) for m in loc.api_parts(t.argv[1:])[1]]
                 if (methods[-1] if methods else "GET") == exec_method(argv):
-                    return True
+                    return "exact"
         elif words[:2] == argv[:2]:
-            return True
-    return False
+            return "exact"
+    if any(t.position == "disallowed" for t in calls):
+        return "blanket"
+    return None
 
 
 def bash_run(bash, bin_dir, script):
@@ -867,7 +874,7 @@ def differential():
                 for n, line in enumerate(fh, 1):
                     rec = json.loads(line)
                     scripts.append((f"{fname}:{n} ({rec['kind']})", rec["min"]))
-    failures, ran, invoked = [], 0, 0
+    failures, ran, invoked, exact = [], 0, 0, 0
     with open(os.path.join(FUZZ_DIR, "manifest.json"), encoding="utf-8") as fh:
         manifest = json.load(fh)
     on_disk = {f for f in os.listdir(FUZZ_DIR) if f.endswith(".jsonl")}
@@ -891,13 +898,15 @@ def differential():
             tokens = loc.locate(script)
             for argv in calls:
                 invoked += 1
-                if not accounted(tokens, argv):
+                how = accounted(tokens, argv)
+                exact += how == "exact"
+                if how is None:
                     failures.append((label, [
                         f"bash ran `gh {' '.join(argv)[:80]}` but the locator "
                         f"neither found it nor rejected the script",
                         f"script: {script!r}"], ""))
                     break
-    return failures, ran, invoked
+    return failures, ran, invoked, exact
 
 
 # ---------------------------------------------------------------- mutation
@@ -942,10 +951,17 @@ def main():
         print(f"corpus: {len(corpus)} scenario(s) from PR #969, "
               f"{len(res)} behaving wrongly")
 
-        diffs, ran, invoked = differential()
+        diffs, ran, invoked, exact = differential()
         failed += report("differential", diffs)
         print(f"differential: {ran} generated script(s) run under real bash, "
-              f"{invoked} gh invocation(s) recorded, {len(diffs)} unaccounted")
+              f"{invoked} gh invocation(s) recorded ({exact} matched exactly), "
+              f"{len(diffs)} unaccounted")
+        if invoked and exact * 100 < invoked * MIN_EXACT_PERCENT:
+            print(f"FAIL  differential: only {exact} of {invoked} invocation(s) "
+                  f"matched a located call; the rest were covered only by a "
+                  f"disallowed call elsewhere in their script, so the oracle is "
+                  f"mostly vouching for the gate's failures, not its locating")
+            failed += 1
         if not invoked:
             print("FAIL  differential: bash ran no gh invocation at all, so the "
                   "oracle checked nothing")

@@ -407,7 +407,7 @@
 
 ## Review Gate Round 5 Findings
 
-- [ ] Review finding: Gate 12 differential check can hide missed calls
+- [x] Review finding: Gate 12 differential check can hide missed calls (fixed: `accounted` returns "exact" before "blanket"; the differential prints the exact count and fails below `MIN_EXACT_PERCENT`; at this head 179 of 284 match exactly)
 
   accounted() returns True for every recorded argv once the script contains any disallowed call, and differential() only fails when invoked == 0, so locator misses go unreported and a low ran/invoked ratio still passes.
 
@@ -423,7 +423,7 @@
 
   Detail: steps_ratio near line 652
 
-- [ ] Review finding: _in_url makes locate() quadratic
+- [x] Review finding: _in_url makes locate() quadratic (fixed: `_url_spans` is one regex pass and `locate` bisects it; no new scaling case, the existing self-test passes)
 
   _in_url runs rfind/find over the whole script for each gh match and for each of three whitespace characters, so a script with a bare command word and many gh mentions does O(n*m) work, contradicting the one-linear-pass docstring.
 
@@ -431,7 +431,7 @@
 
   Detail: near line 1166; no SCALING_CASES reaches this path
 
-- [ ] Review finding: Gate 28 coverage narrowed
+- [x] Review finding: Gate 28 coverage narrowed (refuted, as Round 1 finding 8, Round 3 and Round 4: FR-010/FR-011 forbid a second gh reader)
 
   verify-gh-api-explicit-method.py no longer sweeps .py scripts or raw lines (composite if:, docs) and reads only run: scalars reached through steps, so implicit-POST gh api calls can re-enter unchecked.
 
@@ -439,7 +439,7 @@
 
   Detail: No other gate replaces the dropped coverage.
 
-- [ ] Review finding: verify-gate-wiring still calls Gate 12 a heredoc gate
+- [x] Review finding: verify-gate-wiring still calls Gate 12 a heredoc gate (fixed: the three comments and the failure message no longer name Gate 12)
 
   Comments (around line 284) and the pr_time_inline_steps failure message (around line 499) still say Gate 12 is a lint-workflows.yml python heredoc, but it moved to verify-gate-12-token-permissions.py.
 
@@ -456,7 +456,7 @@
 
   Detail: CLAUDE.md 'Shared logic has exactly one home'; move it into a composite.
 
-- [ ] Review finding: judge() over-accepts changed_from_969 scenarios
+- [x] Review finding: judge() over-accepts (fixed: every `::error` line must be the disallowed-form message) changed_from_969 scenarios
 
   A scenario counts as the permitted FR-014 change whenever the gate fails and the DISALLOWED text appears anywhere in the output, without checking the failing reason or that no other failure fired.
 

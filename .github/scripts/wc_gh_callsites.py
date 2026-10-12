@@ -1163,12 +1163,11 @@ def step_runs(path, in_jobs):
     return out
 
 
-def _in_url(script, at):
-    """True when the whitespace-delimited word around `at` holds `://`
-    (`https://github.com/cli/gh`): a URL names gh, it does not run it."""
-    start = max(script.rfind(c, 0, at) for c in " \t\n") + 1
-    ends = [e for e in (script.find(c, at) for c in " \t\n") if e >= 0]
-    return "://" in script[start:min(ends) if ends else len(script)]
+def _url_spans(script):
+    """[(start, end)] of each whitespace-delimited word holding `://`
+    (`https://github.com/cli/gh`): a URL names gh, it does not run it.
+    One pass over the script, so `locate` stays linear."""
+    return [m.span() for m in re.finditer(r"[^ \t\n]*://[^ \t\n]*", script)]
 
 
 def locate(script):
@@ -1179,7 +1178,13 @@ def locate(script):
     # script also holds a `gh` that is neither a call nor a mention (`GH=gh`,
     # `set -- gh api x`, `X=/usr/bin/gh`), it may hold that `gh` (FR-006).
     seen = {tok.offset for tok in sc.toks}
-    if sc.bare and any(m.start() not in seen and not _in_url(script, m.start())
+    urls = _url_spans(script) if sc.bare else []
+    starts = [s for s, _ in urls]
+
+    def in_url(at):
+        i = bisect.bisect_right(starts, at) - 1
+        return i >= 0 and at < urls[i][1]
+    if sc.bare and any(m.start() not in seen and not in_url(m.start())
                        for m in GH_TEXT.finditer(script)):
         for w in sc.bare:
             sc._note_once(w, "dynamic-command")
