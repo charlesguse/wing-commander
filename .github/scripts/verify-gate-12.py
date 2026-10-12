@@ -169,6 +169,12 @@ FIXTURES = [
             ["gh api 2>/dev/null -X POST repos/\"$GITHUB_REPOSITORY\"/actions/runs/1/cancel"]),
      True, ("App token",)),
 
+    ("a disallowed call in a job named like a YAML boolean names its own line",
+     {".github/workflows/w.yml": wf(step([APP_ENV], ["echo x", "`gh api x`"])
+                                    ).replace("  work:", "  on:"),
+      "docs/setup.md": DOCS_OK},
+     True, (f".github/workflows/w.yml:{FIRST_RUN_LINE + 1}:",)),
+
     ("a GH_TOKEN= prefix wins over the step's token",
      mkcase(ACTIONS_WRITE, "", [APP_ENV, "DISPATCH: ${{ github.token }}"],
             ['GH_TOKEN="$DISPATCH" gh run cancel "$RUN_ID"']),

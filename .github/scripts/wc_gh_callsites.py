@@ -1101,7 +1101,9 @@ def step_runs(path, in_jobs):
         return out
     if in_jobs:
         jobs = _map_get(root, "jobs")
-        groups = [(k.value, _map_get(v, "steps")) for k, v in jobs.value
+        # Keyed as yaml.safe_load keys the job (a job named `on` is True there).
+        key = yaml.SafeLoader("").construct_object
+        groups = [(key(k), _map_get(v, "steps")) for k, v in jobs.value
                   ] if isinstance(jobs, yaml.MappingNode) else []
     else:
         groups = [(None, _map_get(_map_get(root, "runs"), "steps"))]
