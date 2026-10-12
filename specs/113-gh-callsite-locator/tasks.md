@@ -239,3 +239,69 @@
   - Refuted: the single-home check for the locator matches two source signatures. Like the other checks in `verify-single-home-idioms.py`, it is an idiom check (FR-011).
   - Refuted: the explicit `CONTRIBUTING.md` path entry is redundant with `*.md`. It follows `main`'s convention of naming each gate's subject even under a glob (`docs/setup.md` under `docs/**`).
   - Out of scope: the default-branch two-liner already sat in 9 run blocks on `main`. FR-017 rewrote each copy in place; giving it one home is a backlog line.
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: call_words stops at end of line, missing continued flags
+
+  For eval/bash -c/sudo calls with no argv, call_words reads only to the next newline, so a -f/-F flag on a continuation line is missed and Gate 28 passes an implicit-POST gh api call.
+
+  - .github/scripts/verify-gh-api-explicit-method.py
+
+  Detail: e.g. eval "gh api repos/x \
+ -f a=b" yields argv 'api repos/x' only
+
+- [ ] Review finding: Gate 28 scope narrowed to run scalars and shell files
+
+  Gate 28 no longer scans .py files or non-run fields, and sweep() errors out if there are zero .sh/shebang files.
+
+  - .github/scripts/verify-gh-api-explicit-method.py
+
+- [ ] Review finding: Default-branch rewrite changes set -e failure semantics
+
+  The ${DEFAULT_BRANCH:-$(gh repo view ...)} rewrite into a separate assignment makes a transient gh failure abort steps under set -e, applied at 7 sites without a test or comment.
+
+  - .github/workflows/cleanup.yml
+  - .github/workflows/auto-update-spec-kit.yml
+
+- [ ] Review finding: Unbounded recursion locate -> _script_may_run_gh -> locate
+
+  Nested literal sh -c / eval strings recurse without a depth bound, so the 'never raises' locator can hit RecursionError.
+
+  - .github/scripts/wc_gh_callsites.py
+
+- [ ] Review finding: Partly quoted heredoc delimiter mis-parsed
+
+  Delimiters like <<E"O"F are treated as unquoted and truncated, so the body is never matched and later gh calls are flagged as disallowed.
+
+  - .github/scripts/wc_gh_callsites.py
+
+- [ ] Review finding: Unterminated heredoc leaves pending/shell_stdin stale
+
+  _heredocs returns early without clearing self.pending or shell_stdin, so nested scans sharing the _Scan misclassify tokens as shell-stdin.
+
+  - .github/scripts/wc_gh_callsites.py
+
+- [ ] Review finding: Single-home scanner check matches one regex spelling
+
+  SCANNER_HEREDOC_RE matches only a specific regex source text, so a second shell scanner written differently escapes the single-home guard.
+
+  - .github/scripts/verify-single-home-idioms.py
+
+- [ ] Review finding: step_runs key construction unguarded and loader leaked
+
+  construct_object on job keys runs outside the try, so an odd key crashes instead of returning {}, and the SafeLoader is never disposed.
+
+  - .github/scripts/wc_gh_callsites.py
+
+- [ ] Review finding: run_blocks matches any run key, no cycle guard
+
+  Any mapping key named run with a scalar value (e.g. with: inputs) is scanned as shell, and alias cycles could loop forever.
+
+  - .github/scripts/wc_gh_callsites.py
+
+- [ ] Review finding: Argv log delimiters collide with argument bytes
+
+  gh_argv_calls splits on \x1f/\x1e, which script-controlled arguments can contain, corrupting the differential check's records.
+
+  - .github/scripts/wc_shell_harness.py
