@@ -21,6 +21,7 @@ Constitution VII requires, not a convenience.
 | `token` | yes | — | Unchanged. |
 | `workflow-file` | yes | — | Unchanged. |
 | `workflow-inputs` | no | `"{}"` | Unchanged. |
+| `ref` | no | `""` | Added by specs/111-reference-image-pin-sync: the branch or tag passed to `gh workflow run --ref`; empty dispatches on the default branch with no `--ref`, so every earlier caller is unchanged. |
 | `attempt-token` | yes | — | Unchanged. |
 | `poll-attempts` | no | `"12"` | Unchanged. |
 | `poll-interval-seconds` | no | `"10"` | Unchanged. |

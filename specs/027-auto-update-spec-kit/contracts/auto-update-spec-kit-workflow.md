@@ -101,7 +101,8 @@ happens this cycle). "Settled" continues to `evaluate-path`.
 ### `evaluate-path` (`needs: settle` when settled, OR the resume path from `comment-reply` after a verified maintainer picks an option)
 
 `claude-sonnet-5` (input `model`), `--max-turns` bounded,
-`--allowedTools "Read,Grep,Bash(gh api:*),Bash(git diff:*)"`,
+`--allowedTools "Read,Grep,Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)"`
+(no `gh` grant, spec 101: the only evidence is the staged `release-notes.json`),
 `--disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git commit:*),Bash(git push:*)"`,
 structured output via `--json-schema` matching data-model.md's Upgrade
 decision record shape. Prompt frames every fetched release-notes body as

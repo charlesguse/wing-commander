@@ -288,9 +288,13 @@ jobs:
           # wrong is the difference between a fixable message and a puzzle.
           if ! missing=$(docker run --rm -e REQUIRED_TOOLS="$REQUIRED_TOOLS" \
             --entrypoint sh "$IMAGE" -c \
-            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done' \
+            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done; if command -v git >/dev/null 2>&1; then v=$(git --version 2>/dev/null); n=${v#git version }; n=${n%% *}; case "$n" in *.*) ;; *) n=;; esac; maj=${n%%.*}; r=${n#*.}; min=${r%%.*}; case "$maj.$min" in .|*[!0-9.]*|.*|*.) echo "could not parse git version from \"$v\"" >&2; exit 1;; esac; if [ "$maj" -lt 2 ] || { [ "$maj" -eq 2 ] && [ "$min" -lt 38 ]; }; then echo "git $n is older than the 2.38 minimum" >&2; exit 1; fi; fi' \
             2>docker-inspect-error.log); then
-            echo "::error::wing-commander verify-image-prerequisites: could not run a POSIX shell inside $IMAGE to check its prerequisites -- $(cat docker-inspect-error.log)"
+            if grep -qE 'is older than the 2\.38 minimum|could not parse git version' docker-inspect-error.log; then
+              echo "::error::wing-commander verify-image-prerequisites: $IMAGE failed the git version floor -- $(cat docker-inspect-error.log)${missing:+ (also missing required tool(s):$missing)}"
+            else
+              echo "::error::wing-commander verify-image-prerequisites: could not run a POSIX shell inside $IMAGE to check its prerequisites -- $(cat docker-inspect-error.log)"
+            fi
             exit 1
           fi
 
@@ -1091,8 +1095,9 @@ jobs:
             that file (a JSON array of {tag, url, body}) for your evidence;
             do not fetch anything else and do not browse the web.
 
-            Your evidence tools are Read and Grep. Bash is restricted to
-            `gh api` and read-only git through
+            Your evidence tools are Read and Grep, and your only evidence is
+            the staged release-notes.json. Bash is restricted to read-only
+            git through
             `python3 -I .wing-commander-pipeline/.github/scripts/git_read.py`
             with `log`, `diff` or `show` and git's usual arguments (plain
             `git` is denied), so any other scripting — python3, node, awk
@@ -1130,7 +1135,7 @@ jobs:
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.decide-ceiling.outputs.ceiling }}
-            --allowedTools "Read,Grep,Bash(gh api:*),Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)"
+            --allowedTools "Read,Grep,Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)"
             --disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),Bash(git commit:*),Bash(git push:*)"
             --json-schema '{"type":"object","properties":{"outcome":{"type":"string","enum":["clean-bump","needs-migration","ambiguous-options"]},"reasoning":{"type":"string"},"sources":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"url":{"type":"string"}},"required":["title","url"]}},"options":{"type":["array","null"],"items":{"type":"object","properties":{"label":{"type":"string"},"description":{"type":"string"}},"required":["label","description"]}}},"required":["outcome","reasoning","sources"]}'
 

@@ -36,6 +36,13 @@ inputs:
       or correlation can never succeed.
     required: false
     default: "{}"
+  ref:
+    description: >
+      Branch or tag to dispatch the workflow on (`gh workflow run --ref`).
+      Empty, the default, dispatches on the default branch, as every
+      caller before specs/111-reference-image-pin-sync did.
+    required: false
+    default: ""
   attempt-token:
     description: >
       Correlation token, e.g. a combination of the calling run's own ID
@@ -96,6 +103,7 @@ runs:
         WORKFLOW_FILE: ${{ inputs.workflow-file }}
         WORKFLOW_INPUTS: ${{ inputs.workflow-inputs }}
         ATTEMPT_TOKEN: ${{ inputs.attempt-token }}
+        DISPATCH_REF: ${{ inputs.ref }}
         POLL_ATTEMPTS: ${{ inputs.poll-attempts }}
         POLL_INTERVAL_SECONDS: ${{ inputs.poll-interval-seconds }}
         WAIT_ATTEMPTS: ${{ inputs.wait-attempts }}
@@ -114,7 +122,12 @@ runs:
         run_url=""
         conclusion=""
 
-        if ! gh workflow run "$WORKFLOW_FILE" "${dispatch_args[@]}" -f "attempt-token=${ATTEMPT_TOKEN}"; then
+        ref_args=()
+        if [ -n "${DISPATCH_REF:-}" ]; then
+          ref_args=(--ref "$DISPATCH_REF")
+        fi
+
+        if ! gh workflow run "$WORKFLOW_FILE" "${ref_args[@]}" "${dispatch_args[@]}" -f "attempt-token=${ATTEMPT_TOKEN}"; then
           echo "::error::wing-commander-dispatch-and-wait: gh workflow run $WORKFLOW_FILE was rejected."
           dispatch_rejected="true"
         else

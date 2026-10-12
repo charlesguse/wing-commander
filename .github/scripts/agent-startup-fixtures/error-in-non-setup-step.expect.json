@@ -1,0 +1,1 @@
+{"verdict": "unclassified", "step": null, "error_contains": "CreateArtifact", "note": "synthetic: an error in the job's own upload step is not the image's setup"}

@@ -1,0 +1,9 @@
+{
+  "issue": 985,
+  "spec_dir": "specs/111-reference-image-pin-sync",
+  "feature_num": "111",
+  "stage": "review",
+  "iteration": 3,
+  "spec_branch": "spec/111-reference-image-pin-sync",
+  "pending_re_review_from": []
+}
