@@ -419,7 +419,16 @@ LOCATOR_CASES = [
      [dis("dynamic-command")] * 10),
     ("a dynamic command word's arguments past its first are not checked (accepted)",
      '"$PY" s.py "${FILE}"; "$PY" s.py g$F; '
-     '"$SCRIPT_DIR/run.sh" a; sudo cp "$F.bak" x; env PATH=/x/gh make', []),
+     '"$SCRIPT_DIR/run.sh" a; sudo cp "$F.bak" x', []),
+    ("a gh directory on PATH runs nothing by itself", "env PATH=/x/gh make", []),
+    # A lone `$CMD` command word may hold a `gh` the script names outside a
+    # call or a mention, so each one is a disallowed call where one exists.
+    ("a lone $CMD may run a gh the script names",
+     'GH=gh; $GH api x -X POST; set -- gh api x; "$@"; X=/usr/bin/gh; $X api x; '
+     'eval "$(echo gh api x)"',
+     [dis("dynamic-command")] * 3 + [dis("unquoted-wrapper")]),
+    ("a lone $CMD with no gh named elsewhere is not checked",
+     '$PY x.py; echo "gh"; # gh', [men("quoted"), men("comment")]),
     ("any word of a literal wrapper may be its command (operands come first)",
      "sudo timeout 5s /usr/bin/gh api x; flock /tmp/l ${X:-g}h api x; "
      "taskset 0x1 g$X api x; sudo ln -s /opt/gh/bin/gh /usr/local/bin/gh",
@@ -491,8 +500,8 @@ LOCATOR_CASES = [
     ("gh behind a wrapper option's value, or as a bare ${} behind a wrapper",
      "sudo -u root /usr/bin/gh api x; timeout -s KILL 5 /usr/bin/gh api x; "
      "$SUDO -u root ${X:-g}h api x; nice -n ${N} g$X api x; sudo ${GH} api x",
-     [dis("unquoted-wrapper")] * 2 + [dis("dynamic-command")]
-     + [dis("unquoted-wrapper")] * 2),
+     [dis("unquoted-wrapper")] * 2 + [dis("dynamic-command")] * 2      # `$SUDO`, as
+     + [dis("unquoted-wrapper")] * 2),                                 # /usr/bin/gh is named
     ("gh by brace expansion or a glob", "{g,}h api x; g{h,} api x; [g]h api x; "
      "g? api x; sudo {g,}h api x",
      [dis("dynamic-command")] * 4 + [dis("unquoted-wrapper")]),
@@ -527,7 +536,7 @@ LOCATOR_CASES = [
      [("call", "subst_first"), dis("unquoted-wrapper")]),
     ("function as a case pattern", "case $x in\n  function) gh a b ;;\nesac", [C_ST]),
     ("a command word that may expand to nothing", "$SUDO gh a b; ${S:-} gh a b",
-     [dis("dynamic-command"), dis("dynamic-command")]),
+     [dis("dynamic-command")] * 3),    # and `$SUDO` itself, as the second gh is named
     ("more runners, and one given as a path", "/usr/bin/env gh a b; flock /l gh a b",
      [dis("unquoted-wrapper"), dis("unquoted-wrapper")]),
     ("text ending gh} is no expansion", 'sudo echo "$X uses gh}"', [men("quoted")]),
@@ -572,8 +581,10 @@ LOCATOR_CASES = [
      [dis("unquoted-wrapper"), men("quoted")] * 3),
     ("a group, |&, a process substitution or /dev/stdin still feed a shell",
      "echo 'gh a' |& bash; { echo 'gh b'; } | sh; (echo 'gh c'; :) | bash; "
-     "bash <(echo 'gh d'; :); echo 'gh e' | bash /dev/stdin; . <(echo 'gh f')",
-     [dis("shell-stdin")] * 6),
+     "bash <(echo 'gh d'; :); echo 'gh e' | bash /dev/stdin; . <(echo 'gh f'); "
+     "echo gh g | bash; source <(echo gh h); bash <<< gh\\ i",
+     [dis("shell-stdin")] * 9),
+    ("a gh word nowhere fed to a shell is no call", "echo gh x | cat; command -v gh", []),
     ("a group that ends before the pipe feeds no shell",
      "{ echo 'gh x'; }; echo 'gh y' | cat; (echo 'gh z'); bash s.sh",
      [men("quoted")] * 3),

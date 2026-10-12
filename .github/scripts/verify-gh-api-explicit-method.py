@@ -125,7 +125,7 @@ class Detector(object):
     def offenders(self, script):
         """[(0-based line, flag)] for the `gh api` calls in this shell script
         that ship an unstated method; the flag is quoted in the error."""
-        found = []
+        found, read = [], set()
         for tok in loc.locate(script):
             # A disallowed call is Gate 12's to report as a form, but its
             # words are still the call's: an implicit POST in one counts.
@@ -133,11 +133,15 @@ class Detector(object):
                 continue
             if tok.position == "subst_first" and not self.look_in_substitutions:
                 continue
-            if not tok.argv or tok.argv[0] != "api":
+            at, argv = tok.offset, tok.argv
+            if not argv and tok.position == "disallowed":
+                at, argv = loc.call_words(script, tok)     # `sudo gh api ...`
+            if not argv or argv[0] != "api" or at in read:
                 continue
+            read.add(at)
             field = None
             method = False
-            for word in loc.api_flags(tok.argv[1:]):
+            for word in loc.api_flags(argv[1:]):
                 if self.method_re.match(word):
                     method = True
                 elif field is None and self.field_re.match(word):
@@ -388,6 +392,30 @@ CASES = [
     ("a call in a form Gate 12 rejects still counts here",  # wc-gh-method-exempt: self-test fixture text
      'x="$(echo "$(gh api repos/x -f ref=main)")"',
      True, ("-f",)),
+
+    ("a call Gate 12 rejects, in backticks, still counts here",  # wc-gh-method-exempt: self-test fixture text
+     "x=`gh api repos/x -f a=b`",
+     True, ("-f",)),
+
+    ("a call Gate 12 rejects, behind sudo, still counts here",  # wc-gh-method-exempt: self-test fixture text
+     "sudo gh api repos/x -f a=b",
+     True, ("-f",)),
+
+    ("a call Gate 12 rejects, in an eval string, still counts here",  # wc-gh-method-exempt: self-test fixture text
+     "eval \"gh api repos/x -f a=b\"",
+     True, ("-f",)),
+
+    ("a call Gate 12 rejects, in a bash -c string, still counts here",  # wc-gh-method-exempt: self-test fixture text
+     "bash -c \"gh api repos/x -f a=b $(date)\"",
+     True, ("-f",)),
+
+    ("a call Gate 12 rejects, in an unquoted heredoc fed to bash, still counts here",  # wc-gh-method-exempt: self-test fixture text
+     "bash <<EOF\ngh api repos/x -f a=b\nEOF",
+     True, ("-f",)),
+
+    ("such a call that says its method passes",
+     "sudo gh api -X POST repos/x -f a=b\neval \"gh api --method POST repos/x -f a=b\"",
+     False, ()),
 
     ("an exemption on the right line despite a form feed in an earlier one",
      "echo a\x0cb\n# wc-gh-method-exempt: fixture\ngh api repos/x -f ref=main",

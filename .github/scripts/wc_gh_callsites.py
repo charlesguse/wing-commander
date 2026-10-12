@@ -50,6 +50,7 @@ GH_WORD = re.compile(r"(?<![\w./$@:%-])gh(?![\w-])")
 # `${X:-gh}${Y:-}`), so as a command word it is a disallowed call (FR-006),
 # even where it could never be `gh` (`${X##*/gh}`).
 GH_IN_EXPANSION = re.compile(r"(?<![\w.$@%])gh(?![\w-])")
+GH_TEXT = re.compile(r"(?<![\w-])gh(?![\w-])")       # `gh` in any word, `/usr/bin/gh` too
 FUNCTION_NAME = re.compile(r"[ \t]+[^\s;&|()<>]")    # `function NAME`, not `function)`
 TIME_GAP = re.compile(r"(?:[ \t]|\\\n)*")
 ASSIGN = re.compile(r"[A-Za-z_]\w*(?:\[[^\]\n]*\])?\+?=")    # `a=`, `a+=`, `a[$k]=`
@@ -131,8 +132,10 @@ class _Scan:
         self.nl = [i for i, c in enumerate(text) if c == "\n"]
         self.no_expr = None                   # offset of the first unclosed `${{`
         self.braces = 0                       # `${...}` levels open right now
-        self.pipe = 0                         # index of the first token of this pipeline
+        self.pipe = (0, 0)                    # (first token, first offset) of this pipeline
         self.groups = []                      # self.pipe where each open `(`/`{` group began
+        self.at = 0                           # where the command being ended stops
+        self.bare = []                        # offsets of lone `$CMD`/`"$@"` command words
         self.shell_stdin = False              # the heredocs now pending feed a shell
 
     # ---------------------------------------------------------------- tokens
@@ -401,7 +404,7 @@ class _Scan:
         t, n = self.t, self.n
         words, drop, timed = [], False, None
         while i < n:
-            c = t[i]
+            c, self.at = t[i], i
             if c in " \t" or (c == "\\" and t[i + 1:i + 2] == "\n"):
                 i += 1 + (c == "\\")
             elif ctx.pattern and (c in ";&" or c == "\n" and ctx.pattern == 2):
@@ -410,7 +413,7 @@ class _Scan:
             elif c == "\n":
                 self._end(words, ctx)
                 words, i = [], self._heredocs(i + 1)
-                self.pipe = len(self.toks)
+                self.pipe = (len(self.toks), i)
             elif c == "#":
                 j = t.find("\n", i)
                 j = n if j < 0 else j
@@ -437,7 +440,7 @@ class _Scan:
                     self._end(words, ctx)
                     ctx.parens += c == "("
                     if c != "|" or t[i + 1:i + 2] == "|":
-                        self.pipe = len(self.toks)             # a pipeline ends here
+                        self.pipe = (len(self.toks), i)        # a pipeline ends here
                     if c == "(":
                         self.groups.append(self.pipe)
                 words, i = [], j or i + 1 + t.startswith("|&", i)   # `|&` pipes too
@@ -487,6 +490,7 @@ class _Scan:
                     self.pipe = min(self.pipe, self.groups.pop())
                 if lead not in RESERVED:
                     words.append(w)
+        self.at = i
         self._end(words, ctx)
         if ctx.depth:
             self._unsure(ctx.start, "unterminated-substitution")
@@ -591,6 +595,8 @@ class _Scan:
               and not (_base(head.lit) == "find" and not any(
                   w.lit is not None and w.lit.startswith(("-exec", "-ok")) for w in words[k + 1:]))):
             why = "dynamic-command" if head.lit is None else "unquoted-wrapper"
+            if head.lit is None:
+                self.bare.append(head)                  # `$GH api`: see locate()
             args = words[k + 1:]
             run = _wrapped_commands(args)
             # A literal wrapper may take operands before the command (`flock
@@ -618,12 +624,19 @@ class _Scan:
     def _stdin_shell(self):
         """A shell that reads its script from stdin is running text this
         scanner took for data: the quoted strings of its pipeline (`echo '...'
-        | bash`, `bash <<< '...'`) and any heredoc opened on its line."""
+        | bash`, `bash <<< '...'`), every other `gh` word in it (`echo gh x |
+        bash`), and any heredoc opened on its line."""
         self.shell_stdin = self.shell_stdin or bool(self.pending)
-        for tok in self.toks[self.pipe:]:
+        first, start = self.pipe
+        seen = set()
+        for tok in self.toks[first:]:
+            seen.add(tok.offset)
             if tok.kind == "mention" and tok.mention_clause == "quoted":
                 tok.kind, tok.position, tok.reason, tok.mention_clause = (
                     "call", "disallowed", "shell-stdin", None)
+        for m in GH_WORD.finditer(self.t, start, self.at):
+            if m.start() not in seen:
+                self._note(m.start(), "call", position="disallowed", reason="shell-stdin")
 
     def _note_once(self, w, reason):
         """A disallowed call at word `w`, unless its own text already holds one
@@ -823,9 +836,10 @@ def _script_may_run_gh(w):
     not a provable mention (`X=gh`). `sh -c 'command -v "$t"'` runs nothing.
     A string glued to its flag (`-S'gh api x'`, `--command=...`) is read
     without the flag too. A word holding an expansion is judged piece by
-    piece (_eval_may_run_gh)."""
+    piece (_eval_may_run_gh), and any `gh` text in it counts, since what a
+    substitution in it prints is read as shell too (`eval "$(echo gh x)"`)."""
     if w.lit is None:
-        return _eval_may_run_gh(w)
+        return GH_TEXT.search(w.raw) is not None or _eval_may_run_gh(w)
     texts = [w.lit]
     m = SHELL_FLAG.match(w.lit) or re.match(r"--(?:split-string|command)=", w.lit)
     if m:
@@ -997,6 +1011,23 @@ def api_parts(args):
     return _api_scan(args)[:2]
 
 
+def call_words(script, tok):
+    """-> (offset, argv) of the `gh` call a disallowed token with no argv
+    stands for (a backtick body, `sudo gh`, `eval "gh ..."`, a heredoc fed to
+    a shell), read from the first `gh` at or after it to the end of its line;
+    (None, []) when there is none. Gate 28 reads a call's flags even where
+    Gate 12 rejects its form."""
+    end = script.find("\n", tok.offset)
+    end = len(script) if end < 0 else end
+    m = GH_WORD.search(script, tok.offset, end)
+    if m is None:
+        return None, []
+    for t in locate(script[m.start():end]):
+        if t.offset == 0 and t.kind == "call":
+            return m.start(), t.argv
+    return None, []
+
+
 def api_flags(args):
     """The dashed words in flag position among the words after `gh api`."""
     return _api_scan(args)[3]
@@ -1087,6 +1118,13 @@ def locate(script):
     """Every `gh` word in `script`, in source order (see the module doc)."""
     sc = _Scan(script)
     sc._cmds(0, _Ctx(0, 0))
+    # A lone `$CMD`/`"$@"` command word runs whatever it holds. Where the
+    # script also holds a `gh` that is neither a call nor a mention (`GH=gh`,
+    # `set -- gh api x`, `X=/usr/bin/gh`), it may hold that `gh` (FR-006).
+    seen = {tok.offset for tok in sc.toks}
+    if sc.bare and any(m.start() not in seen for m in GH_TEXT.finditer(script)):
+        for w in sc.bare:
+            sc._note_once(w, "dynamic-command")
     toks = sorted(sc.toks, key=lambda x: x.offset)
     if sc.broken is not None:
         for tok in toks:
