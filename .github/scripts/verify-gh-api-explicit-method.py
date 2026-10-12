@@ -228,9 +228,11 @@ def sweep():
                  "found.".format(LINT_WORKFLOW))
     detector = Detector()
     yamls, shells = subject_files()
-    if not yamls or not shells:
-        sys.exit("::error::Gate 28 matched no workflows, composite actions or "
-                 "scripts at all. That is a broken sweep, not a clean tree.")
+    # Shell scripts are optional (a tree may keep all its shell in run: blocks);
+    # workflows and actions are not.
+    if not yamls:
+        sys.exit("::error::Gate 28 matched no workflows or composite actions "
+                 "at all. That is a broken sweep, not a clean tree.")
     failures = []
     for path in yamls:
         for script in loc.run_blocks(path):
@@ -403,6 +405,10 @@ CASES = [
 
     ("a call Gate 12 rejects, in an eval string, still counts here",  # wc-gh-method-exempt: self-test fixture text
      "eval \"gh api repos/x -f a=b\"",
+     True, ("-f",)),
+
+    ("a call Gate 12 rejects, continued onto the next line, still counts here",  # wc-gh-method-exempt: self-test fixture text
+     "eval \"gh api repos/x \\\n -f a=b\"",
      True, ("-f",)),
 
     ("a call Gate 12 rejects, in a bash -c string, still counts here",  # wc-gh-method-exempt: self-test fixture text

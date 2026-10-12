@@ -242,7 +242,7 @@
 
 ## Review Gate Round 2 Findings
 
-- [ ] Review finding: call_words stops at end of line, missing continued flags
+- [x] Review finding: call_words stops at end of line, missing continued flags (fixed: `call_words` follows `\`-continued lines; Gate 28 fixture "continued onto the next line")
 
   For eval/bash -c/sudo calls with no argv, call_words reads only to the next newline, so a -f/-F flag on a continuation line is missed and Gate 28 passes an implicit-POST gh api call.
 
@@ -251,56 +251,56 @@
   Detail: e.g. eval "gh api repos/x \
  -f a=b" yields argv 'api repos/x' only
 
-- [ ] Review finding: Gate 28 scope narrowed to run scalars and shell files
+- [x] Review finding: Gate 28 scope narrowed to run scalars and shell files (partly fixed: the sweep no longer errors when a tree has no shell scripts; the `.py` scope is refuted as in Round 1 finding 8, FR-010/FR-011)
 
   Gate 28 no longer scans .py files or non-run fields, and sweep() errors out if there are zero .sh/shebang files.
 
   - .github/scripts/verify-gh-api-explicit-method.py
 
-- [ ] Review finding: Default-branch rewrite changes set -e failure semantics
+- [x] Review finding: Default-branch rewrite changes set -e failure semantics (refuted: `${V:-$(gh …)}` as an assignment and `[ -n "$db" ] || db="$(gh …)"` both abort under `set -e` when gh fails, and neither runs gh when the value is set)
 
   The ${DEFAULT_BRANCH:-$(gh repo view ...)} rewrite into a separate assignment makes a transient gh failure abort steps under set -e, applied at 7 sites without a test or comment.
 
   - .github/workflows/cleanup.yml
   - .github/workflows/auto-update-spec-kit.yml
 
-- [ ] Review finding: Unbounded recursion locate -> _script_may_run_gh -> locate
+- [x] Review finding: Unbounded recursion locate -> _script_may_run_gh -> locate (fixed: `MAX_READING` bound, past it the string is unprovable; Gate 12 case "nested past the bound")
 
   Nested literal sh -c / eval strings recurse without a depth bound, so the 'never raises' locator can hit RecursionError.
 
   - .github/scripts/wc_gh_callsites.py
 
-- [ ] Review finding: Partly quoted heredoc delimiter mis-parsed
+- [x] Review finding: Partly quoted heredoc delimiter mis-parsed (fixed: the delimiter word is read piece by piece; Gate 12 case "partly quoted heredoc delimiter")
 
   Delimiters like <<E"O"F are treated as unquoted and truncated, so the body is never matched and later gh calls are flagged as disallowed.
 
   - .github/scripts/wc_gh_callsites.py
 
-- [ ] Review finding: Unterminated heredoc leaves pending/shell_stdin stale
+- [x] Review finding: Unterminated heredoc leaves pending/shell_stdin stale (fixed: the early return clears both; the Gate 12 case pins the result, which the old code also gave on that input)
 
   _heredocs returns early without clearing self.pending or shell_stdin, so nested scans sharing the _Scan misclassify tokens as shell-stdin.
 
   - .github/scripts/wc_gh_callsites.py
 
-- [ ] Review finding: Single-home scanner check matches one regex spelling
+- [x] Review finding: Single-home scanner check matches one regex spelling (fixed: both signs take more spellings; fixture "verify-third-scanner-spelled.py")
 
   SCANNER_HEREDOC_RE matches only a specific regex source text, so a second shell scanner written differently escapes the single-home guard.
 
   - .github/scripts/verify-single-home-idioms.py
 
-- [ ] Review finding: step_runs key construction unguarded and loader leaked
+- [x] Review finding: step_runs key construction unguarded and loader leaked (fixed: construction is inside a try and the loader is disposed)
 
   construct_object on job keys runs outside the try, so an odd key crashes instead of returning {}, and the SafeLoader is never disposed.
 
   - .github/scripts/wc_gh_callsites.py
 
-- [ ] Review finding: run_blocks matches any run key, no cycle guard
+- [x] Review finding: run_blocks matches any run key, no cycle guard (fixed: only a step's own `run:` counts, never one under `with:`, and a visited set stops alias cycles)
 
   Any mapping key named run with a scalar value (e.g. with: inputs) is scanned as shell, and alias cycles could loop forever.
 
   - .github/scripts/wc_gh_callsites.py
 
-- [ ] Review finding: Argv log delimiters collide with argument bytes
+- [x] Review finding: Argv log delimiters collide with argument bytes (fixed: the stub logs a count and NUL-ended words, which an argument cannot hold)
 
   gh_argv_calls splits on \x1f/\x1e, which script-controlled arguments can contain, corrupting the differential check's records.
 

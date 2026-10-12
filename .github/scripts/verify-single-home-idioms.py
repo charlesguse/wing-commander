@@ -810,8 +810,12 @@ def check_repo_files(root="."):
 # tell a command from text. Either sign alone is common -- a regex that
 # finds a heredoc to read its body, a `$(` search in a fixture -- so only
 # the pair is a second locator. Matched on the SOURCE text of the scanner.
-SCANNER_HEREDOC_RE = re.compile(r"<<-\?(?:\[ \\t\]|\\s)\*")
-SCANNER_SUBST_RE = re.compile(r"""startswith\(\s*["']\$\(["']\s*,""")
+# Each sign takes the spellings a second scanner would plausibly use: the
+# heredoc opener `<<`, an optional `-` (escaped or grouped, optional), then
+# blank-skipping (`\s`, `[ \t]`, `[\t ]`, `[ \t]*`); the `$(` step as a
+# startswith, find or index call on that literal.
+SCANNER_HEREDOC_RE = re.compile(r"<<[-\\?()]{0,8}(?:\[ ?\\t ?\]|\\s|\[\\t ?\])")
+SCANNER_SUBST_RE = re.compile(r"""(?:startswith|find|index)\(\s*["']\$\(["']""")
 
 
 def check_gh_callsite_locator(root="."):
@@ -2802,6 +2806,12 @@ def run_selftest():
         "HEREDOC = re.compile(r\"<<-?[ \\t]*\\\\?(['\\\"]?)([\\w]+)\\1\")\n"
         "def scan(text, i):\n"
         "    if text.startswith(\"$(\", i):\n        return i + 2\n")
+    selftest_third_paste_fails(
+        "gh-callsite-locator", ".github/scripts/verify-third-scanner-spelled.py",
+        "import re\n"
+        "HEREDOC = re.compile(r\"<<(-?)[\\t ]*(\\w+)\")\n"
+        "def scan(text, i):\n"
+        "    return text.find(\"$(\", i)\n")
     selftest_third_paste_passes(
         "gh-callsite-locator", ".github/scripts/verify-third-heredoc-only.py",
         "import re\n"

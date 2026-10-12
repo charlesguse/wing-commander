@@ -64,7 +64,6 @@ SHELL_STRING = re.compile(r"-[A-Za-z]+")                  # with a c or S: a she
 EVAL_SUBST = re.compile(r"\$\(|`")
 CASE_WORD = re.compile(r"\bcase\b")
 CMD_SEP = re.compile(r"[;&|()\n]+")
-HEREDOC_DELIM = re.compile(r"\\?([^\s;&|<>()'\"`\\]+)")
 VAR = re.compile(r"\$(?:[A-Za-z_]\w*|[0-9@*#?!$-])")
 NAMED_FD = re.compile(r"\{[A-Za-z_]\w*\}")
 QUOTED_VAR = re.compile(r'"\$(?:\w+|\{\w+\})"')
@@ -369,6 +368,8 @@ class _Scan:
                     break
             else:
                 self._mark(t[body:n], body, "unterminated-heredoc")
+                self.pending.clear()
+                self.shell_stdin = False
                 return n
         if i >= n:
             self.pending.clear()
@@ -377,7 +378,7 @@ class _Scan:
 
     def _redirect(self, i, ctx):
         """-> (index after the operator, whether a target word follows)."""
-        t = self.t
+        t, n_ = self.t, self.n
         if t.startswith("<<<", i):
             return i + 3, True
         if t.startswith("<<", i):
@@ -386,14 +387,24 @@ class _Scan:
             j += strip
             while t[j:j + 1] in (" ", "\t"):
                 j += 1
-            if t[j:j + 1] in ("'", '"'):
-                k = self._close(j, False)
-                self.pending.append((t[j + 1:k], True, strip))
-                return k + 1, False
-            m = HEREDOC_DELIM.match(t, j)
-            if m:
-                self.pending.append((m.group(1), t[j] == "\\", strip))
-                return m.end(), False
+            # The delimiter word may be quoted in part (`E"O"F`, `\EOF`): its
+            # text is the pieces with quotes dropped, and any quoting at all
+            # makes the body data.
+            delim, quoted, k = [], False, j
+            while k < n_ and t[k] not in " \t\n;&|<>()`":
+                if t[k] in ("'", '"'):
+                    e = self._close(k, False)
+                    delim.append(t[k + 1:e])
+                    k, quoted = e + 1, True
+                elif t[k] == "\\" and k + 1 < n_:
+                    delim.append(t[k + 1])
+                    k, quoted = k + 2, True
+                else:
+                    delim.append(t[k])
+                    k += 1
+            if k > j:
+                self.pending.append(("".join(delim), quoted, strip))
+                return k, False
             return j, False
         if t[i + 1:i + 2] == "(":                       # <( ) reads like $( )
             return self._nest(i, ctx), False
@@ -828,6 +839,10 @@ def _eval_unknowns(text):
     return "".join(out)
 
 
+MAX_READING = 8           # each level is a whole nested scan, many frames deep
+_reading = [0]          # how many literal script strings are being read inside one another
+
+
 def _script_may_run_gh(w):
     """Whether word `w`, which a shell re-reads as a script (`sh -c '...'`,
     `eval`, `trap`, a remote shell's words), could run `gh`. A literal
@@ -844,12 +859,18 @@ def _script_may_run_gh(w):
     m = SHELL_FLAG.match(w.lit) or re.match(r"--(?:split-string|command)=", w.lit)
     if m:
         texts.append(w.lit[m.end():])
-    for text in texts:
-        toks = locate(text)
-        inert = {tok.offset for tok in toks if tok.kind == "mention"}
-        if (any(tok.kind == "call" for tok in toks)
-                or any(g.start() not in inert for g in GH_WORD.finditer(text))):
-            return True
+    if _reading[0] >= MAX_READING:       # strings nested too deep to follow: unprovable
+        return True
+    _reading[0] += 1
+    try:
+        for text in texts:
+            toks = locate(text)
+            inert = {tok.offset for tok in toks if tok.kind == "mention"}
+            if (any(tok.kind == "call" for tok in toks)
+                    or any(g.start() not in inert for g in GH_WORD.finditer(text))):
+                return True
+    finally:
+        _reading[0] -= 1
     return False
 
 
@@ -1018,6 +1039,8 @@ def call_words(script, tok):
     (None, []) when there is none. Gate 28 reads a call's flags even where
     Gate 12 rejects its form."""
     end = script.find("\n", tok.offset)
+    while end > 0 and script[end - 1] == "\\":      # a continued line goes on
+        end = script.find("\n", end + 1)
     end = len(script) if end < 0 else end
     m = GH_WORD.search(script, tok.offset, end)
     if m is None:
@@ -1072,20 +1095,25 @@ def run_blocks(path):
     """[Run] for every `run:` scalar in the workflow or composite-action YAML
     at `path`."""
     import yaml
-    out = []
+    out, seen = [], set()
 
-    def walk(node):
+    def walk(node, step):
+        if id(node) in seen:                 # an alias cycle or a shared node
+            return
+        seen.add(id(node))
         if isinstance(node, yaml.MappingNode):
             for k, v in node.value:
-                if getattr(k, "value", None) == "run" and isinstance(v, yaml.ScalarNode):
+                key = getattr(k, "value", None)
+                # `run:` is shell only in a step; `with: {run: ...}` is an input.
+                if key == "run" and step and isinstance(v, yaml.ScalarNode):
                     out.append(_run(v))
                 else:
-                    walk(v)
+                    walk(v, key == "steps")
         elif isinstance(node, yaml.SequenceNode):
             for v in node.value:
-                walk(v)
+                walk(v, step)
 
-    walk(_compose(path))
+    walk(_compose(path), False)
     return out
 
 
@@ -1102,9 +1130,15 @@ def step_runs(path, in_jobs):
     if in_jobs:
         jobs = _map_get(root, "jobs")
         # Keyed as yaml.safe_load keys the job (a job named `on` is True there).
-        key = yaml.SafeLoader("").construct_object
-        groups = [(key(k), _map_get(v, "steps")) for k, v in jobs.value
-                  ] if isinstance(jobs, yaml.MappingNode) else []
+        loader = yaml.SafeLoader("")
+        try:
+            groups = [(loader.construct_object(k), _map_get(v, "steps"))
+                      for k, v in jobs.value
+                      ] if isinstance(jobs, yaml.MappingNode) else []
+        except Exception:
+            return out
+        finally:
+            loader.dispose()
     else:
         groups = [(None, _map_get(_map_get(root, "runs"), "steps"))]
     for jname, steps in groups:
