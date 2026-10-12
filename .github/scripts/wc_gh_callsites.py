@@ -603,9 +603,10 @@ def _reads_stdin(words):
     stdin or of a process substitution, or `xargs`/`parallel` handing what
     it reads to a shell or evaluator."""
     feeds = False
-    for j, w in enumerate(words):
+    for j, w in enumerate(words):               # stops at the first shell: linear
         rest, b = words[j + 1:], _base(w.lit)
-        strings = any(_shell_string(r.lit if r.lit is not None else r.pre) for r in rest)
+        strings = any(_shell_string(r.lit if r.lit is not None else r.pre) for r in rest
+                      ) if b in SHELLS or b in ("ssh", "sudo", "doas") else None
         if w.lit in ("source", ".") and (j == 0 or words[j - 1].lit in ("builtin", "command")):
             return not rest or _dev_file(rest[0])
         if b in ("xargs", "parallel"):
