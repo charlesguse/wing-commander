@@ -244,7 +244,7 @@ COMPOSITE_USES_RE = re.compile(
 # (pflag) keeps the LAST value, so `-X POST ... -X GET` is a read and
 # `-X GET ... -X POST` a write. A method that is not a literal word
 # is a disallowed form (wc_gh_callsites), never read as a read.
-API_WRITE_METHOD_RE = re.compile(r'(?:POST|PATCH|PUT|DELETE)\b')
+API_WRITE_METHOD_RE = re.compile(r'(?:POST|PATCH|PUT|DELETE)\b', re.I)
 
 
 def norm_expr(raw):

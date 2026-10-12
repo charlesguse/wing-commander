@@ -308,7 +308,7 @@
 
 ## Review Gate Round 3 Findings
 
-- [ ] Review finding: Gate 28 no longer scans Python scripts or raw lines
+- [x] Review finding: Gate 28 no longer scans Python scripts or raw lines (refuted, as Round 1 finding 8: reading Python with a second `gh` reader breaks FR-010/FR-011, and `main`'s regex never matched the list form the scripts use)
 
   The new run-block sweep reads only run: scalars and shell scripts, so a gh api string built in a .py script under .github/scripts that the old raw-text sweep caught now passes silently.
 
@@ -316,14 +316,14 @@
 
   Detail: Old sweep read raw text of every .py script and all action/workflow lines; new one does not.
 
-- [ ] Review finding: Gate 28 crashes with a traceback on malformed YAML
+- [x] Review finding: Gate 28 crashes with a traceback on malformed YAML (fixed: `sweep` reports a `::error file=` annotation and goes on)
 
   loc.run_blocks() calls yaml.compose without try/except, so one malformed workflow produces a raw traceback instead of a ::error file= annotation; Gate 12 wraps the same parse.
 
   - .github/scripts/verify-gh-api-explicit-method.py
   - .github/scripts/wc_gh_callsites.py
 
-- [ ] Review finding: Gate 12 treats lower-case HTTP methods as reads
+- [x] Review finding: Gate 12 treats lower-case HTTP methods as reads (fixed: `API_WRITE_METHOD_RE` is case-insensitive; Gate 12 fixture "a lower-case method is a write")
 
   API_WRITE_METHOD_RE matches only upper-case verbs, so `gh api -X patch ...` is classified as read and passes a call that needs write permission.
 
@@ -331,7 +331,7 @@
 
   Detail: No lower-case-method scenario in the corpus.
 
-- [ ] Review finding: gh_argv_calls can raise on an interleaved recording log
+- [x] Review finding: gh_argv_calls can raise on an interleaved recording log (fixed: the stub writes one record with a single printf)
 
   The recording stub writes one printf per word to a shared log, so backgrounded or piped gh calls can interleave records and make int(parts[i]) raise ValueError, crashing the differential self-test.
 
@@ -339,19 +339,19 @@
 
   Detail: Build each record in one string and write it once, or lock.
 
-- [ ] Review finding: run_blocks skips repeated YAML nodes
+- [x] Review finding: run_blocks skips repeated YAML nodes (fixed: only nodes on the current path are skipped, so an alias cycle still ends and a shared node is read at each use)
 
   The seen set keyed by id(node) drops the second occurrence of an aliased run:, so a violation is reported once and an exemption on one occurrence appears to cover both.
 
   - .github/scripts/wc_gh_callsites.py
 
-- [ ] Review finding: Gate 28 reports the wrapper token's line for disallowed calls
+- [x] Review finding: Gate 28 reports the wrapper token's line for disallowed calls (fixed: the line is that of the `gh` word; Gate 28 fixtures "an exemption on the gh line of a wrapper's continued call counts" and "a wrapper's failure line is the gh line")
 
   For eval, backtick or sudo wrappers the failure line and the wc-gh-method-exempt lookup use the wrapper token's line, not the real gh api line on a later continuation, so the exemption marker is missed and the annotation points at the wrong line.
 
   - .github/scripts/verify-gh-api-explicit-method.py
 
-- [ ] Review finding: Waivers cite #889 without confirming the migration line exists
+- [x] Review finding: Waivers cite #889 without confirming the migration line exists (refuted: what an issue body says is a network read no PR-time gate makes; Gate 124 `--check-open` already fails a waiver whose tracker is closed, and the checklist line is the implementer's to add per research R9)
 
   Two single-home waivers for the locator cite the Maintenance backlog as tracker, but nothing checks that #889 carries the migrate-onto-wc_gh_callsites line, so Gate 124 on main could be left pointing at a tracker that never mentions the work.
 

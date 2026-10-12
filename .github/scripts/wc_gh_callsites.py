@@ -1095,12 +1095,18 @@ def run_blocks(path):
     """[Run] for every `run:` scalar in the workflow or composite-action YAML
     at `path`."""
     import yaml
-    out, seen = [], set()
+    out, active = [], set()
 
     def walk(node, step):
-        if id(node) in seen:                 # an alias cycle or a shared node
-            return
-        seen.add(id(node))
+        if id(node) in active:               # an alias cycle; a shared node
+            return                           # is read at each of its uses
+        active.add(id(node))
+        try:
+            walk_node(node, step)
+        finally:
+            active.discard(id(node))
+
+    def walk_node(node, step):
         if isinstance(node, yaml.MappingNode):
             for k, v in node.value:
                 key = getattr(k, "value", None)

@@ -721,8 +721,8 @@ def gh_argv_recording_stub(bin_dir):
     path = os.path.join(bin_dir, "gh")
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write('#!/bin/bash\n'
-                 '{ printf "%s\\0" "$#"; for a in "$@"; do printf "%s\\0" "$a"; '
-                 'done; } >> "$GHLOG"\n')
+                 '# one printf, so one append write: concurrent calls do not interleave\n'
+                 'printf "%s\\0" "$#" "$@" >> "$GHLOG"\n')
     os.chmod(path, 0o755)
     return bin_dir
 

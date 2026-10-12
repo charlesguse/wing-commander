@@ -159,6 +159,11 @@ FIXTURES = [
              'gh api -X POST "$P"']),
      True, ("App token",)),
 
+    ("a lower-case method is a write, so the App token is needed",
+     mkcase("", "", [APP_ENV],
+            ['gh api -X post repos/"$GITHUB_REPOSITORY"/actions/runs/1/cancel']),
+     True, ("App token",)),
+
     ("a named fd redirect is not the path of the call",
      mkcase("", "", [APP_ENV],
             ['gh api {fd}>/dev/null -X POST repos/"$GITHUB_REPOSITORY"/actions/runs/1/cancel']),

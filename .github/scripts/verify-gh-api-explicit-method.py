@@ -147,7 +147,10 @@ class Detector(object):
                 elif field is None and self.field_re.match(word):
                     field = word
             if field is not None and not method:
-                found.append((tok.line - 1, field))
+                # The line of the `gh` word itself: for `eval "..."` or
+                # `sudo gh` the token sits on the wrapper, which a continued
+                # call may leave lines above its flags and its exemption.
+                found.append((script.count("\n", 0, at), field))
         return found
 
     def scan_script(self, path, script, first_line=1):
@@ -235,7 +238,14 @@ def sweep():
                  "at all. That is a broken sweep, not a clean tree.")
     failures = []
     for path in yamls:
-        for script in loc.run_blocks(path):
+        try:
+            blocks = loc.run_blocks(path)
+        except Exception as exc:      # Gate 12 wraps the same parse
+            failures.append("::error file={0}::Gate 28 could not parse this "
+                            "file as YAML ({1}), so its `gh api` calls were "
+                            "not checked.".format(path, " ".join(str(exc).split())))
+            continue
+        for script in blocks:
             failures.extend(detector.scan_script(path, script))
     for path in shells:
         with open(path, encoding="utf-8") as fh:
@@ -418,6 +428,14 @@ CASES = [
     ("a call Gate 12 rejects, in an unquoted heredoc fed to bash, still counts here",  # wc-gh-method-exempt: self-test fixture text
      "bash <<EOF\ngh api repos/x -f a=b\nEOF",
      True, ("-f",)),
+
+    ("an exemption on the gh line of a wrapper's continued call counts",  # wc-gh-method-exempt: self-test fixture text
+     "eval \\\n \"gh api repos/x -f a=b\"  # wc-gh-method-exempt: fixture",
+     False, ()),
+
+    ("a wrapper's failure line is the gh line, not the wrapper's",  # wc-gh-method-exempt: self-test fixture text
+     "echo a\neval \\\n \"gh api repos/x -f a=b\"",
+     True, ("line=3",)),
 
     ("such a call that says its method passes",
      "sudo gh api -X POST repos/x -f a=b\neval \"gh api --method POST repos/x -f a=b\"",
