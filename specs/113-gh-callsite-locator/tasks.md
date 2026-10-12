@@ -356,3 +356,51 @@
   Two single-home waivers for the locator cite the Maintenance backlog as tracker, but nothing checks that #889 carries the migrate-onto-wc_gh_callsites line, so Gate 124 on main could be left pointing at a tracker that never mentions the work.
 
   - .github/scripts/verify-single-home-idioms.py
+
+## Review Gate Round 4 Findings
+
+- [ ] Review finding: Gate 28 no longer scans Python files or raw lines
+
+  The rewrite reads only run: scalars and shell files, so an implicit-POST `gh api` call in a Python helper's subprocess string or a heredoc-written script goes uncaught, and the docstring does not say so.
+
+  - .github/scripts/verify-gh-api-explicit-method.py
+
+  Detail: The old sweep covered every workflow, action and .github/scripts/**/*.py line.
+
+- [ ] Review finding: Gate 28 shell-file read is unguarded and skips *.bash
+
+  A bare open() raises UnicodeDecodeError on a non-UTF-8 shell file and crashes the gate with a traceback. Extensionless discovery also skips shebang scripts named like deploy.bash.
+
+  - .github/scripts/verify-gh-api-explicit-method.py
+
+- [ ] Review finding: Bare $CMD fallback uses broad GH_TEXT regex
+
+  A `gh` in a URL or path (such as github.com/cli/gh) yields an unseen GH_TEXT match, so every lone $CMD command word is flagged dynamic-command with a confusing message.
+
+  - .github/scripts/wc_gh_callsites.py
+
+- [ ] Review finding: step_runs swallows YAML errors and reports line 1
+
+  When step_runs fails to parse or resolve aliases or merge keys, Gate 12 falls back to an empty Run() and reports every failure at file:1.
+
+  - .github/scripts/wc_gh_callsites.py
+  - .github/scripts/verify-gate-12-token-permissions.py
+
+- [ ] Review finding: Gate 12 gives a misleading message for gh api without a path
+
+  If api_path is None or a stray flag word, the call falls through to the SUBCOMMAND_PERMS lookup and says to add a table entry, which cannot fix the call.
+
+  - .github/scripts/verify-gate-12-token-permissions.py
+
+- [ ] Review finding: --method=$M and -X$M not treated as flag-proof in _api_scan
+
+  API_ATTACHED omits these forms, so they are reported as dynamic-flag instead of variable-method. The Dynamic built via type(w)(...) also loses its pre and split attributes.
+
+  - .github/scripts/wc_gh_callsites.py
+
+- [ ] Review finding: issues_err_text assignment can abort the step under set -e
+
+  The standalone $(cat ...) assignment is no longer protected the way the old inline echo argument was, so an unreadable error file fails the step and skips the [] fallback. The same pattern is in write-boundary-lookup.
+
+  - .github/actions/wing-commander-durable-failure-issue/action.yml
+  - .github/actions/write-boundary-lookup/action.yml
