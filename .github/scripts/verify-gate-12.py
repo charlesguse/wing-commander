@@ -696,6 +696,16 @@ LOCATOR_CASES = [
      [dis("shell-stdin")]),
     ("pass 2: pwsh reads its pipe", "echo 'gh a b' | pwsh -NonInteractive",
      [dis("shell-stdin")]),
+    # review-until-clean pass 3: fish's -C/--init-command runs its string,
+    # then reads stdin.
+    ("pass 3: fish -C runs its string", "fish -C 'gh api x -X DELETE'", [dis("shell-stdin")]),
+    ("pass 3: fish --init-command runs its string", "fish --init-command 'gh api x'",
+     [dis("shell-stdin")]),
+    ("pass 3: a wrapped fish -iC runs its string", "sudo fish -iC 'gh a b'",
+     [dis("shell-stdin")]),
+    ("pass 3: fish -C reads its heredoc after the string",
+     "fish -C 'x' <<'E'\ngh api x -X DELETE\nE", [dis("unquoted-heredoc")]),
+    ("pass 3: make -C is no fish -C", "make -C dir; echo 'gh x'", [men("quoted")]),
 ]
 
 
@@ -770,6 +780,14 @@ def run_locator_cases():
         ratio = steps_ratio(make)
         if ratio > 6:       # 4x the input: linear is about 4, quadratic about 16
             bad.append((f"scaling: {name}", [f"4x the input took {ratio:.1f}x the steps"]))
+    # Regex time makes no profile event either: a word-character run must
+    # not be retried from each of its characters (review-until-clean pass 3;
+    # quadratic took about 12s here, linear well under 0.1s).
+    t0 = time.time()
+    loc.locate("echo " + "a" * 50000 + "\ngh a b")
+    took = time.time() - t0
+    if took > 2:
+        bad.append(("scaling: a 50,000-character word", [f"took {took:.1f}s"]))
     copies = stdin_copies()
     if copies > 2 * 2002:   # one copy of the words is linear; one per word is not
         bad.append(("scaling: _reads_stdin copies", [f"{copies} words copied for a "
@@ -913,12 +931,21 @@ def exec_method(argv):
     return meth
 
 
+# A word bash may turn into other or several words without splitting: an
+# array or positional expansion (`"$@"`, `"${A[@]}"`), a brace list, a
+# glob or a leading tilde (review-until-clean pass 3).
+MANY_WORDS = re.compile(r"\$\{?[@*]|\[[@*]\]")
+EXPANDS = re.compile(r"\{[^{}]*(?:,|\.\.)[^{}]*\}|[*?[]|^~")
+
+
 def could_be(located, argv):
     """Whether a located call's words could have run as `argv`: each literal
     word equal, each quoted expansion one word starting with its literal
-    text, and from the first word the shell may split on, anything."""
+    text, and from the first word the shell may split on or otherwise expand
+    (MANY_WORDS, EXPANDS), anything."""
     for k, w in enumerate(located):
-        if isinstance(w, loc.Dynamic) and w.split:
+        if (w.split or MANY_WORDS.search(w)) if isinstance(w, loc.Dynamic) else (
+                EXPANDS.search(w)):
             return True
         if k >= len(argv) or (argv[k] != str(w) if not isinstance(w, loc.Dynamic)
                               else not argv[k].startswith(w.pre)):
@@ -999,6 +1026,15 @@ def differential():
         if accounted(loc.locate(script), argv) is not None:
             failures.append(("oracle", [f"accounted() vouches for `gh {' '.join(argv)}` "
                                         f"from the unrelated call `{script}`"], ""))
+    # But it does vouch where bash expands one word into others (pass 3).
+    for script, argv in (('gh issue close "$@"', ["issue", "close", "1", "2"]),
+                         ('gh issue close "${A[@]}"', ["issue", "close", "1", "2"]),
+                         ("gh issue close {1,2}", ["issue", "close", "1", "2"]),
+                         ("gh issue close *", ["issue", "close", "log", "s.sh"]),
+                         ("gh issue view ~/x", ["issue", "view", "/home/u/x"])):
+        if accounted(loc.locate(script), argv) != "exact":
+            failures.append(("oracle", [f"accounted() misses `gh {' '.join(argv)}`, "
+                                        f"which bash runs for `{script}`"], ""))
     with open(os.path.join(FUZZ_DIR, "manifest.json"), encoding="utf-8") as fh:
         manifest = json.load(fh)
     on_disk = {f for f in os.listdir(FUZZ_DIR) if f.endswith(".jsonl")}

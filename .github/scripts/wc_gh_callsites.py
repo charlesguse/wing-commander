@@ -58,7 +58,9 @@ SPELLED = re.compile(r"(?<![\w$@%])g(?:[\"'\\]*h(?![\w-])|[\"'\\]*[$`])"
                      r"|(?:[})`]|\$\w+[\"'\\])[\"'\\]*h(?![\w-])")
 # A URL: the scheme to the first character that could end it or start shell
 # syntax (`;`, `&`, `|`, a quote, `$`...), so a gh joined on after it is seen.
-URL = re.compile(r"[A-Za-z][\w+.-]*://[^\s;&|<>()`'\"\\$]*")
+# The scheme starts a run of scheme characters, so a long run is tried from
+# one place, not each: linear (review-until-clean pass 3).
+URL = re.compile(r"(?<![\w+.-])[A-Za-z][\w+.-]*://[^\s;&|<>()`'\"\\$]*")
 # `<<` or `<<-`, then the delimiter word; an unterminated quote ends it.
 HEREDOC = re.compile(r"<<(-?)[ \t]*((?:'[^']*'|\"[^\"]*\"|\\.|[^\s;&|<>()`'\"\\])*)")
 DELIM_PIECE = re.compile(r"'([^']*)'|\"([^\"]*)\"|\\(.)")
@@ -84,9 +86,11 @@ WRAPPERS = frozenset(("env", "command", "exec", "sudo", "xargs", "nohup", "nice"
                       "nsenter", "unshare", "runuser", "sg", "strace", "busybox",
                       "time",                 # `X=1 time gh`: /usr/bin/time, not the keyword
                       )) | EVALUATORS
-SHELLS = frozenset(("bash", "sh", "dash", "zsh", "ksh", "mksh", "ash", "yash", "posh",
-                    "csh", "tcsh", "fish", "su")) | frozenset(("pwsh", "powershell"))
 PWSH = frozenset(("pwsh", "powershell"))    # `-Command`/`-EncodedCommand`, any case
+SHELLS = frozenset(("bash", "sh", "dash", "zsh", "ksh", "mksh", "ash", "yash", "posh",
+                    "csh", "tcsh", "fish", "su")) | PWSH
+# fish's `-C`/`--init-command` runs its string, then the script (or stdin).
+FISH_INIT = frozenset(("-C", "--init-command"))
 # Options that take the next word as their value: a shell's (`-o pipefail`,
 # `--rcfile F`), and sudo's (`-u root`, `--user root`).
 SHELL_VALUED = frozenset(("-o", "-O", "+o", "+O", "--rcfile", "--init-file"))
@@ -587,8 +591,11 @@ class _Scan:
                                                for w in args))
                 or not (dynamic or base in WRAPPERS or base in SHELLS)):
             return
+        # The shell may follow a wrapper (`sudo fish -C ...`): any word names it.
+        named = {_base(w.lit) for w in [head] + args}
+        pwsh, fish = bool(named & PWSH), "fish" in named
         if dynamic or any(_base(w.lit) in EVALUATORS or _shell_string(
-                w.lit if w.lit is not None else w.pre, base in PWSH) for w in [head] + args):
+                w.lit if w.lit is not None else w.pre, pwsh, fish) for w in [head] + args):
             self._condemn(head.off + len(head.raw),      # the head word is judged above
                           "dynamic-command" if dynamic else "unquoted-wrapper")
             self.bare.append(head.off)
@@ -635,13 +642,22 @@ def _reads_stdin(words):
             return True                 # `-Command -` and `-File -` read it too
         elif b in SHELLS and b != "su":
             rest = words[j + 1:]        # once: this returns
+            fish = b == "fish"
             ops = [r for k, r in enumerate(rest) if (r.lit is None or r.lit[:1] not in "-+")
-                   and (k == 0 or rest[k - 1].lit not in SHELL_VALUED)]
+                   and (k == 0 or not _takes_value(rest[k - 1].lit, fish))]
             return not later[j + 1] and (not ops or _dev_file(ops[0]) or
                                          any(r.lit == "-s" for r in rest))
         elif b in ("su", "ssh") or b in ("sudo", "doas") and login[j + 1]:
             return not later[j + 1]
     return False
+
+
+def _takes_value(s, fish):
+    """Whether shell option word `s` takes the next word as its value: a
+    SHELL_VALUED option or, for fish, `-C`/`--init-command`, `-C` last in a
+    cluster (`-iC`) too."""
+    return s in SHELL_VALUED or fish and s is not None and (
+        s in FISH_INIT or SHELL_STRING.fullmatch(s) is not None and s.endswith("C"))
 
 
 def _dev_file(w):
@@ -655,14 +671,17 @@ def _base(s):
     return (s or "").rsplit("/", 1)[-1]
 
 
-def _shell_string(s, pwsh=False):
+def _shell_string(s, pwsh=False, fish=False):
     """Whether literal word `s` hands a shell string over: `-c`, `-lc`,
     `-S...`, `--split-string`, `--command`; with `pwsh`, also PowerShell's
-    `-Command`/`-EncodedCommand` and their abbreviations, in any case."""
+    `-Command`/`-EncodedCommand` and their abbreviations, in any case; with
+    `fish`, also fish's `-C`/`--init-command`, joined to its value or not."""
     s = s or ""
     return (s.startswith(("--split-string", "--command", "-S"))
             or (SHELL_STRING.fullmatch(s) is not None and "c" in s)
-            or pwsh and s.lower().startswith(("-c", "-e")))
+            or pwsh and s.lower().startswith(("-c", "-e"))
+            or fish and (s.startswith("--init-command") or s[:1] == "-" and s[1:2] != "-"
+                         and "C" in s))
 
 
 def _may_be_gh(w, split=True):
