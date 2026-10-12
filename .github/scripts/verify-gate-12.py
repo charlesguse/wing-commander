@@ -600,6 +600,7 @@ SCALING_CASES = (
     ("many words", lambda n: "echo " + "a " * n + "\ngh a b"),
     ("nested brace lists", lambda n: "{x," * n + "a" + "}" * n + " api x"),
     ("unclosed substitutions", lambda n: "echo $( " * (n // 100) + "x " * n),
+    ("a long literal script a shell runs", lambda n: "bash -c '" + "a b; " * n + "'"),
 )
 
 

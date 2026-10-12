@@ -83,7 +83,8 @@ literal word.
 nested `$( $( ) )`, in a `${…}` value, in a command word that could expand
 to `gh` across an expansion or glob (`${X:-g}h`, `g$X`, `$HOME/bin/gh`,
 `${CMD}`, `{g,}h`),
-by a path (`/usr/bin/gh`), behind `eval`/`env`/other wrappers,
+by a path (`/usr/bin/gh`), behind `eval`/`env`/`trap`/other wrappers,
+in a string a shell runs (`bash -c '…'`, or piped or fed to a shell),
 with a subcommand or method taken from a variable, in an unquoted-heredoc
 body or `$'…'` string, or as a `case` arm body inside `$( )`. In a `gh api`
 call, a word holding an unquoted expansion (`-f body=$X`, `${X:--X GET}`)
@@ -92,7 +93,8 @@ one of them could be a method flag; quote it. A command word that is one
 bare `$CMD` or `$(…)` is not checked, so never run `gh` through one.
 
 **Mentions that need no rewriting**: `gh` in a quoted string with no `$(`
-or backtick, in a quoted-delimiter heredoc body, or in a comment. To mention
+or backtick, in a quoted-delimiter heredoc body, or in a comment, unless
+a shell runs that string or body as a script. To mention
 `gh` inside an unquoted heredoc, quote the delimiter or reword.
 
 ## Where things live
