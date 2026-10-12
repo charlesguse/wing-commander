@@ -90,8 +90,8 @@ SHELLS = frozenset(("bash", "sh", "dash", "zsh", "ksh", "su"))  # with `-c`, run
 API_VALUED = frozenset(("-X", "--method", "-H", "--header", "-f", "--raw-field", "-F",
                         "--field", "-q", "--jq", "-t", "--template", "-p", "--preview",
                         "--hostname", "--input", "--cache"))
-API_ATTACHED = re.compile(r"-(?:[HfFqtp]|-(?:header|raw-field|field|jq|template|"
-                          r"preview|hostname|input|cache)=)")
+API_ATTACHED = re.compile(r"-(?:[HfFqtpX]|-(?:header|raw-field|field|jq|template|"
+                          r"preview|hostname|input|cache|method)=)")
 
 
 class _Word:
@@ -1021,10 +1021,21 @@ def _api_scan(args):
                     methods.append(args[i])
             i += 1
         elif m:
-            methods.append(type(w)(m.group(1)))
+            methods.append(_like(w, m.group(1)))
         elif s.startswith("--method="):
-            methods.append(type(w)(s[9:]))
+            methods.append(_like(w, s[9:]))
     return path, methods, stray, flags
+
+
+def _like(w, text):
+    """`text`, a slice of the argv word `w`, as the same kind of word: a
+    Dynamic keeps its literal prefix and its splitting."""
+    if not isinstance(w, Dynamic):
+        return type(w)(text)
+    out = Dynamic(text)
+    cut = len(w) - len(text)            # the flag's own characters
+    out.pre, out.split = w.pre[cut:], w.split
+    return out
 
 
 def api_parts(args):
@@ -1125,14 +1136,12 @@ def run_blocks(path):
 
 def step_runs(path, in_jobs):
     """{(job name or None, step index): Run} for the step `run:` scalars of
-    the workflow (`in_jobs`) or composite action at `path`; {} when the file
-    does not parse."""
+    the workflow (`in_jobs`) or composite action at `path`. Raises when the
+    file cannot be composed or its job keys cannot be built: the caller says
+    so, rather than report every call at line 1."""
     import yaml
     out = {}
-    try:
-        root = _compose(path)
-    except Exception:
-        return out
+    root = _compose(path)
     if in_jobs:
         jobs = _map_get(root, "jobs")
         # Keyed as yaml.safe_load keys the job (a job named `on` is True there).
@@ -1141,8 +1150,6 @@ def step_runs(path, in_jobs):
             groups = [(loader.construct_object(k), _map_get(v, "steps"))
                       for k, v in jobs.value
                       ] if isinstance(jobs, yaml.MappingNode) else []
-        except Exception:
-            return out
         finally:
             loader.dispose()
     else:
@@ -1156,6 +1163,14 @@ def step_runs(path, in_jobs):
     return out
 
 
+def _in_url(script, at):
+    """True when the whitespace-delimited word around `at` holds `://`
+    (`https://github.com/cli/gh`): a URL names gh, it does not run it."""
+    start = max(script.rfind(c, 0, at) for c in " \t\n") + 1
+    ends = [e for e in (script.find(c, at) for c in " \t\n") if e >= 0]
+    return "://" in script[start:min(ends) if ends else len(script)]
+
+
 def locate(script):
     """Every `gh` word in `script`, in source order (see the module doc)."""
     sc = _Scan(script)
@@ -1164,7 +1179,8 @@ def locate(script):
     # script also holds a `gh` that is neither a call nor a mention (`GH=gh`,
     # `set -- gh api x`, `X=/usr/bin/gh`), it may hold that `gh` (FR-006).
     seen = {tok.offset for tok in sc.toks}
-    if sc.bare and any(m.start() not in seen for m in GH_TEXT.finditer(script)):
+    if sc.bare and any(m.start() not in seen and not _in_url(script, m.start())
+                       for m in GH_TEXT.finditer(script)):
         for w in sc.bare:
             sc._note_once(w, "dynamic-command")
     toks = sorted(sc.toks, key=lambda x: x.offset)

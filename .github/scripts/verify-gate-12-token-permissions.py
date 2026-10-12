@@ -486,6 +486,12 @@ def check_gh_invocation(where, tok, assigns, tok_kind, tok_detail,
     (category D) so the two can never disagree about what a call needs."""
     argv = tok.argv
     api_path = api_parts(argv[1:])[0] if argv and argv[0] == "api" else None
+    if argv and argv[0] == "api" and api_path is None:
+        failures.append(
+            f"{where}: `gh api` has no endpoint path Gate 12 can read, so it "
+            f"cannot tell which permission the call needs. Put the path in "
+            f"the call as a plain word (a quoted variable is fine).")
+        return
     if api_path is not None:
         apipath = str(api_path)
         resolved = resolve_paths(apipath, assigns)
@@ -635,13 +641,26 @@ callsite_grants = []  # (caller, caller-job, called-workflow, [(v1, v2, input)])
 # [(caller, job, step, with, job env, job perms, job App exprs)].
 composite_callsites = {}
 
+
+def run_lines_of(path, in_jobs):
+    """step_runs(), or {} after a failure naming the file: without the line
+    map every call would be reported at line 1."""
+    try:
+        return step_runs(path, in_jobs)
+    except Exception as e:
+        failures.append(f"{path}: could not map run: blocks to lines "
+                        f"({' '.join(str(e).split())}); failures in it are "
+                        f"reported at the start of the block.")
+        return {}
+
+
 for f in sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml")):
     try:
         wf = yaml.safe_load(open(f, encoding="utf-8")) or {}
     except Exception as e:
         failures.append(f"{f}: YAML parse failure: {e}")
         continue
-    wf_run_lines = step_runs(f, True)
+    wf_run_lines = run_lines_of(f, True)
 
     for jname, job in (wf.get("jobs") or {}).items():
         job = job or {}
@@ -756,7 +775,7 @@ for af in action_files:
     comp_steps = [st or {} for st in (runs.get("steps") or [])]
     comp_app_exprs = app_token_exprs_for({"steps": comp_steps})
     comp_calls = []   # (step name, step env, located call, assigns)
-    comp_run_lines = step_runs(af, False)
+    comp_run_lines = run_lines_of(af, False)
     for sidx, st in enumerate(comp_steps):
         st_name = st.get("name") or st.get("id") or "<unnamed step>"
         st_uses = str(st.get("uses") or "")

@@ -174,6 +174,15 @@ FIXTURES = [
             ["gh api 2>/dev/null -X POST repos/\"$GITHUB_REPOSITORY\"/actions/runs/1/cancel"]),
      True, ("App token",)),
 
+    ("a gh api with no endpoint path is not blamed on the subcommand table",
+     mkcase("", "", [APP_ENV], ["gh api -X GET"]),
+     True, ("endpoint path",)),
+
+    ("a variable method glued to -X is a variable method, not a dynamic flag",
+     mkcase("", "", [APP_ENV],
+            ['gh api -X"$M" repos/"$GITHUB_REPOSITORY"/actions/runs/1/cancel']),
+     True, ("method",)),
+
     ("a disallowed call in a job named like a YAML boolean names its own line",
      {".github/workflows/w.yml": wf(step([APP_ENV], ["echo x", "`gh api x`"])
                                     ).replace("  work:", "  on:"),
@@ -353,6 +362,8 @@ def men(clause):
 
 LOCATOR_CASES = [
     ("statement", "gh issue view 5", [C_ST]),
+    ("a url that names gh is not a gh a lone $CMD may run",
+     'echo https://github.com/cli/gh\n"$CMD" x', []),
     ("after a separator", "true; gh a b && gh c d | gh e f", [C_ST] * 3),
     ("after then/do/!", "if ! gh a b; then gh c d; fi", [C_ST] * 2),
     ("first command of a substitution", 'x="$(gh issue view 5)"', [C_SUB]),

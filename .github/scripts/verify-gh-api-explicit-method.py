@@ -206,8 +206,10 @@ def subject_files():
               + glob.glob(".github/actions/**/*.sh", recursive=True))
     for p in (glob.glob(".github/scripts/**/*", recursive=True)
               + glob.glob(".github/actions/**/*", recursive=True)):
-        if os.path.isfile(p) and "." not in os.path.basename(p) and _has_shell_shebang(p):
-            shells.append(p)        # an extensionless executable script
+        ext = os.path.splitext(p)[1]
+        if (os.path.isfile(p) and ext in ("", ".bash")
+                and _has_shell_shebang(p)):
+            shells.append(p)        # an extensionless or .bash script
     return (sorted(set(posix(p) for p in yamls)),
             sorted(set(posix(p) for p in shells)))
 
@@ -248,8 +250,15 @@ def sweep():
         for script in blocks:
             failures.extend(detector.scan_script(path, script))
     for path in shells:
-        with open(path, encoding="utf-8") as fh:
-            failures.extend(detector.scan_script(path, fh.read()))
+        try:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        except (OSError, UnicodeDecodeError) as exc:
+            failures.append("::error file={0}::Gate 28 could not read this "
+                            "shell script ({1}), so its `gh api` calls were "
+                            "not checked.".format(path, " ".join(str(exc).split())))
+            continue
+        failures.extend(detector.scan_script(path, text))
     for f in failures:
         print(f)
     print("Gate 28: scanned {0} workflow/action file(s) and {1} shell script(s) "

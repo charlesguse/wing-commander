@@ -347,7 +347,7 @@
   "expect": "fail",
   "must_mention": [
    "gh api",
-   "SUBCOMMAND_PERMS"
+   "endpoint path"
   ]
  },
  {
@@ -373,7 +373,7 @@
   "expect": "fail",
   "must_mention": [
    "gh api",
-   "SUBCOMMAND_PERMS"
+   "endpoint path"
   ]
  },
  {
@@ -454,7 +454,7 @@
   "expect": "fail",
   "must_mention": [
    "gh api",
-   "SUBCOMMAND_PERMS"
+   "endpoint path"
   ]
  },
  {

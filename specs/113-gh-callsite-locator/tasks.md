@@ -359,7 +359,7 @@
 
 ## Review Gate Round 4 Findings
 
-- [ ] Review finding: Gate 28 no longer scans Python files or raw lines
+- [x] Review finding: Gate 28 no longer scans Python files or raw lines (refuted, as Round 1 finding 8 and Round 3: FR-010/FR-011 forbid a second gh reader; the module docstring's SCOPE section already says Python is out of scope)
 
   The rewrite reads only run: scalars and shell files, so an implicit-POST `gh api` call in a Python helper's subprocess string or a heredoc-written script goes uncaught, and the docstring does not say so.
 
@@ -367,38 +367,38 @@
 
   Detail: The old sweep covered every workflow, action and .github/scripts/**/*.py line.
 
-- [ ] Review finding: Gate 28 shell-file read is unguarded and skips *.bash
+- [x] Review finding: Gate 28 shell-file read is unguarded and skips *.bash (fixed: an unreadable script is a `::error file=` failure, and a shebang `.bash` script is scanned)
 
   A bare open() raises UnicodeDecodeError on a non-UTF-8 shell file and crashes the gate with a traceback. Extensionless discovery also skips shebang scripts named like deploy.bash.
 
   - .github/scripts/verify-gh-api-explicit-method.py
 
-- [ ] Review finding: Bare $CMD fallback uses broad GH_TEXT regex
+- [x] Review finding: Bare $CMD fallback uses broad GH_TEXT regex (fixed: a `gh` inside a `://` URL word is not counted; locator case "a url that names gh ...")
 
   A `gh` in a URL or path (such as github.com/cli/gh) yields an unseen GH_TEXT match, so every lone $CMD command word is flagged dynamic-command with a confusing message.
 
   - .github/scripts/wc_gh_callsites.py
 
-- [ ] Review finding: step_runs swallows YAML errors and reports line 1
+- [x] Review finding: step_runs swallows YAML errors and reports line 1 (fixed: `step_runs` raises and Gate 12's `run_lines_of` reports a failure naming the file)
 
   When step_runs fails to parse or resolve aliases or merge keys, Gate 12 falls back to an empty Run() and reports every failure at file:1.
 
   - .github/scripts/wc_gh_callsites.py
   - .github/scripts/verify-gate-12-token-permissions.py
 
-- [ ] Review finding: Gate 12 gives a misleading message for gh api without a path
+- [x] Review finding: Gate 12 gives a misleading message for gh api without a path (fixed: its own "no endpoint path" failure; fixture and the three corpus scenarios' expected text updated, verdicts unchanged)
 
   If api_path is None or a stray flag word, the call falls through to the SUBCOMMAND_PERMS lookup and says to add a table entry, which cannot fix the call.
 
   - .github/scripts/verify-gate-12-token-permissions.py
 
-- [ ] Review finding: --method=$M and -X$M not treated as flag-proof in _api_scan
+- [x] Review finding: --method=$M and -X$M not treated as flag-proof in _api_scan (fixed: both in `API_ATTACHED`, and `_like` keeps `pre`/`split`; fixture "a variable method glued to -X ...")
 
   API_ATTACHED omits these forms, so they are reported as dynamic-flag instead of variable-method. The Dynamic built via type(w)(...) also loses its pre and split attributes.
 
   - .github/scripts/wc_gh_callsites.py
 
-- [ ] Review finding: issues_err_text assignment can abort the step under set -e
+- [x] Review finding: issues_err_text assignment can abort the step under set -e (fixed in both composites: `$(cat ... 2>/dev/null || true)`)
 
   The standalone $(cat ...) assignment is no longer protected the way the old inline echo argument was, so an unreadable error file fails the step and skips the [] fallback. The same pattern is in write-boundary-lookup.
 
