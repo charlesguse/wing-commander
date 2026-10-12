@@ -52,6 +52,10 @@ GH = re.compile(r"(?<![\w$@%-])gh(?![\w-])")          # the word gh, `/usr/bin/g
 # A `gh` anywhere in a word that also holds a `${...}` (`${X:-gh}`): what it
 # expands to cannot be proved, so as a command word it is disallowed.
 GH_IN_EXPANSION = re.compile(r"(?<![\w.$@%])gh(?![\w-])")
+# In text a shell runs, gh as a word or spelled across quotes or an
+# expansion: `g""h`, `g\\h`, `g$X`, `${X:-g}h`, `$(printf g)h`, `${X:-gh}`.
+SPELLED = re.compile(r"(?<![\w$@%])g(?:[\"'\\]*h(?![\w-])|[\"'\\]*[$`])"
+                     r"|(?:[})`]|\$\w+[\"'\\])[\"'\\]*h(?![\w-])")
 BLANK_WORD = re.compile(r"[^ \t\n]+")
 # `<<` or `<<-`, then the delimiter word; an unterminated quote ends it.
 HEREDOC = re.compile(r"<<(-?)[ \t]*((?:'[^']*'|\"[^\"]*\"|\\.|[^\s;&|<>()`'\"\\])*)")
@@ -71,14 +75,15 @@ RESERVED = frozenset(("if", "then", "elif", "else", "do", "while", "until", "!",
                       "}", "time"))
 # Programs that run another command given in their words; any of the words
 # may be it. The list is closed, so the authoring rule says to call gh directly.
+EVALUATORS = frozenset(("eval", "trap", "watch", "script", "ssh", "parallel", "source", "."))
 WRAPPERS = frozenset(("env", "command", "exec", "sudo", "xargs", "nohup", "nice", "stdbuf",
                       "setsid", "timeout", "coproc", "builtin", "flock", "ionice", "taskset",
                       "chrt", "doas", "find", "docker", "podman", "kubectl", "chroot",
                       "nsenter", "unshare", "runuser", "sg", "strace", "busybox",
                       "time",                 # `X=1 time gh`: /usr/bin/time, not the keyword
-                      "eval", "trap", "watch", "script", "ssh", "parallel", "source", "."))
-EVALUATORS = frozenset(("eval", "trap", "watch", "script", "ssh", "parallel", "source", "."))
-SHELLS = frozenset(("bash", "sh", "dash", "zsh", "ksh", "su"))  # with `-c`, run a string
+                      )) | EVALUATORS
+SHELLS = frozenset(("bash", "sh", "dash", "zsh", "ksh", "mksh", "ash", "yash", "posh",
+                    "su"))                  # with `-c`, run a string
 
 
 class _Word:
@@ -144,10 +149,11 @@ class _Scan:
             return True
         return old.position == "disallowed"
 
-    def _mark(self, a, b, why, call):
-        """Each `gh` in t[a:b]: a disallowed call for reason `why`, or with
-        call=False a mention in clause `why`."""
-        for m in GH.finditer(self.g, a, b):
+    def _mark(self, a, b, why, call, spelled=False):
+        """Each `gh` in t[a:b]: a disallowed call for reason `why` (with
+        `spelled`, text a shell runs, also gh spelled across quotes or an
+        expansion), or with call=False a mention in clause `why`."""
+        for m in (SPELLED if spelled else GH).finditer(self.g, a, b):
             if call:
                 self._flag(m.start(), why)
             else:
@@ -164,7 +170,7 @@ class _Scan:
     def _condemn(self, start, why):
         """Text from `start` to the end of this command is a script a shell
         runs: every gh in it is a disallowed call, quoted or not."""
-        self._mark(start, self.at, why, True)
+        self._mark(start, self.at, why, True, True)
 
     def _unsure(self, off, reason):
         """A construct this scanner cannot track exactly: nothing after it is
@@ -199,7 +205,7 @@ class _Scan:
     def _backtick(self, i):
         """A backtick is a string a shell runs: never read inside (the rule)."""
         j = self._close(i, True)
-        self._mark(i + 1, j, "backtick" if j < self.n else "unterminated-quote", True)
+        self._mark(i + 1, j, "backtick" if j < self.n else "unterminated-quote", True, True)
         if "$" in self.t[i + 1:j]:
             self.bare.append(i)
         return min(j + 1, self.n)
@@ -365,7 +371,7 @@ class _Scan:
                 if (line.lstrip("\t") if strip else line) == delim:
                     end = e - len(line)
                     self._mark(body, end, "quoted-heredoc" if quoted else "unquoted-heredoc",
-                               not quoted)
+                               not quoted, not quoted)
                     if not quoted and "$" in t[body:end]:
                         self.bare.append(body)
                     break
@@ -562,8 +568,9 @@ class _Scan:
                                  "subst_first" if ctx.depth else "statement"))
             return
         base, dynamic = _base(head.lit), head.lit is None
-        if _may_be_gh(head):
-            self._note_word(head, _may_be_gh(head))
+        why = _may_be_gh(head)
+        if why:
+            self._note_word(head, why)
         elif head.pat == EXP:
             self.bare.append(head.off)                  # `$CMD`: see locate()
         if ((base == "command" and any(w.lit in ("-v", "-V") for w in args))
@@ -573,8 +580,10 @@ class _Scan:
             return
         if dynamic or any(_base(w.lit) in EVALUATORS or _shell_string(
                 w.lit if w.lit is not None else w.pre) for w in [head] + args):
-            self._condemn(head.off, "dynamic-command" if dynamic else "unquoted-wrapper")
+            self._condemn(head.off + len(head.raw),      # the head word is judged above
+                          "dynamic-command" if dynamic else "unquoted-wrapper")
             self.bare.append(head.off)
+            self.shell_stdin = self.shell_stdin or bool(self.pending)   # `eval "$(cat)" <<E`
         if base in SHELLS:
             return
         for w in args:                                  # any word may be the command
@@ -587,18 +596,41 @@ class _Scan:
 
 
 def _reads_stdin(words):
-    """Whether the command in `words` is a shell that reads its script from
-    stdin (`bash`, `sudo bash -s`, `bash /dev/stdin`, `bash <(...)`) rather
-    than from `-c` or a file, or a leading `source`/`.` of stdin or of a
-    process substitution (`. <(...)`, `source /dev/stdin`)."""
+    """Whether the command in `words` runs a script it reads from stdin: a
+    shell given no `-c` string and no script file (`bash`, `bash -o
+    pipefail`, `sudo bash -s`, `bash /dev/stdin`, `bash <(...)`), `su`,
+    `ssh` or `sudo -s`/`-i` given no `-c` string, a leading `source`/`.` of
+    stdin or of a process substitution, or `xargs`/`parallel` handing what
+    it reads to a shell or evaluator."""
+    feeds = False
     for j, w in enumerate(words):
-        rest = words[j + 1:]
+        rest, b = words[j + 1:], _base(w.lit)
+        strings = any(_shell_string(r.lit if r.lit is not None else r.pre) for r in rest)
         if w.lit in ("source", ".") and (j == 0 or words[j - 1].lit in ("builtin", "command")):
             return not rest or _dev_file(rest[0])
-        if _base(w.lit) in SHELLS and w.lit != "su":
-            return not any(_shell_string(r.lit if r.lit is not None else r.pre) for r in rest) and (
-                all(r.lit is not None and r.lit.startswith("-") for r in rest)
-                or any(r.lit == "-s" or _dev_file(r) for r in rest))
+        if b in ("xargs", "parallel"):
+            feeds = True
+        elif feeds and (b in SHELLS or b in EVALUATORS):
+            return True
+        elif b in SHELLS and b != "su":
+            ops = [r for k, r in enumerate(rest) if (r.lit is None or r.lit[:1] not in "-+")
+                   and (k == 0 or rest[k - 1].lit not in ("-o", "-O", "+o", "+O"))]
+            return not strings and (not ops or _dev_file(ops[0]) or
+                                    any(r.lit == "-s" for r in rest))
+        elif b in ("su", "ssh") or b in ("sudo", "doas") and _login_shell(rest):
+            return not strings
+    return False
+
+
+def _login_shell(rest):
+    """Whether sudo's options `rest` ask for a shell (`-s`, `-i`, `-is`)."""
+    for k, r in enumerate(rest):
+        if (r.lit or "").startswith("-"):
+            if r.lit != "--" and r.lit[1:2] != "-" and ("s" in r.lit or "i" in r.lit):
+                return True
+        elif k == 0 or rest[k - 1].lit not in ("-u", "-g", "-U", "-C", "-D", "-h", "-p", "-r",
+                                                "-t", "-T"):
+            return False
     return False
 
 

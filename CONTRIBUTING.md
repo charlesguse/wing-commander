@@ -96,11 +96,11 @@ string or stream that a shell or evaluator executes fails as a disallowed
 form, however it is quoted. That covers the arguments of
 `sh`/`bash`/`zsh`/`dash -c`, `eval`, `trap`, `source`/`.`, `ssh`, `su -c`
 and `docker`/`podman exec|run … sh -c`; a backtick body; the body of a
-heredoc or here-string fed to a shell; and anything piped or
+heredoc or here-string fed to a shell or evaluator; and anything piped or
 process-substituted into a shell (every `gh` earlier in the `run:` block
-counts). A string with no `gh` word in it passes untouched. Gate 12 does
-not look inside such a string for `gh` spelled across quotes or
-expansions (`sh -c 'g$X api'`), so never write one.
+that is not itself an allowed call counts). `gh` spelled across quotes or
+an expansion in such a string (`sh -c 'g""h api'`, `g$X`, `${X:-g}h`)
+fails too. A string with no `gh` in it passes untouched.
 
 **Variables as commands**: a command word that is a variable or expansion
 (`$CMD`, `"$@"`, `${X:-…}`, the `$SUDO` of `$SUDO gh`), and an `eval`,
