@@ -26,6 +26,10 @@ Meanwhile the repository's real call sites are simple. Across all 87 workflow an
 - Q: Are Gate 28 and #954's script-call reader migrated onto the shared locator in this spec? → A: C — Gate 28 moves in this spec; #954's reader follows in its own lifecycle, waived in the single-home check meanwhile with a tracking line on #889 (FR-012).
 - Q: Is a pinned `shfmt` binary an acceptable fallback dependency? → A: Not now — this spec adds no new dependency; a real-parser fallback becomes its own proposal, decided with evidence of the authoring rule's false-failure rate (FR-019).
 
+### Session 2026-10-12
+
+- Q: Review passes on PR #1004 kept finding new indirect ways to reach `gh` (inside `sh -c`, `eval`, `trap`, heredocs and pipes fed to a shell, and through variables as command words), and the locator grew to about 1,200 lines against SC-003's 250. Keep reading inside those strings, accept the gaps, or make the rule stricter? → A: (c) make the authoring rule stricter so the locator can shrink. Any `gh` word anywhere in a string or stream a shell or evaluator runs is a disallowed form, and nothing inside such a string is read; a string with no `gh` passes. A variable or expansion used as a command word is a disallowed form wherever the `run:` block holds a `gh` outside a located call or a provable mention. FR-004's mentions and FR-007's checks are unchanged (contracts/authoring-rule.md).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A miss becomes impossible by construction (Priority: P1)

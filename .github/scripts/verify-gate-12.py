@@ -250,6 +250,18 @@ FIXTURES = [
      mkcase("", "", [APP_ENV], ['x="${Y:-$(gh issue view 5)}"']),
      True, (DISALLOWED, "(param-expansion)")),
 
+    ("any gh word in a string a shell runs fails closed, quoted or not",
+     mkcase("", "", [APP_ENV], ["docker run --rm img sh -c 'echo \"gh is missing\"'"]),
+     True, (DISALLOWED, "(unquoted-wrapper)")),
+
+    ("a string a shell runs with no gh word in it passes untouched",
+     mkcase("", "", [APP_ENV], ["docker run --rm img sh -c 'command -v git'"]),
+     False, ()),
+
+    ("a variable command word fails closed where a stray gh is named",
+     mkcase("", "", [APP_ENV], ["GH=gh", '"$GH" issue view 5']),
+     True, (DISALLOWED, "(dynamic-command)")),
+
     ("an unterminated quote hides nothing: the rest fails closed",
      mkcase("", "", [APP_ENV], ["echo 'oops", "gh issue view 5"]),
      True, (DISALLOWED, "(unterminated-quote)")),
@@ -423,12 +435,12 @@ LOCATOR_CASES = [
      [dis("unquoted-wrapper")]),
     ("a ${} word holding gh anywhere is unprovable",
      "${X:-gh}/x api; ${GH:-${HOME}/bin/gh} api; sudo ${G:-${D}/gh} a; ${X:-gh}${Y:-} a",
-     [dis("dynamic-command"), dis("dynamic-command"), dis("unquoted-wrapper"),
+     [dis("dynamic-command"), dis("param-expansion"), dis("param-expansion"),
       dis("dynamic-command")]),
-    ("a quoted gh behind a wrapper stays a call", 'sudo "gh" api x',
-     [dis("unquoted-wrapper"), men("quoted")]),
+    ("a quoted gh behind a wrapper is a call", 'sudo "gh" api x',
+     [dis("unquoted-wrapper")]),
     ("gh as a quoted or nested ${} default", '${X:-"gh"} api x; ${X:-${Y:-gh}} a',
-     [dis("dynamic-command"), men("quoted"), dis("dynamic-command")]),
+     [dis("dynamic-command")] * 2),
     ("gh split across a ${} boundary in command position",
      '${X:-g}h api x -X DELETE; g${Y} api x; ${X}${Y} a; "${X:-g}h" api x; '
      'sudo ${X:-g}h api x; echo ${X:-g}h; "${X}"hx a; "${X}"g a',
@@ -440,98 +452,99 @@ LOCATOR_CASES = [
      "/usr/bin/g${X} api x; ${HOME}/bin/g${X:-h} api x; $HOME/bin/gh api x; "
      '"$HOME/bin/gh" api x; $(printf g)$(printf h) api x; h$X a',
      [dis("dynamic-command")] * 10),
-    ("a dynamic command word's arguments past its first are not checked (accepted)",
+    ("a dynamic command word's arguments may be its command",
      '"$PY" s.py "${FILE}"; "$PY" s.py g$F; '
-     '"$SCRIPT_DIR/run.sh" a; sudo cp "$F.bak" x', []),
+     '"$SCRIPT_DIR/run.sh" a; sudo cp "$F.bak" x', [dis("dynamic-command")]),
     ("a gh directory on PATH runs nothing by itself", "env PATH=/x/gh make", []),
     # A lone `$CMD` command word may hold a `gh` the script names outside a
     # call or a mention, so each one is a disallowed call where one exists.
     ("a lone $CMD may run a gh the script names",
      'GH=gh; $GH api x -X POST; set -- gh api x; "$@"; X=/usr/bin/gh; $X api x; '
      'eval "$(echo gh api x)"',
-     [dis("dynamic-command")] * 3 + [dis("unquoted-wrapper")]),
+     [dis("dynamic-command")] * 5 + [dis("unquoted-wrapper")]),
     ("a lone $CMD with no gh named elsewhere is not checked",
      '$PY x.py; echo "gh"; # gh', [men("quoted"), men("comment")]),
     ("any word of a literal wrapper may be its command (operands come first)",
      "sudo timeout 5s /usr/bin/gh api x; flock /tmp/l ${X:-g}h api x; "
      "taskset 0x1 g$X api x; sudo ln -s /opt/gh/bin/gh /usr/local/bin/gh",
-     [dis("unquoted-wrapper")] * 4),
+     [dis("unquoted-wrapper")] * 6),
     ("gh spelled by a brace list, an ANSI-C or a locale string",
      "{gh,} api x; {,/usr/bin/gh} api x; $'\\x67h' api x; $'\\147h' api x; "
      '$"gh" api x; {1..3} a; echo {a,b}',
-     [dis("dynamic-command")] * 4 + [C_ST, men("quoted")]),
-    ("a shell string handed to eval or a wrapper is re-read",
+     [dis("dynamic-command")] * 4 + [C_ST, dis("dynamic-command")]),
+    ("a shell string handed to eval or a wrapper is not read: gh in it fails, "
+     "none passes",
      "eval 'g\"\"h api x'; eval '$(printf g)h api x'; command eval \"gh api x\"; "
      'watch "gh api x"; flock /tmp/l -c "gh api x"',
-     [dis("unquoted-wrapper")] * 2 + [dis("unquoted-wrapper"), men("quoted")] * 3),
+     [dis("unquoted-wrapper")] * 3),
     ("a [[ ]] test still ends a command", "x=$( [[ -n y ]] && gh api x )",
      [dis("substitution-not-first")]),
     ("a process substitution in a test runs; a [[ redirect target is no test",
      "[[ -f <(gh api x) ]]; > [[ gh a b ]]", [C_SUB, C_ST]),
     ("a sequence brace or an undecodable $'...' may be gh",
      "{g..g}h api x; $'\\u67h' api x; echo $'\\e[31m'", [dis("dynamic-command")] * 2),
-    ("a shell handed a string re-reads it",
+    ("a shell handed a string is not read: gh in it fails",
      "bash -c 'gh api x'; sudo bash -lc 'gh api x'; env -S'gh api x'; "
      'bash .github/x.sh "$y"; bash -c "$CMD"',
-     [dis("unquoted-wrapper"), men("quoted")] * 3),
+     [dis("unquoted-wrapper")] * 3),
     ("a call inside a may-be-gh command word does not hide the gh after it",
-     "$(gh a b)h gh api y", [C_SUB, dis("dynamic-command")]),
-    ("a ${} word after a wrapper's operand, and nested expansions in eval",
+     "$(gh a b)h gh api y", [dis("dynamic-command"), C_SUB, dis("dynamic-command")]),
+    ("rule 2: a lone ${} after a wrapper, or eval of an expansion, passes where "
+     "no stray gh is named",
      "flock /tmp/l ${GH} api x; eval '$X\"\"h api x'; eval '${X:-${Y:-g}}h api x'; "
-     "eval '$(echo $(echo g))h api x'", [dis("unquoted-wrapper")] * 4),
+     "eval '$(echo $(echo g))h api x'", []),
     ("an array assignment before gh is an unsupported prefix",
      "x=$( GH_TOKEN=(t) gh api x -X DELETE ); a=(x) case x in && gh a b",
      [dis("unsupported-prefix"), C_ST]),
     ("a case arm ends the first command; a cut pattern fails closed",
      "x=$(case $y in a) ;; esac; gh api x); case x in fi;gh '",
      [dis("substitution-not-first"), dis("case-pattern")]),
-    ("a long brace list, and backtick or heredoc commands, may be gh",
+    ("a long brace list may be gh; backtick and unquoted heredoc bodies are not read",
      "{gh,a,b,c,d,e,f,i,j,k,l,m,n,o,p,q,r} api x; x=`g$X api x`; x=`ls $D/$F`\n"
      "cat <<E\nsee $DIR/$F and $(${X:-g}h api x)\nE",
-     [dis("dynamic-command"), dis("backtick"), dis("unquoted-heredoc")]),
+     [dis("dynamic-command")]),
     ("a pattern cut by a newline fails closed; time after a prefix is a runner",
      "case x in fi\ngh api x\nesac\na=(x) time gh api x",
      [dis("case-pattern"), dis("unquoted-wrapper")]),
-    ("backtick and heredoc commands after a keyword or nested",
+    ("backtick and unquoted heredoc bodies holding no gh word are not read",
      "x=`if :; then g$X api x; fi`\ncat <<E\n$(echo $(${X:-g}h api x))\nE",
-     [dis("backtick"), dis("unquoted-heredoc")]),
+     []),
     ("many brace lists in one word stay linear",
      ("{x}{" + ",".join("a" * 17) + "}") * 8000 + " x", None),
-    ("a case on the word in; an attached -S string; a POSIX glob class",
+    ("a case on the word in; an attached -S string with no gh; a POSIX glob class",
      'case in in esac && gh api x; env -S"g$X api x"; [[:lower:]]h api x\n'
      "cat <<E\n$(case $a in x) g$X api x;; esac)\nE",
-     [C_ST, dis("unquoted-wrapper"), dis("dynamic-command"), dis("unquoted-heredoc")]),
-    ("an unclosed brace before many lists ends; a ${} command in backticks",
+     [C_ST, dis("dynamic-command")]),
+    ("an unclosed brace before many lists ends; a backtick body is not read",
      "{{a,b}{c,d}{e,f}{g,h}{i,j} api x; x=`${CMD} api x`",
-     [dis("dynamic-command"), dis("backtick")]),
+     [dis("dynamic-command")]),
     ("heredoc case spans stay linear",
      "cat <<E\n" + "$(case x in a) :;; esac)" * 4000 + "\nE", None),
     ("nested brace lists stay linear", "{x," * 8000 + "a" + "}" * 8000 + " api x", None),
     ("a may-be-gh word in an unclosed list", "a=(x\n${X:-gh} api x",
      [dis("unparsed-array")]),
-    ("a $'...' cut at a NUL, or re-read by eval",
+    ("a $'...' command word; eval of a string with no gh word",
      "$'g\\0x'h api x; eval \"\\$'g'h api x\"",
-     [dis("dynamic-command"), dis("unquoted-wrapper")]),
+     [dis("dynamic-command")]),
     ("nested unclosed lists stay linear", "[[ $( " * 39 + "x " * 80000, None),
     ("brace and bracket runs stay linear", "{" + "," * 20000 + " " + "[" * 20000, None),
-    ("a ${} word after a wrapper option may be the command",
+    ("rule 2: a lone ${} after a wrapper option passes where no stray gh is named",
      "sudo -E ${GH} api x; xargs -I{} ${GH} api {}; nice -n ${N} make",
-     [dis("unquoted-wrapper")] * 3),
+     []),
     ("gh by a literal path", "/usr/bin/gh api x; sudo /usr/bin/gh api x; "
      "timeout 5 env FOO=1 /usr/bin/gh api x",
      [dis("gh-by-path"), dis("unquoted-wrapper"), dis("unquoted-wrapper")]),
     ("gh behind a wrapper option's value, or as a bare ${} behind a wrapper",
      "sudo -u root /usr/bin/gh api x; timeout -s KILL 5 /usr/bin/gh api x; "
      "$SUDO -u root ${X:-g}h api x; nice -n ${N} g$X api x; sudo ${GH} api x",
-     [dis("unquoted-wrapper")] * 2 + [dis("dynamic-command")] * 2      # `$SUDO`, as
-     + [dis("unquoted-wrapper")] * 2),                                 # /usr/bin/gh is named
+     [dis("unquoted-wrapper")] * 2 + [dis("dynamic-command"), dis("unquoted-wrapper")]),
     ("gh by brace expansion or a glob", "{g,}h api x; g{h,} api x; [g]h api x; "
      "g? api x; sudo {g,}h api x",
      [dis("dynamic-command")] * 4 + [dis("unquoted-wrapper")]),
-    ("eval re-reads its words; a lone substitution stays unchecked",
+    ("eval's words are not read: gh in them fails, none passes",
      'eval "gh api x"; eval "g$X api x"; eval "${GH} api"; eval "x; \\${X:-g}h a"; '
      'eval "$(bash x.sh)"',
-     [dis("unquoted-wrapper"), men("quoted")] + [dis("unquoted-wrapper")] * 3),
+     [dis("unquoted-wrapper")]),
     ("an assignment after a wrapper is no command",
      'env PATH="$HOME/bin:$PATH" make; sudo FOO=$X make', []),
     ("a case pattern runs nothing, its arm does",
@@ -554,12 +567,12 @@ LOCATOR_CASES = [
      [dis("dynamic-command"), dis("dynamic-command")]),
     ("gh split by a continuation in a ${} word", "${X:-g\\\nh} api x; sudo ${X:-g\\\nh} a",
      [dis("dynamic-command"), dis("unquoted-wrapper")]),
-    ("a wrapper scan passes a word already holding a call",
+    ("a wrapper word holding a call is flagged, and so is the gh after it",
      'sudo $(gh a b)${S} gh api -X DELETE x',
-     [("call", "subst_first"), dis("unquoted-wrapper")]),
+     [dis("unquoted-wrapper"), C_SUB, dis("unquoted-wrapper")]),
     ("function as a case pattern", "case $x in\n  function) gh a b ;;\nesac", [C_ST]),
     ("a command word that may expand to nothing", "$SUDO gh a b; ${S:-} gh a b",
-     [dis("dynamic-command")] * 3),    # and `$SUDO` itself, as the second gh is named
+     [dis("dynamic-command")] * 2),
     ("more runners, and one given as a path", "/usr/bin/env gh a b; flock /l gh a b",
      [dis("unquoted-wrapper"), dis("unquoted-wrapper")]),
     ("text ending gh} is no expansion", 'sudo echo "$X uses gh}"', [men("quoted")]),
@@ -577,7 +590,8 @@ LOCATOR_CASES = [
     ("unterminated substitution", "x=$(gh a b",
      [dis("unterminated-substitution")]),
     ("ghost and gh-pages", "ghost run; git push origin gh-pages", []),
-    ("quoted gh-pages", 'echo "gh-pages .github/gh"', []),
+    ("quoted gh-pages is no gh; a quoted path ending in gh is a mention",
+     'echo "gh-pages .github/gh"', [men("quoted")]),
     ("Actions expression text", "echo ${{ x == '`' }} && gh a b", [C_ST]),
     ("Actions expression with }} string", "echo ${{ contains(x, '}}') }} gh a b",
      []),
@@ -590,18 +604,18 @@ LOCATOR_CASES = [
     ("a quoted string piped or here-stringed to a shell is a script",
      "echo 'gh api x' | bash; bash <<< 'gh a b'; echo 'gh c d'; bash script.sh 'gh e f'",
      [dis("shell-stdin"), dis("shell-stdin"), men("quoted"), men("quoted")]),
-    ("find, ssh and docker run the rest of their words",
+    ("find, ssh and docker run the rest of their words, quoted or not",
      "find . -exec gh issue close {} \\;; ssh host gh a b; docker run img gh c d; "
      "find . -exec sh -c 'gh x y' _ {} \\;",
-     [dis("unquoted-wrapper")] * 3 + [dis("unquoted-wrapper"), men("quoted")]),
-    ("a literal script a shell runs is read as a script: only its commands count",
+     [dis("unquoted-wrapper")] * 4),
+    ("a script a shell runs is not read: no gh passes, any gh word fails",
      "docker run --rm i sh -c 'for t in $T; do command -v \"$t\"; done; "
      "n=${v#git version }; case \"$a.$b\" in .) exit 1;; esac'; "
      "bash -c 'echo \"gh is missing\"'; trap 'rm -f \"${T}\"' EXIT",
-     [men("quoted")]),
-    ("a literal script a shell runs still fails on gh it may run",
+     [dis("unquoted-wrapper")]),
+    ("a script a shell runs fails on any gh word in it",
      "sh -c 'X=gh; $X api'; trap 'gh a b' EXIT; docker run i sh -c 'echo \"${X}\"; gh c d'",
-     [dis("unquoted-wrapper"), men("quoted")] * 3),
+     [dis("unquoted-wrapper")] * 3),
     ("a group, |&, a process substitution or /dev/stdin still feed a shell",
      "echo 'gh a' |& bash; { echo 'gh b'; } | sh; (echo 'gh c'; :) | bash; "
      "bash <(echo 'gh d'; :); echo 'gh e' | bash /dev/stdin; . <(echo 'gh f'); "
@@ -616,12 +630,24 @@ LOCATOR_CASES = [
     ("a partly quoted heredoc delimiter is one word and its body is data",
      "cat <<E\"O\"F\ngh x\nEOF\ngh a b", [men("quoted-heredoc"), C_ST]),
     ("an unterminated heredoc in a nested script leaves nothing pending",
-     "sh -c 'cat <<EOF | bash\ngh x'; gh a b", [dis("unquoted-wrapper"), men("quoted"), C_ST]),
+     "sh -c 'cat <<EOF | bash\ngh x'; gh a b", [dis("unquoted-wrapper"), C_ST]),
     ("script strings nested past the bound fail closed, never raise",
      "sh -c " + "'" * 1 + "eval " * 200 + "true'", None),
     ("unclosed Actions openers are linear", "echo \"" + "`${{" * 20000 + "\"", None),
     ("unclosed array lists and tests are linear",
      "a=(x\n" * 30000 + "[[ a\n" * 30000 + "; gh a b", None),
+    # The owner's option (c) on #993 (2026-10-12): a string or stream a shell
+    # or evaluator runs is never read; any gh word in it fails, and one with
+    # none passes. What runs a variable fails where a stray gh is named.
+    ("rule 1: source, su -c and docker/podman sh -c are not read",
+     'source x.sh "gh a"; . ./env.sh; su -c "gh a" u; docker exec c sh -c "gh b"; '
+     'podman run i sh -c "command -v git"', [dis("unquoted-wrapper")] * 3),
+    ("rule 2: a backtick, eval or unquoted heredoc holding an expansion fails "
+     "where a stray gh is named",
+     'X=gh; y=`$X api x`; eval "$X api"\ncat <<E\n$($X api)\nE',
+     [dis("dynamic-command")] * 4),
+    ("rule 2: a lone $CMD beside located calls and provable mentions passes",
+     '"$PY" x.py; gh issue view 5; echo "gh x"', [C_ST, men("quoted")]),
     ("a large heredoc is linear", "cat <<'EOF'\n" + "a b c\n" * 200000 + "EOF\ngh a b",
      [C_ST]),
 ]
@@ -916,13 +942,13 @@ def mutation(scenarios, root):
     (FR-016). -> (survived: bool, replayed count)."""
     with open(LOCATOR, encoding="utf-8") as fh:
         src = fh.read()
-    needle = 'self._note(head.off, "call", reason=reason,'
+    needle = 'self._note(m.start() if m else head.off, "call", reason=reason,'
     if needle not in src:
         return True, 0               # the mutation target moved: fail loudly
     mdir = tempfile.mkdtemp(prefix="mutant_", dir=root)
     shutil.copy(GATE, mdir)
     with open(os.path.join(mdir, "wc_gh_callsites.py"), "w", encoding="utf-8") as fh:
-        fh.write(src.replace(needle, 'self._note(head.off, "mention", reason=reason,'))
+        fh.write(src.replace(needle, needle.replace('"call"', '"mention"')))
     sample = [s for s in scenarios if s[2] and s[3]][:MUTATION_SAMPLE]
     red = run_scenarios(os.path.join(mdir, os.path.basename(GATE)), sample, root)
     return not red, len(sample)
