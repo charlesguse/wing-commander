@@ -1,0 +1,36 @@
+{"mode": "any", "kind": "verb", "min": "(())<<w\n`gh issue create\"\"`"}
+{"mode": "any", "kind": "verb", "min": "{ { $()``$(())''$(<<w);} }\n`gh issue create`"}
+{"mode": "sc", "kind": "verb", "min": "$()'''''\n#'\n(gh issue create\"\")"}
+{"mode": "sc", "kind": "verb", "min": "$(())$('''')'\n#'&gh issue create"}
+{"mode": "sc", "kind": "verb", "min": "$(())'\n#'$((()))()(());gh issue create $(())"}
+{"mode": "sc", "kind": "verb", "min": "(())\n'\n#'\ngh issue create\nif :;then :;fi"}
+{"mode": "sc", "kind": "verb", "min": "$()'\n#'\n(e)\n(e);gh issue create``"}
+{"mode": "any", "kind": "api", "min": "if true;then gh api issues -XPATCH'';fi"}
+{"mode": "any", "kind": "api", "min": "$(())``\n(())\n''```gh api issues\\`\\`\\`\\` -XPATCH`$()"}
+{"mode": "sc", "kind": "verb", "min": "$()'\n#'|(());gh issue create"}
+{"mode": "any", "kind": "api", "min": "$(gh api issues\"\"``''$(()) -XPOST)''"}
+{"mode": "any", "kind": "verb", "min": "$(`<<'`\"\" #'\n)``gh issue create\"$()\""}
+{"mode": "sc", "kind": "verb", "min": "$('\n#'\"\")$(gh issue create``)"}
+{"mode": "any", "kind": "api", "min": "`gh api issues$()\\`\\`\"\" -XPOST`"}
+{"mode": "any", "kind": "api", "min": "```gh api issues\\`\\` --method POST`"}
+{"mode": "sc", "kind": "api", "min": "gh api issues -XPOST"}
+{"mode": "sc", "kind": "verb", "min": "('\n#')\n``gh issue create\"$()\""}
+{"mode": "any", "kind": "api", "min": "\"`gh api issues\"\" -X\"POST\"`\""}
+{"mode": "any", "kind": "api", "min": "gh api issues -X\"POST\""}
+{"mode": "sc", "kind": "api", "min": "gh api issues -XPOST"}
+{"mode": "sc", "kind": "verb", "min": "'\n#'\n{ gh issue create;}\n(())"}
+{"mode": "any", "kind": "api", "min": "```gh api issues -XPOST`"}
+{"mode": "sc", "kind": "verb", "min": "'\n#'\n(());gh issue create"}
+{"mode": "any", "kind": "api", "min": "(gh api issues --method=POST)"}
+{"mode": "pronly", "kind": "api", "min": "(if(())then $(())'';fi)\n{ gh api repos/{owner}/{repo}/issues ${{ x || ')' }}$(`))`) --method POST''``;}"}
+{"mode": "sc", "kind": "verb", "min": "($()$()''\"\n#\"``$(''))\n(gh issue create)\n$(())``''$(())"}
+{"mode": "sc", "kind": "api", "min": "($(())''\"\")\n(())\n$(gh api issues`` -XPOST)''"}
+{"mode": "sc", "kind": "api", "min": "(())\nif ``;then if(e)then o;fi fi&gh api issues\"\"`` -XPOST"}
+{"mode": "sc", "kind": "verb", "min": "'\n#'$(())&gh issue create"}
+{"mode": "any", "kind": "verb", "min": "(())<<t\n`gh issue create\"\"`"}
+{"mode": "any", "kind": "api", "min": "{ $((()))\"\";}\n`gh api issues\\`\\`\\`\\` -X\"POST\"`"}
+{"mode": "pronly", "kind": "verb", "min": "(''$())\n{(())}\n('\n#')\n\"${{ inputs.a != '\"' }}\"`gh issue create`\n(t)"}
+{"mode": "sc", "kind": "verb", "min": "$(\"``\")``'''\n#'\"\"$(gh issue create)"}
+{"mode": "pronly", "kind": "api", "min": "`gh api repos/{owner}/{repo}/issues -X'POST' \"\n\"${{ inputs.a || 'b' }} -XT`"}
+{"mode": "pronly", "kind": "verb", "min": "$(()''${)`''``` #\"\ngh issue create"}
+{"mode": "pronly", "kind": "api", "min": "''$((())\n)$(gh api repos/{owner}/{repo}/issues --method=POST '\n'$( #'\n) -XT)\"\"$(\"\")"}

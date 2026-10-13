@@ -281,9 +281,10 @@ def gate_sources(scanned=None):
     The gate scripts under .github/scripts AND the python heredocs embedded
     in workflow and composite run: blocks, the latter as `<file>:<line>`.
     Skipping the second is how this check could have reported "0 failure(s)"
-    over an untriggered docs/setup.md: Gate 12's live scan is a heredoc, and
-    the only file-based trace of its subject is a fixture key in its
-    self-test -- discovery by accident.
+    over an untriggered docs/setup.md: a gate whose only file-based trace
+    of its subject is a fixture key in its self-test is discovery by
+    accident (Gate 12 once was one; it now lives in
+    verify-gate-12-token-permissions.py).
 
     Both readers below run over THIS list rather than gathering their own,
     so a disagreement between them can only mean the patterns disagree --
@@ -478,8 +479,7 @@ def check_local_runner_parity(root="."):
         print(f"ok    all {len(pr_time_gates(root))} PR-time gate(s) are "
               f"reproducible locally ({len(pr_time_invocations(root))} invocation(s))")
 
-    # The same promise for the heredoc gates (Gate 12's live scan among
-    # them). pr_time_inline_steps and LOOSE_PY_HEREDOC_RE share one grammar
+    # The same promise for the heredoc gates. pr_time_inline_steps and LOOSE_PY_HEREDOC_RE share one grammar
     # for "this step opens a python heredoc"; a PR-time step it cannot run
     # verbatim is reported here rather than dropped, and a lint-workflows.yml
     # with no runnable heredoc gate at all means the reader broke, not that
@@ -495,7 +495,7 @@ def check_local_runner_parity(root="."):
     if not runnable:
         failures.append(
             "pr_time_inline_steps found no runnable python-heredoc step in "
-            "lint-workflows.yml's PR-time jobs - Gates 2/3/6/12/15/16/22/23 "
+            "lint-workflows.yml's PR-time jobs - Gates 2/3/6/15/16/22/23 "
             "are written that way, so the reader has stopped seeing them.")
     elif not unrunnable:
         print(f"ok    all {len(runnable)} PR-time heredoc gate(s) run "

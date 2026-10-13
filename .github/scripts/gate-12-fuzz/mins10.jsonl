@@ -1,0 +1,6 @@
+{"mode": "pronly", "kind": "verb", "min": "` #`$(())$'\\''$(\ngh issue create)"}
+{"mode": "pronly", "kind": "api", "min": "$'\\'''\"'\"${ #}\"\n(())\n(gh api repos/{owner}/{repo}/issues -XPOST\"\"\"\")"}
+{"mode": "pronly", "kind": "verb", "min": "$(())``''``$(${\"\" #$'\\''})$()``''\n{ gh issue create\"\";}"}
+{"mode": "pronly", "kind": "api", "min": "''$()''\n($'\\''$(())`'`)\n(``)\n\"$(gh api repos/{owner}/{repo}/issues \"``\" --method POST)\""}
+{"mode": "pronly", "kind": "api", "min": "`gh api repos/{owner}/{repo}/issues ${{ x || ')' }}\\`;\\`${{ inputs.a && inputs.b }} -XPOST`"}
+{"mode": "pronly", "kind": "verb", "min": "$'\\''``\nif((()))then ${{ inputs.a != '\"' }};fi|$(\"\"''\"''\")\"\n#\"\ngh issue create"}

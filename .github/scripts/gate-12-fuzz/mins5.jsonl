@@ -1,0 +1,16 @@
+{"mode": "pronly", "kind": "api", "min": "`\\``gh api repos/{owner}/{repo}/issues \\${{ toJSON(x) }} -XPOST\n(())\n``"}
+{"mode": "pronly", "kind": "verb", "min": "$($'\\'')'${\"\"\n#'\n(gh issue create);(())"}
+{"mode": "pronly", "kind": "api", "min": "`gh api repos/{owner}/{repo}/issues \\${{ inputs.a != '\"' }}$((())(()))\"\"$() -XPATCH`"}
+{"mode": "pronly", "kind": "verb", "min": "`\"`$'\\'' #\"\n(gh issue create``)"}
+{"mode": "pronly", "kind": "api", "min": "((()))\n\"$(gh api repos/{owner}/{repo}/issues \\${{ format('''{0}', x) }} -X\"POST\")\"$(())"}
+{"mode": "pronly", "kind": "api", "min": "''gh api repos/{owner}/{repo}/issues ``\\${{ format('''{0}', x) }}`` --method POST"}
+{"mode": "pronly", "kind": "api", "min": "$()''`\n#``<<E `\n`gh api repos/{owner}/{repo}/issues \"\"\\`\\` -XPATCH`"}
+{"mode": "pronly", "kind": "verb", "min": "` #`$'\\''$(()''\"\")\ngh issue create $(())"}
+{"mode": "pronly", "kind": "api", "min": "$'\\''$()$((()))$(('${'`''`)' #'\n)&gh api repos/{owner}/{repo}/issues --method=POST"}
+{"mode": "pronly", "kind": "api", "min": "`gh api repos/{owner}/{repo}/issues \"\"${{ inputs.a && inputs.b }}\\` #\\` -XPATCH`"}
+{"mode": "pronly", "kind": "api", "min": "gh api repos/{owner}/{repo}/issues ``$($( #'\n)$(case A in a)esac))--method=POST"}
+{"mode": "pronly", "kind": "verb", "min": "$()''$(())$(\"\n#\"$'\\'')\"\"\n$(gh issue create)\n{(())}"}
+{"mode": "pronly", "kind": "api", "min": "(gh api repos/{owner}/{repo}/issues ${A#$'\\''}\"'\n\" -XPOST)\n$(}``)"}
+{"mode": "pronly", "kind": "api", "min": "{ gh api repos/{owner}/{repo}/issues \\${{ toJSON(x) }}$(((()))()``)`` -XPOST;}\n(\"\"''''``)"}
+{"mode": "pronly", "kind": "api", "min": "gh api repos/{owner}/{repo}/issues \"\"${{ inputs.a || 'b' }}\"`\\`\" '`\" -XPOST$(\n(``$()))``\"``\""}
+{"mode": "pronly", "kind": "api", "min": "if true;then gh api repos/{owner}/{repo}/issues ''\\${{ inputs.a != '\"' }} -XPOST;fi\n((()))"}

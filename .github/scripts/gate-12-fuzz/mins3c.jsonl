@@ -1,0 +1,8 @@
+{"mode": "any", "kind": "api", "min": "`````gh api repos/{owner}/{repo}/issues \\`\\`\"\"--method POST`"}
+{"mode": "any", "kind": "api", "min": "$(gh api repos/{owner}/{repo}/issues \"\"${B:`$(`'${'}$(()) -XPOST)}''"}
+{"mode": "any", "kind": "api", "min": "`gh api repos/{owner}/{repo}/issues $(())\\` #\\`\"\"\"\" -XPOST`"}
+{"mode": "pronly", "kind": "api", "min": "(if(())then $(())'';fi)\n{ gh api repos/{owner}/{repo}/issues ${{ x || ')' }}$(`))`) --method POST''``;}"}
+{"mode": "pronly", "kind": "verb", "min": "(''$())\n{(())}\n('\n#')\n\"${{ inputs.a != '\"' }}\"`gh issue create`\n(t)"}
+{"mode": "any", "kind": "api", "min": "{ $((()))\"\";}\n`gh api repos/{owner}/{repo}/issues \\`\\`\\`\\`-X\"POST\"`"}
+{"mode": "pronly", "kind": "verb", "min": "$(()''${)`''``` #\"\ngh issue create"}
+{"mode": "any", "kind": "api", "min": "$()$('')`gh api repos/{owner}/{repo}/issues \\`\\`\\`\\`-XPOST`$(())\"\""}
