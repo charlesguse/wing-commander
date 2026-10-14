@@ -561,6 +561,92 @@ def check_rescue_scope(errors, wf_dir=None):
     return covered
 
 
+PIPELINE_DIR = ".wing-commander-pipeline"
+PROJECT_GATE = re.compile(r"(?:steps\.[\w-]+\.outputs|matrix)\.project != ''")
+
+
+def _reads_pipeline(step):
+    """A step that runs code from the pipeline checkout: a composite under
+    it, or a run block that names it."""
+    return str(step.get("uses", "")).startswith(f"./{PIPELINE_DIR}/") or f"{PIPELINE_DIR}/" in str(step.get("run", ""))
+
+
+def _is_pipeline_removal(step):
+    return str(step.get("run", "")).strip() == f"rm -rf -- {PIPELINE_DIR}"
+
+
+def _is_pipeline_recheckout(step):
+    w = step.get("with") or {}
+    return (str(step.get("uses", "")).startswith("actions/checkout@")
+            and str(w.get("path", "")) == PIPELINE_DIR
+            and str(w.get("ref", "")).strip() == "${{ steps.pipeline-ref.outputs.ref }}")
+
+
+def check_pipeline_recheckout(errors, wf_dir=None):
+    """MF-46: the agent can write the pipeline checkout in the workspace
+    (`git diff --output=<path>`), so in every subfolder-capable job (one
+    with a containment check) each agent step is followed, before any step
+    that runs code from that checkout, by `rm -rf -- .wing-commander-pipeline`
+    and then a re-checkout at the job's pinned ref, both gated on a
+    non-empty project. Subfolder-capable means the job uses
+    wing-commander-containment in any mode."""
+    wf_dir = wf_dir or os.path.join(ROOT, ".github", "workflows")
+    covered = 0
+    for fn in sorted(os.listdir(wf_dir)):
+        if not fn.endswith(".yml"):
+            continue
+        with open(os.path.join(wf_dir, fn), encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+        for job_name, job in ((doc or {}).get("jobs") or {}).items():
+            steps = job.get("steps") or []
+            if not any(str(s.get("uses", "")).endswith("/wing-commander-containment") for s in steps):
+                continue
+            for i, s in enumerate(steps):
+                if "claude-code-action" not in str(s.get("uses", "")):
+                    continue
+                after = steps[i + 1:]
+                first = next((j for j, t in enumerate(after) if _reads_pipeline(t)), len(after))
+                rm = next((j for j, t in enumerate(after[:first]) if _is_pipeline_removal(t)), None)
+                co = next((j for j, t in enumerate(after[:first]) if _is_pipeline_recheckout(t)), None)
+                where = f"{fn}:{job_name}: agent {s.get('name')!r}"
+                if rm is None or co is None or co < rm:
+                    errors.append(f"{where} is not followed by `rm -rf -- {PIPELINE_DIR}` and a re-checkout at "
+                                  f"steps.pipeline-ref.outputs.ref before the first step that runs pipeline code (MF-46)")
+                    continue
+                if not any(t.get("id") == "pipeline-ref" for t in steps[:i]):
+                    errors.append(f"{where}: the job has no pipeline-ref step before the agent to re-checkout at (MF-46)")
+                    continue
+                if not all(PROJECT_GATE.search(str(after[j].get("if", ""))) for j in (rm, co)):
+                    errors.append(f"{where}: the pipeline re-checkout is not gated on a non-empty project (MF-46)")
+                    continue
+                covered += 1
+    return covered
+
+
+UNRECHECKED = """\
+jobs:
+  stage:
+    steps:
+      - id: project
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+      - name: Agent
+        id: agent
+        uses: anthropics/claude-code-action@v1
+      - name: Remove the pipeline checkout (post-agent)
+        if: always() && steps.project.outputs.project != ''
+        run: rm -rf -- .wing-commander-pipeline
+      - name: Check agent changes stay inside the project folder
+        id: containment
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+      - name: Re-checkout pipeline repository (post-agent)
+        if: always() && steps.project.outputs.project != ''
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          path: .wing-commander-pipeline
+"""
+
+
 def staged_clone(tmp, case):
     """A clone whose origin already holds the base commit, with the case's
     local commits on top. Returns (work, origin, base sha)."""
@@ -845,6 +931,15 @@ def main():
         check_rescue_scope(probe, tmp)
         if not any("MF-36" in p for p in probe):
             errors.append("rescue scope: a rescue not gated on its failed containment check was not flagged")
+    if check_pipeline_recheckout(errors) == 0:
+        errors.append("pipeline re-checkout: no agent in a subfolder-capable job was found -- the check has lost its subject")
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "unrechecked.yml"), "w", encoding="utf-8") as fh:
+            fh.write(UNRECHECKED)
+        probe = []
+        check_pipeline_recheckout(probe, tmp)
+        if not any("MF-46" in p for p in probe):
+            errors.append("pipeline re-checkout: a re-checkout after the first pipeline composite was not flagged")
     if check_guard_coverage(errors) == 0:
         errors.append("guard coverage: no Edit/Write agent in a project-wired job was found -- the check has lost its subject")
     # Self-test: the coverage check must flag an unguarded Edit/Write agent.

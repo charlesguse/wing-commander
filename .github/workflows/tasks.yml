@@ -951,6 +951,24 @@ jobs:
             --allowedTools "${{ steps.tool-args-tasks-direct-commit.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-tasks-direct-commit.outputs.disallowed-tools }}"
 
+      # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
+      # any step runs pipeline code -- see clarify.yml.
+      - name: Remove the agent-writable pipeline checkout (post-agent, auto)
+        id: pipeline-rm-auto
+        if: always() && steps.agent-auto.outcome != 'skipped' && steps.project.outputs.project != ''
+        run: rm -rf -- .wing-commander-pipeline
+
+      - name: Re-checkout pipeline repository (post-agent, auto)
+        id: pipeline-recheckout-auto
+        if: always() && steps.agent-auto.outcome != 'skipped' && steps.project.outputs.project != ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
       # !cancelled(), not always() (spec 052, should-fix per maintainer
       # review of PR #407): a run cancelled during the agent step must not
       # still perform a network mint and a remote rewrite in the cancel
@@ -1203,6 +1221,24 @@ jobs:
             --max-turns ${{ steps.agent-pr-ceiling.outputs.ceiling }}
             --allowedTools "${{ steps.tool-args-tasks-pr.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-tasks-pr.outputs.disallowed-tools }}"
+
+      # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
+      # any step runs pipeline code -- see clarify.yml.
+      - name: Remove the agent-writable pipeline checkout (post-agent, pr)
+        id: pipeline-rm-pr
+        if: always() && steps.agent-pr.outcome != 'skipped' && steps.project.outputs.project != ''
+        run: rm -rf -- .wing-commander-pipeline
+
+      - name: Re-checkout pipeline repository (post-agent, pr)
+        id: pipeline-recheckout-pr
+        if: always() && steps.agent-pr.outcome != 'skipped' && steps.project.outputs.project != ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
 
       # !cancelled(), not always() (spec 052, should-fix per maintainer
       # review of PR #407): a run cancelled during the agent step must not
@@ -1646,6 +1682,10 @@ jobs:
         with:
           candidates-json: >-
             [
+              {"name": "Remove the agent-writable pipeline checkout (post-agent, auto)", "conclusion": "${{ steps.pipeline-rm-auto.conclusion }}"},
+              {"name": "Re-checkout pipeline repository (post-agent, auto)", "conclusion": "${{ steps.pipeline-recheckout-auto.conclusion }}"},
+              {"name": "Remove the agent-writable pipeline checkout (post-agent, pr)", "conclusion": "${{ steps.pipeline-rm-pr.conclusion }}"},
+              {"name": "Re-checkout pipeline repository (post-agent, pr)", "conclusion": "${{ steps.pipeline-recheckout-pr.conclusion }}"},
               {"name": "Check agent changes stay inside the project folder (auto)", "conclusion": "${{ steps.containment-auto.conclusion }}"},
               {"name": "Check agent changes stay inside the project folder (pr)", "conclusion": "${{ steps.containment-pr.conclusion }}"},
               {"name": "Fail loud on non-healthy agent verdict (auto)", "conclusion": "${{ steps.verdict-fail-auto.conclusion }}"},

@@ -814,6 +814,22 @@ jobs:
             --allowedTools "${{ steps.tool-args-cleanup.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-cleanup.outputs.disallowed-tools }}"
 
+      # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
+      # any step runs pipeline code -- see clarify.yml.
+      - name: Remove the agent-writable pipeline checkout (post-agent)
+        if: always() && steps.summarize.outcome != 'skipped' && steps.project.outputs.project != ''
+        run: rm -rf -- .wing-commander-pipeline
+
+      - name: Re-checkout pipeline repository (post-agent)
+        if: always() && steps.summarize.outcome != 'skipped' && steps.project.outputs.project != ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
       # Containment (spec 114, FR-021) -- see clarify.yml. This agent holds no
       # git commit or push tool and nothing below commits, so any change it
       # leaves is uncommitted and dies with the runner: base-sha HEAD covers

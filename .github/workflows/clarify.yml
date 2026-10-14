@@ -828,6 +828,32 @@ jobs:
             --allowedTools "${{ steps.tool-args-clarify.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-clarify.outputs.disallowed-tools }}"
 
+      # Spec 114 (MF-46): the agent can write the pipeline checkout in the
+      # workspace (`git log/diff --output=<path>`), and every step below
+      # runs a composite from it -- the containment check, label first, the
+      # stranded-commit push. For a subfolder lifecycle it is deleted and
+      # checked out again at the job's pinned ref before any of them runs.
+      # always(), not !cancelled(): the always() verdict and metrics steps
+      # below run pipeline code in a cancelled run too, and a checkout is a
+      # read, never a remote rewrite. verify-subfolder-containment.py
+      # (check_pipeline_recheckout) holds every subfolder-capable agent to
+      # this pair.
+      - name: Remove the agent-writable pipeline checkout (post-agent)
+        id: pipeline-rm
+        if: always() && steps.agent.outcome != 'skipped' && steps.project.outputs.project != ''
+        run: rm -rf -- .wing-commander-pipeline
+
+      - name: Re-checkout pipeline repository (post-agent)
+        id: pipeline-recheckout
+        if: always() && steps.agent.outcome != 'skipped' && steps.project.outputs.project != ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
       # !cancelled(), not always() (spec 052, should-fix per maintainer
       # review of PR #407): a run cancelled during the agent step must not
       # still perform a network mint and a remote rewrite in the cancel
@@ -1357,6 +1383,8 @@ jobs:
         with:
           candidates-json: >-
             [
+              {"name": "Remove the agent-writable pipeline checkout (post-agent)", "conclusion": "${{ steps.pipeline-rm.conclusion }}"},
+              {"name": "Re-checkout pipeline repository (post-agent)", "conclusion": "${{ steps.pipeline-recheckout.conclusion }}"},
               {"name": "Check agent changes stay inside the project folder", "conclusion": "${{ steps.containment.conclusion }}"},
               {"name": "Fail on agent API error", "conclusion": "${{ steps.api-error.conclusion }}"},
               {"name": "Fail loud on non-healthy agent verdict", "conclusion": "${{ steps.verdict-fail.conclusion }}"},

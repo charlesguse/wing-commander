@@ -1406,6 +1406,24 @@ jobs:
             --allowedTools "${{ steps.tool-args-cycle.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-cycle.outputs.disallowed-tools }}"
 
+      # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
+      # any step runs pipeline code -- see clarify.yml.
+      - name: Remove the agent-writable pipeline checkout (post-agent, cycle)
+        id: pipeline-rm-cycle
+        if: always() && steps.cycle.outcome != 'skipped' && steps.project.outputs.project != ''
+        run: rm -rf -- .wing-commander-pipeline
+
+      - name: Re-checkout pipeline repository (post-agent, cycle)
+        id: pipeline-recheckout-cycle
+        if: always() && steps.cycle.outcome != 'skipped' && steps.project.outputs.project != ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
       # !cancelled(), not always() (spec 052, should-fix per maintainer
       # review of PR #407): a run cancelled during the agent step must not
       # still perform a network mint and a remote rewrite in the cancel
@@ -2305,6 +2323,24 @@ jobs:
             --allowedTools "${{ steps.tool-args-retry.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-retry.outputs.disallowed-tools }}"
 
+      # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
+      # any step runs pipeline code -- see clarify.yml.
+      - name: Remove the agent-writable pipeline checkout (post-agent, retry)
+        id: pipeline-rm-retry
+        if: always() && steps.retry.outcome != 'skipped' && steps.project.outputs.project != ''
+        run: rm -rf -- .wing-commander-pipeline
+
+      - name: Re-checkout pipeline repository (post-agent, retry)
+        id: pipeline-recheckout-retry
+        if: always() && steps.retry.outcome != 'skipped' && steps.project.outputs.project != ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
       # !cancelled(), not always() (spec 052, should-fix per maintainer
       # review of PR #407): a run cancelled during the agent step must not
       # still perform a network mint and a remote rewrite in the cancel
@@ -3141,6 +3177,24 @@ jobs:
             --allowedTools "${{ steps.tool-args-post-progress-comment.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-post-progress-comment.outputs.disallowed-tools }}"
 
+      # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
+      # any step runs pipeline code -- see clarify.yml.
+      - name: Remove the agent-writable pipeline checkout (post-agent, progress)
+        id: pipeline-rm-progress
+        if: always() && steps.progress.outcome != 'skipped' && steps.project.outputs.project != ''
+        run: rm -rf -- .wing-commander-pipeline
+
+      - name: Re-checkout pipeline repository (post-agent, progress)
+        id: pipeline-recheckout-progress
+        if: always() && steps.progress.outcome != 'skipped' && steps.project.outputs.project != ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
       # !cancelled(), not always() (spec 052, should-fix per maintainer
       # review of PR #407): a run cancelled during the agent step must not
       # still perform a network mint and a remote rewrite in the cancel
@@ -3750,6 +3804,12 @@ jobs:
         with:
           candidates-json: >-
             [
+              {"name": "Remove the agent-writable pipeline checkout (post-agent, cycle)", "conclusion": "${{ steps.pipeline-rm-cycle.conclusion }}"},
+              {"name": "Re-checkout pipeline repository (post-agent, cycle)", "conclusion": "${{ steps.pipeline-recheckout-cycle.conclusion }}"},
+              {"name": "Remove the agent-writable pipeline checkout (post-agent, retry)", "conclusion": "${{ steps.pipeline-rm-retry.conclusion }}"},
+              {"name": "Re-checkout pipeline repository (post-agent, retry)", "conclusion": "${{ steps.pipeline-recheckout-retry.conclusion }}"},
+              {"name": "Remove the agent-writable pipeline checkout (post-agent, progress)", "conclusion": "${{ steps.pipeline-rm-progress.conclusion }}"},
+              {"name": "Re-checkout pipeline repository (post-agent, progress)", "conclusion": "${{ steps.pipeline-recheckout-progress.conclusion }}"},
               {"name": "Check agent changes stay inside the project folder (cycle)", "conclusion": "${{ steps.containment-cycle.conclusion }}"},
               {"name": "Check agent changes stay inside the project folder (retry)", "conclusion": "${{ steps.containment-retry.conclusion }}"},
               {"name": "Flip stage label (first cycle)", "conclusion": "${{ steps.flip-label.conclusion }}"},
