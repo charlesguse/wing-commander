@@ -190,6 +190,11 @@ def contain(case, script):
             git(other, "add", "-A")
             git(other, "commit", "-q", "-m", "concurrent")
             git(other, "push", "-q", "origin", "HEAD:refs/heads/" + ref)
+        if case.get("agent_fetch"):
+            # MF-57: the agent then runs `git fetch origin`, which brings the
+            # concurrent run's commits into this object store but writes only
+            # refs/remotes/*.
+            git(tmp, "fetch", "-q", "origin")
         for rel in case.get("modify", []):
             with open(os.path.join(tmp, rel), "a", encoding="utf-8") as fh:
                 fh.write("y\n")
@@ -666,6 +671,61 @@ def check_pipeline_recheckout(errors, wf_dir=None):
     return covered
 
 
+def check_snapshot_freshness(errors, wf_dir=None):
+    """MF-55: a check-mode containment step reading helpers-dir compares the
+    remote's heads with that install-pre-push step's snapshot, so the
+    snapshot must be taken after every agent step but the one being
+    checked. Otherwise a branch moved before that agent ran (an earlier
+    agent's push, the rescue push, another run's move) is charged to it."""
+    wf_dir = wf_dir or os.path.join(ROOT, ".github", "workflows")
+    covered = 0
+    for fn in sorted(os.listdir(wf_dir)):
+        if not fn.endswith(".yml"):
+            continue
+        with open(os.path.join(wf_dir, fn), encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+        for job_name, job in ((doc or {}).get("jobs") or {}).items():
+            steps = job.get("steps") or []
+            ids = {t.get("id"): j for j, t in enumerate(steps) if t.get("id")}
+            for i, s in enumerate(steps):
+                w = s.get("with") or {}
+                if not str(s.get("uses", "")).endswith("/wing-commander-containment") or str(w.get("mode", "check")) != "check":
+                    continue
+                m = re.search(r"steps\.([\w-]+)\.outputs\.helpers-dir", str(w.get("helpers-dir", "")))
+                if not m:
+                    continue
+                where = f"{fn}:{job_name}: containment check {s.get('name')!r}"
+                j = ids.get(m.group(1))
+                if j is None or j > i:
+                    errors.append(f"{where} reads helpers-dir from {m.group(1)!r}, which is not an earlier step (MF-55)")
+                    continue
+                agents = sum("claude-code-action" in str(t.get("uses", "")) for t in steps[j + 1:i])
+                if agents != 1:
+                    errors.append(f"{where} compares with a snapshot taken {agents} agent steps before it, not directly before its own agent (MF-55)")
+                    continue
+                covered += 1
+    return covered
+
+
+STALE_SNAPSHOT = """\
+jobs:
+  stage:
+    steps:
+      - id: hook
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          mode: install-pre-push
+      - id: cycle
+        uses: anthropics/claude-code-action@v1
+      - id: retry
+        uses: anthropics/claude-code-action@v1
+      - name: Check agent changes stay inside the project folder (retry)
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          helpers-dir: ${{ steps.hook.outputs.helpers-dir }}
+"""
+
+
 UNRECHECKED = """\
 jobs:
   stage:
@@ -983,6 +1043,15 @@ def main():
         check_pipeline_recheckout(probe, tmp)
         if not any("MF-46" in p for p in probe):
             errors.append("pipeline re-checkout: a re-checkout after the first pipeline composite was not flagged")
+    if check_snapshot_freshness(errors) == 0:
+        errors.append("snapshot freshness: no containment check reading helpers-dir was found -- the check has lost its subject")
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "stale-snapshot.yml"), "w", encoding="utf-8") as fh:
+            fh.write(STALE_SNAPSHOT)
+        probe = []
+        check_snapshot_freshness(probe, tmp)
+        if not any("MF-55" in p for p in probe):
+            errors.append("snapshot freshness: a retry check comparing with the cycle agent's snapshot was not flagged")
     if check_guard_coverage(errors) == 0:
         errors.append("guard coverage: no Edit/Write agent in a project-wired job was found -- the check has lost its subject")
     # Self-test: the coverage check must flag an unguarded Edit/Write agent.

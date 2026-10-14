@@ -1225,7 +1225,7 @@ jobs:
           intended-turns: ${{ inputs.max-turns }}
 
       # Containment pre-push hook (spec 114, FR-021) -- see clarify.yml.
-      # The retry agent below reuses it.
+      # The retry agent below gets its own, with a fresh snapshot.
       - name: Install containment pre-push hook
         id: containment-hook
         if: steps.project.outputs.project != ''
@@ -2147,6 +2147,24 @@ jobs:
           git fetch origin "+refs/heads/${SPEC_PREFIX}$SLUG:refs/remotes/origin/${SPEC_PREFIX}$SLUG"
           echo "base-sha=$(git rev-parse "origin/${SPEC_PREFIX}$SLUG")" >> "$GITHUB_OUTPUT"
 
+      # Containment pre-push hook (spec 114, FR-021) -- see clarify.yml.
+      # A fresh snapshot of the remote's branch heads for the retry's
+      # check (MF-55): the cycle's snapshot predates the cycle agent's
+      # pushes and the rescue push, which are not the retry agent's.
+      - name: Install containment pre-push hook (retry)
+        id: containment-hook-retry
+        if: >-
+          steps.lifecycle-gate.outputs.is-open == 'true' &&
+          steps.guard.outputs.skip != 'true' &&
+          steps.outcome.outputs.ok == 'false' &&
+          steps.effective-model.outputs.model != inputs.escalation-model &&
+          steps.tool-args-retry.outputs.allowed-tools != '' &&
+          steps.project.outputs.project != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          mode: install-pre-push
+          project: ${{ steps.project.outputs.project }}
+
       # This step's prompt carries the retry-bound paragraph for the
       # credential-expiry `git push` signature -- see clarify.yml.
       - name: Implement and converge (retry at escalation model)
@@ -2193,7 +2211,7 @@ jobs:
 
             Steps:
             1. Start from the branch's pushed state:
-               git fetch origin &&
+               ${{ !steps.project.outputs.project && 'git fetch origin &&' || '' }}
                git reset --hard origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
             2. Run the /speckit-implement skill
                (${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.claude/skills/speckit-implement/SKILL.md) for this feature
@@ -2378,7 +2396,7 @@ jobs:
           project: ${{ steps.project.outputs.project }}
           base-sha: ${{ steps.retry-base.outputs.base-sha }}
           default-branch: ${{ inputs.default-branch }}
-          helpers-dir: ${{ steps.containment-hook.outputs.helpers-dir }}
+          helpers-dir: ${{ steps.containment-hook-retry.outputs.helpers-dir }}
 
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it

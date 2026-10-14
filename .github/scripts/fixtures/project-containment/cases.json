@@ -210,6 +210,26 @@
       "modify": ["a/b/x.md"],
       "expect": "pass"
     },
+    "concurrent_run_fetched_by_the_agent_is_not_the_agents": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "concurrent_pushes": {"spec/q/002-y": ["q/spec.md"], "main": ["README.md"]},
+      "agent_fetch": true,
+      "modify": ["a/b/x.md"],
+      "expect": "pass"
+    },
+    "agent_push_to_another_branch_then_fetch_still_fails": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "agent_pushes": {"spec/other/001-x": ["README.md"]},
+      "concurrent_pushes": {"spec/q/002-y": ["q/spec.md"]},
+      "agent_fetch": true,
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["spec/other/001-x"]
+    },
     "missing_pre_agent_snapshot_fails_closed": {
       "project": "a/b",
       "base_files": ["a/b/x.md"],

@@ -60,8 +60,9 @@ inputs:
       installed the hook checks with the copies; empty means _shared/.
       When set, the check also tests every branch the remote gained or
       moved since install-pre-push's snapshot of its heads
-      (remote-heads.before) whose tip this checkout holds -- a pushing
-      agent can push any ref -- and fails without that snapshot.
+      (remote-heads.before) whose tip is reachable from HEAD, a local
+      branch or HEAD's reflog -- a pushing agent can push any ref -- and
+      fails without that snapshot.
     required: false
     default: ""
   hooks-dir:
@@ -141,19 +142,29 @@ runs:
         # An agent that pushes can push any ref, not only this job's branch.
         # With the pre-agent snapshot install-pre-push took (helpers-dir),
         # every branch the remote now carries that was created or moved
-        # since is a candidate. Only a tip this checkout holds can have been
-        # pushed from it: a branch another lifecycle's concurrent run moved
-        # points at a commit this job never fetched, so it is left alone.
-        # Read before the trusted-base fetch below adds any object.
+        # since is a candidate. Only a tip this checkout reached locally can
+        # have been pushed from it: one reachable from HEAD, a local branch
+        # or HEAD's reflog. A fetch writes only refs/remotes/*, so a branch
+        # another lifecycle's concurrent run moved is left alone even when
+        # the agent fetched its commits.
         pushed=""
         if [ -n "$HELPERS_DIR" ]; then
           if [ ! -f "$helpers/remote-heads.before" ] || ! heads="$(git ls-remote origin 'refs/heads/*')"; then
             echo "::error::wing-commander-containment: could not compare the remote's branches with the pre-agent snapshot, so pushes to other branches cannot be checked."
             exit 1
           fi
+          local_tips="$( { git rev-parse HEAD; git for-each-ref --format='%(objectname)' refs/heads/; git log -g --format=%H HEAD 2>/dev/null; } | sort -u)"
           while read -r sha ref; do
             [ -n "${ref:-}" ] || continue
             git cat-file -e "$sha^{commit}" 2>/dev/null || continue
+            reached=""
+            while read -r t; do
+              if [ -n "$t" ] && git merge-base --is-ancestor "$sha" "$t" 2>/dev/null; then
+                reached=1
+                break
+              fi
+            done <<< "$local_tips"
+            [ -n "$reached" ] || continue
             pushed="$pushed$ref $sha $ref 0"$'\n'
           done < <(printf '%s\n' "$heads" | grep -vxF -f "$helpers/remote-heads.before" || true)
         fi
