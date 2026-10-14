@@ -56,7 +56,7 @@
 
 ### Gates for User Story 1
 
-- [ ] T018 [P] [US1] Create `.github/scripts/verify-intake-routing.py` with fixtures under `.github/scripts/fixtures/project-intake-routing/`: label count 0/1/≥2, missing folder, non-Spec-Kit folder, routing-prefix validation (malformed shape; overlap with `spec:`, `stage:`, `model:`, `board:`, `disposition:`, findings family, `route-out-of-boundary`, `spec-request`, `spec-proposal`, `spec-`; too long), re-run refusal pair (routing on refuses with and without a `node:` label; routing off unchanged), label-first ordering, over-budget slug (FR-001, FR-003, FR-014, FR-023)
+- [X] T018 [P] [US1] Create `.github/scripts/verify-intake-routing.py` with fixtures under `.github/scripts/fixtures/project-intake-routing/`: label count 0/1/≥2, missing folder, non-Spec-Kit folder, routing-prefix validation (malformed shape; overlap with `spec:`, `stage:`, `model:`, `board:`, `disposition:`, findings family, `route-out-of-boundary`, `spec-request`, `spec-proposal`, `spec-`; too long), re-run refusal pair (routing on refuses with and without a `node:` label; routing off unchanged), label-first ordering, over-budget slug (FR-001, FR-003, FR-014, FR-023)
 - [X] T019 [P] [US1] Create `.github/scripts/verify-subfolder-containment.py` with fixtures under `.github/scripts/fixtures/project-containment/`: `P=a/b` write to `a/.claude/` denied; denies for root `.claude/`, `.git/`, `P/.claude/`, `P/**/.claude/`; denies hold with `no-write-paths` overridden; change outside `P` fails the guard; moving a nested folder or editing a child-index README inside `P` passes; every Edit/Write `claude-code-action` step consumes `tool-args` (FR-021, FR-022)
 - [X] T020 [P] [US1] Create `.github/scripts/verify-pipeline-checkout-containment.py` with fixtures under `.github/scripts/fixtures/project-checkout-containment/`: read-only grant under working directory `P` still names the workspace-root `.wing-commander-pipeline/`; repository tooling grants (`.github/scripts/run-local-gates.py`) resolve to the workspace root; branch tracking `P/.wing-commander-pipeline/x` is refused (FR-025)
 - [ ] T021 [US1] Register T018–T020 gates in `.github/workflows/lint-workflows.yml` and `.github/scripts/run-local-gates.py`
@@ -70,7 +70,7 @@
 - [ ] T026 [US1] Extend `.github/actions/wing-commander-tool-args/` to derive the project-aware denies (root `.claude/**`, `.git/**`, each proper ancestor `E/.claude/**`, `P/.claude/**`, `P/**/.claude/**`) into the single `no-write-paths` definition, and make all trusted-checkout and repository-tooling grants absolute under `${GITHUB_WORKSPACE}` (FR-022, FR-025, D10, D11)
 - [X] T027 [P] [US1] Create composite `.github/actions/wing-commander-containment/action.yml`: given the pre-agent SHA and `P`, fail the stage with a callout listing any changed path (committed or working tree) outside `P/`; skip for root lifecycles (FR-021)
 - [X] T028 [US1] Add the pipeline-checkout guard check that refuses a branch tracking `**/.wing-commander-pipeline/**` at any depth (`git ls-files`); locate the guard via `grep -rn pipeline-checkout .github/` (FR-025)
-- [ ] T029 [US1] Wire `wing-commander-project`, project-aware preflight and the project working directory (per T001 outcome) and containment guard into `.github/workflows/intake.yml`
+- [X] T029 [US1] Wire `wing-commander-project`, project-aware preflight and the project working directory (per T001 outcome) and containment guard into `.github/workflows/intake.yml`
 - [X] T030 [P] [US1] Wire the same into `.github/workflows/clarify.yml`: derive `(P, slug)` from the lifecycle identity, run preflight in `P`, agent working directory `P`, containment guard, project-aware paths in prompts and allowed-tools
 - [X] T031 [P] [US1] Same wiring in `.github/workflows/plan.yml`; the plan→tasks hand-off and the manual-restart `slug` input take `P/<NNN-slug>`; document the input form in the input description
 - [X] T032 [P] [US1] Same wiring in `.github/workflows/tasks.yml`; restart `slug` takes `P/<NNN-slug>`
@@ -202,7 +202,7 @@ Add US2 (isolation) → US3 (compat proof) → US4 (graduation) → US5 (nesting
 Source: maintainer comment on PR #1022, asking implement to continue the in-scope work. The last cycle stopped after one partial step on T018 and used 15 of its 180 turns.
 
 - [ ] MF001 Use each cycle's turn budget to complete as many remaining tasks as it allows. Check off each task in this file as soon as it is complete so that every cycle registers progress and the loop does not end on "no further progress". (PR #1022)
-- [ ] MF002 Finish T018 first, before any other remaining task. (PR #1022)
+- [X] MF002 Finish T018 first, before any other remaining task. (PR #1022)
 - [ ] MF003 Then do the per-stage wiring, in order: T029, T033, T034, T035, T040, T042, T043, T044, T045, T046. T036 and T041, which M001 also covers, belong to this wiring phase too. (PR #1022)
 - [ ] MF004 Then do the remaining gates and fixtures: T021, T026, T037, T038, T047, T048, T049, T050, T051, T052, T053, T054. (PR #1022)
 - [ ] MF005 Then do T001, T056, T057, T058, T059 and M001–M004. T056, the constitution amendment, stays a separate human-merged PR and does not land on this branch. (PR #1022)

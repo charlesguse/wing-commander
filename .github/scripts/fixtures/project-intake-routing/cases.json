@@ -25,5 +25,30 @@
     {"project": "", "budget": 44},
     {"project": "ideas/alpha", "budget": 33},
     {"project": "a", "budget": 43}
+  ],
+  "label_count": [
+    {"name": "no routing label routes to the root", "labels": ["bug", "spec-request"], "expect": "pass", "project": ""},
+    {"name": "one routing label routes to its folder", "labels": ["spec-request", "node:ideas/alpha"], "expect": "pass", "project": "ideas/alpha"},
+    {"name": "a label merely containing the prefix is not a routing label", "labels": ["xnode:ideas/alpha"], "expect": "pass", "project": ""},
+    {"name": "two routing labels refuse", "labels": ["node:ideas/alpha", "node:ideas/beta"], "expect": "fail", "names": ["2 routing labels"]},
+    {"name": "three routing labels refuse", "labels": ["node:a", "node:b", "node:c"], "expect": "fail", "names": ["3 routing labels"]},
+    {"name": "a routing label breaking the grammar refuses", "labels": ["node:Ideas/Alpha"], "expect": "fail", "names": ["Ideas/Alpha"]}
+  ],
+  "folder": [
+    {"name": "complete Spec Kit project", "project": "ideas/alpha", "layout": "speckit", "expect": "pass"},
+    {"name": "missing folder", "project": "ideas/alpha", "layout": "none", "expect": "fail", "names": ["ideas/alpha", "not a directory"]},
+    {"name": "folder that is not a Spec Kit project", "project": "ideas/alpha", "layout": "plain", "expect": "fail", "names": ["ideas/alpha", ".specify"]},
+    {"name": "folder that lost its constitution", "project": "ideas/alpha", "layout": "no-constitution", "expect": "fail", "names": ["ideas/alpha", "constitution"]}
+  ],
+  "rerun": [
+    {"name": "routing on, routed issue already specified", "labels": ["node:ideas/alpha", "spec:ideas/alpha/001-login"], "existing": "spec:ideas/alpha/001-login"},
+    {"name": "routing on, root issue already specified (no routing label)", "labels": ["spec-request", "spec:001-login"], "existing": "spec:001-login"},
+    {"name": "routing on, first run", "labels": ["node:ideas/alpha", "spec-request"], "existing": ""}
+  ],
+  "created": [
+    {"name": "root slug, no budget applies", "project": "", "budget": "", "branch": "001-a-root-slug-that-is-much-longer-than-forty-four-chars", "expect": "pass", "spec_dir": "specs/001-a-root-slug-that-is-much-longer-than-forty-four-chars"},
+    {"name": "subfolder slug within budget", "project": "ideas/alpha", "budget": "33", "branch": "ideas/alpha/001-login", "expect": "pass", "spec_dir": "ideas/alpha/specs/001-login"},
+    {"name": "subfolder slug exactly at budget", "project": "ideas/alpha", "budget": "33", "branch": "ideas/alpha/001-abcdefghijklmnopqrstuvwxyz123", "expect": "pass", "spec_dir": "ideas/alpha/specs/001-abcdefghijklmnopqrstuvwxyz123"},
+    {"name": "subfolder slug one over budget", "project": "ideas/alpha", "budget": "33", "branch": "ideas/alpha/001-abcdefghijklmnopqrstuvwxyz1234", "expect": "fail", "names": ["33 characters", "ideas/alpha"]}
   ]
 }
