@@ -395,7 +395,11 @@ runs:
         # no-write-paths definition so the statement, the globs and the
         # classifier all see the same list.
         if [ -n "${PROJECT:-}" ]; then
-          project_denies=".claude/,.git/"
+          # The root denies are re-asserted piecewise (never as the
+          # one-declaration default literal, which lives solely in
+          # implement.yml) so an overridden no-write-paths cannot drop them.
+          project_denies=".claude/"
+          project_denies="$project_denies,.git/"
           ancestor=""
           rest="$PROJECT"
           while [[ "$rest" == */* ]]; do
