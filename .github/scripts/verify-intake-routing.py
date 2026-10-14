@@ -8,9 +8,14 @@ fixtures/project-intake-routing/cases.json:
     `gh` serving the issue's live labels: 0 routing labels route to the root,
     1 routes to its folder, 2 or more refuse; with check-folder on, a missing
     folder or a folder that is not a Spec Kit project refuses, naming it;
-  * intake.yml's re-run refusal step (`rerun`): with routing on, any `spec:`
-    label refuses, with or without a routing label; the step and its refusal
-    steps are skipped when routing is off;
+  * intake.yml's re-run refusal step (`rerun`, in the routing-gate job): with
+    routing on, any `spec:` label refuses, with or without a routing label;
+    the step and its refusal steps are skipped when routing is off;
+  * intake.yml's concurrency (research D8, FR-012), evaluated from the shipped
+    expressions: the routing gate holds a per-issue group, the numbering job
+    a per-project group (`wing-commander-intake` at the root, unchanged), so
+    two intakes routed to different projects never share a numbering group
+    while the same issue routed twice shares its gate group;
   * intake.yml's project guidance (`project-guidance`): the label is created
     before the first branch push, and the root prompt gains nothing;
   * intake.yml's "Resolve created spec" (`created`) with a fake `git`: a
@@ -26,6 +31,8 @@ import sys
 import tempfile
 
 import yaml
+
+from wc_gha_expr import evaluate_if, interpolate
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCRIPT = os.path.join(ROOT, ".github", "actions", "_shared", "project-name.sh")
@@ -111,10 +118,9 @@ def make_layout(base, project, layout):
             fh.write("# constitution\n")
 
 
-def intake_steps():
+def intake_doc():
     with open(INTAKE, encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh)
-    return doc["jobs"]["intake"]["steps"]
+        return yaml.safe_load(fh)
 
 
 def step_by_id(steps, sid):
@@ -194,6 +200,67 @@ def check_label_first(steps, bindir, errors):
         errors.append(f"label-first: root project guidance is not empty: {outputs!r}")
 
 
+def resolve_project(labels, bindir):
+    """The project the real routing composite resolves from these live labels."""
+    with open(os.path.join(PROJECT_ACTION, "action.yml"), encoding="utf-8") as fh:
+        resolve = yaml.safe_load(fh)["runs"]["steps"][0]["run"]
+    env = {"GH_TOKEN": "fake", "ROUTING_PREFIX": "node:", "ISSUE": "7", "IDENTITY": "",
+           "IDENTITY_KIND": "slug", "CHECK_FOLDER": "false", "FAKE_LABELS_JSON": labels_json(labels)}
+    r, outputs, _ = run_step(resolve, env, ROOT, bindir, PROJECT_ACTION)
+    return output_value(outputs, "project") if r.returncode == 0 else None
+
+
+def check_concurrency(doc, bindir, errors):
+    """Research D8 / FR-012: per-issue gate group, per-project numbering group."""
+    jobs = doc["jobs"]
+    gate, intake, stalled = jobs["routing-gate"], jobs["intake"], jobs["stalled"]
+    gate_group = gate["concurrency"]["group"]
+    intake_group = intake["concurrency"]["group"]
+    if stalled["concurrency"]["group"] != intake_group:
+        errors.append("concurrency: the stalled job does not share the intake job's numbering group")
+    if gate["concurrency"].get("cancel-in-progress") is not False:
+        errors.append("concurrency: the routing gate's per-issue group may cancel a queued intake")
+    if "routing-gate" not in (intake.get("needs") or []):
+        errors.append("concurrency: the numbering job does not `needs:` the routing gate")
+
+    def groups(prefix, issue, labels):
+        ctx = {"inputs.routing-label-prefix": prefix, "inputs.issue-number": issue,
+               "needs.verify-image-prerequisites.result": "skipped", "cancelled()": False}
+        gate_runs = evaluate_if(gate["if"], ctx)
+        project = (resolve_project(labels, bindir) if gate_runs else "") or ""
+        ctx.update({"needs.routing-gate.result": "success" if gate_runs else "skipped",
+                    "needs.routing-gate.outputs.project": project})
+        if not evaluate_if(intake["if"], ctx):
+            errors.append(f"concurrency: intake does not run for prefix={prefix!r} labels={labels!r}")
+        return (interpolate(gate_group, ctx) if gate_runs else None), interpolate(intake_group, ctx)
+
+    root_gate, root_num = groups("", "7", ["node:ideas/alpha"])
+    if root_gate is not None or root_num != "wing-commander-intake":
+        errors.append(f"concurrency: routing off changed intake (gate={root_gate!r}, group={root_num!r})")
+    a_gate, a_num = groups("node:", "7", ["node:ideas/alpha"])
+    b_gate, b_num = groups("node:", "8", ["node:ideas/beta"])
+    c_gate, c_num = groups("node:", "9", ["spec-request"])
+    if (a_num, b_num, c_num) != ("wing-commander-intake/ideas/alpha", "wing-commander-intake/ideas/beta",
+                                 "wing-commander-intake"):
+        errors.append(f"concurrency: numbering groups {a_num!r}, {b_num!r}, {c_num!r} are not per project")
+    if a_gate == b_gate:
+        errors.append("concurrency: two issues share one per-issue gate group")
+    a2_gate, a2_num = groups("node:", "7", ["node:ideas/beta"])
+    if a2_gate != a_gate or a2_num == a_num:
+        errors.append("concurrency: the same issue routed to two projects is not serialized by its gate group")
+    ctx = {"inputs.routing-label-prefix": "node:", "needs.verify-image-prerequisites.result": "success",
+           "cancelled()": False, "needs.routing-gate.result": "failure"}
+    if evaluate_if(intake["if"], ctx):
+        errors.append("concurrency: intake still runs after the routing gate refused")
+    ctx.update({"needs.intake.result": "skipped", "needs.intake.outputs.refusal-reason": "",
+                "needs.routing-gate.outputs.refused": "true"})
+    if evaluate_if(stalled["if"], ctx):
+        errors.append("concurrency: a routing-gate refusal is also reported as a stall")
+    ctx["needs.routing-gate.outputs.refused"] = ""
+    if not evaluate_if(stalled["if"], ctx):
+        errors.append("concurrency: a routing gate that died unrefused is not reported as a stall")
+
+
 def check_created(data, steps, bindir, errors):
     created = step_by_id(steps, "created")
     for case in data["created"]:
@@ -236,9 +303,11 @@ def main():
     with tempfile.TemporaryDirectory() as bindir:
         write_exec(os.path.join(bindir, "gh"), FAKE_GH)
         check_label_count(data, bindir, errors)
-        steps = intake_steps()
-        check_rerun(data, steps, bindir, errors)
+        doc = intake_doc()
+        steps = doc["jobs"]["intake"]["steps"]
+        check_rerun(data, doc["jobs"]["routing-gate"]["steps"], bindir, errors)
         check_label_first(steps, bindir, errors)
+        check_concurrency(doc, bindir, errors)
         with tempfile.TemporaryDirectory() as gitbin:
             write_exec(os.path.join(gitbin, "git"), FAKE_GIT)
             check_created(data, steps, gitbin + os.pathsep + bindir, errors)

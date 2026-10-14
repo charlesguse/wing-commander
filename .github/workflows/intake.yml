@@ -344,6 +344,134 @@ jobs:
             exit 1
           fi
 
+  # Per-issue routing gate (spec 114, FR-001/FR-003/FR-012, research.md
+  # D8). A job holds one concurrency group, so with routing on this small
+  # job holds `wing-commander-intake-issue/<issue>` and runs the prefix
+  # check, the routing-label count and the re-run refusal; the numbering
+  # job below `needs:` it and holds the per-project numbering group. With
+  # routing off it is skipped and intake is unchanged (FR-016).
+  routing-gate:
+    needs: verify-image-prerequisites
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && inputs.routing-label-prefix != ''"
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    concurrency:
+      group: wing-commander-intake-issue/${{ inputs.issue-number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    outputs:
+      project: ${{ steps.project.outputs.project }}
+      # 'true' when this gate refused the intake itself (and posted its own
+      # callout), so the stalled job does not report a stall on top.
+      refused: ${{ (steps.project.outcome == 'failure' || steps.rerun.outputs.existing != '') && 'true' || '' }}
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # pin the exact commit, never a branch -- see specs/010-reusable-pipeline/research.md.
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          # A private pipeline repository is not readable by the caller's
+          # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      # A closed lifecycle is inert (specs/022-gate-closed-lifecycle); the
+      # intake job below posts the note, so this gate only stands aside.
+      - name: Check lifecycle issue state
+        id: lifecycle-gate
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-lifecycle-gate
+        with:
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ github.token }}
+
+      # Subfolder routing (spec 114, FR-001/FR-003/FR-023): validate the
+      # prefix, read the issue's live labels, require at most one
+      # `<routing-label-prefix>P` label and validate P against the
+      # project-path grammar; a refusal posts a callout naming the labels or
+      # the folder. The folder itself is checked by intake's Preflight.
+      - name: Resolve routed project
+        id: project
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          routing-label-prefix: ${{ inputs.routing-label-prefix }}
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ github.token }}
+          check-folder: 'false'
+
+      # Re-run refusal (spec 114, FR-003): with routing on, an issue that
+      # already carries any `spec:` label has been specified once; a second
+      # intake would allocate a second spec for it, possibly in another
+      # project. Held inside the per-issue group so a concurrent run on the
+      # same issue is serialized behind this one.
+      - name: Check for an existing spec label (routing only)
+        id: rerun
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && inputs.routing-label-prefix != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ inputs.issue-number }}
+        run: |
+          existing="$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("spec:"))] | join(", ")')"
+          echo "existing=$existing" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse a re-run on an already-specified issue
+        if: steps.rerun.outputs.existing != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "Intake already ran for this issue — it carries ${{ steps.rerun.outputs.existing }}. Nothing was created."
+
+      - name: Stop after a refused re-run
+        if: steps.rerun.outputs.existing != ''
+        run: |
+          echo "::error::wing-commander intake: this issue already carries a spec label; with routing on, intake refuses a re-run."
+          exit 1
+
   intake:
     # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
     # specs/038-runner-container-passthrough/research.md.
@@ -368,14 +496,18 @@ jobs:
       deployment: ${{ inputs.environment-deployment }}
     # Serialize intakes (in the CONSUMING repository — concurrency groups are
     # scoped to the caller) so concurrent runs cannot allocate the same
-    # feature number.
+    # feature number. Numbering is per project (spec 114, research.md D8):
+    # the root keeps `wing-commander-intake`, a routed project P takes
+    # `wing-commander-intake/P`.
     concurrency:
-      group: wing-commander-intake
+      group: wing-commander-intake${{ needs.routing-gate.outputs.project && format('/{0}', needs.routing-gate.outputs.project) || '' }}
       cancel-in-progress: false
     # if: tolerates a skipped image check without widening to run merely
-    # because the workflow was not cancelled (#224) -- see clarify.yml.
-    needs: verify-image-prerequisites
-    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure'"
+    # because the workflow was not cancelled (#224) -- see clarify.yml. A
+    # skipped routing gate (routing off) is tolerated the same way; a failed
+    # one refused the intake.
+    needs: [verify-image-prerequisites, routing-gate]
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.routing-gate.result != 'failure'"
     permissions:
       contents: write
       pull-requests: write
@@ -450,22 +582,9 @@ jobs:
           kind: info
           summary: "This lifecycle issue is closed — no action was taken."
 
-      # Subfolder routing (spec 114, FR-001/FR-003): read the issue's live
-      # labels, require at most one `<routing-label-prefix>P` label and
-      # validate P against the project-path grammar. Skipped entirely when
-      # routing is off, so the root lifecycle is unchanged (FR-016). The
-      # folder itself is checked by Preflight below, which names it.
-      - name: Resolve routed project
-        id: project
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && inputs.routing-label-prefix != ''
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
-        with:
-          routing-label-prefix: ${{ inputs.routing-label-prefix }}
-          issue-number: ${{ inputs.issue-number }}
-          token: ${{ github.token }}
-          check-folder: 'false'
-
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
+      # A routed project (resolved by the routing-gate job, spec 114) is
+      # checked inside its folder, naming it; empty at the root.
       - name: Preflight
         id: preflight
         if: steps.lifecycle-gate.outputs.is-open == 'true'
@@ -474,8 +593,8 @@ jobs:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "true"
-          project: ${{ steps.project.outputs.project }}
-          require-files: "${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.claude/skills/speckit-specify/SKILL.md|specify init (spec-kit's claude integration)"
+          project: ${{ needs.routing-gate.outputs.project }}
+          require-files: "${{ needs.routing-gate.outputs.project && format('{0}/', needs.routing-gate.outputs.project) || '' }}.claude/skills/speckit-specify/SKILL.md|specify init (spec-kit's claude integration)"
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
@@ -579,34 +698,16 @@ jobs:
           spec-draft-prefix: ${{ inputs.spec-draft-prefix }}
           spec-prefix: ${{ inputs.spec-prefix }}
 
-      # Re-run refusal (spec 114, FR-003): with routing on, an issue that
-      # already carries any `spec:` label has been specified once; a second
-      # intake would allocate a second spec for it, possibly in another
-      # project. The single `wing-commander-intake` group serializes
-      # intakes, so a concurrent first run's label is visible here.
-      - name: Check for an existing spec label (routing only)
-        id: rerun
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && inputs.routing-label-prefix != ''
+      # This job holds the numbering group of the project the routing gate
+      # resolved; a routing label changed since then would allocate under
+      # another project's group (spec 114, FR-012). Refuse rather than race.
+      - name: Refuse a routing label changed since the routing gate
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.num.outputs.project != needs.routing-gate.outputs.project
         env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          ISSUE: ${{ inputs.issue-number }}
+          GATE_PROJECT: ${{ needs.routing-gate.outputs.project }}
+          NOW_PROJECT: ${{ steps.num.outputs.project }}
         run: |
-          existing="$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("spec:"))] | join(", ")')"
-          echo "existing=$existing" >> "$GITHUB_OUTPUT"
-
-      - name: Refuse a re-run on an already-specified issue
-        if: steps.rerun.outputs.existing != ''
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
-        with:
-          token: ${{ env.WC_BOT_TOKEN }}
-          issue-number: ${{ inputs.issue-number }}
-          kind: action
-          summary: "Intake already ran for this issue — it carries ${{ steps.rerun.outputs.existing }}. Nothing was created."
-
-      - name: Stop after a refused re-run
-        if: steps.rerun.outputs.existing != ''
-        run: |
-          echo "::error::wing-commander intake: this issue already carries a spec label; with routing on, intake refuses a re-run."
+          echo "::error::wing-commander intake: the issue's routing label changed while intake was queued (routing gate resolved '$GATE_PROJECT', now '$NOW_PROJECT'). Nothing was created; re-run intake."
           exit 1
 
       # Tie the run back to the issue the moment intake starts, with a link.
@@ -1589,14 +1690,17 @@ jobs:
   # entry means no spec-meta.json was ever written for this feature — the
   # same "record could not be updated" branch every other stage takes only
   # on a rarer failure, not a bespoke intake-only wording.
+  # A routing-gate refusal (spec 114) already posted its own callout, so it
+  # is excluded here like an in-job refusal.
   stalled:
-    needs: [verify-image-prerequisites, intake]
+    needs: [verify-image-prerequisites, routing-gate, intake]
     if: |
       needs.verify-image-prerequisites.result != 'failure' &&
       !cancelled() &&
       ( needs.intake.result == 'failure' ||
         needs.intake.result == 'skipped' ) &&
-      needs.intake.outputs.refusal-reason == ''
+      needs.intake.outputs.refusal-reason == '' &&
+      needs.routing-gate.outputs.refused != 'true'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -1614,8 +1718,9 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
+    # The numbering group -- see the intake job.
     concurrency:
-      group: wing-commander-intake
+      group: wing-commander-intake${{ needs.routing-gate.outputs.project && format('/{0}', needs.routing-gate.outputs.project) || '' }}
       cancel-in-progress: false
     permissions:
       contents: write
