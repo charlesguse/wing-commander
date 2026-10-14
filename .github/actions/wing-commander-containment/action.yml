@@ -13,7 +13,8 @@
 #     helpers out of the trusted pipeline checkout, writes a pre-push hook
 #     that refuses a push carrying a change outside P (or, with
 #     label-first-number set, intake's label-first check), and points
-#     core.hooksPath at it. Outputs the pre-agent HEAD.
+#     core.hooksPath at it. Outputs the pre-agent HEAD, and snapshots the
+#     remote's branch heads for the post-agent check.
 #   filter -- narrows a newline-separated path file, in place, to the paths
 #     inside P (rebase's conflict manifest).
 #
@@ -57,6 +58,10 @@ inputs:
       the agent step (its helpers-dir output). The agent can reach the
       pipeline checkout's own _shared/ in the workspace, so a job that
       installed the hook checks with the copies; empty means _shared/.
+      When set, the check also tests every branch the remote gained or
+      moved since install-pre-push's snapshot of its heads
+      (remote-heads.before) whose tip this checkout holds -- a pushing
+      agent can push any ref -- and fails without that snapshot.
     required: false
     default: ""
   hooks-dir:
@@ -133,6 +138,25 @@ runs:
         . "$helpers/git-push-hardening.sh"
         wc_harden_git_env
         export GIT_NO_REPLACE_OBJECTS=1
+        # An agent that pushes can push any ref, not only this job's branch.
+        # With the pre-agent snapshot install-pre-push took (helpers-dir),
+        # every branch the remote now carries that was created or moved
+        # since is a candidate. Only a tip this checkout holds can have been
+        # pushed from it: a branch another lifecycle's concurrent run moved
+        # points at a commit this job never fetched, so it is left alone.
+        # Read before the trusted-base fetch below adds any object.
+        pushed=""
+        if [ -n "$HELPERS_DIR" ]; then
+          if [ ! -f "$helpers/remote-heads.before" ] || ! heads="$(git ls-remote origin 'refs/heads/*')"; then
+            echo "::error::wing-commander-containment: could not compare the remote's branches with the pre-agent snapshot, so pushes to other branches cannot be checked."
+            exit 1
+          fi
+          while read -r sha ref; do
+            [ -n "${ref:-}" ] || continue
+            git cat-file -e "$sha^{commit}" 2>/dev/null || continue
+            pushed="$pushed$ref $sha $ref 0"$'\n'
+          done < <(printf '%s\n' "$heads" | grep -vxF -f "$helpers/remote-heads.before" || true)
+        fi
         # A restarted stage's BASE_SHA is the already-pushed tip, so the
         # default branch's merge base is checked too, from the tip the
         # remote reports now. Unresolvable is a failure, not a pass.
@@ -149,6 +173,20 @@ runs:
         # The path test's single home is _shared/containment.sh, which
         # pr-conversation's pre-push hook runs too.
         outside="$(printf '%s\n' "$changed" | bash "$helpers/containment.sh" outside "$PROJECT")"
+        # Each pushed branch, through the same test the pre-push hook runs,
+        # from the default branch's trusted tip.
+        bad_refs=""
+        while read -r ref sha _; do
+          [ -n "${ref:-}" ] || continue
+          if ! printf '%s %s %s %s\n' "$ref" "$sha" "$ref" 0 \
+              | bash "$helpers/containment.sh" pre-push "$PROJECT" "$tip"; then
+            bad_refs="$bad_refs ${ref#refs/heads/}"
+            outside="${outside:+$outside$'\n'}branch ${ref#refs/heads/}"
+          fi
+        done <<< "$pushed"
+        if [ -n "$bad_refs" ]; then
+          echo "::error::wing-commander-containment: the agent pushed branch(es) carrying changes outside project folder '$PROJECT':$bad_refs"
+        fi
         if [ -n "$outside" ]; then
           {
             echo "outside-paths<<WC_EOF"
@@ -195,6 +233,13 @@ runs:
         cp "${helpers[@]/#/$shared/}" "$hooks_dir/"
         trusted="$(mktemp -d "$RUNNER_TEMP/wing-commander-containment-trusted.XXXXXXXX")"
         cp "${helpers[@]/#/$shared/}" "$trusted/"
+        # The remote's branch heads before the agent runs: the post-agent
+        # check tests every branch the agent created or moved, not only
+        # this job's own (an agent that pushes can name any ref).
+        if ! git ls-remote origin 'refs/heads/*' > "$trusted/remote-heads.before"; then
+          echo "::error::wing-commander-containment: could not list the remote's branches before the agent step."
+          exit 1
+        fi
         chmod 0444 "$trusted"/*
         chmod 0555 "$trusted"
         echo "helpers-dir=$trusted" >> "$GITHUB_OUTPUT"

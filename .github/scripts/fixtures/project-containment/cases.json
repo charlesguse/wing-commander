@@ -186,6 +186,39 @@
       "expect": "fail",
       "names": ["docs/guide.md"]
     },
+    "agent_push_to_another_branch_outside_project": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "agent_pushes": {"spec/other/001-x": ["README.md"]},
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["spec/other/001-x"]
+    },
+    "agent_push_to_another_branch_inside_project": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "agent_pushes": {"scratch": ["a/b/y.md"]},
+      "expect": "pass"
+    },
+    "concurrent_run_moving_its_own_branch_is_not_the_agents": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "concurrent_pushes": {"spec/q/002-y": ["q/spec.md"], "main": ["README.md"]},
+      "modify": ["a/b/x.md"],
+      "expect": "pass"
+    },
+    "missing_pre_agent_snapshot_fails_closed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "snapshot": true,
+      "drop_snapshot": true,
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["pre-agent snapshot"]
+    },
     "suffix_named_remote_branch_is_not_the_default_tip": {
       "project": "a/b",
       "base_files": ["a/b/x.md", "README.md"],

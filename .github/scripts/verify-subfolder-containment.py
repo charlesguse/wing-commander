@@ -147,6 +147,49 @@ def contain(case, script):
             git(tmp, "add", "-A")
             git(tmp, "commit", "-q", "-m", "earlier run")
         base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp, capture_output=True, text=True, check=True).stdout.strip()
+        helpers = ""
+        if case.get("snapshot"):
+            # MF-48: install-pre-push's helper copies and its pre-agent
+            # snapshot of the remote's branch heads.
+            helpers = os.path.join(top, "helpers")
+            os.makedirs(helpers)
+            for name in ("containment.sh", "project-name.sh", "git-push-hardening.sh"):
+                with open(os.path.join(ACTIONS, "_shared", name), encoding="utf-8") as src, \
+                        open(os.path.join(helpers, name), "w", encoding="utf-8") as dst:
+                    dst.write(src.read())
+            heads = subprocess.run(["git", "ls-remote", "origin", "refs/heads/*"], cwd=tmp,
+                                   capture_output=True, text=True, check=True).stdout
+            if not case.get("drop_snapshot"):
+                with open(os.path.join(helpers, "remote-heads.before"), "w", encoding="utf-8") as fh:
+                    fh.write(heads)
+        for ref, files in case.get("agent_pushes", {}).items():
+            # The agent commits on another branch and pushes it itself.
+            git(tmp, "checkout", "-q", "-b", "agent-side", base)
+            for rel in files:
+                path = os.path.join(tmp, rel)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "a", encoding="utf-8") as fh:
+                    fh.write("p\n")
+            git(tmp, "add", "-A")
+            git(tmp, "commit", "-q", "-m", "agent push")
+            git(tmp, "push", "-q", "origin", "HEAD:refs/heads/" + ref)
+            git(tmp, "checkout", "-q", "main")
+            git(tmp, "branch", "-q", "-D", "agent-side")
+        for ref, files in case.get("concurrent_pushes", {}).items():
+            # Another lifecycle's run moves its own branch meanwhile, from a
+            # clone this checkout never fetches.
+            other = os.path.join(top, "other-" + ref.replace("/", "-"))
+            subprocess.run(["git", "clone", "-q", origin, other], check=True, capture_output=True)
+            git(other, "config", "user.email", "g@example.invalid")
+            git(other, "config", "user.name", "other")
+            for rel in files:
+                path = os.path.join(other, rel)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "a", encoding="utf-8") as fh:
+                    fh.write("c\n")
+            git(other, "add", "-A")
+            git(other, "commit", "-q", "-m", "concurrent")
+            git(other, "push", "-q", "origin", "HEAD:refs/heads/" + ref)
         for rel in case.get("modify", []):
             with open(os.path.join(tmp, rel), "a", encoding="utf-8") as fh:
                 fh.write("y\n")
@@ -177,7 +220,7 @@ def contain(case, script):
             git(tmp, "add", "-A")
             git(tmp, "commit", "-q", "-m", "agent")
         env = {"PROJECT": case["project"], "BASE_SHA": base, "DEFAULT_BRANCH": case.get("default_branch", "main"),
-               "HELPERS_DIR": ""}
+               "HELPERS_DIR": helpers}
         r, _ = run_script(script, env, tmp, "wing-commander-containment")
         return r
 
