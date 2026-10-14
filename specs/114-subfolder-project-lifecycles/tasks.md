@@ -273,3 +273,7 @@ Source: maintainer comment on PR #1022 (five fresh-session reviewers plus an adv
 ### Then
 
 - [ ] MF-27 Run T037, T049 and T058, and keep `python .github/scripts/run-local-gates.py` green (T056 is tracked separately in #1032)
+
+## Phase 13: Convergence
+
+- [ ] T067 In `.github/workflows/intake.yml`, fail the intake job loudly, naming the refusal, when a routed subfolder intake's "Label first (subfolder project)" step or its "Publish stranded commits (post-agent)" push refuses a branch the agent committed (both are `continue-on-error`, so today an over-budget or misnumbered branch ends as a green run whose only trace is "intake produced no spec"), and cover the refused-rescue path in Gate 162 per FR-014 (partial)
