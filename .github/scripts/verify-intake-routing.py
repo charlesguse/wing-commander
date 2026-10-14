@@ -783,7 +783,18 @@ def check_root_compat(bindir, errors):
 
 
 def check_created(data, steps, bindir, errors):
-    created = step_by_id(steps, "created")
+    """Resolve created spec: the ref step reads the pushed branch back (and
+    the slug budget); the spec dir comes from the shared parser
+    (wing-commander-project, MF-21), never an inline path split."""
+    created_ref = step_by_id(steps, "created-ref")
+    names = step_by_id(steps, "created")
+    if not str(names.get("uses", "")).endswith("/wing-commander-project") \
+            or "steps.created-ref.outputs.slug" not in str((names.get("with") or {}).get("identity", "")):
+        errors.append("created: the spec dir is not read from the created slug by wing-commander-project")
+    if "##*/" in created_ref["run"] or "%/*" in created_ref["run"]:
+        errors.append("created: the ref step still splits the project path inline")
+    with open(os.path.join(PROJECT_ACTION, "action.yml"), encoding="utf-8") as fh:
+        resolve = yaml.safe_load(fh)["runs"]["steps"][0]["run"]
     for case in data["created"]:
         env = {
             "NUM": case["branch"].rsplit("/", 1)[-1][:3],
@@ -792,11 +803,15 @@ def check_created(data, steps, bindir, errors):
             "SPEC_DRAFT_PREFIX": "spec-draft/",
             "FAKE_LS_REMOTE": f"0123abcd\trefs/heads/spec-draft/{case['branch']}\n",
         }
-        r, outputs, _ = run_step(created["run"], env, ROOT, bindir)
+        r, outputs, _ = run_step(created_ref["run"], env, ROOT, bindir)
         tag = f"created {case['name']!r}"
         if case["expect"] == "pass":
-            if r.returncode != 0 or output_value(outputs, "spec-dir") != case["spec_dir"]:
-                errors.append(f"{tag}: rc={r.returncode} spec-dir={output_value(outputs, 'spec-dir')!r} {r.stdout!r}")
+            slug = output_value(outputs, "slug") or ""
+            nenv = {"GH_TOKEN": "", "ROUTING_PREFIX": "", "ISSUE": "", "IDENTITY": slug, "IDENTITY_KIND": "slug",
+                    "CHECK_FOLDER": "false", "FINDINGS_LABEL_PREFIX": ""}
+            nr, nouts, _ = run_step(resolve, nenv, ROOT, bindir, PROJECT_ACTION)
+            if r.returncode != 0 or nr.returncode != 0 or output_value(nouts, "spec-dir") != case["spec_dir"]:
+                errors.append(f"{tag}: rc={r.returncode}/{nr.returncode} spec-dir={output_value(nouts, 'spec-dir')!r} {r.stdout!r}")
             if output_value(outputs, "branch") != "spec-draft/" + case["branch"]:
                 errors.append(f"{tag}: branch={output_value(outputs, 'branch')!r}, want the exact spec-draft/{case['branch']}")
         else:
@@ -817,7 +832,7 @@ def check_spec_pr_lookup(steps, bindir, errors):
         if step is None:
             errors.append(f"spec PR lookup: no {name!r} step")
             continue
-        if "steps.created.outputs.branch" not in str((step.get("env") or {}).get("BRANCH", "")):
+        if "steps.created-ref.outputs.branch" not in str((step.get("env") or {}).get("BRANCH", "")):
             errors.append(f"spec PR lookup: {name!r} is not handed the created branch")
         if "startswith(" in step["run"]:
             errors.append(f"spec PR lookup: {name!r} still matches a branch-name prefix")

@@ -1,5 +1,6 @@
           # specs/$slug in a comment is documentation, not a path
-          spec_dir="${project:+$project/}specs/${slug##*/}"
+          spec_dir="$(bash "$lib" spec-dir "$project" "$slug")"
           test -f "$project/.specify/memory/constitution.md"
           ls -d "$base"/[0-9][0-9][0-9]-*
           ls -d "$p"/.claude/skills/speckit-*
+          run_id="${RUN_URL##*/}"

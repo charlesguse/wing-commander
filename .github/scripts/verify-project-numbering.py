@@ -92,11 +92,18 @@ def collision(case, script, env):
             with open(os.path.join(temp, name), "w", encoding="utf-8") as fh:
                 fh.write("[]")
         summary = os.path.join(tmp, "summary")
+        # The collector's project and bare slug come from the shared parser
+        # through wing-commander-inspected-run-identity (T066); derive them
+        # the same way.
+        parsed = subprocess.run(["bash", SCRIPT, "names", "slug", case["slug"]], capture_output=True,
+                                text=True, check=False).stdout
+        names = dict(line.split("=", 1) for line in parsed.splitlines() if "=" in line)
         full = {**os.environ, **env,
                 "PATH": bindir + os.pathsep + os.environ.get("PATH", ""),
                 "GH_TOKEN": "fake", "GITHUB_REPOSITORY": "o/r", "FAKE_PRS": prs,
                 "RESOLVED_STAGE": "intake", "RESOLVED_STAGE_SOURCE": "name",
                 "RUN_CONCLUSION": "failure", "SLUG": case["slug"],
+                "OWN_PROJECT": names.get("project", ""), "LIFECYCLE_SLUG": names.get("slug", ""),
                 "RUNNER_TEMP": temp, "GITHUB_STEP_SUMMARY": summary}
         r = subprocess.run(["bash", "-e", "-c", script], cwd=work, capture_output=True,
                            text=True, env=full, check=False)

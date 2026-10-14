@@ -886,6 +886,8 @@ jobs:
         env:
           SPEC_DIR_INPUT: ${{ inputs.spec-dir }}
           PROJECT: ${{ steps.project.outputs.project }}
+          # P/NNN-slug from the shared parser -- see finalize.yml.
+          QUALIFIED: ${{ steps.project.outputs.slug-qualified }}
           ISSUE: ${{ inputs.issue-number }}
           ITERATION: ${{ inputs.iteration }}
         run: |
@@ -910,7 +912,7 @@ jobs:
             echo "refused=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-          echo "slug=${PROJECT:+$PROJECT/}${SPEC_DIR_INPUT##*/}" >> "$GITHUB_OUTPUT"
+          echo "slug=${QUALIFIED:-${SPEC_DIR_INPUT#specs/}}" >> "$GITHUB_OUTPUT"
           echo "spec-dir=$SPEC_DIR_INPUT"      >> "$GITHUB_OUTPUT"
 
       # Refusal note (research.md D1) — see "Report preflight refusal" above.
@@ -4055,14 +4057,18 @@ jobs:
       # exclusion). inputs.spec-dir/issue-number are used, never
       # needs.implement.outputs.* for identity — those may never have been
       # set if implement died before reaching the steps that set them (D6).
+      # [P/]specs/NNN-slug -> [P/]NNN-slug, the branch's form, through the
+      # shared parser (spec 114, FR-013) -- see finalize.yml's stalled job.
       - name: Resolve spec identity from inputs
         id: identity
         if: needs.implement.outputs.final-ok != 'false' && needs.implement.outputs.refusal-reason == ''
-        env:
-          SPEC_DIR: ${{ inputs.spec-dir }}
-        run: |
-          # [P/]specs/NNN-slug -> [P/]NNN-slug, the branch's form (spec 114).
-          echo "slug=${SPEC_DIR%specs/*}${SPEC_DIR##*/}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ inputs.spec-dir }}
+          identity-kind: spec-dir
+          token: ${{ github.token }}
+          check-folder: 'false'
 
       # continue-on-error: the spec branch may not exist yet or the checkout
       # may lose a race — either degrades the notice's wording (composite's
@@ -4076,7 +4082,7 @@ jobs:
         continue-on-error: true
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
+          ref: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug-qualified }}
           token: ${{ steps.ctx.outputs.token }}
           fetch-depth: 0
           clean: false
@@ -4173,7 +4179,7 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
           issue-number: ${{ inputs.issue-number }}
           spec-dir: ${{ inputs.spec-dir }}
-          spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
+          spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug-qualified }}
           stage-label: "stage:implement"
           reason: ${{ steps.reason.outputs.reason }}
           restart-command: ${{ steps.restart.outputs.restart-command }}

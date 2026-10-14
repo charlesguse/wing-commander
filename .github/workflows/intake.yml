@@ -1211,7 +1211,7 @@ jobs:
       # declared outputs (the agent may have legitimately stopped without a
       # spec: an undiscernible request).
       - name: Resolve created spec
-        id: created
+        id: created-ref
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           NUM: ${{ steps.num.outputs.num }}
@@ -1220,20 +1220,34 @@ jobs:
           SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
           ref=$(git ls-remote --heads origin "refs/heads/$SPEC_DRAFT_PREFIX${PROJECT:+$PROJECT/}$NUM-*" | awk '{print $2}' | head -1)
-          branch="${ref#refs/heads/"$SPEC_DRAFT_PREFIX"}"
-          if [ -n "$branch" ]; then
+          slug="${ref#refs/heads/"$SPEC_DRAFT_PREFIX"}"
+          if [ -n "$slug" ]; then
             # Spec 114 (FR-014): a subfolder slug must fit the spec label.
-            if [ -n "$PROJECT" ] && [ "${#branch}" -gt "$(( ${#PROJECT} + 1 + SLUG_BUDGET ))" ]; then
-              echo "::error::wing-commander intake: '${branch##*/}' is longer than the $SLUG_BUDGET characters the spec label for project $PROJECT can carry."
+            if [ -n "$PROJECT" ] && [ "${#slug}" -gt "$(( ${#PROJECT} + 1 + SLUG_BUDGET ))" ]; then
+              echo "::error::wing-commander intake: '$slug' is longer than the $SLUG_BUDGET characters after '$PROJECT/' the spec label for project $PROJECT can carry."
               exit 1
             fi
-            echo "spec-dir=${PROJECT:+$PROJECT/}specs/${branch##*/}" >> "$GITHUB_OUTPUT"
+            echo "slug=$slug" >> "$GITHUB_OUTPUT"
             echo "branch=${ref#refs/heads/}" >> "$GITHUB_OUTPUT"
           else
-            echo "spec-dir=" >> "$GITHUB_OUTPUT"
+            echo "slug=" >> "$GITHUB_OUTPUT"
             echo "branch=" >> "$GITHUB_OUTPUT"
             echo "No $SPEC_DRAFT_PREFIX$NUM-* branch found — intake produced no spec." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # The created [P/]NNN-slug names its spec dir through the shared parser
+      # (spec 114, FR-013); `spec-dir` stays empty when intake produced no
+      # spec (this step is skipped).
+      - name: Resolve created spec dir
+        id: created
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.created-ref.outputs.slug != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ steps.created-ref.outputs.slug }}
+          identity-kind: slug
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ env.WC_BOT_TOKEN }}
+          check-folder: 'false'
 
       # specs/056-stage-found-defect-filing: the agent's structured result
       # may carry an optional `findings` array (FR-007) alongside
@@ -1651,7 +1665,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false' && steps.clarification.outputs.specified == 'true' && steps.clarification.outputs.blocked != 'true' && steps.created.outputs.spec-dir != ''
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          BRANCH: ${{ steps.created.outputs.branch }}
+          BRANCH: ${{ steps.created-ref.outputs.branch }}
         run: |
           url=""
           if [ -n "$BRANCH" ]; then
@@ -1678,7 +1692,7 @@ jobs:
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ inputs.issue-number }}
-          BRANCH: ${{ steps.created.outputs.branch }}
+          BRANCH: ${{ steps.created-ref.outputs.branch }}
         run: |
           pr=""
           # An empty --head would match every PR, so no branch means no PR.

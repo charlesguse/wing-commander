@@ -15,6 +15,8 @@
 #   check-folder <P>        filesystem rules        -> (nothing)
 #   parse <kind> <name>     kind: branch|label|slug|spec-dir
 #                                                   -> project=<P> slug=<NNN-slug>
+#   names <kind> <name>     parse, plus qualified=<P/NNN-slug>
+#                           spec_dir=<P/specs/NNN-slug> spec_dir_rel=<specs/NNN-slug>
 #   spec-dir <P> <NNN-slug>                         -> P/specs/<NNN-slug>
 #   slug-budget <P>                                 -> integer (44 - len(P))
 #   next-number <P>         env SPEC_DRAFT_PREFIX, SPEC_PREFIX
@@ -22,7 +24,8 @@
 #   validate-prefix <pfx>                           -> (nothing)
 #
 # `parse branch` strips the first matching flat prefix from SPEC_DRAFT_PREFIX,
-# SPEC_PREFIX and IMPL_PREFIX (longest first), then -- for an implement
+# SPEC_PREFIX, IMPL_PREFIX and, when set, PLAN_PREFIX and TASKS_PREFIX
+# (longest first), then -- for an implement
 # branch only -- a trailing -iterN.
 # The empty project (root) is written as an empty `project=`.
 set -uo pipefail
@@ -96,7 +99,8 @@ parse() {
   local kind="$1" name="$2" rest
   case "$kind" in
     branch)
-      rest=$(strip_prefix "$name" "${SPEC_DRAFT_PREFIX:-}" "${SPEC_PREFIX:-}" "${IMPL_PREFIX:-}") \
+      rest=$(strip_prefix "$name" "${SPEC_DRAFT_PREFIX:-}" "${SPEC_PREFIX:-}" "${IMPL_PREFIX:-}" \
+               "${PLAN_PREFIX:-}" "${TASKS_PREFIX:-}") \
         || fail "branch '$name' carries none of the configured prefixes"
       # -iterN belongs to implement branches only: a spec or spec-draft
       # slug that happens to end in it keeps it. The implement prefix is the
@@ -131,6 +135,20 @@ parse() {
   if [ -n "$proj" ]; then validate_path "$proj" || exit 1; fi
   echo "project=$proj"
   echo "slug=$slug"
+}
+
+# names <kind> <name>: parse, then every name the lifecycle derives from
+# (P, NNN-slug), so a caller never rebuilds one by splitting a path itself.
+names() {
+  local out p s
+  out="$(parse "$1" "$2")" || exit 1
+  p="$(printf '%s\n' "$out" | sed -n 's/^project=//p')"
+  s="$(printf '%s\n' "$out" | sed -n 's/^slug=//p')"
+  echo "project=$p"
+  echo "slug=$s"
+  echo "qualified=${p:+$p/}$s"
+  echo "spec_dir=${p:+$p/}specs/$s"
+  echo "spec_dir_rel=specs/$s"
 }
 
 next_number() {
@@ -186,6 +204,7 @@ case "$cmd" in
   validate-path) [ "$#" -eq 1 ] || fail "usage: validate-path <P>"; validate_path "$1" && echo "project=$1" ;;
   check-folder) [ "$#" -eq 1 ] || fail "usage: check-folder <P>"; check_folder "$1" ;;
   parse) [ "$#" -eq 2 ] || fail "usage: parse <kind> <name>"; parse "$1" "$2" ;;
+  names) [ "$#" -eq 2 ] || fail "usage: names <kind> <name>"; names "$1" "$2" ;;
   spec-dir) [ "$#" -eq 2 ] || fail "usage: spec-dir <P> <NNN-slug>"; echo "${1:+$1/}specs/$2" ;;
   slug-budget) [ "$#" -eq 1 ] || fail "usage: slug-budget <P>"; echo $(( LABEL_BUDGET_BASE - ${#1} )) ;;
   next-number) [ "$#" -eq 1 ] || fail "usage: next-number <P>"; next_number "$1" ;;

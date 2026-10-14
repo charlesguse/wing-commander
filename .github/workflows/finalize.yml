@@ -487,6 +487,9 @@ jobs:
         env:
           SPEC_DIR_INPUT: ${{ inputs.spec-dir }}
           PROJECT: ${{ steps.project.outputs.project }}
+          # The project-qualified P/NNN-slug "Resolve project" read through
+          # the shared parser; empty at the root.
+          QUALIFIED: ${{ steps.project.outputs.slug-qualified }}
           ISSUE: ${{ inputs.issue-number }}
         run: |
           # A subfolder spec-dir is P/specs/NNN-slug, P already validated by
@@ -504,7 +507,7 @@ jobs:
             echo "refused=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-          echo "slug=${PROJECT:+$PROJECT/}${SPEC_DIR_INPUT##*/}" >> "$GITHUB_OUTPUT"
+          echo "slug=${QUALIFIED:-${SPEC_DIR_INPUT#specs/}}" >> "$GITHUB_OUTPUT"
           echo "spec-dir=$SPEC_DIR_INPUT"      >> "$GITHUB_OUTPUT"
 
       # Refusal note (research.md D1) — see "Report preflight refusal" above.
@@ -1684,14 +1687,20 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
+      # [P/]specs/NNN-slug -> [P/]NNN-slug, the branch's form, through the
+      # shared parser (spec 114, FR-013). Best-effort: this job reports a
+      # stall, so a name it cannot read leaves the branch unnamed rather
+      # than failing the report.
       - name: Resolve spec identity from inputs
         id: identity
         if: needs.finalize.outputs.refusal-reason == ''
-        env:
-          SPEC_DIR: ${{ inputs.spec-dir }}
-        run: |
-          # [P/]specs/NNN-slug -> [P/]NNN-slug, the branch's form (spec 114).
-          echo "slug=${SPEC_DIR%specs/*}${SPEC_DIR##*/}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ inputs.spec-dir }}
+          identity-kind: spec-dir
+          token: ${{ github.token }}
+          check-folder: 'false'
 
       # FR-004/FR-011: a credential re-establishment failure is named as
       # such, ahead of the generic agent-ran branch; otherwise, a real
@@ -1717,7 +1726,7 @@ jobs:
           token: ${{ steps.ctx.outputs.token }}
           issue-number: ${{ inputs.issue-number }}
           spec-dir: ${{ inputs.spec-dir }}
-          spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug }}
+          spec-branch: ${{ inputs.spec-prefix }}${{ steps.identity.outputs.slug-qualified }}
           stage-label: "stage:finalize"
           reason: ${{ steps.reason.outputs.reason }}
           # FR-015: resume-oriented wording when the agent ran and a step

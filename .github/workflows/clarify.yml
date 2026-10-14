@@ -1460,15 +1460,21 @@ jobs:
         run: |
           spec_slug="$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("spec:"))][0] // "" | sub("^spec:"; "")')"
           echo "slug=$spec_slug" >> "$GITHUB_OUTPUT"
-          if [ -n "$spec_slug" ]; then
-            # A subfolder lifecycle's label carries P/NNN-slug, whose spec
-            # lives at P/specs/NNN-slug (spec 114).
-            project=""
-            case "$spec_slug" in */*) project="${spec_slug%/*}" ;; esac
-            echo "spec-dir=${project:+$project/}specs/${spec_slug##*/}" >> "$GITHUB_OUTPUT"
-          else
-            echo "spec-dir=" >> "$GITHUB_OUTPUT"
-          fi
+
+      # The label's [P/]NNN-slug names its spec dir [P/]specs/NNN-slug
+      # through the shared parser (spec 114, FR-013). Best-effort: this job
+      # reports a stall, so a name it cannot read leaves the dir empty
+      # rather than failing the report.
+      - name: Resolve spec dir independently
+        id: identity-names
+        if: needs.clarify.outputs.refusal-reason == '' && steps.identity.outputs.slug != ''
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ steps.identity.outputs.slug }}
+          identity-kind: slug
+          token: ${{ github.token }}
+          check-folder: 'false'
 
       # (canonical copy: failed-step-naming; do not condense)
       # FR-004/FR-011 (spec 052, maintainer review of PR #407): a credential
@@ -1499,7 +1505,7 @@ jobs:
         with:
           token: ${{ steps.ctx.outputs.token }}
           issue-number: ${{ inputs.issue-number }}
-          spec-dir: ${{ steps.identity.outputs.spec-dir }}
+          spec-dir: ${{ steps.identity-names.outputs.spec-dir }}
           spec-branch: spec/${{ steps.identity.outputs.slug }}
           stage-label: "stage:clarify"
           reason: ${{ steps.reason.outputs.reason }}

@@ -88,6 +88,7 @@ import json
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -145,9 +146,16 @@ def run_case(*, prs=(), dirs=(), files=(), stage="intake", stage_source="name",
         for name in ("signals.json", "collector-outcomes.json"):
             with open(os.path.join(runner_temp, name), "w", encoding="utf-8") as fh:
                 fh.write("[]")
+        # The collector reads its project and bare slug from the shared
+        # parser through wing-commander-inspected-run-identity (spec 114,
+        # T066); derive them the same way.
+        parsed = subprocess.run([BASH, ".github/actions/_shared/project-name.sh", "names", "slug", slug],
+                                capture_output=True, text=True, check=False).stdout
+        names = dict(line.split("=", 1) for line in parsed.splitlines() if "=" in line)
         env = {"GITHUB_REPOSITORY": "charlesguse/wing-commander", "GH_TOKEN": "dummy",
                "RESOLVED_STAGE": stage, "RESOLVED_STAGE_SOURCE": stage_source,
                "RUN_CONCLUSION": conclusion, "SLUG": slug,
+               "OWN_PROJECT": names.get("project", ""), "LIFECYCLE_SLUG": names.get("slug", ""),
                "SPEC_DRAFT_PREFIX": draft_prefix, "SPEC_PREFIX": spec_prefix,
                "PATH": bindir + os.pathsep + os.environ["PATH"]}
         rc, out, _outputs, _summary = run_step(BASH, SCRIPT, workdir, env, runner_temp)

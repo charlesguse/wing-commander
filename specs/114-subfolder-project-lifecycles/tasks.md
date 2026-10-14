@@ -227,6 +227,7 @@ Source: maintainer comment on PR #1022, asking implement to continue the in-scop
 ## Phase 12: Convergence
 
 - [ ] T066 Replace the inline name splitting in `.github/actions/wing-commander-inspected-run-identity/action.yml` (head-branch prefix and `-iterN` stripping, metrics-record `[P/]specs/` to slug, slug to spec dir), `.github/workflows/watchdog.yml`'s spec-collision collector (`own_project="${SLUG%/*}"`) and `.github/workflows/rebase.yml`'s discover step (`project="${slug%/*}"`) with `_shared/project-name.sh parse`, so the watchdog and fold-cycle guard identify project and lifecycle through the one shared parser, and extend `verify-project-single-home.py` with a reject fixture for an inline project split per FR-013 (partial)
+  - Progress (cycle 13): inspected-run-identity and the watchdog collector done (it now reads `project`/`lifecycle-slug` outputs); the reject fixtures and the `inline-project-split` pattern added. Rebase `discover` remains -- see MF-21's note.
 
 
 ## Maintainer Feedback: Code review of #1022 at `87ae553`
@@ -262,6 +263,7 @@ Source: maintainer comment on PR #1022 (five fresh-session reviewers plus an adv
 - [X] MF-19 [Review #13] `check-folder`: test `.specify/memory`, `.specify/scripts` and each `SKILL.md` for symlinks. Add fixtures for a symlinked memory dir, skills dir and skill file
 - [X] MF-20 [Review #14] Routing must refuse instead of falling back to the root: bare routing label (`node:`), failed `gh issue view`, leading `/` or `//`. Strip `-iterN` only for implement branches. Add fixtures for each
 - [ ] MF-21 [Review #15, T066] Replace every remaining inline project/slug split (incl. `read-spec-meta.sh`, plan, tasks, rebase) with `project-name.sh parse`. Anchor rebase's `ls-remote` to `refs/heads/${SPEC_PREFIX}`
+  - Progress (cycle 13): done for `read-spec-meta.sh`, `wing-commander-context`, `wing-commander-inspected-run-identity`, intake's "Resolve created spec", implement/finalize spec identity and stalled jobs, clarify's stalled job, all three cleanup arms, rebase's abandon arm and the watchdog collector (new `project-name.sh names`); `ls-remote` anchored. Gate 159 now fails any `inline-project-split`. Still inline, as counted allowances in `verify-project-single-home.py` (`INLINE_SPLIT_ALLOWED`): the one-step pre-jobs with no pipeline checkout (plan and tasks `resolve-spec`, cleanup `select`, pr-conversation `resolve-identity`), rebase `discover`'s per-branch loop and implement's credential-free gate-suite job. Converting them needs a pipeline checkout in each pre-job (or a batch mode of `wing-commander-project` for discover).
 - [X] MF-22 [Review #16] Add the stale-folder re-check after checkout in pr-conversation act and act.fold, rebase and cleanup
 - [X] MF-23 [Review #17] Add a `release-claim` job (`if: always()`, no concurrency group) so `spec-intake-claimed` is released when a pending intake is cancelled
 - [X] MF-24 [Review #18, FR-016] Restore root byte-identity: drop the added blank lines around `routing-notes` in the root intake prompt, and add `name: rebase (${{ matrix.slug }}, ${{ matrix.spec_dir }}, ${{ matrix.issue }})` to the rebase matrix

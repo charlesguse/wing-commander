@@ -47,6 +47,26 @@ def main():
     spec_dir = run(env, "spec-dir", "", "001-login")
     if spec_dir.stdout.strip() != "specs/001-login":
         errors.append(f"spec-dir builder (root): {spec_dir.stdout!r}")
+    # `names` (MF-21/T066): every derived name from one parse, for callers
+    # that used to split a path inline; plan and tasks branches parse when
+    # their prefixes are set.
+    names_env = {**env, "PLAN_PREFIX": "plan/", "TASKS_PREFIX": "tasks/"}
+    for kind, name, want in (
+        ("slug", "ideas/alpha/001-login", ("ideas/alpha", "001-login", "ideas/alpha/001-login",
+                                           "ideas/alpha/specs/001-login", "specs/001-login")),
+        ("spec-dir", "specs/001-login", ("", "001-login", "001-login", "specs/001-login", "specs/001-login")),
+        ("branch", "plan/ideas/alpha/001-login", ("ideas/alpha", "001-login", "ideas/alpha/001-login",
+                                                  "ideas/alpha/specs/001-login", "specs/001-login")),
+        ("branch", "tasks/001-login", ("", "001-login", "001-login", "specs/001-login", "specs/001-login")),
+    ):
+        r = run(names_env, "names", kind, name)
+        expect = "".join(f"{k}={v}\n" for k, v in zip(("project", "slug", "qualified", "spec_dir", "spec_dir_rel"), want))
+        if r.returncode != 0 or r.stdout != expect:
+            errors.append(f"names {kind} {name!r}: rc={r.returncode} out={r.stdout!r}, want {expect!r}")
+    if run(names_env, "names", "slug", "/001-login").returncode == 0:
+        errors.append("names: a name with an empty project was accepted")
+    if run(env, "names", "branch", "plan/001-login").returncode == 0:
+        errors.append("names: a plan branch parsed with no plan prefix configured")
     # Attribution (FR-013, research D13): the watchdog and the fold-cycle
     # guard attribute a run by parsing whichever name they hold. Every form of
     # one lifecycle must give its own (P, slug) and spec-dir, and lifecycles

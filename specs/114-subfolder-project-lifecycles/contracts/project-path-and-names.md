@@ -33,12 +33,13 @@ The label budget: `len("spec:") + len(P) + 1 + len(NNN-slug) ≤ 50`, so `len(NN
 | `validate-path <P>` | candidate path | `project=<P>` | 0 valid; 1 invalid, reason on stderr |
 | `check-folder <P>` | validated path | nothing | 0; 1 with the folder and missing piece named |
 | `parse <kind> <name>` | `branch`, `label`, `slug` or `spec-dir` plus a name | `project=<P>` and `slug=<NNN-slug>` | 0; 1 on malformed |
+| `names <kind> <name>` | as `parse` | `parse`'s lines, then `qualified=<P/NNN-slug>`, `spec_dir=<P/specs/NNN-slug>`, `spec_dir_rel=specs/<NNN-slug>` | 0; 1 on malformed |
 | `spec-dir <P> <NNN-slug>` | | `P/specs/<NNN-slug>` | 0 |
 | `slug-budget <P>` | | integer | 0 |
 | `next-number <P>` | env `SPEC_DRAFT_PREFIX`, `SPEC_PREFIX` | zero-padded number | 0 |
 | `validate-prefix <prefix>` | routing prefix | nothing | 0; 1 with the overlapping family named |
 
-Rules: the parser strips the flat prefix first, strips `-iterN`, takes the last segment as `NNN-slug`, and the remainder is `P`. For `slug` and `spec-dir` kinds, the same `(P, NNN-slug)` results as for the matching branch and label.
+Rules: the parser strips the flat prefix first (`SPEC_DRAFT_PREFIX`, `SPEC_PREFIX`, `IMPL_PREFIX`, and `PLAN_PREFIX`/`TASKS_PREFIX` when set; longest match), strips `-iterN` from an implement branch only, takes the last segment as `NNN-slug`, and the remainder is `P`; a name whose remainder is empty before a `/` is refused, never read as the root. For `slug` and `spec-dir` kinds, the same `(P, NNN-slug)` results as for the matching branch and label.
 
 ## Composite `wing-commander-project`
 

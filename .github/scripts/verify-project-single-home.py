@@ -4,12 +4,16 @@
 A file converted for subfolder projects must reach the spec directory, the
 Spec Kit state and the skills through the shared project logic
 (`_shared/project-name.sh`, the `wing-commander-project` composite), never by
-rebuilding a root-only path. Four patterns count as root-only:
+rebuilding a root-only path or splitting a name by hand. Five patterns count:
 
-  root-spec-dir   a spec directory built from a slug as `specs/<slug var>`
-  root-specify    a bare `.specify/` path (no project prefix before it)
-  root-specs-scan a `ls`/`find` over a bare `specs/`
-  root-skill-path a bare `.claude/skills/speckit-*` path
+  root-spec-dir        a spec directory built as `specs/<any variable>`
+  root-specify         a bare `.specify/` path (no project prefix before it)
+  root-specs-scan      a `ls`/`find` over a bare `specs/`
+  root-skill-path      a bare `.claude/skills/speckit-*` path
+  inline-project-split a project or NNN-slug cut out of a slug, spec dir or
+                       branch with `%/*`, `##*/`, `%specs/*` or `%%/specs/*`
+
+A Windows separator reads as `/`.
 
 Each converted file may keep a fixed number of hits (its documented root
 branch: the empty-project case that must stay byte-identical); a hit beyond
@@ -40,13 +44,17 @@ PATTERNS = {
     "root-specify": re.compile(r"""(?:^|[\s"'(=])\.specify/"""),
     "root-specs-scan": re.compile(r"\b(?:ls|find)\s+(?:-\w+\s+)*specs/"),
     "root-skill-path": re.compile(r"""(?:^|[\s"'(=])\.claude/skills/speckit-"""),
+    # A lifecycle name split by hand (T066/MF-21): the project or the bare
+    # NNN-slug cut out of a slug, spec dir or branch with `%/*`, `##*/`,
+    # `%specs/*` or `%%/specs/*` instead of read by the parser.
+    "inline-project-split": re.compile(
+        r"\$\{\w*(?:slug|SLUG|spec_dir|SPEC_DIR|record_dir|branch|BRANCH)\w*(?:%/\*|##\*/|%specs/\*|%%/specs/\*)\}"),
 }
 
 # file -> {pattern: hits allowed}. A hit is a documented root branch.
 ALLOWED = {
     # spec-dir-rel is project-relative by definition.
     ".github/actions/wing-commander-project/action.yml": {"root-spec-dir": 1},
-    ".github/actions/wing-commander-inspected-run-identity/action.yml": {"root-spec-dir": 1},
     ".github/actions/wing-commander-context/action.yml": {"root-spec-dir": 1},
     # Two input-description lines name the artifacts in prose; the third
     # skill hit is the root branch's `ls -d` (the empty-project case).
@@ -69,6 +77,24 @@ ALLOWED = {
     # and has no project; a subfolder project's own upgrade is out of scope.
     ".github/workflows/auto-update-spec-kit.yml": {"root-specify": 12, "root-skill-path": 1},
 }
+
+# inline-project-split hits that cannot reach the parser: each sits in a job
+# that runs before any pipeline checkout exists (a one-step pre-job whose
+# outputs name the next job's concurrency group), or in the credential-free
+# gate-suite job, where wing-commander-project's token-bearing callout may
+# not run. Each validates the name's shape first, and the job that acts on
+# the value re-reads it through wing-commander-project, which refuses any
+# name the inline split would read differently.
+INLINE_SPLIT_ALLOWED = {
+    ".github/workflows/plan.yml": 2,              # resolve-spec
+    ".github/workflows/tasks.yml": 6,             # resolve-spec x3
+    ".github/workflows/cleanup.yml": 1,           # select
+    ".github/workflows/pr-conversation.yml": 2,   # resolve-identity
+    ".github/workflows/rebase.yml": 2,            # discover's per-branch loop
+    ".github/workflows/implement.yml": 1,         # gate-suite-implement-cycle
+}
+for _rel, _n in INLINE_SPLIT_ALLOWED.items():
+    ALLOWED.setdefault(_rel, {})["inline-project-split"] = _n
 
 
 def scan(text):

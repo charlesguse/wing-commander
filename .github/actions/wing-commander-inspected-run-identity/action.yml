@@ -146,8 +146,14 @@ outputs:
     description: Where the slug came from — `head-branch`, `metrics-record`, or empty when none resolved.
     value: ${{ steps.resolve.outputs.slug-source }}
   spec-dir:
-    description: specs/<slug>, or empty.
+    description: "[P/]specs/<NNN-slug>, or empty."
     value: ${{ steps.resolve.outputs.spec-dir }}
+  project:
+    description: The lifecycle's project P from the shared parser (spec 114), empty at the root or when no slug resolved.
+    value: ${{ steps.resolve.outputs.project }}
+  lifecycle-slug:
+    description: The bare NNN-slug, without the project, or empty.
+    value: ${{ steps.resolve.outputs.lifecycle-slug }}
   lifecycle-issue:
     description: The lifecycle issue number from spec-meta.json on the spec branch (else the spec-draft branch), or empty.
     value: ${{ steps.resolve.outputs.lifecycle-issue }}
@@ -207,14 +213,18 @@ runs:
           HEAD_BRANCH="$(GH_TOKEN="$ACTIONS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch --jq '.headBranch // empty' 2>/dev/null || true)"
         fi
 
+        # Project and lifecycle come from the one parser (spec 114, FR-013):
+        # it strips whichever pipeline prefix the branch carries (-iterN only
+        # from an implement branch) and reads [P/]NNN-slug, so a name it
+        # cannot read is no pipeline branch here.
+        lib="$GITHUB_ACTION_PATH/../_shared/project-name.sh"
+        kv() { printf '%s\n' "$2" | sed -n "s/^$1=//p"; }
+        export SPEC_DRAFT_PREFIX SPEC_PREFIX PLAN_PREFIX TASKS_PREFIX IMPL_PREFIX
         slug=""
-        case "$HEAD_BRANCH" in
-          "${SPEC_DRAFT_PREFIX}"*) slug="${HEAD_BRANCH#"$SPEC_DRAFT_PREFIX"}" ;;
-          "${SPEC_PREFIX}"*)       slug="${HEAD_BRANCH#"$SPEC_PREFIX"}" ;;
-          "${PLAN_PREFIX}"*)       slug="${HEAD_BRANCH#"$PLAN_PREFIX"}" ;;
-          "${TASKS_PREFIX}"*)      slug="${HEAD_BRANCH#"$TASKS_PREFIX"}" ;;
-          "${IMPL_PREFIX}"*)       slug="${HEAD_BRANCH#"$IMPL_PREFIX"}"; slug="${slug%-iter*}" ;;
-        esac
+        names=""
+        if [ -n "$HEAD_BRANCH" ] && names="$(bash "$lib" names branch "$HEAD_BRANCH" 2>/dev/null)"; then
+          slug="$(kv qualified "$names")"
+        fi
         slug_source=""
         [ -z "$slug" ] || slug_source="head-branch"
 
@@ -242,10 +252,10 @@ runs:
                 specs/?*|?*/specs/?*) record_dir="$d"; break ;;
               esac
             done < <(find "$mr_dir" -type f -name '*.json' 2>/dev/null | sort)
-            if [ -n "$record_dir" ]; then
-              # [P/]specs/<NNN-slug> -> [P/]<NNN-slug> (spec 114).
-              slug="${record_dir%%/specs/*}/${record_dir##*/}"
-              case "$record_dir" in specs/*) slug="${record_dir#specs/}" ;; esac
+            # [P/]specs/<NNN-slug> -> [P/]<NNN-slug> (spec 114), through the
+            # parser.
+            if [ -n "$record_dir" ] && names="$(bash "$lib" names spec-dir "$record_dir" 2>/dev/null)"; then
+              slug="$(kv qualified "$names")"
               slug_source="metrics-record"
             fi
           fi
@@ -262,11 +272,8 @@ runs:
         if [ -n "$slug" ]; then
           # A subfolder lifecycle's slug is <P>/<NNN-slug>; its spec
           # directory is repository-relative <P>/specs/<NNN-slug> (spec 114,
-          # contracts/project-path-and-names.md). Root is specs/<slug>.
-          case "$slug" in
-            */*) spec_dir="${slug%/*}/specs/${slug##*/}" ;;
-            *)   spec_dir="specs/$slug" ;;
-          esac
+          # contracts/project-path-and-names.md), named by the parser above.
+          spec_dir="$(kv spec_dir "$names")"
           # One home for this read (#340, Gate 61): _shared/read-spec-meta.sh
           # fetches the branch, reads the file and applies the self-identity
           # check; its values are sanitised, so eval is safe.
@@ -301,6 +308,8 @@ runs:
           echo "slug=$slug"
           echo "slug-source=$slug_source"
           echo "spec-dir=$spec_dir"
+          echo "project=$(kv project "$names")"
+          echo "lifecycle-slug=$(kv slug "$names")"
           echo "lifecycle-issue=$issue"
           echo "meta-stage=$meta_stage"
           echo "stalled-label=$stalled_label"

@@ -2024,6 +2024,10 @@ jobs:
           RESOLVED_STAGE_SOURCE: ${{ steps.spec-slug.outputs.resolved-stage-source }}
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           SLUG: ${{ steps.spec-slug.outputs.slug }}
+          # Project and bare NNN-slug from the shared parser, via the
+          # inspected-run identity (spec 114, FR-013).
+          OWN_PROJECT: ${{ steps.spec-slug.outputs.project }}
+          LIFECYCLE_SLUG: ${{ steps.spec-slug.outputs.lifecycle-slug }}
           SPEC_DRAFT_PREFIX: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
           SPEC_PREFIX: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
         run: |
@@ -2046,9 +2050,8 @@ jobs:
           # A subfolder lifecycle's slug is P/NNN-slug (spec 114, research.md
           # D13): its number is per project, so only P's own PRs and P/specs/
           # directories can collide with it. The root (no `/`) is unchanged.
-          own_project=""
-          case "$SLUG" in */*) own_project="${SLUG%/*}" ;; esac
-          own_number="$(printf '%s' "${SLUG##*/}" | grep -oE '^[0-9]{3}' || true)"
+          own_project="${OWN_PROJECT:-}"
+          own_number="$(printf '%s' "${LIFECYCLE_SLUG:-}" | grep -oE '^[0-9]{3}' || true)"
           if [ -z "$own_number" ]; then
             echo "spec-collision: no three-digit spec number resolved from slug '$SLUG' — skipping." >> "$GITHUB_STEP_SUMMARY"
             exit 0
