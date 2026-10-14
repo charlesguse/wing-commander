@@ -71,9 +71,9 @@
 - [X] T027 [P] [US1] Create composite `.github/actions/wing-commander-containment/action.yml`: given the pre-agent SHA and `P`, fail the stage with a callout listing any changed path (committed or working tree) outside `P/`; skip for root lifecycles (FR-021)
 - [X] T028 [US1] Add the pipeline-checkout guard check that refuses a branch tracking `**/.wing-commander-pipeline/**` at any depth (`git ls-files`); locate the guard via `grep -rn pipeline-checkout .github/` (FR-025)
 - [ ] T029 [US1] Wire `wing-commander-project`, project-aware preflight and the project working directory (per T001 outcome) and containment guard into `.github/workflows/intake.yml`
-- [ ] T030 [P] [US1] Wire the same into `.github/workflows/clarify.yml`: derive `(P, slug)` from the lifecycle identity, run preflight in `P`, agent working directory `P`, containment guard, project-aware paths in prompts and allowed-tools
-- [ ] T031 [P] [US1] Same wiring in `.github/workflows/plan.yml`; the plan→tasks hand-off and the manual-restart `slug` input take `P/<NNN-slug>`; document the input form in the input description
-- [ ] T032 [P] [US1] Same wiring in `.github/workflows/tasks.yml`; restart `slug` takes `P/<NNN-slug>`
+- [X] T030 [P] [US1] Wire the same into `.github/workflows/clarify.yml`: derive `(P, slug)` from the lifecycle identity, run preflight in `P`, agent working directory `P`, containment guard, project-aware paths in prompts and allowed-tools
+- [X] T031 [P] [US1] Same wiring in `.github/workflows/plan.yml`; the plan→tasks hand-off and the manual-restart `slug` input take `P/<NNN-slug>`; document the input form in the input description
+- [X] T032 [P] [US1] Same wiring in `.github/workflows/tasks.yml`; restart `slug` takes `P/<NNN-slug>`
 - [ ] T033 [P] [US1] Same wiring in `.github/workflows/implement.yml`; branch `<impl-prefix>P/<NNN-slug>-iterN`; `spec_dir` input and hand-offs take `P/specs/<NNN-slug>`
 - [ ] T034 [P] [US1] Same wiring in `.github/workflows/finalize.yml`; `spec_dir` takes the repository-relative form
 - [ ] T035 [P] [US1] Same wiring in `.github/workflows/rebase.yml`, `.github/workflows/pr-conversation.yml` (act and act.fold agents) and `.github/workflows/cleanup.yml`
@@ -193,6 +193,6 @@ Add US2 (isolation) → US3 (compat proof) → US4 (graduation) → US5 (nesting
 ## Maintainer Feedback
 
 - [ ] M001 Complete every remaining unchecked task in this spec's tasks.md (T001, T018, T021, T026, T029–T038, T040–T054, T056–T059), including the per-stage wiring (T029–T036, T040–T046) so Story 1 works end to end. (Maintainer request on PR #1022)
-- [ ] M002 Fix Gate 121: in job `intake`, step `Create spec from issue`, render the canonical commit-message scratch-path guidance by invoking `wing-commander-commit-message-guidance` in an earlier step of the job and interpolating its output into that prompt.
-- [ ] M003 Fix `verify-write-boundary.py`: run it locally to identify the failing scenario (likely from the project-aware deny composition in `wing-commander-tool-args`, T026/T027) and make the composed denies agree with the single no-write-paths definition (spec 090 / FR-022).
+- [X] M002 Fix Gate 121: in job `intake`, step `Create spec from issue`, render the canonical commit-message scratch-path guidance by invoking `wing-commander-commit-message-guidance` in an earlier step of the job and interpolating its output into that prompt.
+- [X] M003 Fix `verify-write-boundary.py`: run it locally to identify the failing scenario (likely from the project-aware deny composition in `wing-commander-tool-args`, T026/T027) and make the composed denies agree with the single no-write-paths definition (spec 090 / FR-022).
 - [ ] M004 Keep root-level adopters byte-identical (FR-016) and run `python .github/scripts/run-local-gates.py` until all gates are green.
