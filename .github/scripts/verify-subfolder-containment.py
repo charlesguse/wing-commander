@@ -10,6 +10,10 @@ cases.json:
   * _shared/containment.sh pre-push -- the hook an agent that pushes itself
     (pr-conversation's act leg) runs: refuses a push carrying a change
     outside the folder, allows one inside it and a branch deletion.
+  * wing-commander-publish-stranded-commits -- the !cancelled() rescue after
+    the containment check: publishes nothing when the unpushed commits touch
+    a path outside the folder, and is handed the job's project wherever a
+    containment check runs.
 It also checks that every workflow step running claude-code-action in a
 workflow that composes tool-args consumes the composed allowed-tools output,
 and that every Edit/Write agent in a project-wired job has a containment
@@ -205,38 +209,111 @@ jobs:
 """
 
 
-def pre_push(case):
-    """Run containment.sh's pre-push mode in a clone whose origin already
-    holds the base commit, after the case's local commits."""
-    with tempfile.TemporaryDirectory() as tmp:
-        origin = os.path.join(tmp, "origin.git")
-        work = os.path.join(tmp, "work")
-        subprocess.run(["git", "init", "-q", "--bare", origin], check=True, capture_output=True)
-        os.makedirs(work)
-        git(work, "init", "-q", "-b", "main")
-        git(work, "config", "user.email", "g@example.invalid")
-        git(work, "config", "user.name", "gate")
-        for rel in case["base_files"]:
-            path = os.path.join(work, rel)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write("x\n")
+UNSCOPED_RESCUE = """\
+jobs:
+  stage:
+    steps:
+      - id: project
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+      - name: Check agent changes stay inside the project folder
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          project: ${{ steps.project.outputs.project }}
+      - name: Publish stranded commits (post-agent)
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          before-sha: abc
+"""
+
+
+def check_rescue_scope(errors, wf_dir=None):
+    """FR-021: the stranded-commit rescue runs on !cancelled(), after the
+    containment check, so in a project-wired job it must be handed the same
+    project the job's containment check uses -- else it publishes exactly
+    what that check failed."""
+    wf_dir = wf_dir or os.path.join(ROOT, ".github", "workflows")
+    covered = 0
+    for fn in sorted(os.listdir(wf_dir)):
+        if not fn.endswith(".yml"):
+            continue
+        with open(os.path.join(wf_dir, fn), encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+        for job_name, job in ((doc or {}).get("jobs") or {}).items():
+            steps = job.get("steps") or []
+            guards = {
+                str((s.get("with") or {}).get("project", "")).strip()
+                for s in steps
+                if str(s.get("uses", "")).endswith("/wing-commander-containment")
+            }
+            wired = bool(guards) or any(str(s.get("uses", "")).endswith("/wing-commander-project") for s in steps)
+            if not wired:
+                continue
+            for s in steps:
+                if not str(s.get("uses", "")).endswith("/wing-commander-publish-stranded-commits"):
+                    continue
+                project = str((s.get("with") or {}).get("project", "")).strip()
+                if not project or (guards and project not in guards):
+                    errors.append(f"{fn}:{job_name}: {s.get('name')!r} is not handed the project its containment check uses (FR-021)")
+                else:
+                    covered += 1
+    return covered
+
+
+def staged_clone(tmp, case):
+    """A clone whose origin already holds the base commit, with the case's
+    local commits on top. Returns (work, origin, base sha)."""
+    origin = os.path.join(tmp, "origin.git")
+    work = os.path.join(tmp, "work")
+    subprocess.run(["git", "init", "-q", "--bare", origin], check=True, capture_output=True)
+    os.makedirs(work)
+    git(work, "init", "-q", "-b", "main")
+    git(work, "config", "user.email", "g@example.invalid")
+    git(work, "config", "user.name", "gate")
+    for rel in case["base_files"]:
+        path = os.path.join(work, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("x\n")
+    git(work, "add", "-A")
+    git(work, "commit", "-q", "-m", "base")
+    base = rev(work, "HEAD")
+    git(work, "remote", "add", "origin", origin)
+    git(work, "push", "-q", "origin", "main")
+    for rel in case.get("commit_files", []):
+        path = os.path.join(work, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("y\n")
+    if case.get("commit_files"):
         git(work, "add", "-A")
-        git(work, "commit", "-q", "-m", "base")
-        git(work, "remote", "add", "origin", origin)
-        git(work, "push", "-q", "origin", "main")
-        for rel in case.get("commit_files", []):
-            path = os.path.join(work, rel)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "a", encoding="utf-8") as fh:
-                fh.write("y\n")
-        if case.get("commit_files"):
-            git(work, "add", "-A")
-            git(work, "commit", "-q", "-m", "agent")
-        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=work, capture_output=True, text=True, check=True).stdout.strip()
-        line = case.get("stdin", "refs/heads/x {sha} refs/heads/x " + "0" * 40).format(sha=sha) + "\n"
+        git(work, "commit", "-q", "-m", "agent")
+    return work, origin, base
+
+
+def rev(cwd, ref):
+    return subprocess.run(["git", "rev-parse", ref], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
+
+
+def pre_push(case):
+    """Run containment.sh's pre-push mode after the case's local commits."""
+    with tempfile.TemporaryDirectory() as tmp:
+        work, _, _ = staged_clone(tmp, case)
+        line = case.get("stdin", "refs/heads/x {sha} refs/heads/x " + "0" * 40).format(sha=rev(work, "HEAD")) + "\n"
         return subprocess.run(["bash", PRE_PUSH, "pre-push", case["project"]], input=line,
                               capture_output=True, text=True, cwd=work, check=False)
+
+
+def publish_stranded(case, script):
+    """Run wing-commander-publish-stranded-commits' real shell after the
+    case's local commits. Returns (result, push-ok, whether origin moved to
+    the local tip)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        work, origin, base = staged_clone(tmp, case)
+        env = {"BEFORE_SHA": base, "WORKDIR": work, "PUSH_TOKEN": "", "PUSH_REPO": "",
+               "EXPECTED_BRANCH": "", "PROJECT": case["project"]}
+        r, out = run_script(script, env, tmp, "wing-commander-publish-stranded-commits")
+        m = re.search(r"^push-ok=(.*)$", out, re.M)
+        return r, (m.group(1) if m else ""), rev(origin, "refs/heads/main") == rev(work, "HEAD")
 
 
 def main():
@@ -279,7 +356,27 @@ def main():
             for p in case.get("names", []):
                 if p not in r.stderr:
                     errors.append(f"pre_push {name}: refusal does not name {p!r}")
+    ps = action_script("wing-commander-publish-stranded-commits")
+    for name, case in data.get("publish_stranded", {}).items():
+        r, ok, moved = publish_stranded(case, ps)
+        if case["expect"] == "pass" and (ok != "true" or not moved):
+            errors.append(f"publish_stranded {name}: expected the commits published, push-ok={ok!r} origin moved={moved} {r.stderr!r}")
+        if case["expect"] == "fail":
+            if ok != "false" or moved:
+                errors.append(f"publish_stranded {name}: expected nothing published, push-ok={ok!r} origin moved={moved}")
+            for p in case.get("names", []):
+                if p not in r.stdout + r.stderr:
+                    errors.append(f"publish_stranded {name}: refusal does not name {p!r}")
     check_wiring(errors)
+    if check_rescue_scope(errors) == 0:
+        errors.append("rescue scope: no stranded-commit rescue in a project-wired job was found -- the check has lost its subject")
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "unscoped.yml"), "w", encoding="utf-8") as fh:
+            fh.write(UNSCOPED_RESCUE)
+        probe = []
+        check_rescue_scope(probe, tmp)
+        if not probe:
+            errors.append("rescue scope: a project-wired rescue with no project input was not flagged")
     if check_guard_coverage(errors) == 0:
         errors.append("guard coverage: no Edit/Write agent in a project-wired job was found -- the check has lost its subject")
     # Self-test: the coverage check must flag an unguarded Edit/Write agent.

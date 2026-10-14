@@ -124,5 +124,33 @@
       "stdin": "(delete) 0000000000000000000000000000000000000000 refs/heads/x {sha}",
       "expect": "pass"
     }
+  },
+  "publish_stranded": {
+    "stranded_inside_published": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["a/b/x.md", "a/b/c/new.md"],
+      "expect": "pass"
+    },
+    "stranded_outside_not_published": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["a/b/x.md", "README.md"],
+      "expect": "fail",
+      "names": ["README.md"]
+    },
+    "stranded_sibling_prefix_not_published": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "commit_files": ["a/bc/y.md"],
+      "expect": "fail",
+      "names": ["a/bc/y.md"]
+    },
+    "root_lifecycle_unchecked": {
+      "project": "",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["README.md"],
+      "expect": "pass"
+    }
   }
 }

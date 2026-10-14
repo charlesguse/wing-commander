@@ -2497,6 +2497,7 @@ jobs:
           # on a branch it cut itself.
           push-token: ${{ env.WC_BOT_TOKEN }}
           push-repo: ${{ github.repository }}
+          project: ${{ steps.project.outputs.project }}
 
       - name: Compute agent run verdict
         id: agent-verdict

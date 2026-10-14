@@ -1011,6 +1011,7 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:
           before-sha: ${{ steps.pre-agent.outputs.before-sha }}
+          project: ${{ steps.project.outputs.project }}
 
       # deterministic, transcript-only verdict replacing the raw steps.agent-auto.outcome checks
       # -- see specs/037-agent-turn-budget-guard/data-model.md. Gated on
@@ -1256,6 +1257,7 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:
           before-sha: ${{ steps.pre-agent.outputs.before-sha }}
+          project: ${{ steps.project.outputs.project }}
 
       - name: Compute agent run verdict (pr)
         id: agent-pr-verdict

@@ -218,4 +218,4 @@ Source: maintainer comment on PR #1022, asking implement to continue the in-scop
 
 ## Phase 10: Convergence
 
-- [ ] T064 Make `.github/actions/wing-commander-publish-stranded-commits` take the lifecycle's project and refuse to push stranded commits that touch any path outside it (through `_shared/containment.sh`), wiring the project into every stage's "Publish stranded commits (post-agent)" call, so a failed containment check can no longer be published by the rescue that runs after it on `!cancelled()`; cover it in `verify-subfolder-containment.py` or Gate 123 per FR-021 (partial)
+- [X] T064 Make `.github/actions/wing-commander-publish-stranded-commits` take the lifecycle's project and refuse to push stranded commits that touch any path outside it (through `_shared/containment.sh`), wiring the project into every stage's "Publish stranded commits (post-agent)" call, so a failed containment check can no longer be published by the rescue that runs after it on `!cancelled()`; cover it in `verify-subfolder-containment.py` or Gate 123 per FR-021 (partial)

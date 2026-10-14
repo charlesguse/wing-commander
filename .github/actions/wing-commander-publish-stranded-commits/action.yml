@@ -58,6 +58,16 @@ inputs:
       Empty (the default) publishes whatever branch the checkout is on.
     required: false
     default: ""
+  project:
+    description: >
+      The lifecycle's project folder P (specs/114-subfolder-project-lifecycles,
+      FR-021). When set, a push whose not-yet-published commits touch any
+      path outside P/ is refused (push-ok=false) through
+      _shared/containment.sh -- this rescue runs on !cancelled(), after the
+      containment check, so it must not publish what that check failed.
+      Empty (the default, and every root lifecycle) skips the check.
+    required: false
+    default: ""
 
 outputs:
   commits-published:
@@ -88,6 +98,7 @@ runs:
         PUSH_TOKEN: ${{ inputs.push-token }}
         PUSH_REPO: ${{ inputs.push-repo }}
         EXPECTED_BRANCH: ${{ inputs.branch }}
+        PROJECT: ${{ inputs.project }}
       run: |
         set -uo pipefail
         dir="${WORKDIR:-.}"
@@ -115,6 +126,13 @@ runs:
           echo "commits-published=$count" >> "$GITHUB_OUTPUT"
           if [ -n "$EXPECTED_BRANCH" ] && [ "$branch" != "$EXPECTED_BRANCH" ]; then
             echo "::warning::wing-commander-publish-stranded-commits: the checkout is on '$branch', not '$EXPECTED_BRANCH' -- nothing is published."
+            echo "push-ok=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$PROJECT" ] && ! printf 'HEAD %s refs/heads/%s 0\n' "$(git rev-parse HEAD)" "$branch" \
+              | bash "$GITHUB_ACTION_PATH/../_shared/containment.sh" pre-push "$PROJECT"; then
+            # spec 114 FR-021: the same test pr-conversation's pre-push hook
+            # runs, over the commits this push would publish that no remote
+            # carries yet. containment.sh has already named the paths.
+            echo "::warning::wing-commander-publish-stranded-commits: the unpublished commits touch paths outside project folder '$PROJECT' -- nothing is published."
             echo "push-ok=false" >> "$GITHUB_OUTPUT"
           elif [ -n "$PUSH_TOKEN" ]; then
             # spec 095 FR-016/FR-017: an explicit destination, pushed from a
