@@ -1,0 +1,48 @@
+{
+  "accept": ["ideas", "ideas/alpha", "a", "a/b", "a/b/c", "x-1/y-2", "abcdefghijklmnopqrstuvwxyz12"],
+  "reject": {
+    "uppercase": "Ideas/alpha",
+    "space": "ideas/al pha",
+    "dotdot": "ideas/../x",
+    "absolute": "/ideas/alpha",
+    "empty": "",
+    "empty-segment": "ideas//alpha",
+    "trailing-slash": "ideas/",
+    "specs-segment": "ideas/specs/alpha",
+    "specs-only": "specs",
+    "number-segment": "ideas/001-alpha",
+    "over-28": "abcdefghijklmnopqrstuvwxyz123",
+    "leading-dash": "-ideas",
+    "underscore": "ideas/al_pha"
+  },
+  "budget": {"ideas/alpha": 33, "a": 43},
+  "prefix_accept": ["node:", "project:", "x1-y:"],
+  "prefix_reject": {
+    "equals-spec": "spec:",
+    "spec-dash": "spec-:",
+    "stage": "stage:",
+    "model": "model:",
+    "board": "board:",
+    "disposition": "disposition:",
+    "route-out-of-boundary": "route-out-of-boundary:",
+    "spec-request": "spec-request:",
+    "starts-with-family": "stage-x:",
+    "no-colon": "node",
+    "two-colons": "node::",
+    "uppercase": "Node:",
+    "too-long": "abcdefghijklmnopqrstuvwxyz:"
+  },
+  "folder_reject": {
+    "missing-folder": {"project": "ideas/alpha", "files": []},
+    "no-specify": {"project": "ideas/alpha", "files": ["ideas/alpha/.claude/skills/speckit-plan/SKILL.md"]},
+    "no-constitution": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/x", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"]},
+    "no-skills": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/x"]},
+    "symlinked-folder": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas/alpha"},
+    "symlinked-ancestor": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas"},
+    "symlinked-specify": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas/alpha/.specify"},
+    "symlinked-claude": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas/alpha/.claude"},
+    "symlinked-specs": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md", "ideas/alpha/specs/.keep"], "symlink": "ideas/alpha/specs"},
+    "symlinked-constitution": {"project": "ideas/alpha", "files": ["ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas/alpha/.specify/memory/constitution.md"}
+  },
+  "folder_accept": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"]}
+}

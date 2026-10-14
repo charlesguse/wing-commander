@@ -1,0 +1,34 @@
+{
+  "env": {"SPEC_DRAFT_PREFIX": "spec-draft/", "SPEC_PREFIX": "spec/", "IMPL_PREFIX": "implement/"},
+  "accept": [
+    {"kind": "branch", "name": "spec-draft/001-login", "project": "", "slug": "001-login"},
+    {"kind": "branch", "name": "spec/001-login", "project": "", "slug": "001-login"},
+    {"kind": "branch", "name": "implement/001-login-iter3", "project": "", "slug": "001-login"},
+    {"kind": "branch", "name": "spec-draft/ideas/alpha/001-login", "project": "ideas/alpha", "slug": "001-login"},
+    {"kind": "branch", "name": "spec/ideas/alpha/001-login", "project": "ideas/alpha", "slug": "001-login"},
+    {"kind": "branch", "name": "implement/ideas/alpha/001-login-iter12", "project": "ideas/alpha", "slug": "001-login"},
+    {"kind": "label", "name": "spec:001-login", "project": "", "slug": "001-login"},
+    {"kind": "label", "name": "spec:ideas/alpha/001-login", "project": "ideas/alpha", "slug": "001-login"},
+    {"kind": "slug", "name": "001-login", "project": "", "slug": "001-login"},
+    {"kind": "slug", "name": "ideas/alpha/001-login", "project": "ideas/alpha", "slug": "001-login"},
+    {"kind": "spec-dir", "name": "specs/001-login", "project": "", "slug": "001-login"},
+    {"kind": "spec-dir", "name": "ideas/alpha/specs/001-login", "project": "ideas/alpha", "slug": "001-login"},
+    {"kind": "spec-dir", "name": "a/b/c/specs/002-x", "project": "a/b/c", "slug": "002-x"},
+    {"kind": "label", "name": "spec:a/b/001-x", "project": "a/b", "slug": "001-x"},
+    {"kind": "label", "name": "spec:c/b/001-x", "project": "c/b", "slug": "001-x"}
+  ],
+  "reject": [
+    {"kind": "branch", "name": "other/001-login"},
+    {"kind": "branch", "name": "spec/ideas/Alpha/001-login"},
+    {"kind": "branch", "name": "spec/ideas//001-login"},
+    {"kind": "branch", "name": "spec/ideas/alpha/login"},
+    {"kind": "label", "name": "node:ideas/alpha"},
+    {"kind": "label", "name": "spec:ideas/specs/001-login"},
+    {"kind": "label", "name": "spec:../001-login"},
+    {"kind": "slug", "name": "ideas/alpha/01-login"},
+    {"kind": "spec-dir", "name": "ideas/alpha/001-login"},
+    {"kind": "spec-dir", "name": "specs/001-login/extra"},
+    {"kind": "spec-dir", "name": "ideas/alpha/specs/001-login/spec.md"},
+    {"kind": "bogus", "name": "001-login"}
+  ]
+}

@@ -1,0 +1,137 @@
+# wing-commander-project — the front door to `_shared/project-name.sh`,
+# the one home of subfolder-project logic (spec 114, research.md D1).
+#
+# Resolves which project a lifecycle belongs to and the names derived from
+# it. Intake passes `routing-label-prefix` and `issue-number` and gets the
+# project from the issue's live routing label; every later stage passes
+# `identity` (any branch, label, slug or spec-dir of the lifecycle) and gets
+# the same (project, slug) pair back from the shared parser, so no stage
+# reads the label again. A routing failure (two routing labels, a path that
+# breaks the grammar, a folder that is not a Spec Kit project) fails the
+# step after posting a callout naming the folder on the lifecycle issue.
+#
+# Root lifecycles produce an empty `project` and root-shaped values, byte
+# for byte what the stages computed before this composite existed.
+#
+# Constitution VII: part of the published surface; adding it is a
+# minor-version change at the next release.
+name: wing-commander-project
+description: >-
+  Resolves a lifecycle's subfolder project (empty for the repository root)
+  from the issue's routing label or from any of its branch, label, slug or
+  spec-dir names, and returns the project-qualified names. Fails with a
+  callout naming the folder when the project is invalid.
+inputs:
+  routing-label-prefix:
+    description: >-
+      Intake only. The label prefix that routes an issue to a project folder
+      (for example `node:`). Empty disables routing and resolves the root.
+    required: false
+    default: ''
+  issue-number:
+    description: Intake only. The issue whose live labels carry the routing label.
+    required: false
+    default: ''
+  identity:
+    description: >-
+      Later stages. A branch, label, slug or spec-dir name of the lifecycle.
+    required: false
+    default: ''
+  identity-kind:
+    description: One of branch, label, slug, spec-dir. Used with `identity`.
+    required: false
+    default: slug
+  token:
+    description: Token for reading labels and posting the failure callout.
+    required: false
+    default: ''
+  check-folder:
+    description: "`true` to also verify the folder is a Spec Kit project on this checkout."
+    required: false
+    default: 'true'
+outputs:
+  project:
+    description: The project path, empty for the repository root.
+    value: ${{ steps.resolve.outputs.project }}
+  slug:
+    description: The NNN-slug, when known.
+    value: ${{ steps.resolve.outputs.slug }}
+  spec-dir:
+    description: The repository-relative spec directory, when the slug is known.
+    value: ${{ steps.resolve.outputs.spec-dir }}
+  spec-dir-rel:
+    description: The project-relative spec directory, when the slug is known.
+    value: ${{ steps.resolve.outputs.spec-dir-rel }}
+  slug-qualified:
+    description: P/NNN-slug (just NNN-slug for the root), when the slug is known.
+    value: ${{ steps.resolve.outputs.slug-qualified }}
+  slug-budget:
+    description: The longest NNN-slug the spec label can carry; empty for the root.
+    value: ${{ steps.resolve.outputs.slug-budget }}
+runs:
+  using: composite
+  steps:
+    - name: Resolve project
+      id: resolve
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ROUTING_PREFIX: ${{ inputs.routing-label-prefix }}
+        ISSUE: ${{ inputs.issue-number }}
+        IDENTITY: ${{ inputs.identity }}
+        IDENTITY_KIND: ${{ inputs.identity-kind }}
+        CHECK_FOLDER: ${{ inputs.check-folder }}
+      run: |
+        lib="$GITHUB_ACTION_PATH/../_shared/project-name.sh"
+        callout() {
+          echo "::error::$1"
+          if [ -n "${GH_TOKEN:-}" ] && [ -n "$ISSUE" ]; then
+            gh issue comment "$ISSUE" --body "⚠️ **Wing Commander · project routing** — $1" || true
+          fi
+        }
+        project=''
+        slug=''
+        if [ -n "$IDENTITY" ]; then
+          if ! out=$(bash "$lib" parse "$IDENTITY_KIND" "$IDENTITY" 2>&1); then
+            callout "cannot read a project from \`$IDENTITY\`: $out"
+            exit 1
+          fi
+          project=$(printf '%s\n' "$out" | sed -n 's/^project=//p')
+          slug=$(printf '%s\n' "$out" | sed -n 's/^slug=//p')
+        elif [ -n "$ROUTING_PREFIX" ]; then
+          if ! err=$(bash "$lib" validate-prefix "$ROUTING_PREFIX" 2>&1); then
+            callout "$err"
+            exit 1
+          fi
+          labels=$(gh issue view "$ISSUE" --json labels --jq '.labels[].name' | grep -F -- "$ROUTING_PREFIX" | grep -E "^$ROUTING_PREFIX" || true)
+          count=$(printf '%s' "$labels" | grep -c . || true)
+          if [ "$count" -gt 1 ]; then
+            callout "this issue carries $count routing labels ($(printf '%s' "$labels" | tr '\n' ' ')); exactly one is allowed. Nothing was created."
+            exit 1
+          fi
+          [ "$count" -eq 0 ] || project="${labels#"$ROUTING_PREFIX"}"
+        fi
+        if [ -n "$project" ]; then
+          if ! err=$(bash "$lib" validate-path "$project" 2>&1 >/dev/null); then
+            callout "project folder \`$project\` is invalid: $err"
+            exit 1
+          fi
+          if [ "$CHECK_FOLDER" = true ] && ! err=$(bash "$lib" check-folder "$project" 2>&1); then
+            callout "project folder \`$project\` is not usable: $err"
+            exit 1
+          fi
+        fi
+        {
+          echo "project=$project"
+          echo "slug=$slug"
+          if [ -n "$slug" ]; then
+            bash "$lib" spec-dir "$project" "$slug" | sed 's/^/spec-dir=/'
+            echo "spec-dir-rel=specs/$slug"
+            echo "slug-qualified=${project:+$project/}$slug"
+          else
+            echo "spec-dir="
+            echo "spec-dir-rel="
+            echo "slug-qualified="
+          fi
+          if [ -n "$project" ]; then echo "slug-budget=$(bash "$lib" slug-budget "$project")"; else echo "slug-budget="; fi
+        } >> "$GITHUB_OUTPUT"
