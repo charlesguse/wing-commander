@@ -110,8 +110,8 @@
 
 **Independent Test**: This repository's lifecycle on the new version, unchanged wrappers, yields identical spec paths, branches, labels, groups and numbers.
 
-- [ ] T047 [P] [US3] Add a root-compat fixture set under `.github/scripts/fixtures/project-root-compat/` (root names for each kind, empty `P`, a pre-feature `spec-meta.json` passing the self-identity check, routing-off intake unchanged) and cover it in `verify-project-name-parser.py` and `verify-intake-routing.py` (FR-016, SC-003)
-- [ ] T048 [P] [US3] Add an interface-delta check (extend an existing interface-contract gate if present, else a small section of `verify-intake-routing.py`) asserting no input, secret or output of any stage workflow was removed or renamed and every new input has a root-reproducing default (FR-017)
+- [X] T047 [P] [US3] Add a root-compat fixture set under `.github/scripts/fixtures/project-root-compat/` (root names for each kind, empty `P`, a pre-feature `spec-meta.json` passing the self-identity check, routing-off intake unchanged) and cover it in `verify-project-name-parser.py` and `verify-intake-routing.py` (FR-016, SC-003)
+- [X] T048 [P] [US3] Add an interface-delta check (extend an existing interface-contract gate if present, else a small section of `verify-intake-routing.py`) asserting no input, secret or output of any stage workflow was removed or renamed and every new input has a root-reproducing default (FR-017)
 - [ ] T049 [US3] Diff-review every edited workflow and composite for root-path byte-identity; confirm this repository's wrappers need no edit; run `python .github/scripts/run-local-gates.py`
 
 **Checkpoint**: Root behaviour proven unchanged.
@@ -124,9 +124,9 @@
 
 **Independent Test**: Copy a completed subfolder project to a fresh root; its `spec-meta.json` files pass the self-identity check and numbering continues its own sequence.
 
-- [ ] T050 [P] [US4] Add copy-out fixtures under `.github/scripts/fixtures/project-graduation/`: a project folder with `spec-meta.json` (`spec_dir = specs/<NNN-slug>`, `spec_branch` unresolvable) passing at `P/specs/...` and again at root; a record carrying `P/specs/...` rejected; next-number continues the project's own sequence
-- [ ] T051 [US4] Extend the spec-meta self-identity gate (locate with `grep -rln spec-meta .github/scripts/verify-*.py`; create `.github/scripts/verify-spec-meta-self-identity.py` if absent) to run both rules over the T050 fixtures (FR-008); register if new
-- [ ] T052 [US4] Confirm no check requires `spec_branch` to resolve after teardown or graduation (grep `spec_branch` across `.github/`), fixing any that do
+- [X] T050 [P] [US4] Add copy-out fixtures under `.github/scripts/fixtures/project-graduation/`: a project folder with `spec-meta.json` (`spec_dir = specs/<NNN-slug>`, `spec_branch` unresolvable) passing at `P/specs/...` and again at root; a record carrying `P/specs/...` rejected; next-number continues the project's own sequence
+- [X] T051 [US4] Extend the spec-meta self-identity gate (locate with `grep -rln spec-meta .github/scripts/verify-*.py`; create `.github/scripts/verify-spec-meta-self-identity.py` if absent) to run both rules over the T050 fixtures (FR-008); register if new
+- [X] T052 [US4] Confirm no check requires `spec_branch` to resolve after teardown or graduation (grep `spec_branch` across `.github/`), fixing any that do
 
 **Checkpoint**: Graduation proven by fixtures.
 
@@ -138,8 +138,8 @@
 
 **Independent Test**: `a/` and `a/b/` each use their own Spec Kit state and specs; `a/b/` and `c/b/` have distinct names.
 
-- [ ] T053 [P] [US5] Add nested fixtures (`a`, `a/b`, `a/b/c` three levels; `a/b` vs `c/b`; last-segment-not-used) to `verify-project-path-grammar.py`, `verify-project-name-parser.py` and `verify-project-numbering.py` (FR-004, SC-005)
-- [ ] T054 [US5] Confirm `project-name.sh check-folder` resolves the nearest enclosing project's state for `a/b` (own `.specify/` and constitution, not `a/`'s) and that the enclosing project's numbering scan excludes `a/b/specs/`; add fixtures
+- [X] T053 [P] [US5] Add nested fixtures (`a`, `a/b`, `a/b/c` three levels; `a/b` vs `c/b`; last-segment-not-used) to `verify-project-path-grammar.py`, `verify-project-name-parser.py` and `verify-project-numbering.py` (FR-004, SC-005)
+- [X] T054 [US5] Confirm `project-name.sh check-folder` resolves the nearest enclosing project's state for `a/b` (own `.specify/` and constitution, not `a/`'s) and that the enclosing project's numbering scan excludes `a/b/specs/`; add fixtures
 
 **Checkpoint**: All stories independently functional.
 
@@ -203,7 +203,7 @@ Source: maintainer comment on PR #1022, asking implement to continue the in-scop
 
 - [ ] MF001 Use each cycle's turn budget to complete as many remaining tasks as it allows. Check off each task in this file as soon as it is complete so that every cycle registers progress and the loop does not end on "no further progress". (PR #1022)
 - [X] MF002 Finish T018 first, before any other remaining task. (PR #1022)
-- [ ] MF003 Then do the per-stage wiring, in order: T029, T033, T034, T035, T040, T042, T043, T044, T045, T046. T036 and T041, which M001 also covers, belong to this wiring phase too. (PR #1022)
+- [X] MF003 Then do the per-stage wiring, in order: T029, T033, T034, T035, T040, T042, T043, T044, T045, T046. T036 and T041, which M001 also covers, belong to this wiring phase too. (PR #1022)
 - [ ] MF004 Then do the remaining gates and fixtures: T021, T026, T037, T038, T047, T048, T049, T050, T051, T052, T053, T054. (PR #1022)
 - [ ] MF005 Then do T001, T056, T057, T058, T059 and M001–M004. T056, the constitution amendment, stays a separate human-merged PR and does not land on this branch. (PR #1022)
 - [ ] MF006 For large workflow files (`implement.yml`, `intake.yml`, `cleanup.yml`), make a focused edit for each task instead of holding back a whole-file rewrite until it is complete. A task that lands partially may be committed with a progress note next to it in this file, and the next cycle continues it. (PR #1022)

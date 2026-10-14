@@ -44,5 +44,16 @@
     "symlinked-specs": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md", "ideas/alpha/specs/.keep"], "symlink": "ideas/alpha/specs"},
     "symlinked-constitution": {"project": "ideas/alpha", "files": ["ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas/alpha/.specify/memory/constitution.md"}
   },
-  "folder_accept": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"]}
+  "folder_accept": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"]},
+  "nested": {
+    "why": "US5 / FR-004: projects nest at any depth within the 28-character cap; each is checked against its OWN Spec Kit state, never an enclosing project's",
+    "tree": ["a/.specify/memory/constitution.md", "a/.claude/skills/speckit-plan/SKILL.md", "a/specs/002-outer/spec.md",
+             "a/b/.specify/memory/constitution.md", "a/b/.claude/skills/speckit-plan/SKILL.md", "a/b/specs/009-inner/spec.md",
+             "a/b/c/.specify/memory/constitution.md", "a/b/c/.claude/skills/speckit-plan/SKILL.md",
+             "c/b/.specify/memory/constitution.md", "c/b/.claude/skills/speckit-plan/SKILL.md",
+             "a/d/README.md"],
+    "accept": ["a", "a/b", "a/b/c", "c/b"],
+    "reject": {"a/d": "inherits only a/'s Spec Kit state, which is not its own"},
+    "budget": {"a": 43, "a/b": 41, "a/b/c": 39, "c/b": 41}
+  }
 }

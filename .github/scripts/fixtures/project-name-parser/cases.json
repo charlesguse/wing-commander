@@ -35,6 +35,26 @@
   ],
   "attribution": [
     {
+      "why": "nested projects (US5): a/b and c/b share their last segment, and a/b/c nests inside a/b; the project is the whole path, never its last segment",
+      "lifecycles": [
+        {"project": "a/b", "slug": "001-x", "spec_dir": "a/b/specs/001-x", "names": [
+          {"kind": "branch", "name": "spec/a/b/001-x"},
+          {"kind": "label", "name": "spec:a/b/001-x"},
+          {"kind": "spec-dir", "name": "a/b/specs/001-x"}]},
+        {"project": "c/b", "slug": "001-x", "spec_dir": "c/b/specs/001-x", "names": [
+          {"kind": "branch", "name": "spec/c/b/001-x"},
+          {"kind": "label", "name": "spec:c/b/001-x"},
+          {"kind": "spec-dir", "name": "c/b/specs/001-x"}]},
+        {"project": "a/b/c", "slug": "001-x", "spec_dir": "a/b/c/specs/001-x", "names": [
+          {"kind": "branch", "name": "implement/a/b/c/001-x-iter1"},
+          {"kind": "label", "name": "spec:a/b/c/001-x"},
+          {"kind": "spec-dir", "name": "a/b/c/specs/001-x"}]},
+        {"project": "a", "slug": "001-x", "spec_dir": "a/specs/001-x", "names": [
+          {"kind": "branch", "name": "spec-draft/a/001-x"},
+          {"kind": "slug", "name": "a/001-x"}]}
+      ]
+    },
+    {
       "why": "watchdog / fold-cycle-guard: the same NNN-slug in two projects is two lifecycles, each named by every one of its forms",
       "lifecycles": [
         {"project": "ideas/alpha", "slug": "004-login", "spec_dir": "ideas/alpha/specs/004-login", "names": [

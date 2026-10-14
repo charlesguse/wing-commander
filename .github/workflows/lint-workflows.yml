@@ -4663,6 +4663,9 @@ jobs:
       - name: Gate 163 — per-project feature numbering and spec-collision scope
         if: "!cancelled()"
         run: python3 .github/scripts/verify-project-numbering.py
+      - name: Gate 164 — spec-meta self-identity in a project and after graduation
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-spec-meta-self-identity.py
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

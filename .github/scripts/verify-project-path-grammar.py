@@ -84,6 +84,24 @@ def main():
             errors.append(f"folder reject {name} was accepted")
         elif case["project"] not in r.stderr:
             errors.append(f"folder reject {name} does not name the folder: {r.stderr!r}")
+    # Nested projects (US5, FR-004): one tree holding a, a/b, a/b/c and c/b.
+    nested = data["nested"]
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = os.path.join(tmp, "repo")
+        os.makedirs(tree)
+        build(tree, {"files": nested["tree"]})
+        for p in nested["accept"]:
+            r = sh(["check-folder", p], cwd=tree)
+            if r.returncode != 0:
+                errors.append(f"nested accept {p!r}: {r.stderr!r}")
+        for p, why in nested["reject"].items():
+            r = sh(["check-folder", p], cwd=tree)
+            if r.returncode == 0:
+                errors.append(f"nested reject {p!r} was accepted ({why})")
+    for p, want in nested["budget"].items():
+        got = sh(["slug-budget", p]).stdout.strip()
+        if got != str(want):
+            errors.append(f"nested budget {p!r}: got {got!r}, want {want}")
     if errors:
         print("verify-project-path-grammar: FAIL")
         for e in errors:

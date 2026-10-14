@@ -13,7 +13,17 @@
     {"name": "a number is never reissued after its branches are torn down", "project": "ideas/alpha",
      "dirs": ["ideas/alpha/specs/007-done"], "branches": [], "want": "008"},
     {"name": "a project named like another's prefix is its own sequence", "project": "a",
-     "dirs": ["ab/specs/009-x", "a/b/specs/004-x"], "branches": ["spec/ab/009-x", "spec/a/b/004-x"], "want": "001"}
+     "dirs": ["ab/specs/009-x", "a/b/specs/004-x"], "branches": ["spec/ab/009-x", "spec/a/b/004-x"], "want": "001"},
+    {"name": "nested: the enclosing project's scan excludes a/b/specs/ and a/b's refs", "project": "a",
+     "dirs": ["a/specs/002-outer", "a/b/specs/009-inner", "a/b/c/specs/011-deep"],
+     "branches": ["spec/a/b/012-x", "spec-draft/a/b/c/015-y"], "want": "003"},
+    {"name": "nested: a/b numbers only its own specs and refs", "project": "a/b",
+     "dirs": ["a/specs/002-outer", "a/b/specs/009-inner", "a/b/c/specs/011-deep"],
+     "branches": ["spec/a/004-x", "spec/a/b/c/020-z"], "want": "010"},
+    {"name": "nested: three levels deep", "project": "a/b/c",
+     "dirs": ["a/b/c/specs/001-x", "a/b/specs/009-inner"], "branches": ["spec/a/b/005-y"], "want": "002"},
+    {"name": "nested: a/b and c/b share a last segment but not a sequence", "project": "c/b",
+     "dirs": ["a/b/specs/009-inner"], "branches": ["spec/a/b/012-x"], "want": "001"}
   ],
   "collision": [
     {"name": "another project's 004 is not a claimant", "slug": "ideas/alpha/004-login",

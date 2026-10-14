@@ -19,7 +19,13 @@ fixtures/project-intake-routing/cases.json:
   * intake.yml's project guidance (`project-guidance`): the label is created
     before the first branch push, and the root prompt gains nothing;
   * intake.yml's "Resolve created spec" (`created`) with a fake `git`: a
-    subfolder slug over the label budget fails, the root has no budget.
+    subfolder slug over the label budget fails, the root has no budget;
+  * root compatibility (FR-016, fixtures/project-root-compat/cases.json):
+    with routing off, a `node:` label routes nothing, the routing gate is
+    skipped and the numbering group is still `wing-commander-intake`;
+  * the interface delta (FR-017, fixtures/project-root-compat/interface.json):
+    no input, secret or output of a published stage was removed or renamed,
+    and every new input is optional with its root-reproducing default.
 
 Exit 0 when every case behaves; 1 otherwise.
 """
@@ -33,12 +39,15 @@ import tempfile
 import yaml
 
 from wc_gha_expr import evaluate_if, interpolate
+from wc_published_stages import published_stages
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCRIPT = os.path.join(ROOT, ".github", "actions", "_shared", "project-name.sh")
 PROJECT_ACTION = os.path.join(ROOT, ".github", "actions", "wing-commander-project")
 INTAKE = os.path.join(ROOT, ".github", "workflows", "intake.yml")
 CASES = os.path.join(ROOT, ".github", "scripts", "fixtures", "project-intake-routing", "cases.json")
+ROOT_COMPAT = os.path.join(ROOT, ".github", "scripts", "fixtures", "project-root-compat", "cases.json")
+INTERFACE = os.path.join(ROOT, ".github", "scripts", "fixtures", "project-root-compat", "interface.json")
 
 FAKE_GH = """#!/usr/bin/env bash
 if [ "$1 $2" = "issue view" ]; then
@@ -261,6 +270,97 @@ def check_concurrency(doc, bindir, errors):
         errors.append("concurrency: a routing gate that died unrefused is not reported as a stall")
 
 
+def stage_interface():
+    """{workflow file: {"inputs": {name: {required, default}}, "secrets": [..], "outputs": [..]}}."""
+    result = {}
+    for path in published_stages(ROOT):
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+        on = doc.get("on", doc.get(True)) or {}
+        call = on.get("workflow_call") or {}
+        inputs = call.get("inputs") or {}
+        result[os.path.basename(path)] = {
+            "inputs": {k: {"required": bool((v or {}).get("required", False)), "default": (v or {}).get("default")}
+                       for k, v in inputs.items()},
+            "secrets": sorted((call.get("secrets") or {}).keys()),
+            "outputs": sorted((call.get("outputs") or {}).keys()),
+        }
+    return result
+
+
+def baseline_of(current, additions):
+    out = {}
+    for fn, iface in sorted(current.items()):
+        added = additions.get(fn, {})
+        out[fn] = {
+            "inputs": sorted(k for k in iface["inputs"] if k not in added.get("inputs", {})),
+            "secrets": [s for s in iface["secrets"] if s not in added.get("secrets", [])],
+            "outputs": [o for o in iface["outputs"] if o not in added.get("outputs", [])],
+        }
+    return out
+
+
+def check_interface(errors):
+    """FR-017: additive only -- nothing removed or renamed, every new input defaults to the root."""
+    with open(INTERFACE, encoding="utf-8") as fh:
+        spec = json.load(fh)
+    current = stage_interface()
+    for fn, base in spec["baseline"].items():
+        if fn not in current:
+            errors.append(f"interface: published stage {fn} is gone")
+            continue
+        cur = current[fn]
+        for kind in ("inputs", "secrets", "outputs"):
+            for name in base[kind]:
+                if name not in cur[kind]:
+                    errors.append(f"interface: {fn} {kind[:-1]} {name!r} was removed or renamed")
+    for fn, cur in current.items():
+        base = spec["baseline"].get(fn)
+        if base is None:
+            continue
+        added = spec["additions"].get(fn, {})
+        for name, meta in cur["inputs"].items():
+            if name in base["inputs"]:
+                continue
+            if name not in added.get("inputs", {}):
+                errors.append(f"interface: {fn} input {name!r} is new but not recorded in interface.json additions")
+            elif meta["required"] or meta["default"] != added["inputs"][name]:
+                errors.append(f"interface: {fn} new input {name!r} must be optional with the root-reproducing "
+                              f"default {added['inputs'][name]!r} (got required={meta['required']}, default={meta['default']!r})")
+        for kind in ("secrets", "outputs"):
+            for name in cur[kind]:
+                if name not in base[kind] and name not in added.get(kind, []):
+                    errors.append(f"interface: {fn} {kind[:-1]} {name!r} is new but not recorded in interface.json additions")
+    for fn, added in spec["additions"].items():
+        for name in added.get("secrets", []):
+            if name in current.get(fn, {}).get("secrets", []):
+                errors.append(f"interface: {fn} added secret {name!r} -- a new secret is not additive for an adopter")
+
+
+def check_root_compat(bindir, errors):
+    """FR-016: with routing off, intake routes nothing and keeps its old numbering group."""
+    with open(ROOT_COMPAT, encoding="utf-8") as fh:
+        off = json.load(fh)["routing_off"]
+    project = None
+    with open(os.path.join(PROJECT_ACTION, "action.yml"), encoding="utf-8") as fh:
+        resolve = yaml.safe_load(fh)["runs"]["steps"][0]["run"]
+    env = {"GH_TOKEN": "fake", "ROUTING_PREFIX": off["routing_label_prefix"], "ISSUE": "7", "IDENTITY": "",
+           "IDENTITY_KIND": "slug", "CHECK_FOLDER": "false", "FAKE_LABELS_JSON": labels_json(off["labels"])}
+    r, outputs, log = run_step(resolve, env, ROOT, bindir, PROJECT_ACTION)
+    project = output_value(outputs, "project")
+    if r.returncode != 0 or project != "" or log:
+        errors.append(f"root-compat: routing off resolved project={project!r} (rc={r.returncode}, gh log {log!r})")
+    doc = intake_doc()
+    ctx = {"inputs.routing-label-prefix": off["routing_label_prefix"], "inputs.issue-number": "7",
+           "needs.verify-image-prerequisites.result": "skipped", "cancelled()": False}
+    if evaluate_if(doc["jobs"]["routing-gate"]["if"], ctx):
+        errors.append("root-compat: the routing gate runs with routing off")
+    ctx.update({"needs.routing-gate.result": "skipped", "needs.routing-gate.outputs.project": ""})
+    group = interpolate(doc["jobs"]["intake"]["concurrency"]["group"], ctx)
+    if group != off["numbering_group"]:
+        errors.append(f"root-compat: routing-off numbering group {group!r}, want {off['numbering_group']!r}")
+
+
 def check_created(data, steps, bindir, errors):
     created = step_by_id(steps, "created")
     for case in data["created"]:
@@ -285,6 +385,14 @@ def check_created(data, steps, bindir, errors):
 
 
 def main():
+    if sys.argv[1:] == ["--print-interface"]:
+        # Regenerates interface.json's baseline: the current interface minus
+        # its recorded additions. Run only when an interface change is
+        # intended and reviewed, never to make this gate pass.
+        with open(INTERFACE, encoding="utf-8") as fh:
+            additions = json.load(fh).get("additions", {})
+        print(json.dumps(baseline_of(stage_interface(), additions), indent=2))
+        return 0
     with open(CASES, encoding="utf-8") as fh:
         data = json.load(fh)
     env = data["env"]
@@ -308,9 +416,11 @@ def main():
         check_rerun(data, doc["jobs"]["routing-gate"]["steps"], bindir, errors)
         check_label_first(steps, bindir, errors)
         check_concurrency(doc, bindir, errors)
+        check_root_compat(bindir, errors)
         with tempfile.TemporaryDirectory() as gitbin:
             write_exec(os.path.join(gitbin, "git"), FAKE_GIT)
             check_created(data, steps, gitbin + os.pathsep + bindir, errors)
+    check_interface(errors)
     if errors:
         print("verify-intake-routing: FAIL")
         for e in errors:

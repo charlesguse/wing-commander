@@ -17,6 +17,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCRIPT = os.path.join(ROOT, ".github", "actions", "_shared", "project-name.sh")
 CASES = os.path.join(ROOT, ".github", "scripts", "fixtures", "project-name-parser", "cases.json")
+ROOT_COMPAT = os.path.join(ROOT, ".github", "scripts", "fixtures", "project-root-compat", "cases.json")
 
 
 def run(env_extra, *args):
@@ -68,6 +69,20 @@ def main():
                 if d != lc["spec_dir"]:
                     errors.append(f"attribution {n['kind']} {n['name']!r}: spec-dir {d!r}, want {lc['spec_dir']!r}")
                 attributed += 1
+    # Root compatibility (FR-016, SC-003): every root name parses to the empty
+    # project and its own slug, and builds the same spec-dir and budget.
+    with open(ROOT_COMPAT, encoding="utf-8") as fh:
+        compat = json.load(fh)
+    for n in compat["names"]:
+        r = run(compat["env"], "parse", n["kind"], n["name"])
+        if r.returncode != 0 or r.stdout != f"project=\nslug={n['slug']}\n":
+            errors.append(f"root-compat {n['kind']} {n['name']!r}: rc={r.returncode} out={r.stdout!r}")
+        d = run(compat["env"], "spec-dir", "", n["slug"]).stdout.strip()
+        if d != compat["spec_dir"]:
+            errors.append(f"root-compat {n['name']!r}: spec-dir {d!r}, want {compat['spec_dir']!r}")
+    b = run(compat["env"], "slug-budget", "").stdout.strip()
+    if b != str(compat["slug_budget"]):
+        errors.append(f"root-compat slug-budget {b!r}, want {compat['slug_budget']}")
     if errors:
         print("verify-project-name-parser: FAIL")
         for e in errors:

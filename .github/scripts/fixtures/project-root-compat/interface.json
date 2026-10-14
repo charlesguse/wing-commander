@@ -1,0 +1,83 @@
+{
+  "why": "FR-017: spec 114 is additive. `baseline` is every published stage's workflow_call interface before spec 114 (regenerate with `python3 .github/scripts/verify-intake-routing.py --print-interface` only for a reviewed interface change); `additions` lists each new input with the default that reproduces root behaviour.",
+  "additions": {
+    "intake.yml": {"inputs": {"routing-label-prefix": ""}}
+  },
+  "baseline": {
+    "agent-startup-check.yml": {
+      "inputs": ["container-image", "environment", "environment-deployment", "pipeline-ref", "pipeline-repo", "runner"],
+      "secrets": ["container-registry-password", "container-registry-username", "pipeline-repo-token"],
+      "outputs": []
+    },
+    "auto-update-spec-kit.yml": {
+      "inputs": ["comment-id", "commenter-association", "commenter-id", "container-image", "default-branch", "e2e-scratch-repo", "e2e-stage-max-turns", "e2e-stage-model", "environment", "environment-deployment", "issue-author-id", "issue-number", "model", "pipeline-ref", "pipeline-repo", "pr-merged", "pr-number", "runner", "stabilization-checks", "trigger"],
+      "secrets": ["anthropic-api-key", "claude-code-oauth-token", "container-registry-password", "container-registry-username", "speckit-app-id", "speckit-app-private-key"],
+      "outputs": []
+    },
+    "clarify.yml": {
+      "inputs": ["allowed-tools-override", "aws-region", "aws-role-arn", "comment-id", "container-image", "default-branch", "disallowed-tools-override", "environment", "environment-deployment", "extra-allowed-tools", "extra-disallowed-tools", "findings-cap", "findings-filing-enabled", "findings-label-prefix", "issue-number", "max-turns", "model", "pipeline-ref", "pipeline-repo", "runner", "spec-draft-prefix", "use-bedrock"],
+      "secrets": ["anthropic-api-key", "claude-code-oauth-token", "container-registry-password", "container-registry-username", "pipeline-repo-token", "speckit-app-id", "speckit-app-private-key"],
+      "outputs": []
+    },
+    "cleanup.yml": {
+      "inputs": ["allowed-tools-override", "aws-region", "aws-role-arn", "base-ref", "container-image", "default-branch", "disallowed-tools-override", "environment", "environment-deployment", "extra-allowed-tools", "extra-disallowed-tools", "head-ref", "impl-prefix", "max-turns", "merge-commit-sha", "merged", "pipeline-ref", "pipeline-repo", "plan-prefix", "pr-number", "runner", "spec-draft-prefix", "spec-prefix", "summary-model", "tasks-prefix", "use-bedrock"],
+      "secrets": ["anthropic-api-key", "claude-code-oauth-token", "container-registry-password", "container-registry-username", "pipeline-repo-token", "speckit-app-id", "speckit-app-private-key"],
+      "outputs": ["outcome"]
+    },
+    "finalize.yml": {
+      "inputs": ["allowed-tools-override", "aws-region", "aws-role-arn", "container-image", "converged", "default-branch", "disallowed-tools-override", "environment", "environment-deployment", "extra-allowed-tools", "extra-disallowed-tools", "findings-cap", "findings-filing-enabled", "findings-label-prefix", "issue-number", "max-turns", "pipeline-ref", "pipeline-repo", "runner", "spec-dir", "spec-prefix", "summary-model", "use-bedrock", "write-boundary-label-prefix"],
+      "secrets": ["anthropic-api-key", "claude-code-oauth-token", "container-registry-password", "container-registry-username", "pipeline-repo-token", "speckit-app-id", "speckit-app-private-key"],
+      "outputs": ["pr-number"]
+    },
+    "fold-cycle-guard.yml": {
+      "inputs": ["conclusion", "container-image", "dry-run", "environment", "environment-deployment", "implement-workflow", "pipeline-ref", "pipeline-repo", "run-id", "runner", "spec-dir"],
+      "secrets": ["container-registry-password", "container-registry-username", "pipeline-repo-token", "speckit-app-id", "speckit-app-private-key"],
+      "outputs": ["action-taken"]
+    },
+    "implement.yml": {
+      "inputs": ["allowed-tools-override", "aws-region", "aws-role-arn", "container-image", "default-branch", "disallowed-tools-override", "environment", "environment-deployment", "escalation-model", "extra-allowed-tools", "extra-disallowed-tools", "findings-cap", "findings-filing-enabled", "findings-label-prefix", "fold-queue-token", "issue-number", "iteration", "max-iterations", "max-turns", "model", "next-workflow", "no-write-paths", "pipeline-ref", "pipeline-repo", "runner", "self-workflow", "spec-dir", "spec-prefix", "summary-model", "use-bedrock", "write-boundary-label-prefix"],
+      "secrets": ["anthropic-api-key", "claude-code-oauth-token", "container-registry-password", "container-registry-username", "pipeline-repo-token", "speckit-app-id", "speckit-app-private-key"],
+      "outputs": ["converged"]
+    },
+    "intake.yml": {
+      "inputs": ["allowed-tools-override", "aws-region", "aws-role-arn", "container-image", "default-branch", "disallowed-tools-override", "environment", "environment-deployment", "extra-allowed-tools", "extra-disallowed-tools", "findings-cap", "findings-filing-enabled", "findings-label-prefix", "impl-prefix", "issue-number", "max-turns", "model", "pipeline-ref", "pipeline-repo", "plan-prefix", "runner", "spec-draft-prefix", "spec-prefix", "tasks-prefix", "use-bedrock"],
+      "secrets": ["anthropic-api-key", "claude-code-oauth-token", "container-registry-password", "container-registry-username", "pipeline-repo-token", "speckit-app-id", "speckit-app-private-key"],
+      "outputs": ["feature-num", "spec-dir"]
+    },
+    "metrics-persist.yml": {
+      "inputs": ["container-image", "destination-branch", "destination-path", "environment", "environment-deployment", "pipeline-repo", "pipeline-repo-ref", "run-id", "runner", "since", "sweep", "sweep-workflow-paths"],
+      "secrets": ["container-registry-password", "container-registry-username", "pipeline-repo-token"],
+      "outputs": ["persisted-count", "unpersisted-record-keys"]
+    },
+    "plan.yml": {
+      "inputs": ["allowed-tools-override", "aws-region", "aws-role-arn", "container-image", "default-branch", "disallowed-tools-override", "environment", "environment-deployment", "extra-allowed-tools", "extra-disallowed-tools", "findings-cap", "findings-filing-enabled", "findings-label-prefix", "head-ref", "impl-prefix", "max-turns", "merged", "model", "next-workflow", "pipeline-ref", "pipeline-repo", "plan-prefix", "plan-review", "pr-number", "runner", "slug", "spec-draft-prefix", "spec-prefix", "tasks-prefix", "use-bedrock"],
+      "secrets": ["anthropic-api-key", "claude-code-oauth-token", "container-registry-password", "container-registry-username", "pipeline-repo-token", "speckit-app-id", "speckit-app-private-key"],
+      "outputs": ["spec-branch", "spec-dir"]
+    },
+    "pr-conversation.yml": {
+      "inputs": ["actor-association", "actor-login", "allowed-tools-override", "aws-region", "aws-role-arn", "body", "comment-id", "confirm-categories", "confirm-environment", "confirm-timeout-minutes", "container-image", "default-branch", "disallowed-tools-override", "environment", "environment-deployment", "event-kind", "extra-allowed-tools", "extra-disallowed-tools", "implement-workflow", "max-turns", "model", "pipeline-ref", "pipeline-repo", "plan-prefix", "pr-number", "review-id", "runner", "spec-draft-prefix", "spec-prefix", "tasks-prefix", "thread-diff-hunk", "thread-path", "use-bedrock"],
+      "secrets": ["anthropic-api-key", "claude-code-oauth-token", "container-registry-password", "container-registry-username", "pipeline-repo-token", "speckit-app-id", "speckit-app-private-key"],
+      "outputs": []
+    },
+    "private-image-dogfood.yml": {
+      "inputs": ["container-image", "environment", "environment-deployment", "runner"],
+      "secrets": ["container-registry-password", "container-registry-username"],
+      "outputs": []
+    },
+    "rebase.yml": {
+      "inputs": ["allowed-tools-override", "aws-region", "aws-role-arn", "container-image", "default-branch", "disallowed-tools-override", "environment", "environment-deployment", "extra-allowed-tools", "extra-disallowed-tools", "max-turns", "model", "pipeline-ref", "pipeline-repo", "runner", "spec-prefix", "use-bedrock"],
+      "secrets": ["anthropic-api-key", "claude-code-oauth-token", "container-registry-password", "container-registry-username", "pipeline-repo-token", "speckit-app-id", "speckit-app-private-key"],
+      "outputs": []
+    },
+    "tasks.yml": {
+      "inputs": ["allowed-tools-override", "aws-region", "aws-role-arn", "container-image", "default-branch", "disallowed-tools-override", "environment", "environment-deployment", "extra-allowed-tools", "extra-disallowed-tools", "findings-cap", "findings-filing-enabled", "findings-label-prefix", "head-ref", "impl-prefix", "max-turns", "mode", "model", "next-workflow", "pipeline-ref", "pipeline-repo", "plan-prefix", "restart", "runner", "slug", "spec-draft-prefix", "spec-prefix", "tasks-prefix", "tasks-review", "use-bedrock"],
+      "secrets": ["anthropic-api-key", "claude-code-oauth-token", "container-registry-password", "container-registry-username", "pipeline-repo-token", "speckit-app-id", "speckit-app-private-key"],
+      "outputs": ["spec-dir"]
+    },
+    "watchdog.yml": {
+      "inputs": ["allowed-tools-override", "aws-region", "aws-role-arn", "container-image", "default-branch", "diagnose-max-turns", "diagnose-model", "diagnose-shadow-enabled", "diagnose-shadow-max-turns", "diagnose-shadow-model", "disallowed-tools-override", "environment", "environment-deployment", "extra-allowed-tools", "extra-disallowed-tools", "pipeline-ref", "pipeline-repo", "propose-fix-max-turns", "propose-fix-model", "run-id", "run-name", "runner", "use-bedrock"],
+      "secrets": ["anthropic-api-key", "claude-code-oauth-token", "container-registry-password", "container-registry-username", "pipeline-repo-token", "speckit-app-id", "speckit-app-private-key"],
+      "outputs": []
+    }
+  }
+}
