@@ -2,10 +2,8 @@
   "issue": 1020,
   "spec_dir": "specs/114-subfolder-project-lifecycles",
   "feature_num": "114",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 14,
   "spec_branch": "spec/114-subfolder-project-lifecycles",
-  "pending_re_review_from": [
-    "charlesguse"
-  ]
+  "pending_re_review_from": []
 }
