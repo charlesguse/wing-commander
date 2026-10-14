@@ -3718,8 +3718,9 @@ jobs:
       # classification (*)" step in this job carries continue-on-error
       # (research.md R13, so a non-healthy/exhausted verdict never strands
       # the retry/dispatch logic below it) and is deliberately excluded;
-      # only "Flip stage label (first cycle)" and "Dispatch next step" can
-      # actually hard-fail this job.
+      # only the two subfolder containment checks (spec 114), "Flip stage
+      # label (first cycle)" and "Dispatch next step" can actually
+      # hard-fail this job.
       - name: Determine failed post-agent step
         id: failed-step
         if: "!cancelled() && (steps.cycle.outcome != 'skipped' || steps.retry.outcome != 'skipped' || steps.progress.outcome != 'skipped')"
@@ -3727,6 +3728,8 @@ jobs:
         with:
           candidates-json: >-
             [
+              {"name": "Check agent changes stay inside the project folder (cycle)", "conclusion": "${{ steps.containment-cycle.conclusion }}"},
+              {"name": "Check agent changes stay inside the project folder (retry)", "conclusion": "${{ steps.containment-retry.conclusion }}"},
               {"name": "Flip stage label (first cycle)", "conclusion": "${{ steps.flip-label.conclusion }}"},
               {"name": "Dispatch next step", "conclusion": "${{ steps.dispatch-next.conclusion }}"}
             ]

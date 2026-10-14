@@ -965,6 +965,7 @@ jobs:
       # runs whether or not a later agent step ever would have carried it
       # along -- see clarify.yml.
       - name: Check agent changes stay inside the project folder (auto)
+        id: containment-auto
         if: "!cancelled() && steps.agent-auto.outcome != 'skipped' && steps.project.outputs.project != ''"
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
         with:
@@ -1205,6 +1206,7 @@ jobs:
       # runs whether or not a later agent step ever would have carried it
       # along -- see clarify.yml.
       - name: Check agent changes stay inside the project folder (pr)
+        id: containment-pr
         if: "!cancelled() && steps.agent-pr.outcome != 'skipped' && steps.project.outputs.project != ''"
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
         with:
@@ -1608,6 +1610,8 @@ jobs:
         with:
           candidates-json: >-
             [
+              {"name": "Check agent changes stay inside the project folder (auto)", "conclusion": "${{ steps.containment-auto.conclusion }}"},
+              {"name": "Check agent changes stay inside the project folder (pr)", "conclusion": "${{ steps.containment-pr.conclusion }}"},
               {"name": "Fail loud on non-healthy agent verdict (auto)", "conclusion": "${{ steps.verdict-fail-auto.conclusion }}"},
               {"name": "Fail loud on non-healthy agent verdict (pr)", "conclusion": "${{ steps.verdict-fail-pr.conclusion }}"},
               {"name": "Verify tasks committed (auto)", "conclusion": "${{ steps.verify-tasks-auto.conclusion }}"},
