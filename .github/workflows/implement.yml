@@ -1228,7 +1228,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          SPECIFY_FEATURE_DIRECTORY: ${{ steps.spec.outputs.spec-dir }}
+          SPECIFY_FEATURE_DIRECTORY: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.spec.outputs.spec-dir) || steps.spec.outputs.spec-dir }}
           # Spec Kit's project-root override -- see intake.yml.
           SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.
@@ -1264,7 +1264,7 @@ jobs:
 
             Steps:
             1. Run the /speckit-implement skill
-               (.claude/skills/speckit-implement/SKILL.md) for this feature
+               (${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.claude/skills/speckit-implement/SKILL.md) for this feature
                (SPECIFY_FEATURE_DIRECTORY is already set). Never wait for
                user input. Commit AND push progress to the current branch as
                each task phase completes (commit messages prefixed
@@ -1276,7 +1276,7 @@ jobs:
                "iteration": ${{ inputs.iteration }},
                and commit it (message prefixed "implement:").
             3. Run the /speckit-converge skill
-               (.claude/skills/speckit-converge/SKILL.md) for this feature.
+               (${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.claude/skills/speckit-converge/SKILL.md) for this feature.
                If it appends a convergence phase to tasks.md, commit exactly
                that tasks.md change on its own with a message prefixed
                "converge:". If it reports converged (tasks.md unchanged),
@@ -1347,7 +1347,7 @@ jobs:
               `SPECIFY_FEATURE_DIRECTORY=... some-script.sh` is denied; the
               variable is already exported for you, so just run the script.
             - The .specify scripts are not executable in this checkout — always
-              invoke them as `bash .specify/scripts/bash/<name>.sh ...`.
+              invoke them as `bash ${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.specify/scripts/bash/<name>.sh ...`.
             - Use bare git verbs from the repo root; `git -C <path> ...` is
               denied.
             - A denied `gh` call is the allowlist refusing it, never an
@@ -2125,7 +2125,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          SPECIFY_FEATURE_DIRECTORY: ${{ steps.spec.outputs.spec-dir }}
+          SPECIFY_FEATURE_DIRECTORY: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.spec.outputs.spec-dir) || steps.spec.outputs.spec-dir }}
           # Spec Kit's project-root override -- see intake.yml.
           SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
@@ -2160,7 +2160,7 @@ jobs:
                git fetch origin &&
                git reset --hard origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
             2. Run the /speckit-implement skill
-               (.claude/skills/speckit-implement/SKILL.md) for this feature
+               (${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.claude/skills/speckit-implement/SKILL.md) for this feature
                (SPECIFY_FEATURE_DIRECTORY is already set). Never wait for
                user input. Commit AND push progress to the current branch as
                each task phase completes (commit messages prefixed
@@ -2172,7 +2172,7 @@ jobs:
                "iteration": ${{ inputs.iteration }},
                and commit it (message prefixed "implement:").
             4. Run the /speckit-converge skill
-               (.claude/skills/speckit-converge/SKILL.md) for this feature.
+               (${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.claude/skills/speckit-converge/SKILL.md) for this feature.
                If it appends a convergence phase to tasks.md, commit exactly
                that tasks.md change on its own with a message prefixed
                "converge:". If it reports converged (tasks.md unchanged),
@@ -2243,7 +2243,7 @@ jobs:
               `SPECIFY_FEATURE_DIRECTORY=... some-script.sh` is denied; the
               variable is already exported for you, so just run the script.
             - The .specify scripts are not executable in this checkout — always
-              invoke them as `bash .specify/scripts/bash/<name>.sh ...`.
+              invoke them as `bash ${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.specify/scripts/bash/<name>.sh ...`.
             - Use bare git verbs from the repo root; `git -C <path> ...` is
               denied.
             - A denied `gh` call is the allowlist refusing it, never an
@@ -3037,6 +3037,7 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          project: ${{ steps.project.outputs.project }}
           step-label: "implement.post-progress-comment"
 
       # The action writes its transcript to a path SHARED by every agent

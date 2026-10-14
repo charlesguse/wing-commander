@@ -62,7 +62,10 @@ inputs:
       FR-022, D10). When non-empty, the project-aware .claude/ denies are
       derived into the same no-write-paths definition: root .claude/ and
       .git/, each proper ancestor E/.claude/, P/.claude/ and
-      P/**/.claude/. Empty (a root lifecycle) adds nothing.
+      P/**/.claude/. Each granted `.specify/` script also gains its
+      P/.specify/ twin, and each `.wing-commander-pipeline/` or
+      `.github/scripts/` path in a Bash grant its twin absolute under
+      GITHUB_WORKSPACE. Empty (a root lifecycle) adds nothing.
     required: false
     default: ""
 
@@ -209,6 +212,33 @@ runs:
 
         effective_allowed="$(compose_list "$raw_allowed" "")"
         effective_disallowed="$(compose_list "$raw_disallowed" "subtract")"
+
+        # Project-local Spec Kit scripts (spec 114, FR-006): a subfolder
+        # project's skills run the project's own P/.specify/scripts, so each
+        # granted `.specify/` script command gains its P-prefixed twin.
+        # Trusted pipeline checkout and repository tooling (FR-025, D10):
+        # each `.wing-commander-pipeline/` or `.github/scripts/` path in a
+        # Bash grant also gains its twin absolute under GITHUB_WORKSPACE,
+        # the form that names the workspace-root copy from any working
+        # directory. A root lifecycle (empty project) adds nothing.
+        if [ -n "${PROJECT:-}" ]; then
+          project_grants=""
+          ws_esc="$(printf '%s' "${GITHUB_WORKSPACE:-}" | sed 's/[#&\\]/\\&/g')"
+          IFS=',' read -ra grant_items <<< "$effective_allowed"
+          for item in "${grant_items[@]}"; do
+            case "$item" in
+              "Bash(.specify/"*) project_grants="$project_grants,Bash($PROJECT/${item#Bash(}" ;;
+              "Bash(bash .specify/"*) project_grants="$project_grants,Bash(bash $PROJECT/${item#Bash(bash }" ;;
+            esac
+            if [ -n "$ws_esc" ] && [[ "$item" == "Bash("* ]]; then
+              abs="$(printf '%s' "$item" | sed -E "s#([^A-Za-z0-9_/.}])([.]wing-commander-pipeline/|[.]github/scripts/)#\\1${ws_esc}/\\2#g")"
+              [ "$abs" = "$item" ] || project_grants="$project_grants,$abs"
+            fi
+          done
+          if [ -n "$project_grants" ]; then
+            effective_allowed="$(compose_list "$effective_allowed$project_grants" "")"
+          fi
+        fi
 
         # 4. Render "shell-commands" as a complete sentence stating exactly
         #    which shell commands this run permits

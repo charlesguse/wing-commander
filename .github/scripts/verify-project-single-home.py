@@ -16,17 +16,22 @@ branch: the empty-project case that must stay byte-identical); a hit beyond
 that count fails. Reject fixtures under fixtures/project-single-home/ each
 carry one pattern and must be caught; accept.txt must stay clean.
 
-project-name.sh is the home of the rules and is not scanned. Scope is listed
-in SCOPE below. T046 widens it to every stage workflow and
-composite; until then a file not listed is not scanned.
+project-name.sh is the home of the rules and is not scanned. Every other
+published stage workflow (on.workflow_call), every composite under
+.github/actions/ and every shared script under .github/actions/_shared/ is
+scanned (T046); a file absent from ALLOWED may hold no hit at all.
 Exit 0 when the gate holds; 1 otherwise.
 """
+import glob
 import os
 import re
 import sys
 
+from wc_published_stages import published_stages
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FIXTURES = os.path.join(ROOT, ".github", "scripts", "fixtures", "project-single-home")
+HOME = ".github/actions/_shared/project-name.sh"
 
 PATTERNS = {
     "root-spec-dir": re.compile(r"""(?:^|[\s"'(=])specs/\$\{?\{?\s*\w*(?:slug|SLUG)\w*"""),
@@ -36,7 +41,7 @@ PATTERNS = {
 }
 
 # file -> {pattern: hits allowed}. A hit is a documented root branch.
-SCOPE = {
+ALLOWED = {
     ".github/actions/_shared/read-spec-meta.sh": {"root-spec-dir": 1},
     # spec-dir-rel is project-relative by definition.
     ".github/actions/wing-commander-project/action.yml": {"root-spec-dir": 1},
@@ -46,6 +51,22 @@ SCOPE = {
     # skill hit is the root branch's `ls -d` (the empty-project case).
     ".github/actions/wing-commander-preflight/action.yml": {
         "root-specify": 2, "root-skill-path": 3},
+    # The two `case` arms that match a root `.specify/` script grant to
+    # derive its P-prefixed twin (spec 114, FR-006).
+    ".github/actions/wing-commander-tool-args/action.yml": {"root-specify": 2},
+    # Each agent step's literal default-allowed-tools (Gate 27 reads it as a
+    # literal list) grants the root-form `.specify/` scripts; tool-args adds
+    # the project's twin, so the literal is the root branch.
+    ".github/workflows/implement.yml": {"root-specify": 2},
+    ".github/workflows/plan.yml": {"root-specify": 2},
+    ".github/workflows/tasks.yml": {"root-specify": 2},
+    # The project-guidance prose names "its .specify/" for a routed project.
+    ".github/workflows/intake.yml": {"root-specify": 1},
+    # rel_dir is the project-relative spec_dir spec-meta.json records.
+    ".github/workflows/rebase.yml": {"root-spec-dir": 1},
+    # Upgrades the adopter's root Spec Kit install, which is not a lifecycle
+    # and has no project; a subfolder project's own upgrade is out of scope.
+    ".github/workflows/auto-update-spec-kit.yml": {"root-specify": 12, "root-skill-path": 1},
 }
 
 
@@ -61,14 +82,25 @@ def scan(text):
     return counts
 
 
+def scope():
+    """Repository-relative paths of every file this gate scans."""
+    files = {os.path.relpath(p, ROOT) for p in published_stages(ROOT)}
+    actions = os.path.join(ROOT, ".github", "actions")
+    for pattern in ("*/action.yml", "*/action.yaml", "_shared/*.sh"):
+        files |= {os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(actions, pattern))}
+    files.discard(HOME)
+    return sorted(f.replace(os.sep, "/") for f in files)
+
+
 def main():
     errors = []
-    for rel, allowed in SCOPE.items():
-        path = os.path.join(ROOT, rel)
-        if not os.path.isfile(path):
-            errors.append(f"{rel}: in scope but missing")
-            continue
-        with open(path, encoding="utf-8") as fh:
+    files = scope()
+    for rel in ALLOWED:
+        if rel not in files:
+            errors.append(f"{rel}: has an allowance but is not in scope (stale entry)")
+    for rel in files:
+        allowed = ALLOWED.get(rel, {})
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
             counts = scan(fh.read())
         for name, n in counts.items():
             if n > allowed.get(name, 0):
@@ -96,7 +128,7 @@ def main():
         for e in errors:
             print("  " + e)
         return 1
-    print(f"verify-project-single-home: OK ({len(SCOPE)} file(s) in scope)")
+    print(f"verify-project-single-home: OK ({len(files)} file(s) in scope, {len(ALLOWED)} with allowances)")
     return 0
 
 

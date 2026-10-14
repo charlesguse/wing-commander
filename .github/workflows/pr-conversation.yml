@@ -372,6 +372,8 @@ jobs:
     outputs:
       qualifies: ${{ steps.identity.outputs.qualifies }}
       slug: ${{ steps.identity.outputs.slug }}
+      # The subfolder project P (spec 114), empty at the repository root.
+      project: ${{ steps.identity.outputs.project }}
       spec-dir: ${{ steps.identity.outputs.spec-dir }}
       default-branch: ${{ steps.identity.outputs.default-branch }}
       reason: ${{ steps.identity.outputs.reason }}
@@ -447,6 +449,7 @@ jobs:
           {
             echo "qualifies=$qualifies"
             echo "slug=$slug"
+            echo "project=$project"
             echo "spec-dir=${slug:+${project:+$project/}specs/${slug##*/}}"
             echo "default-branch=$default_branch"
           } >> "$GITHUB_OUTPUT"
@@ -947,7 +950,7 @@ jobs:
             with `log`, `diff` or `show` and git's usual arguments — plain
             `git` is denied) — you have no write tools at all in this step.
 
-            Read .specify/memory/constitution.md and
+            Read ${{ needs.resolve-identity.outputs.project && format('{0}/', needs.resolve-identity.outputs.project) || '' }}.specify/memory/constitution.md and
             ${{ needs.resolve-identity.outputs.spec-dir }}/{spec.md,plan.md,tasks.md}
             for context, then decide, for each distinguishable request
             inside the staged text, which ONE of these categories it is:
@@ -961,7 +964,7 @@ jobs:
               clearly in-scope nor clearly warranting its own spec MUST
               classify as needs-info rather than guessing which home it
               belongs in.
-            - push-back: conflicts with .specify/memory/constitution.md
+            - push-back: conflicts with ${{ needs.resolve-identity.outputs.project && format('{0}/', needs.resolve-identity.outputs.project) || '' }}.specify/memory/constitution.md
               (e.g. asks to merge/approve this PR, bypass review, or widen
               tool access) — name the specific principle.
             - new-functionality: distinct from the current spec's scope.
@@ -2304,7 +2307,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          SPECIFY_FEATURE_DIRECTORY: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          SPECIFY_FEATURE_DIRECTORY: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, needs.classify-and-announce.outputs.spec-dir) || needs.classify-and-announce.outputs.spec-dir }}
           # Spec Kit's project-root override -- see intake.yml.
           SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'

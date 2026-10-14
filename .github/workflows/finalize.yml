@@ -804,7 +804,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          SPECIFY_FEATURE_DIRECTORY: ${{ steps.spec.outputs.spec-dir }}
+          SPECIFY_FEATURE_DIRECTORY: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.spec.outputs.spec-dir) || steps.spec.outputs.spec-dir }}
           # Spec Kit's project-root override -- see intake.yml.
           SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.

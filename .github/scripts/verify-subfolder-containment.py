@@ -57,7 +57,7 @@ def git(cwd, *args):
 def tool_args(case, script):
     env = {
         "STEP_LABEL": "fixture",
-        "DEFAULT_ALLOWED": "Read,Edit,Write",
+        "DEFAULT_ALLOWED": case.get("default_allowed", "Read,Edit,Write"),
         "DEFAULT_DISALLOWED": "",
         "EXTRA_ALLOWED": "",
         "EXTRA_DISALLOWED": "",
@@ -68,9 +68,10 @@ def tool_args(case, script):
     }
     r, out = run_script(script, env, ROOT, "wing-commander-tool-args")
     if r.returncode != 0:
-        return None, r.stderr
+        return None, None, r.stderr
     m = re.search(r"^disallowed-tools=(.*)$", out, re.M)
-    return (m.group(1) if m else ""), ""
+    a = re.search(r"^allowed-tools=(.*)$", out, re.M)
+    return (m.group(1) if m else ""), (a.group(1) if a else ""), ""
 
 
 def contain(case, script):
@@ -132,10 +133,12 @@ def main():
     errors = []
     ta = action_script("wing-commander-tool-args")
     for name, case in data["tool_args"].items():
-        got, err = tool_args(case, ta)
+        got, allowed, err = tool_args(case, ta)
         if got is None:
             errors.append(f"tool_args {name}: composite failed: {err!r}")
             continue
+        if "allowed" in case and allowed.split(",") != case["allowed"]:
+            errors.append(f"tool_args {name}: allowed-tools {allowed!r}, want {case['allowed']!r}")
         for want in case.get("denied", []):
             for tool in ("Edit", "Write"):
                 if f"{tool}({want})" not in got.split(","):

@@ -832,7 +832,10 @@ jobs:
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
           # Spec Kit's project-root override (spec 114, research.md D9): the
           # vendored scripts resolve .specify/ and specs/ under this folder.
-          # Empty at the repository root, where the scripts ignore it.
+          # Empty at the repository root, where the scripts ignore it. The
+          # scripts resolve a relative SPECIFY_FEATURE_DIRECTORY under this
+          # folder too, so every stage that sets both passes the feature
+          # directory absolute (workspace/P/specs/NNN-slug) for a project.
           SPECIFY_INIT_DIR: ${{ steps.num.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.num.outputs.project) || '' }}
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
@@ -885,7 +888,7 @@ jobs:
                missing in it, NOT in `clarifications`. `specified: false` is what
                tells the pipeline no spec was ever attempted, so it must not post
                a follow-up questionnaire on top of your comment.
-            3. Run the /speckit-specify skill (.claude/skills/speckit-specify/SKILL.md)
+            3. Run the /speckit-specify skill (${{ steps.num.outputs.project && format('{0}/', steps.num.outputs.project) || '' }}.claude/skills/speckit-specify/SKILL.md)
                using the feature description assembled in step 1 (title + body,
                plus any qualifying comments folded in). Follow the skill
                completely (spec directory under specs/, quality checklist,
@@ -973,7 +976,7 @@ jobs:
             - Never prefix a command with an environment assignment.
               `SPECIFY_FEATURE_DIRECTORY=... some-script.sh` is denied.
             - The .specify scripts are not executable in this checkout — always
-              invoke them as `bash .specify/scripts/bash/<name>.sh ...`.
+              invoke them as `bash ${{ steps.num.outputs.project && format('{0}/', steps.num.outputs.project) || '' }}.specify/scripts/bash/<name>.sh ...`.
             - Use bare git verbs from the repo root; `git -C <path> ...` is
               denied.
             - A denied `gh` call is the allowlist refusing it, never an

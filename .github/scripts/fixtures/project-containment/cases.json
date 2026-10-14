@@ -14,6 +14,19 @@
       "no_write_paths": "docs/",
       "disallowed_override": "",
       "denied": ["docs/**", "a/.claude/**", "a/b/**/.claude/**"]
+    },
+    "project_spec_kit_script_grants": {
+      "project": "ideas/alpha",
+      "default_allowed": "Read,Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/setup-plan.sh:*),Bash(git status:*)",
+      "allowed": ["Read", "Bash(.specify/scripts/bash/check-prerequisites.sh:*)", "Bash(bash .specify/scripts/bash/setup-plan.sh:*)", "Bash(git status:*)",
+                  "Bash(ideas/alpha/.specify/scripts/bash/check-prerequisites.sh:*)", "Bash(bash ideas/alpha/.specify/scripts/bash/setup-plan.sh:*)"],
+      "denied": [".claude/**", "ideas/alpha/.claude/**"]
+    },
+    "root_spec_kit_script_grants_unchanged": {
+      "project": "",
+      "default_allowed": "Read,Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/setup-plan.sh:*)",
+      "allowed": ["Read", "Bash(.specify/scripts/bash/check-prerequisites.sh:*)", "Bash(bash .specify/scripts/bash/setup-plan.sh:*)"],
+      "not_denied": [".claude/"]
     }
   },
   "containment": {

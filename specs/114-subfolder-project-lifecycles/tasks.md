@@ -67,7 +67,7 @@
 - [X] T023 [US1] In `.github/workflows/intake.yml` add the re-run refusal (issue already has any `spec:` label, routing on only) per `contracts/routing-and-intake.md`
 - [X] T024 [US1] In `.github/workflows/intake.yml` compute the slug budget deterministically and pass it to the intake agent prompt; after the agent writes, check the slug against the budget; create the `spec:P/<NNN-slug>` label before the first branch push; fail loudly on overflow (routing on and `P` non-empty only) (FR-014, D7)
 - [X] T025 [US1] Make `.github/workflows/intake.yml` create the spec-draft branch `<prefix>P/<NNN-slug>` and write `spec-meta.json` with project-relative `spec_dir`, real `spec_branch`; emit the repository-relative `spec-dir` output (root unchanged)
-- [ ] T026 [US1] Extend `.github/actions/wing-commander-tool-args/` to derive the project-aware denies (root `.claude/**`, `.git/**`, each proper ancestor `E/.claude/**`, `P/.claude/**`, `P/**/.claude/**`) into the single `no-write-paths` definition, and make all trusted-checkout and repository-tooling grants absolute under `${GITHUB_WORKSPACE}` (FR-022, FR-025, D10, D11)
+- [X] T026 [US1] Extend `.github/actions/wing-commander-tool-args/` to derive the project-aware denies (root `.claude/**`, `.git/**`, each proper ancestor `E/.claude/**`, `P/.claude/**`, `P/**/.claude/**`) into the single `no-write-paths` definition, and make all trusted-checkout and repository-tooling grants absolute under `${GITHUB_WORKSPACE}` (FR-022, FR-025, D10, D11)
 - [X] T027 [P] [US1] Create composite `.github/actions/wing-commander-containment/action.yml`: given the pre-agent SHA and `P`, fail the stage with a callout listing any changed path (committed or working tree) outside `P/`; skip for root lifecycles (FR-021)
 - [X] T028 [US1] Add the pipeline-checkout guard check that refuses a branch tracking `**/.wing-commander-pipeline/**` at any depth (`git ls-files`); locate the guard via `grep -rn pipeline-checkout .github/` (FR-025)
 - [X] T029 [US1] Wire `wing-commander-project`, project-aware preflight and the project working directory (per T001 outcome) and containment guard into `.github/workflows/intake.yml`
@@ -98,7 +98,7 @@
 - [X] T043 [P] [US2] Make `.github/workflows/watchdog.yml` resolve project and lifecycle through the shared parser (no prefix-encoded project, no wrapper-input dependence, no project-ignoring defaults) and scope the spec-collision collector to `P/specs/` (FR-013, D13)
 - [X] T044 [P] [US2] Make `.github/workflows/fold-cycle-guard.yml` resolve project and lifecycle through the shared parser; `spec_dir` restart input takes the repository-relative form
 - [X] T045 [US2] Add watchdog/fold-cycle-guard accept/reject fixtures (same `NNN-slug` in two projects attributed to the right one) to `.github/scripts/fixtures/project-name-parser/` and extend `.github/scripts/verify-watchdog-resolved-stage-consumers.py` if needed
-- [ ] T046 [US2] Widen `.github/scripts/verify-project-single-home.py` to every stage workflow and composite under `.github/actions/**`; fix any remaining root-only pattern it finds
+- [X] T046 [US2] Widen `.github/scripts/verify-project-single-home.py` to every stage workflow and composite under `.github/actions/**`; fix any remaining root-only pattern it finds
 
 **Checkpoint**: US1 and US2 work together; no shared names across projects.
 

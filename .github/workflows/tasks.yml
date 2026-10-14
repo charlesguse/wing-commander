@@ -820,7 +820,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          SPECIFY_FEATURE_DIRECTORY: ${{ needs.resolve-spec.outputs.spec-dir }}
+          SPECIFY_FEATURE_DIRECTORY: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, needs.resolve-spec.outputs.spec-dir) || needs.resolve-spec.outputs.spec-dir }}
           # Spec Kit's project-root override -- see intake.yml.
           SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.
@@ -854,7 +854,7 @@ jobs:
             tools, or these steps.
 
             Steps:
-            1. Run the /speckit-tasks skill (.claude/skills/speckit-tasks/SKILL.md)
+            1. Run the /speckit-tasks skill (${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.claude/skills/speckit-tasks/SKILL.md)
                for this feature (SPECIFY_FEATURE_DIRECTORY is already set).
                Never wait for user input.
             2. Update ${{ needs.resolve-spec.outputs.spec-dir }}/spec-meta.json:
@@ -915,7 +915,7 @@ jobs:
               `SPECIFY_FEATURE_DIRECTORY=... some-script.sh` is denied; the
               variable is already exported for you, so just run the script.
             - The .specify scripts are not executable in this checkout — always
-              invoke them as `bash .specify/scripts/bash/<name>.sh ...`.
+              invoke them as `bash ${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.specify/scripts/bash/<name>.sh ...`.
             - Use bare git verbs from the repo root; `git -C <path> ...` is
               denied.
             - A denied `gh` call is the allowlist refusing it, never an
@@ -1061,7 +1061,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          SPECIFY_FEATURE_DIRECTORY: ${{ needs.resolve-spec.outputs.spec-dir }}
+          SPECIFY_FEATURE_DIRECTORY: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, needs.resolve-spec.outputs.spec-dir) || needs.resolve-spec.outputs.spec-dir }}
           # Spec Kit's project-root override -- see intake.yml.
           SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
@@ -1090,7 +1090,7 @@ jobs:
 
             Steps:
             1. Create the work branch: git checkout -b ${{ inputs.tasks-prefix }}${{ needs.resolve-spec.outputs.slug }}
-            2. Run the /speckit-tasks skill (.claude/skills/speckit-tasks/SKILL.md)
+            2. Run the /speckit-tasks skill (${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.claude/skills/speckit-tasks/SKILL.md)
                for this feature (SPECIFY_FEATURE_DIRECTORY is already set).
                Never wait for user input.
             3. Update ${{ needs.resolve-spec.outputs.spec-dir }}/spec-meta.json:
@@ -1156,7 +1156,7 @@ jobs:
               `SPECIFY_FEATURE_DIRECTORY=... some-script.sh` is denied; the
               variable is already exported for you, so just run the script.
             - The .specify scripts are not executable in this checkout — always
-              invoke them as `bash .specify/scripts/bash/<name>.sh ...`.
+              invoke them as `bash ${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.specify/scripts/bash/<name>.sh ...`.
             - Use bare git verbs from the repo root; `git -C <path> ...` is
               denied.
             - A denied `gh` call is the allowlist refusing it, never an
@@ -1490,6 +1490,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           APP_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SLUG: ${{ needs.resolve-spec.outputs.slug }}
+          # [P/]specs/NNN-slug, the repository-relative form implement's
+          # spec_dir input takes (spec 114).
+          SPEC_DIR: ${{ needs.resolve-spec.outputs.spec-dir }}
           ISSUE: ${{ steps.meta.outputs.issue }}
           NEXT_WORKFLOW: ${{ inputs.next-workflow }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
@@ -1497,16 +1500,16 @@ jobs:
           if [ -z "$NEXT_WORKFLOW" ]; then
             echo "No next-workflow configured — task list is committed; stopping here (standalone mode). Dispatch your implement workflow manually if/when you want implementation to run." >> "$GITHUB_STEP_SUMMARY"
             if [ -n "$ISSUE" ]; then
-              body="📋 Task list committed to \`$SPEC_PREFIX$SLUG\`. No implement workflow is configured for automatic hand-off — dispatch one manually with \`spec_dir=specs/$SLUG\`, \`issue=$ISSUE\`, \`iteration=1\` when ready."
+              body="📋 Task list committed to \`$SPEC_PREFIX$SLUG\`. No implement workflow is configured for automatic hand-off — dispatch one manually with \`spec_dir=$SPEC_DIR\`, \`issue=$ISSUE\`, \`iteration=1\` when ready."
               GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
             fi
             exit 0
           fi
           gh workflow run "$NEXT_WORKFLOW" \
-            -f spec_dir="specs/$SLUG" \
+            -f spec_dir="$SPEC_DIR" \
             -f issue="$ISSUE" \
             -f iteration=1
-          echo "Dispatched $NEXT_WORKFLOW (spec_dir=specs/$SLUG, issue=$ISSUE, iteration=1)." >> "$GITHUB_STEP_SUMMARY"
+          echo "Dispatched $NEXT_WORKFLOW (spec_dir=$SPEC_DIR, issue=$ISSUE, iteration=1)." >> "$GITHUB_STEP_SUMMARY"
           echo "dispatched=true" >> "$GITHUB_OUTPUT"
 
       # specs/065-intake-silent-path-cost: the single home for posting this
@@ -1832,18 +1835,18 @@ jobs:
           if [ -z "$NEXT_WORKFLOW" ]; then
             echo "No next-workflow configured — tasks PR accepted; stopping here (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
             if [ -n "$issue" ]; then
-              gh issue comment "$issue" --body "✅ Tasks PR merged — task list accepted. No implement workflow is configured for automatic hand-off — dispatch one manually with \`spec_dir=specs/$SLUG\`, \`issue=$issue\`, \`iteration=1\` when ready."
+              gh issue comment "$issue" --body "✅ Tasks PR merged — task list accepted. No implement workflow is configured for automatic hand-off — dispatch one manually with \`spec_dir=$SPEC_DIR\`, \`issue=$issue\`, \`iteration=1\` when ready."
             fi
             exit 0
           fi
           GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$NEXT_WORKFLOW" \
-            -f spec_dir="specs/$SLUG" \
+            -f spec_dir="$SPEC_DIR" \
             -f issue="$issue" \
             -f iteration=1
           if [ -n "$issue" ]; then
             gh issue comment "$issue" --body "✅ Tasks PR merged — task list accepted. Implementation has been dispatched (iteration 1)."
           fi
-          echo "Dispatched $NEXT_WORKFLOW (spec_dir=specs/$SLUG, issue=$issue, iteration=1)." >> "$GITHUB_STEP_SUMMARY"
+          echo "Dispatched $NEXT_WORKFLOW (spec_dir=$SPEC_DIR, issue=$issue, iteration=1)." >> "$GITHUB_STEP_SUMMARY"
 
   # Survivor job (the #224 idiom, research.md D4) for mode: generate — fires
   # when resolve-spec failed/was skipped-with-a-non-refusal, or tasks
@@ -1954,8 +1957,11 @@ jobs:
             prefix="$PLAN_PREFIX"
           fi
           slug="${INPUT_SLUG:-${HEAD_REF#"$prefix"}}"
+          # [P/]NNN-slug -> [P/]specs/NNN-slug -- see resolve-spec.
+          project=""
+          case "$slug" in */*) project="${slug%/*}" ;; esac
           echo "slug=$slug" >> "$GITHUB_OUTPUT"
-          echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
+          echo "spec-dir=${project:+$project/}specs/${slug##*/}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve lifecycle issue number
         id: issuelookup
@@ -2105,8 +2111,11 @@ jobs:
             prefix="$PLAN_PREFIX"
           fi
           slug="${INPUT_SLUG:-${HEAD_REF#"$prefix"}}"
+          # [P/]NNN-slug -> [P/]specs/NNN-slug -- see resolve-spec.
+          project=""
+          case "$slug" in */*) project="${slug%/*}" ;; esac
           echo "slug=$slug" >> "$GITHUB_OUTPUT"
-          echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
+          echo "spec-dir=${project:+$project/}specs/${slug##*/}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve lifecycle issue number
         id: issuelookup

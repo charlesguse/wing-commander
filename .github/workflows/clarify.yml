@@ -667,7 +667,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          SPECIFY_FEATURE_DIRECTORY: ${{ steps.ctx.outputs.spec-dir }}
+          SPECIFY_FEATURE_DIRECTORY: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.ctx.outputs.spec-dir) || steps.ctx.outputs.spec-dir }}
           # Spec Kit's project-root override (spec 114, research.md D9) -- see
           # intake.yml. Empty at the repository root.
           SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
@@ -1445,7 +1445,11 @@ jobs:
           spec_slug="$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("spec:"))][0] // "" | sub("^spec:"; "")')"
           echo "slug=$spec_slug" >> "$GITHUB_OUTPUT"
           if [ -n "$spec_slug" ]; then
-            echo "spec-dir=specs/$spec_slug" >> "$GITHUB_OUTPUT"
+            # A subfolder lifecycle's label carries P/NNN-slug, whose spec
+            # lives at P/specs/NNN-slug (spec 114).
+            project=""
+            case "$spec_slug" in */*) project="${spec_slug%/*}" ;; esac
+            echo "spec-dir=${project:+$project/}specs/${spec_slug##*/}" >> "$GITHUB_OUTPUT"
           else
             echo "spec-dir=" >> "$GITHUB_OUTPUT"
           fi
