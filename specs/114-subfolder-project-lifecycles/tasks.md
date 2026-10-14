@@ -147,7 +147,7 @@
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T055 [P] Add a "Multiple projects in one repository" section to `docs/adoption.md` covering FR-018 (a)–(d): `routing-label-prefix`, widening the plan wrapper (and tasks `pr` mode) path filter to `**/specs/**`, one `node:<path>` label per project, restart forms (`slug=P/<NNN-slug>` vs `spec_dir=P/specs/<NNN-slug>`); parent instruction files may reach a subfolder agent; `extra-allowed-tools` repository paths resolve to the workspace root; keep root instructions valid
+- [X] T055 [P] Add a "Multiple projects in one repository" section to `docs/adoption.md` covering FR-018 (a)–(d): `routing-label-prefix`, widening the plan wrapper (and tasks `pr` mode) path filter to `**/specs/**`, one `node:<path>` label per project, restart forms (`slug=P/<NNN-slug>` vs `spec_dir=P/specs/<NNN-slug>`); parent instruction files may reach a subfolder agent; `extra-allowed-tools` repository paths resolve to the workspace root; keep root instructions valid
 - [ ] T056 Prepare the constitution amendment 2.4.0 → 2.5.0 (Principle VI artifact list, Principle V `.claude/` deny scope, Operational Constraints spec-path and branch bullets) as a SEPARATE human-merged PR, not on this branch; Sync Impact Report moved to the top of `.specify/memory/constitution-history.md` in the same commit; note the ordering (amendment lands no later than the lifecycle PR) on lifecycle issue #1020 (FR-024)
 - [ ] T057 Check no waiver register cites a tracker this work changes (`grep -rnE '"#N"|issue *= *\([^)]*\bN\b' .github/scripts/`) and update any new waiver entries
 - [ ] T058 Run the `specs/114-subfolder-project-lifecycles/quickstart.md` validation scenarios
