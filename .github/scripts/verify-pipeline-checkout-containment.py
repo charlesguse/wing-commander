@@ -72,12 +72,16 @@ WS = "/gate-ws"
 def compose(default_allowed, project):
     """-> the allowed-tools wing-commander-tool-args composes (D10's one home)."""
     with open(TOOL_ARGS, encoding="utf-8") as fh:
-        script = yaml.safe_load(fh)["runs"]["steps"][0]["run"]
+        step = yaml.safe_load(fh)["runs"]["steps"][0]
+    script = step["run"]
+    # The step's own constants (env values with no expression), as the
+    # runner sets them.
+    constants = {k: str(v) for k, v in (step.get("env") or {}).items() if "${{" not in str(v)}
     with tempfile.TemporaryDirectory() as tmp:
         out, summary = os.path.join(tmp, "out"), os.path.join(tmp, "summary")
         for p in (out, summary):
             open(p, "w", encoding="utf-8").close()
-        env = {**os.environ, "STEP_LABEL": "gate-161", "DEFAULT_ALLOWED": default_allowed,
+        env = {**os.environ, **constants, "STEP_LABEL": "gate-161", "DEFAULT_ALLOWED": default_allowed,
                "DEFAULT_DISALLOWED": "", "EXTRA_ALLOWED": "", "EXTRA_DISALLOWED": "",
                "ALLOWED_OVERRIDE": "__unset__", "DISALLOWED_OVERRIDE": "__unset__",
                "NO_WRITE_PATHS": "", "PROJECT": project, "GITHUB_WORKSPACE": WS,

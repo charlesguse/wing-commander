@@ -258,7 +258,7 @@ Source: maintainer comment on PR #1022 (five fresh-session reviewers plus an adv
 ### Minor
 
 - [X] MF-17 [Review #11] In `containment.sh` (~:51) use `git log --format= --name-only --no-renames -c ...` so merge commits are checked. Add an evil-merge fixture
-- [ ] MF-18 [Review #12] Subtract `Bash(gh api:*)` in `wing-commander-tool-args` for non-empty project on pr-conversation act, re-granting only needed endpoints. If not feasible, record it as an accepted gap in `contracts/containment-and-trusted-checkout.md`
+- [X] MF-18 [Review #12] Subtract `Bash(gh api:*)` in `wing-commander-tool-args` for non-empty project on pr-conversation act, re-granting only needed endpoints. If not feasible, record it as an accepted gap in `contracts/containment-and-trusted-checkout.md`
 - [X] MF-19 [Review #13] `check-folder`: test `.specify/memory`, `.specify/scripts` and each `SKILL.md` for symlinks. Add fixtures for a symlinked memory dir, skills dir and skill file
 - [X] MF-20 [Review #14] Routing must refuse instead of falling back to the root: bare routing label (`node:`), failed `gh issue view`, leading `/` or `//`. Strip `-iterN` only for implement branches. Add fixtures for each
 - [ ] MF-21 [Review #15, T066] Replace every remaining inline project/slug split (incl. `read-spec-meta.sh`, plan, tasks, rebase) with `project-name.sh parse`. Anchor rebase's `ls-remote` to `refs/heads/${SPEC_PREFIX}`

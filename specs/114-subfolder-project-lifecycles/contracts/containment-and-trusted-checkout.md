@@ -18,12 +18,19 @@ The denies hold under the default `no-write-paths` and under any override, whate
 
 Agents covered on main: intake, clarify, plan, tasks, implement, rebase, finalize, cleanup, pr-conversation `act` and `act.fold`. A gate enumerates every `claude-code-action` step with `Edit` or `Write` in its grants and asserts it consumes `tool-args`.
 
+For the same lifecycles `wing-commander-tool-args` also denies, whatever the overrides or extra grants:
+
+| Tool | Why |
+|---|---|
+| `Bash(git push --no-verify:*)`, `Bash(git push -n:*)` | a push that skips the pre-push hook |
+| `Bash(gh api:*)` | the raw API writes repository contents outside `P` with no commit the guard or the hook sees |
+
 ## Confinement guard (FR-021)
 
-Composite `wing-commander-containment`, run after each Edit/Write agent:
+Before each agent that pushes itself, `wing-commander-containment` (mode `install-pre-push`) installs a pre-push hook that refuses a push carrying a change outside `P/` (intake's hook is the label-first check instead). After each Edit/Write agent the same composite (mode `check`):
 
 - Input: the pre-agent SHA and `P`.
-- Computes `git diff --name-only <pre-agent-sha> HEAD` plus the working-tree status.
+- Computes `git diff --name-only --no-renames` from the pre-agent SHA and from the default branch's merge base to `HEAD`, plus the working-tree status and the untracked files (the root trusted checkout excluded).
 - Passes when every path starts with `P/`. Whole-folder operations (moves or deletions of nested project folders) and edits to a child-project index README all start with `P/`, so they pass.
 - Fails the stage with a callout listing the offending paths. The lifecycle PR is not advanced.
 - Skipped for root lifecycles.

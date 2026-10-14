@@ -16,6 +16,19 @@
       "denied": ["docs/**", "a/.claude/**", "a/b/**/.claude/**"],
       "denied_tools": ["Bash(git push --no-verify:*)", "Bash(git push -n:*)"]
     },
+    "raw_api_denied_for_a_project_even_when_extra_allowed": {
+      "project": "ideas/alpha",
+      "default_allowed": "Read,Edit,Bash(gh api:*),Bash(gh pr view:*)",
+      "extra_allowed": "Bash(gh api:*)",
+      "denied_tools": ["Bash(gh api:*)"],
+      "not_stated": ["gh api"]
+    },
+    "raw_api_untouched_at_the_root": {
+      "project": "",
+      "default_allowed": "Read,Edit,Bash(gh api:*)",
+      "allowed": ["Read", "Edit", "Bash(gh api:*)"],
+      "not_denied": ["gh api"]
+    },
     "hook_bypass_denied_for_a_project": {
       "project": "ideas/alpha",
       "default_allowed": "Read,Edit,Bash(git push:*)",

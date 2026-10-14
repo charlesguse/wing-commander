@@ -73,7 +73,6 @@ def tool_args(case, script):
         "STEP_LABEL": "fixture",
         "DEFAULT_ALLOWED": case.get("default_allowed", "Read,Edit,Write"),
         "DEFAULT_DISALLOWED": "",
-        "EXTRA_ALLOWED": "",
         "EXTRA_DISALLOWED": "",
         "ALLOWED_OVERRIDE": "__unset__",
         "DISALLOWED_OVERRIDE": case.get("disallowed_override", "__unset__"),
@@ -81,12 +80,17 @@ def tool_args(case, script):
         "PROJECT": case["project"],
         # The step's own constant, read from action.yml as the runner sets it.
         "HOOK_BYPASS_DENIES": tool_args_env()["HOOK_BYPASS_DENIES"],
+        "PROJECT_API_DENY": tool_args_env()["PROJECT_API_DENY"],
+        "EXTRA_ALLOWED": case.get("extra_allowed", ""),
     }
     r, out = run_script(script, env, ROOT, "wing-commander-tool-args")
     if r.returncode != 0:
         return None, None, r.stderr
     m = re.search(r"^disallowed-tools=(.*)$", out, re.M)
     a = re.search(r"^allowed-tools=(.*)$", out, re.M)
+    s = re.search(r"^shell-commands=(.*)$", out, re.M)
+    if s and any(f"`{c}`" in s.group(1) for c in case.get("not_stated", [])):
+        return None, None, f"the tooling statement still names one of {case['not_stated']!r}: {s.group(1)!r}"
     return (m.group(1) if m else ""), (a.group(1) if a else ""), ""
 
 
