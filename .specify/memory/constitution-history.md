@@ -6,6 +6,26 @@ A new amendment adds its report to the top of this list (below this
 header), not to `constitution.md` -- see CLAUDE.md.
 
 <!--
+Sync Impact Report — 2026-10-14
+Version change: 2.4.0 → 2.5.0 (MINOR: three existing clauses are widened to cover lifecycles that run in a project subfolder of the consuming repository. No principle is added, removed or redefined, and every root-level reading is unchanged because the project path `P` is empty for the root project. Materially expanding where the artifacts live and how far the `.claude/` deny reaches is MINOR, not PATCH (spec 114 FR-024))
+Modified principles:
+  V. Security — Untrusted Content Is Never Instructions: one sentence added right after the `.claude/` write-deny sentence. For a lifecycle in a project subfolder `P`, the deny covers the repository root's `.claude/`, every enclosing project's `.claude/` between the root and `P`, `P/.claude/`, and every nested project's `.claude/` inside `P`, whatever the agent's working directory. Entry authorization, the actor check, the merge classes and App-not-PAT are unchanged, and the merge-class wording that Gate 113 checks is untouched.
+  VI. Portability — The Consuming Repository Owns Its Artifacts: project-specific artifacts (constitution, `.specify/`, spec-kit skills, `specs/`) are read from the lifecycle's project folder in the checkout. That is the repository root by default, or a maintainer-routed project subfolder. Artifact paths resolve relative to that folder. Each project subfolder is governed by its own constitution.
+Modified sections:
+  Operational Constraints: the spec-artifact bullet becomes `[<P>/]specs/<NNN-slug>/`, and the branch-convention bullet becomes `<prefix>[<P>/]<NNN-slug>` and `impl/[<P>/]<NNN-slug>-iterN`. `P` is absent for the root project.
+Added sections: none
+Removed sections: none
+Templates requiring updates:
+  ✅ .specify/templates/plan-template.md — no change needed (Constitution Check is generic)
+  ✅ .specify/templates/spec-template.md — no change needed (no principle references)
+  ✅ .specify/templates/tasks-template.md — no change needed (no principle references)
+  ⚠ docs/adoption.md, docs/setup.md — the multi-project setup (FR-018) is documented by spec 114's lifecycle PR (#1022), not by this amendment. The amendment is human-merged on its own (FR-024), and the lifecycle PR carries no `.specify/memory/` edit.
+  ✅ .specify/extensions.yml — absent, so no before/after_constitution hooks apply
+Motivation: spec 114 (`specs/114-subfolder-project-lifecycles`, lifecycle #1020) lets one repository hold several projects as folders, each running its own lifecycles. FR-024 requires Principle VI's artifact list, Principle V's `.claude/` deny scope, and the Operational Constraints spec-path and branch bullets to stop assuming the repository root. It also requires one MINOR amendment, merged by a human, that reaches `main` no later than the lifecycle PR.
+Worked example: this PR is spec 114's task T056. Its lifecycle PR (finalize PR #1022) carries the stage, composite, gate and doc changes.
+Follow-up TODOs: none
+-->
+<!--
 Sync Impact Report — 2026-10-09
 Version change: 2.3.1 → 2.4.0 (MINOR: Principle II gains a tier choice — a per-lifecycle `model:haiku` opt-in for implement — and a sentence on trial shadows; it also moves the Haiku tier's identifier from claude-haiku-4-5 to claude-haiku-5-5. Adding an opt-in changes the tiering even though no default moves, so this is MINOR, not PATCH, and the identifier change rides in the same amendment (spec 110 FR-003))
 Modified principles: II. Cost-Conscious Model Tiering (the Haiku tier names claude-haiku-5-5; the implement sentence adds the `model:haiku` opt-in — `model:opus` wins when both are present, the escalation retry goes to claude-sonnet-5-5, implement only; a new closing sentence states that a trial shadow declares an explicit Haiku model and turn budget, is bounded and off by default, and acts on nothing, so the diagnose shadow does not read as running against the diagnose carve-out)
