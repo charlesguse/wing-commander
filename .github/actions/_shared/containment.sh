@@ -67,7 +67,9 @@ trusted_base() {
     echo "::error::wing-commander-containment: could not resolve the default branch from the remote -- refusing." >&2
     return 1
   fi
-  sha="$(git ls-remote origin "refs/heads/$branch" 2>/dev/null | cut -f1)"
+  # ls-remote matches its pattern as a ref-name suffix, so
+  # `<x>/refs/heads/<branch>` would match too: keep the exact ref only.
+  sha="$(git ls-remote origin "refs/heads/$branch" 2>/dev/null | awk -v r="refs/heads/$branch" '$2==r {print $1}')"
   case "$sha" in
     *[!0-9a-f]* | '')
       echo "::error::wing-commander-containment: the remote reports no single tip for '$branch' -- refusing." >&2

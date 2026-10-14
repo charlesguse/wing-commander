@@ -126,6 +126,10 @@ def contain(case, script):
             git(tmp, "push", "-q", "origin", "other")
             git(tmp, "checkout", "-q", "main")
             git(tmp, "merge", "-q", "--no-ff", "-m", "merge other", "other")
+        if case.get("suffix_collision"):
+            # MF-50: a remote branch whose name ends in /refs/heads/main also
+            # matches `git ls-remote origin refs/heads/main`.
+            git(tmp, "push", "-q", "origin", "HEAD:refs/heads/x/refs/heads/main")
         if case.get("forged_tracking_ref"):
             # The agent points origin/main at its own tip: the check must
             # still diff from the tip the remote reports.

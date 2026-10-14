@@ -864,8 +864,10 @@ jobs:
           project: ${{ steps.num.outputs.project }}
           # A routed agent cannot push at all: "Publish stranded commits
           # (post-agent)" is the branch's one push, after its label exists
-          # (spec 114 FR-014).
-          project-deny-tools: "Bash(git push:*)"
+          # (spec 114 FR-014). The pipeline also creates and applies the spec
+          # label and opens the PR, so those calls are denied too; the agent
+          # keeps gh issue comment.
+          project-deny-tools: "Bash(git push:*),Bash(gh label create:*),Bash(gh issue edit:*),Bash(gh pr create:*)"
           step-label: "intake"
 
       - name: Compute agent turn ceiling
@@ -1105,7 +1107,7 @@ jobs:
       # FR-014).
       - name: Label first (subfolder project)
         id: label-first
-        if: "!cancelled() && steps.agent.outcome != 'skipped' && inputs.routing-label-prefix != '' && steps.num.outputs.project != ''"
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && inputs.routing-label-prefix != '' && steps.num.outputs.project != '' && steps.containment.outcome != 'failure'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-label-first
         with:
@@ -1114,6 +1116,7 @@ jobs:
           project: ${{ steps.num.outputs.project }}
           number: ${{ steps.num.outputs.num }}
           prefix: ${{ inputs.spec-draft-prefix }}
+          default-branch: ${{ inputs.default-branch }}
 
       - name: Publish stranded commits (post-agent)
         id: publish-stranded
@@ -1123,6 +1126,9 @@ jobs:
         with:
           before-sha: ${{ steps.pre-agent.outputs.before-sha }}
           project: ${{ steps.num.outputs.project }}
+          # Routed subfolder only: exactly the branch "Label first" labelled
+          # (empty when it labelled none, which publishes nothing).
+          branch: ${{ inputs.routing-label-prefix != '' && steps.num.outputs.project != '' && steps.label-first.outputs.slug != '' && format('{0}{1}/{2}', inputs.spec-draft-prefix, steps.num.outputs.project, steps.label-first.outputs.slug) || '' }}
           label-first-issue: ${{ inputs.routing-label-prefix != '' && steps.num.outputs.project != '' && inputs.issue-number || '' }}
           label-first-number: ${{ steps.num.outputs.num }}
           label-first-prefix: ${{ inputs.spec-draft-prefix }}
@@ -1799,10 +1805,12 @@ jobs:
       # that committed nothing leaves the label step green with no slug, so
       # it never fires here. A spec branch "Resolve created spec" finds on the
       # remote with no slug from the label step reached the remote around
-      # label-first, so it fails the run too.
+      # label-first, so it fails the run too. A failed containment check
+      # skips "Label first" (no orphan spec label to refuse every re-run)
+      # and this step, so that check is the run's only red.
       - name: Fail on a refused subfolder publish
         id: refused-publish
-        if: "!cancelled() && steps.agent.outcome != 'skipped' && inputs.routing-label-prefix != '' && steps.num.outputs.project != '' && (steps.label-first.outcome == 'failure' || (steps.label-first.outputs.slug != '' && steps.publish-stranded.outputs.push-ok != 'true') || (steps.created-ref.outputs.slug != '' && steps.label-first.outputs.slug == ''))"
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && inputs.routing-label-prefix != '' && steps.num.outputs.project != '' && steps.containment.outcome != 'failure' && (steps.label-first.outcome == 'failure' || (steps.label-first.outputs.slug != '' && steps.publish-stranded.outputs.push-ok != 'true') || (steps.created-ref.outputs.slug != '' && steps.label-first.outputs.slug == ''))"
         env:
           LABEL_OUTCOME: ${{ steps.label-first.outcome }}
           PROJECT: ${{ steps.num.outputs.project }}
@@ -1875,10 +1883,13 @@ jobs:
   # numbering group when the run is cancelled, or superseded there, never
   # starts; one that fails before any step runs (a container that will not
   # start) never reaches its last step; and the release there can itself
-  # fail. Any of these would leave a claim that refuses every later intake.
-  # always(), with no concurrency group, so this job is never itself the
-  # one left pending. Skipped when the intake job succeeded or reported
-  # claim-released.
+  # fail inside an intake that fails too. Any of these would leave a claim
+  # that refuses every later intake. always(), with no concurrency group,
+  # so this job is never itself the one left pending. Skipped when the
+  # intake job succeeded or reported claim-released: a failed in-job
+  # release inside an otherwise successful intake (the release step is
+  # continue-on-error) is not retried here, and its claim stays until
+  # removed by hand.
   release-claim:
     needs: [verify-image-prerequisites, routing-gate, intake]
     if: always() && needs.verify-image-prerequisites.result != 'failure' && needs.routing-gate.outputs.claim-label != '' && needs.intake.result != 'success' && needs.intake.outputs.claim-released != 'true'

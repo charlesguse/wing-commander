@@ -543,6 +543,19 @@ def check_label_first_rescue(data, doc, bindir, errors):
         if got != want:
             errors.append(f"label-first rescue: label-first-issue is {got!r} for prefix={prefix!r} "
                           f"project={project!r}, want {want!r}")
+    # MF-47: the push is handed exactly the branch the label step labelled,
+    # and no branch at all for the root or when nothing was labelled.
+    def branch_for(prefix, project, slug):
+        return interpolate(str(with_.get("branch", "")), {
+            "inputs.routing-label-prefix": prefix, "steps.num.outputs.project": project,
+            "steps.label-first.outputs.slug": slug, "inputs.spec-draft-prefix": "spec-draft/"})
+    for prefix, project, slug, want in (("node:", "ideas/alpha", "001-login", "spec-draft/ideas/alpha/001-login"),
+                                        ("node:", "ideas/alpha", "", ""), ("", "ideas/alpha", "001-login", ""),
+                                        ("node:", "", "001-login", "")):
+        got = branch_for(prefix, project, slug)
+        if got != want:
+            errors.append(f"label-first rescue: branch is {got!r} for prefix={prefix!r} project={project!r} "
+                          f"slug={slug!r}, want {want!r}")
     for key, expr in (("label-first-number", "steps.num.outputs.num"), ("label-first-prefix", "inputs.spec-draft-prefix")):
         if expr not in str(with_.get(key, "")):
             errors.append(f"label-first rescue: {key} is not {expr} ({with_.get(key)!r})")
@@ -573,7 +586,13 @@ def check_label_first_rescue(data, doc, bindir, errors):
                 r, outputs, _ = run_step(publish, penv, ws, bindir, PUBLISH_ACTION)
                 if output_value(outputs, "push-ok") != "false":
                     errors.append(f"{tag}: the push published a branch no label step labelled")
-            env = {"BEFORE_SHA": base, "WORKDIR": "", "PUSH_TOKEN": "", "PUSH_REPO": "", "EXPECTED_BRANCH": "",
+                # MF-47: a labelled slug handed some other branch is refused.
+                penv = {**penv, "LF_SLUG": slug, "EXPECTED_BRANCH": case["ref"] + "-other"}
+                r, outputs, _ = run_step(publish, penv, ws, bindir, PUBLISH_ACTION)
+                if output_value(outputs, "push-ok") != "false":
+                    errors.append(f"{tag}: the push published a branch other than the one labelled")
+            env = {"BEFORE_SHA": base, "WORKDIR": "", "PUSH_TOKEN": "", "PUSH_REPO": "",
+                   "EXPECTED_BRANCH": branch_for("node:", case["project"], slug),
                    "PROJECT": case["project"], "LF_ISSUE": "7", "LF_NUM": case["num"], "LF_PREFIX": "spec-draft/",
                    "LF_SLUG": slug}
             r, outputs, _ = run_step(publish, env, ws, bindir, PUBLISH_ACTION)
@@ -606,6 +625,20 @@ def check_label_first_rescue(data, doc, bindir, errors):
                           "", "true", True, bindir, errors, created="ideas/alpha/001-login")
     judge_refused_publish(steps, "label-first rescue (root, branch found)", "", "skipped",
                           "", "true", False, bindir, errors, created="001-login")
+    # MF-45: a failed containment check skips "Label first" (no orphan
+    # spec label refusing every re-run) and leaves refused-publish quiet, so
+    # the containment failure is the run's only red.
+    fail_ctx = {"cancelled()": False, "steps.agent.outcome": "success", "inputs.routing-label-prefix": "node:",
+                "steps.num.outputs.project": "ideas/alpha", "steps.containment.outcome": "failure",
+                "steps.label-first.outcome": "skipped", "steps.label-first.outputs.slug": "",
+                "steps.publish-stranded.outputs.push-ok": "", "steps.created-ref.outputs.slug": ""}
+    if evaluate_if(str(lf_step.get("if", "")), fail_ctx):
+        errors.append("label-first rescue: the label step runs after a failed containment check")
+    if evaluate_if(str(step_by_id(steps, "refused-publish").get("if", "")),
+                   {**fail_ctx, "steps.created-ref.outputs.slug": "ideas/alpha/001-login"}):
+        errors.append("label-first rescue: refused-publish fires after a failed containment check")
+    if not evaluate_if(str(lf_step.get("if", "")), {**fail_ctx, "steps.containment.outcome": "success"}):
+        errors.append("label-first rescue: the label step does not run after a passing containment check")
 
 
 def judge_refused_publish(steps, tag, project, lf_outcome, slug, push_ok, want_fail, bindir, errors, created=None):
@@ -624,7 +657,8 @@ def judge_refused_publish(steps, tag, project, lf_outcome, slug, push_ok, want_f
     ctx = {"cancelled()": False, "steps.agent.outcome": "success", "inputs.routing-label-prefix": "node:",
            "steps.num.outputs.project": project, "steps.label-first.outcome": lf_outcome if project else "skipped",
            "steps.label-first.outputs.slug": slug, "steps.publish-stranded.outputs.push-ok": push_ok,
-           "steps.created-ref.outputs.slug": created}
+           "steps.created-ref.outputs.slug": created,
+           "steps.containment.outcome": "success" if project else "skipped"}
     fires = evaluate_if(step["if"], ctx)
     if fires != want_fail:
         errors.append(f"{tag}: refused-publish {'fires' if fires else 'stays quiet'} "
@@ -694,8 +728,15 @@ def check_label_first(steps, bindir, errors):
         errors.append("label-first: the subfolder intake prompt does not carry the slug budget")
     # MF-30: a routed agent cannot push at all, so no push skips label-first.
     targs = (step_by_id(steps, "tool-args-intake").get("with") or {})
-    if "Bash(git push:*)" not in str(targs.get("project-deny-tools", "")):
-        errors.append("label-first: the routed intake agent is not denied Bash(git push:*) (project-deny-tools)")
+    # MF-49: the pipeline creates and applies the label and opens the PR,
+    # so the routed agent is denied those calls too, keeping issue comments.
+    denied = [t.strip() for t in str(targs.get("project-deny-tools", "")).split(",")]
+    for tool in ("Bash(git push:*)", "Bash(gh label create:*)",
+                 "Bash(gh issue edit:*)", "Bash(gh pr create:*)"):
+        if tool not in denied:
+            errors.append(f"label-first: the routed intake agent is not denied {tool} (project-deny-tools)")
+    if any(t.startswith("Bash(gh issue comment") for t in denied):
+        errors.append("label-first: the routed intake agent is denied gh issue comment (project-deny-tools)")
     r, outputs, _ = run_step(guidance["run"], {"PROJECT": "", "SLUG_BUDGET": ""}, ROOT, bindir)
     body = outputs.split("\n", 1)[1] if "\n" in outputs else ""
     if r.returncode != 0 or body.strip() != "WC_INTAKE_PROJECT_GUIDANCE_EOF":

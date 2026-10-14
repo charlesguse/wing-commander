@@ -79,8 +79,10 @@ inputs:
       label budget, every commit inside P -- and its slug must equal
       label-first-slug, the one wing-commander-label-first created the
       spec:P/<NNN-slug> label for and put on the issue before this push.
-      A refusal is push-ok=false. Skipped when the remote already carries
-      HEAD. Empty (the default) skips it.
+      The check always runs (never skipped on a remote-tracking ref, which
+      the agent can rewrite); an empty label-first-slug publishes nothing,
+      and branch must be exactly <label-first-prefix>P/<label-first-slug>.
+      A refusal is push-ok=false. Empty (the default) skips it.
     required: false
     default: ""
   label-first-number:
@@ -177,12 +179,20 @@ runs:
             count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null)" || count=0
           fi
           echo "commits-published=$count" >> "$GITHUB_OUTPUT"
-          if [ -n "$EXPECTED_BRANCH" ] && [ "$branch" != "$EXPECTED_BRANCH" ]; then
+          if [ -n "${LF_ISSUE:-}" ] && [ -z "$LF_SLUG" ]; then
+            # Label first labelled nothing (an agent that committed no spec,
+            # or a refusal it has already named): nothing to publish.
+            echo "wing-commander-publish-stranded-commits: label first labelled no branch -- nothing is published." >> "$GITHUB_STEP_SUMMARY"
+            echo "push-ok=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "${LF_ISSUE:-}" ] && [ "$EXPECTED_BRANCH" != "$LF_PREFIX$PROJECT/$LF_SLUG" ]; then
+            echo "::warning::wing-commander-publish-stranded-commits: label first needs branch '$LF_PREFIX$PROJECT/$LF_SLUG', but this call was given '${EXPECTED_BRANCH:-no branch}' -- nothing is published."
+            echo "push-ok=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$EXPECTED_BRANCH" ] && [ "$branch" != "$EXPECTED_BRANCH" ]; then
             echo "::warning::wing-commander-publish-stranded-commits: the checkout is on '$branch', not '$EXPECTED_BRANCH' -- nothing is published."
             echo "push-ok=false" >> "$GITHUB_OUTPUT"
-          elif [ -n "$PROJECT" ] && [ -n "${LF_ISSUE:-}" ] \
-              && [ "$(git rev-parse HEAD)" != "$(git rev-parse -q --verify "refs/remotes/origin/$branch")" ] \
-              && ! label_first "$branch"; then
+          elif [ -n "${LF_ISSUE:-}" ] && ! label_first "$branch"; then
+            # Always re-run, never skipped on a remote-tracking ref: the
+            # agent can rewrite refs/remotes/*.
             # The check also runs the containment test below, and has
             # already named its refusal.
             echo "::warning::wing-commander-publish-stranded-commits: the label-first check refused '$branch' -- nothing is published."

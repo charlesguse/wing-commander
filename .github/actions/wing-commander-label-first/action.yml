@@ -34,6 +34,12 @@ inputs:
     description: Intake's spec-draft branch prefix.
     required: false
     default: ""
+  default-branch:
+    description: >
+      The repository's default branch; empty means `git ls-remote --symref
+      origin HEAD` (_shared/containment.sh trusted-base).
+    required: false
+    default: ""
 
 outputs:
   slug:
@@ -52,15 +58,28 @@ runs:
         PROJECT: ${{ inputs.project }}
         NUM: ${{ inputs.number }}
         PREFIX: ${{ inputs.prefix }}
+        DEFAULT_BRANCH: ${{ inputs.default-branch }}
       run: |
         set -uo pipefail
         # An agent wrote this checkout: every git call runs with hooks,
         # fsmonitor and global/system config neutralised (spec 095).
         # shellcheck source=../_shared/git-push-hardening.sh
         . "$GITHUB_ACTION_PATH/../_shared/git-push-hardening.sh"
-        # No unpublished commit (an agent that stopped without a spec):
-        # nothing to label, nothing for the push to publish.
-        if [ "$( (wc_harden_git_env; git rev-list --count HEAD --not --remotes) )" = "0" ]; then
+        # No commit past the default branch's tip as the remote reports it
+        # now (an agent that stopped without a spec): nothing to label,
+        # nothing for the push to publish. Never read refs/remotes/*, which
+        # the agent can rewrite; an unresolvable tip fails closed.
+        if ! ahead="$(
+          wc_harden_git_env
+          export GIT_NO_REPLACE_OBJECTS=1
+          tip="$(bash "$GITHUB_ACTION_PATH/../_shared/containment.sh" trusted-base "$PROJECT" "${DEFAULT_BRANCH:-}")" || exit 1
+          git rev-list --count "$tip..HEAD"
+        )"; then
+          echo "slug=" >> "$GITHUB_OUTPUT"
+          echo "::error::wing-commander intake: could not count the commits past the default branch's remote tip -- nothing is labelled."
+          exit 1
+        fi
+        if [ "$ahead" = "0" ]; then
           echo "slug=" >> "$GITHUB_OUTPUT"
           echo "wing-commander-label-first: no unpublished commit -- nothing to label." >> "$GITHUB_STEP_SUMMARY"
           exit 0
