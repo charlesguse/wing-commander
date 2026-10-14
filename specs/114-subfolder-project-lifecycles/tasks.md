@@ -17,7 +17,7 @@
 
 **Purpose**: Resolve the three assumptions research.md marks for early verification.
 
-- [ ] T001 Verify whether `anthropics/claude-code-action` honours a step `working-directory`, and which parent `CLAUDE.md`/settings files it loads from a subfolder; record the result in `specs/114-subfolder-project-lifecycles/research.md` D9 (decides working-directory vs Spec Kit project-root override)
+- [X] T001 Verify whether `anthropics/claude-code-action` honours a step `working-directory`, and which parent `CLAUDE.md`/settings files it loads from a subfolder; record the result in `specs/114-subfolder-project-lifecycles/research.md` D9 (decides working-directory vs Spec Kit project-root override)
 - [X] T002 [P] Read `.github/workflows/intake.yml` (allocate-number, label-creation and branch-push steps) and record the exact insertion point for label-first creation (research D7)
 - [X] T003 [P] Confirm `issue-number` is usable in a reusable workflow's job-level `concurrency.group` expression in `.github/workflows/intake.yml` (research D8)
 - [X] T004 [P] Inventory every `claude-code-action` step holding `Edit`/`Write` and every root-only pattern (`specs/` scans, `.specify/`, constitution, `.claude/skills/speckit-*`, `.wing-commander-pipeline/`) across `.github/workflows/*.yml` and `.github/actions/**`; list them in `specs/114-subfolder-project-lifecycles/research.md`
@@ -149,7 +149,7 @@
 
 - [X] T055 [P] Add a "Multiple projects in one repository" section to `docs/adoption.md` covering FR-018 (a)–(d): `routing-label-prefix`, widening the plan wrapper (and tasks `pr` mode) path filter to `**/specs/**`, one `node:<path>` label per project, restart forms (`slug=P/<NNN-slug>` vs `spec_dir=P/specs/<NNN-slug>`); parent instruction files may reach a subfolder agent; `extra-allowed-tools` repository paths resolve to the workspace root; keep root instructions valid
 - [ ] T056 Prepare the constitution amendment 2.4.0 → 2.5.0 (Principle VI artifact list, Principle V `.claude/` deny scope, Operational Constraints spec-path and branch bullets) as a SEPARATE human-merged PR, not on this branch; Sync Impact Report moved to the top of `.specify/memory/constitution-history.md` in the same commit; note the ordering (amendment lands no later than the lifecycle PR) on lifecycle issue #1020 (FR-024)
-- [ ] T057 Check no waiver register cites a tracker this work changes (`grep -rnE '"#N"|issue *= *\([^)]*\bN\b' .github/scripts/`) and update any new waiver entries
+- [X] T057 Check no waiver register cites a tracker this work changes (`grep -rnE '"#N"|issue *= *\([^)]*\bN\b' .github/scripts/`) and update any new waiver entries
 - [ ] T058 Run the `specs/114-subfolder-project-lifecycles/quickstart.md` validation scenarios
 - [ ] T059 Run `python .github/scripts/run-local-gates.py` to green; re-run after any comment edits; then `prove-after-merge` on one re-driven routed run
 
@@ -201,10 +201,10 @@ Add US2 (isolation) → US3 (compat proof) → US4 (graduation) → US5 (nesting
 
 Source: maintainer comment on PR #1022, asking implement to continue the in-scope work. The last cycle stopped after one partial step on T018 and used 15 of its 180 turns.
 
-- [ ] MF001 Use each cycle's turn budget to complete as many remaining tasks as it allows. Check off each task in this file as soon as it is complete so that every cycle registers progress and the loop does not end on "no further progress". (PR #1022)
+- [X] MF001 Use each cycle's turn budget to complete as many remaining tasks as it allows. Check off each task in this file as soon as it is complete so that every cycle registers progress and the loop does not end on "no further progress". (PR #1022)
 - [X] MF002 Finish T018 first, before any other remaining task. (PR #1022)
 - [X] MF003 Then do the per-stage wiring, in order: T029, T033, T034, T035, T040, T042, T043, T044, T045, T046. T036 and T041, which M001 also covers, belong to this wiring phase too. (PR #1022)
 - [ ] MF004 Then do the remaining gates and fixtures: T021, T026, T037, T038, T047, T048, T049, T050, T051, T052, T053, T054. (PR #1022)
 - [ ] MF005 Then do T001, T056, T057, T058, T059 and M001–M004. T056, the constitution amendment, stays a separate human-merged PR and does not land on this branch. (PR #1022)
-- [ ] MF006 For large workflow files (`implement.yml`, `intake.yml`, `cleanup.yml`), make a focused edit for each task instead of holding back a whole-file rewrite until it is complete. A task that lands partially may be committed with a progress note next to it in this file, and the next cycle continues it. (PR #1022)
+- [X] MF006 For large workflow files (`implement.yml`, `intake.yml`, `cleanup.yml`), make a focused edit for each task instead of holding back a whole-file rewrite until it is complete. A task that lands partially may be committed with a progress note next to it in this file, and the next cycle continues it. (PR #1022)
 - [ ] MF007 After each cycle's edits, keep `python .github/scripts/run-local-gates.py` green, and keep root-level behaviour byte-identical (FR-016). (PR #1022)
