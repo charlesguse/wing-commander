@@ -32,7 +32,10 @@
     {"name": "a label merely containing the prefix is not a routing label", "labels": ["xnode:ideas/alpha"], "expect": "pass", "project": ""},
     {"name": "two routing labels refuse", "labels": ["node:ideas/alpha", "node:ideas/beta"], "expect": "fail", "names": ["2 routing labels"]},
     {"name": "three routing labels refuse", "labels": ["node:a", "node:b", "node:c"], "expect": "fail", "names": ["3 routing labels"]},
-    {"name": "a routing label breaking the grammar refuses", "labels": ["node:Ideas/Alpha"], "expect": "fail", "names": ["Ideas/Alpha"]}
+    {"name": "a routing label breaking the grammar refuses", "labels": ["node:Ideas/Alpha"], "expect": "fail", "names": ["Ideas/Alpha"]},
+    {"name": "a bare routing label refuses rather than routing to the root", "labels": ["node:"], "expect": "fail", "names": ["names no project folder"]},
+    {"name": "a routing label with a leading slash refuses", "labels": ["node:/ideas/alpha"], "expect": "fail", "names": ["/ideas/alpha"]},
+    {"name": "a routing label with a leading double slash refuses", "labels": ["node://ideas"], "expect": "fail", "names": ["//ideas"]}
   ],
   "folder": [
     {"name": "complete Spec Kit project", "project": "ideas/alpha", "layout": "speckit", "expect": "pass"},

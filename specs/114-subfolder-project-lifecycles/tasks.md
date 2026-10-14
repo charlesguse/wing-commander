@@ -250,9 +250,9 @@ Source: maintainer comment on PR #1022 (five fresh-session reviewers plus an adv
 - [X] MF-10 [Review #5] Install the containment pre-push hook (MF-07) before clarify, plan (auto/pr), tasks (auto/pr), implement (cycle/retry) and finalize agents
 - [X] MF-11 [Review #5] Make the post-agent guard also diff from `git merge-base origin/<default-branch> HEAD`, so an earlier pushed violation is caught after a restart
 - [ ] MF-12 [Review #6, FR-006] Add a deterministic project paragraph (like intake's) to the clarify, plan, tasks, implement, finalize and pr-conversation act prompts, pointing reads at `P/.specify/memory/constitution.md`, `P/.specify/extensions.yml` and `P/.claude/skills/<name>/SKILL.md`. Gate that every project-wired prompt carries it
-- [ ] MF-13 [Review #7, FR-023] Add a `findings-label-prefix` input to `wing-commander-project`, pass it from intake, and drive Gate 162 through that input with a `found-by:` reject case
+- [X] MF-13 [Review #7, FR-023] Add a `findings-label-prefix` input to `wing-commander-project`, pass it from intake, and drive Gate 162 through that input with a `found-by:` reject case
 - [X] MF-14 [Review #8, FR-005] Resolve the project first and pass `project:` to the preflights in `clarify.yml` (~:425) and pr-conversation (~:603, ~:1857). Gate that every `require-speckit: "true"` preflight in a project-wired job passes `project:`
-- [ ] MF-15 [Review #9, FR-007] Make the classifier in `wing-commander-stage-findings/action.yml` (~:252) recognise `P/specs/NNN-...` and `P/specs/*/contracts/`, with fixtures
+- [X] MF-15 [Review #9, FR-007] Make the classifier in `wing-commander-stage-findings/action.yml` (~:252) recognise `P/specs/NNN-...` and `P/specs/*/contracts/`, with fixtures
 - [X] MF-16 [Review #10] Expose the exact branch from 'Resolve created spec' and find the spec PR with `gh pr list --head "$BRANCH"` instead of the `$SPEC_DRAFT_PREFIX$NUM-` match (`intake.yml` ~:1607). Add a gate case
 
 ### Minor
@@ -260,7 +260,7 @@ Source: maintainer comment on PR #1022 (five fresh-session reviewers plus an adv
 - [X] MF-17 [Review #11] In `containment.sh` (~:51) use `git log --format= --name-only --no-renames -c ...` so merge commits are checked. Add an evil-merge fixture
 - [ ] MF-18 [Review #12] Subtract `Bash(gh api:*)` in `wing-commander-tool-args` for non-empty project on pr-conversation act, re-granting only needed endpoints. If not feasible, record it as an accepted gap in `contracts/containment-and-trusted-checkout.md`
 - [ ] MF-19 [Review #13] `check-folder`: test `.specify/memory`, `.specify/scripts` and each `SKILL.md` for symlinks. Add fixtures for a symlinked memory dir, skills dir and skill file
-- [ ] MF-20 [Review #14] Routing must refuse instead of falling back to the root: bare routing label (`node:`), failed `gh issue view`, leading `/` or `//`. Strip `-iterN` only for implement branches. Add fixtures for each
+- [X] MF-20 [Review #14] Routing must refuse instead of falling back to the root: bare routing label (`node:`), failed `gh issue view`, leading `/` or `//`. Strip `-iterN` only for implement branches. Add fixtures for each
 - [ ] MF-21 [Review #15, T066] Replace every remaining inline project/slug split (incl. `read-spec-meta.sh`, plan, tasks, rebase) with `project-name.sh parse`. Anchor rebase's `ls-remote` to `refs/heads/${SPEC_PREFIX}`
 - [ ] MF-22 [Review #16] Add the stale-folder re-check after checkout in pr-conversation act and act.fold, rebase and cleanup
 - [ ] MF-23 [Review #17] Add a `release-claim` job (`if: always()`, no concurrency group) so `spec-intake-claimed` is released when a pending intake is cancelled

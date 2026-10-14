@@ -236,6 +236,38 @@ def case_live_contract_finding_still_files():
           state and state.get("dropped_spec_errata") == 0, state)
 
 
+def case_project_spec_paths_classified_like_root():
+    case = "a subfolder project's P/specs/NNN-slug/ docs are spec errata and its contracts still file (spec 114)"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-")
+    project_doc = spec_errata_finding(
+        title="the project's plan.md is stale",
+        evidence={"file_paths": ["ideas/alpha/specs/001-login/plan.md"]},
+        fingerprint_basis={"file_path": "./ideas/alpha/specs/001-login/tasks.md", "gate_or_artifact": "plan"})
+    project_contract = spec_errata_finding(
+        title="the project's contract misnames an output",
+        evidence={"file_paths": ["ideas/alpha/specs/001-login/contracts/api.md"]},
+        fingerprint_basis={"file_path": "ideas/alpha/specs/001-login/contracts/api.md", "gate_or_artifact": "Outputs"})
+    code_named_specs = valid_finding(
+        title="a code directory named specs",
+        evidence={"file_paths": ["ideas/alpha/src/specs/readme.md"]},
+        fingerprint_basis={"file_path": "ideas/alpha/src/specs/readme.md", "gate_or_artifact": "readme"})
+    not_a_project = valid_finding(
+        title="an uppercase folder is no project",
+        evidence={"file_paths": ["Ideas/specs/001-login/spec.md"]},
+        fingerprint_basis={"file_path": "Ideas/specs/001-login/spec.md", "gate_or_artifact": "spec"})
+    rc, outputs, state, out = run_prepare(
+        tmp, "structured-array",
+        findings=[project_doc, project_contract, code_named_specs, not_a_project], cap="3")
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": only the project spec document is dropped",
+          state and state.get("dropped_spec_errata") == 1, state)
+    check(case + ": the contract, the code directory and the non-project survive",
+          [outputs.get("survivor-{0}-title".format(i)) for i in range(3)]
+          == ["the project's contract misnames an output", "a code directory named specs",
+              "an uppercase folder is no project"],
+          [outputs.get("survivor-{0}-title".format(i)) for i in range(3)])
+
+
 def case_spec_errata_summary_reports_the_drop():
     case = "a run whose only finding was spec errata says so in the summary, not 'No findings'"
     tmp = tempfile.mkdtemp(prefix="wc-sf-summary-")
@@ -1751,6 +1783,7 @@ CASES = [
     case_in_flight_over_cap_is_counted,
     case_in_flight_post_posts_dedups_and_survives_failure,
     case_spec_errata_summary_reports_the_drop,
+    case_project_spec_paths_classified_like_root,
     case_empty_file_paths_dropped,
     case_trailing_newline_title_dropped,
     case_cap_overflow_keeps_proposal_order,

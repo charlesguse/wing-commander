@@ -254,13 +254,27 @@ runs:
             # evidence.file_paths is (relative to the checkout), with a
             # leading "./" tolerated -- except specs/*/contracts/, which
             # gates read and which are fixed like code (CLAUDE.md).
+            # A subfolder project's specs live at P/specs/NNN-slug/ (spec
+            # 114, FR-007): P is one or more project-grammar segments, none
+            # of them `specs`, and the feature directory carries its number,
+            # so a code directory merely named specs/ is not mistaken for one.
             norm = str(path).strip().replace("\\", "/")
             while norm.startswith("./"):
                 norm = norm[2:]
             parts = norm.split("/")
-            if len(parts) >= 3 and parts[0] == "specs" and parts[2] == "contracts":
+            if parts[0] == "specs":
+                k = 0
+            elif "specs" in parts:
+                k = parts.index("specs")
+                if not all(re.fullmatch(r"[a-z0-9][a-z0-9-]*", p) for p in parts[:k]):
+                    return False
+                if len(parts) <= k + 1 or not re.match(r"[0-9]{3}-", parts[k + 1]):
+                    return False
+            else:
                 return False
-            return parts[0] == "specs" and len(parts) > 1
+            if len(parts) >= k + 3 and parts[k + 2] == "contracts":
+                return False
+            return len(parts) > k + 1
 
         def is_spec_errata(finding):
             # A finding whose every cited file -- evidence and fingerprint

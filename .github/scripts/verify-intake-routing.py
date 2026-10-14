@@ -62,6 +62,7 @@ INTERFACE = os.path.join(ROOT, ".github", "scripts", "fixtures", "project-root-c
 # several runs can be interleaved against one issue; otherwise `issue view`
 # serves FAKE_LABELS_JSON.
 FAKE_GH = """#!/usr/bin/env bash
+if [ -n "${FAKE_GH_FAIL:-}" ]; then echo "fake gh: HTTP 502" >&2; exit 1; fi
 if [ "$1 $2" = "issue view" ]; then
   expr=""
   while [ "$#" -gt 0 ]; do [ "$1" = --jq ] && expr="$2"; shift; done
@@ -192,6 +193,32 @@ def check_label_count(data, bindir, errors):
             for want in case.get("names", []):
                 if want not in log:
                     errors.append(f"{tag}: lifecycle-issue callout does not name {want!r} (log {log!r})")
+    # MF-20: routing refuses rather than falling back to the root when the
+    # labels cannot be read.
+    r, outputs, _ = run_step(resolve, {**base_env, "CHECK_FOLDER": "false", "FAKE_GH_FAIL": "1",
+                                       "FAKE_LABELS_JSON": labels_json(["node:ideas/alpha"])}, ROOT, bindir, PROJECT_ACTION)
+    if r.returncode == 0 or output_value(outputs, "project") is not None or "could not read the labels" not in r.stdout:
+        errors.append(f"label_count unreadable labels: expected refusal, rc={r.returncode} {r.stdout!r}")
+    # MF-13 (FR-023): the findings-label prefix reaches validate-prefix
+    # through the composite's input, not only through the fixed families.
+    for pfx, findings, want_ok in (("found-by:", "found-by", False), ("found:", "found-by", False),
+                                   ("found-by:", "", True), ("node:", "found-by", True)):
+        env = {**base_env, "ROUTING_PREFIX": pfx, "FINDINGS_LABEL_PREFIX": findings, "CHECK_FOLDER": "false",
+               "FAKE_LABELS_JSON": labels_json([])}
+        r, _, _ = run_step(resolve, env, ROOT, bindir, PROJECT_ACTION)
+        if (r.returncode == 0) != want_ok:
+            errors.append(f"findings prefix: routing prefix {pfx!r} with findings-label-prefix {findings!r} "
+                          f"rc={r.returncode}, want {'accepted' if want_ok else 'refused'} {r.stdout!r}")
+    with open(os.path.join(PROJECT_ACTION, "action.yml"), encoding="utf-8") as fh:
+        resolve_env = yaml.safe_load(fh)["runs"]["steps"][0].get("env", {})
+    if "inputs.findings-label-prefix" not in str(resolve_env.get("FINDINGS_LABEL_PREFIX", "")):
+        errors.append("findings prefix: wing-commander-project does not hand its findings-label-prefix input to validate-prefix")
+    for s in intake_doc()["jobs"].values():
+        for st in s.get("steps") or []:
+            w = st.get("with") or {}
+            if str(st.get("uses", "")).endswith("/wing-commander-project") and w.get("routing-label-prefix"):
+                if "inputs.findings-label-prefix" not in str(w.get("findings-label-prefix", "")):
+                    errors.append(f"findings prefix: intake's {st.get('name')!r} does not pass findings-label-prefix")
     for case in data["folder"]:
         with tempfile.TemporaryDirectory() as repo:
             make_layout(repo, case["project"], case["layout"])

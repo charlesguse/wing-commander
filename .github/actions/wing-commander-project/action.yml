@@ -32,6 +32,13 @@ inputs:
     description: Intake only. The issue whose live labels carry the routing label.
     required: false
     default: ''
+  findings-label-prefix:
+    description: >-
+      Intake only. The prefix of the labels stage findings are filed under
+      (intake's own `findings-label-prefix` input). A routing prefix that
+      overlaps it is refused like the fixed label families (FR-023).
+    required: false
+    default: ''
   identity:
     description: >-
       Later stages. A branch, label, slug or spec-dir name of the lifecycle.
@@ -100,6 +107,7 @@ runs:
         IDENTITY: ${{ inputs.identity }}
         IDENTITY_KIND: ${{ inputs.identity-kind }}
         CHECK_FOLDER: ${{ inputs.check-folder }}
+        FINDINGS_LABEL_PREFIX: ${{ inputs.findings-label-prefix }}
       run: |
         lib="$GITHUB_ACTION_PATH/../_shared/project-name.sh"
         callout() {
@@ -122,13 +130,25 @@ runs:
             callout "$err"
             exit 1
           fi
-          labels=$(gh issue view "$ISSUE" --json labels --jq '.labels[].name' | grep -F -- "$ROUTING_PREFIX" | grep -E "^$ROUTING_PREFIX" || true)
+          # Unreadable labels refuse: falling back to the root would put a
+          # routed issue's spec in the wrong project.
+          if ! all=$(gh issue view "$ISSUE" --json labels --jq '.labels[].name'); then
+            callout "could not read the labels of issue #$ISSUE to find its routing label. Nothing was created."
+            exit 1
+          fi
+          labels=$(printf '%s\n' "$all" | while IFS= read -r l; do case "$l" in "$ROUTING_PREFIX"*) printf '%s\n' "$l" ;; esac; done)
           count=$(printf '%s' "$labels" | grep -c . || true)
           if [ "$count" -gt 1 ]; then
             callout "this issue carries $count routing labels ($(printf '%s' "$labels" | tr '\n' ' ')); exactly one is allowed. Nothing was created."
             exit 1
           fi
-          [ "$count" -eq 0 ] || project="${labels#"$ROUTING_PREFIX"}"
+          if [ "$count" -eq 1 ]; then
+            project="${labels#"$ROUTING_PREFIX"}"
+            if [ -z "$project" ]; then
+              callout "the routing label \`$labels\` names no project folder. Nothing was created."
+              exit 1
+            fi
+          fi
         fi
         if [ -n "$project" ]; then
           if ! err=$(bash "$lib" validate-path "$project" 2>&1 >/dev/null); then

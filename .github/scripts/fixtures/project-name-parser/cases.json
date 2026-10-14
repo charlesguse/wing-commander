@@ -15,7 +15,9 @@
     {"kind": "spec-dir", "name": "ideas/alpha/specs/001-login", "project": "ideas/alpha", "slug": "001-login"},
     {"kind": "spec-dir", "name": "a/b/c/specs/002-x", "project": "a/b/c", "slug": "002-x"},
     {"kind": "label", "name": "spec:a/b/001-x", "project": "a/b", "slug": "001-x"},
-    {"kind": "label", "name": "spec:c/b/001-x", "project": "c/b", "slug": "001-x"}
+    {"kind": "label", "name": "spec:c/b/001-x", "project": "c/b", "slug": "001-x"},
+    {"kind": "branch", "name": "spec/001-login-iter3", "project": "", "slug": "001-login-iter3"},
+    {"kind": "branch", "name": "spec-draft/ideas/alpha/001-retry-iter2", "project": "ideas/alpha", "slug": "001-retry-iter2"}
   ],
   "reject": [
     {"kind": "branch", "name": "other/001-login"},
@@ -31,7 +33,12 @@
     {"kind": "spec-dir", "name": "ideas/alpha/specs/001-login/spec.md"},
     {"kind": "bogus", "name": "001-login"},
     {"kind": "branch", "name": "spec/ideas/alpha/001-login/extra"},
-    {"kind": "branch", "name": "implement/ideas/alpha/001-login-iter2/x"}
+    {"kind": "branch", "name": "implement/ideas/alpha/001-login-iter2/x"},
+    {"kind": "slug", "name": "/001-login"},
+    {"kind": "slug", "name": "//001-login"},
+    {"kind": "label", "name": "spec:/001-login"},
+    {"kind": "branch", "name": "spec//001-login"},
+    {"kind": "branch", "name": "implement//001-login-iter2"}
   ],
   "attribution": [
     {

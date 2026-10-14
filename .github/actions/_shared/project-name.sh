@@ -22,7 +22,8 @@
 #   validate-prefix <pfx>                           -> (nothing)
 #
 # `parse branch` strips the first matching flat prefix from SPEC_DRAFT_PREFIX,
-# SPEC_PREFIX and IMPL_PREFIX (longest first), then a trailing -iterN.
+# SPEC_PREFIX and IMPL_PREFIX (longest first), then -- for an implement
+# branch only -- a trailing -iterN.
 # The empty project (root) is written as an empty `project=`.
 set -uo pipefail
 
@@ -94,7 +95,12 @@ parse() {
     branch)
       rest=$(strip_prefix "$name" "${SPEC_DRAFT_PREFIX:-}" "${SPEC_PREFIX:-}" "${IMPL_PREFIX:-}") \
         || fail "branch '$name' carries none of the configured prefixes"
-      rest=$(printf '%s' "$rest" | sed -E 's/-iter[0-9]+$//')
+      # -iterN belongs to implement branches only: a spec or spec-draft
+      # slug that happens to end in it keeps it. The implement prefix is the
+      # one stripped when it is the longest match.
+      if [ -n "${IMPL_PREFIX:-}" ] && [ "$IMPL_PREFIX$rest" = "$name" ]; then
+        rest=$(printf '%s' "$rest" | sed -E 's/-iter[0-9]+$//')
+      fi
       ;;
     label)
       case "$name" in spec:*) rest="${name#spec:}" ;; *) fail "label '$name' does not start with 'spec:'" ;; esac
@@ -112,7 +118,12 @@ parse() {
     *) fail "unknown kind '$kind'" ;;
   esac
   local slug="${rest##*/}" proj=""
-  case "$rest" in */*) proj="${rest%/*}" ;; esac
+  # A leading '/' (or '//') would leave an empty project, which is the
+  # root: refuse it rather than fall back.
+  case "$rest" in
+    /*) fail "'$name' has an empty project path before '${rest#/}'" ;;
+    */*) proj="${rest%/*}" ;;
+  esac
   printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9-]+$' || fail "'$name' does not end in <NNN-slug>"
   if [ -n "$proj" ]; then validate_path "$proj" || exit 1; fi
   echo "project=$proj"
