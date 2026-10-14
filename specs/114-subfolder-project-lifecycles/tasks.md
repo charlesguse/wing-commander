@@ -189,3 +189,10 @@ Add US2 (isolation) → US3 (compat proof) → US4 (graduation) → US5 (nesting
 - Total: 59 tasks. Setup 4 (T001–T004), Foundational 13 (T005–T017), US1 20 (T018–T037), US2 9 (T038–T046), US3 3 (T047–T049), US4 3 (T050–T052), US5 2 (T053–T054), Polish 5 (T055–T059).
 - Do not edit this spec's spec.md, plan.md or research.md after merge except as T001/T004 research notes in this open PR.
 - Never reference private downstream consumers in code, comments, commits or docs.
+
+## Maintainer Feedback
+
+- [ ] M001 Complete every remaining unchecked task in this spec's tasks.md (T001, T018, T021, T026, T029–T038, T040–T054, T056–T059), including the per-stage wiring (T029–T036, T040–T046) so Story 1 works end to end. (Maintainer request on PR #1022)
+- [ ] M002 Fix Gate 121: in job `intake`, step `Create spec from issue`, render the canonical commit-message scratch-path guidance by invoking `wing-commander-commit-message-guidance` in an earlier step of the job and interpolating its output into that prompt.
+- [ ] M003 Fix `verify-write-boundary.py`: run it locally to identify the failing scenario (likely from the project-aware deny composition in `wing-commander-tool-args`, T026/T027) and make the composed denies agree with the single no-write-paths definition (spec 090 / FR-022).
+- [ ] M004 Keep root-level adopters byte-identical (FR-016) and run `python .github/scripts/run-local-gates.py` until all gates are green.
