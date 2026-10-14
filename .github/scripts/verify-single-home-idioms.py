@@ -1278,11 +1278,16 @@ def check_local_action_before_checkout(root="."):
     return findings
 
 
+# Also the bare directory (`shared=".../.github/actions/_shared"`), which a
+# variable then indexes: the indirection resolves the same helpers.
+PROMOTION_RE = re.compile(SHARED_REF_RE.pattern + r"|\.github/actions/_shared(?![\w./-])")
+
+
 def check_promotion(root="."):
     findings = []
     for path in _relativize(root, published_stages(root)):
         text = read(root, path)
-        for m in SHARED_REF_RE.finditer(text):
+        for m in PROMOTION_RE.finditer(text):
             findings.append(Finding(path, "promotion", line_of(text, m.start()),
                                     m.group(0)))
     actions_base = os.path.join(root, ACTIONS_DIR)
@@ -1295,7 +1300,7 @@ def check_promotion(root="."):
                 if not os.path.isfile(os.path.join(root, candidate)):
                     continue
                 text = read(root, candidate)
-                for m in SHARED_REF_RE.finditer(text):
+                for m in PROMOTION_RE.finditer(text):
                     findings.append(Finding(candidate, "promotion",
                                             line_of(text, m.start()), m.group(0)))
     return findings
@@ -2421,6 +2426,26 @@ def selftest_promotion_fails():
         if not composite_hit:
             fail(f"[{case}] non-underscore composite resolving _shared/ was not caught")
         if stage_hit and composite_hit:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    # spec 114 review: the directory named alone, through a variable, is
+    # the same promotion as naming a file in it.
+    case = "a published stage resolving _shared through a variable fails"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        _write(tmp, ".github/workflows/published-stage.yml",
+              "on:\n  workflow_call: {}\njobs:\n  x:\n    runs-on: ubuntu-latest\n"
+              "    steps:\n      - run: |\n"
+              "          shared=\"$GITHUB_WORKSPACE/.wing-commander-pipeline/.github/actions/_shared\"\n"
+              "          cp \"$shared/containment.sh\" .\n")
+        findings, hard = evaluate(tmp)
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif not any(f.check == "promotion" and f.path == ".github/workflows/published-stage.yml" for f in findings):
+            fail(f"[{case}] a `shared=` variable naming _shared was not caught")
+        else:
             note(f"[{case}] passed")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

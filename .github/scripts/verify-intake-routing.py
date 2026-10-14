@@ -16,12 +16,16 @@ fixtures/project-intake-routing/cases.json:
     a per-project group (`wing-commander-intake` at the root, unchanged), so
     two intakes routed to different projects never share a numbering group
     while the same issue routed twice shares its gate group;
-  * intake.yml's project guidance (`project-guidance`): the label is created
-    before the first branch push, and the root prompt gains nothing;
-  * intake.yml's label-first pre-push hook (`label-first-hook`), and the same
-    check run by its "Publish stranded commits (post-agent)" rescue, whose
+  * intake.yml's project guidance (`project-guidance`): the pipeline labels
+    before it publishes, the agent hands over the push, label and PR, and the
+    root prompt gains nothing;
+  * intake.yml's label-first pre-push hook (`label-first-hook`, installed by
+    wing-commander-containment): it validates only, records a passing slug
+    and refuses every agent push; the same check, then the label, then the
+    push run in its "Publish stranded commits (post-agent)" step, whose
     hardened push runs no hook (T065): an over-budget, misnumbered or
-    out-of-project branch is never pushed, and a pushed one is labelled first;
+    out-of-project branch is never pushed, and a pushed one is labelled
+    first; "Open the spec PR" (`open-pr`) follows that push;
   * intake.yml's "Resolve created spec" (`created`) with a fake `git`: a
     subfolder slug over the label budget fails, the root has no budget;
   * root compatibility (FR-016, fixtures/project-root-compat/cases.json):
@@ -70,6 +74,8 @@ if [ "$1 $2" = "issue view" ]; then
 fi
 if [ "$1 $2" = "issue comment" ]; then echo "$*" >> "$FAKE_GH_LOG"; exit 0; fi
 if [ "$1 $2" = "label create" ]; then echo "label create $3" >> "$FAKE_GH_LOG"; exit 0; fi
+if [ "$1 $2" = "pr list" ]; then echo "pr list $*" >> "$FAKE_GH_LOG"; printf '%s' "${FAKE_PR_NUMBER:-}"; exit 0; fi
+if [ "$1 $2" = "pr create" ]; then echo "$*" >> "$FAKE_GH_LOG"; exit 0; fi
 if [ "$1 $2" = "issue edit" ] && [ -n "${FAKE_LABEL_STATE:-}" ]; then
   shift 3
   while [ "$#" -gt 0 ]; do
@@ -298,10 +304,28 @@ def check_rerun_race(doc, bindir, errors):
             errors.append(f"race: a failed intake's released claim still refuses a re-run ({e_existing!r})")
 
 
+CONTAINMENT_ACTION = os.path.join(ROOT, ".github", "actions", "wing-commander-containment")
+
+
+def install_label_first_hook(hook, case, tmp, ws, bindir):
+    """Run wing-commander-containment's install-pre-push shell with the
+    inputs intake's `label-first-hook` step hands it. -> (proc, record path)."""
+    with open(os.path.join(CONTAINMENT_ACTION, "action.yml"), encoding="utf-8") as fh:
+        install = next(s for s in yaml.safe_load(fh)["runs"]["steps"] if s.get("id") == "install")
+    record = os.path.join(tmp, "rt", "validated-slug")
+    env = {"PROJECT": case["project"], "HOOKS_DIR": os.path.join(tmp, "rt", "hooks"), "LF_PREFIX": "spec-draft/",
+           "LF_NUM": case["num"], "RECORD": record, "RUNNER_TEMP": os.path.join(tmp, "rt")}
+    r, _, _ = run_step(install["run"], env, ws, bindir, CONTAINMENT_ACTION)
+    return r, record
+
+
 def check_label_first_hook(data, doc, bindir, errors):
-    """FR-014 (T061): the spec label exists, and the slug fits its budget,
-    before any branch reaches the remote -- decided by the pre-push hook the
-    shipped `label-first-hook` step installs, driven here by a real
+    """FR-014 (T061, MF-04): no branch reaches the remote before its spec
+    label exists. The pre-push hook the shipped `label-first-hook` step
+    installs (wing-commander-containment, install-pre-push mode) validates
+    only -- ref, allocated number, slug budget, containment -- and makes no
+    API call: it records a passing slug and refuses every push, so the
+    agent's own push never publishes the branch. Driven by a real
     `git push` into a bare origin."""
     steps = doc["jobs"]["intake"]["steps"]
     hook = step_by_id(steps, "label-first-hook")
@@ -310,13 +334,21 @@ def check_label_first_hook(data, doc, bindir, errors):
         errors.append(f"label-first hook: not limited to routing on and a subfolder target ({cond!r})")
     if steps.index(hook) > steps.index(step_by_id(steps, "agent")):
         errors.append("label-first hook: installed after the intake agent step")
+    if not str(hook.get("uses", "")).endswith("/wing-commander-containment"):
+        errors.append("label-first hook: not installed through wing-commander-containment")
+    w = hook.get("with") or {}
+    for key, want in (("mode", "install-pre-push"), ("label-first-number", "steps.num.outputs.num"),
+                      ("label-first-prefix", "inputs.spec-draft-prefix"), ("record-file", "runner.temp")):
+        if want not in str(w.get(key, "")):
+            errors.append(f"label-first hook: {key} is not {want} ({w.get(key)!r})")
+    with open(os.path.join(ROOT, ".github", "actions", "_shared", "intake-pre-push.sh"), encoding="utf-8") as fh:
+        if any(line.lstrip().startswith("gh ") or " gh " in line for line in fh if not line.lstrip().startswith("#")):
+            errors.append("label-first hook: _shared/intake-pre-push.sh makes a gh call (Gate 12; it validates only)")
     for case in data["label_first_hook"]:
         tag = f"label-first hook {case['name']!r}"
         with tempfile.TemporaryDirectory() as tmp:
             ws, origin, git, base = intake_workspace(tmp)
-            env = {"PREFIX": "spec-draft/", "PROJECT": case["project"], "NUM": case["num"], "ISSUE": "7",
-                   "RUNNER_TEMP": os.path.join(tmp, "rt"), "GITHUB_WORKSPACE": ws}
-            r, _, _ = run_step(hook["run"], env, ws, bindir)
+            r, record = install_label_first_hook(hook, case, tmp, ws, bindir)
             if r.returncode != 0:
                 errors.append(f"{tag}: the install step failed rc={r.returncode} {r.stderr!r}")
                 continue
@@ -326,7 +358,14 @@ def check_label_first_hook(data, doc, bindir, errors):
                         "GH_TOKEN": "fake", "FAKE_LABEL_STATE": state, "FAKE_GH_LOG": os.path.join(tmp, "gh.log")}
             p = subprocess.run(["git", "push", "origin", "HEAD:refs/heads/" + case["ref"]], cwd=ws, env=push_env,
                                capture_output=True, text=True, check=False)
-            judge_label_first(tag, case, p.returncode, p.stderr, origin, state, errors)
+            judge_label_first(tag, {**case, "expect": "fail", "names": case.get("names", [])},
+                              p.returncode, p.stderr, origin, state, errors)
+            recorded = open(record, encoding="utf-8").read().strip() if os.path.exists(record) else ""
+            want = case["ref"].rsplit("/", 1)[1] if case["expect"] == "pass" else ""
+            if recorded != want:
+                errors.append(f"{tag}: the hook recorded {recorded!r}, want {want!r}")
+            if case["expect"] == "pass" and "passed the label-first check" not in p.stderr:
+                errors.append(f"{tag}: the refusal does not tell the agent its branch passed ({p.stderr!r})")
 
 
 def intake_workspace(tmp):
@@ -391,19 +430,37 @@ def judge_label_first(tag, case, rc, stderr, origin, state, errors):
 PUBLISH_ACTION = os.path.join(ROOT, ".github", "actions", "wing-commander-publish-stranded-commits")
 
 
+LABEL_FIRST_ACTION = os.path.join(ROOT, ".github", "actions", "wing-commander-label-first")
+
+
 def check_label_first_rescue(data, doc, bindir, errors):
-    """FR-014 (T065): intake's "Publish stranded commits (post-agent)" rescue
-    pushes with hooks off (wc_harden_git_env), so the label-first hook cannot
-    fire on it; the composite runs the same check itself. Each label-first
-    case is replayed as a stranded branch the rescue publishes -- with the
-    hook installed, to prove the check holds without it -- and the intake
-    wiring passes the check's inputs only with routing on and a subfolder."""
+    """FR-014 (T065, MF-05): intake's "Label first" step
+    (wing-commander-label-first) checks the branch and creates and adds the
+    spec label under its declared token; "Publish stranded commits
+    (post-agent)" then pushes with hooks off (wc_harden_git_env), re-running
+    the check and publishing only the branch the label step labelled. Each
+    label-first case is replayed as a stranded branch -- with the hook
+    installed, to prove the check holds without it -- plus a push the label
+    step never labelled, and the intake wiring passes the inputs only with
+    routing on and a subfolder."""
     steps = doc["jobs"]["intake"]["steps"]
     hook = step_by_id(steps, "label-first-hook")
     rescue = step_by_id(steps, "publish-stranded")
+    lf_step = step_by_id(steps, "label-first")
     with_ = rescue.get("with", {})
-    if "GH_TOKEN" not in rescue.get("env", {}):
-        errors.append("label-first rescue: the rescue step carries no GH_TOKEN for the label it creates")
+    if not str(lf_step.get("uses", "")).endswith("/wing-commander-label-first"):
+        errors.append("label-first rescue: the label step does not use wing-commander-label-first")
+    if "env.WC_BOT_TOKEN" not in str((lf_step.get("with") or {}).get("token", "")):
+        errors.append("label-first rescue: the label step is not handed the App token")
+    if not steps.index(lf_step) < steps.index(rescue):
+        errors.append("label-first rescue: the label step does not run before the push")
+    if "steps.label-first.outputs.slug" not in str(with_.get("label-first-slug", "")):
+        errors.append("label-first rescue: the push is not handed the label step's slug")
+    lf_cond = str(lf_step.get("if", ""))
+    if "inputs.routing-label-prefix != ''" not in lf_cond or "steps.num.outputs.project != ''" not in lf_cond:
+        errors.append(f"label-first rescue: the label step is not limited to routing on and a subfolder ({lf_cond!r})")
+    with open(os.path.join(LABEL_FIRST_ACTION, "action.yml"), encoding="utf-8") as fh:
+        label_run = yaml.safe_load(fh)["runs"]["steps"][0]["run"]
     for prefix, project, want in (("node:", "ideas/alpha", "7"), ("", "ideas/alpha", ""), ("node:", "", "")):
         ctx = {"inputs.routing-label-prefix": prefix, "inputs.issue-number": "7", "steps.num.outputs.project": project}
         got = interpolate(str(with_.get("label-first-issue", "")), ctx)
@@ -419,24 +476,83 @@ def check_label_first_rescue(data, doc, bindir, errors):
         tag = f"label-first rescue {case['name']!r}"
         with tempfile.TemporaryDirectory() as tmp:
             ws, origin, git, base = intake_workspace(tmp)
-            env = {"PREFIX": "spec-draft/", "PROJECT": case["project"], "NUM": case["num"], "ISSUE": "7",
-                   "RUNNER_TEMP": os.path.join(tmp, "rt"), "GITHUB_WORKSPACE": ws}
-            r, _, _ = run_step(hook["run"], env, ws, bindir)
+            r, _ = install_label_first_hook(hook, case, tmp, ws, bindir)
             if r.returncode != 0:
                 errors.append(f"{tag}: the install step failed rc={r.returncode} {r.stderr!r}")
                 continue
             git("checkout", "-q", "-b", case["ref"])
             commit_case(ws, git, case)
             state = os.path.join(tmp, "labels.json")
+            lenv = {"GH_TOKEN": "fake", "ISSUE": "7", "PROJECT": case["project"], "NUM": case["num"],
+                    "PREFIX": "spec-draft/", "FAKE_LABEL_STATE": state}
+            lr, louts, _ = run_step(label_run, lenv, ws, bindir, LABEL_FIRST_ACTION)
+            slug = output_value(louts, "slug") or ""
+            if (lr.returncode == 0) != (case["expect"] == "pass") or (case["expect"] == "pass") != bool(slug):
+                errors.append(f"{tag}: the label step rc={lr.returncode} slug={slug!r} for an expected {case['expect']}")
+            if case["expect"] == "pass":
+                # The push refuses a branch the label step did not label.
+                penv = {"BEFORE_SHA": base, "WORKDIR": "", "PUSH_TOKEN": "", "PUSH_REPO": "", "EXPECTED_BRANCH": "",
+                        "PROJECT": case["project"], "LF_ISSUE": "7", "LF_NUM": case["num"], "LF_PREFIX": "spec-draft/",
+                        "LF_SLUG": ""}
+                r, outputs, _ = run_step(publish, penv, ws, bindir, PUBLISH_ACTION)
+                if output_value(outputs, "push-ok") != "false":
+                    errors.append(f"{tag}: the push published a branch no label step labelled")
             env = {"BEFORE_SHA": base, "WORKDIR": "", "PUSH_TOKEN": "", "PUSH_REPO": "", "EXPECTED_BRANCH": "",
                    "PROJECT": case["project"], "LF_ISSUE": "7", "LF_NUM": case["num"], "LF_PREFIX": "spec-draft/",
-                   "GH_TOKEN": "fake", "FAKE_LABEL_STATE": state}
+                   "LF_SLUG": slug}
             r, outputs, _ = run_step(publish, env, ws, bindir, PUBLISH_ACTION)
             ok = output_value(outputs, "push-ok")
             if r.returncode != 0 or ok not in ("true", "false"):
                 errors.append(f"{tag}: the rescue step failed rc={r.returncode} push-ok={ok!r} {r.stderr!r}")
                 continue
-            judge_label_first(tag, case, 0 if ok == "true" else 1, r.stdout + r.stderr, origin, state, errors)
+            judge_label_first(tag, case, 0 if ok == "true" else 1, lr.stdout + lr.stderr + r.stdout + r.stderr,
+                              origin, state, errors)
+    # An agent that stopped without a spec: nothing to label, no error.
+    with tempfile.TemporaryDirectory() as tmp:
+        ws, _, _, _ = intake_workspace(tmp)
+        lenv = {"GH_TOKEN": "fake", "ISSUE": "7", "PROJECT": "ideas/alpha", "NUM": "001", "PREFIX": "spec-draft/",
+                "FAKE_LABEL_STATE": os.path.join(tmp, "labels.json")}
+        lr, louts, log = run_step(label_run, lenv, ws, bindir, LABEL_FIRST_ACTION)
+        if lr.returncode != 0 or output_value(louts, "slug") != "" or "label create" in log:
+            errors.append(f"label-first rescue: an agent with no commit was not a quiet no-op rc={lr.returncode} {lr.stderr!r}")
+
+
+def check_open_pr(doc, bindir, errors):
+    """FR-014 (MF-05): with the agent's push refused, the PR and stage:spec
+    follow the rescue's label-first push, never precede it."""
+    steps = doc["jobs"]["intake"]["steps"]
+    step = step_by_id(steps, "open-pr")
+    cond = str(step.get("if", ""))
+    if "steps.publish-stranded.outputs.push-ok == 'true'" not in cond or "label-first-slug != ''" not in cond:
+        errors.append(f"open-pr: not gated on the label-first push having published ({cond!r})")
+    if steps.index(step) < steps.index(step_by_id(steps, "publish-stranded")):
+        errors.append("open-pr: runs before the label-first push")
+    for existing, want_create in (("", True), ("12", False)):
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = os.path.join(tmp, "ideas", "alpha", "specs", "001-login")
+            os.makedirs(spec)
+            with open(os.path.join(spec, "spec.md"), "w", encoding="utf-8") as fh:
+                fh.write("# Feature Specification: Login\n")
+            state = os.path.join(tmp, "labels.json")
+            with open(state, "w", encoding="utf-8") as fh:
+                json.dump(["spec:ideas/alpha/001-login"], fh)
+            env = {"GH_TOKEN": "fake", "ISSUE": "7", "PROJECT": "ideas/alpha", "SLUG": "001-login",
+                   "PREFIX": "spec-draft/", "BASE": "main", "BODY_FILE": os.path.join(tmp, "body.md"),
+                   "RECORD": os.path.join(tmp, "record"), "FAKE_LABEL_STATE": state, "FAKE_PR_NUMBER": existing}
+            r, _, log = run_step(step["run"], env, tmp, bindir)
+            with open(state, encoding="utf-8") as fh:
+                labels = json.load(fh)
+            created = [line for line in log.splitlines() if line.startswith("pr create")]
+            if r.returncode != 0:
+                errors.append(f"open-pr (existing={existing!r}): failed rc={r.returncode} {r.stderr!r}")
+            elif "stage:spec" not in labels:
+                errors.append(f"open-pr (existing={existing!r}): stage:spec not on the issue ({labels!r})")
+            elif "--head spec-draft/ideas/alpha/001-login" not in log:
+                errors.append(f"open-pr (existing={existing!r}): did not look the PR up by its exact branch ({log!r})")
+            elif bool(created) != want_create:
+                errors.append(f"open-pr (existing={existing!r}): pr create calls {created!r}")
+            elif want_create and "--title Spec: Login (#7)" not in created[0]:
+                errors.append(f"open-pr: title not taken from spec.md's heading ({created[0]!r})")
 
 
 def check_label_first(steps, bindir, errors):
@@ -444,8 +560,10 @@ def check_label_first(steps, bindir, errors):
     r, outputs, _ = run_step(guidance["run"], {"PROJECT": "ideas/alpha", "SLUG_BUDGET": "33"}, ROOT, bindir)
     if r.returncode != 0:
         errors.append(f"label-first: project-guidance failed {r.stderr!r}")
-    elif not any("BEFORE you push" in line and "label" in line for line in outputs.splitlines()):
-        errors.append("label-first: the subfolder intake prompt does not create the spec label before the first push")
+    elif not any("spec label BEFORE it publishes" in line for line in outputs.splitlines()):
+        errors.append("label-first: the subfolder intake prompt does not say the pipeline labels before it publishes")
+    elif "never pass --no-verify" not in outputs or "skip step 6's" not in outputs:
+        errors.append("label-first: the subfolder intake prompt does not hand the push, label and PR to the pipeline")
     elif "at most 33 characters" not in outputs:
         errors.append("label-first: the subfolder intake prompt does not carry the slug budget")
     r, outputs, _ = run_step(guidance["run"], {"PROJECT": "", "SLUG_BUDGET": ""}, ROOT, bindir)
@@ -663,6 +781,7 @@ def main():
         check_label_first(steps, bindir, errors)
         check_label_first_hook(data, doc, bindir, errors)
         check_label_first_rescue(data, doc, bindir, errors)
+        check_open_pr(doc, bindir, errors)
         check_concurrency(doc, bindir, errors)
         check_root_compat(bindir, errors)
         with tempfile.TemporaryDirectory() as gitbin:

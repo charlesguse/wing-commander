@@ -732,31 +732,26 @@ jobs:
       # Label first and the slug budget, in deterministic code (spec 114,
       # FR-014, FR-021): a pre-push hook in the agent's checkout lets intake
       # push only <spec-draft-prefix>P/<NNN-slug>, refuses a slug over the
-      # label budget, creates the spec label and puts it on the issue before
-      # the branch reaches the remote, and keeps the push inside the project
-      # folder (_shared/intake-pre-push.sh, copied with the scripts it calls
-      # out of the trusted pipeline checkout). "Resolve created spec" and the
-      # containment check below still run after the agent, for a push made
-      # around the hook (`--no-verify`). Routing on and a subfolder target
-      # only; the root is unchanged (FR-016).
+      # label budget and keeps the push inside the project folder
+      # (wing-commander-containment's install-pre-push mode, label-first
+      # inputs). It makes no API call: a passing branch has its slug
+      # recorded and the push refused, because the branch may reach the
+      # remote only after its label exists. "Publish stranded commits
+      # (post-agent)" below runs the same check, creates the spec label, puts
+      # it on the issue and only then pushes, under its declared token.
+      # Routing on and a subfolder target only; the root is unchanged
+      # (FR-016).
       - name: Install label-first pre-push hook (subfolder project)
         id: label-first-hook
         if: steps.lifecycle-gate.outputs.is-open == 'true' && inputs.routing-label-prefix != '' && steps.num.outputs.project != ''
-        shell: bash
-        env:
-          PREFIX: ${{ inputs.spec-draft-prefix }}
-          PROJECT: ${{ steps.num.outputs.project }}
-          NUM: ${{ steps.num.outputs.num }}
-          ISSUE: ${{ inputs.issue-number }}
-        run: |
-          set -euo pipefail
-          hooks_dir="$RUNNER_TEMP/wing-commander-intake-hooks"
-          shared="$GITHUB_WORKSPACE/.wing-commander-pipeline/.github/actions/_shared"
-          mkdir -p "$hooks_dir"
-          cp "$shared/intake-pre-push.sh" "$shared/project-name.sh" "$shared/containment.sh" "$hooks_dir/"
-          printf '#!/usr/bin/env bash\nexec bash %q %q %q %q %q\n' "$hooks_dir/intake-pre-push.sh" "$PREFIX" "$PROJECT" "$NUM" "$ISSUE" > "$hooks_dir/pre-push"
-          chmod +x "$hooks_dir/pre-push"
-          git config core.hooksPath "$hooks_dir"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          mode: install-pre-push
+          project: ${{ steps.num.outputs.project }}
+          hooks-dir: ${{ runner.temp }}/wing-commander-intake-hooks
+          label-first-prefix: ${{ inputs.spec-draft-prefix }}
+          label-first-number: ${{ steps.num.outputs.num }}
+          record-file: ${{ runner.temp }}/wing-commander-intake-hooks/validated-slug
 
       # Tie the run back to the issue the moment intake starts, with a link.
       - name: Report run started on issue
@@ -834,7 +829,8 @@ jobs:
               echo "- The branch is \`<prefix>$PROJECT/<NNN-slug>\` and the spec label is \`spec:$PROJECT/<NNN-slug>\`."
               echo "- spec-meta.json records \"spec_dir\": \"specs/<NNN-slug>\" (relative to the project, without \`$PROJECT/\`), so the folder can be copied out unchanged."
               echo "- <NNN-slug> may be at most $SLUG_BUDGET characters long, the most the spec label can carry. Choose a shorter slug rather than exceed it."
-              echo "- Create the spec label (the \`gh label create\` of step 7) BEFORE you push the branch in step 5; step 7 still adds it to the issue."
+              echo "- Push the branch once in step 5. The push is checked and then refused on purpose, whatever the result: a refusal naming a problem (an over-budget slug, say) is yours to fix and push again; one saying the branch passed is the expected end. Do not retry it, and never pass --no-verify. After you finish, the pipeline creates the spec label BEFORE it publishes your branch, puts the label and stage:spec on the issue and opens the pull request."
+              echo "- So skip step 6's \`gh pr create\` (still write the PR body file it names) and step 7's two label commands; still return the final result step 7 describes."
             fi
             echo "WC_INTAKE_PROJECT_GUIDANCE_EOF"
           } >> "$GITHUB_OUTPUT"
@@ -1088,16 +1084,28 @@ jobs:
 
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
-      # along -- see clarify.yml. The hardened push runs with hooks off, so
-      # for a routed subfolder project the composite runs the label-first
-      # check above itself (label-first-* inputs, spec 114 FR-014); GH_TOKEN
-      # is for the label it creates.
+      # along -- see clarify.yml. For a routed subfolder project this is the
+      # branch's one publishing push (the hook above refuses the agent's):
+      # "Label first" checks the branch, creates the spec label and puts it
+      # on the issue; the push then re-runs the check and publishes only
+      # the branch that step labelled (label-first-* inputs, spec 114
+      # FR-014).
+      - name: Label first (subfolder project)
+        id: label-first
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && inputs.routing-label-prefix != '' && steps.num.outputs.project != ''"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-label-first
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ inputs.issue-number }}
+          project: ${{ steps.num.outputs.project }}
+          number: ${{ steps.num.outputs.num }}
+          prefix: ${{ inputs.spec-draft-prefix }}
+
       - name: Publish stranded commits (post-agent)
         id: publish-stranded
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
         continue-on-error: true
-        env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:
           before-sha: ${{ steps.pre-agent.outputs.before-sha }}
@@ -1105,6 +1113,43 @@ jobs:
           label-first-issue: ${{ inputs.routing-label-prefix != '' && steps.num.outputs.project != '' && inputs.issue-number || '' }}
           label-first-number: ${{ steps.num.outputs.num }}
           label-first-prefix: ${{ inputs.spec-draft-prefix }}
+          label-first-slug: ${{ steps.label-first.outputs.slug }}
+
+      # Spec 114 (FR-014): a routed subfolder intake's agent never publishes
+      # its branch, so it opens no pull request and sets no label; once the
+      # push above has published the branch, label first, this step adds
+      # stage:spec and opens the spec PR from the body file the agent wrote.
+      # The title comes from spec.md's heading. A failure here fails intake.
+      - name: Open the spec PR (subfolder project)
+        id: open-pr
+        if: "!cancelled() && steps.publish-stranded.outputs.push-ok == 'true' && steps.publish-stranded.outputs.label-first-slug != ''"
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE: ${{ inputs.issue-number }}
+          PROJECT: ${{ steps.num.outputs.project }}
+          SLUG: ${{ steps.publish-stranded.outputs.label-first-slug }}
+          PREFIX: ${{ inputs.spec-draft-prefix }}
+          BASE: ${{ steps.defbranch.outputs.name }}
+          BODY_FILE: ${{ runner.temp }}/intake-pr-body.md
+          RECORD: ${{ runner.temp }}/wing-commander-intake-hooks/validated-slug
+        run: |
+          set -euo pipefail
+          branch="$PREFIX$PROJECT/$SLUG"
+          if [ ! -s "$RECORD" ]; then
+            echo "Note: the agent never pushed $branch itself; the pipeline published it." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          gh issue edit "$ISSUE" --add-label "stage:spec" >/dev/null
+          existing="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            echo "Spec PR #$existing for $branch is already open." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          title="$(sed -n '1{s/^#[[:space:]]*//;s/^Feature Specification:[[:space:]]*//;p;}' "$PROJECT/specs/$SLUG/spec.md" 2>/dev/null || true)"
+          [ -n "$title" ] || title="$SLUG"
+          if [ ! -s "$BODY_FILE" ]; then
+            printf 'Specification at %s.\n\nCloses nothing — lifecycle issue: #%s\n' "$PROJECT/specs/$SLUG" "$ISSUE" > "$BODY_FILE"
+          fi
+          gh pr create --base "$BASE" --head "$branch" --title "Spec: $title (#$ISSUE)" --body-file "$BODY_FILE"
 
       # deterministic, transcript-only verdict (healthy/exhausted/failed/unclassifiable) replacing
       # the raw outcome check the action's post-hoc rejection can no longer be trusted to reflect

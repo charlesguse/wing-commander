@@ -818,6 +818,14 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # Containment pre-push hook (spec 114, FR-021) -- see clarify.yml.
+      - name: Install containment pre-push hook (auto)
+        if: steps.project.outputs.project != '' && steps.mode.outputs.mode == 'auto'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          mode: install-pre-push
+          project: ${{ steps.project.outputs.project }}
+
       # This step's prompt carries the retry-bound paragraph for the
       # credential-expiry `git push` signature -- see clarify.yml.
       - name: Generate implementation plan (direct commit)
@@ -1068,6 +1076,14 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: ${{ inputs.max-turns }}
+
+      # Containment pre-push hook (spec 114, FR-021) -- see clarify.yml.
+      - name: Install containment pre-push hook (pr)
+        if: steps.project.outputs.project != '' && steps.mode.outputs.mode == 'pr'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          mode: install-pre-push
+          project: ${{ steps.project.outputs.project }}
 
       # This step's prompt carries the retry-bound paragraph for the
       # credential-expiry `git push` signature -- see clarify.yml.

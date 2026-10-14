@@ -8,6 +8,10 @@
 #     the ones outside P/. The wing-commander-containment composite feeds it
 #     the post-agent changed-path list.
 #
+#   containment.sh inside <P>
+#     The complement: prints the stdin paths inside P/. The composite's
+#     filter mode narrows rebase's conflict manifest with it.
+#
 #   containment.sh pre-push <P>
 #     A git pre-push hook body (stdin: `<local ref> <local sha> <remote ref>
 #     <remote sha>` per ref). Refuses the push when any commit it would
@@ -42,6 +46,11 @@ case "$mode" in
   outside)
     outside "$project"
     ;;
+  inside)
+    while IFS= read -r path; do
+      case "$path" in "$project"/*) printf '%s\n' "$path" ;; esac
+    done
+    ;;
   pre-push)
     found=""
     while read -r _local_ref local_sha _remote_ref _remote_sha; do
@@ -62,7 +71,7 @@ case "$mode" in
     fi
     ;;
   *)
-    echo "containment.sh: unknown mode '$mode' (want outside or pre-push)" >&2
+    echo "containment.sh: unknown mode '$mode' (want outside, inside or pre-push)" >&2
     exit 2
     ;;
 esac

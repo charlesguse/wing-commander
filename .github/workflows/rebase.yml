@@ -977,6 +977,19 @@ jobs:
             (${{ steps.agent-ceiling.outputs.ceiling }}) is the only hard
             stop; this is an observability note, not a failure.
 
+      # Containment (spec 114, FR-021): for a subfolder lifecycle the
+      # agent-appended conflict manifest admits only paths inside the project
+      # folder, so a resolution can never widen a commit outside it. Same
+      # `if:` as the scope check below, plus a subfolder project.
+      - name: Narrow the conflict manifest to the project folder
+        id: manifest-filter
+        if: always() && steps.attempt.outputs.outcome == 'conflict' && matrix.project != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          mode: filter
+          project: ${{ matrix.project }}
+          paths-file: ${{ runner.temp }}/conflict-manifest.txt
+
       # Deterministic scope verification of the AI result. Treat an
       # incomplete rebase or an errored/timed-out agent as failure. Otherwise
       # require the replayed commit sequence to match pre_tip in length/order,
@@ -997,6 +1010,7 @@ jobs:
           AGENT_VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           PROJECT: ${{ matrix.project }}
+          MANIFEST_FILTER: ${{ steps.manifest-filter.outcome }}
         run: |
           set -uo pipefail
           push=false
@@ -1014,15 +1028,11 @@ jobs:
             manifest="$RUNNER_TEMP/conflict-manifest.txt"
             touch "$manifest"
             sed '/^$/d' "$manifest" | sort -u > "$RUNNER_TEMP/manifest-sorted.txt"
-            # Containment (spec 114, FR-021): for a subfolder lifecycle the
-            # agent-appended manifest admits only paths inside the project
-            # folder, so a resolution can never widen a commit outside it.
-            # The path test's single home is _shared/containment.sh.
-            if [ -n "$PROJECT" ]; then
-              bash "$GITHUB_WORKSPACE/.wing-commander-pipeline/.github/actions/_shared/containment.sh" outside "$PROJECT" \
-                < "$RUNNER_TEMP/manifest-sorted.txt" | sort -u > "$RUNNER_TEMP/manifest-outside.txt"
-              comm -23 "$RUNNER_TEMP/manifest-sorted.txt" "$RUNNER_TEMP/manifest-outside.txt" > "$RUNNER_TEMP/manifest-inside.txt"
-              mv "$RUNNER_TEMP/manifest-inside.txt" "$RUNNER_TEMP/manifest-sorted.txt"
+            # A subfolder manifest the step above did not narrow admits
+            # nothing: each commit keeps only its original file set.
+            if [ -n "$PROJECT" ] && [ "$MANIFEST_FILTER" != "success" ]; then
+              echo "::warning::${SPEC_PREFIX}$SLUG: the conflict manifest was not narrowed to project folder '$PROJECT' — it admits no extra file."
+              : > "$RUNNER_TEMP/manifest-sorted.txt"
             fi
 
             verdict=pass

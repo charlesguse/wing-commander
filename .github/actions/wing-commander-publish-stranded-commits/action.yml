@@ -72,14 +72,15 @@ inputs:
     description: >
       Intake only, for a subfolder project (specs/114-subfolder-project-lifecycles,
       FR-014): the lifecycle issue number. When set together with project,
-      the push first runs _shared/intake-pre-push.sh -- the same label-first
-      check intake's pre-push hook runs, which cannot fire on this push
-      because wc_harden_git_env switches hooks off: only
+      this is the routed intake's one publishing push (its pre-push hook
+      validates and refuses the agent's own): the branch first passes
+      `_shared/intake-pre-push.sh check` -- only
       <label-first-prefix>P/<label-first-number>-<slug>, a slug within the
-      label budget, the spec:P/<NNN-slug> label created and on the issue
-      before the branch reaches the remote. A refusal is push-ok=false.
-      Skipped when the remote already carries HEAD. Needs GH_TOKEN in the
-      calling step's env. Empty (the default) skips it.
+      label budget, every commit inside P -- and its slug must equal
+      label-first-slug, the one wing-commander-label-first created the
+      spec:P/<NNN-slug> label for and put on the issue before this push.
+      A refusal is push-ok=false. Skipped when the remote already carries
+      HEAD. Empty (the default) skips it.
     required: false
     default: ""
   label-first-number:
@@ -88,6 +89,13 @@ inputs:
     default: ""
   label-first-prefix:
     description: "Intake's spec-draft branch prefix, used together with label-first-issue."
+    required: false
+    default: ""
+  label-first-slug:
+    description: >
+      The <NNN-slug> wing-commander-label-first validated and labelled
+      (its `slug` output). With label-first-issue set, a branch whose slug
+      differs, or an empty value, is not pushed.
     required: false
     default: ""
 
@@ -107,6 +115,11 @@ outputs:
       "false" covers a genuine race (e.g. a concurrent force-push), not a
       credential failure.
     value: ${{ steps.publish.outputs.push-ok }}
+  label-first-slug:
+    description: >
+      The <NNN-slug> the label-first check validated (empty when
+      label-first-issue is unset or the check refused).
+    value: ${{ steps.publish.outputs.label-first-slug }}
 
 runs:
   using: composite
@@ -124,6 +137,7 @@ runs:
         LF_ISSUE: ${{ inputs.label-first-issue }}
         LF_NUM: ${{ inputs.label-first-number }}
         LF_PREFIX: ${{ inputs.label-first-prefix }}
+        LF_SLUG: ${{ inputs.label-first-slug }}
       run: |
         set -uo pipefail
         dir="${WORKDIR:-.}"
@@ -133,6 +147,20 @@ runs:
         # one home of that environment.
         # shellcheck source=../_shared/git-push-hardening.sh
         . "$GITHUB_ACTION_PATH/../_shared/git-push-hardening.sh"
+        # spec 114 FR-014: the routed intake's label first. The check is the
+        # one intake's pre-push hook runs (that hook cannot fire here: the
+        # hardened environment switches hooks off), and the branch must be
+        # the one wing-commander-label-first already labelled.
+        label_first() {
+          local branch="$1" slug
+          slug="$(printf 'HEAD %s refs/heads/%s 0\n' "$(git rev-parse HEAD)" "$branch" \
+            | bash "$GITHUB_ACTION_PATH/../_shared/intake-pre-push.sh" check "$LF_PREFIX" "$PROJECT" "$LF_NUM")" || return 1
+          if [ -z "$LF_SLUG" ] || [ "$slug" != "$LF_SLUG" ]; then
+            echo "::error::wing-commander intake: push refused -- '$slug' has no spec label yet (the label-first step labelled '${LF_SLUG:-nothing}')" >&2
+            return 1
+          fi
+          echo "label-first-slug=$slug" >> "$GITHUB_OUTPUT"
+        }
         (
           wc_harden_git_env
           cd "$dir"
@@ -154,11 +182,9 @@ runs:
             echo "push-ok=false" >> "$GITHUB_OUTPUT"
           elif [ -n "$PROJECT" ] && [ -n "${LF_ISSUE:-}" ] \
               && [ "$(git rev-parse HEAD)" != "$(git rev-parse -q --verify "refs/remotes/origin/$branch")" ] \
-              && ! printf 'HEAD %s refs/heads/%s 0\n' "$(git rev-parse HEAD)" "$branch" \
-              | bash "$GITHUB_ACTION_PATH/../_shared/intake-pre-push.sh" "$LF_PREFIX" "$PROJECT" "$LF_NUM" "$LF_ISSUE"; then
-            # spec 114 FR-014: intake's label-first hook, run by hand because
-            # the hardened environment disables hooks. It also runs the
-            # containment check below, and has already named its refusal.
+              && ! label_first "$branch"; then
+            # The check also runs the containment test below, and has
+            # already named its refusal.
             echo "::warning::wing-commander-publish-stranded-commits: the label-first check refused '$branch' -- nothing is published."
             echo "push-ok=false" >> "$GITHUB_OUTPUT"
           elif [ -n "$PROJECT" ] && ! printf 'HEAD %s refs/heads/%s 0\n' "$(git rev-parse HEAD)" "$branch" \

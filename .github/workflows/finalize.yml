@@ -790,6 +790,14 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.project.outputs.project != ''
         run: echo "before-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      # Containment pre-push hook (spec 114, FR-021) -- see clarify.yml.
+      - name: Install containment pre-push hook
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.project.outputs.project != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          mode: install-pre-push
+          project: ${{ steps.project.outputs.project }}
+
       # FR-025 exclusion (specs/071-agent-push-credential): this step's own
       # default-allowed-tools has no Bash(git push:*) -- it only reads the
       # diff and writes a summary; PR creation is a later deterministic

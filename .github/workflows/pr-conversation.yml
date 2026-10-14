@@ -2209,24 +2209,18 @@ jobs:
       # act agent commits and pushes on some routes, so a check after it ran
       # would come too late. A pre-push hook beside the run-attribution hook
       # refuses any push carrying a change outside the project folder
-      # (_shared/containment.sh, copied out of the trusted pipeline checkout).
-      # Also records the pre-agent HEAD for the post-agent check below.
-      # Skipped for a root lifecycle, so nothing changes there.
+      # (wing-commander-containment's install-pre-push mode, which copies its
+      # helper out of the trusted pipeline checkout). Also records the
+      # pre-agent HEAD for the post-agent check below. Skipped for a root
+      # lifecycle, so nothing changes there.
       - name: Install containment pre-push hook for this leg
         id: containment-hook
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.needs-checkout == 'true' && steps.project.outputs.project != ''
-        shell: bash
-        env:
-          PROJECT: ${{ steps.project.outputs.project }}
-        run: |
-          set -euo pipefail
-          hooks_dir="$RUNNER_TEMP/wing-commander-fold-hooks"
-          mkdir -p "$hooks_dir"
-          cp "$GITHUB_WORKSPACE/.wing-commander-pipeline/.github/actions/_shared/containment.sh" "$hooks_dir/containment.sh"
-          printf '#!/usr/bin/env bash\nexec bash %q pre-push %q\n' "$hooks_dir/containment.sh" "$PROJECT" > "$hooks_dir/pre-push"
-          chmod +x "$hooks_dir/pre-push"
-          git config core.hooksPath "$hooks_dir"
-          echo "pre-agent-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          mode: install-pre-push
+          project: ${{ steps.project.outputs.project }}
+          hooks-dir: ${{ runner.temp }}/wing-commander-fold-hooks
 
       # Drafted-content is already-classified data (T006), but still not
       # fresh instructions — staged to a file, not interpolated (constitution V).

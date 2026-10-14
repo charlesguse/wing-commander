@@ -241,14 +241,14 @@ Source: maintainer comment on PR #1022 (five fresh-session reviewers plus an adv
 
 ### Major
 
-- [ ] MF-04 [Review #2, Gate 12, FR-014] Make `_shared/intake-pre-push.sh` validate only (ref shape, allocated number, slug budget, containment) and record the validated slug under `$RUNNER_TEMP`. Remove its `gh` calls (~:65, ~:67)
-- [ ] MF-05 [Review #2, FR-014] Move `spec:P/<slug>` label creation, the issue label add and the hardened push into a deterministic post-agent intake step (or `wing-commander-publish-stranded-commits` via its `label-first-*` inputs) under a declared token
-- [ ] MF-06 [Review #2, FR-014] For routed intake, deny `Bash(git push --no-verify:*)` and `Bash(git push -n:*)`
-- [ ] MF-07 [Review #3, Gate 60] Add `install-pre-push` mode (copy helpers from `$GITHUB_ACTION_PATH/../_shared`, write the hook, set `core.hooksPath`) and `filter` mode (rebase manifest) to `wing-commander-containment`
-- [ ] MF-08 [Review #3, Gate 60] Route `pr-conversation.yml` (~:2225), `rebase.yml` (~:1022) and `intake.yml` (~:754-756) through those modes, and widen Gate 60 to catch the `shared=` variable indirection
+- [X] MF-04 [Review #2, Gate 12, FR-014] Make `_shared/intake-pre-push.sh` validate only (ref shape, allocated number, slug budget, containment) and record the validated slug under `$RUNNER_TEMP`. Remove its `gh` calls (~:65, ~:67)
+- [X] MF-05 [Review #2, FR-014] Move `spec:P/<slug>` label creation, the issue label add and the hardened push into a deterministic post-agent intake step (or `wing-commander-publish-stranded-commits` via its `label-first-*` inputs) under a declared token
+- [X] MF-06 [Review #2, FR-014] For routed intake, deny `Bash(git push --no-verify:*)` and `Bash(git push -n:*)`
+- [X] MF-07 [Review #3, Gate 60] Add `install-pre-push` mode (copy helpers from `$GITHUB_ACTION_PATH/../_shared`, write the hook, set `core.hooksPath`) and `filter` mode (rebase manifest) to `wing-commander-containment`
+- [X] MF-08 [Review #3, Gate 60] Route `pr-conversation.yml` (~:2225), `rebase.yml` (~:1022) and `intake.yml` (~:754-756) through those modes, and widen Gate 60 to catch the `shared=` variable indirection
 - [X] MF-09 [Review #4] Add `--no-renames` to both diff legs. Add reject fixtures for a committed move into `P`, a staged move into `P`, and a delete outside `P` paired with a near-identical add inside `P`
-- [ ] MF-10 [Review #5] Install the containment pre-push hook (MF-07) before clarify, plan (auto/pr), tasks (auto/pr), implement (cycle/retry) and finalize agents
-- [ ] MF-11 [Review #5] Make the post-agent guard also diff from `git merge-base origin/<default-branch> HEAD`, so an earlier pushed violation is caught after a restart
+- [X] MF-10 [Review #5] Install the containment pre-push hook (MF-07) before clarify, plan (auto/pr), tasks (auto/pr), implement (cycle/retry) and finalize agents
+- [X] MF-11 [Review #5] Make the post-agent guard also diff from `git merge-base origin/<default-branch> HEAD`, so an earlier pushed violation is caught after a restart
 - [ ] MF-12 [Review #6, FR-006] Add a deterministic project paragraph (like intake's) to the clarify, plan, tasks, implement, finalize and pr-conversation act prompts, pointing reads at `P/.specify/memory/constitution.md`, `P/.specify/extensions.yml` and `P/.claude/skills/<name>/SKILL.md`. Gate that every project-wired prompt carries it
 - [ ] MF-13 [Review #7, FR-023] Add a `findings-label-prefix` input to `wing-commander-project`, pass it from intake, and drive Gate 162 through that input with a `found-by:` reject case
 - [ ] MF-14 [Review #8, FR-005] Resolve the project first and pass `project:` to the preflights in `clarify.yml` (~:425) and pr-conversation (~:603, ~:1857). Gate that every `require-speckit: "true"` preflight in a project-wired job passes `project:`

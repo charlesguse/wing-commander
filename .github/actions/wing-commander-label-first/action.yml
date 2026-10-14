@@ -1,0 +1,86 @@
+# Label first for a routed subfolder intake (specs/114-subfolder-project-lifecycles,
+# FR-014). Intake's pre-push hook validates the agent's branch and refuses
+# its push, so the branch reaches the remote only through
+# wing-commander-publish-stranded-commits, after this step: the checked-out
+# branch passes `_shared/intake-pre-push.sh check` (only
+# <prefix>P/<NNN>-<slug>, a slug within the label budget, every unpublished
+# commit inside P), then the spec:P/<NNN-slug> label is created and put on
+# the lifecycle issue under the declared token. The publishing push refuses
+# any branch whose slug this step did not output. Intake only: the label
+# calls live here, not in the publish composite every stage calls, so
+# Gate 12 checks them against the one token that runs them.
+#
+# Resolved from the pipeline repository's own checkout -- see the header of
+# .github/actions/wing-commander-context/action.yml.
+name: wing-commander-label-first
+description: >
+  Validate the routed intake's branch, then create its spec:P/<NNN-slug>
+  label and put it on the lifecycle issue, before any push.
+
+inputs:
+  token:
+    description: Token the label calls run under (the App token).
+    required: true
+  issue-number:
+    description: The lifecycle issue.
+    required: true
+  project:
+    description: The project folder P (non-empty).
+    required: true
+  number:
+    description: The feature number intake allocated.
+    required: true
+  prefix:
+    description: Intake's spec-draft branch prefix.
+    required: false
+    default: ""
+
+outputs:
+  slug:
+    description: The validated and labelled <NNN-slug> (empty on refusal).
+    value: ${{ steps.label.outputs.slug }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check the branch and create its spec label
+      id: label
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ISSUE: ${{ inputs.issue-number }}
+        PROJECT: ${{ inputs.project }}
+        NUM: ${{ inputs.number }}
+        PREFIX: ${{ inputs.prefix }}
+      run: |
+        set -uo pipefail
+        # An agent wrote this checkout: every git call runs with hooks,
+        # fsmonitor and global/system config neutralised (spec 095).
+        # shellcheck source=../_shared/git-push-hardening.sh
+        . "$GITHUB_ACTION_PATH/../_shared/git-push-hardening.sh"
+        # No unpublished commit (an agent that stopped without a spec):
+        # nothing to label, nothing for the push to publish.
+        if [ "$( (wc_harden_git_env; git rev-list --count HEAD --not --remotes) )" = "0" ]; then
+          echo "slug=" >> "$GITHUB_OUTPUT"
+          echo "wing-commander-label-first: no unpublished commit -- nothing to label." >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        if ! slug="$(
+          wc_harden_git_env
+          branch="$(git symbolic-ref -q --short HEAD)" || { echo "::error::wing-commander intake: the checkout is not on a branch -- nothing to label." >&2; exit 1; }
+          printf 'HEAD %s refs/heads/%s 0\n' "$(git rev-parse HEAD)" "$branch" \
+            | bash "$GITHUB_ACTION_PATH/../_shared/intake-pre-push.sh" check "$PREFIX" "$PROJECT" "$NUM"
+        )"; then
+          echo "slug=" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+        label="spec:$PROJECT/$slug"
+        if ! gh label create "$label" --color C5DEF5 --description "Lifecycle: $PROJECT/specs/$slug" --force >/dev/null; then
+          echo "::error::wing-commander intake: could not create the label $label before the first push"
+          exit 1
+        fi
+        if ! gh issue edit "$ISSUE" --add-label "$label" >/dev/null; then
+          echo "::error::wing-commander intake: could not add the label $label to issue #$ISSUE before the first push"
+          exit 1
+        fi
+        echo "slug=$slug" >> "$GITHUB_OUTPUT"

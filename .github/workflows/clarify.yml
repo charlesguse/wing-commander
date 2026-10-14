@@ -652,6 +652,18 @@ jobs:
         with:
           intended-turns: ${{ inputs.max-turns }}
 
+      # Containment (spec 114, FR-021) for an agent that pushes itself: the
+      # post-agent check below runs only after a push already left the
+      # runner, so a pre-push hook refuses any push carrying a change
+      # outside the project folder first (wing-commander-containment,
+      # install-pre-push mode). Skipped for a root lifecycle.
+      - name: Install containment pre-push hook
+        if: steps.project.outputs.project != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          mode: install-pre-push
+          project: ${{ steps.project.outputs.project }}
+
       # (canonical copy: push-credential-retry; do not condense)
       # This step's prompt below carries the retry-bound paragraph for a
       # `git push` that fails with the credential-expiry signature

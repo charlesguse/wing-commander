@@ -4,6 +4,17 @@
 # any push. A root lifecycle (empty project) is skipped: the whole
 # repository is its project.
 #
+# Two more modes keep every workflow's use of _shared/containment.sh (and
+# intake's _shared/intake-pre-push.sh) behind this composite, so no
+# published stage resolves an internal helper itself (Gate 60):
+#   install-pre-push -- before an agent that pushes itself: copies the
+#     helpers out of the trusted pipeline checkout, writes a pre-push hook
+#     that refuses a push carrying a change outside P (or, with
+#     label-first-number set, intake's label-first check), and points
+#     core.hooksPath at it. Outputs the pre-agent HEAD.
+#   filter -- narrows a newline-separated path file, in place, to the paths
+#     inside P (rebase's conflict manifest).
+#
 # Like every shared composite, this action is resolved from the pipeline
 # repository's own checkout (see the header of
 # .github/actions/wing-commander-context/action.yml), so it never assumes
@@ -11,42 +22,100 @@
 name: wing-commander-containment
 description: >
   Fail the stage when any path changed since the pre-agent SHA (committed,
-  staged, modified or untracked) lies outside the project folder.
+  staged, modified or untracked) lies outside the project folder; or
+  install the containment pre-push hook; or filter a path list to the folder.
 
 inputs:
+  mode:
+    description: "check (the default), install-pre-push or filter."
+    required: false
+    default: check
   project:
     description: Project path P (empty for a root lifecycle, which skips the check).
     required: false
     default: ""
   base-sha:
-    description: The commit the checkout was at before the agent step ran.
-    required: true
+    description: The commit the checkout was at before the agent step ran (check mode).
+    required: false
+    default: ""
+  default-branch:
+    description: >
+      check mode: the repository's default branch; empty means the event's
+      repository.default_branch. The check also covers every commit since
+      `git merge-base origin/<default-branch> HEAD`, so a violation an
+      earlier run already pushed is still caught after a restart. A merge
+      base that cannot be found fails the check.
+    required: false
+    default: ""
+  hooks-dir:
+    description: >
+      install-pre-push mode: the core.hooksPath directory to write the hook
+      into, shared with any hook the job installed already. Empty means
+      $RUNNER_TEMP/wing-commander-containment-hooks.
+    required: false
+    default: ""
+  label-first-prefix:
+    description: "install-pre-push mode, intake only: the spec-draft branch prefix."
+    required: false
+    default: ""
+  label-first-number:
+    description: >
+      install-pre-push mode, intake only: the allocated feature number. When
+      set, the hook is intake's label-first check (_shared/intake-pre-push.sh
+      hook), which validates, records the slug in record-file and refuses the
+      push so the branch reaches the remote only after its label exists.
+    required: false
+    default: ""
+  record-file:
+    description: "install-pre-push mode, intake only: where the hook records the validated slug."
+    required: false
+    default: ""
+  paths-file:
+    description: "filter mode: the path file to narrow in place (created empty when missing)."
+    required: false
+    default: ""
 
 outputs:
   outside-paths:
     description: Newline-joined changed paths outside the project folder (empty when contained).
     value: ${{ steps.check.outputs.outside-paths }}
+  pre-agent-sha:
+    description: install-pre-push mode -- HEAD when the hook was installed.
+    value: ${{ steps.install.outputs.pre-agent-sha }}
 
 runs:
   using: composite
   steps:
     - name: Check containment
       id: check
+      if: inputs.mode == 'check'
       shell: bash
       env:
         PROJECT: ${{ inputs.project }}
         BASE_SHA: ${{ inputs.base-sha }}
+        DEFAULT_BRANCH: ${{ inputs.default-branch || github.event.repository.default_branch }}
       run: |
         set -uo pipefail
         if [ -z "$PROJECT" ]; then
           echo "outside-paths=" >> "$GITHUB_OUTPUT"
           exit 0
         fi
+        if [ -z "$BASE_SHA" ]; then
+          echo "::error::wing-commander-containment: check mode needs base-sha."
+          exit 1
+        fi
+        # A restarted stage's BASE_SHA is the already-pushed tip, so the
+        # default branch's merge base is checked too. Unresolvable is a
+        # failure, not a pass.
+        if [ -z "$DEFAULT_BRANCH" ] || ! merge_base="$(git merge-base "origin/$DEFAULT_BRANCH" HEAD)"; then
+          echo "::error::wing-commander-containment: could not find the merge base of origin/${DEFAULT_BRANCH:-<default branch>} and HEAD, so changes already on this branch cannot be checked."
+          exit 1
+        fi
         # --no-renames: a move into P must still name its source outside P.
         # The untracked leg excludes only the root trusted checkout, anchored
         # at the top; both diff legs stay unfiltered so a committed gitlink
         # there is still flagged.
-        changed="$( { git diff --name-only --no-renames "$BASE_SHA" HEAD; git diff --name-only --no-renames HEAD; git ls-files --others --exclude-standard -- ':/' ':(exclude,top).wing-commander-pipeline'; } | sort -u)"
+        changed="$( { git diff --name-only --no-renames "$BASE_SHA" HEAD; git diff --name-only --no-renames "$merge_base" HEAD; git diff --name-only --no-renames HEAD; git ls-files --others --exclude-standard -- ':/' ':(exclude,top).wing-commander-pipeline'; } | sort -u)"
         # The path test's single home is _shared/containment.sh, which
         # pr-conversation's pre-push hook runs too.
         outside="$(printf '%s\n' "$changed" | bash "$GITHUB_ACTION_PATH/../_shared/containment.sh" outside "$PROJECT")"
@@ -67,3 +136,62 @@ runs:
         fi
         echo "outside-paths=" >> "$GITHUB_OUTPUT"
         echo "✅ wing-commander-containment: every change lies inside \`$PROJECT/\`." >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Install containment pre-push hook
+      id: install
+      if: inputs.mode == 'install-pre-push'
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        HOOKS_DIR: ${{ inputs.hooks-dir }}
+        LF_PREFIX: ${{ inputs.label-first-prefix }}
+        LF_NUM: ${{ inputs.label-first-number }}
+        RECORD: ${{ inputs.record-file }}
+      run: |
+        set -euo pipefail
+        if [ -z "$PROJECT" ]; then
+          echo "::error::wing-commander-containment: install-pre-push needs a project; a root lifecycle installs no hook."
+          exit 1
+        fi
+        hooks_dir="${HOOKS_DIR:-$RUNNER_TEMP/wing-commander-containment-hooks}"
+        shared="$GITHUB_ACTION_PATH/../_shared"
+        mkdir -p "$hooks_dir"
+        # Copies, so a branch the agent checks out cannot rewrite the hook.
+        cp "$shared/containment.sh" "$shared/project-name.sh" "$shared/intake-pre-push.sh" "$hooks_dir/"
+        if [ -n "$LF_NUM" ]; then
+          if [ -z "$RECORD" ]; then
+            echo "::error::wing-commander-containment: the label-first hook needs a record-file."
+            exit 1
+          fi
+          printf '#!/usr/bin/env bash\nexec bash %q hook %q %q %q %q\n' "$hooks_dir/intake-pre-push.sh" "$LF_PREFIX" "$PROJECT" "$LF_NUM" "$RECORD" > "$hooks_dir/pre-push"
+        else
+          printf '#!/usr/bin/env bash\nexec bash %q pre-push %q\n' "$hooks_dir/containment.sh" "$PROJECT" > "$hooks_dir/pre-push"
+        fi
+        chmod +x "$hooks_dir/pre-push"
+        git config core.hooksPath "$hooks_dir"
+        echo "pre-agent-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+    - name: Filter paths to the project folder
+      if: inputs.mode == 'filter'
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        PATHS_FILE: ${{ inputs.paths-file }}
+      run: |
+        set -euo pipefail
+        if [ -z "$PROJECT" ] || [ -z "$PATHS_FILE" ]; then
+          echo "::error::wing-commander-containment: filter needs a project and a paths-file."
+          exit 1
+        fi
+        touch "$PATHS_FILE"
+        bash "$GITHUB_ACTION_PATH/../_shared/containment.sh" inside "$PROJECT" < "$PATHS_FILE" > "$PATHS_FILE.inside"
+        mv "$PATHS_FILE.inside" "$PATHS_FILE"
+
+    - name: Refuse an unknown mode
+      if: inputs.mode != 'check' && inputs.mode != 'install-pre-push' && inputs.mode != 'filter'
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+      run: |
+        echo "::error::wing-commander-containment: unknown mode '$MODE' (want check, install-pre-push or filter)."
+        exit 1

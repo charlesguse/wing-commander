@@ -63,6 +63,11 @@ def git(cwd, *args):
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
 
+def tool_args_env():
+    with open(os.path.join(ACTIONS, "wing-commander-tool-args", "action.yml"), encoding="utf-8") as fh:
+        return yaml.safe_load(fh)["runs"]["steps"][0]["env"]
+
+
 def tool_args(case, script):
     env = {
         "STEP_LABEL": "fixture",
@@ -74,6 +79,8 @@ def tool_args(case, script):
         "DISALLOWED_OVERRIDE": case.get("disallowed_override", "__unset__"),
         "NO_WRITE_PATHS": case.get("no_write_paths", ""),
         "PROJECT": case["project"],
+        # The step's own constant, read from action.yml as the runner sets it.
+        "HOOK_BYPASS_DENIES": tool_args_env()["HOOK_BYPASS_DENIES"],
     }
     r, out = run_script(script, env, ROOT, "wing-commander-tool-args")
     if r.returncode != 0:
@@ -95,6 +102,18 @@ def contain(case, script):
                 fh.write("x\n")
         git(tmp, "add", "-A")
         git(tmp, "commit", "-q", "-m", "base")
+        # origin/main is the default branch the merge-base leg diffs from.
+        git(tmp, "update-ref", "refs/remotes/origin/main", "HEAD")
+        if case.get("earlier_run"):
+            # A commit an earlier (restarted) run already made on the branch:
+            # it precedes base-sha, so only the merge-base leg sees it.
+            for rel in case["earlier_run"]:
+                path = os.path.join(tmp, rel)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "a", encoding="utf-8") as fh:
+                    fh.write("r\n")
+            git(tmp, "add", "-A")
+            git(tmp, "commit", "-q", "-m", "earlier run")
         base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp, capture_output=True, text=True, check=True).stdout.strip()
         for rel in case.get("modify", []):
             with open(os.path.join(tmp, rel), "a", encoding="utf-8") as fh:
@@ -125,7 +144,8 @@ def contain(case, script):
         if case.get("commit"):
             git(tmp, "add", "-A")
             git(tmp, "commit", "-q", "-m", "agent")
-        r, _ = run_script(script, {"PROJECT": case["project"], "BASE_SHA": base}, tmp, "wing-commander-containment")
+        env = {"PROJECT": case["project"], "BASE_SHA": base, "DEFAULT_BRANCH": case.get("default_branch", "main")}
+        r, _ = run_script(script, env, tmp, "wing-commander-containment")
         return r
 
 
@@ -201,6 +221,18 @@ def check_guard_coverage(errors, wf_dir=None):
                     errors.append(f"{fn}:{job_name}: Edit/Write agent {s.get('name')!r} in a project-wired job has no containment guard (FR-021)")
                 else:
                     covered += 1
+                # MF-10: for an agent granted `git push`, the post-agent check
+                # comes after a push it made itself, so a pre-push hook must
+                # already be in place.
+                if not any("Bash(git push" in grants.get(x, "") for x in ids):
+                    continue
+                hooked = any(
+                    str(t.get("uses", "")).endswith("/wing-commander-containment")
+                    and str((t.get("with") or {}).get("mode", "")) == "install-pre-push"
+                    for t in steps[:i]
+                )
+                if not hooked:
+                    errors.append(f"{fn}:{job_name}: Edit/Write agent {s.get('name')!r} in a project-wired job runs with no containment pre-push hook installed before it (FR-021)")
     return covered
 
 
@@ -215,7 +247,7 @@ jobs:
       - id: tool-args
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
-          default-allowed-tools: "Read,Write"
+          default-allowed-tools: "Read,Write,Bash(git push:*)"
           project: ${{ steps.project.outputs.project }}
       - name: Agent
         uses: anthropics/claude-code-action@v1
@@ -320,6 +352,61 @@ def staged_clone(tmp, case):
     return work, origin, base
 
 
+def action_step(name, step_name):
+    with open(os.path.join(ACTIONS, name, "action.yml"), encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    return next(s["run"] for s in doc["runs"]["steps"] if s.get("name") == step_name)
+
+
+def check_modes(errors):
+    """MF-07: wing-commander-containment's install-pre-push mode writes a
+    working hook from copies of the helpers (the containment test, or with
+    label-first-number intake's label-first check, which records the slug
+    and refuses the push either way), and filter mode narrows a path file
+    to the folder in place."""
+    install = action_step("wing-commander-containment", "Install containment pre-push hook")
+    base_files = ["a/b/x.md", "README.md"]
+    for name, files, lf, ref, want_pushed in (
+        ("containment hook allows a push inside P", ["a/b/x.md"], False, "main", True),
+        ("containment hook refuses a push outside P", ["README.md"], False, "main", False),
+        ("label-first hook records a valid slug and refuses the push", ["a/b/x.md"], True, "spec-draft/a/b/001-x", False),
+        ("label-first hook refuses an unallocated number", ["a/b/x.md"], True, "spec-draft/a/b/002-x", False),
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin, _ = staged_clone(tmp, {"base_files": base_files})
+            hooks = os.path.join(tmp, "hooks")
+            record = os.path.join(tmp, "record")
+            env = {"PROJECT": "a/b", "HOOKS_DIR": hooks, "LF_PREFIX": "spec-draft/" if lf else "",
+                   "LF_NUM": "001" if lf else "", "RECORD": record if lf else "", "RUNNER_TEMP": tmp}
+            r, out = run_script(install, env, work, "wing-commander-containment")
+            if r.returncode != 0 or "pre-agent-sha=" not in out:
+                errors.append(f"install-pre-push {name}: install failed rc={r.returncode} {r.stderr!r}")
+                continue
+            for rel in files:
+                with open(os.path.join(work, rel), "a", encoding="utf-8") as fh:
+                    fh.write("h\n")
+            git(work, "commit", "-q", "-am", "agent")
+            p = subprocess.run(["git", "push", "origin", "HEAD:refs/heads/" + ref], cwd=work,
+                               capture_output=True, text=True, check=False)
+            moved = subprocess.run(["git", "--git-dir", origin, "rev-parse", "-q", "--verify", "refs/heads/" + ref],
+                                   capture_output=True, text=True, check=False).stdout.strip() == rev(work, "HEAD")
+            if moved != want_pushed or (p.returncode == 0) != want_pushed:
+                errors.append(f"install-pre-push {name}: push rc={p.returncode} reached origin={moved}, want {want_pushed} {p.stderr!r}")
+            recorded = open(record, encoding="utf-8").read().strip() if os.path.exists(record) else ""
+            want_record = "001-x" if ref.endswith("/001-x") else ""
+            if lf and recorded != want_record:
+                errors.append(f"install-pre-push {name}: recorded slug {recorded!r}, want {want_record!r}")
+    flt = action_step("wing-commander-containment", "Filter paths to the project folder")
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = os.path.join(tmp, "manifest.txt")
+        with open(paths, "w", encoding="utf-8") as fh:
+            fh.write("a/b/x.md\nREADME.md\na/bc/y.md\na/b/c/z.md\n")
+        r, _ = run_script(flt, {"PROJECT": "a/b", "PATHS_FILE": paths}, tmp, "wing-commander-containment")
+        got = open(paths, encoding="utf-8").read().split()
+        if r.returncode != 0 or got != ["a/b/x.md", "a/b/c/z.md"]:
+            errors.append(f"filter: kept {got!r}, want ['a/b/x.md', 'a/b/c/z.md'] rc={r.returncode} {r.stderr!r}")
+
+
 GUARD = os.path.join(ROOT, ".github", "scripts", "pipeline-checkout-guard.sh")
 
 
@@ -395,6 +482,9 @@ def main():
             for tool in ("Edit", "Write"):
                 if f"{tool}({want})" not in got.split(","):
                     errors.append(f"tool_args {name}: {tool}({want}) missing from {got!r}")
+        for want in case.get("denied_tools", []):
+            if want not in got.split(","):
+                errors.append(f"tool_args {name}: {want} missing from {got!r}")
         for bad in case.get("not_denied", []):
             if bad in got:
                 errors.append(f"tool_args {name}: unexpected {bad!r} in {got!r}")
@@ -431,6 +521,7 @@ def main():
                 if p not in r.stdout + r.stderr:
                     errors.append(f"publish_stranded {name}: refusal does not name {p!r}")
     check_trusted_checkout_excluded(errors)
+    check_modes(errors)
     check_wiring(errors)
     if check_rescue_scope(errors) == 0:
         errors.append("rescue scope: no stranded-commit rescue in a project-wired job was found -- the check has lost its subject")
@@ -449,8 +540,10 @@ def main():
             fh.write(UNGUARDED)
         probe = []
         check_guard_coverage(probe, tmp)
-        if not probe:
+        if not any("no containment guard" in p for p in probe):
             errors.append("guard coverage: an unguarded Edit/Write agent in a project-wired job was not flagged")
+        if not any("no containment pre-push hook" in p for p in probe):
+            errors.append("guard coverage: a pushing agent with no pre-push hook before it was not flagged")
     if errors:
         print("verify-subfolder-containment: FAIL")
         for e in errors:
