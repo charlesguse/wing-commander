@@ -46,12 +46,34 @@ def main():
     spec_dir = run(env, "spec-dir", "", "001-login")
     if spec_dir.stdout.strip() != "specs/001-login":
         errors.append(f"spec-dir builder (root): {spec_dir.stdout!r}")
+    # Attribution (FR-013, research D13): the watchdog and the fold-cycle
+    # guard attribute a run by parsing whichever name they hold. Every form of
+    # one lifecycle must give its own (P, slug) and spec-dir, and lifecycles
+    # sharing an NNN-slug across projects must never collapse into one.
+    attributed = 0
+    for group in data.get("attribution", []):
+        seen = set()
+        for lc in group["lifecycles"]:
+            pair = (lc["project"], lc["slug"])
+            if pair in seen:
+                errors.append(f"attribution fixture lists {pair!r} twice")
+            seen.add(pair)
+            for n in lc["names"]:
+                r = run(env, "parse", n["kind"], n["name"])
+                got = dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
+                if r.returncode != 0 or (got.get("project"), got.get("slug")) != pair:
+                    errors.append(f"attribution {n['kind']} {n['name']!r}: got {got!r}, want {pair!r}")
+                    continue
+                d = run(env, "spec-dir", got["project"], got["slug"]).stdout.strip()
+                if d != lc["spec_dir"]:
+                    errors.append(f"attribution {n['kind']} {n['name']!r}: spec-dir {d!r}, want {lc['spec_dir']!r}")
+                attributed += 1
     if errors:
         print("verify-project-name-parser: FAIL")
         for e in errors:
             print("  " + e)
         return 1
-    print(f"verify-project-name-parser: OK ({len(data['accept'])} accept, {len(data['reject'])} reject)")
+    print(f"verify-project-name-parser: OK ({len(data['accept'])} accept, {len(data['reject'])} reject, {attributed} attributed)")
     return 0
 
 

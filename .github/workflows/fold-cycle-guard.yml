@@ -22,7 +22,9 @@ on:
         required: true
       spec-dir:
         description: >
-          specs/NNN-slug. Empty (default) resolves it itself via the same
+          The repository-relative spec directory: specs/NNN-slug, or
+          P/specs/NNN-slug for a subfolder project P (spec 114). Empty
+          (default) resolves it itself via the same
           wing-commander-inspected-run-identity composite watchdog.yml
           already uses, since a dispatched run's head-ref is uninformative
           and the wrapper cannot know the spec ahead of time.

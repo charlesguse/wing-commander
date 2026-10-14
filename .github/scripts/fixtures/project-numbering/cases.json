@@ -1,0 +1,32 @@
+{
+  "env": {"SPEC_DRAFT_PREFIX": "spec-draft/", "SPEC_PREFIX": "spec/"},
+  "next_number": [
+    {"name": "a new project starts at 001", "project": "ideas/alpha",
+     "dirs": ["specs/004-root-spec"], "branches": ["spec/006-root"], "want": "001"},
+    {"name": "highest of P/specs/ and P's own draft/spec branches, plus one", "project": "ideas/alpha",
+     "dirs": ["ideas/alpha/specs/003-x"], "branches": ["spec-draft/ideas/alpha/005-y", "spec/ideas/alpha/002-z"], "want": "006"},
+    {"name": "nested, sibling and root refs are not P's", "project": "ideas/alpha",
+     "dirs": ["ideas/alpha/specs/002-x", "ideas/beta/specs/030-x"],
+     "branches": ["spec/ideas/alpha/sub/009-x", "spec/ideas/beta/007-x", "spec/008-x", "spec-draft/ideas/alphabet/011-x"], "want": "003"},
+    {"name": "the root counts only refs with no / after the prefix", "project": "",
+     "dirs": ["specs/004-a", "ideas/alpha/specs/040-a"], "branches": ["spec/ideas/alpha/020-x", "spec-draft/005-y"], "want": "006"},
+    {"name": "a number is never reissued after its branches are torn down", "project": "ideas/alpha",
+     "dirs": ["ideas/alpha/specs/007-done"], "branches": [], "want": "008"},
+    {"name": "a project named like another's prefix is its own sequence", "project": "a",
+     "dirs": ["ab/specs/009-x", "a/b/specs/004-x"], "branches": ["spec/ab/009-x", "spec/a/b/004-x"], "want": "001"}
+  ],
+  "collision": [
+    {"name": "another project's 004 is not a claimant", "slug": "ideas/alpha/004-login",
+     "prs": [[1, "spec-draft/ideas/alpha/004-login"], [2, "spec-draft/ideas/beta/004-other"], [3, "spec-draft/004-root"]],
+     "dirs": ["ideas/beta/specs/004-x", "specs/004-y"], "claimants": 0},
+    {"name": "P's own landed 004 collides with P's new 004", "slug": "ideas/alpha/004-login",
+     "prs": [[1, "spec-draft/ideas/alpha/004-login"], [2, "spec-draft/ideas/beta/004-other"]],
+     "dirs": ["ideas/alpha/specs/004-old", "specs/004-y"], "claimants": 2},
+    {"name": "the root ignores a subfolder project's 004", "slug": "004-login",
+     "prs": [[1, "spec-draft/004-login"], [2, "spec-draft/ideas/alpha/004-z"]],
+     "dirs": ["ideas/alpha/specs/004-q"], "claimants": 0},
+    {"name": "the root still sees its own collision", "slug": "004-login",
+     "prs": [[1, "spec-draft/004-login"], [2, "spec/004-other"]],
+     "dirs": [], "claimants": 2}
+  ]
+}

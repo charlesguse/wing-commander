@@ -29,6 +29,32 @@
     {"kind": "spec-dir", "name": "ideas/alpha/001-login"},
     {"kind": "spec-dir", "name": "specs/001-login/extra"},
     {"kind": "spec-dir", "name": "ideas/alpha/specs/001-login/spec.md"},
-    {"kind": "bogus", "name": "001-login"}
+    {"kind": "bogus", "name": "001-login"},
+    {"kind": "branch", "name": "spec/ideas/alpha/001-login/extra"},
+    {"kind": "branch", "name": "implement/ideas/alpha/001-login-iter2/x"}
+  ],
+  "attribution": [
+    {
+      "why": "watchdog / fold-cycle-guard: the same NNN-slug in two projects is two lifecycles, each named by every one of its forms",
+      "lifecycles": [
+        {"project": "ideas/alpha", "slug": "004-login", "spec_dir": "ideas/alpha/specs/004-login", "names": [
+          {"kind": "branch", "name": "spec-draft/ideas/alpha/004-login"},
+          {"kind": "branch", "name": "spec/ideas/alpha/004-login"},
+          {"kind": "branch", "name": "implement/ideas/alpha/004-login-iter2"},
+          {"kind": "label", "name": "spec:ideas/alpha/004-login"},
+          {"kind": "spec-dir", "name": "ideas/alpha/specs/004-login"}]},
+        {"project": "ideas/beta", "slug": "004-login", "spec_dir": "ideas/beta/specs/004-login", "names": [
+          {"kind": "branch", "name": "spec-draft/ideas/beta/004-login"},
+          {"kind": "branch", "name": "spec/ideas/beta/004-login"},
+          {"kind": "branch", "name": "implement/ideas/beta/004-login-iter2"},
+          {"kind": "label", "name": "spec:ideas/beta/004-login"},
+          {"kind": "spec-dir", "name": "ideas/beta/specs/004-login"}]},
+        {"project": "", "slug": "004-login", "spec_dir": "specs/004-login", "names": [
+          {"kind": "branch", "name": "spec/004-login"},
+          {"kind": "branch", "name": "implement/004-login-iter2"},
+          {"kind": "label", "name": "spec:004-login"},
+          {"kind": "spec-dir", "name": "specs/004-login"}]}
+      ]
+    }
   ]
 }

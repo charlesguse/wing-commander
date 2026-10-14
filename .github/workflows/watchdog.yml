@@ -2043,7 +2043,12 @@ jobs:
             fi
             exit 0
           fi
-          own_number="$(printf '%s' "$SLUG" | grep -oE '^[0-9]{3}' || true)"
+          # A subfolder lifecycle's slug is P/NNN-slug (spec 114, research.md
+          # D13): its number is per project, so only P's own PRs and P/specs/
+          # directories can collide with it. The root (no `/`) is unchanged.
+          own_project=""
+          case "$SLUG" in */*) own_project="${SLUG%/*}" ;; esac
+          own_number="$(printf '%s' "${SLUG##*/}" | grep -oE '^[0-9]{3}' || true)"
           if [ -z "$own_number" ]; then
             echo "spec-collision: no three-digit spec number resolved from slug '$SLUG' — skipping." >> "$GITHUB_STEP_SUMMARY"
             exit 0
@@ -2066,13 +2071,16 @@ jobs:
           _spec_prefix="${SPEC_PREFIX:-spec/}"
           pr_claimants='[]'
           if prs_json="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json number,headRefName --limit 200 2>"$RUNNER_TEMP/sc-pr-err.txt")"; then
-            pr_claimants="$(printf '%s' "$prs_json" | jq -c --arg dp "$_draft_prefix" --arg sp "$_spec_prefix" '
+            pr_claimants="$(printf '%s' "$prs_json" | jq -c --arg dp "$_draft_prefix" --arg sp "$_spec_prefix" --arg op "$own_project" '
               [.[] | . as $p
                 | ($p.headRefName) as $b
                 | ( if ($b | startswith($dp)) then ($b[($dp|length):])
                     elif ($b | startswith($sp)) then ($b[($sp|length):])
-                    else null end ) as $slug
-                | select($slug != null and ($slug | test("^[0-9]{3}")))
+                    else null end ) as $rest
+                | select($rest != null)
+                | ($rest | split("/")) as $parts
+                | ($parts[-1]) as $slug
+                | select(($parts[:-1] | join("/")) == $op and ($slug | test("^[0-9]{3}")))
                 | {pr: $p.number, branch: $b, number: ($slug[0:3])}
               ] | unique
             ')"
@@ -2086,7 +2094,8 @@ jobs:
           # value, and the collector died recording no outcome (#898, found
           # by executing this step). The listing tolerates its own absence;
           # the fallback replaces the value instead of appending to it.
-          dir_claimants="$( { find specs -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9][0-9]-*' 2>/dev/null || true; } | jq -R -c '{dir: ., number: .[6:9]}' | jq -cs '.')" || dir_claimants='[]'
+          specs_base="${own_project:+$own_project/}specs"
+          dir_claimants="$( { find "$specs_base" -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9][0-9]-*' 2>/dev/null || true; } | jq -R -c --arg b "$specs_base/" '{dir: ., number: .[($b | length):][0:3]}' | jq -cs '.')" || dir_claimants='[]'
 
           filter_input="$(jq -n --arg own "$own_number" --argjson prs "$pr_claimants" --argjson dirs "$dir_claimants" \
             '{own_number:$own, pr_claimants:$prs, dir_claimants:$dirs}')"

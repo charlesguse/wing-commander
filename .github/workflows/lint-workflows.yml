@@ -4660,6 +4660,9 @@ jobs:
       - name: Gate 162 — intake routing (prefix, label count, folder, re-run refusal, slug budget)
         if: "!cancelled()"
         run: python3 .github/scripts/verify-intake-routing.py
+      - name: Gate 163 — per-project feature numbering and spec-collision scope
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-project-numbering.py
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
