@@ -69,7 +69,10 @@ fi
 listing="$(mktemp)" || fail "pipeline-checkout guard: could not create a temporary file; refusing to continue unchecked."
 trap 'rm -f "$listing"' EXIT
 
-if ! git ls-files -z -- "$PIPE" > "$listing"; then
+# A project working directory (spec 114 FR-025) must never hold a tracked
+# P/.wing-commander-pipeline/ either: the glob pathspecs match the directory
+# (or a symlink standing in for it) at the root and at any depth.
+if ! git ls-files -z -- "$PIPE" ":(glob)**/$PIPE" ":(glob)**/$PIPE/**" > "$listing"; then
   fail "pipeline-checkout guard: 'git ls-files' failed at the workspace root, so whether the checked-out branch tracks $PIPE/ is unknown; refusing to continue."
 fi
 

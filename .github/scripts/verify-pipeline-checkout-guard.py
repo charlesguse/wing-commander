@@ -401,6 +401,15 @@ def behavioural(repo_root):
         _git(consumer, "commit", "-qm", "hostile")
         _git(consumer, "checkout", "-q", "-f", "main")
 
+        # A branch tracking the directory under a project folder (spec 114
+        # FR-025): not overwriting the trusted checkout, but still refused.
+        _git(consumer, "checkout", "-q", "-b", "nested", "main")
+        nested = os.path.join("ideas", "alpha", PIPE, "x")
+        _write(consumer, nested, "nested\n")
+        _git(consumer, "add", "-f", "--", nested)
+        _git(consumer, "commit", "-qm", "nested")
+        _git(consumer, "checkout", "-q", "-f", "main")
+
         for branch, target, prefix in (("symlink-dot", ".", ""),
                                        ("symlink-other", "evil", "evil")):
             _git(consumer, "checkout", "-q", "-f", "-b", branch, "main")
@@ -516,6 +525,15 @@ def behavioural(repo_root):
             if not os.path.isfile(os.path.join(ws, "README")) or (
                     target != "." and not os.path.isdir(os.path.join(ws, target))):
                 bad.append("{0}: the refusal removed more than the path itself".format(branch))
+
+        ws = workspace("ws-nested", "nested")
+        r = _run_guard(ws, pipeline_ref=pipe_sha)
+        if r.returncode == 0 or "tracks 1 path(s)" not in r.stdout:
+            bad.append("nested branch: a branch tracking a project-folder "
+                       "{0}/ was expected to be refused, got rc={1}: {2}".format(
+                           PIPE, r.returncode, r.stdout))
+        if os.path.exists(os.path.join(ws, nested)):
+            bad.append("nested branch: the nested tracked file was not removed")
 
         ws = workspace("ws-hostile", "hostile")
         with open(os.path.join(ws, PIPE, trusted)) as f:
