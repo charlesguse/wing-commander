@@ -573,6 +573,10 @@ jobs:
   # array fails strategy evaluation, so zero branches must never reach the
   # matrix (first observed live 2026-07-12, run 29180556763).
   rebase:
+    # The leg name a root matrix entry had before spec 114 added `project`
+    # and `artifact_key` to it (FR-016): GitHub's default names a leg by
+    # every matrix value.
+    name: rebase (${{ matrix.slug }}, ${{ matrix.spec_dir }}, ${{ matrix.issue }})
     needs: [discover, verify-image-prerequisites]
     # spec 058 (Gate 15/Gate 23): discover now carries !cancelled() (it
     # tolerates a skipped verify-image-prerequisites), so GitHub's

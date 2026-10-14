@@ -813,8 +813,8 @@ jobs:
             update the body before this spec is finalized.
 
       # Project-folder paragraph for the agent prompt (spec 114, FR-006,
-      # FR-014). Empty at the repository root, so a root prompt gains nothing
-      # but a blank line. The paragraph carries only validated values: the
+      # FR-014). Empty at the repository root, so a root prompt is byte for
+      # byte unchanged. The paragraph carries only validated values: the
       # project path matched the grammar and the budget is an integer.
       - name: Compose project guidance (intake)
         id: project-guidance
@@ -826,6 +826,10 @@ jobs:
           {
             echo "routing-notes<<WC_INTAKE_PROJECT_GUIDANCE_EOF"
             if [ -n "$PROJECT" ]; then
+              # Blank lines around the paragraph; none at the root, whose
+              # prompt stays byte-identical (FR-016).
+              echo ""
+              echo ""
               echo "PROJECT FOLDER: this issue is routed to the project folder \`$PROJECT/\`, a Spec Kit project of its own. Use its .specify/, its constitution and its .claude/skills, not the repository root's. Everything this run writes lies inside \`$PROJECT/\`, apart from the step 5 commit-message and step 6 PR-body scratch files. Where the steps below name a path, branch or label, read it as follows:"
               echo "- <spec-dir> is \`$PROJECT/specs/<NNN-slug>\`. Give every tool a repository-relative path."
               echo "- The branch is \`<prefix>$PROJECT/<NNN-slug>\` and the spec label is \`spec:$PROJECT/<NNN-slug>\`."
@@ -833,6 +837,7 @@ jobs:
               echo "- <NNN-slug> may be at most $SLUG_BUDGET characters long, the most the spec label can carry. Choose a shorter slug rather than exceed it."
               echo "- Push the branch once in step 5. The push is checked and then refused on purpose, whatever the result: a refusal naming a problem (an over-budget slug, say) is yours to fix and push again; one saying the branch passed is the expected end. Do not retry it, and never pass --no-verify. After you finish, the pipeline creates the spec label BEFORE it publishes your branch, puts the label and stage:spec on the issue and opens the pull request."
               echo "- So skip step 6's \`gh pr create\` (still write the PR body file it names) and step 7's two label commands; still return the final result step 7 describes."
+              echo ""
             fi
             echo "WC_INTAKE_PROJECT_GUIDANCE_EOF"
           } >> "$GITHUB_OUTPUT"
@@ -948,10 +953,7 @@ jobs:
                  (pre-computed to account for specs in flight on unmerged
                  branches). When the skill auto-generates the spec directory,
                  use ${{ steps.num.outputs.num }} as the 3-digit prefix instead
-                 of scanning specs/.
-
-            ${{ steps.project-guidance.outputs.routing-notes }}
-
+                 of scanning specs/.${{ steps.project-guidance.outputs.routing-notes }}
             4. Write <spec-dir>/spec-meta.json:
                {"issue": ${{ inputs.issue-number }}, "spec_dir": "<spec-dir>",
                 "feature_num": "<NNN>", "stage": "spec", "iteration": 0,

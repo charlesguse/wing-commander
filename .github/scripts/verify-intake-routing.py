@@ -597,6 +597,11 @@ def check_label_first(steps, bindir, errors):
     body = outputs.split("\n", 1)[1] if "\n" in outputs else ""
     if r.returncode != 0 or body.strip() != "WC_INTAKE_PROJECT_GUIDANCE_EOF":
         errors.append(f"label-first: root project guidance is not empty: {outputs!r}")
+    # MF-24 (FR-016): the empty root paragraph adds no line to the prompt,
+    # so it is interpolated at the end of an existing line, not on its own.
+    prompt = str((step_by_id(steps, "agent").get("with") or {}).get("prompt", ""))
+    if "specs/.${{ steps.project-guidance.outputs.routing-notes }}\n4. Write" not in prompt:
+        errors.append("label-first: the routing paragraph is not spliced onto step 3's last line, so a root prompt gains lines")
 
 
 def resolve_project(labels, bindir):

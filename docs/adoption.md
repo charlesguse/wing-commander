@@ -621,8 +621,11 @@ and behave exactly as before.
   the intake wrapper. An issue labelled `node:ideas/alpha` is routed to
   `ideas/alpha/`. Exactly one such label is allowed; two or more are refused
   with a callout and nothing is created. The prefix must not overlap a
-  pipeline label family (`spec:`, `stage:`, `model:`, `board:`,
-  `disposition:`).
+  pipeline label family -- one being the start of the other counts as an
+  overlap: `spec:`, `stage:`, `model:`, `board:`, `disposition:`, the
+  stage-findings labels (`findings`, and your `findings-label-prefix`,
+  `found-by:` by default), `route-out-of-boundary`, `spec-request` and
+  `spec-proposal`.
 - **Create one `node:<path>` label per project.** The folder must already be
   a Spec Kit project; intake names the folder and the missing piece if not.
 - **Widen the path filters.** The plan wrapper (and the tasks wrapper in `pr`

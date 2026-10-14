@@ -57,7 +57,9 @@ check_folder() {
     [ -d "$acc" ] || fail "project folder '$p' is not a directory on this ref"
   done
   unset IFS
-  for entry in .specify .claude .claude/skills specs; do
+  # Every piece of Spec Kit state an agent reads or runs must be real: a
+  # symlink could point it at another project's (or nobody's) files.
+  for entry in .specify .specify/memory .specify/scripts .claude .claude/skills specs; do
     if [ -L "$p/$entry" ]; then fail "project folder '$p': '$entry' is a symlink"; fi
   done
   [ -d "$p/.specify" ] || fail "project folder '$p' has no .specify/ (not a Spec Kit project)"
@@ -69,6 +71,7 @@ check_folder() {
   for d in "$p"/.claude/skills/speckit-*; do
     [ -e "$d" ] || continue
     [ ! -L "$d" ] || fail "project folder '$p': '${d#"$p"/}' is a symlink"
+    [ ! -L "$d/SKILL.md" ] || fail "project folder '$p': '${d#"$p"/}/SKILL.md' is a symlink"
     found=1
   done
   [ "$found" = 1 ] || fail "project folder '$p' has no .claude/skills/speckit-* skills"
