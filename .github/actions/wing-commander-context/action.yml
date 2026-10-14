@@ -120,7 +120,18 @@ runs:
         spec_slug="$(printf '%s' "$LABELS_JSON" | jq -r '[.[].name | select(startswith("spec:"))][0] // "" | sub("^spec:"; "")')"
         echo "spec_slug=$spec_slug" >> "$GITHUB_OUTPUT"
         if [ -n "$spec_slug" ]; then
-          echo "spec_dir=specs/$spec_slug" >> "$GITHUB_OUTPUT"
+          # The label is spec:[P/]<NNN-slug>; the parser (spec 114) turns it
+          # into the repository-relative [P/]specs/<NNN-slug>. A root label
+          # yields specs/<slug> exactly as before.
+          case "$spec_slug" in
+            */*)
+              parsed="$(bash "$GITHUB_ACTION_PATH/../_shared/project-name.sh" parse label "spec:$spec_slug")" \
+                || { echo "::error::spec label 'spec:$spec_slug' is not [P/]NNN-slug"; exit 1; }
+              proj="$(printf '%s\n' "$parsed" | sed -n 's/^project=//p')"
+              echo "spec_dir=$proj/specs/${spec_slug##*/}" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "spec_dir=specs/$spec_slug" >> "$GITHUB_OUTPUT" ;;
+          esac
         else
           echo "spec_dir=" >> "$GITHUB_OUTPUT"
         fi

@@ -48,7 +48,18 @@ set -uo pipefail
 SPEC_PREFIX="${1:-}"
 SLUG="${2:-}"
 SPEC_DIR="${3:-}"
-[ -n "$SPEC_DIR" ] || SPEC_DIR="specs/$SLUG"
+# A subfolder project's lifecycle slug is "<P>/<NNN-slug>" and its spec
+# directory "<P>/specs/<NNN-slug>" (spec 114). The file is located at that
+# repository-relative path, but the record is portable by copy (FR-008): the
+# spec_dir it carries is project-relative, exactly "specs/<NNN-slug>", so the
+# identity check compares against that tail, never against the project path.
+if [ -z "$SPEC_DIR" ]; then
+  case "$SLUG" in
+    */*) SPEC_DIR="${SLUG%/*}/specs/${SLUG##*/}" ;;
+    *) SPEC_DIR="specs/$SLUG" ;;
+  esac
+fi
+EXPECTED_SPEC_DIR="specs/${SPEC_DIR##*/}"
 
 meta_fetch_ok=false
 meta_found=false
@@ -74,7 +85,7 @@ if [ -n "$SLUG" ]; then
      && printf '%s' "$meta" | jq -e . >/dev/null 2>&1; then
     meta_found=true
     meta_spec_dir="$(only "$(field "$meta" '.spec_dir // empty')" '^specs/[A-Za-z0-9._-]+$')"
-    if [ -n "$meta_spec_dir" ] && [ "$meta_spec_dir" = "$SPEC_DIR" ]; then
+    if [ -n "$meta_spec_dir" ] && [ "$meta_spec_dir" = "$EXPECTED_SPEC_DIR" ]; then
       meta_identity_ok=true
     fi
     meta_issue="$(only "$(field "$meta" '.issue // empty')" '^[0-9]+$')"

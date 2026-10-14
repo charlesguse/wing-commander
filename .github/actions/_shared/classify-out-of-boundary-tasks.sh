@@ -110,11 +110,24 @@ tasks_path = os.environ["TASKS_PATH"]
 # spec_dir is accepted for interface parity with the composite's own
 # inputs (contracts/write-boundary-mechanism.md §3) -- every findings-json
 # field this script emits is anchored to tasks_path, per data-model.md.
-_spec_dir = os.environ.get("SPEC_DIR", "")
+spec_dir = os.environ.get("SPEC_DIR", "")
+
+# Spec 114: a subfolder project's spec_dir is "<P>/specs/<NNN-slug>" and its
+# no-write-paths are project-relative (specs/, .claude/ ...). A task line may
+# name a path either project-relative or repository-relative ("<P>/specs/x"),
+# so the project prefix is stripped before the comparison and both forms
+# classify like their root equivalents. Root (no prefix) is unchanged.
+project_prefix = ""
+if spec_dir.startswith("/") is False and "/specs/" in "/" + spec_dir:
+    head = ("/" + spec_dir).split("/specs/", 1)[0].lstrip("/")
+    if head:
+        project_prefix = head + "/"
 
 def normalize_token(token):
     while token.startswith("./"):
         token = token[2:]
+    if project_prefix and token.startswith(project_prefix):
+        token = token[len(project_prefix):]
     return token
 
 

@@ -4648,6 +4648,9 @@ jobs:
       - name: Gate 158 — one parser reads every project name kind
         if: "!cancelled()"
         run: python3 .github/scripts/verify-project-name-parser.py
+      - name: Gate 159 — project-aware files hold no root-only path pattern
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-project-single-home.py
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

@@ -723,6 +723,40 @@ def check_classification(root, script_path=CLASSIFY_SCRIPT):
     return failures
 
 
+# Spec 114 (FR-007): a subfolder project's spec_dir is "<P>/specs/<NNN-slug>";
+# a task naming the path project-relative or repository-relative classifies
+# like its root equivalent, and a path outside the boundary does not.
+SUBFOLDER_SPEC_DIR = "ideas/alpha/specs/001-demo"
+SUBFOLDER_CLASSIFY_FIXTURES = [
+    ("project-relative .claude path is out of boundary",
+     "- [ ] T001 edit `.claude/skills/foo/SKILL.md`", ".claude/", 1, "true"),
+    ("repository-relative <P>/.claude path is out of boundary",
+     "- [ ] T001 edit `ideas/alpha/.claude/skills/foo/SKILL.md`", ".claude/", 1, "true"),
+    ("repository-relative <P>/specs contract path stays in reach",
+     "- [ ] T001 edit `ideas/alpha/specs/001-demo/contracts/x.md`", ".claude/", 0, "false"),
+    ("a sibling project's .claude path is not stripped",
+     "- [ ] T001 edit `ideas/beta/.claude/skills/foo/SKILL.md`", ".claude/", 0, "false"),
+]
+
+
+def check_subfolder_classification(root, script_path=CLASSIFY_SCRIPT):
+    failures = []
+    for name, items, nwp, expect_count, expect_all in SUBFOLDER_CLASSIFY_FIXTURES:
+        rc, out, outputs = run_classify(
+            items, nwp, tasks_path=f"{SUBFOLDER_SPEC_DIR}/tasks.md",
+            spec_dir=SUBFOLDER_SPEC_DIR, script_path=script_path)
+        if rc != 0:
+            failures.append(f"(c-114) {name}: classify script exited {rc}: {out}")
+            continue
+        if outputs.get("out-of-boundary-count", "") != str(expect_count):
+            failures.append(f"(c-114) {name}: expected count {expect_count}, "
+                            f"got {outputs.get('out-of-boundary-count')!r}")
+        if outputs.get("all-unchecked-out-of-boundary", "") != expect_all:
+            failures.append(f"(c-114) {name}: expected all-oob {expect_all}, "
+                            f"got {outputs.get('all-unchecked-out-of-boundary')!r}")
+    return failures
+
+
 # ---------------------------------------------------------------------------
 # (d) Termination and reason
 # ---------------------------------------------------------------------------
@@ -2227,6 +2261,7 @@ def main():
             failures.extend(check_statement_fidelity(steps, root))
             failures.extend(check_enforcement_parity(steps, root))
             failures.extend(check_classification(root))
+            failures.extend(check_subfolder_classification(root))
             failures.extend(check_termination_and_reason(steps, root))
             failures.extend(check_route_fires_at_iteration_cap(steps, root))
             failures.extend(check_no_filing_on_truncated())

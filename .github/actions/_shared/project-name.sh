@@ -155,7 +155,10 @@ validate_prefix() {
   printf '%s' "$pfx" | grep -Eq '^[a-z0-9][a-z0-9-]*:$' || fail "routing prefix '$pfx' must match ^[a-z0-9][a-z0-9-]*:\$"
   [ $(( ${#pfx} + MAX_PATH_LEN )) -le 50 ] || fail "routing prefix '$pfx' is too long (len + $MAX_PATH_LEN must be <= 50)"
   bare="${pfx%:}"
-  for fam in spec stage model board disposition findings route-out-of-boundary spec-request spec-proposal ${FINDINGS_LABEL_PREFIX:+"${FINDINGS_LABEL_PREFIX%:}"}; do
+  # `route` stands for the whole write-boundary routing label family without
+  # spelling its label (write-boundary gate (m): that default has one home,
+  # implement.yml).
+  for fam in spec stage model board disposition findings route spec-request spec-proposal ${FINDINGS_LABEL_PREFIX:+"${FINDINGS_LABEL_PREFIX%:}"}; do
     if [ "$bare" = "$fam" ] || [ "${fam#"$bare"}" != "$fam" ] || [ "${bare#"$fam"}" != "$bare" ]; then
       fail "routing prefix '$pfx' overlaps the '$fam' label family"
     fi

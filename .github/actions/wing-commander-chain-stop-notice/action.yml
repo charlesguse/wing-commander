@@ -33,7 +33,8 @@ inputs:
     required: true
   spec-dir:
     description: >
-      specs/NNN-slug whose spec-meta.json to mark stalled. Empty means no
+      Repository-relative [P/]specs/NNN-slug whose spec-meta.json to mark
+      stalled. Empty means no
       record to mark (intake, or any stage whose independent identity
       re-derivation itself failed) — the record-mark step is skipped and
       the notice always renders the "record could not be updated" wording.

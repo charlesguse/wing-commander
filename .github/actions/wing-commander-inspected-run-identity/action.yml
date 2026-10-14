@@ -239,11 +239,13 @@ runs:
               [ "$is_own" = "true" ] || continue
               d="$(jq -r '.spec.spec_dir // empty' "$rec" 2>/dev/null || true)"
               case "$d" in
-                specs/?*) record_dir="$d"; break ;;
+                specs/?*|?*/specs/?*) record_dir="$d"; break ;;
               esac
             done < <(find "$mr_dir" -type f -name '*.json' 2>/dev/null | sort)
             if [ -n "$record_dir" ]; then
-              slug="${record_dir#specs/}"
+              # [P/]specs/<NNN-slug> -> [P/]<NNN-slug> (spec 114).
+              slug="${record_dir%%/specs/*}/${record_dir##*/}"
+              case "$record_dir" in specs/*) slug="${record_dir#specs/}" ;; esac
               slug_source="metrics-record"
             fi
           fi
@@ -258,7 +260,13 @@ runs:
         spec_dir=""
         meta_stage=""
         if [ -n "$slug" ]; then
-          spec_dir="specs/$slug"
+          # A subfolder lifecycle's slug is <P>/<NNN-slug>; its spec
+          # directory is repository-relative <P>/specs/<NNN-slug> (spec 114,
+          # contracts/project-path-and-names.md). Root is specs/<slug>.
+          case "$slug" in
+            */*) spec_dir="${slug%/*}/specs/${slug##*/}" ;;
+            *)   spec_dir="specs/$slug" ;;
+          esac
           # One home for this read (#340, Gate 61): _shared/read-spec-meta.sh
           # fetches the branch, reads the file and applies the self-identity
           # check; its values are sanitised, so eval is safe.
