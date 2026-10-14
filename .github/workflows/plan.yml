@@ -16,7 +16,7 @@ on:
         required: false
         default: ""
       slug:
-        description: "Spec slug (NNN-name) — provide this or head-ref"
+        description: "Spec slug (NNN-name; P/NNN-name for a subfolder project P) — provide this or head-ref"
         type: string
         required: false
         default: ""
@@ -394,6 +394,7 @@ jobs:
     outputs:
       slug: ${{ steps.spec.outputs.slug }}
       spec-dir: ${{ steps.spec.outputs.spec-dir }}
+      project: ${{ steps.spec.outputs.project }}
     steps:
       # Derive the spec identity from the merged head branch
       # (spec-draft/<NNN-slug>) or the slug input, and refuse anything that
@@ -406,12 +407,18 @@ jobs:
           SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
           slug="${INPUT_SLUG:-${HEAD_REF#"$SPEC_DRAFT_PREFIX"}}"
-          if ! printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
+          # A subfolder lifecycle's slug is P/<NNN-slug> (spec 114); the
+          # project grammar itself is enforced by wing-commander-project in
+          # the plan job. The root form is unchanged.
+          if ! printf '%s' "$slug" | grep -Eq '^([a-z0-9][a-z0-9-]*/)*[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
             echo "::error::Cannot resolve a spec slug (got '$slug'); refusing to guess."
             exit 1
           fi
+          project=""
+          case "$slug" in */*) project="${slug%/*}" ;; esac
           echo "slug=$slug"           >> "$GITHUB_OUTPUT"
-          echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
+          echo "project=$project"      >> "$GITHUB_OUTPUT"
+          echo "spec-dir=${project:+$project/}specs/${slug##*/}" >> "$GITHUB_OUTPUT"
 
   plan:
     needs: [resolve-spec, verify-image-prerequisites]
@@ -510,6 +517,18 @@ jobs:
           path: .wing-commander-pipeline
           persist-credentials: false
 
+      # Subfolder project (spec 114, FR-007): validates P against the project
+      # grammar through the one parser; the folder itself is checked by
+      # Preflight below, which names it. A root slug resolves an empty project.
+      - name: Resolve project
+        id: project
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ needs.resolve-spec.outputs.slug }}
+          identity-kind: slug
+          token: ${{ github.token }}
+          check-folder: 'false'
+
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
       - name: Preflight
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
@@ -517,7 +536,8 @@ jobs:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "true"
-          require-files: ".claude/skills/speckit-plan/SKILL.md|specify init (spec-kit's claude integration)"
+          project: ${{ steps.project.outputs.project }}
+          require-files: "${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.claude/skills/speckit-plan/SKILL.md|specify init (spec-kit's claude integration)"
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
@@ -779,6 +799,7 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          project: ${{ steps.project.outputs.project }}
           step-label: "plan.direct-commit"
 
       - name: Compute agent turn ceiling (auto)
@@ -800,6 +821,8 @@ jobs:
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ needs.resolve-spec.outputs.spec-dir }}
+          # Spec Kit's project-root override -- see intake.yml.
+          SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           # Force Task/Agent subagents synchronous. In headless CI there is no
           # turn-boundary resume, so a backgrounded subagent makes the run emit
           # an interim success result and exit with the deliverable unbuilt
@@ -961,6 +984,14 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Containment (spec 114, FR-021) -- see clarify.yml.
+      - name: Check agent changes stay inside the project folder (auto)
+        if: "!cancelled() && steps.agent-auto.outcome != 'skipped' && steps.project.outputs.project != ''"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          project: ${{ steps.project.outputs.project }}
+          base-sha: ${{ steps.pre-agent.outputs.before-sha }}
+
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
       # along -- see clarify.yml.
@@ -1018,6 +1049,7 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          project: ${{ steps.project.outputs.project }}
           step-label: "plan.pr"
 
       - name: Compute agent turn ceiling (pr)
@@ -1037,6 +1069,8 @@ jobs:
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ needs.resolve-spec.outputs.spec-dir }}
+          # Spec Kit's project-root override -- see intake.yml.
+          SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
@@ -1194,6 +1228,14 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ env.WC_BOT_TOKEN }}
+
+      # Containment (spec 114, FR-021) -- see clarify.yml.
+      - name: Check agent changes stay inside the project folder (pr)
+        if: "!cancelled() && steps.agent-pr.outcome != 'skipped' && steps.project.outputs.project != ''"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          project: ${{ steps.project.outputs.project }}
+          base-sha: ${{ steps.pre-agent.outputs.before-sha }}
 
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
