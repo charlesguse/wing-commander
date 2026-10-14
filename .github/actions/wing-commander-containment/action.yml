@@ -1,8 +1,10 @@
 # Fails a subfolder-project stage when its agent changed anything outside
 # the project folder P (specs/114-subfolder-project-lifecycles, FR-021).
-# Pure shell, no agent, no network. Runs after the agent step and before
-# any push. A root lifecycle (empty project) is skipped: the whole
-# repository is its project.
+# Pure shell and git, no agent; its only network call is the hardened `git
+# ls-remote`/fetch of the default branch's tip. Runs after the agent step
+# and before any push, and is where containment is enforced (the pre-push
+# hook below is advisory). A root lifecycle (empty project) is skipped: the
+# whole repository is its project.
 #
 # Two more modes keep every workflow's use of _shared/containment.sh (and
 # intake's _shared/intake-pre-push.sh) behind this composite, so no
@@ -40,11 +42,21 @@ inputs:
     default: ""
   default-branch:
     description: >
-      check mode: the repository's default branch; empty means the event's
-      repository.default_branch. The check also covers every commit since
-      `git merge-base origin/<default-branch> HEAD`, so a violation an
-      earlier run already pushed is still caught after a restart. A merge
-      base that cannot be found fails the check.
+      The repository's default branch, which the calling job already
+      resolved. Empty means `git ls-remote --symref origin HEAD`. The check
+      also covers every commit since the merge base of HEAD and that
+      branch's tip as the remote reports it now (a hardened `git ls-remote`,
+      never the agent-rewritable origin/<default-branch>), so a violation an
+      earlier run already pushed is still caught after a restart. A branch,
+      tip or merge base that cannot be found fails the check.
+    required: false
+    default: ""
+  helpers-dir:
+    description: >
+      check mode: the read-only helper copies install-pre-push took before
+      the agent step (its helpers-dir output). The agent can reach the
+      pipeline checkout's own _shared/ in the workspace, so a job that
+      installed the hook checks with the copies; empty means _shared/.
     required: false
     default: ""
   hooks-dir:
@@ -82,6 +94,11 @@ outputs:
   pre-agent-sha:
     description: install-pre-push mode -- HEAD when the hook was installed.
     value: ${{ steps.install.outputs.pre-agent-sha }}
+  helpers-dir:
+    description: >
+      install-pre-push mode -- a read-only directory of helper copies taken
+      before the agent step, for the post-agent check's helpers-dir input.
+    value: ${{ steps.install.outputs.helpers-dir }}
 
 runs:
   using: composite
@@ -93,7 +110,8 @@ runs:
       env:
         PROJECT: ${{ inputs.project }}
         BASE_SHA: ${{ inputs.base-sha }}
-        DEFAULT_BRANCH: ${{ inputs.default-branch || github.event.repository.default_branch }}
+        DEFAULT_BRANCH: ${{ inputs.default-branch }}
+        HELPERS_DIR: ${{ inputs.helpers-dir }}
       run: |
         set -uo pipefail
         if [ -z "$PROJECT" ]; then
@@ -104,11 +122,23 @@ runs:
           echo "::error::wing-commander-containment: check mode needs base-sha."
           exit 1
         fi
+        helpers="${HELPERS_DIR:-$GITHUB_ACTION_PATH/../_shared}"
+        if [ ! -f "$helpers/containment.sh" ] || [ ! -f "$helpers/git-push-hardening.sh" ]; then
+          echo "::error::wing-commander-containment: no containment helpers in '$helpers'."
+          exit 1
+        fi
+        # Every git call below runs hardened (hooks, fsmonitor and global
+        # config off; replace objects ignored) -- the agent ran in this job.
+        # shellcheck source=/dev/null
+        . "$helpers/git-push-hardening.sh"
+        wc_harden_git_env
+        export GIT_NO_REPLACE_OBJECTS=1
         # A restarted stage's BASE_SHA is the already-pushed tip, so the
-        # default branch's merge base is checked too. Unresolvable is a
-        # failure, not a pass.
-        if [ -z "$DEFAULT_BRANCH" ] || ! merge_base="$(git merge-base "origin/$DEFAULT_BRANCH" HEAD)"; then
-          echo "::error::wing-commander-containment: could not find the merge base of origin/${DEFAULT_BRANCH:-<default branch>} and HEAD, so changes already on this branch cannot be checked."
+        # default branch's merge base is checked too, from the tip the
+        # remote reports now. Unresolvable is a failure, not a pass.
+        if ! tip="$(bash "$helpers/containment.sh" trusted-base "$PROJECT" "$DEFAULT_BRANCH")" \
+          || ! merge_base="$(git merge-base "$tip" HEAD)"; then
+          echo "::error::wing-commander-containment: could not find the merge base of the default branch's remote tip and HEAD, so changes already on this branch cannot be checked."
           exit 1
         fi
         # --no-renames: a move into P must still name its source outside P.
@@ -118,7 +148,7 @@ runs:
         changed="$( { git diff --name-only --no-renames "$BASE_SHA" HEAD; git diff --name-only --no-renames "$merge_base" HEAD; git diff --name-only --no-renames HEAD; git ls-files --others --exclude-standard -- ':/' ':(exclude,top).wing-commander-pipeline'; } | sort -u)"
         # The path test's single home is _shared/containment.sh, which
         # pr-conversation's pre-push hook runs too.
-        outside="$(printf '%s\n' "$changed" | bash "$GITHUB_ACTION_PATH/../_shared/containment.sh" outside "$PROJECT")"
+        outside="$(printf '%s\n' "$changed" | bash "$helpers/containment.sh" outside "$PROJECT")"
         if [ -n "$outside" ]; then
           {
             echo "outside-paths<<WC_EOF"
@@ -155,9 +185,19 @@ runs:
         fi
         hooks_dir="${HOOKS_DIR:-$RUNNER_TEMP/wing-commander-containment-hooks}"
         shared="$GITHUB_ACTION_PATH/../_shared"
+        helpers=(containment.sh project-name.sh intake-pre-push.sh git-push-hardening.sh)
         mkdir -p "$hooks_dir"
         # Copies, so a branch the agent checks out cannot rewrite the hook.
-        cp "$shared/containment.sh" "$shared/project-name.sh" "$shared/intake-pre-push.sh" "$hooks_dir/"
+        # The hook is advisory: the agent can repoint core.hooksPath or
+        # overwrite these copies (`git diff --output=<path>`). The enforcing
+        # post-agent check uses a second, read-only set under a fresh
+        # random name (helpers-dir output).
+        cp "${helpers[@]/#/$shared/}" "$hooks_dir/"
+        trusted="$(mktemp -d "$RUNNER_TEMP/wing-commander-containment-trusted.XXXXXXXX")"
+        cp "${helpers[@]/#/$shared/}" "$trusted/"
+        chmod 0444 "$trusted"/*
+        chmod 0555 "$trusted"
+        echo "helpers-dir=$trusted" >> "$GITHUB_OUTPUT"
         if [ -n "$LF_NUM" ]; then
           if [ -z "$RECORD" ]; then
             echo "::error::wing-commander-containment: the label-first hook needs a record-file."

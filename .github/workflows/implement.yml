@@ -1227,6 +1227,7 @@ jobs:
       # Containment pre-push hook (spec 114, FR-021) -- see clarify.yml.
       # The retry agent below reuses it.
       - name: Install containment pre-push hook
+        id: containment-hook
         if: steps.project.outputs.project != ''
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
         with:
@@ -1441,13 +1442,15 @@ jobs:
         with:
           project: ${{ steps.project.outputs.project }}
           base-sha: ${{ steps.base.outputs.base-sha }}
+          default-branch: ${{ inputs.default-branch }}
+          helpers-dir: ${{ steps.containment-hook.outputs.helpers-dir }}
 
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
       # along -- see clarify.yml.
       - name: Publish stranded commits (post-agent, cycle)
         id: publish-stranded-cycle
-        if: "!cancelled() && steps.cycle.outcome != 'skipped'"
+        if: "!cancelled() && steps.cycle.outcome != 'skipped' && steps.containment-cycle.outcome != 'failure'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:
@@ -2338,13 +2341,15 @@ jobs:
         with:
           project: ${{ steps.project.outputs.project }}
           base-sha: ${{ steps.retry-base.outputs.base-sha }}
+          default-branch: ${{ inputs.default-branch }}
+          helpers-dir: ${{ steps.containment-hook.outputs.helpers-dir }}
 
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
       # along -- see clarify.yml.
       - name: Publish stranded commits (post-agent, retry)
         id: publish-stranded-retry
-        if: "!cancelled() && steps.retry.outcome != 'skipped'"
+        if: "!cancelled() && steps.retry.outcome != 'skipped' && steps.containment-retry.outcome != 'failure'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:

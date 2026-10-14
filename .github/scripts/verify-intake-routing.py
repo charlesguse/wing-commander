@@ -429,7 +429,8 @@ def intake_workspace(tmp):
     ws = os.path.join(tmp, "ws")
     origin = os.path.join(tmp, "origin.git")
     os.makedirs(os.path.join(tmp, "rt"))
-    subprocess.run(["git", "init", "-q", "--bare", origin], check=True, capture_output=True)
+    # -b main: the containment test reads the default branch from origin's HEAD.
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", origin], check=True, capture_output=True)
     subprocess.run(["git", "init", "-q", "-b", "main", ws], check=True, capture_output=True)
     os.symlink(ROOT, os.path.join(ws, ".wing-commander-pipeline"))
 
@@ -579,12 +580,22 @@ def check_label_first_rescue(data, doc, bindir, errors):
     judge_refused_publish(steps, "label-first rescue (push refused after label)", "ideas/alpha", "success",
                           "001-login", "false", True, bindir, errors)
     judge_refused_publish(steps, "label-first rescue (root)", "", "failure", "", "false", False, bindir, errors)
+    # MF-31: the branch is on the remote, but the label step labelled
+    # nothing -- it got there around label-first.
+    judge_refused_publish(steps, "label-first rescue (branch around label-first)", "ideas/alpha", "success",
+                          "", "true", True, bindir, errors, created="ideas/alpha/001-login")
+    judge_refused_publish(steps, "label-first rescue (root, branch found)", "", "skipped",
+                          "", "true", False, bindir, errors, created="001-login")
 
 
-def judge_refused_publish(steps, tag, project, lf_outcome, slug, push_ok, want_fail, bindir, errors):
+def judge_refused_publish(steps, tag, project, lf_outcome, slug, push_ok, want_fail, bindir, errors, created=None):
     """T067 (FR-014): intake's "Fail on a refused subfolder publish"
     (`refused-publish`) turns a refusal by the continue-on-error label or
-    push step into a red run naming it, and stays quiet otherwise."""
+    push step into a red run naming it, and stays quiet otherwise. MF-31: a
+    branch "Resolve created spec" found with no label-step slug reached the
+    remote around label-first, and fails the run too."""
+    if created is None:
+        created = f"{project}/{slug}" if slug and push_ok == "true" else ""
     step = step_by_id(steps, "refused-publish")
     if steps.index(step) < steps.index(step_by_id(steps, "publish-stranded")):
         errors.append("refused-publish: runs before the label-first push")
@@ -592,7 +603,8 @@ def judge_refused_publish(steps, tag, project, lf_outcome, slug, push_ok, want_f
         errors.append("refused-publish: carries continue-on-error, so it cannot fail the run")
     ctx = {"cancelled()": False, "steps.agent.outcome": "success", "inputs.routing-label-prefix": "node:",
            "steps.num.outputs.project": project, "steps.label-first.outcome": lf_outcome if project else "skipped",
-           "steps.label-first.outputs.slug": slug, "steps.publish-stranded.outputs.push-ok": push_ok}
+           "steps.label-first.outputs.slug": slug, "steps.publish-stranded.outputs.push-ok": push_ok,
+           "steps.created-ref.outputs.slug": created}
     fires = evaluate_if(step["if"], ctx)
     if fires != want_fail:
         errors.append(f"{tag}: refused-publish {'fires' if fires else 'stays quiet'} "
@@ -603,7 +615,10 @@ def judge_refused_publish(steps, tag, project, lf_outcome, slug, push_ok, want_f
     env = {key: interpolate(str(val), {**ctx, "inputs.spec-draft-prefix": "spec-draft/"})
            for key, val in (step.get("env") or {}).items()}
     r, _, _ = run_step(step["run"], env, ROOT, bindir)
-    want = "label-first check refused" if lf_outcome == "failure" else "was refused after spec:"
+    if lf_outcome != "failure" and not slug and created:
+        want = "without the label-first check"
+    else:
+        want = "label-first check refused" if lf_outcome == "failure" else "was refused after spec:"
     if r.returncode == 0 or "::error::" not in r.stdout or want not in r.stdout or project not in r.stdout:
         errors.append(f"{tag}: refused-publish did not fail naming the refusal rc={r.returncode} {r.stdout!r}")
 
@@ -653,10 +668,14 @@ def check_label_first(steps, bindir, errors):
         errors.append(f"label-first: project-guidance failed {r.stderr!r}")
     elif not any("spec label BEFORE it publishes" in line for line in outputs.splitlines()):
         errors.append("label-first: the subfolder intake prompt does not say the pipeline labels before it publishes")
-    elif "never pass --no-verify" not in outputs or "skip step 6's" not in outputs:
+    elif "Do not push" not in outputs or "skip step 6's" not in outputs:
         errors.append("label-first: the subfolder intake prompt does not hand the push, label and PR to the pipeline")
     elif "at most 33 characters" not in outputs:
         errors.append("label-first: the subfolder intake prompt does not carry the slug budget")
+    # MF-30: a routed agent cannot push at all, so no push skips label-first.
+    targs = (step_by_id(steps, "tool-args-intake").get("with") or {})
+    if "Bash(git push:*)" not in str(targs.get("project-deny-tools", "")):
+        errors.append("label-first: the routed intake agent is not denied Bash(git push:*) (project-deny-tools)")
     r, outputs, _ = run_step(guidance["run"], {"PROJECT": "", "SLUG_BUDGET": ""}, ROOT, bindir)
     body = outputs.split("\n", 1)[1] if "\n" in outputs else ""
     if r.returncode != 0 or body.strip() != "WC_INTAKE_PROJECT_GUIDANCE_EOF":

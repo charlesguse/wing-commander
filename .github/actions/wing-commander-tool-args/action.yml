@@ -60,12 +60,20 @@ inputs:
     description: >
       Subfolder project path P (specs/114-subfolder-project-lifecycles,
       FR-022, D10). When non-empty, the project-aware .claude/ denies are
-      derived into the same no-write-paths definition: root .claude/ and
-      .git/, each proper ancestor E/.claude/, P/.claude/ and
+      derived into the same no-write-paths definition: root .claude/,
+      .git/ and .wing-commander-pipeline/, each proper ancestor E/.claude/, P/.claude/ and
       P/**/.claude/. Each granted `.specify/` script also gains its
       P/.specify/ twin, and each `.wing-commander-pipeline/` or
       `.github/scripts/` path in a Bash grant its twin absolute under
       GITHUB_WORKSPACE. Empty (a root lifecycle) adds nothing.
+    required: false
+    default: ""
+  project-deny-tools:
+    description: >
+      Comma-separated tools denied only when project is non-empty, appended
+      after the override/extra composition so nothing reopens them, and
+      left out of the tooling statement (intake denies a routed agent
+      `Bash(git push:*)`, spec 114 FR-014). Ignored for a root lifecycle.
     required: false
     default: ""
 
@@ -119,9 +127,10 @@ runs:
         DISALLOWED_OVERRIDE: ${{ inputs.disallowed-tools-override }}
         NO_WRITE_PATHS: ${{ inputs.no-write-paths }}
         PROJECT: ${{ inputs.project }}
-        # Spec 114: the hook-skipping push forms a subfolder agent is denied
+        PROJECT_DENY: ${{ inputs.project-deny-tools }}
+        # Spec 114: the hook-skipping push form a subfolder agent is denied
         # (step 5 below). A constant tool list, not a command.
-        HOOK_BYPASS_DENIES: "Bash(git push --no-verify:*),Bash(git push -n:*)"
+        HOOK_BYPASS_DENIES: "Bash(git push --no-verify:*)"
         # ... and the raw API, which writes contents around both (step 3).
         PROJECT_API_DENY: "Bash(gh api:*)"
       run: |
@@ -250,6 +259,11 @@ runs:
           # or override reopens it, and before step 4, so the tooling
           # statement does not claim it.
           effective_disallowed="${effective_disallowed:+$effective_disallowed,}$PROJECT_API_DENY"
+          # The caller's own subfolder-only denies (project-deny-tools),
+          # placed the same way, so no override reopens them either.
+          if [ -n "${PROJECT_DENY:-}" ]; then
+            effective_disallowed="$effective_disallowed,$(compose_list "$PROJECT_DENY" "")"
+          fi
         fi
 
         # 4. Render "shell-commands" as a complete sentence stating exactly
@@ -442,6 +456,9 @@ runs:
           # implement.yml) so an overridden no-write-paths cannot drop them.
           project_denies=".claude/"
           project_denies="$project_denies,.git/"
+          # The trusted pipeline checkout: its composites and _shared/
+          # helpers run after the agent (MF-34).
+          project_denies="$project_denies,.wing-commander-pipeline/"
           ancestor=""
           rest="$PROJECT"
           while [[ "$rest" == */* ]]; do

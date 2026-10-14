@@ -10,6 +10,7 @@ For a subfolder lifecycle in project `P`, `wing-commander-tool-args` adds to the
 |---|---|
 | `.claude/**` | root control surface |
 | `.git/**` | repository metadata |
+| `.wing-commander-pipeline/**` | the trusted pipeline checkout, whose composites and helpers run after the agent |
 | `E/.claude/**` for each proper ancestor `E` of `P` | enclosing projects (for `P = a/b`: `a/.claude/**`) |
 | `P/.claude/**` | the project's own control surface |
 | `P/**/.claude/**` | nested projects |
@@ -22,19 +23,30 @@ For the same lifecycles `wing-commander-tool-args` also denies, whatever the ove
 
 | Tool | Why |
 |---|---|
-| `Bash(git push --no-verify:*)`, `Bash(git push -n:*)` | a push that skips the pre-push hook |
+| `Bash(git push --no-verify:*)` | the plain form of a push that skips the pre-push hook (`git push -n` is a dry run and stays allowed) |
 | `Bash(gh api:*)` | the raw API writes repository contents outside `P` with no commit the guard or the hook sees |
+
+A caller may add its own subfolder-only denies through `project-deny-tools`, placed the same way. Intake passes `Bash(git push:*)`, so a routed intake agent cannot push at all: "Label first" and "Publish stranded commits (post-agent)" make the branch's one push, after its label exists (FR-014).
 
 ## Confinement guard (FR-021)
 
-Before each agent that pushes itself, `wing-commander-containment` (mode `install-pre-push`) installs a pre-push hook that refuses a push carrying a change outside `P/` (intake's hook is the label-first check instead). After each Edit/Write agent the same composite (mode `check`):
+Before each agent that pushes itself, `wing-commander-containment` (mode `install-pre-push`) installs a pre-push hook that refuses a push carrying a change outside `P/` (intake's hook is the label-first check instead).
 
-- Input: the pre-agent SHA and `P`.
-- Computes `git diff --name-only --no-renames` from the pre-agent SHA and from the default branch's merge base to `HEAD`, plus the working-tree status and the untracked files (the root trusted checkout excluded).
+**What the pre-push hook guarantees: nothing.** It is advisory, an early stop that saves a wasted push. The agent can repoint `core.hooksPath`, pass `--no-verify` in a form the deny list does not match, or overwrite the hook's helper copies under `$RUNNER_TEMP` with a git command that writes a file (`git diff --output=<path>`, `git log --output=<path>`). A push the hook refuses was refused; a push it allowed proves nothing.
+
+**Where containment is enforced:** the post-agent `check` mode below, which runs in a step the agent cannot touch, under the hardened git environment (`wc_harden_git_env`: hooks, fsmonitor and global config off; `GIT_NO_REPLACE_OBJECTS=1`), with the helper copies `install-pre-push` took before the agent ran (its `helpers-dir` output: a fresh, randomly named, read-only directory) rather than the workspace's `.wing-commander-pipeline/`. When it fails, the stage fails, and every "Publish stranded commits (post-agent)" step is gated on `steps.<containment>.outcome != 'failure'`, so the rescue never publishes what the check refused. A push the agent already made is not undone: the branch carries the violation, and every later stage's check (which diffs from the default branch's merge base) fails until it is removed.
+
+After each Edit/Write agent the same composite (mode `check`):
+
+- Input: the pre-agent SHA, `P`, the default branch the job resolved (`default-branch`; empty means `git ls-remote --symref origin HEAD`) and the pre-agent helper copies (`helpers-dir`; empty means the pipeline checkout's `_shared/`).
+- Resolves the default branch's tip from the remote itself (`containment.sh trusted-base`: `git ls-remote origin refs/heads/<default>`, fetched when the checkout lacks it), never from `origin/<default>` or `--not --remotes`, both refs the agent can rewrite. A branch or tip that cannot be resolved fails the check.
+- Computes `git diff --name-only --no-renames` from the pre-agent SHA and from the merge base of that tip and `HEAD`, plus the working-tree status and the untracked files (the root trusted checkout excluded). The pre-push hook uses the same base: every commit since `merge-base(<trusted tip>, <local sha>)`, so content already on another remote branch that arrives through a merge or a reset is still checked.
 - Passes when every path starts with `P/`. Whole-folder operations (moves or deletions of nested project folders) and edits to a child-project index README all start with `P/`, so they pass.
 - Fails the stage with a callout listing the offending paths. The lifecycle PR is not advanced.
 - Skipped for root lifecycles.
 - Runner-temp files outside the checkout are not in the diff.
+
+Accepted residual gaps: `origin`'s URL comes from the repository's own `.git/config`, which the environment cannot neutralise (see `_shared/git-push-hardening.sh`), so an agent that rewrites it can steer `ls-remote` to another remote; the read-only helper copies stop a non-root writer only; and `git diff --output=<path>` can still overwrite files in `.wing-commander-pipeline/`, which the Edit/Write deny above does not cover.
 
 ## Trusted checkout references (FR-025)
 

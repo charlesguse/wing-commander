@@ -830,6 +830,7 @@ jobs:
 
       # Containment pre-push hook (spec 114, FR-021) -- see clarify.yml.
       - name: Install containment pre-push hook (auto)
+        id: containment-hook-auto
         if: steps.project.outputs.project != '' && steps.mode.outputs.mode == 'auto'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
         with:
@@ -1013,18 +1014,21 @@ jobs:
 
       # Containment (spec 114, FR-021) -- see clarify.yml.
       - name: Check agent changes stay inside the project folder (auto)
+        id: containment-auto
         if: "!cancelled() && steps.agent-auto.outcome != 'skipped' && steps.project.outputs.project != ''"
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
         with:
           project: ${{ steps.project.outputs.project }}
           base-sha: ${{ steps.pre-agent.outputs.before-sha }}
+          default-branch: ${{ inputs.default-branch }}
+          helpers-dir: ${{ steps.containment-hook-auto.outputs.helpers-dir }}
 
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
       # along -- see clarify.yml.
       - name: Publish stranded commits (post-agent, auto)
         id: publish-stranded-auto
-        if: "!cancelled() && steps.agent-auto.outcome != 'skipped'"
+        if: "!cancelled() && steps.agent-auto.outcome != 'skipped' && steps.containment-auto.outcome != 'failure'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:
@@ -1089,6 +1093,7 @@ jobs:
 
       # Containment pre-push hook (spec 114, FR-021) -- see clarify.yml.
       - name: Install containment pre-push hook (pr)
+        id: containment-hook-pr
         if: steps.project.outputs.project != '' && steps.mode.outputs.mode == 'pr'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
         with:
@@ -1267,18 +1272,21 @@ jobs:
 
       # Containment (spec 114, FR-021) -- see clarify.yml.
       - name: Check agent changes stay inside the project folder (pr)
+        id: containment-pr
         if: "!cancelled() && steps.agent-pr.outcome != 'skipped' && steps.project.outputs.project != ''"
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
         with:
           project: ${{ steps.project.outputs.project }}
           base-sha: ${{ steps.pre-agent.outputs.before-sha }}
+          default-branch: ${{ inputs.default-branch }}
+          helpers-dir: ${{ steps.containment-hook-pr.outputs.helpers-dir }}
 
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
       # along -- see clarify.yml.
       - name: Publish stranded commits (post-agent, pr)
         id: publish-stranded-pr
-        if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
+        if: "!cancelled() && steps.agent-pr.outcome != 'skipped' && steps.containment-pr.outcome != 'failure'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:

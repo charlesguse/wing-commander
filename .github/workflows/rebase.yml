@@ -394,6 +394,7 @@ jobs:
           identities-json: ${{ steps.list.outputs.slugs }}
           identity-kind: slug
           check-folder: 'false'
+          token: ${{ steps.ctx.outputs.token }}
 
       # Select the eligible branch set.
       - name: Select in-flight branches

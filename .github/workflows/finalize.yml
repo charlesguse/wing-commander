@@ -798,6 +798,7 @@ jobs:
 
       # Containment pre-push hook (spec 114, FR-021) -- see clarify.yml.
       - name: Install containment pre-push hook
+        id: containment-hook
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.project.outputs.project != ''
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
         with:
@@ -940,6 +941,8 @@ jobs:
         with:
           project: ${{ steps.project.outputs.project }}
           base-sha: ${{ steps.pre-agent.outputs.before-sha }}
+          default-branch: ${{ inputs.default-branch }}
+          helpers-dir: ${{ steps.containment-hook.outputs.helpers-dir }}
 
       # deterministic, transcript-only verdict replacing the raw steps.summarize.outcome checks
       # below -- see specs/037-agent-turn-budget-guard/data-model.md.

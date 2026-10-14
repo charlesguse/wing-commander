@@ -661,6 +661,7 @@ jobs:
       # outside the project folder first (wing-commander-containment,
       # install-pre-push mode). Skipped for a root lifecycle.
       - name: Install containment pre-push hook
+        id: containment-hook
         if: steps.project.outputs.project != ''
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
         with:
@@ -865,6 +866,8 @@ jobs:
         with:
           project: ${{ steps.project.outputs.project }}
           base-sha: ${{ steps.pre-agent.outputs.before-sha }}
+          default-branch: ${{ inputs.default-branch }}
+          helpers-dir: ${{ steps.containment-hook.outputs.helpers-dir }}
 
       # (canonical copy: push-rescue; do not condense)
       # Deterministic rescue for work the agent could not push itself --
@@ -879,7 +882,7 @@ jobs:
       # failed agent step (FR-019).
       - name: Publish stranded commits (post-agent)
         id: publish-stranded
-        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && steps.containment.outcome != 'failure'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:

@@ -2490,6 +2490,8 @@ jobs:
         with:
           project: ${{ steps.project.outputs.project }}
           base-sha: ${{ steps.containment-hook.outputs.pre-agent-sha }}
+          default-branch: ${{ needs.classify-and-announce.outputs.default-branch }}
+          helpers-dir: ${{ steps.containment-hook.outputs.helpers-dir }}
 
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
@@ -2499,7 +2501,7 @@ jobs:
       # anything, so it demonstrably predates this job's own checkout).
       - name: Publish stranded commits (post-agent)
         id: publish-stranded
-        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && steps.containment.outcome != 'failure'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:

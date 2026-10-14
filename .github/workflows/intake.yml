@@ -732,17 +732,17 @@ jobs:
           exit 1
 
       # Label first and the slug budget, in deterministic code (spec 114,
-      # FR-014, FR-021): a pre-push hook in the agent's checkout lets intake
-      # push only <spec-draft-prefix>P/<NNN-slug>, refuses a slug over the
-      # label budget and keeps the push inside the project folder
-      # (wing-commander-containment's install-pre-push mode, label-first
-      # inputs). It makes no API call: a passing branch has its slug
-      # recorded and the push refused, because the branch may reach the
-      # remote only after its label exists. "Publish stranded commits
-      # (post-agent)" below runs the same check, creates the spec label, puts
-      # it on the issue and only then pushes, under its declared token.
-      # Routing on and a subfolder target only; the root is unchanged
-      # (FR-016).
+      # FR-014, FR-021). A routed agent is denied `git push` outright
+      # (tool-args' project-deny-tools below); this pre-push hook is a
+      # backstop that refuses any push it would still make, after checking
+      # <spec-draft-prefix>P/<NNN-slug>, the label budget and the project
+      # folder (wing-commander-containment's install-pre-push mode,
+      # label-first inputs). It makes no API call, and its read-only helper
+      # copies serve the post-agent containment check. "Label first" and
+      # "Publish stranded commits (post-agent)" below run the same check,
+      # create the spec label, put it on the issue and only then push, under
+      # their declared token. Routing on and a subfolder target only; the
+      # root is unchanged (FR-016).
       - name: Install label-first pre-push hook (subfolder project)
         id: label-first-hook
         if: steps.lifecycle-gate.outputs.is-open == 'true' && inputs.routing-label-prefix != '' && steps.num.outputs.project != ''
@@ -835,7 +835,7 @@ jobs:
               echo "- The branch is \`<prefix>$PROJECT/<NNN-slug>\` and the spec label is \`spec:$PROJECT/<NNN-slug>\`."
               echo "- spec-meta.json records \"spec_dir\": \"specs/<NNN-slug>\" (relative to the project, without \`$PROJECT/\`), so the folder can be copied out unchanged."
               echo "- <NNN-slug> may be at most $SLUG_BUDGET characters long, the most the spec label can carry. Choose a shorter slug rather than exceed it."
-              echo "- Push the branch once in step 5. The push is checked and then refused on purpose, whatever the result: a refusal naming a problem (an over-budget slug, say) is yours to fix and push again; one saying the branch passed is the expected end. Do not retry it, and never pass --no-verify. After you finish, the pipeline creates the spec label BEFORE it publishes your branch, puts the label and stage:spec on the issue and opens the pull request."
+              echo "- Do not push. Skip step 5's \`git push\` (still commit there): this run cannot push. After you finish, the pipeline checks the branch (the allocated number, a slug within the budget above, every change inside \`$PROJECT/\`), creates the spec label BEFORE it publishes your branch, puts the label and stage:spec on the issue and opens the pull request. A branch that fails the check is not published."
               echo "- So skip step 6's \`gh pr create\` (still write the PR body file it names) and step 7's two label commands; still return the final result step 7 describes."
               echo ""
             fi
@@ -859,6 +859,10 @@ jobs:
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           project: ${{ steps.num.outputs.project }}
+          # A routed agent cannot push at all: "Publish stranded commits
+          # (post-agent)" is the branch's one push, after its label exists
+          # (spec 114 FR-014).
+          project-deny-tools: "Bash(git push:*)"
           step-label: "intake"
 
       - name: Compute agent turn ceiling
@@ -1085,6 +1089,8 @@ jobs:
         with:
           project: ${{ steps.num.outputs.project }}
           base-sha: ${{ steps.pre-agent.outputs.before-sha }}
+          default-branch: ${{ inputs.default-branch }}
+          helpers-dir: ${{ steps.label-first-hook.outputs.helpers-dir }}
 
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
@@ -1108,7 +1114,7 @@ jobs:
 
       - name: Publish stranded commits (post-agent)
         id: publish-stranded
-        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && steps.containment.outcome != 'failure'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:
@@ -1788,17 +1794,22 @@ jobs:
       # would otherwise end green, its only trace "intake produced no spec";
       # this step turns it into the red run, naming the refusal. An agent
       # that committed nothing leaves the label step green with no slug, so
-      # it never fires here.
+      # it never fires here. A spec branch "Resolve created spec" finds on the
+      # remote with no slug from the label step reached the remote around
+      # label-first, so it fails the run too.
       - name: Fail on a refused subfolder publish
         id: refused-publish
-        if: "!cancelled() && steps.agent.outcome != 'skipped' && inputs.routing-label-prefix != '' && steps.num.outputs.project != '' && (steps.label-first.outcome == 'failure' || (steps.label-first.outputs.slug != '' && steps.publish-stranded.outputs.push-ok != 'true'))"
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && inputs.routing-label-prefix != '' && steps.num.outputs.project != '' && (steps.label-first.outcome == 'failure' || (steps.label-first.outputs.slug != '' && steps.publish-stranded.outputs.push-ok != 'true') || (steps.created-ref.outputs.slug != '' && steps.label-first.outputs.slug == ''))"
         env:
           LABEL_OUTCOME: ${{ steps.label-first.outcome }}
           PROJECT: ${{ steps.num.outputs.project }}
           SLUG: ${{ steps.label-first.outputs.slug }}
+          CREATED: ${{ steps.created-ref.outputs.slug }}
           PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
-          if [ "$LABEL_OUTCOME" = "failure" ]; then
+          if [ "$LABEL_OUTCOME" != "failure" ] && [ -z "$SLUG" ] && [ -n "$CREATED" ]; then
+            echo "::error::wing-commander intake stage: failing the run — $PREFIX$CREATED reached the remote without the label-first check for project $PROJECT; spec:$CREATED was never created by the pipeline. Delete the branch before re-running intake."
+          elif [ "$LABEL_OUTCOME" = "failure" ]; then
             echo "::error::wing-commander intake stage: failing the run — the label-first check refused the branch the agent committed for project $PROJECT (see the error above); nothing was labelled or published."
           else
             echo "::error::wing-commander intake stage: failing the run — the push of $PREFIX$PROJECT/$SLUG was refused after spec:$PROJECT/$SLUG was labelled (see the warning above); the branch was not published."

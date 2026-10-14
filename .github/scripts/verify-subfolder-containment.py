@@ -78,6 +78,7 @@ def tool_args(case, script):
         "DISALLOWED_OVERRIDE": case.get("disallowed_override", "__unset__"),
         "NO_WRITE_PATHS": case.get("no_write_paths", ""),
         "PROJECT": case["project"],
+        "PROJECT_DENY": case.get("project_deny_tools", ""),
         # The step's own constant, read from action.yml as the runner sets it.
         "HOOK_BYPASS_DENIES": tool_args_env()["HOOK_BYPASS_DENIES"],
         "PROJECT_API_DENY": tool_args_env()["PROJECT_API_DENY"],
@@ -95,8 +96,12 @@ def tool_args(case, script):
 
 
 def contain(case, script):
-    with tempfile.TemporaryDirectory() as tmp:
-        git(tmp, "init", "-q")
+    with tempfile.TemporaryDirectory() as top:
+        origin = os.path.join(top, "origin.git")
+        tmp = os.path.join(top, "work")
+        os.makedirs(tmp)
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", origin], check=True, capture_output=True)
+        git(tmp, "init", "-q", "-b", "main")
         git(tmp, "config", "user.email", "g@example.invalid")
         git(tmp, "config", "user.name", "gate")
         for rel in case["base_files"]:
@@ -106,8 +111,27 @@ def contain(case, script):
                 fh.write("x\n")
         git(tmp, "add", "-A")
         git(tmp, "commit", "-q", "-m", "base")
-        # origin/main is the default branch the merge-base leg diffs from.
-        git(tmp, "update-ref", "refs/remotes/origin/main", "HEAD")
+        # The remote's main is the default branch the merge-base leg diffs
+        # from (read with ls-remote, never origin/main).
+        git(tmp, "remote", "add", "origin", origin)
+        git(tmp, "push", "-q", "origin", "main")
+        if case.get("remote_branch"):
+            # Content already on another remote branch, outside P: it must
+            # still be flagged when it arrives through a merge.
+            git(tmp, "checkout", "-q", "-b", "other")
+            for rel in case["remote_branch"]:
+                with open(os.path.join(tmp, rel), "a", encoding="utf-8") as fh:
+                    fh.write("o\n")
+            git(tmp, "commit", "-q", "-am", "other")
+            git(tmp, "push", "-q", "origin", "other")
+            git(tmp, "checkout", "-q", "main")
+            git(tmp, "merge", "-q", "--no-ff", "-m", "merge other", "other")
+        if case.get("forged_tracking_ref"):
+            # The agent points origin/main at its own tip: the check must
+            # still diff from the tip the remote reports.
+            git(tmp, "update-ref", "refs/remotes/origin/main", "HEAD")
+        if case.get("no_remote"):
+            git(tmp, "remote", "remove", "origin")
         if case.get("earlier_run"):
             # A commit an earlier (restarted) run already made on the branch:
             # it precedes base-sha, so only the merge-base leg sees it.
@@ -148,7 +172,8 @@ def contain(case, script):
         if case.get("commit"):
             git(tmp, "add", "-A")
             git(tmp, "commit", "-q", "-m", "agent")
-        env = {"PROJECT": case["project"], "BASE_SHA": base, "DEFAULT_BRANCH": case.get("default_branch", "main")}
+        env = {"PROJECT": case["project"], "BASE_SHA": base, "DEFAULT_BRANCH": case.get("default_branch", "main"),
+               "HELPERS_DIR": ""}
         r, _ = run_script(script, env, tmp, "wing-commander-containment")
         return r
 
@@ -465,6 +490,25 @@ jobs:
 """
 
 
+UNGATED_RESCUE = """\
+jobs:
+  stage:
+    steps:
+      - id: project
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+      - name: Check agent changes stay inside the project folder
+        id: containment
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          project: ${{ steps.project.outputs.project }}
+      - name: Publish stranded commits (post-agent)
+        if: "!cancelled()"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
+        with:
+          project: ${{ steps.project.outputs.project }}
+"""
+
+
 def check_rescue_scope(errors, wf_dir=None):
     """FR-021: the stranded-commit rescue runs on !cancelled(), after the
     containment check, so in a project-wired job it must be handed the same
@@ -487,14 +531,29 @@ def check_rescue_scope(errors, wf_dir=None):
             wired = bool(guards) or any(str(s.get("uses", "")).endswith("/wing-commander-project") for s in steps)
             if not wired:
                 continue
+            last_check = None
             for s in steps:
-                if not str(s.get("uses", "")).endswith("/wing-commander-publish-stranded-commits"):
+                uses = str(s.get("uses", ""))
+                if uses.endswith("/wing-commander-containment") and str((s.get("with") or {}).get("mode", "check")) == "check":
+                    last_check = s
+                    # MF-28: the caller hands over the default branch it
+                    # resolved; the composite reads no event payload.
+                    if not str((s.get("with") or {}).get("default-branch", "")).strip():
+                        errors.append(f"{fn}:{job_name}: containment check {s.get('name')!r} is not handed the job's default branch (MF-28)")
+                if not uses.endswith("/wing-commander-publish-stranded-commits"):
                     continue
                 project = str((s.get("with") or {}).get("project", "")).strip()
                 if not project or (guards and project not in guards):
                     errors.append(f"{fn}:{job_name}: {s.get('name')!r} is not handed the project its containment check uses (FR-021)")
-                else:
-                    covered += 1
+                    continue
+                # MF-36: the rescue runs on !cancelled(), so it must also be
+                # gated on the check above it not having failed.
+                if last_check is not None:
+                    cid = last_check.get("id")
+                    if not cid or f"steps.{cid}.outcome != 'failure'" not in str(s.get("if", "")):
+                        errors.append(f"{fn}:{job_name}: {s.get('name')!r} is not gated on its containment check ({cid or 'no id'}) not having failed (FR-021, MF-36)")
+                        continue
+                covered += 1
     return covered
 
 
@@ -503,7 +562,7 @@ def staged_clone(tmp, case):
     local commits on top. Returns (work, origin, base sha)."""
     origin = os.path.join(tmp, "origin.git")
     work = os.path.join(tmp, "work")
-    subprocess.run(["git", "init", "-q", "--bare", origin], check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", origin], check=True, capture_output=True)
     os.makedirs(work)
     git(work, "init", "-q", "-b", "main")
     git(work, "config", "user.email", "g@example.invalid")
@@ -518,6 +577,17 @@ def staged_clone(tmp, case):
     base = rev(work, "HEAD")
     git(work, "remote", "add", "origin", origin)
     git(work, "push", "-q", "origin", "main")
+    if case.get("remote_branch"):
+        # Content already on another remote branch, outside P, merged in:
+        # `--not --remotes` would have let it through (MF-33).
+        git(work, "checkout", "-q", "-b", "other")
+        for rel in case["remote_branch"]:
+            with open(os.path.join(work, rel), "a", encoding="utf-8") as fh:
+                fh.write("o\n")
+        git(work, "commit", "-q", "-am", "other")
+        git(work, "push", "-q", "origin", "other")
+        git(work, "checkout", "-q", "main")
+        git(work, "merge", "-q", "--no-ff", "-m", "merge other", "other")
     for rel in case.get("commit_files", []):
         path = os.path.join(work, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -526,6 +596,18 @@ def staged_clone(tmp, case):
     if case.get("commit_files"):
         git(work, "add", "-A")
         git(work, "commit", "-q", "-m", "agent")
+    if case.get("replace_object"):
+        # A planted refs/replace/* that swaps the agent's tip for a clean
+        # commit inside P: git must ignore it (GIT_NO_REPLACE_OBJECTS).
+        tip = rev(work, "HEAD")
+        git(work, "checkout", "-q", "--detach", base)
+        with open(os.path.join(work, case["project"], "clean.md"), "w", encoding="utf-8") as fh:
+            fh.write("c\n")
+        git(work, "add", "-A")
+        git(work, "commit", "-q", "-m", "clean")
+        clean = rev(work, "HEAD")
+        git(work, "checkout", "-q", "main")
+        git(work, "replace", tip, clean)
     if case.get("evil_merge_files"):
         # A merge of a side branch that changed only P, whose merge commit
         # itself also changes the listed paths (an evil merge).
@@ -752,6 +834,13 @@ def main():
         check_rescue_scope(probe, tmp)
         if not probe:
             errors.append("rescue scope: a project-wired rescue with no project input was not flagged")
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "ungated.yml"), "w", encoding="utf-8") as fh:
+            fh.write(UNGATED_RESCUE)
+        probe = []
+        check_rescue_scope(probe, tmp)
+        if not any("MF-36" in p for p in probe):
+            errors.append("rescue scope: a rescue not gated on its failed containment check was not flagged")
     if check_guard_coverage(errors) == 0:
         errors.append("guard coverage: no Edit/Write agent in a project-wired job was found -- the check has lost its subject")
     # Self-test: the coverage check must flag an unguarded Edit/Write agent.

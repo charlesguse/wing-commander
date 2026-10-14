@@ -828,6 +828,7 @@ jobs:
         with:
           project: ${{ steps.project.outputs.project }}
           base-sha: HEAD
+          default-branch: ${{ needs.select.outputs.default-branch }}
 
       # deterministic, transcript-only verdict replacing the raw steps.summarize.outcome checks
       # below -- see specs/037-agent-turn-budget-guard/data-model.md.
