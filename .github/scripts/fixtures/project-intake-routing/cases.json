@@ -43,7 +43,16 @@
   "rerun": [
     {"name": "routing on, routed issue already specified", "labels": ["node:ideas/alpha", "spec:ideas/alpha/001-login"], "existing": "spec:ideas/alpha/001-login"},
     {"name": "routing on, root issue already specified (no routing label)", "labels": ["spec-request", "spec:001-login"], "existing": "spec:001-login"},
-    {"name": "routing on, first run", "labels": ["node:ideas/alpha", "spec-request"], "existing": ""}
+    {"name": "routing on, first run", "labels": ["node:ideas/alpha", "spec-request"], "existing": ""},
+    {"name": "routing on, another intake holds the claim", "labels": ["node:ideas/alpha", "spec-intake-claimed"], "existing": "spec-intake-claimed"}
+  ],
+  "label_first_hook": [
+    {"name": "subfolder slug within budget", "project": "ideas/alpha", "num": "001", "ref": "spec-draft/ideas/alpha/001-login", "commit": ["ideas/alpha/specs/001-login/spec.md"], "expect": "pass", "label": "spec:ideas/alpha/001-login"},
+    {"name": "subfolder slug exactly at budget", "project": "ideas/alpha", "num": "001", "ref": "spec-draft/ideas/alpha/001-abcdefghijklmnopqrstuvwxyz123", "commit": ["ideas/alpha/specs/001-abcdefghijklmnopqrstuvwxyz123/spec.md"], "expect": "pass", "label": "spec:ideas/alpha/001-abcdefghijklmnopqrstuvwxyz123"},
+    {"name": "subfolder slug one over budget", "project": "ideas/alpha", "num": "001", "ref": "spec-draft/ideas/alpha/001-abcdefghijklmnopqrstuvwxyz1234", "commit": ["ideas/alpha/specs/001-abcdefghijklmnopqrstuvwxyz1234/spec.md"], "expect": "fail", "names": ["at most 33"]},
+    {"name": "branch without the allocated number", "project": "ideas/alpha", "num": "001", "ref": "spec-draft/ideas/alpha/002-login", "commit": ["ideas/alpha/specs/002-login/spec.md"], "expect": "fail", "names": ["001"]},
+    {"name": "branch in another project", "project": "ideas/alpha", "num": "001", "ref": "spec-draft/ideas/beta/001-login", "commit": ["ideas/alpha/specs/001-login/spec.md"], "expect": "fail", "names": ["spec-draft/ideas/beta/001-login"]},
+    {"name": "commit outside the project folder", "project": "ideas/alpha", "num": "001", "ref": "spec-draft/ideas/alpha/001-login", "commit": ["ideas/alpha/specs/001-login/spec.md", "README.md"], "expect": "fail", "names": ["README.md"]}
   ],
   "created": [
     {"name": "root slug, no budget applies", "project": "", "budget": "", "branch": "001-a-root-slug-that-is-much-longer-than-forty-four-chars", "expect": "pass", "spec_dir": "specs/001-a-root-slug-that-is-much-longer-than-forty-four-chars"},

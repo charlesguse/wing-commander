@@ -2469,7 +2469,7 @@ jobs:
       # Containment (spec 114, FR-021) -- see clarify.yml. The pre-push hook
       # above stops an out-of-folder push; this names any out-of-folder
       # change the agent left unpushed or pushed around the hook
-      # (`--no-verify`), and keeps the rescue below from publishing it.
+      # (`--no-verify`).
       - name: Check agent changes stay inside the project folder
         id: containment
         if: "!cancelled() && steps.agent.outcome != 'skipped' && steps.containment-hook.outputs.pre-agent-sha != ''"
@@ -2484,10 +2484,9 @@ jobs:
       # classify-and-announce's own pre-fold tip (research.md D3 -- read
       # last in that job, immediately before this job starts folding
       # anything, so it demonstrably predates this job's own checkout).
-      # Never publishes a leg whose containment check failed (spec 114).
       - name: Publish stranded commits (post-agent)
         id: publish-stranded
-        if: "!cancelled() && steps.agent.outcome != 'skipped' && steps.containment.outcome != 'failure'"
+        if: "!cancelled() && steps.agent.outcome != 'skipped'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:

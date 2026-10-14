@@ -382,6 +382,9 @@ jobs:
       # 'true' when this gate refused the intake itself (and posted its own
       # callout), so the stalled job does not report a stall on top.
       refused: ${{ (steps.project.outcome == 'failure' || steps.rerun.outputs.existing != '') && 'true' || '' }}
+      # The claim label this gate put on the issue (empty when it claimed
+      # nothing), for the intake job to release.
+      claim-label: ${{ steps.rerun.outputs.claim-label }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -447,6 +450,16 @@ jobs:
       # intake would allocate a second spec for it, possibly in another
       # project. Held inside the per-issue group so a concurrent run on the
       # same issue is serialized behind this one.
+      #
+      # The group alone ends with this job, before the intake job creates the
+      # `spec:` label, so a second intake queued behind it would pass. The
+      # check therefore also claims the issue, inside the group: it reads the
+      # claim label alongside the `spec:` labels and, finding neither, puts
+      # the claim on the issue. The claim label's single home is this step's
+      # `claim-label` output; the intake job's "Release the intake claim"
+      # removes it at its end, when the `spec:` label (if any) has taken over.
+      # It starts with `spec`, a family no routing prefix may overlap
+      # (project-name.sh validate-prefix).
       - name: Check for an existing spec label (routing only)
         id: rerun
         if: steps.lifecycle-gate.outputs.is-open == 'true' && inputs.routing-label-prefix != ''
@@ -454,8 +467,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ inputs.issue-number }}
         run: |
-          existing="$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("spec:"))] | join(", ")')"
+          claim=spec-intake-claimed
+          existing="$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("spec:") or . == "'"$claim"'")] | join(", ")')"
           echo "existing=$existing" >> "$GITHUB_OUTPUT"
+          if [ -z "$existing" ]; then
+            gh label create "$claim" --color EDEDED --description "Wing Commander: an intake is running for this issue" --force >/dev/null
+            gh issue edit "$ISSUE" --add-label "$claim" >/dev/null
+            echo "claim-label=$claim" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Refuse a re-run on an already-specified issue
         if: steps.rerun.outputs.existing != ''
@@ -464,7 +483,7 @@ jobs:
           token: ${{ github.token }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
-          summary: "Intake already ran for this issue — it carries ${{ steps.rerun.outputs.existing }}. Nothing was created."
+          summary: "Intake already ran, or is running, for this issue — it carries ${{ steps.rerun.outputs.existing }}. Nothing was created. If only spec-intake-claimed is listed and no intake run is in progress, a cancelled run left it: remove that label and re-run intake."
 
       - name: Stop after a refused re-run
         if: steps.rerun.outputs.existing != ''
@@ -709,6 +728,35 @@ jobs:
         run: |
           echo "::error::wing-commander intake: the issue's routing label changed while intake was queued (routing gate resolved '$GATE_PROJECT', now '$NOW_PROJECT'). Nothing was created; re-run intake."
           exit 1
+
+      # Label first and the slug budget, in deterministic code (spec 114,
+      # FR-014, FR-021): a pre-push hook in the agent's checkout lets intake
+      # push only <spec-draft-prefix>P/<NNN-slug>, refuses a slug over the
+      # label budget, creates the spec label and puts it on the issue before
+      # the branch reaches the remote, and keeps the push inside the project
+      # folder (_shared/intake-pre-push.sh, copied with the scripts it calls
+      # out of the trusted pipeline checkout). "Resolve created spec" and the
+      # containment check below still run after the agent, for a push made
+      # around the hook (`--no-verify`). Routing on and a subfolder target
+      # only; the root is unchanged (FR-016).
+      - name: Install label-first pre-push hook (subfolder project)
+        id: label-first-hook
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && inputs.routing-label-prefix != '' && steps.num.outputs.project != ''
+        shell: bash
+        env:
+          PREFIX: ${{ inputs.spec-draft-prefix }}
+          PROJECT: ${{ steps.num.outputs.project }}
+          NUM: ${{ steps.num.outputs.num }}
+          ISSUE: ${{ inputs.issue-number }}
+        run: |
+          set -euo pipefail
+          hooks_dir="$RUNNER_TEMP/wing-commander-intake-hooks"
+          shared="$GITHUB_WORKSPACE/.wing-commander-pipeline/.github/actions/_shared"
+          mkdir -p "$hooks_dir"
+          cp "$shared/intake-pre-push.sh" "$shared/project-name.sh" "$shared/containment.sh" "$hooks_dir/"
+          printf '#!/usr/bin/env bash\nexec bash %q %q %q %q %q\n' "$hooks_dir/intake-pre-push.sh" "$PREFIX" "$PROJECT" "$NUM" "$ISSUE" > "$hooks_dir/pre-push"
+          chmod +x "$hooks_dir/pre-push"
+          git config core.hooksPath "$hooks_dir"
 
       # Tie the run back to the issue the moment intake starts, with a link.
       - name: Report run started on issue
@@ -1040,11 +1088,14 @@ jobs:
 
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
-      # along -- see clarify.yml.
+      # along -- see clarify.yml. GH_TOKEN is for the label-first pre-push
+      # hook above, which this push also runs for a subfolder project.
       - name: Publish stranded commits (post-agent)
         id: publish-stranded
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
         continue-on-error: true
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:
           before-sha: ${{ steps.pre-agent.outputs.before-sha }}
@@ -1684,6 +1735,22 @@ jobs:
               {"name": "Fail on invalid agent result", "conclusion": "${{ steps.invalid-result.conclusion }}"},
               {"name": "Fail on unresolved clarification markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"}
             ]
+
+      # Release the routing gate's claim on the issue (spec 114, FR-003,
+      # FR-012) -- see the gate's "Check for an existing spec label". By now
+      # the issue's `spec:` label, if this run created one, carries the
+      # re-run refusal; a run that created none leaves the issue free for a
+      # re-run. always(), not !cancelled(): a cancelled or failed intake must
+      # not strand the claim, and removing one label is no remote rewrite.
+      - name: Release the intake claim
+        if: always() && needs.routing-gate.outputs.claim-label != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ inputs.issue-number }}
+          CLAIM: ${{ needs.routing-gate.outputs.claim-label }}
+        run: gh issue edit "$ISSUE" --remove-label "$CLAIM"
 
   # Survivor job (the #224 idiom, research.md D4): new for intake — this
   # stage has no exhausted-retry loop, so it admits only the abnormal-

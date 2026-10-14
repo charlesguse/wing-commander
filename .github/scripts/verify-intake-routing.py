@@ -49,14 +49,36 @@ CASES = os.path.join(ROOT, ".github", "scripts", "fixtures", "project-intake-rou
 ROOT_COMPAT = os.path.join(ROOT, ".github", "scripts", "fixtures", "project-root-compat", "cases.json")
 INTERFACE = os.path.join(ROOT, ".github", "scripts", "fixtures", "project-root-compat", "interface.json")
 
+# With FAKE_LABEL_STATE set, the issue's labels live in that file (a JSON
+# array of names) and `issue edit --add-label/--remove-label` change them, so
+# several runs can be interleaved against one issue; otherwise `issue view`
+# serves FAKE_LABELS_JSON.
 FAKE_GH = """#!/usr/bin/env bash
 if [ "$1 $2" = "issue view" ]; then
   expr=""
   while [ "$#" -gt 0 ]; do [ "$1" = --jq ] && expr="$2"; shift; done
-  printf '%s' "$FAKE_LABELS_JSON" | jq -r "$expr"
+  if [ -n "${FAKE_LABEL_STATE:-}" ]; then
+    jq -c '{labels: [.[] | {name: .}]}' "$FAKE_LABEL_STATE" | jq -r "$expr"
+  else
+    printf '%s' "$FAKE_LABELS_JSON" | jq -r "$expr"
+  fi
   exit 0
 fi
 if [ "$1 $2" = "issue comment" ]; then echo "$*" >> "$FAKE_GH_LOG"; exit 0; fi
+if [ "$1 $2" = "label create" ]; then echo "label create $3" >> "$FAKE_GH_LOG"; exit 0; fi
+if [ "$1 $2" = "issue edit" ] && [ -n "${FAKE_LABEL_STATE:-}" ]; then
+  shift 3
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --add-label) jq --arg l "$2" '. + [$l] | unique' "$FAKE_LABEL_STATE" > "$FAKE_LABEL_STATE.tmp"; shift 2 ;;
+      --remove-label) jq --arg l "$2" 'map(select(. != $l))' "$FAKE_LABEL_STATE" > "$FAKE_LABEL_STATE.tmp"; shift 2 ;;
+      *) echo "fake gh: unexpected issue edit flag $1" >&2; exit 2 ;;
+    esac
+    mv "$FAKE_LABEL_STATE.tmp" "$FAKE_LABEL_STATE"
+  done
+  echo "issue edit" >> "$FAKE_GH_LOG"
+  exit 0
+fi
 echo "fake gh: unexpected $*" >&2; exit 2
 """
 
@@ -187,11 +209,165 @@ def check_rerun(data, steps, bindir, errors):
     if not any("callout" in str(s.get("uses", "")) for s in gated):
         errors.append("rerun: no lifecycle-issue callout is gated on steps.rerun.outputs.existing")
     for case in data["rerun"]:
-        env = {"GH_TOKEN": "fake", "ISSUE": "7", "FAKE_LABELS_JSON": labels_json(case["labels"])}
-        r, outputs, _ = run_step(rerun["run"], env, ROOT, bindir)
+        with tempfile.TemporaryDirectory() as tmp:
+            state = os.path.join(tmp, "labels.json")
+            with open(state, "w", encoding="utf-8") as fh:
+                json.dump(case["labels"], fh)
+            env = {"GH_TOKEN": "fake", "ISSUE": "7", "FAKE_LABEL_STATE": state}
+            r, outputs, _ = run_step(rerun["run"], env, ROOT, bindir)
         got = output_value(outputs, "existing")
         if r.returncode != 0 or got != case["existing"]:
             errors.append(f"rerun {case['name']!r}: rc={r.returncode} existing={got!r}, want {case['existing']!r}")
+
+
+CLAIM = "spec-intake-claimed"
+
+
+def check_rerun_race(doc, bindir, errors):
+    """FR-003/FR-012 (T060): the refusal is race-safe across the whole intake.
+    The per-issue group ends with the routing-gate job, before the intake job
+    creates the `spec:` label, so the gate claims the issue inside the group.
+    Interleavings run the shipped `rerun` and "Release the intake claim"
+    steps against one stateful issue."""
+    gate = doc["jobs"]["routing-gate"]
+    rerun = step_by_id(gate["steps"], "rerun")
+    if "steps.rerun.outputs.claim-label" not in str(gate.get("outputs", {}).get("claim-label", "")):
+        errors.append("race: the routing gate does not export its claim label as `claim-label`")
+    release = [s for s in doc["jobs"]["intake"]["steps"] if s.get("name") == "Release the intake claim"]
+    if len(release) != 1:
+        errors.append("race: the intake job has no single \"Release the intake claim\" step")
+        return
+    release = release[0]
+    cond = str(release.get("if", ""))
+    if "always()" not in cond or "needs.routing-gate.outputs.claim-label != ''" not in cond:
+        errors.append(f"race: the claim release is not always()-gated on the gate's claim ({cond!r})")
+    if doc["jobs"]["intake"]["steps"][-1] is not release:
+        errors.append("race: the claim release is not the intake job's last step")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        state = os.path.join(tmp, "labels.json")
+
+        def labels(value=None):
+            if value is not None:
+                with open(state, "w", encoding="utf-8") as fh:
+                    json.dump(value, fh)
+            with open(state, encoding="utf-8") as fh:
+                return json.load(fh)
+
+        def gate_run(who):
+            r, outputs, _ = run_step(rerun["run"], {"GH_TOKEN": "fake", "ISSUE": "7", "FAKE_LABEL_STATE": state},
+                                     ROOT, bindir)
+            if r.returncode != 0:
+                errors.append(f"race: {who}'s gate failed rc={r.returncode} {r.stderr!r}")
+            return output_value(outputs, "existing") or "", output_value(outputs, "claim-label") or ""
+
+        def release_run(claim):
+            env = {"GH_TOKEN": "fake", "GH_REPO": "o/r", "ISSUE": "7", "CLAIM": claim, "FAKE_LABEL_STATE": state}
+            r, _, _ = run_step(release["run"], env, ROOT, bindir)
+            if r.returncode != 0:
+                errors.append(f"race: the claim release failed rc={r.returncode} {r.stderr!r}")
+
+        # A passes its gate; B, queued behind A's per-issue group, runs its
+        # gate before A's intake job has created the spec label.
+        labels([])
+        a_existing, a_claim = gate_run("A")
+        if a_existing or a_claim != CLAIM or CLAIM not in labels():
+            errors.append(f"race: the first intake did not claim the issue (existing={a_existing!r}, claim={a_claim!r})")
+        b_existing, b_claim = gate_run("B")
+        if not b_existing or b_claim:
+            errors.append(f"race: a second intake passed between the first's gate and its spec label "
+                          f"(existing={b_existing!r}, claim={b_claim!r})")
+        # A creates its spec label (the label-first hook), then releases.
+        labels(labels() + ["spec:ideas/alpha/001-x"])
+        release_run(a_claim)
+        if CLAIM in labels():
+            errors.append("race: the claim was not released at the end of the intake job")
+        c_existing, _ = gate_run("C")
+        if "spec:ideas/alpha/001-x" not in c_existing:
+            errors.append(f"race: after the first intake finished, a re-run was not refused ({c_existing!r})")
+        # A failed intake that created no spec label leaves the issue free.
+        labels([])
+        _, d_claim = gate_run("D")
+        release_run(d_claim)
+        e_existing, e_claim = gate_run("E")
+        if e_existing or e_claim != CLAIM:
+            errors.append(f"race: a failed intake's released claim still refuses a re-run ({e_existing!r})")
+
+
+def check_label_first_hook(data, doc, bindir, errors):
+    """FR-014 (T061): the spec label exists, and the slug fits its budget,
+    before any branch reaches the remote -- decided by the pre-push hook the
+    shipped `label-first-hook` step installs, driven here by a real
+    `git push` into a bare origin."""
+    steps = doc["jobs"]["intake"]["steps"]
+    hook = step_by_id(steps, "label-first-hook")
+    cond = str(hook.get("if", ""))
+    if "inputs.routing-label-prefix != ''" not in cond or "steps.num.outputs.project != ''" not in cond:
+        errors.append(f"label-first hook: not limited to routing on and a subfolder target ({cond!r})")
+    if steps.index(hook) > steps.index(step_by_id(steps, "agent")):
+        errors.append("label-first hook: installed after the intake agent step")
+    for case in data["label_first_hook"]:
+        tag = f"label-first hook {case['name']!r}"
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = os.path.join(tmp, "ws")
+            origin = os.path.join(tmp, "origin.git")
+            rt = os.path.join(tmp, "rt")
+            os.makedirs(rt)
+            subprocess.run(["git", "init", "-q", "--bare", origin], check=True, capture_output=True)
+            subprocess.run(["git", "init", "-q", "-b", "main", ws], check=True, capture_output=True)
+            os.symlink(ROOT, os.path.join(ws, ".wing-commander-pipeline"))
+
+            def git(*args):
+                return subprocess.run(["git", *args], cwd=ws, capture_output=True, text=True, check=False)
+            for k, v in (("user.email", "g@example.invalid"), ("user.name", "gate"), ("commit.gpgsign", "false")):
+                git("config", k, v)
+            with open(os.path.join(ws, ".git", "info", "exclude"), "a", encoding="utf-8") as fh:
+                fh.write(".wing-commander-pipeline\n")
+            os.makedirs(os.path.join(ws, "ideas", "alpha"))
+            with open(os.path.join(ws, "README.md"), "w", encoding="utf-8") as fh:
+                fh.write("root\n")
+            git("add", "-A")
+            git("commit", "-q", "-m", "base")
+            git("remote", "add", "origin", origin)
+            git("push", "-q", "origin", "main")
+            state = os.path.join(tmp, "labels.json")
+            with open(state, "w", encoding="utf-8") as fh:
+                json.dump([], fh)
+            env = {"PREFIX": "spec-draft/", "PROJECT": case["project"], "NUM": case["num"], "ISSUE": "7",
+                   "RUNNER_TEMP": rt, "GITHUB_WORKSPACE": ws}
+            r, _, _ = run_step(hook["run"], env, ws, bindir)
+            if r.returncode != 0:
+                errors.append(f"{tag}: the install step failed rc={r.returncode} {r.stderr!r}")
+                continue
+            for rel in case["commit"]:
+                path = os.path.join(ws, rel)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "a", encoding="utf-8") as fh:
+                    fh.write("x\n")
+            git("add", "-A")
+            git("commit", "-q", "-m", "spec")
+            push_env = {**os.environ, "PATH": bindir + os.pathsep + os.environ.get("PATH", ""),
+                        "GH_TOKEN": "fake", "FAKE_LABEL_STATE": state, "FAKE_GH_LOG": os.path.join(tmp, "gh.log")}
+            p = subprocess.run(["git", "push", "origin", "HEAD:refs/heads/" + case["ref"]], cwd=ws, env=push_env,
+                               capture_output=True, text=True, check=False)
+            pushed = subprocess.run(["git", "--git-dir", origin, "rev-parse", "--verify", "-q",
+                                     "refs/heads/" + case["ref"]], capture_output=True, text=True,
+                                    check=False).returncode == 0
+            with open(state, encoding="utf-8") as fh:
+                on_issue = json.load(fh)
+        if case["expect"] == "pass":
+            if p.returncode != 0 or not pushed:
+                errors.append(f"{tag}: push refused rc={p.returncode} {p.stderr!r}")
+            if case["label"] not in on_issue:
+                errors.append(f"{tag}: the spec label {case['label']!r} is not on the issue ({on_issue!r})")
+        else:
+            if p.returncode == 0 or pushed:
+                errors.append(f"{tag}: the push went through; no branch may exist")
+            if any(n.startswith("spec:") for n in on_issue):
+                errors.append(f"{tag}: a refused push still labelled the issue ({on_issue!r})")
+            for want in case.get("names", []):
+                if want not in p.stderr:
+                    errors.append(f"{tag}: refusal does not name {want!r} ({p.stderr!r})")
 
 
 def check_label_first(steps, bindir, errors):
@@ -414,7 +590,9 @@ def main():
         doc = intake_doc()
         steps = doc["jobs"]["intake"]["steps"]
         check_rerun(data, doc["jobs"]["routing-gate"]["steps"], bindir, errors)
+        check_rerun_race(doc, bindir, errors)
         check_label_first(steps, bindir, errors)
+        check_label_first_hook(data, doc, bindir, errors)
         check_concurrency(doc, bindir, errors)
         check_root_compat(bindir, errors)
         with tempfile.TemporaryDirectory() as gitbin:
@@ -426,7 +604,7 @@ def main():
         for e in errors:
             print("  " + e)
         return 1
-    counts = ", ".join(f"{len(data[k])} {k}" for k in ("prefix_accept", "prefix_reject", "budget", "label_count", "folder", "rerun", "created"))
+    counts = ", ".join(f"{len(data[k])} {k}" for k in ("prefix_accept", "prefix_reject", "budget", "label_count", "folder", "rerun", "created", "label_first_hook"))
     print(f"verify-intake-routing: OK ({counts})")
     return 0
 
