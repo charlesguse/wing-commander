@@ -90,7 +90,6 @@ INLINE_SPLIT_ALLOWED = {
     ".github/workflows/tasks.yml": 6,             # resolve-spec x3
     ".github/workflows/cleanup.yml": 1,           # select
     ".github/workflows/pr-conversation.yml": 2,   # resolve-identity
-    ".github/workflows/rebase.yml": 2,            # discover's per-branch loop
     ".github/workflows/implement.yml": 1,         # gate-suite-implement-cycle
 }
 for _rel, _n in INLINE_SPLIT_ALLOWED.items():

@@ -376,6 +376,25 @@ jobs:
           [ -n "$db" ] || db="$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)"
           echo "name=$db" >> "$GITHUB_OUTPUT"
 
+      # Every in-flight branch's project and spec dir come from the shared
+      # parser in one batch call, never split inline (spec 114, FR-013).
+      - name: List in-flight branch names
+        id: list
+        env:
+          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+        run: |
+          slugs="$(git ls-remote --heads origin "refs/heads/${SPEC_PREFIX}*" \
+            | jq -Rnc --arg p "refs/heads/$SPEC_PREFIX" '[inputs | split("\t")[1] | select(. != null) | ltrimstr($p)]')"
+          echo "slugs=$slugs" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve in-flight branch names
+        id: names
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identities-json: ${{ steps.list.outputs.slugs }}
+          identity-kind: slug
+          check-folder: 'false'
+
       # Select the eligible branch set.
       - name: Select in-flight branches
         id: select
@@ -385,6 +404,7 @@ jobs:
           DB: ${{ steps.defbranch.outputs.name }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+          NAMES_JSON: ${{ steps.names.outputs.names-json }}
         run: |
           set -uo pipefail
 
@@ -421,18 +441,12 @@ jobs:
           main_sha="$(git rev-parse "refs/remotes/origin/$DB" 2>/dev/null || git rev-parse HEAD)"
 
           err_file="$RUNNER_TEMP/rebase-discover-gh-err.txt"
+          names_json="${NAMES_JSON:-}"
+          [ -n "$names_json" ] || names_json='{}'
           selected='[]'
           while read -r _sha ref; do
             [ -n "${ref:-}" ] || continue
             slug="${ref#refs/heads/"${SPEC_PREFIX}"}"
-            # A subfolder project's branch is <prefix>P/NNN-slug and its spec
-            # lives at P/specs/NNN-slug, recording the project-relative
-            # specs/NNN-slug (spec 114, FR-007/FR-008). Root unchanged.
-            project=""
-            case "$slug" in */*) project="${slug%/*}" ;; esac
-            rel_dir="specs/${slug##*/}"
-            spec_dir="${project:+$project/}$rel_dir"
-            meta_path="$spec_dir/spec-meta.json"
 
             # #95, first filter: a branch whose own PR is already merged is
             # finished, and nothing about it is auto-rebase's business.
@@ -456,6 +470,29 @@ jobs:
               note "$slug" "its pull request (#$merged_pr) is already merged — the spec is complete"
               continue
             fi
+
+            # A subfolder project's branch is <prefix>P/NNN-slug and its spec
+            # lives at P/specs/NNN-slug, recording the project-relative
+            # specs/NNN-slug (spec 114, FR-007/FR-008). Root unchanged. The
+            # names come from "Resolve in-flight branch names"; a name the
+            # parser refused (or a branch pushed since it ran) is null there:
+            # a root name keeps the reading it always had, a P/ name that the
+            # parser refused is excluded rather than read at a guessed path.
+            if names="$(printf '%s' "$names_json" | jq -ce --arg s "$slug" '.[$s] // empty' 2>/dev/null)"; then
+              project="$(printf '%s' "$names" | jq -r '.project')"
+              rel_dir="$(printf '%s' "$names" | jq -r '.spec_dir_rel')"
+            else
+              case "$slug" in
+                */*)
+                  warn "$slug" "the project parser does not read it as a P/NNN-slug lifecycle name"
+                  continue
+                  ;;
+              esac
+              project=""
+              rel_dir="specs/$slug"
+            fi
+            spec_dir="${project:+$project/}$rel_dir"
+            meta_path="$spec_dir/spec-meta.json"
 
             # Read the branch's own spec-meta.json tip.
             if ! meta="$(git show "refs/remotes/origin/${SPEC_PREFIX}$slug:$meta_path" 2>/dev/null)"; then

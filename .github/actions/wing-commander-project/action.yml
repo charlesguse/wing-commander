@@ -6,7 +6,8 @@
 # project from the issue's live routing label; every later stage passes
 # `identity` (any branch, label, slug or spec-dir of the lifecycle) and gets
 # the same (project, slug) pair back from the shared parser, so no stage
-# reads the label again. A routing failure (two routing labels, a path that
+# reads the label again; rebase discover passes `identities-json` and gets
+# every in-flight branch's names in one call. A routing failure (two routing labels, a path that
 # breaks the grammar, a folder that is not a Spec Kit project) fails the
 # step after posting a callout naming the folder on the lifecycle issue.
 #
@@ -45,9 +46,16 @@ inputs:
     required: false
     default: ''
   identity-kind:
-    description: One of branch, label, slug, spec-dir. Used with `identity`.
+    description: One of branch, label, slug, spec-dir. Used with `identity` or `identities-json`.
     required: false
     default: slug
+  identities-json:
+    description: >-
+      A JSON array of names of `identity-kind`, read in one call (rebase
+      discover's in-flight branches). Fills `names-json`; a name the parser
+      refuses maps to null and fails nothing, so the caller decides.
+    required: false
+    default: ''
   token:
     description: Token for reading labels and posting the failure callout.
     required: false
@@ -100,6 +108,12 @@ outputs:
       and trailing blank lines; empty for the root. Splice it onto the end
       of an existing prompt line, never on a line of its own.
     value: ${{ steps.resolve.outputs.prompt-paragraph }}
+  names-json:
+    description: >-
+      identities-json only. A JSON object mapping each name to
+      {project, slug, qualified, spec_dir, spec_dir_rel}, or to null when
+      the parser refuses it.
+    value: ${{ steps.batch.outputs.names-json }}
 runs:
   using: composite
   steps:
@@ -194,6 +208,34 @@ runs:
             echo "prompt-paragraph="
           fi
         } >> "$GITHUB_OUTPUT"
+
+    # Many names in one call (spec 114, FR-013): each through `names`, so a
+    # caller holding a list never splits one by hand.
+    - name: Resolve names (batch)
+      id: batch
+      if: inputs.identities-json != ''
+      shell: bash
+      env:
+        IDENTITIES_JSON: ${{ inputs.identities-json }}
+        IDENTITY_KIND: ${{ inputs.identity-kind }}
+      run: |
+        set -uo pipefail
+        lib="$GITHUB_ACTION_PATH/../_shared/project-name.sh"
+        if ! names="$(printf '%s' "$IDENTITIES_JSON" | jq -r '.[]')"; then
+          echo "::error::wing-commander-project: identities-json is not a JSON array of names"
+          exit 1
+        fi
+        json='{}'
+        while IFS= read -r name; do
+          [ -n "$name" ] || continue
+          if out="$(bash "$lib" names "$IDENTITY_KIND" "$name" 2>/dev/null)"; then
+            entry="$(printf '%s\n' "$out" | jq -Rnc '[inputs | capture("^(?<k>[a-z_]+)=(?<v>.*)$") | {(.k): .v}] | add')"
+          else
+            entry=null
+          fi
+          json="$(printf '%s' "$json" | jq -c --arg n "$name" --argjson e "$entry" '. + {($n): $e}')"
+        done <<< "$names"
+        echo "names-json=$json" >> "$GITHUB_OUTPUT"
 
     # Per-project feature numbering (FR-009, FR-010). The root reproduces the
     # numbers intake allocated before this composite existed.
