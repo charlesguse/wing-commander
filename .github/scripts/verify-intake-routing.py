@@ -280,6 +280,32 @@ def check_rerun_race(doc, bindir, errors):
         errors.append(f"race: the claim release is not always()-gated on the gate's claim ({cond!r})")
     if doc["jobs"]["intake"]["steps"][-1] is not release:
         errors.append("race: the claim release is not the intake job's last step")
+    # MF-23: an intake job that never started (cancelled while pending in its
+    # numbering group) releases the claim from a job of its own.
+    rc_job = doc["jobs"].get("release-claim")
+    if not isinstance(rc_job, dict):
+        errors.append("race: no release-claim job releases the claim when the intake job never runs")
+    else:
+        rc_if = " ".join(str(rc_job.get("if", "")).split())
+        for want in ("always()", "needs.routing-gate.outputs.claim-label != ''",
+                     "needs.intake.result == 'cancelled'", "needs.intake.result == 'skipped'"):
+            if want not in rc_if:
+                errors.append(f"race: release-claim's if: lacks {want!r} ({rc_if!r})")
+        if "concurrency" in rc_job:
+            errors.append("race: release-claim holds a concurrency group, so it can itself be left pending")
+        if not {"routing-gate", "intake"} <= set(rc_job.get("needs") or []):
+            errors.append("race: release-claim does not wait for the routing gate and the intake job")
+        rc_steps = rc_job.get("steps") or []
+        with tempfile.TemporaryDirectory() as tmp:
+            state = os.path.join(tmp, "labels.json")
+            with open(state, "w", encoding="utf-8") as fh:
+                json.dump([CLAIM], fh)
+            env = {"GH_TOKEN": "fake", "GH_REPO": "o/r", "ISSUE": "7", "CLAIM": CLAIM, "FAKE_LABEL_STATE": state}
+            for s in rc_steps:
+                run_step(s.get("run", ""), env, ROOT, bindir)
+            with open(state, encoding="utf-8") as fh:
+                if CLAIM in json.load(fh):
+                    errors.append("race: release-claim's steps did not remove the claim label")
 
     with tempfile.TemporaryDirectory() as tmp:
         state = os.path.join(tmp, "labels.json")

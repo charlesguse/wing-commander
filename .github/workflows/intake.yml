@@ -1812,6 +1812,45 @@ jobs:
           CLAIM: ${{ needs.routing-gate.outputs.claim-label }}
         run: gh issue edit "$ISSUE" --remove-label "$CLAIM"
 
+  # The same release for an intake job that never reached its own last step
+  # (spec 114, FR-003, FR-012): an intake still pending in its numbering
+  # group when the run is cancelled, or superseded there, never starts, so
+  # "Release the intake claim" above never runs and the claim would refuse
+  # every later intake. always(), with no concurrency group, so this job is
+  # never itself the one left pending. A run whose intake job ran released
+  # the claim there.
+  release-claim:
+    needs: [verify-image-prerequisites, routing-gate, intake]
+    if: always() && needs.verify-image-prerequisites.result != 'failure' && needs.routing-gate.outputs.claim-label != '' && (needs.intake.result == 'cancelled' || needs.intake.result == 'skipped')
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    permissions:
+      issues: write
+    steps:
+      - name: Release the intake claim (intake job never ran)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ inputs.issue-number }}
+          CLAIM: ${{ needs.routing-gate.outputs.claim-label }}
+        run: gh issue edit "$ISSUE" --remove-label "$CLAIM"
+
   # Survivor job (the #224 idiom, research.md D4): new for intake — this
   # stage has no exhausted-retry loop, so it admits only the abnormal-
   # termination arm. Split internally on refusal-reason == '' (D3's
