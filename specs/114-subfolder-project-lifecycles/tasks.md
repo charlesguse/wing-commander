@@ -219,3 +219,7 @@ Source: maintainer comment on PR #1022, asking implement to continue the in-scop
 ## Phase 10: Convergence
 
 - [X] T064 Make `.github/actions/wing-commander-publish-stranded-commits` take the lifecycle's project and refuse to push stranded commits that touch any path outside it (through `_shared/containment.sh`), wiring the project into every stage's "Publish stranded commits (post-agent)" call, so a failed containment check can no longer be published by the rescue that runs after it on `!cancelled()`; cover it in `verify-subfolder-containment.py` or Gate 123 per FR-021 (partial)
+
+## Phase 11: Convergence
+
+- [ ] T065 Make intake's "Publish stranded commits (post-agent)" rescue in `.github/workflows/intake.yml` honour the label-first rule for a subfolder project: `wc_harden_git_env` sets `core.hooksPath=/dev/null`, so the label-first pre-push hook (`_shared/intake-pre-push.sh`) never runs on that push, and a branch the agent could not push itself reaches the remote with no slug-budget check and no `spec:P/<NNN-slug>` label created first; run the same deterministic check-and-create (or refuse the rescue) before it pushes, and cover the rescue path in Gate 162 per FR-014 (partial)
