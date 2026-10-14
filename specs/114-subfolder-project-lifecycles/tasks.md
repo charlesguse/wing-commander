@@ -227,3 +227,47 @@ Source: maintainer comment on PR #1022, asking implement to continue the in-scop
 ## Phase 12: Convergence
 
 - [ ] T066 Replace the inline name splitting in `.github/actions/wing-commander-inspected-run-identity/action.yml` (head-branch prefix and `-iterN` stripping, metrics-record `[P/]specs/` to slug, slug to spec dir), `.github/workflows/watchdog.yml`'s spec-collision collector (`own_project="${SLUG%/*}"`) and `.github/workflows/rebase.yml`'s discover step (`project="${slug%/*}"`) with `_shared/project-name.sh parse`, so the watchdog and fold-cycle guard identify project and lifecycle through the one shared parser, and extend `verify-project-single-home.py` with a reject fixture for an inline project split per FR-013 (partial)
+
+
+## Maintainer Feedback: Code review of #1022 at `87ae553`
+
+Source: maintainer comment on PR #1022 (five fresh-session reviewers plus an adversarial verification pass). Fix in the order below. Lint is currently red on Gate 12 and Gate 60.
+
+### Blocker
+
+- [ ] MF-01 [Review #1] In `wing-commander-containment/action.yml` (~:45), exclude only the root trusted checkout from the untracked listing with the anchored pathspec `-- ':/' ':(exclude,top).wing-commander-pipeline'`. Do not use an unanchored `--exclude`. Leave both `git diff` legs unfiltered so a committed gitlink is still flagged
+- [ ] MF-02 [Review #1] Append `/.wing-commander-pipeline/` to `.git/info/exclude` after the consumer checkout (closes #1030)
+- [ ] MF-03 [Review #1] Gate 160 case: an untracked nested git repo at `.wing-commander-pipeline/` plus a change only inside `P` must pass
+
+### Major
+
+- [ ] MF-04 [Review #2, Gate 12, FR-014] Make `_shared/intake-pre-push.sh` validate only (ref shape, allocated number, slug budget, containment) and record the validated slug under `$RUNNER_TEMP`. Remove its `gh` calls (~:65, ~:67)
+- [ ] MF-05 [Review #2, FR-014] Move `spec:P/<slug>` label creation, the issue label add and the hardened push into a deterministic post-agent intake step (or `wing-commander-publish-stranded-commits` via its `label-first-*` inputs) under a declared token
+- [ ] MF-06 [Review #2, FR-014] For routed intake, deny `Bash(git push --no-verify:*)` and `Bash(git push -n:*)`
+- [ ] MF-07 [Review #3, Gate 60] Add `install-pre-push` mode (copy helpers from `$GITHUB_ACTION_PATH/../_shared`, write the hook, set `core.hooksPath`) and `filter` mode (rebase manifest) to `wing-commander-containment`
+- [ ] MF-08 [Review #3, Gate 60] Route `pr-conversation.yml` (~:2225), `rebase.yml` (~:1022) and `intake.yml` (~:754-756) through those modes, and widen Gate 60 to catch the `shared=` variable indirection
+- [ ] MF-09 [Review #4] Add `--no-renames` to both diff legs. Add reject fixtures for a committed move into `P`, a staged move into `P`, and a delete outside `P` paired with a near-identical add inside `P`
+- [ ] MF-10 [Review #5] Install the containment pre-push hook (MF-07) before clarify, plan (auto/pr), tasks (auto/pr), implement (cycle/retry) and finalize agents
+- [ ] MF-11 [Review #5] Make the post-agent guard also diff from `git merge-base origin/<default-branch> HEAD`, so an earlier pushed violation is caught after a restart
+- [ ] MF-12 [Review #6, FR-006] Add a deterministic project paragraph (like intake's) to the clarify, plan, tasks, implement, finalize and pr-conversation act prompts, pointing reads at `P/.specify/memory/constitution.md`, `P/.specify/extensions.yml` and `P/.claude/skills/<name>/SKILL.md`. Gate that every project-wired prompt carries it
+- [ ] MF-13 [Review #7, FR-023] Add a `findings-label-prefix` input to `wing-commander-project`, pass it from intake, and drive Gate 162 through that input with a `found-by:` reject case
+- [ ] MF-14 [Review #8, FR-005] Resolve the project first and pass `project:` to the preflights in `clarify.yml` (~:425) and pr-conversation (~:603, ~:1857). Gate that every `require-speckit: "true"` preflight in a project-wired job passes `project:`
+- [ ] MF-15 [Review #9, FR-007] Make the classifier in `wing-commander-stage-findings/action.yml` (~:252) recognise `P/specs/NNN-...` and `P/specs/*/contracts/`, with fixtures
+- [ ] MF-16 [Review #10] Expose the exact branch from 'Resolve created spec' and find the spec PR with `gh pr list --head "$BRANCH"` instead of the `$SPEC_DRAFT_PREFIX$NUM-` match (`intake.yml` ~:1607). Add a gate case
+
+### Minor
+
+- [ ] MF-17 [Review #11] In `containment.sh` (~:51) use `git log --format= --name-only --no-renames -c ...` so merge commits are checked. Add an evil-merge fixture
+- [ ] MF-18 [Review #12] Subtract `Bash(gh api:*)` in `wing-commander-tool-args` for non-empty project on pr-conversation act, re-granting only needed endpoints. If not feasible, record it as an accepted gap in `contracts/containment-and-trusted-checkout.md`
+- [ ] MF-19 [Review #13] `check-folder`: test `.specify/memory`, `.specify/scripts` and each `SKILL.md` for symlinks. Add fixtures for a symlinked memory dir, skills dir and skill file
+- [ ] MF-20 [Review #14] Routing must refuse instead of falling back to the root: bare routing label (`node:`), failed `gh issue view`, leading `/` or `//`. Strip `-iterN` only for implement branches. Add fixtures for each
+- [ ] MF-21 [Review #15, T066] Replace every remaining inline project/slug split (incl. `read-spec-meta.sh`, plan, tasks, rebase) with `project-name.sh parse`. Anchor rebase's `ls-remote` to `refs/heads/${SPEC_PREFIX}`
+- [ ] MF-22 [Review #16] Add the stale-folder re-check after checkout in pr-conversation act and act.fold, rebase and cleanup
+- [ ] MF-23 [Review #17] Add a `release-claim` job (`if: always()`, no concurrency group) so `spec-intake-claimed` is released when a pending intake is cancelled
+- [ ] MF-24 [Review #18, FR-016] Restore root byte-identity: drop the added blank lines around `routing-notes` in the root intake prompt, and add `name: rebase (${{ matrix.slug }}, ${{ matrix.spec_dir }}, ${{ matrix.issue }})` to the rebase matrix
+- [ ] MF-25 [Review #19] Widen Gate 159's root-spec-dir pattern beyond slug-named variables and normalise Windows path separators
+- [ ] MF-26 [Review #20] In `docs/adoption.md`, list every rejected overlap family: `spec:`, `stage:`, `model:`, `board:`, `disposition:`, the findings prefix, `route-out-of-boundary`, `spec-request`, `spec-proposal`
+
+### Then
+
+- [ ] MF-27 Run T037, T049 and T058, and keep `python .github/scripts/run-local-gates.py` green (T056 is tracked separately in #1032)
