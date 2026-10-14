@@ -4657,6 +4657,9 @@ jobs:
       - name: Gate 161 — pipeline-checkout grants stay workspace-rooted under a project folder
         if: "!cancelled()"
         run: python3 .github/scripts/verify-pipeline-checkout-containment.py
+      - name: Gate 162 — intake routing (prefix, label count, folder, re-run refusal, slug budget)
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-intake-routing.py
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
