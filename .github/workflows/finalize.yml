@@ -558,6 +558,9 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
+          # The project-relative spec_dir the record carries, from the shared
+          # parser (wing-commander-project); the root's is its spec dir.
+          SPEC_DIR_REL: ${{ steps.project.outputs.spec-dir-rel || steps.spec.outputs.spec-dir }}
           ISSUE: ${{ inputs.issue-number }}
         run: |
           for f in spec.md plan.md tasks.md spec-meta.json; do
@@ -572,7 +575,7 @@ jobs:
           done
           meta_issue=$(jq -r '.issue // empty' "$SPEC_DIR/spec-meta.json")
           meta_dir=$(jq -r '.spec_dir // empty' "$SPEC_DIR/spec-meta.json")
-          if [ "$meta_issue" != "$ISSUE" ] || [ "$meta_dir" != "specs/${SPEC_DIR##*/}" ]; then
+          if [ "$meta_issue" != "$ISSUE" ] || [ "$meta_dir" != "$SPEC_DIR_REL" ]; then
             msg="wing-commander finalize stage: spec-meta.json (issue=$meta_issue, spec_dir=$meta_dir) does not match the dispatch inputs (issue=$ISSUE, spec_dir=$SPEC_DIR) — refusing."
             echo "::error::$msg"
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"

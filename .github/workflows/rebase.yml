@@ -558,7 +558,9 @@ jobs:
             selected="$(printf '%s' "$selected" | jq -c \
               --arg slug "$slug" --arg dir "$spec_dir" --arg issue "$issue" --arg project "$project" \
               '. + [{slug: $slug, spec_dir: $dir, issue: $issue, project: $project, artifact_key: ($slug | gsub("/"; "__"))}]')"
-          done < <(git ls-remote --heads origin "${SPEC_PREFIX}*")
+          # Anchored: a bare "${SPEC_PREFIX}*" pattern also matches any ref
+          # merely ending in it (refs/heads/x/spec/...).
+          done < <(git ls-remote --heads origin "refs/heads/${SPEC_PREFIX}*")
 
           # An empty array is a valid, successful output.
           echo "branches=$selected" >> "$GITHUB_OUTPUT"
@@ -698,6 +700,22 @@ jobs:
           p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
           if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
           git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
+      # Subfolder lifecycle only (spec 114): the project-relative spec_dir
+      # the abandon arm checks the record against, from the shared parser
+      # (FR-013), and the stale-folder check (T036) on the spec branch just
+      # checked out -- the recorded folder must still be a Spec Kit project
+      # there, or the leg stops naming it. A root leg's spec_dir is already
+      # project-relative.
+      - name: Resolve spec names and check the project folder
+        id: names
+        if: matrix.project != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ matrix.slug }}
+          identity-kind: slug
+          issue-number: ${{ matrix.issue }}
+          token: ${{ steps.ctx.outputs.token }}
 
       # Fetch ONLY the default branch (never a bare `git fetch origin`, which
       # would refresh the branch's own remote-tracking ref and silently defeat
@@ -1203,6 +1221,7 @@ jobs:
         env:
           SLUG: ${{ matrix.slug }}
           SPEC_DIR: ${{ matrix.spec_dir }}
+          SPEC_DIR_REL: ${{ matrix.project != '' && steps.names.outputs.spec-dir-rel || matrix.spec_dir }}
           BEFORE: ${{ steps.attempt.outputs.before }}
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
@@ -1228,7 +1247,7 @@ jobs:
           issue="$(printf '%s' "$meta" | jq -r '.issue // empty' 2>/dev/null || true)"
           meta_dir="$(printf '%s' "$meta" | jq -r '.spec_dir // empty' 2>/dev/null || true)"
 
-          if [ -z "$issue" ] || [ "$meta_dir" != "specs/${spec_dir##*/}" ]; then
+          if [ -z "$issue" ] || [ -z "$SPEC_DIR_REL" ] || [ "$meta_dir" != "$SPEC_DIR_REL" ]; then
             echo "::warning::${SPEC_PREFIX}$SLUG: cannot resolve a trustworthy lifecycle issue from $spec_dir/spec-meta.json — recording the abandonment here only, taking no action on the issue."
             echo "${SPEC_PREFIX}$SLUG: abandoned; lifecycle issue could not be identified, so no comment/label was posted." >> "$GITHUB_STEP_SUMMARY"
             exit 0

@@ -1,0 +1,1 @@
+          path: specs/${{ inputs.feature }}/spec.md

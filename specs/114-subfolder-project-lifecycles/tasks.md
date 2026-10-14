@@ -265,7 +265,7 @@ Source: maintainer comment on PR #1022 (five fresh-session reviewers plus an adv
 - [ ] MF-22 [Review #16] Add the stale-folder re-check after checkout in pr-conversation act and act.fold, rebase and cleanup
 - [X] MF-23 [Review #17] Add a `release-claim` job (`if: always()`, no concurrency group) so `spec-intake-claimed` is released when a pending intake is cancelled
 - [X] MF-24 [Review #18, FR-016] Restore root byte-identity: drop the added blank lines around `routing-notes` in the root intake prompt, and add `name: rebase (${{ matrix.slug }}, ${{ matrix.spec_dir }}, ${{ matrix.issue }})` to the rebase matrix
-- [ ] MF-25 [Review #19] Widen Gate 159's root-spec-dir pattern beyond slug-named variables and normalise Windows path separators
+- [X] MF-25 [Review #19] Widen Gate 159's root-spec-dir pattern beyond slug-named variables and normalise Windows path separators
 - [X] MF-26 [Review #20] In `docs/adoption.md`, list every rejected overlap family: `spec:`, `stage:`, `model:`, `board:`, `disposition:`, the findings prefix, `route-out-of-boundary`, `spec-request`, `spec-proposal`
 
 ### Then

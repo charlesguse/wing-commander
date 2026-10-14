@@ -52,14 +52,27 @@ SPEC_DIR="${3:-}"
 # directory "<P>/specs/<NNN-slug>" (spec 114). The file is located at that
 # repository-relative path, but the record is portable by copy (FR-008): the
 # spec_dir it carries is project-relative, exactly "specs/<NNN-slug>", so the
-# identity check compares against that tail, never against the project path.
-if [ -z "$SPEC_DIR" ]; then
+# identity check compares against that, never against the project path. A
+# project name is read by the one parser (project-name.sh), and one it cannot
+# read has no record here; a root name (no `/`) is taken as it always was.
+lib="$(dirname "$0")/project-name.sh"
+# kv KEY TEXT -> the value of `KEY=` in TEXT.
+kv() { printf '%s\n' "$2" | sed -n "s/^$1=//p"; }
+if [ -z "$SPEC_DIR" ] && [ -n "$SLUG" ]; then
   case "$SLUG" in
-    */*) SPEC_DIR="${SLUG%/*}/specs/${SLUG##*/}" ;;
-    *) SPEC_DIR="specs/$SLUG" ;;
+    */*) if parsed="$(bash "$lib" parse slug "$SLUG" 2>/dev/null)"; then
+           SPEC_DIR="$(bash "$lib" spec-dir "$(kv project "$parsed")" "$(kv slug "$parsed")")"
+         fi ;;
+    *) SPEC_DIR="$(bash "$lib" spec-dir "" "$SLUG")" ;;
   esac
 fi
-EXPECTED_SPEC_DIR="specs/${SPEC_DIR##*/}"
+EXPECTED_SPEC_DIR=""
+case "$SPEC_DIR" in
+  specs/*) EXPECTED_SPEC_DIR="$SPEC_DIR" ;;
+  *) if parsed="$(bash "$lib" parse spec-dir "$SPEC_DIR" 2>/dev/null)"; then
+       EXPECTED_SPEC_DIR="$(bash "$lib" spec-dir "" "$(kv slug "$parsed")")"
+     fi ;;
+esac
 
 meta_fetch_ok=false
 meta_found=false
@@ -74,7 +87,7 @@ field() { printf '%s' "$1" | jq -r "$2" 2>/dev/null || true; }
 # only VALUE ERE     -> VALUE when it matches the whole-line pattern, else empty.
 only() { printf '%s' "$1" | grep -E "$2" || true; }
 
-if [ -n "$SLUG" ]; then
+if [ -n "$SLUG" ] && [ -n "$SPEC_DIR" ]; then
   branch="${SPEC_PREFIX}${SLUG}"
   if git fetch --no-tags --quiet origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" 2>/dev/null; then
     meta_fetch_ok=true

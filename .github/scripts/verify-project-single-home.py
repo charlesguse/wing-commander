@@ -34,7 +34,9 @@ FIXTURES = os.path.join(ROOT, ".github", "scripts", "fixtures", "project-single-
 HOME = ".github/actions/_shared/project-name.sh"
 
 PATTERNS = {
-    "root-spec-dir": re.compile(r"""(?:^|[\s"'(=])specs/\$\{?\{?\s*\w*(?:slug|SLUG)\w*"""),
+    # Any variable or expression right after a bare `specs/` -- `$feature`,
+    # `${name}`, `${{ inputs.x }}` -- not only one named like a slug.
+    "root-spec-dir": re.compile(r"""(?:^|[\s"'(=])specs/\$(?:\{\{\s*|\{)?[A-Za-z_]"""),
     "root-specify": re.compile(r"""(?:^|[\s"'(=])\.specify/"""),
     "root-specs-scan": re.compile(r"\b(?:ls|find)\s+(?:-\w+\s+)*specs/"),
     "root-skill-path": re.compile(r"""(?:^|[\s"'(=])\.claude/skills/speckit-"""),
@@ -42,7 +44,6 @@ PATTERNS = {
 
 # file -> {pattern: hits allowed}. A hit is a documented root branch.
 ALLOWED = {
-    ".github/actions/_shared/read-spec-meta.sh": {"root-spec-dir": 1},
     # spec-dir-rel is project-relative by definition.
     ".github/actions/wing-commander-project/action.yml": {"root-spec-dir": 1},
     ".github/actions/wing-commander-inspected-run-identity/action.yml": {"root-spec-dir": 1},
@@ -76,6 +77,8 @@ def scan(text):
     for line in text.splitlines():
         if line.lstrip().startswith("#"):
             continue
+        # A Windows separator (`specs\$slug`, `.specify\`) is the same path.
+        line = line.replace("\\\\", "/").replace("\\", "/")
         for name, rx in PATTERNS.items():
             if rx.search(line):
                 counts[name] += 1
@@ -116,7 +119,8 @@ def main():
             if hits:
                 errors.append(f"fixture accept.txt wrongly flagged: {sorted(hits)}")
         elif fname.startswith("reject-"):
-            name = fname[len("reject-"):].rsplit(".", 1)[0]
+            # reject-<pattern>[--<variant>].txt
+            name = fname[len("reject-"):].rsplit(".", 1)[0].split("--", 1)[0]
             if name not in hits:
                 errors.append(f"fixture {fname} was not caught as {name}")
             caught |= hits

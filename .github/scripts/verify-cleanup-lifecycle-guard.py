@@ -415,7 +415,9 @@ def run_guard(guard, root, meta, labelled, lookup_rc="0"):
 
     rc, out, outputs, summary = run_step(
         BASH, guard, work,
-        {"GH_TOKEN": "x", "SPEC_DIR": SPEC_DIR, "SLUG": SLUG,
+        # A root lifecycle: its project-relative spec dir (the names step's
+        # spec-dir-rel) is its spec dir.
+        {"GH_TOKEN": "x", "SPEC_DIR": SPEC_DIR, "SPEC_DIR_REL": SPEC_DIR, "SLUG": SLUG,
          "PR_NUMBER": PR_NUMBER, "GITHUB_REPOSITORY": REPO,
          "GH_CALLS": calls, "GH_ISSUE_LIST": labelled,
          "GH_ISSUE_LIST_RC": lookup_rc,
@@ -571,8 +573,8 @@ def scenarios(guard, root):
 def _mut_recombine_the_two_tests(guard):
     """The shipped defect: one condition, one message for both faults."""
     return guard.replace(
-        'if [ -z "$meta_dir" ] || [ "$meta_dir" != "specs/${SPEC_DIR##*/}" ]; then',
-        'if [ -z "$issue" ] || [ -z "$meta_dir" ] || [ "$meta_dir" != "specs/${SPEC_DIR##*/}" ]; then')
+        'if [ -z "$meta_dir" ] || [ "$meta_dir" != "$SPEC_DIR_REL" ]; then',
+        'if [ -z "$issue" ] || [ -z "$meta_dir" ] || [ "$meta_dir" != "$SPEC_DIR_REL" ]; then')
 
 
 def _mut_drop_the_fallback(guard):
