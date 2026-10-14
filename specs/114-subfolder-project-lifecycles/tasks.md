@@ -347,3 +347,51 @@ Source: maintainer issue-comment on PR #1022 (round-4 review). CI is green and a
 
 - [X] MF-58 [R4 #2, contract] In `specs/114-subfolder-project-lifecycles/contracts/containment-and-trusted-checkout.md`, add to "Accepted residual gaps" (~:50-56), citing spec 095 FR-008: a subfolder agent can use the granted `git log/diff --output=<path>` to write its own step's `$GITHUB_ENV` and `$GITHUB_PATH` files under `$RUNNER_TEMP/_runner_file_commands`. A `BASH_ENV`, `PATH` or `LD_PRELOAD` set that way reaches every later step in the job, including the re-checkout, the check and the publish push. Qualify :37 so the re-checkout's guarantee covers only the composite files it restores. This is doc-only unless a cheap, contained mitigation exists.
 - [ ] MF-59 After each cycle, keep `python .github/scripts/run-local-gates.py` green and keep root behaviour byte-identical (FR-016). (PR #1022)
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Containment path checks lack -z, quoted paths false-fail
+
+  containment.sh feeds git diff/ls-files/log --name-only output without -z or core.quotepath=off into outside(), so non-ASCII or special-character filenames inside P are reported as outside P and the stage/push fails closed.
+
+  - .github/actions/_shared/containment.sh
+
+  Detail: Fix with -z or -c core.quotepath=off at all call sites.
+
+- [ ] Review finding: git push --no-verify deny is trivially bypassable
+
+  Deny rule Bash(git push --no-verify:*) matches only when the flag directly follows push, so 'git push origin HEAD --no-verify' or -c core.hooksPath skips the pre-push containment hook.
+
+  - .github/actions/wing-commander-tool-args/action.yml
+
+- [ ] Review finding: Blanket gh api deny cannot be reopened and blocks reads
+
+  PROJECT_API_DENY (Bash(gh api:*)) is appended after override and extra-allowed composition for subfolder lifecycles, blocking legitimate read-only gh api use and any adopter grant; a write-method-specific deny would satisfy FR-021.
+
+  - .github/actions/wing-commander-tool-args/action.yml
+
+- [ ] Review finding: Containment composite repeats unquoted path listing
+
+  wing-commander-containment lists changed paths without -z; quoted names yield false outside-paths hits and a misleading step summary.
+
+  - .github/actions/wing-commander-containment/action.yml
+
+- [ ] Review finding: Subfolder spec-PR step in intake.yml lacks guards and retry
+
+  The 'Open the spec PR (subfolder project)' step omits the is-open and agent-outcome guards its siblings have and is non-idempotent; a gh pr create failure after the label and branch are published strands the issue with no PR and blocks later intakes.
+
+  - .github/workflows/intake.yml
+
+- [ ] Review finding: Stale gate-range comment in lint-workflows.yml
+
+  Header comment says Gates 157-158 but the block wires Gates 157-164; gates 159-164 are undocumented in a comment that gates treat as load-bearing.
+
+  - .github/workflows/lint-workflows.yml
+
+- [ ] Review finding: parse branch -iterN stripping depends on prefix equality check
+
+  project-name.sh strips -iterN only if IMPL_PREFIX+rest equals name, which is stricter than the old unconditional strip and may leave -iterN in the slug when prefixes overlap.
+
+  - .github/actions/_shared/project-name.sh
+
+  Detail: Lower confidence; depends on overlapping prefix configuration.
