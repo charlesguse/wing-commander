@@ -1,0 +1,29 @@
+{
+  "env": {"FINDINGS_LABEL_PREFIX": "wing-commander-findings:"},
+  "prefix_accept": ["node:", "project:", "area-1:"],
+  "prefix_reject": [
+    "node",
+    "Node:",
+    ":",
+    "no de:",
+    "spec:",
+    "spec-x:",
+    "sp:",
+    "stage:",
+    "model:",
+    "board:",
+    "disposition:",
+    "findings:",
+    "route:",
+    "route-out-of-boundary:",
+    "spec-request:",
+    "spec-proposal:",
+    "wing-commander-findings:",
+    "this-prefix-is-far-too-long-to-fit:"
+  ],
+  "budget": [
+    {"project": "", "budget": 44},
+    {"project": "ideas/alpha", "budget": 33},
+    {"project": "a", "budget": 43}
+  ]
+}
