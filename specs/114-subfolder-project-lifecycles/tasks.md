@@ -223,3 +223,7 @@ Source: maintainer comment on PR #1022, asking implement to continue the in-scop
 ## Phase 11: Convergence
 
 - [X] T065 Make intake's "Publish stranded commits (post-agent)" rescue in `.github/workflows/intake.yml` honour the label-first rule for a subfolder project: `wc_harden_git_env` sets `core.hooksPath=/dev/null`, so the label-first pre-push hook (`_shared/intake-pre-push.sh`) never runs on that push, and a branch the agent could not push itself reaches the remote with no slug-budget check and no `spec:P/<NNN-slug>` label created first; run the same deterministic check-and-create (or refuse the rescue) before it pushes, and cover the rescue path in Gate 162 per FR-014 (partial)
+
+## Phase 12: Convergence
+
+- [ ] T066 Replace the inline name splitting in `.github/actions/wing-commander-inspected-run-identity/action.yml` (head-branch prefix and `-iterN` stripping, metrics-record `[P/]specs/` to slug, slug to spec dir), `.github/workflows/watchdog.yml`'s spec-collision collector (`own_project="${SLUG%/*}"`) and `.github/workflows/rebase.yml`'s discover step (`project="${slug%/*}"`) with `_shared/project-name.sh parse`, so the watchdog and fold-cycle guard identify project and lifecycle through the one shared parser, and extend `verify-project-single-home.py` with a reject fixture for an inline project split per FR-013 (partial)
