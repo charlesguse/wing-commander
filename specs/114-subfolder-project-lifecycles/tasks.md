@@ -18,9 +18,9 @@
 **Purpose**: Resolve the three assumptions research.md marks for early verification.
 
 - [ ] T001 Verify whether `anthropics/claude-code-action` honours a step `working-directory`, and which parent `CLAUDE.md`/settings files it loads from a subfolder; record the result in `specs/114-subfolder-project-lifecycles/research.md` D9 (decides working-directory vs Spec Kit project-root override)
-- [ ] T002 [P] Read `.github/workflows/intake.yml` (allocate-number, label-creation and branch-push steps) and record the exact insertion point for label-first creation (research D7)
-- [ ] T003 [P] Confirm `issue-number` is usable in a reusable workflow's job-level `concurrency.group` expression in `.github/workflows/intake.yml` (research D8)
-- [ ] T004 [P] Inventory every `claude-code-action` step holding `Edit`/`Write` and every root-only pattern (`specs/` scans, `.specify/`, constitution, `.claude/skills/speckit-*`, `.wing-commander-pipeline/`) across `.github/workflows/*.yml` and `.github/actions/**`; list them in `specs/114-subfolder-project-lifecycles/research.md`
+- [X] T002 [P] Read `.github/workflows/intake.yml` (allocate-number, label-creation and branch-push steps) and record the exact insertion point for label-first creation (research D7)
+- [X] T003 [P] Confirm `issue-number` is usable in a reusable workflow's job-level `concurrency.group` expression in `.github/workflows/intake.yml` (research D8)
+- [X] T004 [P] Inventory every `claude-code-action` step holding `Edit`/`Write` and every root-only pattern (`specs/` scans, `.specify/`, constitution, `.claude/skills/speckit-*`, `.wing-commander-pipeline/`) across `.github/workflows/*.yml` and `.github/actions/**`; list them in `specs/114-subfolder-project-lifecycles/research.md`
 
 ---
 
@@ -63,10 +63,10 @@
 
 ### Implementation for User Story 1
 
-- [ ] T022 [US1] Add optional input `routing-label-prefix` (default `''`) to `.github/workflows/intake.yml`; add a deterministic step that validates the prefix (`project-name.sh validate-prefix`), reads live labels via `gh issue view <issue-number> --json labels`, counts `node:` labels, and invokes `wing-commander-project`; two or more labels refuse with a lifecycle-issue callout and create nothing (FR-001, FR-023). Skipped entirely when the prefix is empty
-- [ ] T023 [US1] In `.github/workflows/intake.yml` add the re-run refusal (issue already has any `spec:` label, routing on only) per `contracts/routing-and-intake.md`
-- [ ] T024 [US1] In `.github/workflows/intake.yml` compute the slug budget deterministically and pass it to the intake agent prompt; after the agent writes, check the slug against the budget; create the `spec:P/<NNN-slug>` label before the first branch push; fail loudly on overflow (routing on and `P` non-empty only) (FR-014, D7)
-- [ ] T025 [US1] Make `.github/workflows/intake.yml` create the spec-draft branch `<prefix>P/<NNN-slug>` and write `spec-meta.json` with project-relative `spec_dir`, real `spec_branch`; emit the repository-relative `spec-dir` output (root unchanged)
+- [X] T022 [US1] Add optional input `routing-label-prefix` (default `''`) to `.github/workflows/intake.yml`; add a deterministic step that validates the prefix (`project-name.sh validate-prefix`), reads live labels via `gh issue view <issue-number> --json labels`, counts `node:` labels, and invokes `wing-commander-project`; two or more labels refuse with a lifecycle-issue callout and create nothing (FR-001, FR-023). Skipped entirely when the prefix is empty
+- [X] T023 [US1] In `.github/workflows/intake.yml` add the re-run refusal (issue already has any `spec:` label, routing on only) per `contracts/routing-and-intake.md`
+- [X] T024 [US1] In `.github/workflows/intake.yml` compute the slug budget deterministically and pass it to the intake agent prompt; after the agent writes, check the slug against the budget; create the `spec:P/<NNN-slug>` label before the first branch push; fail loudly on overflow (routing on and `P` non-empty only) (FR-014, D7)
+- [X] T025 [US1] Make `.github/workflows/intake.yml` create the spec-draft branch `<prefix>P/<NNN-slug>` and write `spec-meta.json` with project-relative `spec_dir`, real `spec_branch`; emit the repository-relative `spec-dir` output (root unchanged)
 - [ ] T026 [US1] Extend `.github/actions/wing-commander-tool-args/` to derive the project-aware denies (root `.claude/**`, `.git/**`, each proper ancestor `E/.claude/**`, `P/.claude/**`, `P/**/.claude/**`) into the single `no-write-paths` definition, and make all trusted-checkout and repository-tooling grants absolute under `${GITHUB_WORKSPACE}` (FR-022, FR-025, D10, D11)
 - [ ] T027 [P] [US1] Create composite `.github/actions/wing-commander-containment/action.yml`: given the pre-agent SHA and `P`, fail the stage with a callout listing any changed path (committed or working tree) outside `P/`; skip for root lifecycles (FR-021)
 - [ ] T028 [US1] Add the pipeline-checkout guard check that refuses a branch tracking `**/.wing-commander-pipeline/**` at any depth (`git ls-files`); locate the guard via `grep -rn pipeline-checkout .github/` (FR-025)
@@ -91,7 +91,7 @@
 **Independent Test**: Two projects both producing `001-login` have distinct branches, labels and groups, run in parallel, and each run is attributed to the right lifecycle.
 
 - [ ] T038 [P] [US2] Create `.github/scripts/verify-project-numbering.py` with fixtures under `.github/scripts/fixtures/project-numbering/`: per-project start at `001`, highest of `P/specs/` and anchored `refs/heads/<prefix>P/<NNN-slug>` refs, nested and sibling refs not counted, root counts only refs with no `/` after the prefix, number never reissued after branch teardown, project-scoped spec-collision check ignores another project's `004` (FR-009, FR-010); register in `lint-workflows.yml` and `run-local-gates.py`
-- [ ] T039 [US2] Replace the inline "Allocate feature number" scan in `.github/workflows/intake.yml` with `project-name.sh next-number <P>` (root reproduces today's numbers)
+- [X] T039 [US2] Replace the inline "Allocate feature number" scan in `.github/workflows/intake.yml` with `project-name.sh next-number <P>` (root reproduces today's numbers)
 - [ ] T040 [US2] Split intake concurrency in `.github/workflows/intake.yml`: numbering group `wing-commander-intake` (root) / `wing-commander-intake/P`; when routing is on, a gate job holds `wing-commander-intake-issue/<issue-number>` (`cancel-in-progress: false`) and runs the prefix check, label count and re-run refusal; the numbering job `needs:` it (FR-012, D8). Add the two-concurrent-intakes-different-projects model (fake `gh`) to T018's gate
 - [ ] T041 [US2] Make per-spec concurrency groups `wing-commander-<repository-relative spec dir>` in `.github/workflows/clarify.yml`, `plan.yml`, `tasks.yml`, `implement.yml`, `finalize.yml`, `rebase.yml` (root names unchanged)
 - [ ] T042 [US2] Make `.github/workflows/cleanup.yml` list and delete branches and labels by anchored full refnames within the finishing lifecycle's project namespace only (FR-015)

@@ -208,6 +208,16 @@ on:
         type: number
         required: false
         default: 3
+      routing-label-prefix:
+        description: >
+          Label prefix that routes an issue to a subfolder project (for
+          example `node:` -- an issue labelled `node:ideas/alpha` runs its
+          whole lifecycle inside `ideas/alpha/`, spec 114). Empty (default)
+          disables routing: the lifecycle runs at the repository root,
+          unchanged.
+        type: string
+        required: false
+        default: ""
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -232,7 +242,7 @@ on:
         required: false
     outputs:
       spec-dir:
-        description: "specs/NNN-slug directory the intake created (empty if no spec was produced)"
+        description: "Repository-relative [P/]specs/NNN-slug directory the intake created (empty if no spec was produced); P is the routed project folder, absent at the repository root"
         value: ${{ jobs.intake.outputs.spec-dir }}
       feature-num:
         description: "The 3-digit feature number allocated for this intake"
@@ -440,6 +450,21 @@ jobs:
           kind: info
           summary: "This lifecycle issue is closed — no action was taken."
 
+      # Subfolder routing (spec 114, FR-001/FR-003): read the issue's live
+      # labels, require at most one `<routing-label-prefix>P` label and
+      # validate P against the project-path grammar. Skipped entirely when
+      # routing is off, so the root lifecycle is unchanged (FR-016). The
+      # folder itself is checked by Preflight below, which names it.
+      - name: Resolve routed project
+        id: project
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && inputs.routing-label-prefix != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          routing-label-prefix: ${{ inputs.routing-label-prefix }}
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ github.token }}
+          check-folder: 'false'
+
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
       - name: Preflight
         id: preflight
@@ -449,7 +474,8 @@ jobs:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "true"
-          require-files: ".claude/skills/speckit-specify/SKILL.md|specify init (spec-kit's claude integration)"
+          project: ${{ steps.project.outputs.project }}
+          require-files: "${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.claude/skills/speckit-specify/SKILL.md|specify init (spec-kit's claude integration)"
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
@@ -534,29 +560,54 @@ jobs:
       # current checkout, which cannot see specs still in flight on unmerged
       # spec-draft/ branches. Compute the next free number across specs/ AND
       # every open pipeline branch, and hand it to the agent.
+      #
+      # Spec 114 (FR-009, FR-010): the scan itself now lives in
+      # _shared/project-name.sh, reached through wing-commander-project; the
+      # number is per project (the root counts only root specs and branches,
+      # exactly as before). The composite re-reads the routing label so this
+      # step names the same project as "Resolve routed project" above.
       - name: Allocate feature number
         id: num
         if: steps.lifecycle-gate.outputs.is-open == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          routing-label-prefix: ${{ inputs.routing-label-prefix }}
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ env.WC_BOT_TOKEN }}
+          check-folder: 'false'
+          allocate-number: 'true'
+          spec-draft-prefix: ${{ inputs.spec-draft-prefix }}
+          spec-prefix: ${{ inputs.spec-prefix }}
+
+      # Re-run refusal (spec 114, FR-003): with routing on, an issue that
+      # already carries any `spec:` label has been specified once; a second
+      # intake would allocate a second spec for it, possibly in another
+      # project. The single `wing-commander-intake` group serializes
+      # intakes, so a concurrent first run's label is visible here.
+      - name: Check for an existing spec label (routing only)
+        id: rerun
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && inputs.routing-label-prefix != ''
         env:
-          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
-          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE: ${{ inputs.issue-number }}
         run: |
-          highest=$(
-            {
-              ls -d specs/[0-9][0-9][0-9]-* 2>/dev/null | sed 's|^specs/||'
-              git ls-remote --heads origin "refs/heads/$SPEC_DRAFT_PREFIX*" "refs/heads/$SPEC_PREFIX*" \
-                | sed -E 's|^[0-9a-f]+[[:space:]]+refs/heads/||' \
-                | while IFS= read -r ref; do
-                    case "$ref" in
-                      "$SPEC_DRAFT_PREFIX"*) printf '%s\n' "${ref#"$SPEC_DRAFT_PREFIX"}" ;;
-                      "$SPEC_PREFIX"*) printf '%s\n' "${ref#"$SPEC_PREFIX"}" ;;
-                    esac
-                  done
-            } | grep -oE '^[0-9]{3}' | sort -n | tail -1
-          )
-          num=$(printf '%03d' $(( 10#${highest:-000} + 1 )))
-          echo "num=$num" >> "$GITHUB_OUTPUT"
-          echo "Allocated feature number $num (highest in use: ${highest:-none})." >> "$GITHUB_STEP_SUMMARY"
+          existing="$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("spec:"))] | join(", ")')"
+          echo "existing=$existing" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse a re-run on an already-specified issue
+        if: steps.rerun.outputs.existing != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "Intake already ran for this issue — it carries ${{ steps.rerun.outputs.existing }}. Nothing was created."
+
+      - name: Stop after a refused re-run
+        if: steps.rerun.outputs.existing != ''
+        run: |
+          echo "::error::wing-commander intake: this issue already carries a spec label; with routing on, intake refuses a re-run."
+          exit 1
 
       # Tie the run back to the issue the moment intake starts, with a link.
       - name: Report run started on issue
@@ -615,6 +666,30 @@ jobs:
             discussion actually settled something the body doesn't capture,
             update the body before this spec is finalized.
 
+      # Project-folder paragraph for the agent prompt (spec 114, FR-006,
+      # FR-014). Empty at the repository root, so a root prompt gains nothing
+      # but a blank line. The paragraph carries only validated values: the
+      # project path matched the grammar and the budget is an integer.
+      - name: Compose project guidance (intake)
+        id: project-guidance
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        env:
+          PROJECT: ${{ steps.num.outputs.project }}
+          SLUG_BUDGET: ${{ steps.num.outputs.slug-budget }}
+        run: |
+          {
+            echo "guidance<<WC_INTAKE_PROJECT_GUIDANCE_EOF"
+            if [ -n "$PROJECT" ]; then
+              echo "PROJECT FOLDER: this issue is routed to the project folder \`$PROJECT/\`, a Spec Kit project of its own. Use its .specify/, its constitution and its .claude/skills, not the repository root's. Everything this run writes lies inside \`$PROJECT/\`, apart from the step 5 commit-message and step 6 PR-body scratch files. Where the steps below name a path, branch or label, read it as follows:"
+              echo "- <spec-dir> is \`$PROJECT/specs/<NNN-slug>\`. Give every tool a repository-relative path."
+              echo "- The branch is \`<prefix>$PROJECT/<NNN-slug>\` and the spec label is \`spec:$PROJECT/<NNN-slug>\`."
+              echo "- spec-meta.json records \"spec_dir\": \"specs/<NNN-slug>\" (relative to the project, without \`$PROJECT/\`), so the folder can be copied out unchanged."
+              echo "- <NNN-slug> may be at most $SLUG_BUDGET characters long, the most the spec label can carry. Choose a shorter slug rather than exceed it."
+              echo "- Create the spec label (the \`gh label create\` of step 7) BEFORE you push the branch in step 5; step 7 still adds it to the issue."
+            fi
+            echo "WC_INTAKE_PROJECT_GUIDANCE_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Compose commit-message guidance (intake)
         id: commit-guidance-intake
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
@@ -653,6 +728,10 @@ jobs:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
+          # Spec Kit's project-root override (spec 114, research.md D9): the
+          # vendored scripts resolve .specify/ and specs/ under this folder.
+          # Empty at the repository root, where the scripts ignore it.
+          SPECIFY_INIT_DIR: ${{ steps.num.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.num.outputs.project) || '' }}
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
@@ -719,6 +798,9 @@ jobs:
                  branches). When the skill auto-generates the spec directory,
                  use ${{ steps.num.outputs.num }} as the 3-digit prefix instead
                  of scanning specs/.
+
+            ${{ steps.project-guidance.outputs.guidance }}
+
             4. Write <spec-dir>/spec-meta.json:
                {"issue": ${{ inputs.issue-number }}, "spec_dir": "<spec-dir>",
                 "feature_num": "<NNN>", "stage": "spec", "iteration": 0,
@@ -913,12 +995,19 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           NUM: ${{ steps.num.outputs.num }}
+          PROJECT: ${{ steps.num.outputs.project }}
+          SLUG_BUDGET: ${{ steps.num.outputs.slug-budget }}
           SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
-          ref=$(git ls-remote --heads origin "refs/heads/$SPEC_DRAFT_PREFIX$NUM-*" | awk '{print $2}' | head -1)
+          ref=$(git ls-remote --heads origin "refs/heads/$SPEC_DRAFT_PREFIX${PROJECT:+$PROJECT/}$NUM-*" | awk '{print $2}' | head -1)
           branch="${ref#refs/heads/"$SPEC_DRAFT_PREFIX"}"
           if [ -n "$branch" ]; then
-            echo "spec-dir=specs/$branch" >> "$GITHUB_OUTPUT"
+            # Spec 114 (FR-014): a subfolder slug must fit the spec label.
+            if [ -n "$PROJECT" ] && [ "${#branch}" -gt "$(( ${#PROJECT} + 1 + SLUG_BUDGET ))" ]; then
+              echo "::error::wing-commander intake: '${branch##*/}' is longer than the $SLUG_BUDGET characters the spec label for project $PROJECT can carry."
+              exit 1
+            fi
+            echo "spec-dir=${PROJECT:+$PROJECT/}specs/${branch##*/}" >> "$GITHUB_OUTPUT"
           else
             echo "spec-dir=" >> "$GITHUB_OUTPUT"
             echo "No $SPEC_DRAFT_PREFIX$NUM-* branch found — intake produced no spec." >> "$GITHUB_STEP_SUMMARY"

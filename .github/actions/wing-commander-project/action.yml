@@ -49,7 +49,26 @@ inputs:
     description: "`true` to also verify the folder is a Spec Kit project on this checkout."
     required: false
     default: 'true'
+  allocate-number:
+    description: >-
+      Intake only. `true` to also allocate the next feature number for the
+      resolved project (`project-name.sh next-number`): the highest of the
+      project's `specs/` and the anchored spec-draft and spec branches, plus
+      one. Empty `project` allocates for the repository root.
+    required: false
+    default: 'false'
+  spec-draft-prefix:
+    description: Branch prefix of spec drafts; used only by allocate-number.
+    required: false
+    default: spec-draft/
+  spec-prefix:
+    description: Branch prefix of spec branches; used only by allocate-number.
+    required: false
+    default: spec/
 outputs:
+  num:
+    description: The allocated feature number (allocate-number only).
+    value: ${{ steps.number.outputs.num }}
   project:
     description: The project path, empty for the repository root.
     value: ${{ steps.resolve.outputs.project }}
@@ -135,3 +154,18 @@ runs:
           fi
           if [ -n "$project" ]; then echo "slug-budget=$(bash "$lib" slug-budget "$project")"; else echo "slug-budget="; fi
         } >> "$GITHUB_OUTPUT"
+
+    # Per-project feature numbering (FR-009, FR-010). The root reproduces the
+    # numbers intake allocated before this composite existed.
+    - name: Allocate feature number
+      id: number
+      if: inputs.allocate-number == 'true'
+      shell: bash
+      env:
+        PROJECT: ${{ steps.resolve.outputs.project }}
+        SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
+        SPEC_PREFIX: ${{ inputs.spec-prefix }}
+      run: |
+        num="$(bash "$GITHUB_ACTION_PATH/../_shared/project-name.sh" next-number "$PROJECT")" || exit 1
+        echo "num=$num" >> "$GITHUB_OUTPUT"
+        echo "Allocated feature number $num${PROJECT:+ for project $PROJECT}." >> "$GITHUB_STEP_SUMMARY"
