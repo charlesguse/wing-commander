@@ -48,7 +48,8 @@ case "$mode" in
       [ -n "${local_sha:-}" ] || continue
       # An all-zero local sha is a branch deletion: it publishes no content.
       case "$local_sha" in *[!0]*) ;; *) continue ;; esac
-      if ! paths="$(git log --format= --name-only --no-renames "$local_sha" --not --remotes 2>&1)"; then
+      # -c: a merge commit's own changes (an evil merge) are listed too.
+      if ! paths="$(git log --format= --name-only --no-renames -c "$local_sha" --not --remotes 2>&1)"; then
         echo "::error::wing-commander-containment: could not list the commits this push would publish ($paths) -- refusing the push." >&2
         exit 1
       fi

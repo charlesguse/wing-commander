@@ -107,6 +107,21 @@ def contain(case, script):
         for src, dst in case.get("move", []):
             os.makedirs(os.path.dirname(os.path.join(tmp, dst)), exist_ok=True)
             git(tmp, "mv", src, dst)
+        for src, dst in case.get("copy", []):
+            os.makedirs(os.path.dirname(os.path.join(tmp, dst)), exist_ok=True)
+            with open(os.path.join(tmp, src), encoding="utf-8") as fh:
+                body = fh.read()
+            with open(os.path.join(tmp, dst), "w", encoding="utf-8") as fh:
+                fh.write(body)
+        for rel in case.get("remove", []):
+            os.remove(os.path.join(tmp, rel))
+        for rel in case.get("nested_repo", []):
+            # An untracked nested git repository, like the trusted checkout.
+            path = os.path.join(tmp, rel)
+            os.makedirs(path, exist_ok=True)
+            git(path, "init", "-q")
+            with open(os.path.join(path, "f.txt"), "w", encoding="utf-8") as fh:
+                fh.write("n\n")
         if case.get("commit"):
             git(tmp, "add", "-A")
             git(tmp, "commit", "-q", "-m", "agent")
@@ -287,7 +302,55 @@ def staged_clone(tmp, case):
     if case.get("commit_files"):
         git(work, "add", "-A")
         git(work, "commit", "-q", "-m", "agent")
+    if case.get("evil_merge_files"):
+        # A merge of a side branch that changed only P, whose merge commit
+        # itself also changes the listed paths (an evil merge).
+        git(work, "checkout", "-q", "-b", "side", base)
+        with open(os.path.join(work, case["project"], "side.md"), "w", encoding="utf-8") as fh:
+            fh.write("s\n")
+        git(work, "add", "-A")
+        git(work, "commit", "-q", "-m", "side")
+        git(work, "checkout", "-q", "main")
+        git(work, "merge", "-q", "--no-ff", "--no-commit", "side")
+        for rel in case["evil_merge_files"]:
+            with open(os.path.join(work, rel), "a", encoding="utf-8") as fh:
+                fh.write("e\n")
+        git(work, "add", "-A")
+        git(work, "commit", "-q", "-m", "merge")
     return work, origin, base
+
+
+GUARD = os.path.join(ROOT, ".github", "scripts", "pipeline-checkout-guard.sh")
+
+
+def check_trusted_checkout_excluded(errors):
+    """#1030: after the pipeline-checkout guard passes a consumer checkout,
+    `git add -A` no longer stages the untracked trusted checkout as a
+    gitlink, and a second guard run does not duplicate the exclude line."""
+    with tempfile.TemporaryDirectory() as tmp:
+        git(tmp, "init", "-q")
+        pipe = os.path.join(tmp, ".wing-commander-pipeline")
+        os.makedirs(pipe)
+        git(pipe, "init", "-q")
+        git(pipe, "config", "user.email", "g@example.invalid")
+        git(pipe, "config", "user.name", "gate")
+        with open(os.path.join(pipe, "f.txt"), "w", encoding="utf-8") as fh:
+            fh.write("p\n")
+        git(pipe, "add", "-A")
+        git(pipe, "commit", "-q", "-m", "pipe")
+        for _ in range(2):
+            r = subprocess.run(["bash", GUARD], cwd=tmp, capture_output=True, text=True, check=False)
+            if r.returncode != 0:
+                errors.append(f"trusted checkout exclude: guard failed rc={r.returncode} {r.stdout!r}")
+                return
+        git(tmp, "add", "-A")
+        staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=tmp,
+                                capture_output=True, text=True, check=True).stdout
+        if ".wing-commander-pipeline" in staged:
+            errors.append("trusted checkout exclude: `git add -A` staged .wing-commander-pipeline after the guard ran (#1030)")
+        with open(os.path.join(tmp, ".git", "info", "exclude"), encoding="utf-8") as fh:
+            if fh.read().count("/.wing-commander-pipeline/") != 1:
+                errors.append("trusted checkout exclude: the exclude line is missing or duplicated")
 
 
 def rev(cwd, ref):
@@ -367,6 +430,7 @@ def main():
             for p in case.get("names", []):
                 if p not in r.stdout + r.stderr:
                     errors.append(f"publish_stranded {name}: refusal does not name {p!r}")
+    check_trusted_checkout_excluded(errors)
     check_wiring(errors)
     if check_rescue_scope(errors) == 0:
         errors.append("rescue scope: no stranded-commit rescue in a project-wired job was found -- the check has lost its subject")

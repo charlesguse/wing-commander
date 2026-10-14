@@ -72,6 +72,7 @@ import argparse
 import copy
 import glob
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -105,6 +106,7 @@ SYMLINK_CHECK = '[ -L "$p" ] || '
 PIPELINE_REF_ENV = "WC_PIPELINE_REF"
 GUARD_NAME = "Refuse a branch that tracks .wing-commander-pipeline/"
 ROOT_PATHS = (None, "", ".", "./")
+EXCLUDE_PATHSPEC = re.compile(r":\(exclude[^)]*\)" + re.escape(PIPE))
 
 
 def load_tree(root="."):
@@ -226,7 +228,11 @@ def check(docs, root="."):
             failures.append("{0}: names pipeline-checkout-guard.sh other than as GUARD_RUN -- the "
                             "guard must be read from the verified pipeline repository's object "
                             "store, never its working tree.".format(where))
-        if PIPE in body and ("ls-files" in body or "ls-tree" in body):
+        # An exclude pathspec naming the directory (spec 114's containment
+        # composite leaves the untracked trusted checkout out of its listing)
+        # lists nothing under it, so it is not a copy of the check.
+        scan = EXCLUDE_PATHSPEC.sub("", body)
+        if PIPE in scan and ("ls-files" in scan or "ls-tree" in scan):
             failures.append("{0}: lists tracked paths under {1} inline -- a pasted copy of the "
                             "check; call {2} instead (CLAUDE.md, one home).".format(
                                 where, PIPE, GUARD_SCRIPT))
@@ -296,6 +302,11 @@ def mutations(docs):
         steps_of(d).insert(0, {"name": "inline", "shell": "bash",
                                "run": "test -z \"$(git ls-files -- .wing-commander-pipeline)\""})
 
+    def inline_copy_beside_exclude(d):
+        steps_of(d).insert(0, {"name": "inline", "shell": "bash",
+                               "run": "git ls-files -- ':/' ':(exclude,top).wing-commander-pipeline'\n"
+                                      "test -z \"$(git ls-files -- .wing-commander-pipeline)\""})
+
     def no_symlink_check(d):
         run = steps_of(d)[i + 1]["run"]
         assert SYMLINK_CHECK in run
@@ -324,6 +335,7 @@ def mutations(docs):
         ("a guard without shell: bash", no_shell, "no `shell: bash`"),
         ("a guard with continue-on-error", coe, "has continue-on-error"),
         ("an inline copy of the check", inline_copy, "a pasted copy of the check"),
+        ("an inline copy beside an exclude pathspec", inline_copy_beside_exclude, "a pasted copy of the check"),
         ("an unguarded checkout in a composite", composite_unguarded, cpath),
     ]
 

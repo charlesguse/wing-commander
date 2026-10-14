@@ -42,7 +42,11 @@ runs:
           echo "outside-paths=" >> "$GITHUB_OUTPUT"
           exit 0
         fi
-        changed="$( { git diff --name-only "$BASE_SHA" HEAD; git diff --name-only HEAD; git ls-files --others --exclude-standard; } | sort -u)"
+        # --no-renames: a move into P must still name its source outside P.
+        # The untracked leg excludes only the root trusted checkout, anchored
+        # at the top; both diff legs stay unfiltered so a committed gitlink
+        # there is still flagged.
+        changed="$( { git diff --name-only --no-renames "$BASE_SHA" HEAD; git diff --name-only --no-renames HEAD; git ls-files --others --exclude-standard -- ':/' ':(exclude,top).wing-commander-pipeline'; } | sort -u)"
         # The path test's single home is _shared/containment.sh, which
         # pr-conversation's pre-push hook runs too.
         outside="$(printf '%s\n' "$changed" | bash "$GITHUB_ACTION_PATH/../_shared/containment.sh" outside "$PROJECT")"

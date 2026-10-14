@@ -78,6 +78,14 @@ fi
 
 if [ ! -s "$listing" ]; then
   echo "pipeline-checkout guard: the checked-out branch tracks nothing under $PIPE/."
+  # Keep an agent's `git add -A` from staging the untracked trusted checkout
+  # as a gitlink (#1030): exclude it, anchored at the root, in the
+  # repository's own info/exclude (never the branch's .gitignore).
+  exclude="$(git rev-parse --git-path info/exclude 2>/dev/null)" || exclude=""
+  if [ -n "$exclude" ] && ! grep -qxF "/$PIPE/" "$exclude" 2>/dev/null; then
+    mkdir -p "$(dirname "$exclude")" && printf '\n/%s/\n' "$PIPE" >> "$exclude" \
+      || echo "::warning::pipeline-checkout guard: could not add /$PIPE/ to $exclude; a 'git add -A' may stage it."
+  fi
   exit 0
 fi
 

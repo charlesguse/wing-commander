@@ -235,9 +235,9 @@ Source: maintainer comment on PR #1022 (five fresh-session reviewers plus an adv
 
 ### Blocker
 
-- [ ] MF-01 [Review #1] In `wing-commander-containment/action.yml` (~:45), exclude only the root trusted checkout from the untracked listing with the anchored pathspec `-- ':/' ':(exclude,top).wing-commander-pipeline'`. Do not use an unanchored `--exclude`. Leave both `git diff` legs unfiltered so a committed gitlink is still flagged
-- [ ] MF-02 [Review #1] Append `/.wing-commander-pipeline/` to `.git/info/exclude` after the consumer checkout (closes #1030)
-- [ ] MF-03 [Review #1] Gate 160 case: an untracked nested git repo at `.wing-commander-pipeline/` plus a change only inside `P` must pass
+- [X] MF-01 [Review #1] In `wing-commander-containment/action.yml` (~:45), exclude only the root trusted checkout from the untracked listing with the anchored pathspec `-- ':/' ':(exclude,top).wing-commander-pipeline'`. Do not use an unanchored `--exclude`. Leave both `git diff` legs unfiltered so a committed gitlink is still flagged
+- [X] MF-02 [Review #1] Append `/.wing-commander-pipeline/` to `.git/info/exclude` after the consumer checkout (closes #1030)
+- [X] MF-03 [Review #1] Gate 160 case: an untracked nested git repo at `.wing-commander-pipeline/` plus a change only inside `P` must pass
 
 ### Major
 
@@ -246,7 +246,7 @@ Source: maintainer comment on PR #1022 (five fresh-session reviewers plus an adv
 - [ ] MF-06 [Review #2, FR-014] For routed intake, deny `Bash(git push --no-verify:*)` and `Bash(git push -n:*)`
 - [ ] MF-07 [Review #3, Gate 60] Add `install-pre-push` mode (copy helpers from `$GITHUB_ACTION_PATH/../_shared`, write the hook, set `core.hooksPath`) and `filter` mode (rebase manifest) to `wing-commander-containment`
 - [ ] MF-08 [Review #3, Gate 60] Route `pr-conversation.yml` (~:2225), `rebase.yml` (~:1022) and `intake.yml` (~:754-756) through those modes, and widen Gate 60 to catch the `shared=` variable indirection
-- [ ] MF-09 [Review #4] Add `--no-renames` to both diff legs. Add reject fixtures for a committed move into `P`, a staged move into `P`, and a delete outside `P` paired with a near-identical add inside `P`
+- [X] MF-09 [Review #4] Add `--no-renames` to both diff legs. Add reject fixtures for a committed move into `P`, a staged move into `P`, and a delete outside `P` paired with a near-identical add inside `P`
 - [ ] MF-10 [Review #5] Install the containment pre-push hook (MF-07) before clarify, plan (auto/pr), tasks (auto/pr), implement (cycle/retry) and finalize agents
 - [ ] MF-11 [Review #5] Make the post-agent guard also diff from `git merge-base origin/<default-branch> HEAD`, so an earlier pushed violation is caught after a restart
 - [ ] MF-12 [Review #6, FR-006] Add a deterministic project paragraph (like intake's) to the clarify, plan, tasks, implement, finalize and pr-conversation act prompts, pointing reads at `P/.specify/memory/constitution.md`, `P/.specify/extensions.yml` and `P/.claude/skills/<name>/SKILL.md`. Gate that every project-wired prompt carries it
@@ -257,7 +257,7 @@ Source: maintainer comment on PR #1022 (five fresh-session reviewers plus an adv
 
 ### Minor
 
-- [ ] MF-17 [Review #11] In `containment.sh` (~:51) use `git log --format= --name-only --no-renames -c ...` so merge commits are checked. Add an evil-merge fixture
+- [X] MF-17 [Review #11] In `containment.sh` (~:51) use `git log --format= --name-only --no-renames -c ...` so merge commits are checked. Add an evil-merge fixture
 - [ ] MF-18 [Review #12] Subtract `Bash(gh api:*)` in `wing-commander-tool-args` for non-empty project on pr-conversation act, re-granting only needed endpoints. If not feasible, record it as an accepted gap in `contracts/containment-and-trusted-checkout.md`
 - [ ] MF-19 [Review #13] `check-folder`: test `.specify/memory`, `.specify/scripts` and each `SKILL.md` for symlinks. Add fixtures for a symlinked memory dir, skills dir and skill file
 - [ ] MF-20 [Review #14] Routing must refuse instead of falling back to the root: bare routing label (`node:`), failed `gh issue view`, leading `/` or `//`. Strip `-iterN` only for implement branches. Add fixtures for each

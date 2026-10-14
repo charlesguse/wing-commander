@@ -89,6 +89,44 @@
       "base_files": ["README.md"],
       "modify": ["README.md"],
       "expect": "pass"
+    },
+    "untracked_trusted_checkout_ignored": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "nested_repo": [".wing-commander-pipeline"],
+      "modify": ["a/b/x.md"],
+      "expect": "pass"
+    },
+    "nested_trusted_checkout_name_is_outside": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "nested_repo": ["a/.wing-commander-pipeline"],
+      "expect": "fail",
+      "names": ["a/.wing-commander-pipeline"]
+    },
+    "committed_move_into_project": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "outside.md"],
+      "move": [["outside.md", "a/b/outside.md"]],
+      "commit": true,
+      "expect": "fail",
+      "names": ["outside.md"]
+    },
+    "staged_move_into_project": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "outside.md"],
+      "move": [["outside.md", "a/b/outside.md"]],
+      "expect": "fail",
+      "names": ["outside.md"]
+    },
+    "delete_outside_with_near_identical_add_inside": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "docs/guide.md"],
+      "copy": [["docs/guide.md", "a/b/guide.md"]],
+      "remove": ["docs/guide.md"],
+      "commit": true,
+      "expect": "fail",
+      "names": ["docs/guide.md"]
     }
   },
   "pre_push": {
@@ -115,6 +153,21 @@
     "commits_already_on_a_remote_not_rechecked": {
       "project": "a/b",
       "base_files": ["README.md", "a/b/x.md"],
+      "expect": "pass"
+    },
+    "evil_merge_outside_refused": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["a/b/x.md"],
+      "evil_merge_files": ["README.md"],
+      "expect": "fail",
+      "names": ["README.md"]
+    },
+    "clean_merge_inside_allowed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["a/b/x.md"],
+      "evil_merge_files": ["a/b/x.md"],
       "expect": "pass"
     },
     "branch_deletion_allowed": {
