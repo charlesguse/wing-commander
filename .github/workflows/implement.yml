@@ -582,18 +582,21 @@ jobs:
 
       # The spec branch to gate, from the same validated spec-dir the
       # implement job resolves; anything else is refused, and the implement
-      # job then reads an absent verdict as red.
+      # job then reads an absent verdict as red. A subfolder project's
+      # `P/specs/NNN-slug` gates branch `<spec-prefix>P/NNN-slug` (spec 114);
+      # the implement job's wing-commander-project step enforces the project
+      # grammar. The root form is unchanged.
       - name: Resolve the spec branch to gate
         id: head
         env:
           SPEC_DIR_INPUT: ${{ inputs.spec-dir }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
-          if ! printf '%s' "$SPEC_DIR_INPUT" | grep -Eq '^specs/[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
+          if ! printf '%s' "$SPEC_DIR_INPUT" | grep -Eq '^([a-z0-9][a-z0-9-]*/)*specs/[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
             echo "::error::spec-dir '$SPEC_DIR_INPUT' does not match specs/NNN-slug; refusing to guess."
             exit 1
           fi
-          echo "ref=${SPEC_PREFIX}${SPEC_DIR_INPUT#specs/}" >> "$GITHUB_OUTPUT"
+          echo "ref=${SPEC_PREFIX}${SPEC_DIR_INPUT%specs/*}${SPEC_DIR_INPUT##*/}" >> "$GITHUB_OUTPUT"
 
       # FR-009a: a failed install degrades to the preflight's missing-
       # actionlint skip below, never to a job failure with no verdict. Not
@@ -813,6 +816,20 @@ jobs:
           kind: info
           summary: "This lifecycle issue is closed — no action was taken."
 
+      # Subfolder project (spec 114, FR-007): a `P/specs/NNN-slug` spec-dir
+      # names project P. Skipped for a root spec-dir (`specs/NNN-slug` holds
+      # no `/specs/`), so the project stays empty and nothing below changes.
+      - name: Resolve project
+        id: project
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && contains(inputs.spec-dir, '/specs/')
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ inputs.spec-dir }}
+          identity-kind: spec-dir
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ github.token }}
+          check-folder: 'false'
+
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
       - name: Preflight
         id: preflight
@@ -822,9 +839,10 @@ jobs:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "true"
+          project: ${{ steps.project.outputs.project }}
           require-files: |
-            .claude/skills/speckit-implement/SKILL.md|specify init (spec-kit's claude integration)
-            .claude/skills/speckit-converge/SKILL.md|specify init (spec-kit's claude integration)
+            ${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.claude/skills/speckit-implement/SKILL.md|specify init (spec-kit's claude integration)
+            ${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.claude/skills/speckit-converge/SKILL.md|specify init (spec-kit's claude integration)
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
@@ -867,10 +885,14 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           SPEC_DIR_INPUT: ${{ inputs.spec-dir }}
+          PROJECT: ${{ steps.project.outputs.project }}
           ISSUE: ${{ inputs.issue-number }}
           ITERATION: ${{ inputs.iteration }}
         run: |
-          if ! printf '%s' "$SPEC_DIR_INPUT" | grep -Eq '^specs/[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
+          # A subfolder spec-dir is P/specs/NNN-slug, P already validated by
+          # "Resolve project"; its slug is project-qualified (P/NNN-slug), the
+          # form every branch and label of the lifecycle carries (spec 114).
+          if ! printf '%s' "$SPEC_DIR_INPUT" | grep -Eq "^${PROJECT:+$PROJECT/}specs/[0-9]{3}-[a-z0-9][a-z0-9-]*\$"; then
             echo "::error::spec-dir '$SPEC_DIR_INPUT' does not match specs/NNN-slug; refusing to guess."
             echo "reason=spec-dir '$SPEC_DIR_INPUT' does not match specs/NNN-slug; refusing to guess." >> "$GITHUB_OUTPUT"
             echo "refused=true" >> "$GITHUB_OUTPUT"
@@ -888,7 +910,7 @@ jobs:
             echo "refused=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-          echo "slug=${SPEC_DIR_INPUT#specs/}" >> "$GITHUB_OUTPUT"
+          echo "slug=${PROJECT:+$PROJECT/}${SPEC_DIR_INPUT##*/}" >> "$GITHUB_OUTPUT"
           echo "spec-dir=$SPEC_DIR_INPUT"      >> "$GITHUB_OUTPUT"
 
       # Refusal note (research.md D1) — see "Report preflight refusal" above.
@@ -922,9 +944,21 @@ jobs:
           if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
           git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
+      # Stale-folder check (spec 114, T036) -- see clarify.yml.
+      - name: Check project folder on the checked-out ref
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.project.outputs.project != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ inputs.spec-dir }}
+          identity-kind: spec-dir
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ github.token }}
+
       # The accepted task list must exist on the spec branch and the
       # lifecycle record must agree with the inputs — report and stop rather
       # than building the wrong thing (the message names the providing stage).
+      # spec-meta.json records the project-relative spec_dir (specs/NNN-slug,
+      # spec 114 FR-008), which is the dispatch's spec-dir at the root.
       - name: Verify spec artifacts match the dispatch
         id: meta
         if: steps.lifecycle-gate.outputs.is-open == 'true'
@@ -944,7 +978,7 @@ jobs:
           done
           meta_issue=$(jq -r '.issue // empty' "$SPEC_DIR/spec-meta.json")
           meta_dir=$(jq -r '.spec_dir // empty' "$SPEC_DIR/spec-meta.json")
-          if [ "$meta_issue" != "$ISSUE" ] || [ "$meta_dir" != "$SPEC_DIR" ]; then
+          if [ "$meta_issue" != "$ISSUE" ] || [ "$meta_dir" != "specs/${SPEC_DIR##*/}" ]; then
             msg="wing-commander implement stage: spec-meta.json (issue=$meta_issue, spec_dir=$meta_dir) does not match the dispatch inputs (issue=$ISSUE, spec_dir=$SPEC_DIR) — refusing."
             echo "::error::$msg"
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"
@@ -1170,6 +1204,7 @@ jobs:
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           no-write-paths: ${{ inputs.no-write-paths }}
+          project: ${{ steps.project.outputs.project }}
           step-label: "implement.cycle"
 
       # The intended budget (inputs.max-turns) keeps its public meaning; the
@@ -1194,6 +1229,8 @@ jobs:
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ steps.spec.outputs.spec-dir }}
+          # Spec Kit's project-root override -- see intake.yml.
+          SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
@@ -1381,6 +1418,15 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ env.WC_BOT_TOKEN }}
+
+      # Containment (spec 114, FR-021) -- see clarify.yml.
+      - name: Check agent changes stay inside the project folder (cycle)
+        id: containment-cycle
+        if: "!cancelled() && steps.cycle.outcome != 'skipped' && steps.project.outputs.project != ''"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          project: ${{ steps.project.outputs.project }}
+          base-sha: ${{ steps.base.outputs.base-sha }}
 
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
@@ -2030,6 +2076,7 @@ jobs:
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           no-write-paths: ${{ inputs.no-write-paths }}
+          project: ${{ steps.project.outputs.project }}
           step-label: "implement.retry"
 
       - name: Compute agent turn ceiling (retry)
@@ -2079,6 +2126,8 @@ jobs:
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ steps.spec.outputs.spec-dir }}
+          # Spec Kit's project-root override -- see intake.yml.
+          SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
@@ -2265,6 +2314,15 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ env.WC_BOT_TOKEN }}
+
+      # Containment (spec 114, FR-021) -- see clarify.yml.
+      - name: Check agent changes stay inside the project folder (retry)
+        id: containment-retry
+        if: "!cancelled() && steps.retry.outcome != 'skipped' && steps.project.outputs.project != ''"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          project: ${{ steps.project.outputs.project }}
+          base-sha: ${{ steps.retry-base.outputs.base-sha }}
 
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
@@ -3985,7 +4043,8 @@ jobs:
         env:
           SPEC_DIR: ${{ inputs.spec-dir }}
         run: |
-          echo "slug=${SPEC_DIR#specs/}" >> "$GITHUB_OUTPUT"
+          # [P/]specs/NNN-slug -> [P/]NNN-slug, the branch's form (spec 114).
+          echo "slug=${SPEC_DIR%specs/*}${SPEC_DIR##*/}" >> "$GITHUB_OUTPUT"
 
       # continue-on-error: the spec branch may not exist yet or the checkout
       # may lose a race — either degrades the notice's wording (composite's

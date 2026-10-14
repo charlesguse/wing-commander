@@ -74,7 +74,7 @@
 - [X] T030 [P] [US1] Wire the same into `.github/workflows/clarify.yml`: derive `(P, slug)` from the lifecycle identity, run preflight in `P`, agent working directory `P`, containment guard, project-aware paths in prompts and allowed-tools
 - [X] T031 [P] [US1] Same wiring in `.github/workflows/plan.yml`; the plan→tasks hand-off and the manual-restart `slug` input take `P/<NNN-slug>`; document the input form in the input description
 - [X] T032 [P] [US1] Same wiring in `.github/workflows/tasks.yml`; restart `slug` takes `P/<NNN-slug>`
-- [ ] T033 [P] [US1] Same wiring in `.github/workflows/implement.yml`; branch `<impl-prefix>P/<NNN-slug>-iterN`; `spec_dir` input and hand-offs take `P/specs/<NNN-slug>`
+- [X] T033 [P] [US1] Same wiring in `.github/workflows/implement.yml`; branch `<impl-prefix>P/<NNN-slug>-iterN`; `spec_dir` input and hand-offs take `P/specs/<NNN-slug>`
 - [ ] T034 [P] [US1] Same wiring in `.github/workflows/finalize.yml`; `spec_dir` takes the repository-relative form
 - [ ] T035 [P] [US1] Same wiring in `.github/workflows/rebase.yml`, `.github/workflows/pr-conversation.yml` (act and act.fold agents) and `.github/workflows/cleanup.yml`
 - [ ] T036 [US1] Add the stale-folder check: each later stage re-validates the recorded folder on the ref it works from (`project-name.sh check-folder`) and fails naming the folder if missing or no longer a Spec Kit project; add reject fixtures to T018's gate
