@@ -330,3 +330,19 @@ Source: maintainer issue-comment on PR #1022 (round-3 review). All of round 2 is
 - [X] MF-51 [R3 #9] Update the release-claim comment in `.github/workflows/intake.yml` (~:1872-1881) to say that a failed in-job release inside an otherwise successful intake is not retried.
 - [X] MF-52 [R3 #10] In `specs/114-subfolder-project-lifecycles/contracts/containment-and-trusted-checkout.md`, resolve the conflict between :37 and :49. Drop "a step the agent cannot touch", state what MF-46's re-checkout guarantees, and list any residual gap plainly.
 - [ ] MF-53 After each cycle, keep `python .github/scripts/run-local-gates.py` green (especially Gate 12, Gate 23, Gate 38, Gate 60 and Gate 122) and keep root behaviour byte-identical (FR-016). (PR #1022)
+
+## Maintainer Feedback: Code review of #1022 at `65efebc` (round 4)
+
+Source: maintainer issue-comment on PR #1022 (round-4 review). CI is green and all ten round-3 items are verified fixed. Each of the two remaining items was found independently by more than one reviewer.
+
+### Major
+
+- [ ] MF-54 [R4 #1a, Story 2 AS-5] In `.github/workflows/implement.yml` (retry prompt, ~:2196), drop the bare `git fetch origin` instruction for a subfolder lifecycle. `retry-base` already fetches the lifecycle's own branch, so `git reset --hard origin/<branch>` is enough. The root prompt stays byte-identical (FR-016).
+- [ ] MF-55 [R4 #1b, Story 2 AS-5] In `.github/workflows/implement.yml`, take a fresh `install-pre-push` snapshot (`remote-heads.before`) directly before the retry agent, gated the same way as the cycle snapshot. Point the retry's containment check (~:2381) at that new snapshot instead of the one taken before the cycle agent.
+- [ ] MF-56 [R4 #1c, contract "branches moved by other runs are left alone"] In `.github/actions/wing-commander-containment/action.yml` (~:148-159), stop treating a moved or created remote head as agent-pushed just because its tip is in the local object store. Count it only when its new tip is reachable from HEAD, from a local `refs/heads/*`, or from HEAD's reflog (`git log -g --format=%H HEAD`). A fetch writes only `refs/remotes/*`.
+- [ ] MF-57 [R4 #1, test] Add a containment fixture: another lifecycle pushes a branch concurrently, then the subfolder agent runs `git fetch origin`, and the check must pass. Keep the existing fixtures where the agent pushes another ref, and confirm they still fail.
+
+### Minor
+
+- [ ] MF-58 [R4 #2, contract] In `specs/114-subfolder-project-lifecycles/contracts/containment-and-trusted-checkout.md`, add to "Accepted residual gaps" (~:50-56), citing spec 095 FR-008: a subfolder agent can use the granted `git log/diff --output=<path>` to write its own step's `$GITHUB_ENV` and `$GITHUB_PATH` files under `$RUNNER_TEMP/_runner_file_commands`. A `BASH_ENV`, `PATH` or `LD_PRELOAD` set that way reaches every later step in the job, including the re-checkout, the check and the publish push. Qualify :37 so the re-checkout's guarantee covers only the composite files it restores. This is doc-only unless a cheap, contained mitigation exists.
+- [ ] MF-59 After each cycle, keep `python .github/scripts/run-local-gates.py` green and keep root behaviour byte-identical (FR-016). (PR #1022)
