@@ -279,3 +279,28 @@ Source: maintainer comment on PR #1022 (five fresh-session reviewers plus an adv
 ## Phase 13: Convergence
 
 - [X] T067 In `.github/workflows/intake.yml`, fail the intake job loudly, naming the refusal, when a routed subfolder intake's "Label first (subfolder project)" step or its "Publish stranded commits (post-agent)" push refuses a branch the agent committed (both are `continue-on-error`, so today an over-budget or misnumbered branch ends as a green run whose only trace is "intake produced no spec"), and cover the refused-rescue path in Gate 162 per FR-014 (partial)
+
+## Maintainer Feedback: Code review of #1022 at `b8b2c7c` (round 2)
+
+Source: maintainer issue-comment on PR #1022 (round-2 review; 18 of 20 round-1 items confirmed fixed). Lint is red on Gate 38 and Gate 12.
+
+### Major
+
+- [ ] MF-28 [R2 #1, Gate 38] In `.github/actions/wing-commander-containment/action.yml` (~:96), stop reading `github.event.repository.default_branch` inside the composite. Add a `default-branch` input and pass it from every check-mode caller, using the branch that job already resolves. When the input is empty, resolve the branch in-step with `git ls-remote --symref origin HEAD` (the idiom `implement.yml` uses). Fail closed if neither gives a branch.
+- [ ] MF-29 [R2 #2, Gate 12] In `.github/workflows/rebase.yml` (~:390-396), 'Resolve in-flight branch names' calls `wing-commander-project` without a token. Pass `token: ${{ steps.ctx.outputs.token }}`, as the other call in the same workflow does.
+- [ ] MF-30 [R2 #3, FR-014] Close the label-first bypass. For routed subfolder intake, append `Bash(git push:*)` to the agent's disallowed list so the agent cannot push at all. Remove the `Bash(git push -n:*)` deny (`-n` means `--dry-run`) and the now-redundant `--no-verify` prefix deny. The post-agent label-first step re-runs the check, creates the label, then pushes. Update the routing notes to say the agent does not push.
+- [ ] MF-31 [R2 #3, FR-014] In `intake.yml`, when `created-ref` found a slug but `label-first` produced none, the branch reached the remote without label-first. Fail loudly through the refused-publish path, and cover it in Gate 162.
+- [ ] MF-32 [R2 #4, containment] Export `GIT_NO_REPLACE_OBJECTS=1` in `_shared/containment.sh`, in the containment check-mode run block and in `wc_harden_git_env`. Run check mode under the hardened git env.
+- [ ] MF-33 [R2 #4, containment] Compute the containment base from a trusted SHA: a hardened `git ls-remote origin refs/heads/<default>`, fetched if missing, instead of the agent-rewritable `origin/<default>` or `--not --remotes`. Use the same base in the pre-push leg, diffing against `merge-base(<trusted default SHA>, local_sha)`. This also closes the gap where already-remote content arrives through a merge or reset.
+- [ ] MF-34 [R2 #5, containment] Treat the pre-push hook as advisory, because `core.hooksPath` and the `$RUNNER_TEMP` helper copies can be overwritten through `git log`/`git diff --output=<path>`. Enforce containment in the hardened post-agent step instead, running helper copies taken before the agent step and kept out of the agent's reach. Add `.wing-commander-pipeline/` to the subfolder no-write set.
+- [ ] MF-35 [R2 #5] Update `specs/114-subfolder-project-lifecycles/contracts/containment-and-trusted-checkout.md` to say plainly what the pre-push hook does and does not guarantee, and where containment is actually enforced.
+
+### Minor
+
+- [ ] MF-36 [R2 #6] On every subfolder-capable 'Publish stranded commits (post-agent)' step, add `&& steps.containment.outcome != 'failure'` to the `!cancelled()` guard so a failed containment check never triggers a rescue push. Root lifecycles (where the containment step is skipped) stay unchanged. Get a `review-step-gating` pass on this change.
+- [ ] MF-37 [R2 #7, FR-014] In `_shared/intake-pre-push.sh`, validate the slug grammar through `project-name.sh parse slug`, on top of the existing number, `/` and length checks. Add a reject fixture for `001-Bad_Slug`.
+- [ ] MF-38 [R2 #8, FR-016] In `.github/actions/wing-commander-stage-findings/action.yml` (~:267-272), take the nested `<prefix>/specs/NNN-*` branch only when `<prefix>/.specify` exists on the checkout and is not a symlink. Add fixtures, including a root-only adopter path such as `e2e/specs/001-login.spec.ts` that must not be treated as a spec document.
+- [ ] MF-39 [R2 #9] Expose a `claim-released` output from intake's in-job release step. Let the `release-claim` job run whenever intake did not succeed and did not release the claim itself, including when the intake job fails before any step runs.
+- [ ] MF-40 [R2 #10, Gate 60] Widen the Gate 60 regex to also match a trailing `_shared/` and a parent-directory variable followed by `/_shared/`, with self-test fixtures for each.
+- [ ] MF-41 [R2 #11, MF-21] Route the remaining inline splits (plan/tasks resolve-spec, cleanup select, pr-conversation resolve-identity, implement gate-suite) through `project-name.sh parse`, then remove their `INLINE_SPLIT_ALLOWED` entries and close MF-21. If a site must stay inline, record why here and leave MF-21 open with a follow-up issue.
+- [ ] MF-42 After each cycle, keep `python .github/scripts/run-local-gates.py` green (Gate 12, Gate 38 and Gate 60 especially) and keep root behaviour byte-identical (FR-016). (PR #1022)
