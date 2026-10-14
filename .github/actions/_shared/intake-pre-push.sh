@@ -4,7 +4,8 @@
 # the first push of a subfolder spec may carry:
 #
 #   * the only ref intake may push is <branch-prefix>P/<NNN-slug>, where NNN
-#     is the number intake allocated -- no deletion, no other branch;
+#     is the number intake allocated and <NNN-slug> passes the shared slug
+#     grammar (project-name.sh parse slug) -- no deletion, no other branch;
 #   * len(<NNN-slug>) must fit the spec-label budget (project-name.sh
 #     slug-budget P): an over-budget slug fails here, so no branch exists;
 #   * every commit the push publishes stays inside P (containment.sh).
@@ -66,6 +67,9 @@ while read -r _local_ref local_sha remote_ref _remote_sha; do
     *) refuse "branch ${remote_ref#refs/heads/} does not carry the allocated feature number $num" ;;
   esac
   case "$slug" in */*) refuse "'$slug' is not a single <NNN-slug> segment" ;; esac
+  # The slug grammar's one home is the shared parser.
+  bash "$here/project-name.sh" parse slug "$slug" >/dev/null 2>&1 \
+    || refuse "'$slug' is not a valid <NNN-slug> (three digits, a hyphen, then lowercase letters, digits and hyphens)"
   if [ "${#slug}" -gt "$budget" ]; then
     refuse "'$slug' is ${#slug} characters; the spec:$project/<NNN-slug> label leaves at most $budget (GitHub caps labels at 50). Choose a shorter slug -- nothing was truncated."
   fi

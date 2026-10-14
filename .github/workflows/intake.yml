@@ -545,6 +545,9 @@ jobs:
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
       commits-published: ${{ steps.publish-stranded.outputs.commits-published }}
       push-ok: ${{ steps.publish-stranded.outputs.push-ok }}
+      # 'true' once "Release the intake claim" removed the routing claim;
+      # release-claim runs whenever it did not (spec 114, FR-003).
+      claim-released: ${{ steps.release-claim.outputs.released }}
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
@@ -1855,6 +1858,7 @@ jobs:
       # re-run. always(), not !cancelled(): a cancelled or failed intake must
       # not strand the claim, and removing one label is no remote rewrite.
       - name: Release the intake claim
+        id: release-claim
         if: always() && needs.routing-gate.outputs.claim-label != ''
         continue-on-error: true
         env:
@@ -1862,18 +1866,22 @@ jobs:
           GH_REPO: ${{ github.repository }}
           ISSUE: ${{ inputs.issue-number }}
           CLAIM: ${{ needs.routing-gate.outputs.claim-label }}
-        run: gh issue edit "$ISSUE" --remove-label "$CLAIM"
+        run: |
+          gh issue edit "$ISSUE" --remove-label "$CLAIM"
+          echo "released=true" >> "$GITHUB_OUTPUT"
 
-  # The same release for an intake job that never reached its own last step
-  # (spec 114, FR-003, FR-012): an intake still pending in its numbering
-  # group when the run is cancelled, or superseded there, never starts, so
-  # "Release the intake claim" above never runs and the claim would refuse
-  # every later intake. always(), with no concurrency group, so this job is
-  # never itself the one left pending. A run whose intake job ran released
-  # the claim there.
+  # The same release for an intake job that did not release the claim
+  # itself (spec 114, FR-003, FR-012): an intake still pending in its
+  # numbering group when the run is cancelled, or superseded there, never
+  # starts; one that fails before any step runs (a container that will not
+  # start) never reaches its last step; and the release there can itself
+  # fail. Any of these would leave a claim that refuses every later intake.
+  # always(), with no concurrency group, so this job is never itself the
+  # one left pending. Skipped when the intake job succeeded or reported
+  # claim-released.
   release-claim:
     needs: [verify-image-prerequisites, routing-gate, intake]
-    if: always() && needs.verify-image-prerequisites.result != 'failure' && needs.routing-gate.outputs.claim-label != '' && (needs.intake.result == 'cancelled' || needs.intake.result == 'skipped')
+    if: always() && needs.verify-image-prerequisites.result != 'failure' && needs.routing-gate.outputs.claim-label != '' && needs.intake.result != 'success' && needs.intake.outputs.claim-released != 'true'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -1894,7 +1902,7 @@ jobs:
     permissions:
       issues: write
     steps:
-      - name: Release the intake claim (intake job never ran)
+      - name: Release the intake claim (intake job did not release it)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

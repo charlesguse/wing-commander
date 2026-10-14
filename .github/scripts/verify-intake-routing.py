@@ -289,10 +289,30 @@ def check_rerun_race(doc, bindir, errors):
         errors.append("race: no release-claim job releases the claim when the intake job never runs")
     else:
         rc_if = " ".join(str(rc_job.get("if", "")).split())
-        for want in ("always()", "needs.routing-gate.outputs.claim-label != ''",
-                     "needs.intake.result == 'cancelled'", "needs.intake.result == 'skipped'"):
-            if want not in rc_if:
-                errors.append(f"race: release-claim's if: lacks {want!r} ({rc_if!r})")
+        if "always()" not in rc_if:
+            errors.append(f"race: release-claim's if: is not always()-gated ({rc_if!r})")
+        # MF-39: it runs whenever the intake job did not succeed and did not
+        # report the claim released -- including a job that failed before
+        # any step ran -- and never otherwise.
+        for result, released, want in (("cancelled", "", True), ("skipped", "", True), ("failure", "", True),
+                                       ("failure", "true", False), ("success", "true", False),
+                                       ("success", "", False), ("cancelled", "true", False)):
+            ctx = {"always()": True, "cancelled()": False, "needs.verify-image-prerequisites.result": "success",
+                   "needs.routing-gate.outputs.claim-label": CLAIM, "needs.intake.result": result,
+                   "needs.intake.outputs.claim-released": released}
+            if evaluate_if(rc_if, ctx) != want:
+                errors.append(f"race: release-claim {'skips' if want else 'runs'} for intake result={result!r} "
+                              f"claim-released={released!r} ({rc_if!r})")
+        if "steps.release-claim.outputs.released" not in str((doc["jobs"]["intake"].get("outputs") or {}).get("claim-released", "")):
+            errors.append("race: the intake job does not export claim-released from its release step")
+        with tempfile.TemporaryDirectory() as tmp:
+            state = os.path.join(tmp, "labels.json")
+            with open(state, "w", encoding="utf-8") as fh:
+                json.dump([CLAIM], fh)
+            env = {"GH_TOKEN": "fake", "GH_REPO": "o/r", "ISSUE": "7", "CLAIM": CLAIM, "FAKE_LABEL_STATE": state}
+            r, outputs, _ = run_step(release.get("run", ""), env, ROOT, bindir)
+            if r.returncode != 0 or output_value(outputs, "released") != "true":
+                errors.append(f"race: the in-job release did not report released=true rc={r.returncode} {outputs!r}")
         if "concurrency" in rc_job:
             errors.append("race: release-claim holds a concurrency group, so it can itself be left pending")
         if not {"routing-gate", "intake"} <= set(rc_job.get("needs") or []):

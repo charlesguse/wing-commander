@@ -255,6 +255,22 @@ def case_project_spec_paths_classified_like_root():
         title="an uppercase folder is no project",
         evidence={"file_paths": ["Ideas/specs/001-login/spec.md"]},
         fingerprint_basis={"file_path": "Ideas/specs/001-login/spec.md", "gate_or_artifact": "spec"})
+    # MF-38 (FR-016): only a folder that is a Spec Kit project on the
+    # checkout has P/specs/ documents. ideas/alpha is one; e2e/ (a root-only
+    # adopter's test folder) is not, and linked/ only through a symlink.
+    os.makedirs(os.path.join(tmp, "ideas", "alpha", ".specify"))
+    tmp2 = tempfile.mkdtemp(prefix="wc-sf-")
+    os.makedirs(os.path.join(tmp2, "elsewhere", ".specify"))
+    os.makedirs(os.path.join(tmp2, "linked"))
+    os.symlink(os.path.join(tmp2, "elsewhere", ".specify"), os.path.join(tmp2, "linked", ".specify"))
+    e2e_test = valid_finding(
+        title="a root adopter's e2e spec file",
+        evidence={"file_paths": ["e2e/specs/001-login.spec.ts"]},
+        fingerprint_basis={"file_path": "e2e/specs/001-login.spec.ts", "gate_or_artifact": "login"})
+    linked_project = valid_finding(
+        title="a folder whose .specify is a symlink is no project",
+        evidence={"file_paths": ["linked/specs/001-login/spec.md"]},
+        fingerprint_basis={"file_path": "linked/specs/001-login/spec.md", "gate_or_artifact": "spec"})
     rc, outputs, state, out = run_prepare(
         tmp, "structured-array",
         findings=[project_doc, project_contract, code_named_specs, not_a_project], cap="3")
@@ -266,6 +282,14 @@ def case_project_spec_paths_classified_like_root():
           == ["the project's contract misnames an output", "a code directory named specs",
               "an uppercase folder is no project"],
           [outputs.get("survivor-{0}-title".format(i)) for i in range(3)])
+    rc, outputs, state, out = run_prepare(
+        tmp2, "structured-array", findings=[e2e_test, linked_project], cap="3")
+    check(case + ": exit 0 (non-projects)", rc == 0, out)
+    check(case + ": a folder with no real .specify has no spec documents",
+          state and state.get("dropped_spec_errata") == 0
+          and [outputs.get("survivor-{0}-title".format(i)) for i in range(2)]
+          == ["a root adopter's e2e spec file", "a folder whose .specify is a symlink is no project"],
+          (state, out))
 
 
 def case_spec_errata_summary_reports_the_drop():

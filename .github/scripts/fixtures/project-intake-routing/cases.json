@@ -55,7 +55,8 @@
     {"name": "subfolder slug one over budget", "project": "ideas/alpha", "num": "001", "ref": "spec-draft/ideas/alpha/001-abcdefghijklmnopqrstuvwxyz1234", "commit": ["ideas/alpha/specs/001-abcdefghijklmnopqrstuvwxyz1234/spec.md"], "expect": "fail", "names": ["at most 33"]},
     {"name": "branch without the allocated number", "project": "ideas/alpha", "num": "001", "ref": "spec-draft/ideas/alpha/002-login", "commit": ["ideas/alpha/specs/002-login/spec.md"], "expect": "fail", "names": ["001"]},
     {"name": "branch in another project", "project": "ideas/alpha", "num": "001", "ref": "spec-draft/ideas/beta/001-login", "commit": ["ideas/alpha/specs/001-login/spec.md"], "expect": "fail", "names": ["spec-draft/ideas/beta/001-login"]},
-    {"name": "commit outside the project folder", "project": "ideas/alpha", "num": "001", "ref": "spec-draft/ideas/alpha/001-login", "commit": ["ideas/alpha/specs/001-login/spec.md", "README.md"], "expect": "fail", "names": ["README.md"]}
+    {"name": "commit outside the project folder", "project": "ideas/alpha", "num": "001", "ref": "spec-draft/ideas/alpha/001-login", "commit": ["ideas/alpha/specs/001-login/spec.md", "README.md"], "expect": "fail", "names": ["README.md"]},
+    {"name": "slug outside the shared grammar", "project": "ideas/alpha", "num": "001", "ref": "spec-draft/ideas/alpha/001-Bad_Slug", "commit": ["ideas/alpha/specs/001-Bad_Slug/spec.md"], "expect": "fail", "names": ["001-Bad_Slug", "not a valid <NNN-slug>"]}
   ],
   "created": [
     {"name": "root slug, no budget applies", "project": "", "budget": "", "branch": "001-a-root-slug-that-is-much-longer-than-forty-four-chars", "expect": "pass", "spec_dir": "specs/001-a-root-slug-that-is-much-longer-than-forty-four-chars"},

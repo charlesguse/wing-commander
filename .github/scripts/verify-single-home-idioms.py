@@ -1278,15 +1278,26 @@ def check_local_action_before_checkout(root="."):
     return findings
 
 
-# Also the bare directory (`shared=".../.github/actions/_shared"`), which a
-# variable then indexes: the indirection resolves the same helpers.
-PROMOTION_RE = re.compile(SHARED_REF_RE.pattern + r"|\.github/actions/_shared(?![\w./-])")
+# Also the bare directory (`shared=".../.github/actions/_shared"`, with or
+# without a trailing slash), which a variable then indexes, and a
+# parent-directory variable followed by `/_shared` (`"$actions/_shared/x.sh"`):
+# each indirection resolves the same helpers. A composite's own
+# `$GITHUB_ACTION_PATH/../_shared` is the sanctioned form and does not match.
+PROMOTION_RE = re.compile(SHARED_REF_RE.pattern
+                          + r"|\.github/actions/_shared/?(?![\w./-])"
+                          + r"|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/_shared(?![\w.-])")
+
+
+def _blank_comment_lines(text):
+    """Comment-only lines (YAML or shell) blanked, line numbers kept: prose
+    naming the rule is not a resolution."""
+    return "\n".join("" if line.lstrip().startswith("#") else line for line in text.split("\n"))
 
 
 def check_promotion(root="."):
     findings = []
     for path in _relativize(root, published_stages(root)):
-        text = read(root, path)
+        text = _blank_comment_lines(read(root, path))
         for m in PROMOTION_RE.finditer(text):
             findings.append(Finding(path, "promotion", line_of(text, m.start()),
                                     m.group(0)))
@@ -1299,7 +1310,7 @@ def check_promotion(root="."):
                 candidate = os.path.join(ACTIONS_DIR, name, fname).replace(os.sep, "/")
                 if not os.path.isfile(os.path.join(root, candidate)):
                     continue
-                text = read(root, candidate)
+                text = _blank_comment_lines(read(root, candidate))
                 for m in PROMOTION_RE.finditer(text):
                     findings.append(Finding(candidate, "promotion",
                                             line_of(text, m.start()), m.group(0)))
@@ -2445,6 +2456,52 @@ def selftest_promotion_fails():
             fail(f"[{case}] unexpected hard failure(s): {hard}")
         elif not any(f.check == "promotion" and f.path == ".github/workflows/published-stage.yml" for f in findings):
             fail(f"[{case}] a `shared=` variable naming _shared was not caught")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    # MF-40: a trailing-slash directory and a parent-directory variable
+    # followed by /_shared/ are the same promotion; a comment naming the
+    # rule and a composite's own $GITHUB_ACTION_PATH/../_shared are not.
+    for case, body, want in (
+        ("a trailing `_shared/` directory is caught",
+         "          shared=\"$GITHUB_WORKSPACE/.wing-commander-pipeline/.github/actions/_shared/\"\n", True),
+        ("a parent-directory variable followed by /_shared/ is caught",
+         "          actions=\"$GITHUB_WORKSPACE/.wing-commander-pipeline/.github/actions\"\n"
+         "          bash \"$actions/_shared/containment.sh\" outside P\n", True),
+        ("a braced parent-directory variable followed by /_shared is caught",
+         "          cp \"${ACTIONS_DIR}/_shared\" -r .\n", True),
+        ("a comment naming .github/actions/_shared/ is not a resolution",
+         "          # never resolve .github/actions/_shared/ directly\n          echo ok\n", False),
+    ):
+        tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+        try:
+            _clean_tree(tmp)
+            _write(tmp, ".github/workflows/published-stage.yml",
+                   "on:\n  workflow_call: {}\njobs:\n  x:\n    runs-on: ubuntu-latest\n"
+                   "    steps:\n      - run: |\n" + body)
+            findings, hard = evaluate(tmp)
+            got = any(f.check == "promotion" and f.path == ".github/workflows/published-stage.yml" for f in findings)
+            if hard:
+                fail(f"[{case}] unexpected hard failure(s): {hard}")
+            elif got != want:
+                fail(f"[{case}] promotion {'not ' if want else ''}flagged")
+            else:
+                note(f"[{case}] passed")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    case = "a composite's own $GITHUB_ACTION_PATH/../_shared passes"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        _write(tmp, ".github/actions/wing-commander-x/action.yml",
+               "name: x\nruns:\n  using: composite\n  steps:\n    - shell: bash\n"
+               "      run: bash \"$GITHUB_ACTION_PATH/../_shared/containment.sh\" outside P\n")
+        findings, hard = evaluate(tmp)
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif any(f.check == "promotion" for f in findings):
+            fail(f"[{case}] the sanctioned composite form was flagged")
         else:
             note(f"[{case}] passed")
     finally:
