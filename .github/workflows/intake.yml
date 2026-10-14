@@ -1780,6 +1780,32 @@ jobs:
           echo "::error::wing-commander intake stage: failing the run — the spec still carries colon-form [NEEDS CLARIFICATION: markers while the structured result reported none (see the error above). No readiness callout was posted."
           exit 1
 
+      # Spec 114 (FR-014): a routed subfolder intake's branch reaches the
+      # remote only through "Label first" and "Publish stranded commits
+      # (post-agent)", both continue-on-error so the claim release and the
+      # metrics still run. A refusal there (an over-budget, misnumbered or
+      # out-of-project branch, or a push refused after the label landed)
+      # would otherwise end green, its only trace "intake produced no spec";
+      # this step turns it into the red run, naming the refusal. An agent
+      # that committed nothing leaves the label step green with no slug, so
+      # it never fires here.
+      - name: Fail on a refused subfolder publish
+        id: refused-publish
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && inputs.routing-label-prefix != '' && steps.num.outputs.project != '' && (steps.label-first.outcome == 'failure' || (steps.label-first.outputs.slug != '' && steps.publish-stranded.outputs.push-ok != 'true'))"
+        env:
+          LABEL_OUTCOME: ${{ steps.label-first.outcome }}
+          PROJECT: ${{ steps.num.outputs.project }}
+          SLUG: ${{ steps.label-first.outputs.slug }}
+          PREFIX: ${{ inputs.spec-draft-prefix }}
+        run: |
+          if [ "$LABEL_OUTCOME" = "failure" ]; then
+            echo "::error::wing-commander intake stage: failing the run — the label-first check refused the branch the agent committed for project $PROJECT (see the error above); nothing was labelled or published."
+          else
+            echo "::error::wing-commander intake stage: failing the run — the push of $PREFIX$PROJECT/$SLUG was refused after spec:$PROJECT/$SLUG was labelled (see the warning above); the branch was not published."
+          fi
+          echo "Intake refused to publish the subfolder spec branch for project $PROJECT — see the error in this job." >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       # FR-011: names the specific post-agent step that failed, for the
       # stalled job to read instead of the generic "a step after it did not
       # complete" -- see clarify.yml.
@@ -1807,7 +1833,8 @@ jobs:
               {"name": "Check agent changes stay inside the project folder", "conclusion": "${{ steps.containment.conclusion }}"},
               {"name": "Fail loud on non-healthy agent verdict", "conclusion": "${{ steps.verdict-fail.conclusion }}"},
               {"name": "Fail on invalid agent result", "conclusion": "${{ steps.invalid-result.conclusion }}"},
-              {"name": "Fail on unresolved clarification markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"}
+              {"name": "Fail on unresolved clarification markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"},
+              {"name": "Fail on a refused subfolder publish", "conclusion": "${{ steps.refused-publish.conclusion }}"}
             ]
 
       # Release the routing gate's claim on the issue (spec 114, FR-003,

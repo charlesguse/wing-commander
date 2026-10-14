@@ -276,4 +276,4 @@ Source: maintainer comment on PR #1022 (five fresh-session reviewers plus an adv
 
 ## Phase 13: Convergence
 
-- [ ] T067 In `.github/workflows/intake.yml`, fail the intake job loudly, naming the refusal, when a routed subfolder intake's "Label first (subfolder project)" step or its "Publish stranded commits (post-agent)" push refuses a branch the agent committed (both are `continue-on-error`, so today an over-budget or misnumbered branch ends as a green run whose only trace is "intake produced no spec"), and cover the refused-rescue path in Gate 162 per FR-014 (partial)
+- [X] T067 In `.github/workflows/intake.yml`, fail the intake job loudly, naming the refusal, when a routed subfolder intake's "Label first (subfolder project)" step or its "Publish stranded commits (post-agent)" push refuses a branch the agent committed (both are `continue-on-error`, so today an over-budget or misnumbered branch ends as a green run whose only trace is "intake produced no spec"), and cover the refused-rescue path in Gate 162 per FR-014 (partial)

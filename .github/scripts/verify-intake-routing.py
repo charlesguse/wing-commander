@@ -25,7 +25,9 @@ fixtures/project-intake-routing/cases.json:
     push run in its "Publish stranded commits (post-agent)" step, whose
     hardened push runs no hook (T065): an over-budget, misnumbered or
     out-of-project branch is never pushed, and a pushed one is labelled
-    first; "Open the spec PR" (`open-pr`) follows that push;
+    first; "Open the spec PR" (`open-pr`) follows that push, and "Fail on a
+    refused subfolder publish" (`refused-publish`) turns a refusal by either
+    continue-on-error step into a red run naming it (T067);
   * intake.yml's "Resolve created spec" (`created`) with a fake `git`: a
     subfolder slug over the label budget fails, the root has no budget;
   * root compatibility (FR-016, fixtures/project-root-compat/cases.json):
@@ -560,6 +562,8 @@ def check_label_first_rescue(data, doc, bindir, errors):
                 continue
             judge_label_first(tag, case, 0 if ok == "true" else 1, lr.stdout + lr.stderr + r.stdout + r.stderr,
                               origin, state, errors)
+            judge_refused_publish(steps, tag, case["project"], "success" if lr.returncode == 0 else "failure",
+                                  slug, ok, case["expect"] == "fail", bindir, errors)
     # An agent that stopped without a spec: nothing to label, no error.
     with tempfile.TemporaryDirectory() as tmp:
         ws, _, _, _ = intake_workspace(tmp)
@@ -568,6 +572,40 @@ def check_label_first_rescue(data, doc, bindir, errors):
         lr, louts, log = run_step(label_run, lenv, ws, bindir, LABEL_FIRST_ACTION)
         if lr.returncode != 0 or output_value(louts, "slug") != "" or "label create" in log:
             errors.append(f"label-first rescue: an agent with no commit was not a quiet no-op rc={lr.returncode} {lr.stderr!r}")
+        judge_refused_publish(steps, "label-first rescue (no commit)", "ideas/alpha", "success",
+                              output_value(louts, "slug") or "", "true", False, bindir, errors)
+    # T067: a push refused after the label landed (a race, or a branch the
+    # label step did not label) still fails the run; the root never does.
+    judge_refused_publish(steps, "label-first rescue (push refused after label)", "ideas/alpha", "success",
+                          "001-login", "false", True, bindir, errors)
+    judge_refused_publish(steps, "label-first rescue (root)", "", "failure", "", "false", False, bindir, errors)
+
+
+def judge_refused_publish(steps, tag, project, lf_outcome, slug, push_ok, want_fail, bindir, errors):
+    """T067 (FR-014): intake's "Fail on a refused subfolder publish"
+    (`refused-publish`) turns a refusal by the continue-on-error label or
+    push step into a red run naming it, and stays quiet otherwise."""
+    step = step_by_id(steps, "refused-publish")
+    if steps.index(step) < steps.index(step_by_id(steps, "publish-stranded")):
+        errors.append("refused-publish: runs before the label-first push")
+    if step.get("continue-on-error"):
+        errors.append("refused-publish: carries continue-on-error, so it cannot fail the run")
+    ctx = {"cancelled()": False, "steps.agent.outcome": "success", "inputs.routing-label-prefix": "node:",
+           "steps.num.outputs.project": project, "steps.label-first.outcome": lf_outcome if project else "skipped",
+           "steps.label-first.outputs.slug": slug, "steps.publish-stranded.outputs.push-ok": push_ok}
+    fires = evaluate_if(step["if"], ctx)
+    if fires != want_fail:
+        errors.append(f"{tag}: refused-publish {'fires' if fires else 'stays quiet'} "
+                      f"(label={lf_outcome}, slug={slug!r}, push-ok={push_ok!r})")
+        return
+    if not fires:
+        return
+    env = {key: interpolate(str(val), {**ctx, "inputs.spec-draft-prefix": "spec-draft/"})
+           for key, val in (step.get("env") or {}).items()}
+    r, _, _ = run_step(step["run"], env, ROOT, bindir)
+    want = "label-first check refused" if lf_outcome == "failure" else "was refused after spec:"
+    if r.returncode == 0 or "::error::" not in r.stdout or want not in r.stdout or project not in r.stdout:
+        errors.append(f"{tag}: refused-publish did not fail naming the refusal rc={r.returncode} {r.stdout!r}")
 
 
 def check_open_pr(doc, bindir, errors):
