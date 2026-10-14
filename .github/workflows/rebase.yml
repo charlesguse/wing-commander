@@ -795,7 +795,10 @@ jobs:
             outcome=conflict
             # Seed the conflict manifest deterministically with the first
             # stop's conflicted files; the agent appends later stops.
-            git diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflict-manifest.txt" || true
+            # core.quotepath=off: a non-ASCII name is listed as itself, not
+            # "a/b/caf\303\251.md", so the project-folder filter below keeps
+            # it and the scope check compares like with like (FR-021).
+            git -c core.quotepath=off diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflict-manifest.txt" || true
           else
             outcome=error
           fi
@@ -887,6 +890,9 @@ jobs:
                conflicted files for this stop. BEFORE resolving them, append
                each of those file paths (one per line) to the manifest file
                ${{ steps.ctx.outputs.runner-temp }}/conflict-manifest.txt using the Edit tool.
+               Write each path as its plain name: git prints a name with
+               non-ASCII or special characters quoted and escaped
+               ("a/b/caf\303\251.md"); append it unquoted (a/b/café.md).
             3. Edit ONLY the conflict-marked files, removing the conflict
                markers so the result reconciles this branch's change with the
                default branch's. Do not touch any file that is not
@@ -1119,9 +1125,10 @@ jobs:
               verdict=fail
             else
               i=0
+              # core.quotepath=off: listed the way the manifest was seeded.
               while [ "$i" -lt "${#pre[@]}" ]; do
-                git show --name-only --format= "${pre[$i]}"  | sed '/^$/d' | sort -u > "$RUNNER_TEMP/pre-files.txt"
-                git show --name-only --format= "${post[$i]}" | sed '/^$/d' | sort -u > "$RUNNER_TEMP/post-files.txt"
+                git -c core.quotepath=off show --name-only --format= "${pre[$i]}"  | sed '/^$/d' | sort -u > "$RUNNER_TEMP/pre-files.txt"
+                git -c core.quotepath=off show --name-only --format= "${post[$i]}" | sed '/^$/d' | sort -u > "$RUNNER_TEMP/post-files.txt"
                 cat "$RUNNER_TEMP/pre-files.txt" "$RUNNER_TEMP/manifest-sorted.txt" | sort -u > "$RUNNER_TEMP/allowed.txt"
                 extra="$(comm -23 "$RUNNER_TEMP/post-files.txt" "$RUNNER_TEMP/allowed.txt")"
                 if [ -n "$extra" ]; then

@@ -14,6 +14,9 @@ cases.json:
     the containment check: publishes nothing when the unpushed commits touch
     a path outside the folder, and is handed the job's project wherever a
     containment check runs.
+  * rebase.yml's conflict manifest and "Verify AI resolution scope" -- a
+    real conflict on a non-ASCII name inside the folder survives the
+    composite's filter mode and passes the scope check (T068).
 It also checks that every workflow step running claude-code-action in a
 workflow that composes tool-args consumes the composed allowed-tools output,
 and that every Edit/Write agent in a project-wired job has a containment
@@ -874,6 +877,75 @@ def check_modes(errors):
             errors.append(f"filter: kept {got!r}, want ['a/b/x.md', 'a/b/c/z.md'] rc={r.returncode} {r.stderr!r}")
 
 
+def rebase_step(step_id):
+    with open(os.path.join(ROOT, ".github", "workflows", "rebase.yml"), encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    return next(s for job in doc["jobs"].values() for s in job.get("steps") or [] if s.get("id") == step_id)
+
+
+def check_rebase_manifest_unquoted(errors):
+    """T068 (FR-021): rebase's conflict manifest and its scope check's
+    per-commit file sets list a non-ASCII name inside P as itself. Drives a
+    real conflict on a/b/café.md through rebase.yml's own manifest-seeding
+    line, the composite's filter mode and the real "Verify AI resolution
+    scope" step. The rebased tip also touches café.md, which only the
+    manifest admits -- so a quoted listing at either site abandons a valid
+    resolution."""
+    seed = [ln.strip() for ln in rebase_step("attempt")["run"].splitlines()
+            if "--diff-filter=U" in ln and "conflict-manifest.txt" in ln]
+    if len(seed) != 1:
+        errors.append(f"rebase manifest: want one manifest-seeding line in the attempt step, found {len(seed)}")
+        return
+    verify = rebase_step("verify")["run"]
+    flt = action_step("wing-commander-containment", "Filter paths to the project folder")
+    name = "a/b/café.md"
+    with tempfile.TemporaryDirectory() as tmp:
+        work, _, _ = staged_clone(tmp, {"base_files": [name, "a/b/x.md"]})
+        # The default, made explicit: a caller's own config must not hide the defect.
+        git(work, "config", "core.quotepath", "true")
+        git(work, "checkout", "-q", "-b", "feature")
+        for rel, text in ((name, "branch\n"), ("a/b/x.md", "branch\n")):
+            with open(os.path.join(work, rel), "w", encoding="utf-8") as fh:
+                fh.write(text)
+            git(work, "commit", "-q", "-am", "feature " + rel)
+        git(work, "checkout", "-q", "main")
+        with open(os.path.join(work, name), "w", encoding="utf-8") as fh:
+            fh.write("main\n")
+        git(work, "commit", "-q", "-am", "main moves")
+        git(work, "push", "-q", "origin", "main")
+        git(work, "fetch", "-q", "origin")
+        git(work, "checkout", "-q", "feature")
+        with open(os.path.join(tmp, "pre_tip.txt"), "w", encoding="utf-8") as fh:
+            fh.write(subprocess.run(["git", "rev-list", "--reverse", "origin/main..HEAD"], cwd=work,
+                                    capture_output=True, text=True, check=True).stdout)
+        subprocess.run(["git", "rebase", "origin/main"], cwd=work, capture_output=True, check=False)
+        env = {"RUNNER_TEMP": tmp}
+        r, _ = run_script(seed[0], env, work, "wing-commander-containment")
+        # The agent's resolution: reconcile the stop, then (a later stop's
+        # work, as far as the scope check can tell) touch café.md again on
+        # the second commit, which only the manifest admits.
+        with open(os.path.join(work, name), "w", encoding="utf-8") as fh:
+            fh.write("merged\n")
+        git(work, "add", "-A")
+        subprocess.run(["git", "-c", "core.editor=true", "rebase", "--continue"], cwd=work,
+                       capture_output=True, check=False)
+        with open(os.path.join(work, name), "a", encoding="utf-8") as fh:
+            fh.write("again\n")
+        git(work, "commit", "-q", "--amend", "-a", "--no-edit")
+        manifest = os.path.join(tmp, "conflict-manifest.txt")
+        r, _ = run_script(flt, {"PROJECT": "a/b", "PATHS_FILE": manifest}, tmp, "wing-commander-containment")
+        kept = open(manifest, encoding="utf-8").read().split("\n")
+        if r.returncode != 0 or name not in kept:
+            errors.append(f"rebase manifest: filter mode dropped the conflicted {name!r} inside P (kept {kept!r}) -- the manifest is listed quoted (T068)")
+            return
+        env.update(SLUG="001-x", AGENT_VERDICT="healthy", SPEC_PREFIX="spec/", PROJECT="a/b",
+                   MANIFEST_FILTER="success", DB="main")
+        r, out = run_script(verify, env, work, "wing-commander-containment")
+        if "push=true" not in out.splitlines():
+            errors.append(f"rebase manifest: the scope check abandoned a resolution inside P that touched {name!r} "
+                          f"-- its per-commit file sets are listed quoted (T068) {r.stdout!r}")
+
+
 GUARD = os.path.join(ROOT, ".github", "scripts", "pipeline-checkout-guard.sh")
 
 
@@ -989,6 +1061,7 @@ def main():
                     errors.append(f"publish_stranded {name}: refusal does not name {p!r}")
     check_trusted_checkout_excluded(errors)
     check_modes(errors)
+    check_rebase_manifest_unquoted(errors)
     if check_stale_folder(errors) == 0:
         errors.append("stale folder: no Edit/Write agent in a project-wired job was found -- the check has lost its subject")
     with tempfile.TemporaryDirectory() as tmp:
