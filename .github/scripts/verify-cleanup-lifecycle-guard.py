@@ -571,8 +571,8 @@ def scenarios(guard, root):
 def _mut_recombine_the_two_tests(guard):
     """The shipped defect: one condition, one message for both faults."""
     return guard.replace(
-        'if [ -z "$meta_dir" ] || [ "$meta_dir" != "$SPEC_DIR" ]; then',
-        'if [ -z "$issue" ] || [ -z "$meta_dir" ] || [ "$meta_dir" != "$SPEC_DIR" ]; then')
+        'if [ -z "$meta_dir" ] || [ "$meta_dir" != "specs/${SPEC_DIR##*/}" ]; then',
+        'if [ -z "$issue" ] || [ -z "$meta_dir" ] || [ "$meta_dir" != "specs/${SPEC_DIR##*/}" ]; then')
 
 
 def _mut_drop_the_fallback(guard):

@@ -425,7 +425,13 @@ jobs:
           while read -r _sha ref; do
             [ -n "${ref:-}" ] || continue
             slug="${ref#refs/heads/"${SPEC_PREFIX}"}"
-            spec_dir="specs/$slug"
+            # A subfolder project's branch is <prefix>P/NNN-slug and its spec
+            # lives at P/specs/NNN-slug, recording the project-relative
+            # specs/NNN-slug (spec 114, FR-007/FR-008). Root unchanged.
+            project=""
+            case "$slug" in */*) project="${slug%/*}" ;; esac
+            rel_dir="specs/${slug##*/}"
+            spec_dir="${project:+$project/}$rel_dir"
             meta_path="$spec_dir/spec-meta.json"
 
             # #95, first filter: a branch whose own PR is already merged is
@@ -461,8 +467,8 @@ jobs:
               continue
             fi
             meta_dir="$(printf '%s' "$meta" | jq -r '.spec_dir // empty')"
-            if [ "$meta_dir" != "$spec_dir" ]; then
-              warn "$slug" "spec-meta.json .spec_dir='$meta_dir' does not identify $spec_dir (self-identity check)"
+            if [ "$meta_dir" != "$rel_dir" ]; then
+              warn "$slug" "spec-meta.json .spec_dir='$meta_dir' does not identify $rel_dir (self-identity check)"
               continue
             fi
 
@@ -546,9 +552,12 @@ jobs:
               fi
             fi
 
+            # artifact_key: the slug with each `/` as `__` (an artifact name
+            # may not hold `/`; a project path never holds `_`), so it is
+            # the slug itself at the root.
             selected="$(printf '%s' "$selected" | jq -c \
-              --arg slug "$slug" --arg dir "$spec_dir" --arg issue "$issue" \
-              '. + [{slug: $slug, spec_dir: $dir, issue: $issue}]')"
+              --arg slug "$slug" --arg dir "$spec_dir" --arg issue "$issue" --arg project "$project" \
+              '. + [{slug: $slug, spec_dir: $dir, issue: $issue, project: $project, artifact_key: ($slug | gsub("/"; "__"))}]')"
           done < <(git ls-remote --heads origin "${SPEC_PREFIX}*")
 
           # An empty array is a valid, successful output.
@@ -767,6 +776,7 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          project: ${{ matrix.project }}
           step-label: "rebase"
 
       # specs/037-agent-turn-budget-guard/: turns the intended turn budget
@@ -886,7 +896,7 @@ jobs:
         if: always() && steps.agent.outcome != 'skipped'
         uses: actions/upload-artifact@v6
         with:
-          name: claude-execution-output-${{ matrix.slug }}
+          name: claude-execution-output-${{ matrix.artifact_key }}
           path: ${{ runner.temp }}/claude-execution-output.json
           if-no-files-found: ignore
           retention-days: 90
@@ -920,13 +930,13 @@ jobs:
       # Durable record (specs/043-durable-metrics-record) — the artifact this
       # feature persists past the transcript's own retention window. One
       # artifact per matrix entry, mirroring this job's own
-      # claude-execution-output-${{ matrix.slug }} transcript naming — a
+      # claude-execution-output-${{ matrix.artifact_key }} transcript naming — a
       # matrix job's parallel legs would otherwise collide on a shared name.
       - name: Upload metrics record
         if: always() && steps.agent.outcome != 'skipped'
         uses: actions/upload-artifact@v6
         with:
-          name: metrics-record-${{ matrix.slug }}
+          name: metrics-record-${{ matrix.artifact_key }}
           path: ${{ runner.temp }}/wing-commander-metrics-record.json
           if-no-files-found: ignore
           retention-days: 90
@@ -1167,6 +1177,7 @@ jobs:
           (steps.verify.outputs.escalate == 'true' || steps.attempt.outputs.outcome == 'error')
         env:
           SLUG: ${{ matrix.slug }}
+          SPEC_DIR: ${{ matrix.spec_dir }}
           BEFORE: ${{ steps.attempt.outputs.before }}
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
@@ -1178,7 +1189,9 @@ jobs:
           FAILED_STEP: ${{ steps.failed-step.outputs.step }}
         run: |
           set -uo pipefail
-          spec_dir="specs/$SLUG"
+          # discover's [P/]specs/NNN-slug; spec-meta.json records the
+          # project-relative specs/NNN-slug (spec 114).
+          spec_dir="$SPEC_DIR"
 
           if [ -d "$(git rev-parse --git-path rebase-merge)" ] || [ -d "$(git rev-parse --git-path rebase-apply)" ]; then
             git rebase --abort || true
@@ -1190,7 +1203,7 @@ jobs:
           issue="$(printf '%s' "$meta" | jq -r '.issue // empty' 2>/dev/null || true)"
           meta_dir="$(printf '%s' "$meta" | jq -r '.spec_dir // empty' 2>/dev/null || true)"
 
-          if [ -z "$issue" ] || [ "$meta_dir" != "$spec_dir" ]; then
+          if [ -z "$issue" ] || [ "$meta_dir" != "specs/${spec_dir##*/}" ]; then
             echo "::warning::${SPEC_PREFIX}$SLUG: cannot resolve a trustworthy lifecycle issue from $spec_dir/spec-meta.json — recording the abandonment here only, taking no action on the issue."
             echo "${SPEC_PREFIX}$SLUG: abandoned; lifecycle issue could not be identified, so no comment/label was posted." >> "$GITHUB_STEP_SUMMARY"
             exit 0

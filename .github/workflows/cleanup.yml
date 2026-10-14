@@ -422,7 +422,9 @@ jobs:
             "${TASKS_PREFIX}"*)      slug="${HEAD_REF#"$TASKS_PREFIX"}" ;;
             "${IMPL_PREFIX}"*)       slug="${HEAD_REF#"$IMPL_PREFIX"}"; slug="${slug%-iter*}" ;;
           esac
-          echo "spec-dir=${slug:+specs/$slug}" >> "$GITHUB_OUTPUT"
+          # A subfolder project's slug is P/NNN-slug and its spec dir
+          # P/specs/NNN-slug (spec 114); the outcome jobs validate it.
+          echo "spec-dir=${slug:+${slug%"${slug##*/}"}specs/${slug##*/}}" >> "$GITHUB_OUTPUT"
           echo "Closed PR (head=$HEAD_REF, base=$BASE_REF, merged=$MERGED) → cleanup outcome: **$outcome**." >> "$GITHUB_STEP_SUMMARY"
 
   # The pipeline's most common outcome — a merged final PR tears itself down
@@ -535,7 +537,10 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
 
       # Derive the spec identity from the merged head branch rather than
-      # guessing.
+      # guessing. A subfolder project's slug is project-qualified
+      # (P/NNN-slug, spec 114): its spec lives at P/specs/NNN-slug and
+      # spec-meta.json records the project-relative specs/NNN-slug. The
+      # other two arms' identity steps resolve the same way.
       - name: Resolve spec identity
         id: spec
         env:
@@ -545,7 +550,7 @@ jobs:
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
         run: |
           slug="${HEAD_REF#"$SPEC_PREFIX"}"
-          if ! printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
+          if ! printf '%s' "$slug" | grep -Eq '^([a-z0-9][a-z0-9-]*/)*[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
             msg="wing-commander cleanup stage: cannot resolve a spec slug from '$HEAD_REF'; refusing to guess."
             echo "::error::$msg"
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"
@@ -553,7 +558,7 @@ jobs:
             exit 1
           fi
           echo "slug=$slug"           >> "$GITHUB_OUTPUT"
-          echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
+          echo "spec-dir=${slug%"${slug##*/}"}specs/${slug##*/}" >> "$GITHUB_OUTPUT"
 
       # The merge commit, never the spec branch (#282). A final PR merged
       # with --delete-branch (or the UI's "Delete branch" button) loses its
@@ -629,7 +634,7 @@ jobs:
           # of this guard for the full note (#73). The three copies are kept
           # identical on purpose — a spec-meta.json whose `issue` is null is a
           # property of the spec branch, not of which arm reached it.
-          if [ -z "$meta_dir" ] || [ "$meta_dir" != "$SPEC_DIR" ]; then
+          if [ -z "$meta_dir" ] || [ "$meta_dir" != "specs/${SPEC_DIR##*/}" ]; then
             fail "spec-meta.json is missing or invalid — it records spec_dir='$meta_dir', not the expected $SPEC_DIR. Refusing to act on a specification this pull request does not identify."
           fi
           if [ -z "$issue" ]; then
@@ -703,6 +708,19 @@ jobs:
           if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
           git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
+      # Subfolder project (spec 114, FR-022): the P of a `P/NNN-slug`
+      # lifecycle, for the agent's project-aware denies. Skipped for a root
+      # slug (no `/`), so nothing below changes there.
+      - name: Resolve project
+        id: project
+        if: contains(steps.spec.outputs.slug, '/')
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ steps.spec.outputs.slug }}
+          identity-kind: slug
+          token: ${{ steps.ctx.outputs.token }}
+          check-folder: 'false'
+
       # The one agent step, read-only, deriving its diff from the merge
       # commit itself so it's independent of branch-deletion ordering.
       - name: Compose tool args (cleanup)
@@ -715,6 +733,7 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          project: ${{ steps.project.outputs.project }}
           step-label: "cleanup"
 
       - name: Compute agent turn ceiling
@@ -936,7 +955,12 @@ jobs:
           done
 
       # Always attempted, independent of the idempotency skip above — an
-      # already-absent branch is success.
+      # already-absent branch is success. Every name is an anchored full
+      # refname inside this lifecycle's own namespace (spec 114, FR-015):
+      # `git ls-remote` matches a pattern against a ref's trailing
+      # components, so the impl listing names `refs/heads/` and keeps only
+      # exact `<impl-prefix>[P/]NNN-slug-iterN` refs, never a same-slug
+      # branch of another project.
       - name: Delete pipeline branches
         env:
           SLUG: ${{ steps.spec.outputs.slug }}
@@ -947,7 +971,7 @@ jobs:
           IMPL_PREFIX: ${{ inputs.impl-prefix }}
         run: |
           delete_branch() {
-            if git push origin --delete "$1" 2>"$RUNNER_TEMP/delete-err"; then
+            if git push origin --delete "refs/heads/$1" 2>"$RUNNER_TEMP/delete-err"; then
               echo "Deleted $1." >> "$GITHUB_STEP_SUMMARY"
             else
               echo "$1 already absent (or could not be deleted) — treated as success:" >> "$GITHUB_STEP_SUMMARY"
@@ -958,8 +982,12 @@ jobs:
           delete_branch "${SPEC_PREFIX}$SLUG"
           delete_branch "${PLAN_PREFIX}$SLUG"
           delete_branch "${TASKS_PREFIX}$SLUG"
-          for ref in $(git ls-remote --heads origin "${IMPL_PREFIX}$SLUG-iter*" | awk '{print $2}'); do
-            delete_branch "${ref#refs/heads/}"
+          for ref in $(git ls-remote --heads origin "refs/heads/${IMPL_PREFIX}$SLUG-iter*" | awk '{print $2}'); do
+            name="${ref#refs/heads/}"
+            iter="${name#"${IMPL_PREFIX}$SLUG-iter"}"
+            if [ "$name" != "$iter" ] && [ -n "$iter" ] && [ -z "${iter//[0-9]/}" ]; then
+              delete_branch "$name"
+            fi
           done
 
       # The loud failure #282 asks for. This arm's trigger is a one-shot
@@ -1120,7 +1148,7 @@ jobs:
           SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
           slug="${HEAD_REF#"$SPEC_DRAFT_PREFIX"}"
-          if ! printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
+          if ! printf '%s' "$slug" | grep -Eq '^([a-z0-9][a-z0-9-]*/)*[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
             msg="wing-commander cleanup stage: cannot resolve a spec slug from '$HEAD_REF'; refusing to guess."
             echo "::error::$msg"
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"
@@ -1128,7 +1156,7 @@ jobs:
             exit 1
           fi
           echo "slug=$slug"           >> "$GITHUB_OUTPUT"
-          echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
+          echo "spec-dir=${slug%"${slug##*/}"}specs/${slug##*/}" >> "$GITHUB_OUTPUT"
 
       # The draft branch may already be gone — a draft closed together with
       # its branch is the same race as #282. wing-commander-resolve-checkout-ref
@@ -1187,7 +1215,7 @@ jobs:
           # of this guard for the full note (#73). The three copies are kept
           # identical on purpose — a spec-meta.json whose `issue` is null is a
           # property of the spec branch, not of which arm reached it.
-          if [ -z "$meta_dir" ] || [ "$meta_dir" != "$SPEC_DIR" ]; then
+          if [ -z "$meta_dir" ] || [ "$meta_dir" != "specs/${SPEC_DIR##*/}" ]; then
             fail "spec-meta.json is missing or invalid — it records spec_dir='$meta_dir', not the expected $SPEC_DIR. Refusing to act on a specification this pull request does not identify."
           fi
           if [ -z "$issue" ]; then
@@ -1419,14 +1447,14 @@ jobs:
               arm=""
               ;;
           esac
-          if ! printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
+          if ! printf '%s' "$slug" | grep -Eq '^([a-z0-9][a-z0-9-]*/)*[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
             fail "cannot resolve a spec slug from '$HEAD_REF'; refusing to guess."
           fi
           if [ "$arm" = "nonfinal" ] && [ "$BASE_REF" != "${SPEC_PREFIX}$slug" ]; then
             fail "'$HEAD_REF' targets '$BASE_REF', not its own ${SPEC_PREFIX}$slug — refusing to guess."
           fi
           echo "slug=$slug"           >> "$GITHUB_OUTPUT"
-          echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
+          echo "spec-dir=${slug%"${slug##*/}"}specs/${slug##*/}" >> "$GITHUB_OUTPUT"
           echo "arm=$arm"             >> "$GITHUB_OUTPUT"
 
       # The probed branch may already be gone (#282). wing-commander-resolve-
@@ -1491,7 +1519,7 @@ jobs:
           # spec_dir matched perfectly and only `issue` was empty — the
           # misattribution sent maintainers to inspect a spec_dir that was
           # already correct.
-          if [ -z "$meta_dir" ] || [ "$meta_dir" != "$SPEC_DIR" ]; then
+          if [ -z "$meta_dir" ] || [ "$meta_dir" != "specs/${SPEC_DIR##*/}" ]; then
             fail "spec-meta.json is missing or invalid — it records spec_dir='$meta_dir', not the expected $SPEC_DIR. Refusing to act on a specification this pull request does not identify."
           fi
           # "issue": null is not corruption, it is a documented window. A

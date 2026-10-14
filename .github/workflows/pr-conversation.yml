@@ -433,16 +433,21 @@ jobs:
              && [ "${head_ref#"$PLAN_PREFIX"}" = "$head_ref" ] \
              && [ "${head_ref#"$TASKS_PREFIX"}" = "$head_ref" ]; then
             candidate="${head_ref#"$SPEC_PREFIX"}"
-            if printf '%s' "$candidate" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
+            # A subfolder project's branch carries P/NNN-slug (spec 114); its
+            # spec lives at P/specs/NNN-slug. The act job's
+            # wing-commander-project step enforces P's grammar.
+            if printf '%s' "$candidate" | grep -Eq '^([a-z0-9][a-z0-9-]*/)*[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
               qualifies=true
               slug="$candidate"
             fi
           fi
+          project=""
+          case "$slug" in */*) project="${slug%/*}" ;; esac
 
           {
             echo "qualifies=$qualifies"
             echo "slug=$slug"
-            echo "spec-dir=${slug:+specs/$slug}"
+            echo "spec-dir=${slug:+${project:+$project/}specs/${slug##*/}}"
             echo "default-branch=$default_branch"
           } >> "$GITHUB_OUTPUT"
           if [ "$qualifies" != "true" ]; then
@@ -2145,6 +2150,20 @@ jobs:
             echo "leg-start=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } >> "$GITHUB_OUTPUT"
 
+      # Subfolder project (spec 114, FR-007, FR-022): the P of a
+      # `P/NNN-slug` lifecycle, for the act agents' project-aware denies.
+      # Skipped for a root slug (no `/`), so nothing below changes there.
+      - name: Resolve project
+        id: project
+        if: steps.relay-gate.outputs.proceed == 'true' && contains(needs.classify-and-announce.outputs.slug, '/')
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ needs.classify-and-announce.outputs.slug }}
+          identity-kind: slug
+          issue-number: ${{ needs.classify-and-announce.outputs.issue-number }}
+          token: ${{ env.WC_BOT_TOKEN }}
+          check-folder: 'false'
+
       - name: Checkout working tree for this leg
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.needs-checkout == 'true'
         uses: actions/checkout@v5
@@ -2239,6 +2258,7 @@ jobs:
           # after any adopter override or extra-allowed-tools, so neither can
           # reopen it -- see implement.yml's no-write-paths input.
           no-write-paths: ".git/"
+          project: ${{ steps.project.outputs.project }}
           step-label: "pr-conversation.act"
 
       # The fold route's own, narrower grant: no Bash(git commit:*)/
@@ -2257,6 +2277,7 @@ jobs:
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
           # .git/ deny -- see the act step's tool args above in this file.
           no-write-paths: ".git/"
+          project: ${{ steps.project.outputs.project }}
           step-label: "pr-conversation.act.fold"
 
       # T010: the shared bounded agent step every mutation route uses. Never
@@ -2284,6 +2305,8 @@ jobs:
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          # Spec Kit's project-root override -- see intake.yml.
+          SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}

@@ -76,8 +76,8 @@
 - [X] T032 [P] [US1] Same wiring in `.github/workflows/tasks.yml`; restart `slug` takes `P/<NNN-slug>`
 - [X] T033 [P] [US1] Same wiring in `.github/workflows/implement.yml`; branch `<impl-prefix>P/<NNN-slug>-iterN`; `spec_dir` input and hand-offs take `P/specs/<NNN-slug>`
 - [X] T034 [P] [US1] Same wiring in `.github/workflows/finalize.yml`; `spec_dir` takes the repository-relative form
-- [ ] T035 [P] [US1] Same wiring in `.github/workflows/rebase.yml`, `.github/workflows/pr-conversation.yml` (act and act.fold agents) and `.github/workflows/cleanup.yml`
-- [ ] T036 [US1] Add the stale-folder check: each later stage re-validates the recorded folder on the ref it works from (`project-name.sh check-folder`) and fails naming the folder if missing or no longer a Spec Kit project; add reject fixtures to T018's gate
+- [X] T035 [P] [US1] Same wiring in `.github/workflows/rebase.yml`, `.github/workflows/pr-conversation.yml` (act and act.fold agents) and `.github/workflows/cleanup.yml`
+- [X] T036 [US1] Add the stale-folder check: each later stage re-validates the recorded folder on the ref it works from (`project-name.sh check-folder`) and fails naming the folder if missing or no longer a Spec Kit project; add reject fixtures to T018's gate
 - [ ] T037 [US1] Run `python .github/scripts/run-local-gates.py`; then apply `review-step-gating` and `container-shell-safety` passes to the edited workflows
 
 **Checkpoint**: US1 independently functional: a routed lifecycle runs end to end inside its folder.
@@ -93,8 +93,8 @@
 - [ ] T038 [P] [US2] Create `.github/scripts/verify-project-numbering.py` with fixtures under `.github/scripts/fixtures/project-numbering/`: per-project start at `001`, highest of `P/specs/` and anchored `refs/heads/<prefix>P/<NNN-slug>` refs, nested and sibling refs not counted, root counts only refs with no `/` after the prefix, number never reissued after branch teardown, project-scoped spec-collision check ignores another project's `004` (FR-009, FR-010); register in `lint-workflows.yml` and `run-local-gates.py`
 - [X] T039 [US2] Replace the inline "Allocate feature number" scan in `.github/workflows/intake.yml` with `project-name.sh next-number <P>` (root reproduces today's numbers)
 - [ ] T040 [US2] Split intake concurrency in `.github/workflows/intake.yml`: numbering group `wing-commander-intake` (root) / `wing-commander-intake/P`; when routing is on, a gate job holds `wing-commander-intake-issue/<issue-number>` (`cancel-in-progress: false`) and runs the prefix check, label count and re-run refusal; the numbering job `needs:` it (FR-012, D8). Add the two-concurrent-intakes-different-projects model (fake `gh`) to T018's gate
-- [ ] T041 [US2] Make per-spec concurrency groups `wing-commander-<repository-relative spec dir>` in `.github/workflows/clarify.yml`, `plan.yml`, `tasks.yml`, `implement.yml`, `finalize.yml`, `rebase.yml` (root names unchanged)
-- [ ] T042 [US2] Make `.github/workflows/cleanup.yml` list and delete branches and labels by anchored full refnames within the finishing lifecycle's project namespace only (FR-015)
+- [X] T041 [US2] Make per-spec concurrency groups `wing-commander-<repository-relative spec dir>` in `.github/workflows/clarify.yml`, `plan.yml`, `tasks.yml`, `implement.yml`, `finalize.yml`, `rebase.yml` (root names unchanged)
+- [X] T042 [US2] Make `.github/workflows/cleanup.yml` list and delete branches and labels by anchored full refnames within the finishing lifecycle's project namespace only (FR-015)
 - [ ] T043 [P] [US2] Make `.github/workflows/watchdog.yml` resolve project and lifecycle through the shared parser (no prefix-encoded project, no wrapper-input dependence, no project-ignoring defaults) and scope the spec-collision collector to `P/specs/` (FR-013, D13)
 - [ ] T044 [P] [US2] Make `.github/workflows/fold-cycle-guard.yml` resolve project and lifecycle through the shared parser; `spec_dir` restart input takes the repository-relative form
 - [ ] T045 [US2] Add watchdog/fold-cycle-guard accept/reject fixtures (same `NNN-slug` in two projects attributed to the right one) to `.github/scripts/fixtures/project-name-parser/` and extend `.github/scripts/verify-watchdog-resolved-stage-consumers.py` if needed
