@@ -196,3 +196,15 @@ Add US2 (isolation) → US3 (compat proof) → US4 (graduation) → US5 (nesting
 - [X] M002 Fix Gate 121: in job `intake`, step `Create spec from issue`, render the canonical commit-message scratch-path guidance by invoking `wing-commander-commit-message-guidance` in an earlier step of the job and interpolating its output into that prompt.
 - [X] M003 Fix `verify-write-boundary.py`: run it locally to identify the failing scenario (likely from the project-aware deny composition in `wing-commander-tool-args`, T026/T027) and make the composed denies agree with the single no-write-paths definition (spec 090 / FR-022).
 - [ ] M004 Keep root-level adopters byte-identical (FR-016) and run `python .github/scripts/run-local-gates.py` until all gates are green.
+
+## Maintainer Feedback: Continue Implementation
+
+Source: maintainer comment on PR #1022, asking implement to continue the in-scope work. The last cycle stopped after one partial step on T018 and used 15 of its 180 turns.
+
+- [ ] MF001 Use each cycle's turn budget to complete as many remaining tasks as it allows. Check off each task in this file as soon as it is complete so that every cycle registers progress and the loop does not end on "no further progress". (PR #1022)
+- [ ] MF002 Finish T018 first, before any other remaining task. (PR #1022)
+- [ ] MF003 Then do the per-stage wiring, in order: T029, T033, T034, T035, T040, T042, T043, T044, T045, T046. T036 and T041, which M001 also covers, belong to this wiring phase too. (PR #1022)
+- [ ] MF004 Then do the remaining gates and fixtures: T021, T026, T037, T038, T047, T048, T049, T050, T051, T052, T053, T054. (PR #1022)
+- [ ] MF005 Then do T001, T056, T057, T058, T059 and M001–M004. T056, the constitution amendment, stays a separate human-merged PR and does not land on this branch. (PR #1022)
+- [ ] MF006 For large workflow files (`implement.yml`, `intake.yml`, `cleanup.yml`), make a focused edit for each task instead of holding back a whole-file rewrite until it is complete. A task that lands partially may be committed with a progress note next to it in this file, and the next cycle continues it. (PR #1022)
+- [ ] MF007 After each cycle's edits, keep `python .github/scripts/run-local-gates.py` green, and keep root-level behaviour byte-identical (FR-016). (PR #1022)
