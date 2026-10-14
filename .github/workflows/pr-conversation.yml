@@ -2205,6 +2205,29 @@ jobs:
           chmod +x "$hooks_dir/prepare-commit-msg"
           git config core.hooksPath "$hooks_dir"
 
+      # Containment (spec 114, FR-021) for an agent that pushes itself: the
+      # act agent commits and pushes on some routes, so a check after it ran
+      # would come too late. A pre-push hook beside the run-attribution hook
+      # refuses any push carrying a change outside the project folder
+      # (_shared/containment.sh, copied out of the trusted pipeline checkout).
+      # Also records the pre-agent HEAD for the post-agent check below.
+      # Skipped for a root lifecycle, so nothing changes there.
+      - name: Install containment pre-push hook for this leg
+        id: containment-hook
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.needs-checkout == 'true' && steps.project.outputs.project != ''
+        shell: bash
+        env:
+          PROJECT: ${{ steps.project.outputs.project }}
+        run: |
+          set -euo pipefail
+          hooks_dir="$RUNNER_TEMP/wing-commander-fold-hooks"
+          mkdir -p "$hooks_dir"
+          cp "$GITHUB_WORKSPACE/.wing-commander-pipeline/.github/actions/_shared/containment.sh" "$hooks_dir/containment.sh"
+          printf '#!/usr/bin/env bash\nexec bash %q pre-push %q\n' "$hooks_dir/containment.sh" "$PROJECT" > "$hooks_dir/pre-push"
+          chmod +x "$hooks_dir/pre-push"
+          git config core.hooksPath "$hooks_dir"
+          echo "pre-agent-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       # Drafted-content is already-classified data (T006), but still not
       # fresh instructions — staged to a file, not interpolated (constitution V).
       # Any small-unrelated-change size-backstop reshape (issue-title/
@@ -2443,15 +2466,28 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Containment (spec 114, FR-021) -- see clarify.yml. The pre-push hook
+      # above stops an out-of-folder push; this names any out-of-folder
+      # change the agent left unpushed or pushed around the hook
+      # (`--no-verify`), and keeps the rescue below from publishing it.
+      - name: Check agent changes stay inside the project folder
+        id: containment
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && steps.containment-hook.outputs.pre-agent-sha != ''"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          project: ${{ steps.project.outputs.project }}
+          base-sha: ${{ steps.containment-hook.outputs.pre-agent-sha }}
+
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
       # along -- see clarify.yml. before-sha reused from
       # classify-and-announce's own pre-fold tip (research.md D3 -- read
       # last in that job, immediately before this job starts folding
       # anything, so it demonstrably predates this job's own checkout).
+      # Never publishes a leg whose containment check failed (spec 114).
       - name: Publish stranded commits (post-agent)
         id: publish-stranded
-        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && steps.containment.outcome != 'failure'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:

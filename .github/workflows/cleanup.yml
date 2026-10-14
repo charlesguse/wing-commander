@@ -798,6 +798,21 @@ jobs:
             --allowedTools "${{ steps.tool-args-cleanup.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-cleanup.outputs.disallowed-tools }}"
 
+      # Containment (spec 114, FR-021) -- see clarify.yml. This agent holds no
+      # git commit or push tool and nothing below commits, so any change it
+      # leaves is uncommitted and dies with the runner: base-sha HEAD covers
+      # it, and the check annotates rather than fails, because a red step
+      # here would skip the teardown below (see "Fail loud on non-healthy
+      # agent verdict").
+      - name: Check agent changes stay inside the project folder
+        id: containment
+        if: "!cancelled() && steps.summarize.outcome != 'skipped' && steps.project.outputs.project != ''"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          project: ${{ steps.project.outputs.project }}
+          base-sha: HEAD
+
       # deterministic, transcript-only verdict replacing the raw steps.summarize.outcome checks
       # below -- see specs/037-agent-turn-budget-guard/data-model.md.
       - name: Compute agent run verdict

@@ -121,7 +121,16 @@ def git(cwd, *args):
 
 
 def meta(slug, issue, stage="implement"):
-    return json.dumps({"spec_dir": "specs/" + slug, "issue": issue, "stage": stage})
+    return json.dumps({"spec_dir": "specs/" + slug.rsplit("/", 1)[-1], "issue": issue,
+                       "stage": stage})
+
+
+# spec 114 (FR-007/FR-008): a subfolder project's branch is <prefix>P/NNN-slug,
+# its spec lives at P/specs/NNN-slug, and its spec-meta records the
+# project-relative specs/NNN-slug. A record carrying the P/ prefix fails the
+# self-identity check.
+SUBFOLDER = "ideas/alpha/015-sub"
+SUBFOLDER_BAD = "ideas/alpha/016-bad-meta"
 
 
 # slug -> lifecycle issue number. Every branch carries a valid spec-meta.
@@ -140,6 +149,8 @@ BRANCHES = {
     "012-other-bot": 12,       # #831: another App's marker with current SHAs: selected
     "013-fork-pr-only": 13,    # #916: closed, only a fork's same-named PR open: excluded
     "014-login-not-bot": 14,   # #831: the App's login on a non-Bot user (synthetic): selected
+    SUBFOLDER: 15,             # spec 114: a subfolder project's branch: selected
+    SUBFOLDER_BAD: 16,         # spec 114: spec-meta records P/specs/...: excluded
 }
 
 
@@ -159,15 +170,21 @@ def build(tmp):
     tips = {}
     for slug, number in BRANCHES.items():
         git(work, "checkout", "-q", "-b", "spec/" + slug, "main")
-        d = os.path.join(work, "specs", slug)
+        project, _, leaf = slug.rpartition("/")
+        d = os.path.join(work, project, "specs", leaf)
         os.makedirs(d)
-        open(os.path.join(d, "spec-meta.json"), "w").write(meta(slug, number))
-        git(work, "add", "specs")
+        record = meta(slug, number)
+        if slug == SUBFOLDER_BAD:
+            record = json.dumps({"spec_dir": project + "/specs/" + leaf, "issue": number,
+                                 "stage": "implement"})
+        open(os.path.join(d, "spec-meta.json"), "w").write(record)
+        git(work, "add", "-A")
         git(work, "commit", "-q", "-m", slug)
         git(work, "push", "-q", "origin", "spec/" + slug)
         tips[slug] = git(work, "rev-parse", "HEAD")
     git(work, "checkout", "-q", "main")
     shutil.rmtree(os.path.join(work, "specs"), ignore_errors=True)
+    shutil.rmtree(os.path.join(work, "ideas"), ignore_errors=True)
     return work, tips, git(work, "rev-parse", "main")
 
 
@@ -267,9 +284,23 @@ def suite(script, quiet=False):
             chosen = None
         want = ["001-open", "003-closed-open-pr", "005-forged-marker",
                 "007-issue-read-fails", "008-pr-read-fails", "010-stale-last",
-                "011-comments-fail", "012-other-bot", "014-login-not-bot"]
+                "011-comments-fail", "012-other-bot", "014-login-not-bot", SUBFOLDER]
         ck("selects exactly the in-flight branches", chosen == want,
            "selected {0}, want {1}".format(chosen, want))
+        try:
+            sub = [b for b in json.loads(outputs.get("branches", "null")) if b["slug"] == SUBFOLDER]
+        except (TypeError, ValueError):
+            sub = []
+        sub = sub[0] if sub else {}
+        ck("spec 114: a subfolder branch carries its repository-relative spec_dir",
+           sub.get("spec_dir") == "ideas/alpha/specs/015-sub", sub)
+        ck("spec 114: a subfolder branch carries its project",
+           sub.get("project") == "ideas/alpha", sub)
+        ck("spec 114: a subfolder branch's artifact_key is slash-free",
+           sub.get("artifact_key") == "ideas__alpha__015-sub", sub)
+        ck("spec 114: a spec-meta recording P/specs/... fails the self-identity check",
+           "spec/{0} excluded".format(SUBFOLDER_BAD) in output
+           and "does not identify specs/016-bad-meta" in output, output)
         ck("#916: a closed issue with no open PR is noted, not warned",
            "spec/002-parked` excluded from auto-rebase: its lifecycle issue (#2) is closed" in summary
            and "spec/002-parked excluded" not in output,
@@ -307,6 +338,14 @@ MUTATIONS = (
      'echo "::warning::wing-commander rebase discover: ${SPEC_PREFIX}$1 kept', 'true "'),
     ("#831 first marker read instead of the last",
      "| last // empty')", "| first // empty')"),
+    ("spec 114 subfolder spec dir read at the root",
+     'spec_dir="${project:+$project/}$rel_dir"', 'spec_dir="$rel_dir"'),
+    ("spec 114 self-identity compares the repository-relative dir",
+     'if [ "$meta_dir" != "$rel_dir" ]; then', 'if [ "$meta_dir" != "$spec_dir" ]; then'),
+    ("spec 114 artifact_key keeps the slash",
+     'artifact_key: ($slug | gsub("/"; "__"))', 'artifact_key: $slug'),
+    ("spec 114 project not emitted",
+     'project: $project,', 'project: "",'),
 )
 
 

@@ -90,5 +90,39 @@
       "modify": ["README.md"],
       "expect": "pass"
     }
+  },
+  "pre_push": {
+    "push_inside_allowed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["a/b/x.md", "a/b/c/new.md"],
+      "expect": "pass"
+    },
+    "push_outside_refused": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["a/b/x.md", "README.md"],
+      "expect": "fail",
+      "names": ["README.md"]
+    },
+    "push_sibling_prefix_refused": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "commit_files": ["a/bc/y.md"],
+      "expect": "fail",
+      "names": ["a/bc/y.md"]
+    },
+    "commits_already_on_a_remote_not_rechecked": {
+      "project": "a/b",
+      "base_files": ["README.md", "a/b/x.md"],
+      "expect": "pass"
+    },
+    "branch_deletion_allowed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "commit_files": ["README.md"],
+      "stdin": "(delete) 0000000000000000000000000000000000000000 refs/heads/x {sha}",
+      "expect": "pass"
+    }
   }
 }

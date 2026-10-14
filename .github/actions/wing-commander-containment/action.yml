@@ -43,14 +43,9 @@ runs:
           exit 0
         fi
         changed="$( { git diff --name-only "$BASE_SHA" HEAD; git diff --name-only HEAD; git ls-files --others --exclude-standard; } | sort -u)"
-        outside=""
-        while IFS= read -r path; do
-          [ -z "$path" ] && continue
-          case "$path" in
-            "$PROJECT"/*) ;;
-            *) outside="${outside:+$outside$'\n'}$path" ;;
-          esac
-        done <<< "$changed"
+        # The path test's single home is _shared/containment.sh, which
+        # pr-conversation's pre-push hook runs too.
+        outside="$(printf '%s\n' "$changed" | bash "$GITHUB_ACTION_PATH/../_shared/containment.sh" outside "$PROJECT")"
         if [ -n "$outside" ]; then
           {
             echo "outside-paths<<WC_EOF"

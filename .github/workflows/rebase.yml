@@ -996,6 +996,7 @@ jobs:
           # what sent healthy resolutions down this abandon-and-escalate path.
           AGENT_VERDICT: ${{ steps.agent-verdict.outputs.verdict }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          PROJECT: ${{ matrix.project }}
         run: |
           set -uo pipefail
           push=false
@@ -1013,6 +1014,16 @@ jobs:
             manifest="$RUNNER_TEMP/conflict-manifest.txt"
             touch "$manifest"
             sed '/^$/d' "$manifest" | sort -u > "$RUNNER_TEMP/manifest-sorted.txt"
+            # Containment (spec 114, FR-021): for a subfolder lifecycle the
+            # agent-appended manifest admits only paths inside the project
+            # folder, so a resolution can never widen a commit outside it.
+            # The path test's single home is _shared/containment.sh.
+            if [ -n "$PROJECT" ]; then
+              bash "$GITHUB_WORKSPACE/.wing-commander-pipeline/.github/actions/_shared/containment.sh" outside "$PROJECT" \
+                < "$RUNNER_TEMP/manifest-sorted.txt" | sort -u > "$RUNNER_TEMP/manifest-outside.txt"
+              comm -23 "$RUNNER_TEMP/manifest-sorted.txt" "$RUNNER_TEMP/manifest-outside.txt" > "$RUNNER_TEMP/manifest-inside.txt"
+              mv "$RUNNER_TEMP/manifest-inside.txt" "$RUNNER_TEMP/manifest-sorted.txt"
+            fi
 
             verdict=pass
             if [ "${#pre[@]}" -ne "${#post[@]}" ]; then
