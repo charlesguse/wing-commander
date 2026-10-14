@@ -1,0 +1,70 @@
+# Fails a subfolder-project stage when its agent changed anything outside
+# the project folder P (specs/114-subfolder-project-lifecycles, FR-021).
+# Pure shell, no agent, no network. Runs after the agent step and before
+# any push. A root lifecycle (empty project) is skipped: the whole
+# repository is its project.
+#
+# Like every shared composite, this action is resolved from the pipeline
+# repository's own checkout (see the header of
+# .github/actions/wing-commander-context/action.yml), so it never assumes
+# it lives in the workspace-root repository.
+name: wing-commander-containment
+description: >
+  Fail the stage when any path changed since the pre-agent SHA (committed,
+  staged, modified or untracked) lies outside the project folder.
+
+inputs:
+  project:
+    description: Project path P (empty for a root lifecycle, which skips the check).
+    required: false
+    default: ""
+  base-sha:
+    description: The commit the checkout was at before the agent step ran.
+    required: true
+
+outputs:
+  outside-paths:
+    description: Newline-joined changed paths outside the project folder (empty when contained).
+    value: ${{ steps.check.outputs.outside-paths }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check containment
+      id: check
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        BASE_SHA: ${{ inputs.base-sha }}
+      run: |
+        set -uo pipefail
+        if [ -z "$PROJECT" ]; then
+          echo "outside-paths=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        changed="$( { git diff --name-only "$BASE_SHA" HEAD; git diff --name-only HEAD; git ls-files --others --exclude-standard; } | sort -u)"
+        outside=""
+        while IFS= read -r path; do
+          [ -z "$path" ] && continue
+          case "$path" in
+            "$PROJECT"/*) ;;
+            *) outside="${outside:+$outside$'\n'}$path" ;;
+          esac
+        done <<< "$changed"
+        if [ -n "$outside" ]; then
+          {
+            echo "outside-paths<<WC_EOF"
+            echo "$outside"
+            echo "WC_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "::error::wing-commander-containment: the agent changed paths outside project folder '$PROJECT': $(echo "$outside" | tr '\n' ' ')"
+          {
+            echo "❌ **wing-commander-containment failed** — changes outside \`$PROJECT/\`:"
+            echo '```'
+            echo "$outside"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+        fi
+        echo "outside-paths=" >> "$GITHUB_OUTPUT"
+        echo "✅ wing-commander-containment: every change lies inside \`$PROJECT/\`." >> "$GITHUB_STEP_SUMMARY"

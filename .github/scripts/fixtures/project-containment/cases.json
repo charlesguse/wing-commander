@@ -1,0 +1,81 @@
+{
+  "tool_args": {
+    "nested_project": {
+      "project": "a/b",
+      "denied": [".claude/**", ".git/**", "a/.claude/**", "a/b/.claude/**", "a/b/**/.claude/**"]
+    },
+    "single_segment_project": {
+      "project": "ideas",
+      "denied": [".claude/**", ".git/**", "ideas/.claude/**", "ideas/**/.claude/**"],
+      "not_denied": ["Edit(ideas/**)"]
+    },
+    "denies_hold_with_no_write_paths_overridden": {
+      "project": "a/b",
+      "no_write_paths": "docs/",
+      "disallowed_override": "",
+      "denied": ["docs/**", "a/.claude/**", "a/b/**/.claude/**"]
+    }
+  },
+  "containment": {
+    "inside_edit": {
+      "project": "a/b",
+      "base_files": ["a/b/specs/001-x/spec.md", "README.md"],
+      "modify": ["a/b/specs/001-x/spec.md"],
+      "expect": "pass"
+    },
+    "inside_new_file": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "create": ["a/b/src/new.py"],
+      "expect": "pass"
+    },
+    "nested_folder_move_inside": {
+      "project": "a",
+      "base_files": ["a/b/README.md", "a/b/specs/001-x/spec.md"],
+      "move": [["a/b", "a/c"]],
+      "commit": true,
+      "expect": "pass"
+    },
+    "child_index_readme_inside": {
+      "project": "a",
+      "base_files": ["a/README.md", "a/b/x.md"],
+      "modify": ["a/README.md"],
+      "expect": "pass"
+    },
+    "uncommitted_outside": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "modify": ["README.md"],
+      "expect": "fail",
+      "names": ["README.md"]
+    },
+    "committed_outside": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "a/other.md"],
+      "modify": ["a/other.md"],
+      "commit": true,
+      "expect": "fail",
+      "names": ["a/other.md"]
+    },
+    "untracked_outside": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "create": ["stray.txt"],
+      "expect": "fail",
+      "names": ["stray.txt"]
+    },
+    "sibling_prefix_is_outside": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "create": ["a/bc/y.md"],
+      "expect": "fail",
+      "names": ["a/bc/y.md"]
+    },
+    "root_lifecycle_skipped": {
+      "project": "",
+      "base_files": ["README.md"],
+      "modify": ["README.md"],
+      "expect": "pass"
+    }
+  }
+}

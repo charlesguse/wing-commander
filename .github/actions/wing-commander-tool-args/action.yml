@@ -56,6 +56,15 @@ inputs:
       (specs/090-stage-write-boundary, FR-002, FR-019).
     required: false
     default: ""
+  project:
+    description: >
+      Subfolder project path P (specs/114-subfolder-project-lifecycles,
+      FR-022, D10). When non-empty, the project-aware .claude/ denies are
+      derived into the same no-write-paths definition: root .claude/ and
+      .git/, each proper ancestor E/.claude/, P/.claude/ and
+      P/**/.claude/. Empty (a root lifecycle) adds nothing.
+    required: false
+    default: ""
 
 outputs:
   allowed-tools:
@@ -106,6 +115,7 @@ runs:
         ALLOWED_OVERRIDE: ${{ inputs.allowed-tools-override }}
         DISALLOWED_OVERRIDE: ${{ inputs.disallowed-tools-override }}
         NO_WRITE_PATHS: ${{ inputs.no-write-paths }}
+        PROJECT: ${{ inputs.project }}
       run: |
         set -uo pipefail
 
@@ -381,6 +391,22 @@ runs:
         #    on commas, trim, dedupe, drop empties, preserving first-seen
         #    order -- the identical four-shape rendering pattern
         #    shell_commands above already uses.
+        # Project-aware denies (spec 114 FR-022): folded into the one
+        # no-write-paths definition so the statement, the globs and the
+        # classifier all see the same list.
+        if [ -n "${PROJECT:-}" ]; then
+          project_denies=".claude/,.git/"
+          ancestor=""
+          rest="$PROJECT"
+          while [[ "$rest" == */* ]]; do
+            ancestor="$ancestor${rest%%/*}/"
+            rest="${rest#*/}"
+            project_denies="$project_denies,${ancestor}.claude/"
+          done
+          project_denies="$project_denies,$PROJECT/.claude/,$PROJECT/**/.claude/"
+          NO_WRITE_PATHS="${NO_WRITE_PATHS:+$NO_WRITE_PATHS,}$project_denies"
+        fi
+
         write_paths_list=""
         write_paths_glob_denies=""
         declare -A write_paths_seen=()

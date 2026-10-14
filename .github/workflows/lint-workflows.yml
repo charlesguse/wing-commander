@@ -4651,6 +4651,9 @@ jobs:
       - name: Gate 159 — project-aware files hold no root-only path pattern
         if: "!cancelled()"
         run: python3 .github/scripts/verify-project-single-home.py
+      - name: Gate 160 — subfolder containment (project-aware denies, outside-folder guard)
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-subfolder-containment.py
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
