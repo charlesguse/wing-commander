@@ -185,7 +185,7 @@ runs:
         fi
         hooks_dir="${HOOKS_DIR:-$RUNNER_TEMP/wing-commander-containment-hooks}"
         shared="$GITHUB_ACTION_PATH/../_shared"
-        helpers=(containment.sh project-name.sh intake-pre-push.sh git-push-hardening.sh)
+        read -ra helpers <<< "containment.sh project-name.sh intake-pre-push.sh git-push-hardening.sh"
         mkdir -p "$hooks_dir"
         # Copies, so a branch the agent checks out cannot rewrite the hook.
         # The hook is advisory: the agent can repoint core.hooksPath or
