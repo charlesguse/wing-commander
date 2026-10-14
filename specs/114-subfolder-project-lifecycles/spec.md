@@ -8,6 +8,14 @@
 
 **Input**: User description: "Run the pipeline on a project in a subfolder, so one repository can hold several projects" (lifecycle issue #1020). Every stage today treats the repository root as the one project. An adopter wants one repository to hold many independent projects as folders ("nodes"), each its own Wing Commander project with its own constitution, `.specify/`, spec-kit skills, `specs/` and code, and nodes may nest inside nodes. Spec Kit already resolves the nearest enclosing `.specify/` and accepts an explicit project-root override; the gaps are on the pipeline side: preflight, spec-directory resolution and validation, feature numbering, and repository-wide names (labels, branches, concurrency groups).
 
+## Clarifications
+
+### Session 2026-10-14
+
+- Q: How does an issue name its project? → A: A maintainer applies a `node:<path>` label before or together with `spec-request`; the prefix is a new optional intake input defaulting to empty (routing off). Intake reads live labels; zero = root, one = that project, two or more = refuse. Only intake reads it; later stages use the recorded identity.
+- Q: Per-project or repository-wide feature numbering? → A: Per project, each starting at `001`, scanning `P/specs/` and anchored `refs/heads/<prefix>P/<NNN-slug>` refs; intake concurrency `wing-commander-intake/P`.
+- Q: Namespacing scheme? → A: The validated folder path itself, unchanged, placed after the existing flat prefixes; no flattening, hashing or per-piece inputs. Paths are capped at 28 characters so `spec:` labels fit GitHub's 50-character limit; spec-meta stays project-relative and never records the path.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Run a full lifecycle on a project in a subfolder (Priority: P1)
@@ -20,7 +28,7 @@ A maintainer of a repository that holds several projects as folders opens an iss
 
 **Acceptance Scenarios**:
 
-1. **Given** a repository with a project in `ideas/alpha/` carrying its own constitution, `.specify/` and spec-kit skills, **When** a maintainer routes an issue to that project and applies the entry label, **Then** intake creates `ideas/alpha/specs/<NNN-slug>/spec.md` and the matching `spec-meta.json` records that project-relative location.
+1. **Given** a repository with a project in `ideas/alpha/` carrying its own constitution, `.specify/` and spec-kit skills, **When** a maintainer applies `node:ideas/alpha` before or together with the entry label, **Then** intake creates `ideas/alpha/specs/<NNN-slug>/spec.md`, the branches `<prefix>ideas/alpha/<NNN-slug>` and the label `spec:ideas/alpha/<NNN-slug>`, and the matching `spec-meta.json` records the project-relative location `specs/<NNN-slug>`.
 2. **Given** that lifecycle's spec PR has merged, **When** plan, tasks, implement, converge and finalize run, **Then** each stage locates the spec directory from the lifecycle's identity (branch, label or dispatch data) without falling back to root `specs/`, and each agent's working directory and allowed paths are the project folder.
 3. **Given** a stage receives a spec directory as dispatch data, **When** that directory is a valid project-relative spec path such as `ideas/alpha/specs/003-foo`, **Then** the stage accepts it; **When** it is malformed, escapes the repository, or points outside a recognised project, **Then** the stage rejects it loudly.
 4. **Given** the routed folder lacks `.specify/` or the spec-kit skills, **When** preflight runs, **Then** it fails naming the folder and what is missing, rather than silently using the root project.
@@ -92,15 +100,16 @@ A project folder can contain further project folders, to any depth. Each nested 
 
 ### Edge Cases
 
-- An issue names a project folder that does not exist, or one that exists but is not a Spec Kit project: the routing step fails loudly on the lifecycle issue naming the folder; no branch, label or spec directory is created.
-- An issue names no project in a repository that has a root project: the lifecycle runs at the root exactly as today.
-- An issue names more than one project, or its project designation changes mid-lifecycle: the first recorded project is authoritative; a conflicting designation is reported on the lifecycle issue and the stage refuses to proceed rather than move the spec.
-- A project path contains characters not valid in branch names, label names or concurrency group names (spaces, uppercase, very long paths): the derived key is normalised deterministically, and two distinct paths that would normalise to the same key are rejected rather than allowed to collide.
-- A derived label name exceeds GitHub's label length limit: the derivation stays deterministic and collision-checked, and fails loudly rather than truncating into a collision.
-- A project path attempts traversal (`..`, absolute paths, symlinks out of the checkout): rejected as untrusted input before any stage uses it.
+- An issue's `node:` label names a project folder that does not exist, or one that exists but is not a Spec Kit project: intake fails loudly on the lifecycle issue naming the folder; no branch, label or spec directory is created.
+- An issue carries no `node:` label (or the adopter has not enabled routing): the lifecycle runs at the root exactly as today.
+- An issue carries two or more `node:` labels: intake refuses with a callout on the lifecycle issue and creates nothing.
+- A `node:` label is added, removed or changed after intake: it has no effect; every later stage reads the project from the recorded identity. Re-running intake on an issue that already has a `spec:` label refuses.
+- A project path contains characters not valid in branch names, label names or concurrency group names (spaces, uppercase, a `specs` segment, a segment shaped like `NNN-`, or more than 28 characters): it is rejected, never normalised.
+- A `spec:` label for the derived name would exceed GitHub's 50-character limit: intake fails loudly before any branch exists rather than truncating.
+- A project path attempts traversal (`..`, absolute paths, symlinks): rejected as untrusted input before any stage uses it.
 - A root project's lifecycle touches files inside a nested project's folder: the root's lifecycle treats nested project folders as out of its scope (consistent with the adopter's own constitution keeping root lifecycles out of node contents); whether the pipeline enforces this or leaves it to the adopter's constitution is decided in planning.
 - Watchdog and fold-cycle guard currently read repository-wide prefix variables or defaults: they must identify a run's project without depending on any single wrapper's per-call inputs.
-- A branch prefix containing `/` is currently rejected by preflight; any namespacing that relies on folder paths in branch names must either flatten the path or relax that check without weakening the protection it provides.
+- A configured branch prefix containing `/` is rejected by preflight today; that check stays unchanged, because the project path is appended after the flat prefix rather than folded into it.
 
 ## Requirements *(mandatory)*
 
@@ -108,9 +117,9 @@ A project folder can contain further project folders, to any depth. Each nested 
 
 **Project resolution**
 
-- **FR-001**: The pipeline MUST let a lifecycle target a project that lives in a subfolder of the repository, identified by its folder path relative to the repository root, through [NEEDS CLARIFICATION: How does an issue name its project — a `node:<path>`-style label, a field in the issue form, or a separate wrapper set per project (all wrappers still sit side by side in the root `.github/workflows/`)?].
-- **FR-002**: The project path MUST be treated as untrusted input: validated against a strict format, rejected if it escapes the repository or traverses upward, and resolved by deterministic code, never by an agent's judgment.
-- **FR-003**: Once a lifecycle's project is resolved, it MUST be recorded in the lifecycle's durable identity (spec-meta and whatever identity the routing mechanism carries) and every later stage MUST derive it from that record, never re-infer it.
+- **FR-001**: The pipeline MUST let a lifecycle target a project that lives in a subfolder of the repository, identified by its folder path relative to the repository root, through a `node:<path>` routing label that a maintainer applies before or together with `spec-request`. Routing is controlled by a new optional intake input naming the label prefix; it defaults to empty, which turns routing off so root-level adopters are unaffected. Intake MUST read the issue's live labels through its `issue-number` input, never from the event payload or the issue body. Zero routing labels means the root project, exactly one means that project, and two or more MUST make intake refuse with a callout on the lifecycle issue and create nothing. (Only triage-or-higher users can apply labels, so routing carries the same authority as entry; an issue-form field would stay author-editable after approval, and per-project wrappers cannot split the repository-wide watchdog, cleanup, rebase and fold-cycle-guard triggers.)
+- **FR-002**: The project path MUST be treated as untrusted input and validated by deterministic code, never by an agent's judgment, before any use. A valid path is one or more segments matching `^[a-z0-9][a-z0-9-]*$` joined by `/`, contains no segment equal to `specs` and no segment matching `^[0-9]{3}-`, is at most 28 characters long, and names a real directory (not a symlink, and with no symlinked ancestor) on the default branch that contains `.specify/` and `.claude/skills/speckit-*`. Any other path, including absolute paths and `..` traversal, MUST be rejected, never normalised.
+- **FR-003**: Once a lifecycle's project is resolved, it MUST be recorded in the lifecycle's durable identity — its branch names, its `spec:` label and the spec directory carried as dispatch data — and every later stage, plus the watchdog and fold-cycle guard, MUST derive the project from that record, never re-infer it. Only intake reads the routing label: adding, removing or changing a `node:` label after intake has no effect, and re-running intake on an issue that already carries a `spec:` label MUST refuse. `spec-meta.json` is deliberately not part of this record (see FR-008).
 - **FR-004**: Projects MUST be supported at any folder depth, and a project nested inside another project MUST be treated as a distinct project.
 
 **Per-project Spec Kit state**
@@ -118,19 +127,19 @@ A project folder can contain further project folders, to any depth. Each nested 
 - **FR-005**: Preflight MUST check for `.specify/` and the spec-kit skills in the resolved project folder (the root when no project is named), and fail naming the folder and the missing piece when they are absent.
 - **FR-006**: Every stage MUST read the constitution, `.specify/` templates and scripts, spec-kit skills and `specs/` from the resolved project folder, and its agent MUST run with that folder as its working project, including the paths in agent prompts and allowed-tools lists.
 - **FR-007**: Every place that derives or validates a spec directory (stage dispatch validation, branch- or label-based reconstruction, the shared context and inspected-run-identity actions, and the shared spec-meta reader) MUST accept a project-relative spec directory of the form `<project>/specs/<NNN-slug>` and continue to accept root `specs/<NNN-slug>`, while still rejecting anything malformed.
-- **FR-008**: A spec's `spec-meta.json` MUST record its spec directory in a form that remains valid after the project folder is copied to the root of another repository, with no edits inside the folder (Story 4).
+- **FR-008**: A spec's `spec-meta.json` MUST record its spec directory project-relative (`specs/<NNN-slug>`) and MUST NOT record the project path, so that it remains valid after the project folder is copied to the root of another repository, with no edits inside the folder (Story 4).
 
 **Feature numbering**
 
-- **FR-009**: Feature numbers MUST be allocated [NEEDS CLARIFICATION: per project (each starting at `001`, scanned from the project's own `specs/` and the project's own branches) or from one sequence shared across the repository?].
+- **FR-009**: Feature numbers MUST be allocated per project, each project's sequence starting at `001`. For project P, the next number is 1 plus the highest `NNN` found in `P/specs/` and in branch refs that exactly match `refs/heads/<prefix>P/<NNN-slug>` for the spec-draft and spec branch prefixes (anchored full refnames, so a nested or sibling project's refs never count). The root project counts only refs whose remainder after the prefix contains no `/`. (Projects moved into a shared repository keep their existing numbers without renumbering, graduated copies continue their own sequence, and this matches Spec Kit.)
 - **FR-010**: Number allocation MUST always include the target project's own `specs/` directory in its scan, so that teardown deleting a project's branches can never cause a number already present in that project to be reissued.
 
 **Isolation and names**
 
-- **FR-011**: Branch names, `spec:` labels and per-spec concurrency groups for a subfolder project MUST be unique across the repository, so that two projects with the same `NNN-slug` never collide on branches or labels and never serialize on each other's per-spec concurrency group. The namespacing scheme is [NEEDS CLARIFICATION: one project key derived deterministically from the folder path that prefixes branches, labels and concurrency groups together, or separately configurable inputs per piece as branch prefixes are today?].
-- **FR-012**: The intake concurrency group MUST serialize only the intakes that share a numbering sequence; if numbering is per project, intakes in different projects MUST NOT queue behind each other.
-- **FR-013**: The watchdog and fold-cycle guard MUST identify each inspected run's project and lifecycle correctly regardless of which wrapper started it, without relying on a single repository-wide prefix or on defaults that ignore the project.
-- **FR-014**: Any name derived from a project path MUST be computed deterministically, MUST be checked for collisions between distinct paths, and MUST fail loudly rather than silently truncate or merge two projects.
+- **FR-011**: Branch names, `spec:` labels and per-spec concurrency groups for a subfolder project MUST be unique across the repository, so that two projects with the same `NNN-slug` never collide on branches or labels and never serialize on each other's per-spec concurrency group. The namespacing key is the validated project path P itself, unchanged (no flattening, hashing or per-piece inputs), placed after the existing flat prefixes: branches `<prefix>P/<NNN-slug>` and `<impl-prefix>P/<NNN-slug>-iterN`, label `spec:P/<NNN-slug>`, spec directory `P/specs/<NNN-slug>`, per-spec concurrency group `wing-commander-<spec dir>`. The root project's key is empty, so every root name is unchanged. The configured branch prefixes themselves still may not contain `/` (preflight's existing check stays).
+- **FR-012**: The intake concurrency group MUST serialize only the intakes that share a numbering sequence: the root project keeps `wing-commander-intake`, and project P uses `wing-commander-intake/P`, so intakes in different projects never queue behind each other.
+- **FR-013**: The watchdog and fold-cycle guard MUST identify each inspected run's project and lifecycle correctly regardless of which wrapper started it, by reading the project from the branch, label or spec-directory names they already parse, without relying on a single repository-wide prefix or on defaults that ignore the project. One shared parser MUST be used everywhere: strip the prefix (or `spec:`), take the last segment as the `NNN-slug`, and the rest is P. Branch listing and deletion MUST use anchored full refnames.
+- **FR-014**: Any name derived from a project path MUST be computed deterministically and MUST fail loudly rather than silently truncate or merge two projects. Because validated paths are used verbatim, distinct paths always yield distinct names and no separate collision search is needed. GitHub caps labels at 50 characters, so `spec:` + P + `/` + `NNN-slug` must fit, i.e. len(P) + len(`NNN-slug`) ≤ 44. Deterministic code, not the agent's prompt, MUST hand the intake agent its slug budget, check the result, and create the `spec:` label before any branch exists; a slug over budget fails, never truncates. Paths over 28 characters are refused (FR-002), which leaves at least 16 characters for `NNN-slug`; this caps path length, not nesting depth.
 - **FR-015**: Cleanup MUST tear down only the finishing lifecycle's branches and labels within its own project's namespace.
 
 **Compatibility**
@@ -141,14 +150,15 @@ A project folder can contain further project folders, to any depth. Each nested 
 
 **Verification**
 
-- **FR-019**: Each new or changed validation (project path format, project-relative spec directory acceptance and rejection, derived-name collision detection, per-project numbering scan) MUST be covered by deterministic gates or tests with checked-in fixtures that exercise both the accept and every reject branch.
+- **FR-019**: Each new or changed validation (routing-label count, project path format, project-relative spec directory acceptance and rejection, `spec:` label length budget, the shared name parser, per-project numbering scan) MUST be covered by deterministic gates or tests with checked-in fixtures that exercise both the accept and every reject branch.
 - **FR-020**: A gate MUST fail if a stage reintroduces a hard-coded root-only spec-directory pattern, root-only `.specify/` or constitution path, or root-only `specs/` scan where the project-aware form is required.
 
 ### Key Entities
 
 - **Project (node)**: A folder in the repository (possibly the root, possibly nested) that holds its own constitution, `.specify/`, spec-kit skills and `specs/`. Identified by its path relative to the repository root; the root project has the empty path.
-- **Project key**: A deterministic, collision-checked name derived from the project path, used to namespace repository-wide names (branches, labels, concurrency groups) for non-root projects. Empty for the root project, so root names are unchanged.
-- **Lifecycle identity**: The tuple (project, `NNN-slug`) that uniquely identifies a lifecycle across the repository, recorded durably and read by every stage, the watchdog and the fold-cycle guard.
+- **Routing label**: A `node:<path>` label (prefix set by an optional intake input, routing off by default) applied by a maintainer before or with `spec-request`; read only by intake.
+- **Project key**: The validated project path itself, used verbatim after the existing flat prefixes to namespace repository-wide names (branches, labels, concurrency groups). Empty for the root project, so root names are unchanged.
+- **Lifecycle identity**: The tuple (project, `NNN-slug`) that uniquely identifies a lifecycle across the repository, recorded durably in its branch names, `spec:` label and dispatched spec directory, and read by every stage, the watchdog and the fold-cycle guard through one shared parser.
 - **Spec directory**: `<project>/specs/<NNN-slug>/` for a subfolder project, `specs/<NNN-slug>/` for the root project.
 
 ## Success Criteria *(mandatory)*
@@ -168,7 +178,7 @@ A project folder can contain further project folders, to any depth. Each nested 
 - Spec Kit's own nearest-`.specify/` resolution and explicit project-root override (present in the pinned version) are sufficient on the Spec Kit side; no change to vendored Spec Kit files is needed.
 - Secrets, the GitHub App, repository variables such as kill switches and auto-merge settings, and the issue board remain repository-wide; per-project settings beyond what routing and namespacing need are out of scope.
 - The lifecycle issue, the `spec-request` entry label and the maintainer authorization rules (Principle V) stay unchanged; routing adds a project designation, not a new authorization path.
-- Nesting depth is unbounded, per the issue; practical limits come only from GitHub's name-length limits, handled by FR-014.
+- Nesting depth is unbounded, per the issue; the only limit is the 28-character path cap that keeps `spec:` labels within GitHub's 50-character limit (FR-002, FR-014), which caps path length, not depth.
 - Enforcing that a root project's lifecycles stay out of nested projects' contents is left to each adopter's own constitution unless planning finds a cheap deterministic guard.
 - This repository's constitution states spec artifacts live in `specs/<NNN-slug>/` (Operational Constraints) and Principle VI lists root paths for project artifacts; supporting project-relative paths is expected to need a constitution amendment (PATCH or MINOR), which is a human-merged change and is noted here for the plan stage.
 - Moving existing adopters' projects into a shared repository, and migrating their issue/label history, is out of scope; this feature makes it possible, it does not perform it.
