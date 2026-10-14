@@ -1088,8 +1088,10 @@ jobs:
 
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
-      # along -- see clarify.yml. GH_TOKEN is for the label-first pre-push
-      # hook above, which this push also runs for a subfolder project.
+      # along -- see clarify.yml. The hardened push runs with hooks off, so
+      # for a routed subfolder project the composite runs the label-first
+      # check above itself (label-first-* inputs, spec 114 FR-014); GH_TOKEN
+      # is for the label it creates.
       - name: Publish stranded commits (post-agent)
         id: publish-stranded
         if: "!cancelled() && steps.agent.outcome != 'skipped'"
@@ -1100,6 +1102,9 @@ jobs:
         with:
           before-sha: ${{ steps.pre-agent.outputs.before-sha }}
           project: ${{ steps.num.outputs.project }}
+          label-first-issue: ${{ inputs.routing-label-prefix != '' && steps.num.outputs.project != '' && inputs.issue-number || '' }}
+          label-first-number: ${{ steps.num.outputs.num }}
+          label-first-prefix: ${{ inputs.spec-draft-prefix }}
 
       # deterministic, transcript-only verdict (healthy/exhausted/failed/unclassifiable) replacing
       # the raw outcome check the action's post-hoc rejection can no longer be trusted to reflect

@@ -68,6 +68,28 @@ inputs:
       Empty (the default, and every root lifecycle) skips the check.
     required: false
     default: ""
+  label-first-issue:
+    description: >
+      Intake only, for a subfolder project (specs/114-subfolder-project-lifecycles,
+      FR-014): the lifecycle issue number. When set together with project,
+      the push first runs _shared/intake-pre-push.sh -- the same label-first
+      check intake's pre-push hook runs, which cannot fire on this push
+      because wc_harden_git_env switches hooks off: only
+      <label-first-prefix>P/<label-first-number>-<slug>, a slug within the
+      label budget, the spec:P/<NNN-slug> label created and on the issue
+      before the branch reaches the remote. A refusal is push-ok=false.
+      Skipped when the remote already carries HEAD. Needs GH_TOKEN in the
+      calling step's env. Empty (the default) skips it.
+    required: false
+    default: ""
+  label-first-number:
+    description: "The feature number intake allocated, required together with label-first-issue."
+    required: false
+    default: ""
+  label-first-prefix:
+    description: "Intake's spec-draft branch prefix, used together with label-first-issue."
+    required: false
+    default: ""
 
 outputs:
   commits-published:
@@ -99,6 +121,9 @@ runs:
         PUSH_REPO: ${{ inputs.push-repo }}
         EXPECTED_BRANCH: ${{ inputs.branch }}
         PROJECT: ${{ inputs.project }}
+        LF_ISSUE: ${{ inputs.label-first-issue }}
+        LF_NUM: ${{ inputs.label-first-number }}
+        LF_PREFIX: ${{ inputs.label-first-prefix }}
       run: |
         set -uo pipefail
         dir="${WORKDIR:-.}"
@@ -126,6 +151,15 @@ runs:
           echo "commits-published=$count" >> "$GITHUB_OUTPUT"
           if [ -n "$EXPECTED_BRANCH" ] && [ "$branch" != "$EXPECTED_BRANCH" ]; then
             echo "::warning::wing-commander-publish-stranded-commits: the checkout is on '$branch', not '$EXPECTED_BRANCH' -- nothing is published."
+            echo "push-ok=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$PROJECT" ] && [ -n "${LF_ISSUE:-}" ] \
+              && [ "$(git rev-parse HEAD)" != "$(git rev-parse -q --verify "refs/remotes/origin/$branch")" ] \
+              && ! printf 'HEAD %s refs/heads/%s 0\n' "$(git rev-parse HEAD)" "$branch" \
+              | bash "$GITHUB_ACTION_PATH/../_shared/intake-pre-push.sh" "$LF_PREFIX" "$PROJECT" "$LF_NUM" "$LF_ISSUE"; then
+            # spec 114 FR-014: intake's label-first hook, run by hand because
+            # the hardened environment disables hooks. It also runs the
+            # containment check below, and has already named its refusal.
+            echo "::warning::wing-commander-publish-stranded-commits: the label-first check refused '$branch' -- nothing is published."
             echo "push-ok=false" >> "$GITHUB_OUTPUT"
           elif [ -n "$PROJECT" ] && ! printf 'HEAD %s refs/heads/%s 0\n' "$(git rev-parse HEAD)" "$branch" \
               | bash "$GITHUB_ACTION_PATH/../_shared/containment.sh" pre-push "$PROJECT"; then

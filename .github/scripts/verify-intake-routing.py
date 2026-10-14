@@ -18,6 +18,10 @@ fixtures/project-intake-routing/cases.json:
     while the same issue routed twice shares its gate group;
   * intake.yml's project guidance (`project-guidance`): the label is created
     before the first branch push, and the root prompt gains nothing;
+  * intake.yml's label-first pre-push hook (`label-first-hook`), and the same
+    check run by its "Publish stranded commits (post-agent)" rescue, whose
+    hardened push runs no hook (T065): an over-budget, misnumbered or
+    out-of-project branch is never pushed, and a pushed one is labelled first;
   * intake.yml's "Resolve created spec" (`created`) with a fake `git`: a
     subfolder slug over the label budget fails, the root has no budget;
   * root compatibility (FR-016, fixtures/project-root-compat/cases.json):
@@ -309,65 +313,130 @@ def check_label_first_hook(data, doc, bindir, errors):
     for case in data["label_first_hook"]:
         tag = f"label-first hook {case['name']!r}"
         with tempfile.TemporaryDirectory() as tmp:
-            ws = os.path.join(tmp, "ws")
-            origin = os.path.join(tmp, "origin.git")
-            rt = os.path.join(tmp, "rt")
-            os.makedirs(rt)
-            subprocess.run(["git", "init", "-q", "--bare", origin], check=True, capture_output=True)
-            subprocess.run(["git", "init", "-q", "-b", "main", ws], check=True, capture_output=True)
-            os.symlink(ROOT, os.path.join(ws, ".wing-commander-pipeline"))
-
-            def git(*args):
-                return subprocess.run(["git", *args], cwd=ws, capture_output=True, text=True, check=False)
-            for k, v in (("user.email", "g@example.invalid"), ("user.name", "gate"), ("commit.gpgsign", "false")):
-                git("config", k, v)
-            with open(os.path.join(ws, ".git", "info", "exclude"), "a", encoding="utf-8") as fh:
-                fh.write(".wing-commander-pipeline\n")
-            os.makedirs(os.path.join(ws, "ideas", "alpha"))
-            with open(os.path.join(ws, "README.md"), "w", encoding="utf-8") as fh:
-                fh.write("root\n")
-            git("add", "-A")
-            git("commit", "-q", "-m", "base")
-            git("remote", "add", "origin", origin)
-            git("push", "-q", "origin", "main")
-            state = os.path.join(tmp, "labels.json")
-            with open(state, "w", encoding="utf-8") as fh:
-                json.dump([], fh)
+            ws, origin, git, base = intake_workspace(tmp)
             env = {"PREFIX": "spec-draft/", "PROJECT": case["project"], "NUM": case["num"], "ISSUE": "7",
-                   "RUNNER_TEMP": rt, "GITHUB_WORKSPACE": ws}
+                   "RUNNER_TEMP": os.path.join(tmp, "rt"), "GITHUB_WORKSPACE": ws}
             r, _, _ = run_step(hook["run"], env, ws, bindir)
             if r.returncode != 0:
                 errors.append(f"{tag}: the install step failed rc={r.returncode} {r.stderr!r}")
                 continue
-            for rel in case["commit"]:
-                path = os.path.join(ws, rel)
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                with open(path, "a", encoding="utf-8") as fh:
-                    fh.write("x\n")
-            git("add", "-A")
-            git("commit", "-q", "-m", "spec")
+            commit_case(ws, git, case)
+            state = os.path.join(tmp, "labels.json")
             push_env = {**os.environ, "PATH": bindir + os.pathsep + os.environ.get("PATH", ""),
                         "GH_TOKEN": "fake", "FAKE_LABEL_STATE": state, "FAKE_GH_LOG": os.path.join(tmp, "gh.log")}
             p = subprocess.run(["git", "push", "origin", "HEAD:refs/heads/" + case["ref"]], cwd=ws, env=push_env,
                                capture_output=True, text=True, check=False)
-            pushed = subprocess.run(["git", "--git-dir", origin, "rev-parse", "--verify", "-q",
-                                     "refs/heads/" + case["ref"]], capture_output=True, text=True,
-                                    check=False).returncode == 0
-            with open(state, encoding="utf-8") as fh:
-                on_issue = json.load(fh)
-        if case["expect"] == "pass":
-            if p.returncode != 0 or not pushed:
-                errors.append(f"{tag}: push refused rc={p.returncode} {p.stderr!r}")
-            if case["label"] not in on_issue:
-                errors.append(f"{tag}: the spec label {case['label']!r} is not on the issue ({on_issue!r})")
-        else:
-            if p.returncode == 0 or pushed:
-                errors.append(f"{tag}: the push went through; no branch may exist")
-            if any(n.startswith("spec:") for n in on_issue):
-                errors.append(f"{tag}: a refused push still labelled the issue ({on_issue!r})")
-            for want in case.get("names", []):
-                if want not in p.stderr:
-                    errors.append(f"{tag}: refusal does not name {want!r} ({p.stderr!r})")
+            judge_label_first(tag, case, p.returncode, p.stderr, origin, state, errors)
+
+
+def intake_workspace(tmp):
+    """A checkout of a bare origin carrying `main`, with the pipeline checkout
+    linked in and the project folder present -> (ws, origin, git, base-sha)."""
+    ws = os.path.join(tmp, "ws")
+    origin = os.path.join(tmp, "origin.git")
+    os.makedirs(os.path.join(tmp, "rt"))
+    subprocess.run(["git", "init", "-q", "--bare", origin], check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", ws], check=True, capture_output=True)
+    os.symlink(ROOT, os.path.join(ws, ".wing-commander-pipeline"))
+
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=ws, capture_output=True, text=True, check=False)
+    for k, v in (("user.email", "g@example.invalid"), ("user.name", "gate"), ("commit.gpgsign", "false")):
+        git("config", k, v)
+    with open(os.path.join(ws, ".git", "info", "exclude"), "a", encoding="utf-8") as fh:
+        fh.write(".wing-commander-pipeline\n")
+    os.makedirs(os.path.join(ws, "ideas", "alpha"))
+    with open(os.path.join(ws, "README.md"), "w", encoding="utf-8") as fh:
+        fh.write("root\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    git("remote", "add", "origin", origin)
+    git("push", "-q", "origin", "main")
+    with open(os.path.join(tmp, "labels.json"), "w", encoding="utf-8") as fh:
+        json.dump([], fh)
+    return ws, origin, git, git("rev-parse", "HEAD").stdout.strip()
+
+
+def commit_case(ws, git, case):
+    for rel in case["commit"]:
+        path = os.path.join(ws, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("x\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "spec")
+
+
+def judge_label_first(tag, case, rc, stderr, origin, state, errors):
+    pushed = subprocess.run(["git", "--git-dir", origin, "rev-parse", "--verify", "-q",
+                             "refs/heads/" + case["ref"]], capture_output=True, text=True,
+                            check=False).returncode == 0
+    with open(state, encoding="utf-8") as fh:
+        on_issue = json.load(fh)
+    if case["expect"] == "pass":
+        if rc != 0 or not pushed:
+            errors.append(f"{tag}: push refused rc={rc} {stderr!r}")
+        if case["label"] not in on_issue:
+            errors.append(f"{tag}: the spec label {case['label']!r} is not on the issue ({on_issue!r})")
+    else:
+        if rc == 0 or pushed:
+            errors.append(f"{tag}: the push went through; no branch may exist")
+        if any(n.startswith("spec:") for n in on_issue):
+            errors.append(f"{tag}: a refused push still labelled the issue ({on_issue!r})")
+        for want in case.get("names", []):
+            if want not in stderr:
+                errors.append(f"{tag}: refusal does not name {want!r} ({stderr!r})")
+
+
+PUBLISH_ACTION = os.path.join(ROOT, ".github", "actions", "wing-commander-publish-stranded-commits")
+
+
+def check_label_first_rescue(data, doc, bindir, errors):
+    """FR-014 (T065): intake's "Publish stranded commits (post-agent)" rescue
+    pushes with hooks off (wc_harden_git_env), so the label-first hook cannot
+    fire on it; the composite runs the same check itself. Each label-first
+    case is replayed as a stranded branch the rescue publishes -- with the
+    hook installed, to prove the check holds without it -- and the intake
+    wiring passes the check's inputs only with routing on and a subfolder."""
+    steps = doc["jobs"]["intake"]["steps"]
+    hook = step_by_id(steps, "label-first-hook")
+    rescue = step_by_id(steps, "publish-stranded")
+    with_ = rescue.get("with", {})
+    if "GH_TOKEN" not in rescue.get("env", {}):
+        errors.append("label-first rescue: the rescue step carries no GH_TOKEN for the label it creates")
+    for prefix, project, want in (("node:", "ideas/alpha", "7"), ("", "ideas/alpha", ""), ("node:", "", "")):
+        ctx = {"inputs.routing-label-prefix": prefix, "inputs.issue-number": "7", "steps.num.outputs.project": project}
+        got = interpolate(str(with_.get("label-first-issue", "")), ctx)
+        if got != want:
+            errors.append(f"label-first rescue: label-first-issue is {got!r} for prefix={prefix!r} "
+                          f"project={project!r}, want {want!r}")
+    for key, expr in (("label-first-number", "steps.num.outputs.num"), ("label-first-prefix", "inputs.spec-draft-prefix")):
+        if expr not in str(with_.get(key, "")):
+            errors.append(f"label-first rescue: {key} is not {expr} ({with_.get(key)!r})")
+    with open(os.path.join(PUBLISH_ACTION, "action.yml"), encoding="utf-8") as fh:
+        publish = yaml.safe_load(fh)["runs"]["steps"][0]["run"]
+    for case in data["label_first_hook"]:
+        tag = f"label-first rescue {case['name']!r}"
+        with tempfile.TemporaryDirectory() as tmp:
+            ws, origin, git, base = intake_workspace(tmp)
+            env = {"PREFIX": "spec-draft/", "PROJECT": case["project"], "NUM": case["num"], "ISSUE": "7",
+                   "RUNNER_TEMP": os.path.join(tmp, "rt"), "GITHUB_WORKSPACE": ws}
+            r, _, _ = run_step(hook["run"], env, ws, bindir)
+            if r.returncode != 0:
+                errors.append(f"{tag}: the install step failed rc={r.returncode} {r.stderr!r}")
+                continue
+            git("checkout", "-q", "-b", case["ref"])
+            commit_case(ws, git, case)
+            state = os.path.join(tmp, "labels.json")
+            env = {"BEFORE_SHA": base, "WORKDIR": "", "PUSH_TOKEN": "", "PUSH_REPO": "", "EXPECTED_BRANCH": "",
+                   "PROJECT": case["project"], "LF_ISSUE": "7", "LF_NUM": case["num"], "LF_PREFIX": "spec-draft/",
+                   "GH_TOKEN": "fake", "FAKE_LABEL_STATE": state}
+            r, outputs, _ = run_step(publish, env, ws, bindir, PUBLISH_ACTION)
+            ok = output_value(outputs, "push-ok")
+            if r.returncode != 0 or ok not in ("true", "false"):
+                errors.append(f"{tag}: the rescue step failed rc={r.returncode} push-ok={ok!r} {r.stderr!r}")
+                continue
+            judge_label_first(tag, case, 0 if ok == "true" else 1, r.stdout + r.stderr, origin, state, errors)
 
 
 def check_label_first(steps, bindir, errors):
@@ -593,6 +662,7 @@ def main():
         check_rerun_race(doc, bindir, errors)
         check_label_first(steps, bindir, errors)
         check_label_first_hook(data, doc, bindir, errors)
+        check_label_first_rescue(data, doc, bindir, errors)
         check_concurrency(doc, bindir, errors)
         check_root_compat(bindir, errors)
         with tempfile.TemporaryDirectory() as gitbin:
