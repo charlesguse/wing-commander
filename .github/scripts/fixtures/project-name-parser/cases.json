@@ -17,7 +17,19 @@
     {"kind": "label", "name": "spec:a/b/001-x", "project": "a/b", "slug": "001-x"},
     {"kind": "label", "name": "spec:c/b/001-x", "project": "c/b", "slug": "001-x"},
     {"kind": "branch", "name": "spec/001-login-iter3", "project": "", "slug": "001-login-iter3"},
-    {"kind": "branch", "name": "spec-draft/ideas/alpha/001-retry-iter2", "project": "ideas/alpha", "slug": "001-retry-iter2"}
+    {"kind": "branch", "name": "spec-draft/ideas/alpha/001-retry-iter2", "project": "ideas/alpha", "slug": "001-retry-iter2"},
+    {"kind": "branch", "name": "wc/001-login-iter2", "project": "", "slug": "001-login",
+     "env": {"SPEC_DRAFT_PREFIX": "wc/draft/", "SPEC_PREFIX": "wc/spec/", "IMPL_PREFIX": "wc/"}},
+    {"kind": "branch", "name": "wc/ideas/alpha/001-login-iter3", "project": "ideas/alpha", "slug": "001-login",
+     "env": {"SPEC_DRAFT_PREFIX": "wc/draft/", "SPEC_PREFIX": "wc/spec/", "IMPL_PREFIX": "wc/"}},
+    {"kind": "branch", "name": "wc/spec/001-login-iter2", "project": "", "slug": "001-login-iter2",
+     "env": {"SPEC_DRAFT_PREFIX": "wc/draft/", "SPEC_PREFIX": "wc/spec/", "IMPL_PREFIX": "wc/"}},
+    {"kind": "branch", "name": "wc/impl/001-x-iter2", "project": "", "slug": "001-x",
+     "env": {"SPEC_DRAFT_PREFIX": "wc/draft/", "SPEC_PREFIX": "wc/", "IMPL_PREFIX": "wc/impl/"}},
+    {"kind": "branch", "name": "wc/001-x-iter2", "project": "", "slug": "001-x-iter2",
+     "env": {"SPEC_DRAFT_PREFIX": "wc/draft/", "SPEC_PREFIX": "wc/", "IMPL_PREFIX": "wc/impl/"}},
+    {"kind": "branch", "name": "wc/001-x-iter2", "project": "", "slug": "001-x",
+     "env": {"SPEC_DRAFT_PREFIX": "wc/draft/", "SPEC_PREFIX": "wc/", "IMPL_PREFIX": "wc/"}}
   ],
   "reject": [
     {"kind": "branch", "name": "other/001-login"},

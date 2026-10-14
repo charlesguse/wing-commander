@@ -78,7 +78,14 @@ fi
 if [ "$1 $2" = "issue comment" ]; then echo "$*" >> "$FAKE_GH_LOG"; exit 0; fi
 if [ "$1 $2" = "label create" ]; then echo "label create $3" >> "$FAKE_GH_LOG"; exit 0; fi
 if [ "$1 $2" = "pr list" ]; then echo "pr list $*" >> "$FAKE_GH_LOG"; printf '%s' "${FAKE_PR_NUMBER:-}"; exit 0; fi
-if [ "$1 $2" = "pr create" ]; then echo "$*" >> "$FAKE_GH_LOG"; exit 0; fi
+if [ "$1 $2" = "pr create" ]; then
+  echo "$*" >> "$FAKE_GH_LOG"
+  # The first FAKE_PR_CREATE_FAILS creates fail, as a transient API error.
+  if [ "$(grep -c '^pr create' "$FAKE_GH_LOG")" -le "${FAKE_PR_CREATE_FAILS:-0}" ]; then
+    echo "fake gh: HTTP 502" >&2; exit 1
+  fi
+  exit 0
+fi
 if [ "$1 $2" = "issue edit" ] && [ -n "${FAKE_LABEL_STATE:-}" ]; then
   shift 3
   while [ "$#" -gt 0 ]; do
@@ -687,6 +694,44 @@ def check_open_pr(doc, bindir, errors):
         errors.append(f"open-pr: not gated on the label-first push having published ({cond!r})")
     if steps.index(step) < steps.index(step_by_id(steps, "publish-stranded")):
         errors.append("open-pr: runs before the label-first push")
+    # Review round 1: the siblings' guards -- a closed lifecycle or a
+    # skipped agent opens no PR.
+    open_ctx = {"cancelled()": False, "steps.lifecycle-gate.outputs.is-open": "true",
+                "steps.agent.outcome": "success", "steps.publish-stranded.outputs.push-ok": "true",
+                "steps.publish-stranded.outputs.label-first-slug": "001-login"}
+    if not evaluate_if(cond, open_ctx):
+        errors.append("open-pr: does not run after a published label-first push")
+    for key, val in (("steps.lifecycle-gate.outputs.is-open", "false"), ("steps.agent.outcome", "skipped")):
+        if evaluate_if(cond, {**open_ctx, key: val}):
+            errors.append(f"open-pr: runs with {key} == {val!r}")
+    # A transient create failure is retried, re-checking for an open PR
+    # first; one that persists fails the step naming the branch.
+    with tempfile.TemporaryDirectory() as tmp:
+        nosleep = os.path.join(tmp, "bin")
+        os.makedirs(nosleep)
+        write_exec(os.path.join(nosleep, "sleep"), "#!/usr/bin/env bash\nexit 0\n")
+        spec = os.path.join(tmp, "ideas", "alpha", "specs", "001-login")
+        os.makedirs(spec)
+        with open(os.path.join(spec, "spec.md"), "w", encoding="utf-8") as fh:
+            fh.write("# Feature Specification: Login\n")
+        for fails, want_ok in ((1, True), (9, False)):
+            state = os.path.join(tmp, "labels.json")
+            with open(state, "w", encoding="utf-8") as fh:
+                json.dump([], fh)
+            env = {"GH_TOKEN": "fake", "ISSUE": "7", "PROJECT": "ideas/alpha", "SLUG": "001-login",
+                   "PREFIX": "spec-draft/", "BASE": "main", "BODY_FILE": os.path.join(tmp, "body.md"),
+                   "RECORD": os.path.join(tmp, "record"), "FAKE_LABEL_STATE": state, "FAKE_PR_NUMBER": "",
+                   "FAKE_PR_CREATE_FAILS": str(fails)}
+            r, _, log = run_step(step["run"], env, tmp, nosleep + os.pathsep + bindir)
+            creates = [line for line in log.splitlines() if line.startswith("pr create")]
+            lists = [line for line in log.splitlines() if line.startswith("pr list")]
+            if want_ok and (r.returncode != 0 or len(creates) != 2 or len(lists) != 2):
+                errors.append(f"open-pr: a transient create failure was not retried rc={r.returncode} "
+                              f"creates={len(creates)} lookups={len(lists)} {r.stderr!r}")
+            if not want_ok and (r.returncode == 0 or len(creates) != 3
+                                or "spec-draft/ideas/alpha/001-login" not in r.stdout or "::error::" not in r.stdout):
+                errors.append(f"open-pr: a persistent create failure did not fail naming the branch "
+                              f"rc={r.returncode} creates={len(creates)} {r.stdout!r}")
     for existing, want_create in (("", True), ("12", False)):
         with tempfile.TemporaryDirectory() as tmp:
             spec = os.path.join(tmp, "ideas", "alpha", "specs", "001-login")

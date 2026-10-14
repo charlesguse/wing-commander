@@ -350,7 +350,7 @@ Source: maintainer issue-comment on PR #1022 (round-4 review). CI is green and a
 
 ## Review Gate Round 1 Findings
 
-- [ ] Review finding: Containment path checks lack -z, quoted paths false-fail
+- [X] Review finding: Containment path checks lack -z, quoted paths false-fail
 
   containment.sh feeds git diff/ls-files/log --name-only output without -z or core.quotepath=off into outside(), so non-ASCII or special-character filenames inside P are reported as outside P and the stage/push fails closed.
 
@@ -358,40 +358,54 @@ Source: maintainer issue-comment on PR #1022 (round-4 review). CI is green and a
 
   Detail: Fix with -z or -c core.quotepath=off at all call sites.
 
-- [ ] Review finding: git push --no-verify deny is trivially bypassable
+  - Done (cycle 18): `containment.sh outside <P> -z` reads NUL-separated paths; the pre-push leg and the composite's check pipe `git log/diff/ls-files -z` into it. Gate 160 fixtures with non-ASCII, quote, tab and backslash names inside P (committed, uncommitted and pushed) and one non-ASCII name outside P.
+
+- [X] Review finding: git push --no-verify deny is trivially bypassable
 
   Deny rule Bash(git push --no-verify:*) matches only when the flag directly follows push, so 'git push origin HEAD --no-verify' or -c core.hooksPath skips the pre-push containment hook.
 
   - .github/actions/wing-commander-tool-args/action.yml
 
-- [ ] Review finding: Blanket gh api deny cannot be reopened and blocks reads
+  - Done (cycle 18): `HOOK_BYPASS_DENIES` adds `Bash(git push* --no-veri*)` (the flag anywhere, and git's unique abbreviations). `git -c ... push` is not under the `git push` prefix any stage grants. The hook stays advisory; the post-agent check enforces (contract).
+
+- [X] Review finding: Blanket gh api deny cannot be reopened and blocks reads
 
   PROJECT_API_DENY (Bash(gh api:*)) is appended after override and extra-allowed composition for subfolder lifecycles, blocking legitimate read-only gh api use and any adopter grant; a write-method-specific deny would satisfy FR-021.
 
   - .github/actions/wing-commander-tool-args/action.yml
 
-- [ ] Review finding: Containment composite repeats unquoted path listing
+  - Resolved by precedent, no behaviour change (cycle 18): spec 051 FR-006 (#338) decided `gh api` cannot be bounded to GET -- a method or field flag anywhere in the call (`-X`, `--method`, `-f`/`-F`, `--input`, a `-iX` cluster) makes it a write -- so a method-specific deny would leave the write open. The blanket deny is intended and not reopenable by design; the rationale is now stated at the constant and in `contracts/containment-and-trusted-checkout.md`.
+
+- [X] Review finding: Containment composite repeats unquoted path listing
 
   wing-commander-containment lists changed paths without -z; quoted names yield false outside-paths hits and a misleading step summary.
 
   - .github/actions/wing-commander-containment/action.yml
 
-- [ ] Review finding: Subfolder spec-PR step in intake.yml lacks guards and retry
+  - Done (cycle 18) with the containment.sh finding above: every listing leg is `-z`, `sort -zu`, into `containment.sh outside <P> -z`.
+
+- [X] Review finding: Subfolder spec-PR step in intake.yml lacks guards and retry
 
   The 'Open the spec PR (subfolder project)' step omits the is-open and agent-outcome guards its siblings have and is non-idempotent; a gh pr create failure after the label and branch are published strands the issue with no PR and blocks later intakes.
 
   - .github/workflows/intake.yml
 
-- [ ] Review finding: Stale gate-range comment in lint-workflows.yml
+  - Done (cycle 18): gated on `steps.lifecycle-gate.outputs.is-open == 'true'` and a non-skipped agent; three attempts, each looking for an open PR from the branch before creating; a persistent failure fails intake naming the branch to open the PR from by hand. Gate 162 covers the guards, a retried transient failure and a persistent one.
+
+- [X] Review finding: Stale gate-range comment in lint-workflows.yml
 
   Header comment says Gates 157-158 but the block wires Gates 157-164; gates 159-164 are undocumented in a comment that gates treat as load-bearing.
 
   - .github/workflows/lint-workflows.yml
 
-- [ ] Review finding: parse branch -iterN stripping depends on prefix equality check
+  - Done (cycle 18): the comment names Gates 157-164 and what each covers.
+
+- [X] Review finding: parse branch -iterN stripping depends on prefix equality check
 
   project-name.sh strips -iterN only if IMPL_PREFIX+rest equals name, which is stricter than the old unconditional strip and may leave -iterN in the slug when prefixes overlap.
 
   - .github/actions/_shared/project-name.sh
 
   Detail: Lower confidence; depends on overlapping prefix configuration.
+
+  - Done (cycle 18): the test now compares the prefix actually stripped (`${name%"$rest"}`) with IMPL_PREFIX, which is what the equality check meant; the stricter behaviour is MF-20's requirement. Gate 158 gains per-case prefix overrides and overlapping-prefix fixtures (implement prefix shorter, longer, and shared with the spec prefix).

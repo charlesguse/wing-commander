@@ -3,10 +3,13 @@
 # lifecycle's repository changes lie inside its project folder P. Two
 # consumers, one test:
 #
-#   containment.sh outside <P>
-#     Reads newline-separated repository-relative paths on stdin and prints
-#     the ones outside P/. The wing-commander-containment composite feeds it
-#     the post-agent changed-path list.
+#   containment.sh outside <P> [-z]
+#     Reads newline-separated repository-relative paths on stdin (NUL-
+#     separated with -z) and prints the ones outside P/, one per line. The
+#     wing-commander-containment composite feeds it the post-agent
+#     changed-path list from git's -z output: without -z, git quotes a
+#     non-ASCII or special-character name ("a/b/caf\303\251.md"), and the
+#     quoted form would read as a path outside P.
 #
 #   containment.sh inside <P>
 #     The complement: prints the stdin paths inside P/. The composite's
@@ -48,8 +51,9 @@ if [ -f "$here/git-push-hardening.sh" ]; then
 fi
 
 outside() {
-  local project="$1" path
-  while IFS= read -r path; do
+  local project="$1" delim=$'\n' path
+  [ "${2:-}" = "-z" ] && delim=''
+  while IFS= read -r -d "$delim" path || [ -n "$path" ]; do
     [ -z "$path" ] && continue
     case "$path" in
       "$project"/*) ;;
@@ -94,7 +98,7 @@ fi
 
 case "$mode" in
   outside)
-    outside "$project"
+    outside "$project" "${3:-}"
     ;;
   inside)
     while IFS= read -r path; do
@@ -119,11 +123,13 @@ case "$mode" in
         exit 1
       fi
       # -c: a merge commit's own changes (an evil merge) are listed too.
-      if ! paths="$(git log --format= --name-only --no-renames -c "$base..$local_sha" 2>&1)"; then
-        echo "::error::wing-commander-containment: could not list the commits this push would publish ($paths) -- refusing the push." >&2
+      # -z: names arrive unquoted (see `outside`); piped, never captured,
+      # since a shell variable cannot hold a NUL.
+      if ! bad="$(git log -z --format= --name-only --no-renames -c "$base..$local_sha" | outside "$project" -z)"; then
+        echo "::error::wing-commander-containment: could not list the commits this push would publish -- refusing the push." >&2
         exit 1
       fi
-      found="$found$(printf '%s\n' "$paths" | outside "$project")"$'\n'
+      found="$found$bad"$'\n'
     done
     found="$(printf '%s' "$found" | sed '/^$/d' | sort -u)"
     if [ -n "$found" ]; then

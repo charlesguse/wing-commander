@@ -1156,10 +1156,15 @@ jobs:
       # its branch, so it opens no pull request and sets no label; once the
       # push above has published the branch, label first, this step adds
       # stage:spec and opens the spec PR from the body file the agent wrote.
-      # The title comes from spec.md's heading. A failure here fails intake.
+      # The title comes from spec.md's heading. Idempotent: each attempt
+      # first looks for an open PR from the branch, so a create that landed
+      # before its response was lost is not repeated. By now the label and
+      # the branch exist, so a re-run of intake is refused; a create that
+      # still fails after three attempts fails intake naming the branch to
+      # open the PR from by hand.
       - name: Open the spec PR (subfolder project)
         id: open-pr
-        if: "!cancelled() && steps.publish-stranded.outputs.push-ok == 'true' && steps.publish-stranded.outputs.label-first-slug != ''"
+        if: "!cancelled() && steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome != 'skipped' && steps.publish-stranded.outputs.push-ok == 'true' && steps.publish-stranded.outputs.label-first-slug != ''"
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ inputs.issue-number }}
@@ -1176,17 +1181,24 @@ jobs:
             echo "Note: the agent never pushed $branch itself; the pipeline published it." >> "$GITHUB_STEP_SUMMARY"
           fi
           gh issue edit "$ISSUE" --add-label "stage:spec" >/dev/null
-          existing="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')"
-          if [ -n "$existing" ]; then
-            echo "Spec PR #$existing for $branch is already open." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
           title="$(sed -n '1{s/^#[[:space:]]*//;s/^Feature Specification:[[:space:]]*//;p;}' "$PROJECT/specs/$SLUG/spec.md" 2>/dev/null || true)"
           [ -n "$title" ] || title="$SLUG"
           if [ ! -s "$BODY_FILE" ]; then
             printf 'Specification at %s.\n\nCloses nothing — lifecycle issue: #%s\n' "$PROJECT/specs/$SLUG" "$ISSUE" > "$BODY_FILE"
           fi
-          gh pr create --base "$BASE" --head "$branch" --title "Spec: $title (#$ISSUE)" --body-file "$BODY_FILE"
+          for attempt in 1 2 3; do
+            existing="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty' || true)"
+            if [ -n "$existing" ]; then
+              echo "Spec PR #$existing for $branch is open." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            if gh pr create --base "$BASE" --head "$branch" --title "Spec: $title (#$ISSUE)" --body-file "$BODY_FILE"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 10)); fi
+          done
+          echo "::error::wing-commander intake stage: could not open the spec PR from $branch (project $PROJECT) after 3 attempts. The branch and its spec label are published, so a re-run of intake is refused: open the PR from $branch to $BASE by hand."
+          exit 1
 
       # deterministic, transcript-only verdict (healthy/exhausted/failed/unclassifiable) replacing
       # the raw outcome check the action's post-hoc rejection can no longer be trusted to reflect

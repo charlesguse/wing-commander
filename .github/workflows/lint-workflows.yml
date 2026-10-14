@@ -4635,12 +4635,19 @@ jobs:
         if: "!cancelled()"
         run: bash .github/scripts/wing-commander-fold-queue-ledger-tests/run-tests.sh
 
-      # Gates 157-158 — specs/114-subfolder-project-lifecycles (FR-002,
-      # FR-005, FR-007, FR-013, FR-019). Gate 157 drives
-      # _shared/project-name.sh over the path grammar, the folder rules
-      # (symlinks included), the label budget and the routing-prefix
-      # overlap rules; Gate 158 drives its name parser over every name kind
-      # and asserts one lifecycle parses to one (project, slug) pair.
+      # Gates 157-164 — specs/114-subfolder-project-lifecycles (FR-002,
+      # FR-005, FR-007, FR-013, FR-014, FR-016, FR-019, FR-021, FR-022,
+      # FR-025). Gate 157 drives _shared/project-name.sh over the path
+      # grammar, the folder rules (symlinks included), the label budget and
+      # the routing-prefix overlap rules; Gate 158 drives its name parser
+      # over every name kind and asserts one lifecycle parses to one
+      # (project, slug) pair. Gate 159 keeps root-only path patterns and
+      # inline project splits out of project-aware files; Gate 160 runs the
+      # containment composite, the project-aware denies and the rescue's
+      # scope; Gate 161 keeps pipeline-checkout grants workspace-rooted;
+      # Gate 162 drives intake's routing and label-first publish; Gate 163
+      # scopes feature numbering and spec collisions to a project; Gate 164
+      # checks spec-meta's self-identity in a project and after graduation.
       # Fixtures live beside each gate under .github/scripts/fixtures/.
       - name: Gate 157 — project path grammar, folder rules, label budget and routing prefix
         if: "!cancelled()"

@@ -23,8 +23,8 @@ For the same lifecycles `wing-commander-tool-args` also denies, whatever the ove
 
 | Tool | Why |
 |---|---|
-| `Bash(git push --no-verify:*)` | the plain form of a push that skips the pre-push hook (`git push -n` is a dry run and stays allowed) |
-| `Bash(gh api:*)` | the raw API writes repository contents outside `P` with no commit the guard or the hook sees |
+| `Bash(git push --no-verify:*)`, `Bash(git push* --no-veri*)` | a push that skips the pre-push hook, with the flag anywhere after `push` and in git's unique abbreviations (`git push -n` is a dry run and stays allowed). `git -c core.hooksPath=… push` is not under the `git push` prefix a stage grants |
+| `Bash(gh api:*)` | the raw API writes repository contents outside `P` with no commit the guard or the hook sees. Denied whole, reads included: a method or field flag anywhere in the call makes it a write, so it cannot be narrowed to GET (spec 051, #338). A subfolder agent reads through the `gh issue`/`gh pr` grants instead |
 
 A caller may add its own subfolder-only denies through `project-deny-tools`, placed the same way. Intake passes `Bash(git push:*)`, so a routed intake agent cannot push at all: "Label first" and "Publish stranded commits (post-agent)" make the branch's one push, after its label exists (FR-014).
 

@@ -31,7 +31,8 @@ def main():
     env = data["env"]
     errors = []
     for case in data["accept"]:
-        r = run(env, "parse", case["kind"], case["name"])
+        # A case may override the prefixes (overlapping-prefix configurations).
+        r = run({**env, **case.get("env", {})}, "parse", case["kind"], case["name"])
         want = f"project={case['project']}\nslug={case['slug']}\n"
         if r.returncode != 0 or r.stdout != want:
             errors.append(f"accept {case['kind']} {case['name']!r}: rc={r.returncode} out={r.stdout!r} err={r.stderr!r}")

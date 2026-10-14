@@ -103,9 +103,12 @@ parse() {
                "${PLAN_PREFIX:-}" "${TASKS_PREFIX:-}") \
         || fail "branch '$name' carries none of the configured prefixes"
       # -iterN belongs to implement branches only: a spec or spec-draft
-      # slug that happens to end in it keeps it. The implement prefix is the
-      # one stripped when it is the longest match.
-      if [ -n "${IMPL_PREFIX:-}" ] && [ "$IMPL_PREFIX$rest" = "$name" ]; then
+      # slug that happens to end in it keeps it. The branch is an implement
+      # branch when the prefix actually stripped (the longest match) is
+      # IMPL_PREFIX; with overlapping prefixes (`wc/` and `wc/spec/`) the
+      # longer one wins, and a prefix IMPL_PREFIX shares with another stage
+      # reads as implement.
+      if [ -n "${IMPL_PREFIX:-}" ] && [ "${name%"$rest"}" = "$IMPL_PREFIX" ]; then
         rest=$(printf '%s' "$rest" | sed -E 's/-iter[0-9]+$//')
       fi
       ;;
