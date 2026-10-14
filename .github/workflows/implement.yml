@@ -1266,7 +1266,7 @@ jobs:
             cycle ${{ inputs.iteration }}. The approved task list lives in
             ${{ steps.spec.outputs.spec-dir }}/tasks.md; its lifecycle issue
             is #${{ inputs.issue-number }}. The repo is checked out on the
-            persistent branch ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}.
+            persistent branch ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}.${{ steps.project.outputs.prompt-paragraph }}
 
             ${{ steps.gate-suite-summary-cycle.outputs.paragraph }}
 
@@ -2160,7 +2160,7 @@ jobs:
             you find it). The approved task list lives in
             ${{ steps.spec.outputs.spec-dir }}/tasks.md; its lifecycle issue
             is #${{ inputs.issue-number }}. The repo is checked out on the
-            persistent branch ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}.
+            persistent branch ${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}.${{ steps.project.outputs.prompt-paragraph }}
 
             ${{ steps.gate-suite-summary-retry.outputs.paragraph }}
 

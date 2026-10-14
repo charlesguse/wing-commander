@@ -236,6 +236,154 @@ def check_guard_coverage(errors, wf_dir=None):
     return covered
 
 
+GUIDANCE_SPLICE = re.compile(r"\S\$\{\{ steps\.[\w-]+\.outputs\.(?:prompt-paragraph|routing-notes) \}\}")
+
+
+def check_prompt_guidance(errors, wf_dir=None):
+    """FR-006 (MF-12): every Edit/Write agent in a project-wired job reads
+    the project folder's own constitution, extension hooks and skills, so
+    its prompt carries the deterministic project paragraph (the
+    wing-commander-project `prompt-paragraph` output; intake's own
+    `routing-notes`),
+    spliced onto the end of a prompt line so a root prompt gains no line."""
+    wf_dir = wf_dir or os.path.join(ROOT, ".github", "workflows")
+    covered = 0
+    for fn in sorted(os.listdir(wf_dir)):
+        if not fn.endswith(".yml"):
+            continue
+        with open(os.path.join(wf_dir, fn), encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+        for job_name, job in ((doc or {}).get("jobs") or {}).items():
+            steps = job.get("steps") or []
+            grants, wired = {}, False
+            for s in steps:
+                uses = str(s.get("uses", ""))
+                if uses.endswith("/wing-commander-project"):
+                    wired = True
+                if uses.endswith("/wing-commander-tool-args"):
+                    w = s.get("with") or {}
+                    wired = wired or bool(str(w.get("project", "")).strip())
+                    if s.get("id"):
+                        grants[s["id"]] = str(w.get("default-allowed-tools", ""))
+            if not wired:
+                continue
+            for s in steps:
+                if "claude-code-action" not in str(s.get("uses", "")):
+                    continue
+                ids = re.findall(r"steps\.([\w-]+)\.outputs\.allowed-tools", json.dumps(s))
+                if not any(writes(grants.get(x, "")) for x in ids):
+                    continue
+                prompt = str((s.get("with") or {}).get("prompt", ""))
+                if not GUIDANCE_SPLICE.search(prompt):
+                    errors.append(f"{fn}:{job_name}: Edit/Write agent {s.get('name')!r} in a project-wired job carries no project paragraph spliced onto a prompt line (FR-006)")
+                else:
+                    covered += 1
+    return covered
+
+
+def check_guidance_output(errors):
+    """The paragraph itself: it names the folder's constitution, extension
+    hooks and skills, and the root gets nothing."""
+    with open(os.path.join(ACTIONS, "wing-commander-project", "action.yml"), encoding="utf-8") as fh:
+        resolve = yaml.safe_load(fh)["runs"]["steps"][0]["run"]
+    for identity, want in (("ideas/alpha/001-x", True), ("001-x", False)):
+        env = {"GH_TOKEN": "", "ROUTING_PREFIX": "", "ISSUE": "", "IDENTITY": identity,
+               "IDENTITY_KIND": "slug", "CHECK_FOLDER": "false", "FINDINGS_LABEL_PREFIX": ""}
+        r, out = run_script(resolve, env, ROOT, "wing-commander-project")
+        m = re.search(r"^prompt-paragraph<<(\w+)\n(.*?)\n\1$", out, re.M | re.S)
+        text = m.group(2) if m else ""
+        if r.returncode != 0:
+            errors.append(f"guidance: resolve failed for {identity!r}: {r.stderr!r}")
+        elif want:
+            for path in ("ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.specify/extensions.yml",
+                         "ideas/alpha/.claude/skills/<name>/SKILL.md"):
+                if path not in text:
+                    errors.append(f"guidance: the project paragraph does not name {path}")
+            if not text.startswith("\n\n") or not text.endswith("\n"):
+                errors.append("guidance: the project paragraph does not carry its own blank lines")
+        elif m or "prompt-paragraph=\n" not in out:
+            errors.append(f"guidance: the root gets a paragraph: {out!r}")
+
+
+# Jobs whose last checkout is of the ref an earlier folder check already
+# read: intake's agent works on the default branch the routing gate checked
+# the folder on (with check-folder on), re-checked out only as the bot.
+STALE_FOLDER_EXEMPT = {("intake.yml", "intake")}
+
+
+def is_root_checkout(step):
+    w = step.get("with") or {}
+    return str(step.get("uses", "")).startswith("actions/checkout@") and w.get("path") in (None, "", ".", "./")
+
+
+def is_folder_check(step):
+    uses, w = str(step.get("uses", "")), step.get("with") or {}
+    if uses.endswith("/wing-commander-project"):
+        return str(w.get("check-folder", "true")) != "false"
+    return uses.endswith("/wing-commander-preflight") and "outputs.project" in str(w.get("project", ""))
+
+
+def check_stale_folder(errors, wf_dir=None):
+    """T036 (MF-22): in a project-wired job, the recorded folder is
+    re-checked on the ref the agent works from -- a folder check
+    (wing-commander-project with check-folder on, or a project preflight)
+    after the last root checkout before every Edit/Write agent."""
+    wf_dir = wf_dir or os.path.join(ROOT, ".github", "workflows")
+    covered = 0
+    for fn in sorted(os.listdir(wf_dir)):
+        if not fn.endswith(".yml"):
+            continue
+        with open(os.path.join(wf_dir, fn), encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+        for job_name, job in ((doc or {}).get("jobs") or {}).items():
+            if (fn, job_name) in STALE_FOLDER_EXEMPT:
+                continue
+            steps = job.get("steps") or []
+            grants, wired = {}, False
+            for s in steps:
+                uses = str(s.get("uses", ""))
+                if uses.endswith("/wing-commander-project"):
+                    wired = True
+                if uses.endswith("/wing-commander-tool-args"):
+                    w = s.get("with") or {}
+                    wired = wired or bool(str(w.get("project", "")).strip())
+                    if s.get("id"):
+                        grants[s["id"]] = str(w.get("default-allowed-tools", ""))
+            if not wired:
+                continue
+            for i, s in enumerate(steps):
+                if "claude-code-action" not in str(s.get("uses", "")):
+                    continue
+                ids = re.findall(r"steps\.([\w-]+)\.outputs\.allowed-tools", json.dumps(s))
+                if not any(writes(grants.get(x, "")) for x in ids):
+                    continue
+                last = max((j for j in range(i) if is_root_checkout(steps[j])), default=-1)
+                if any(is_folder_check(t) for t in steps[last + 1:i]):
+                    covered += 1
+                else:
+                    errors.append(f"{fn}:{job_name}: Edit/Write agent {s.get('name')!r} runs with no project-folder check after its last checkout (T036)")
+    return covered
+
+
+STALE = """\
+jobs:
+  stage:
+    steps:
+      - id: project
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+      - uses: actions/checkout@v5
+      - id: tool-args
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Edit"
+          project: ${{ steps.project.outputs.project }}
+      - name: Agent
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_args: --allowedTools "${{ steps.tool-args.outputs.allowed-tools }}"
+"""
+
+
 def check_preflight_project(errors, wf_dir=None):
     """FR-005 (MF-14): in a project-wired job (one that reads any
     `outputs.project`), every preflight that requires Spec Kit is handed the
@@ -562,6 +710,25 @@ def main():
                     errors.append(f"publish_stranded {name}: refusal does not name {p!r}")
     check_trusted_checkout_excluded(errors)
     check_modes(errors)
+    if check_stale_folder(errors) == 0:
+        errors.append("stale folder: no Edit/Write agent in a project-wired job was found -- the check has lost its subject")
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "stale.yml"), "w", encoding="utf-8") as fh:
+            fh.write(STALE)
+        probe = []
+        check_stale_folder(probe, tmp)
+        if not probe:
+            errors.append("stale folder: a folder resolved only before the checkout was not flagged")
+    check_guidance_output(errors)
+    if check_prompt_guidance(errors) == 0:
+        errors.append("prompt guidance: no Edit/Write agent in a project-wired job was found -- the check has lost its subject")
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "unguided.yml"), "w", encoding="utf-8") as fh:
+            fh.write(UNGUARDED)
+        probe = []
+        check_prompt_guidance(probe, tmp)
+        if not probe:
+            errors.append("prompt guidance: an Edit/Write agent with no project paragraph was not flagged")
     if check_preflight_project(errors) == 0:
         errors.append("preflight project: no Spec Kit preflight in a project-wired job was found -- the check has lost its subject")
     with tempfile.TemporaryDirectory() as tmp:

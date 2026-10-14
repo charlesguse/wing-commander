@@ -723,7 +723,7 @@ jobs:
           prompt: |
             You are the clarification stage of this repository's spec pipeline,
             working on the draft spec in ${{ steps.ctx.outputs.spec-dir }} for
-            lifecycle issue #${{ inputs.issue-number }}.
+            lifecycle issue #${{ inputs.issue-number }}.${{ steps.project.outputs.prompt-paragraph }}
 
             A reply to the clarification questions was posted. Open these two
             files directly with the Read tool:

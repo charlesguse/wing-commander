@@ -94,6 +94,12 @@ outputs:
   slug-budget:
     description: The longest NNN-slug the spec label can carry; empty for the root.
     value: ${{ steps.resolve.outputs.slug-budget }}
+  prompt-paragraph:
+    description: >-
+      The project-folder paragraph for an agent prompt, with its own leading
+      and trailing blank lines; empty for the root. Splice it onto the end
+      of an existing prompt line, never on a line of its own.
+    value: ${{ steps.resolve.outputs.prompt-paragraph }}
 runs:
   using: composite
   steps:
@@ -173,6 +179,20 @@ runs:
             echo "slug-qualified="
           fi
           if [ -n "$project" ]; then echo "slug-budget=$(bash "$lib" slug-budget "$project")"; else echo "slug-budget="; fi
+          # The agent-prompt paragraph a later stage splices onto a line of
+          # its prompt (spec 114, FR-006): blank lines and all, so a root
+          # prompt, which gets nothing, stays byte-identical. Only the
+          # grammar-checked project path is interpolated.
+          if [ -n "$project" ]; then
+            echo "prompt-paragraph<<WC_PROJECT_GUIDANCE_EOF"
+            echo ""
+            echo ""
+            echo "PROJECT FOLDER: this lifecycle lives in the project folder \`$project/\`, a Spec Kit project of its own. Read its constitution at \`$project/.specify/memory/constitution.md\`, its extension hooks at \`$project/.specify/extensions.yml\` and each skill at \`$project/.claude/skills/<name>/SKILL.md\` -- never the repository root's \`.specify/\` or \`.claude/skills/\`. Give every tool a repository-relative path; everything this run writes lies inside \`$project/\`, apart from the scratch files these instructions name outside the repository."
+            echo ""
+            echo "WC_PROJECT_GUIDANCE_EOF"
+          else
+            echo "prompt-paragraph="
+          fi
         } >> "$GITHUB_OUTPUT"
 
     # Per-project feature numbering (FR-009, FR-010). The root reproduces the
