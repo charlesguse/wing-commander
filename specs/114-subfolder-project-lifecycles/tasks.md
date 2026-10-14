@@ -251,9 +251,9 @@ Source: maintainer comment on PR #1022 (five fresh-session reviewers plus an adv
 - [X] MF-11 [Review #5] Make the post-agent guard also diff from `git merge-base origin/<default-branch> HEAD`, so an earlier pushed violation is caught after a restart
 - [ ] MF-12 [Review #6, FR-006] Add a deterministic project paragraph (like intake's) to the clarify, plan, tasks, implement, finalize and pr-conversation act prompts, pointing reads at `P/.specify/memory/constitution.md`, `P/.specify/extensions.yml` and `P/.claude/skills/<name>/SKILL.md`. Gate that every project-wired prompt carries it
 - [ ] MF-13 [Review #7, FR-023] Add a `findings-label-prefix` input to `wing-commander-project`, pass it from intake, and drive Gate 162 through that input with a `found-by:` reject case
-- [ ] MF-14 [Review #8, FR-005] Resolve the project first and pass `project:` to the preflights in `clarify.yml` (~:425) and pr-conversation (~:603, ~:1857). Gate that every `require-speckit: "true"` preflight in a project-wired job passes `project:`
+- [X] MF-14 [Review #8, FR-005] Resolve the project first and pass `project:` to the preflights in `clarify.yml` (~:425) and pr-conversation (~:603, ~:1857). Gate that every `require-speckit: "true"` preflight in a project-wired job passes `project:`
 - [ ] MF-15 [Review #9, FR-007] Make the classifier in `wing-commander-stage-findings/action.yml` (~:252) recognise `P/specs/NNN-...` and `P/specs/*/contracts/`, with fixtures
-- [ ] MF-16 [Review #10] Expose the exact branch from 'Resolve created spec' and find the spec PR with `gh pr list --head "$BRANCH"` instead of the `$SPEC_DRAFT_PREFIX$NUM-` match (`intake.yml` ~:1607). Add a gate case
+- [X] MF-16 [Review #10] Expose the exact branch from 'Resolve created spec' and find the spec PR with `gh pr list --head "$BRANCH"` instead of the `$SPEC_DRAFT_PREFIX$NUM-` match (`intake.yml` ~:1607). Add a gate case
 
 ### Minor
 

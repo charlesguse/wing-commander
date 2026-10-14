@@ -421,38 +421,6 @@ jobs:
           kind: info
           summary: "This lifecycle issue is closed — no action was taken."
 
-      # Deterministic fail-fast before any billable work (FR-004, FR-009).
-      - name: Preflight
-        id: preflight
-        if: steps.lifecycle-gate.outputs.is-open == 'true'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
-        with:
-          oauth-token: ${{ secrets.claude-code-oauth-token }}
-          api-key: ${{ secrets.anthropic-api-key }}
-          require-speckit: "true"
-          use-bedrock: ${{ inputs.use-bedrock }}
-          aws-role-arn: ${{ inputs.aws-role-arn }}
-          aws-region: ${{ inputs.aws-region }}
-
-      # Refusal note (research.md D1): the preflight step ran and declined —
-      # always()-gated so it fires regardless of the step's own failure.
-      - name: Report preflight refusal on lifecycle issue
-        if: always() && steps.preflight.outputs.refused == 'true'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
-        with:
-          token: ${{ github.token }}
-          issue-number: ${{ inputs.issue-number }}
-          kind: action
-          summary: "This stage could not start — ${{ steps.preflight.outputs.reason }}"
-
-      - name: Configure AWS credentials for Bedrock
-        if: steps.lifecycle-gate.outputs.is-open == 'true'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
-        with:
-          use-bedrock: ${{ inputs.use-bedrock }}
-          aws-role-arn: ${{ inputs.aws-role-arn }}
-          aws-region: ${{ inputs.aws-region }}
-
       # Event-agnostic (research.md D2): the stage fetches the issue's labels
       # itself instead of reading the caller's event payload.
       - name: Fetch issue labels
@@ -555,6 +523,41 @@ jobs:
           issue-number: ${{ inputs.issue-number }}
           token: ${{ github.token }}
           check-folder: 'false'
+
+      # Deterministic fail-fast before any billable work (FR-004, FR-009).
+      # After "Resolve project" (spec 114, FR-005): a subfolder lifecycle's
+      # Spec Kit state is checked inside its folder, not at the root.
+      - name: Preflight
+        id: preflight
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
+        with:
+          oauth-token: ${{ secrets.claude-code-oauth-token }}
+          api-key: ${{ secrets.anthropic-api-key }}
+          require-speckit: "true"
+          project: ${{ steps.project.outputs.project }}
+          use-bedrock: ${{ inputs.use-bedrock }}
+          aws-role-arn: ${{ inputs.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
+      # Refusal note (research.md D1): the preflight step ran and declined —
+      # always()-gated so it fires regardless of the step's own failure.
+      - name: Report preflight refusal on lifecycle issue
+        if: always() && steps.preflight.outputs.refused == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "This stage could not start — ${{ steps.preflight.outputs.reason }}"
+
+      - name: Configure AWS credentials for Bedrock
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
+        with:
+          use-bedrock: ${{ inputs.use-bedrock }}
+          aws-role-arn: ${{ inputs.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
 
       # clean: false — a default `git clean` here would delete the untracked
       # .wing-commander-pipeline checkout the composite steps below still need.

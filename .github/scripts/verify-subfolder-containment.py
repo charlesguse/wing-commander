@@ -236,6 +236,46 @@ def check_guard_coverage(errors, wf_dir=None):
     return covered
 
 
+def check_preflight_project(errors, wf_dir=None):
+    """FR-005 (MF-14): in a project-wired job (one that reads any
+    `outputs.project`), every preflight that requires Spec Kit is handed the
+    project, so a subfolder lifecycle is checked inside its folder rather
+    than refused at a root that need not be a Spec Kit project."""
+    wf_dir = wf_dir or os.path.join(ROOT, ".github", "workflows")
+    covered = 0
+    for fn in sorted(os.listdir(wf_dir)):
+        if not fn.endswith(".yml"):
+            continue
+        with open(os.path.join(wf_dir, fn), encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+        for job_name, job in ((doc or {}).get("jobs") or {}).items():
+            if "outputs.project" not in json.dumps(job):
+                continue
+            for s in job.get("steps") or []:
+                w = s.get("with") or {}
+                if not str(s.get("uses", "")).endswith("/wing-commander-preflight") or str(w.get("require-speckit", "")) != "true":
+                    continue
+                if "outputs.project" not in str(w.get("project", "")):
+                    errors.append(f"{fn}:{job_name}: preflight {s.get('name')!r} requires Spec Kit but is not handed the project (FR-005)")
+                else:
+                    covered += 1
+    return covered
+
+
+UNPROJECTED_PREFLIGHT = """\
+jobs:
+  stage:
+    steps:
+      - id: project
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+      - name: Preflight
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
+        with:
+          require-speckit: "true"
+      - run: echo "${{ steps.project.outputs.project }}"
+"""
+
+
 PRE_PUSH = os.path.join(ACTIONS, "_shared", "containment.sh")
 
 UNGUARDED = """\
@@ -522,6 +562,15 @@ def main():
                     errors.append(f"publish_stranded {name}: refusal does not name {p!r}")
     check_trusted_checkout_excluded(errors)
     check_modes(errors)
+    if check_preflight_project(errors) == 0:
+        errors.append("preflight project: no Spec Kit preflight in a project-wired job was found -- the check has lost its subject")
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "unprojected.yml"), "w", encoding="utf-8") as fh:
+            fh.write(UNPROJECTED_PREFLIGHT)
+        probe = []
+        check_preflight_project(probe, tmp)
+        if not probe:
+            errors.append("preflight project: a Spec Kit preflight with no project in a project-wired job was not flagged")
     check_wiring(errors)
     if check_rescue_scope(errors) == 0:
         errors.append("rescue scope: no stranded-commit rescue in a project-wired job was found -- the check has lost its subject")

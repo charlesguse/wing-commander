@@ -507,6 +507,8 @@ jobs:
       qualifies: ${{ needs.resolve-identity.outputs.qualifies }}
       spec-dir: ${{ needs.resolve-identity.outputs.spec-dir }}
       slug: ${{ needs.resolve-identity.outputs.slug }}
+      # The subfolder project P (spec 114), for act's preflight.
+      project: ${{ needs.resolve-identity.outputs.project }}
       default-branch: ${{ needs.resolve-identity.outputs.default-branch }}
       issue-number: ${{ steps.meta.outputs.issue-number }}
       # #287 — the prose-free-output rule, stated once here (the act and
@@ -608,6 +610,9 @@ jobs:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "true"
+          # spec 114 (FR-005): a subfolder lifecycle's Spec Kit state lives
+          # in its folder; resolve-identity already resolved P.
+          project: ${{ needs.resolve-identity.outputs.project }}
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
@@ -1861,6 +1866,8 @@ jobs:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "true"
+          # spec 114 (FR-005) -- see classify-and-announce's preflight.
+          project: ${{ needs.classify-and-announce.outputs.project }}
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}

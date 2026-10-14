@@ -739,12 +739,36 @@ def check_created(data, steps, bindir, errors):
         if case["expect"] == "pass":
             if r.returncode != 0 or output_value(outputs, "spec-dir") != case["spec_dir"]:
                 errors.append(f"{tag}: rc={r.returncode} spec-dir={output_value(outputs, 'spec-dir')!r} {r.stdout!r}")
+            if output_value(outputs, "branch") != "spec-draft/" + case["branch"]:
+                errors.append(f"{tag}: branch={output_value(outputs, 'branch')!r}, want the exact spec-draft/{case['branch']}")
         else:
             if r.returncode == 0:
                 errors.append(f"{tag}: over-budget slug was accepted")
             for want in case.get("names", []):
                 if want not in r.stdout + r.stderr:
                     errors.append(f"{tag}: error does not name {want!r}")
+
+
+def check_spec_pr_lookup(steps, bindir, errors):
+    """MF-16: the spec PR is found by the exact branch "Resolve created
+    spec" read back, never by a `<prefix>NNN-` prefix match (which misses a
+    subfolder branch and can match another project's NNN); no branch looks
+    up nothing."""
+    for name in ("Resolve spec PR URL", "Label spec PR to match the issue"):
+        step = next((s for s in steps if s.get("name") == name), None)
+        if step is None:
+            errors.append(f"spec PR lookup: no {name!r} step")
+            continue
+        if "steps.created.outputs.branch" not in str((step.get("env") or {}).get("BRANCH", "")):
+            errors.append(f"spec PR lookup: {name!r} is not handed the created branch")
+        if "startswith(" in step["run"]:
+            errors.append(f"spec PR lookup: {name!r} still matches a branch-name prefix")
+        for branch, want in (("spec-draft/ideas/alpha/001-login", True), ("", False)):
+            env = {"GH_TOKEN": "fake", "ISSUE": "7", "BRANCH": branch, "FAKE_PR_NUMBER": ""}
+            _, _, log = run_step(step["run"], env, ROOT, bindir)
+            looked = f"--head {branch}" in log if branch else "pr list" in log
+            if looked != want:
+                errors.append(f"spec PR lookup: {name!r} with branch={branch!r} -> gh log {log!r}")
 
 
 def main():
@@ -782,6 +806,7 @@ def main():
         check_label_first_hook(data, doc, bindir, errors)
         check_label_first_rescue(data, doc, bindir, errors)
         check_open_pr(doc, bindir, errors)
+        check_spec_pr_lookup(steps, bindir, errors)
         check_concurrency(doc, bindir, errors)
         check_root_compat(bindir, errors)
         with tempfile.TemporaryDirectory() as gitbin:

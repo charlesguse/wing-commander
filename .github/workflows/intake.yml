@@ -1224,8 +1224,10 @@ jobs:
               exit 1
             fi
             echo "spec-dir=${PROJECT:+$PROJECT/}specs/${branch##*/}" >> "$GITHUB_OUTPUT"
+            echo "branch=${ref#refs/heads/}" >> "$GITHUB_OUTPUT"
           else
             echo "spec-dir=" >> "$GITHUB_OUTPUT"
+            echo "branch=" >> "$GITHUB_OUTPUT"
             echo "No $SPEC_DRAFT_PREFIX$NUM-* branch found — intake produced no spec." >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -1622,10 +1624,10 @@ jobs:
           summary: "Answer the open clarification questions"
           body-file: ${{ runner.temp }}/intake-clarification.md
 
-      # Same jq-side startswith() filter "Label spec PR to match the issue"
-      # already uses below — gh pr list --head takes an exact branch name,
-      # not a glob, so the NNN-slug suffix (unknown at this point) must be
-      # matched client-side.
+      # The PR is found by the exact branch "Resolve created spec" read back
+      # (`gh pr list --head` takes an exact name), so neither a subfolder
+      # project's <prefix>P/NNN-slug nor another project's NNN is mistaken
+      # for it (spec 114) -- "Label spec PR to match the issue" does the same.
       # Two guards, because `needed == 'false'` is true on the no-spec path
       # as well as the happy path. `specified == 'true'` excludes the step 2
       # STOP (the agent never attempted a spec, so there is no PR to point
@@ -1645,11 +1647,12 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false' && steps.clarification.outputs.specified == 'true' && steps.clarification.outputs.blocked != 'true' && steps.created.outputs.spec-dir != ''
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          NUM: ${{ steps.num.outputs.num }}
-          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
+          BRANCH: ${{ steps.created.outputs.branch }}
         run: |
-          url=$(gh pr list --state open --json url,headRefName \
-            --jq "[.[] | select(.headRefName | startswith(\"$SPEC_DRAFT_PREFIX$NUM-\"))][0].url // empty")
+          url=""
+          if [ -n "$BRANCH" ]; then
+            url=$(gh pr list --state open --head "$BRANCH" --json url --jq '.[0].url // empty')
+          fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
       - name: Announce spec PR ready for review
@@ -1671,13 +1674,15 @@ jobs:
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ inputs.issue-number }}
-          NUM: ${{ steps.num.outputs.num }}
-          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
+          BRANCH: ${{ steps.created.outputs.branch }}
         run: |
-          pr=$(gh pr list --state open --json number,headRefName \
-            --jq "[.[] | select(.headRefName | startswith(\"$SPEC_DRAFT_PREFIX$NUM-\"))][0].number // empty")
+          pr=""
+          # An empty --head would match every PR, so no branch means no PR.
+          if [ -n "$BRANCH" ]; then
+            pr=$(gh pr list --state open --head "$BRANCH" --json number --jq '.[0].number // empty')
+          fi
           if [ -z "$pr" ]; then
-            echo "No $SPEC_DRAFT_PREFIX$NUM-* PR found — intake produced no spec; nothing to label." >> "$GITHUB_STEP_SUMMARY"
+            echo "No open PR for ${BRANCH:-a spec branch} found — intake produced no spec; nothing to label." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           labels=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name] | join(",")')
