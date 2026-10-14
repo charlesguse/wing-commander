@@ -409,3 +409,7 @@ Source: maintainer issue-comment on PR #1022 (round-4 review). CI is green and a
   Detail: Lower confidence; depends on overlapping prefix configuration.
 
   - Done (cycle 18): the test now compares the prefix actually stripped (`${name%"$rest"}`) with IMPL_PREFIX, which is what the equality check meant; the stricter behaviour is MF-20's requirement. Gate 158 gains per-case prefix overrides and overlapping-prefix fixtures (implement prefix shorter, longer, and shared with the spec prefix).
+
+## Phase 14: Convergence
+
+- [ ] T068 In `.github/workflows/rebase.yml`, make the conflict manifest (`git diff --name-only --diff-filter=U`, ~:798) and the "Verify AI resolution scope" per-commit file sets (`git show --name-only`, ~:1123-1124) unquoted (`-c core.quotepath=off`, or `-z` through a NUL-aware `containment.sh inside`), so `wing-commander-containment`'s filter mode keeps a conflicted file inside P whose name is non-ASCII instead of dropping it and abandoning a valid resolution; add a Gate 160 filter-mode fixture with such a name per FR-021 (partial)
