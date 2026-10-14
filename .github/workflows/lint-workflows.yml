@@ -4654,6 +4654,9 @@ jobs:
       - name: Gate 160 — subfolder containment (project-aware denies, outside-folder guard)
         if: "!cancelled()"
         run: python3 .github/scripts/verify-subfolder-containment.py
+      - name: Gate 161 — pipeline-checkout grants stay workspace-rooted under a project folder
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-pipeline-checkout-containment.py
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
