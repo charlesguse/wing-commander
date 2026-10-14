@@ -27,7 +27,7 @@ on:
         required: false
         default: ""
       slug:
-        description: "Spec slug (NNN-name) — provide this or head-ref"
+        description: "Spec slug (NNN-name; P/NNN-name for a subfolder project P) — provide this or head-ref"
         type: string
         required: false
         default: ""
@@ -401,6 +401,7 @@ jobs:
     outputs:
       slug: ${{ steps.spec.outputs.slug }}
       spec-dir: ${{ steps.spec.outputs.spec-dir }}
+      project: ${{ steps.spec.outputs.project }}
       # Internal job-to-job wiring only — never a workflow_call output
       # (research.md D3). Non-empty only when this refusal-shaped step
       # actually ran and refused. No in-job refusal callout is possible at
@@ -431,14 +432,20 @@ jobs:
             prefix="$PLAN_PREFIX"
           fi
           slug="${INPUT_SLUG:-${HEAD_REF#"$prefix"}}"
-          if ! printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
+          # A subfolder lifecycle's slug is P/<NNN-slug> (spec 114); the
+          # project grammar itself is enforced by wing-commander-project in
+          # the tasks jobs -- see plan.yml. The root form is unchanged.
+          if ! printf '%s' "$slug" | grep -Eq '^([a-z0-9][a-z0-9-]*/)*[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
             echo "::error::Cannot resolve a spec slug (got '$slug'); refusing to guess."
             echo "reason=Cannot resolve a spec slug (got '$slug'); refusing to guess." >> "$GITHUB_OUTPUT"
             echo "refused=true" >> "$GITHUB_OUTPUT"
             exit 1
           fi
+          project=""
+          case "$slug" in */*) project="${slug%/*}" ;; esac
           echo "slug=$slug"           >> "$GITHUB_OUTPUT"
-          echo "spec-dir=specs/$slug" >> "$GITHUB_OUTPUT"
+          echo "project=$project"      >> "$GITHUB_OUTPUT"
+          echo "spec-dir=${project:+$project/}specs/${slug##*/}" >> "$GITHUB_OUTPUT"
 
   tasks:
     needs: [resolve-spec, verify-image-prerequisites]
@@ -560,6 +567,16 @@ jobs:
           fi
           echo "issue=${issue:-}" >> "$GITHUB_OUTPUT"
 
+      # Subfolder project (spec 114, FR-007) -- see plan.yml.
+      - name: Resolve project
+        id: project
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ needs.resolve-spec.outputs.slug }}
+          identity-kind: slug
+          token: ${{ github.token }}
+          check-folder: 'false'
+
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
       - name: Preflight
         id: preflight
@@ -568,7 +585,8 @@ jobs:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "true"
-          require-files: ".claude/skills/speckit-tasks/SKILL.md|specify init (spec-kit's claude integration)"
+          project: ${{ steps.project.outputs.project }}
+          require-files: "${{ steps.project.outputs.project && format('{0}/', steps.project.outputs.project) || '' }}.claude/skills/speckit-tasks/SKILL.md|specify init (spec-kit's claude integration)"
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
@@ -772,6 +790,7 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          project: ${{ steps.project.outputs.project }}
           step-label: "tasks.direct-commit"
 
       - name: Compute agent turn ceiling (auto)
@@ -793,6 +812,8 @@ jobs:
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ needs.resolve-spec.outputs.spec-dir }}
+          # Spec Kit's project-root override -- see intake.yml.
+          SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
@@ -943,6 +964,13 @@ jobs:
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
       # along -- see clarify.yml.
+      - name: Check agent changes stay inside the project folder (auto)
+        if: "!cancelled() && steps.agent-auto.outcome != 'skipped' && steps.project.outputs.project != ''"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          project: ${{ steps.project.outputs.project }}
+          base-sha: ${{ steps.pre-agent.outputs.before-sha }}
+
       - name: Publish stranded commits (post-agent, auto)
         id: publish-stranded-auto
         if: "!cancelled() && steps.agent-auto.outcome != 'skipped'"
@@ -996,6 +1024,7 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          project: ${{ steps.project.outputs.project }}
           step-label: "tasks.pr"
 
       - name: Compute agent turn ceiling (pr)
@@ -1023,6 +1052,8 @@ jobs:
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SPECIFY_FEATURE_DIRECTORY: ${{ needs.resolve-spec.outputs.spec-dir }}
+          # Spec Kit's project-root override -- see intake.yml.
+          SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
@@ -1173,6 +1204,13 @@ jobs:
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
       # along -- see clarify.yml.
+      - name: Check agent changes stay inside the project folder (pr)
+        if: "!cancelled() && steps.agent-pr.outcome != 'skipped' && steps.project.outputs.project != ''"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          project: ${{ steps.project.outputs.project }}
+          base-sha: ${{ steps.pre-agent.outputs.before-sha }}
+
       - name: Publish stranded commits (post-agent, pr)
         id: publish-stranded-pr
         if: "!cancelled() && steps.agent-pr.outcome != 'skipped'"
@@ -1666,12 +1704,22 @@ jobs:
 
       # No agent step runs on this path, so no credential is required —
       # spec-kit presence is still checked so failures carry guidance.
+      - name: Resolve project
+        id: project
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ needs.resolve-spec.outputs.slug }}
+          identity-kind: slug
+          token: ${{ github.token }}
+          check-folder: 'false'
+
       - name: Preflight
         id: preflight
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
         with:
           require-credential: "false"
           require-speckit: "true"
+          project: ${{ steps.project.outputs.project }}
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
