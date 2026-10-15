@@ -645,3 +645,38 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
   Detail: The watchdog and fold-cycle guard lose identity for such branches.
 
   - Intended narrowing (FR-013, MF-20), now made visible (cycle 23): the pipeline only creates `[P/]NNN-slug` branches, so a prefixed name the parser refuses names no lifecycle. It now falls through to the metrics-record fallback, where the old split took it whole as the slug and skipped the fallback. The step summary names the refusal. Gate 19 scenario "a prefixed head the shared parser refuses" (slug from the record, summary line), and Gate 158 root reject fixtures `spec/login`, `spec-draft/001-Login_x`, `implement/login-iter2`.
+
+## Review Gate Round 5 Findings
+
+- [ ] Review finding: Intake claim release fallback skipped when intake job succeeds
+
+  release-claim job's needs.intake.result != 'success' clause skips it when the in-job 'Release the intake claim' step (continue-on-error) failed, leaving spec-intake-claimed on the issue and blocking later intakes.
+
+  - .github/workflows/intake.yml
+
+  Detail: Gate the fallback on claim-released != 'true' alone.
+
+- [ ] Review finding: Project/spec-dir split and slug regex pasted into many workflows
+
+  The slug split (project=${slug%/*}, specs/${slug##*/}) and the slug regex are copied inline across tasks.yml, plan.yml, pr-conversation.yml and cleanup.yml, and sed project= kv copies exist beside kv.sh. This breaks the single-home rule and the copies accept slugs the shared parser rejects.
+
+  - .github/workflows/tasks.yml
+  - .github/workflows/plan.yml
+  - .github/workflows/pr-conversation.yml
+  - .github/workflows/cleanup.yml
+  - .github/actions/wing-commander-project/action.yml
+
+  Detail: Move into the shared parser and add a single-home check to an existing gate.
+
+- [ ] Review finding: Blanket gh api deny for subfolder lifecycles breaks stages that grant it
+
+  The deny of Bash(gh api:*) is appended last in tool-args and cannot be reopened, so pr-conversation's act route, whose default allowed tools include gh api, loses all gh api calls for subfolder lifecycles, silently. The tooling statement omits the deny.
+
+  - .github/actions/wing-commander-tool-args/action.yml
+  - .github/workflows/pr-conversation.yml
+
+- [ ] Review finding: Inspected-run identity no longer resolves malformed pipeline-prefixed branches
+
+  Branches with a pipeline prefix that do not parse as [P/]NNN-slug (spec/foo, impl/001-x-iter) now yield an empty slug and no spec-meta read, where the old code attributed them. Watchdog and fold-cycle-guard see no lifecycle, with only a step-summary trace.
+
+  - .github/actions/wing-commander-inspected-run-identity/action.yml
