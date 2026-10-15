@@ -236,7 +236,7 @@ def read_spec_meta_env(repo):
 
 
 def run_classify(unchecked_items, no_write_paths, tasks_path=f"{SPEC_DIR}/tasks.md",
-                  spec_dir=SPEC_DIR, script_path=CLASSIFY_SCRIPT):
+                  spec_dir=SPEC_DIR, script_path=CLASSIFY_SCRIPT, cwd=None):
     """Drives the SHIPPED classify-out-of-boundary-tasks.sh directly
     (contracts/write-boundary-gate.md's Inputs section), never a Python
     re-implementation of the classification rule. `script_path` is
@@ -247,7 +247,7 @@ def run_classify(unchecked_items, no_write_paths, tasks_path=f"{SPEC_DIR}/tasks.
     proc = subprocess.run([BASH, script, unchecked_items, no_write_paths,
                            tasks_path, spec_dir],
                           capture_output=True, text=True, encoding="utf-8",
-                          errors="replace")
+                          errors="replace", cwd=cwd)
     fd, out_path = tempfile.mkstemp()
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -754,6 +754,23 @@ def check_subfolder_classification(root, script_path=CLASSIFY_SCRIPT):
         if outputs.get("all-unchecked-out-of-boundary", "") != expect_all:
             failures.append(f"(c-114) {name}: expected all-oob {expect_all}, "
                             f"got {outputs.get('all-unchecked-out-of-boundary')!r}")
+    # A project-relative token that starts with the project's own first
+    # segment (project `app`, which has an `app/` subfolder): `app/.claude/x`
+    # may name `app/app/.claude/x`, so it is not stripped into `.claude/x`
+    # and stays in reach; without that subfolder it is the repository-
+    # relative form and is out of boundary.
+    for name, subfolder, expect_count in (
+            ("an already project-relative token is not stripped again", True, 0),
+            ("a repository-relative token is stripped when no such subfolder exists", False, 1)):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "app", "app" if subfolder else "src"))
+            rc, out, outputs = run_classify(
+                "- [ ] T001 edit `app/.claude/skills/foo/SKILL.md`", ".claude/",
+                tasks_path="app/specs/001-demo/tasks.md", spec_dir="app/specs/001-demo",
+                script_path=script_path, cwd=tmp)
+        if rc != 0 or outputs.get("out-of-boundary-count", "") != str(expect_count):
+            failures.append(f"(c-114) {name}: expected count {expect_count}, rc={rc} "
+                            f"got {outputs.get('out-of-boundary-count')!r}")
     return failures
 
 

@@ -4,7 +4,7 @@
 A file converted for subfolder projects must reach the spec directory, the
 Spec Kit state and the skills through the shared project logic
 (`_shared/project-name.sh`, the `wing-commander-project` composite), never by
-rebuilding a root-only path or splitting a name by hand. Five patterns count:
+rebuilding a root-only path or splitting a name by hand. Six patterns count:
 
   root-spec-dir        a spec directory built as `specs/<any variable>`
   root-specify         a bare `.specify/` path (no project prefix before it)
@@ -12,6 +12,8 @@ rebuilding a root-only path or splitting a name by hand. Five patterns count:
   root-skill-path      a bare `.claude/skills/speckit-*` path
   inline-project-split a project or NNN-slug cut out of a slug, spec dir or
                        branch with `%/*`, `##*/`, `%specs/*` or `%%/specs/*`
+  inline-kv-helper     a copy of the `kv KEY TEXT` body that reads one key of
+                       the parser's output; its one home is _shared/kv.sh
 
 A Windows separator reads as `/`.
 
@@ -49,6 +51,8 @@ PATTERNS = {
     # `%specs/*` or `%%/specs/*` instead of read by the parser.
     "inline-project-split": re.compile(
         r"\$\{\w*(?:slug|SLUG|spec_dir|SPEC_DIR|record_dir|branch|BRANCH)\w*(?:%/\*|##\*/|%specs/\*|%%/specs/\*)\}"),
+    # The kv helper's body, pasted instead of sourcing _shared/kv.sh.
+    "inline-kv-helper": re.compile(r"""sed\s+-n\s+["']s/\^\$\{?1\}?=//p"""),
 }
 
 # file -> {pattern: hits allowed}. A hit is a documented root branch.
@@ -76,6 +80,8 @@ ALLOWED = {
     # Upgrades the adopter's root Spec Kit install, which is not a lifecycle
     # and has no project; a subfolder project's own upgrade is out of scope.
     ".github/workflows/auto-update-spec-kit.yml": {"root-specify": 12, "root-skill-path": 1},
+    # The kv helper's one home.
+    ".github/actions/_shared/kv.sh": {"inline-kv-helper": 1},
 }
 
 # inline-project-split hits that cannot reach the parser: each sits in a job

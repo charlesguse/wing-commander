@@ -585,7 +585,9 @@ jobs:
       # job then reads an absent verdict as red. A subfolder project's
       # `P/specs/NNN-slug` gates branch `<spec-prefix>P/NNN-slug` (spec 114);
       # the implement job's wing-commander-project step enforces the project
-      # grammar. The root form is unchanged.
+      # grammar, and a project segment named `specs` (`specs/specs/001-x`,
+      # which would gate the root branch of another lifecycle) is refused
+      # here already. The root form is unchanged.
       - name: Resolve the spec branch to gate
         id: head
         env:
@@ -596,7 +598,13 @@ jobs:
             echo "::error::spec-dir '$SPEC_DIR_INPUT' does not match specs/NNN-slug; refusing to guess."
             exit 1
           fi
-          echo "ref=${SPEC_PREFIX}${SPEC_DIR_INPUT%specs/*}${SPEC_DIR_INPUT##*/}" >> "$GITHUB_OUTPUT"
+          project_part="${SPEC_DIR_INPUT%specs/*}"
+          case "/$project_part" in
+            */specs/*)
+              echo "::error::spec-dir '$SPEC_DIR_INPUT' has a project segment named 'specs'; refusing to guess."
+              exit 1 ;;
+          esac
+          echo "ref=${SPEC_PREFIX}${project_part}${SPEC_DIR_INPUT#"${project_part}specs/"}" >> "$GITHUB_OUTPUT"
 
       # FR-009a: a failed install degrades to the preflight's missing-
       # actionlint skip below, never to a job failure with no verdict. Not

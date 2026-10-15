@@ -1769,7 +1769,7 @@ def _sh_select(script, cwd):
 
 def _stage_select_trusted_copy(repo):
     """Copies the real _shared/read-spec-meta.sh (+ the project-name.sh
-    parser it reads names with, spec 114) and wc_lifecycle_review_marker.py
+    parser it reads names with, spec 114, and the kv.sh helper it sources) and wc_lifecycle_review_marker.py
     (+ its board_item_marker.py dependency) into .wc-pristine-repo -- the
     step under test resolves both from there, never the workspace root
     (T073)."""
@@ -1777,7 +1777,7 @@ def _stage_select_trusted_copy(repo):
     scripts_dir = os.path.join(repo, ".wc-pristine-repo", ".github", "scripts")
     os.makedirs(actions_dir, exist_ok=True)
     os.makedirs(scripts_dir, exist_ok=True)
-    for name in ("read-spec-meta.sh", "project-name.sh"):
+    for name in ("read-spec-meta.sh", "project-name.sh", "kv.sh"):
         shutil.copyfile(
             os.path.join(".github", "actions", "_shared", name),
             os.path.join(actions_dir, name))

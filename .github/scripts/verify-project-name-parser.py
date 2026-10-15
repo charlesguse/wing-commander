@@ -40,6 +40,11 @@ def main():
         r = run(env, "parse", case["kind"], case["name"])
         if r.returncode == 0:
             errors.append(f"reject {case['kind']} {case['name']!r} was accepted: {r.stdout!r}")
+    # A grammar check tests the whole value, never one line of it: an
+    # embedded newline is refused by every validator.
+    for mode, value in (("validate-path", "ok\n../../etc"), ("validate-prefix", "node:\n$(x)")):
+        if run(env, mode, value).returncode == 0:
+            errors.append(f"{mode} accepted the multi-line value {value!r}")
     # Builder side of the spec-dir round trip (FR-013); the accept cases above
     # assert the same (P, NNN-slug) comes back from every kind.
     spec_dir = run(env, "spec-dir", "ideas/alpha", "001-login")

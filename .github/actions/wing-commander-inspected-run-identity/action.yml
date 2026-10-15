@@ -218,7 +218,8 @@ runs:
         # from an implement branch) and reads [P/]NNN-slug, so a name it
         # cannot read is no pipeline branch here.
         lib="$GITHUB_ACTION_PATH/../_shared/project-name.sh"
-        kv() { printf '%s\n' "$2" | sed -n "s/^$1=//p"; }
+        # shellcheck source=/dev/null
+        . "$GITHUB_ACTION_PATH/../_shared/kv.sh"
         export SPEC_DRAFT_PREFIX SPEC_PREFIX PLAN_PREFIX TASKS_PREFIX IMPL_PREFIX
         slug=""
         names=""

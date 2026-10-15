@@ -251,6 +251,42 @@
       "expect": "fail",
       "names": ["spec/other/001-x"]
     },
+    "agent_push_of_a_raw_sha_through_origin_fails": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "agent_raw_pushes": {"spec/other/003-z": "README.md"},
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["spec/other/003-z"]
+    },
+    "agent_push_of_a_raw_sha_by_url_fails": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "agent_raw_pushes": {"spec/other/004-w": "README.md"},
+      "raw_push_by_url": true,
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["spec/other/004-w"]
+    },
+    "agent_push_of_a_raw_sha_inside_project_passes": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "agent_raw_pushes": {"scratch": "a/b/raw.md"},
+      "concurrent_pushes": {"spec/q/002-y": ["q/spec.md"]},
+      "agent_fetch": true,
+      "expect": "pass"
+    },
+    "unreachable_base_sha_fails_closed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "base_sha": "0123456789abcdef0123456789abcdef01234567",
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["could not list the changed paths"]
+    },
     "missing_pre_agent_snapshot_fails_closed": {
       "project": "a/b",
       "base_files": ["a/b/x.md"],

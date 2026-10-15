@@ -1160,11 +1160,13 @@ jobs:
       # first looks for an open PR from the branch, so a create that landed
       # before its response was lost is not repeated. By now the label and
       # the branch exist, so a re-run of intake is refused; a create that
-      # still fails after three attempts fails intake naming the branch to
-      # open the PR from by hand.
+      # still fails after three attempts names the branch to open the PR
+      # from by hand. continue-on-error, so the steps below still run;
+      # "Fail on an unopened subfolder spec PR" turns it into the red run.
       - name: Open the spec PR (subfolder project)
         id: open-pr
         if: "!cancelled() && steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome != 'skipped' && steps.publish-stranded.outputs.push-ok == 'true' && steps.publish-stranded.outputs.label-first-slug != ''"
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ inputs.issue-number }}
@@ -1858,6 +1860,20 @@ jobs:
           echo "Intake refused to publish the subfolder spec branch for project $PROJECT — see the error in this job." >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
+      # Spec 114 (FR-014): "Open the spec PR (subfolder project)" is
+      # continue-on-error so the steps after it still run; a spec PR it
+      # could not open is turned into the red run here, deferred to the
+      # job's last steps like the refusal above.
+      - name: Fail on an unopened subfolder spec PR
+        id: unopened-pr
+        if: "!cancelled() && steps.open-pr.outcome == 'failure'"
+        env:
+          PROJECT: ${{ steps.num.outputs.project }}
+          BRANCH: ${{ inputs.spec-draft-prefix }}${{ steps.num.outputs.project }}/${{ steps.publish-stranded.outputs.label-first-slug }}
+        run: |
+          echo "::error::wing-commander intake stage: failing the run — the spec PR from $BRANCH (project $PROJECT) could not be opened (see the error above); the branch and its spec label are published, so open the PR by hand."
+          exit 1
+
       # FR-011: names the specific post-agent step that failed, for the
       # stalled job to read instead of the generic "a step after it did not
       # complete" -- see clarify.yml.
@@ -1888,7 +1904,8 @@ jobs:
               {"name": "Fail loud on non-healthy agent verdict", "conclusion": "${{ steps.verdict-fail.conclusion }}"},
               {"name": "Fail on invalid agent result", "conclusion": "${{ steps.invalid-result.conclusion }}"},
               {"name": "Fail on unresolved clarification markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"},
-              {"name": "Fail on a refused subfolder publish", "conclusion": "${{ steps.refused-publish.conclusion }}"}
+              {"name": "Fail on a refused subfolder publish", "conclusion": "${{ steps.refused-publish.conclusion }}"},
+              {"name": "Fail on an unopened subfolder spec PR", "conclusion": "${{ steps.unopened-pr.conclusion }}"}
             ]
 
       # Release the routing gate's claim on the issue (spec 114, FR-003,

@@ -302,6 +302,19 @@ def main():
     gate_by_name = {(s or {}).get("name"): s for s in gate_job.get("steps") or []}
     by_id = {(s or {}).get("id"): s for s in steps}
     texts = {}
+    # The spec branch the gate job checks out, from spec-dir (spec 114): a
+    # project segment named `specs` is refused, never read as the root
+    # branch of another lifecycle.
+    head = next((s for s in gate_job.get("steps") or [] if (s or {}).get("id") == "head"), {})
+    for spec_dir, want in (("specs/001-x", "spec/001-x"),
+                           ("ideas/alpha/specs/001-x", "spec/ideas/alpha/001-x"),
+                           ("specs/specs/001-x", None),
+                           ("a/specs/b/specs/001-x", None)):
+        rc, out, outputs, _, _ = run_plain(head.get("run", "exit 1"),
+                                           {"SPEC_DIR_INPUT": spec_dir, "SPEC_PREFIX": "spec/"})
+        got = outputs.get("ref") if rc == 0 else None
+        check("(cycle) spec-dir {0!r} gates branch {1!r}".format(spec_dir, want),
+              got == want, "rc={0} ref={1!r} {2}".format(rc, got, out))
     # spec 095: the job-to-job wiring of the contained cycle leg.
     check("(cycle) the implement job waits for {0}".format(GATE_JOB),
           GATE_JOB in (job.get("needs") or []), "needs={0}".format(job.get("needs")))

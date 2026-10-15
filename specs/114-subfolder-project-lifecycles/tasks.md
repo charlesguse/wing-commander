@@ -428,7 +428,7 @@ Source: maintainer issue-comment on PR #1022 asking to re-drive implement for T0
 
 ## Review Gate Round 2 Findings
 
-- [ ] Review finding: Containment check mode fails open on git pipeline errors
+- [X] Review finding: Containment check mode fails open on git pipeline errors
 
   The changed-path pipeline in the containment action's check mode has no exit-status check, so a failing git diff/ls-files yields an empty outside list and reports everything inside P.
 
@@ -436,7 +436,9 @@ Source: maintainer issue-comment on PR #1022 asking to re-drive implement for T0
 
   Detail: Script runs with set -uo pipefail but no -e; an unreachable BASE_SHA gives empty output and the step passes. The preceding trusted-base lookup does fail closed.
 
-- [ ] Review finding: containment.sh inside mode drops final line without trailing newline
+  - Done (cycle 20): the four listing legs are `&&`-chained into a temp file and the `outside` filter's status is checked; any failure fails the check ("could not list the changed paths"). Gate 160 fixture `unreachable_base_sha_fails_closed` (passed before the fix, checked).
+
+- [X] Review finding: containment.sh inside mode drops final line without trailing newline
 
   `inside` uses `while IFS= read -r path` without `|| [ -n "$path" ]`, so a last path with no trailing newline is dropped, unlike `outside`.
 
@@ -444,7 +446,9 @@ Source: maintainer issue-comment on PR #1022 asking to re-drive implement for T0
 
   Detail: Rebase conflict manifest edited by the agent may lack a trailing newline; the filter step then loses the last conflicted path and the scope check misreports it as extra.
 
-- [ ] Review finding: intake 'Open the spec PR (subfolder project)' hard-fails without continue-on-error
+  - Done (cycle 20): `inside` reads `|| [ -n "$path" ]`. Gate 160's filter-mode check also runs a manifest with no trailing newline (fails without the fix, checked).
+
+- [X] Review finding: intake 'Open the spec PR (subfolder project)' hard-fails without continue-on-error
 
   The step exits 1 after 3 gh pr create attempts, skipping later success()-gated post-agent steps and producing a misleading failure cause; it is also absent from the failed-post-agent-step candidates.
 
@@ -452,7 +456,9 @@ Source: maintainer issue-comment on PR #1022 asking to re-drive implement for T0
 
   Detail: Neighbouring steps use continue-on-error plus a dedicated refusal step. Needs a review-step-gating pass.
 
-- [ ] Review finding: Pushed-branch containment check misses commits pushed by raw sha
+  - Done (cycle 20): `open-pr` is `continue-on-error`; a new deferred "Fail on an unopened subfolder spec PR" (`unopened-pr`, `!cancelled() && steps.open-pr.outcome == 'failure'`) after "Fail on a refused subfolder publish" turns it red naming the branch, and is in the failed-post-agent-step candidates. Gate 162 (`verify-intake-routing.py`) checks all three. The `review-step-gating` skill pass lives under `.claude/`, which this run reads but whose review procedure was not run as a separate session; see the cycle-20 final message.
+
+- [X] Review finding: Pushed-branch containment check misses commits pushed by raw sha
 
   The check only inspects remote tips reachable from HEAD, local branches or the HEAD reflog, so an out-of-project commit pushed by sha to another ref is never checked.
 
@@ -460,7 +466,9 @@ Source: maintainer issue-comment on PR #1022 asking to re-drive implement for T0
 
   Detail: commit-tree or hash-object content pushed with `git push origin <sha>:refs/heads/other` is not an ancestor of local_tips, so it is skipped and containment passes.
 
-- [ ] Review finding: project-name.sh grammar checks accept multi-line values
+  - Done (cycle 20): a moved head this checkout holds is also checked when it is reachable from a `refs/remotes/*` reflog's "update by push" entry (raw sha through `origin`) or from no `refs/remotes/*` ref at all (pushed by URL); a fetched concurrent branch is still left alone. Gate 160 fixtures for both raw-sha pushes and a raw-sha push inside P beside a fetched concurrent branch; the by-URL fixture fails without the no-tracking-ref leg (checked). Remaining gap (reflog expiry; push by URL then fetch through origin) is listed in the contract.
+
+- [X] Review finding: project-name.sh grammar checks accept multi-line values
 
   validate_path and the slug check use `printf | grep -Eq '^...$'`, which succeeds if any single line matches, so embedded newlines pass.
 
@@ -468,7 +476,9 @@ Source: maintainer issue-comment on PR #1022 asking to re-drive implement for T0
 
   Detail: A value like $'ok\n../../etc' passes, then flows into paths, GITHUB_OUTPUT lines and the agent prompt.
 
-- [ ] Review finding: implement.yml spec-branch derivation mishandles a project segment named specs
+  - Done (cycle 20): every grammar check goes through a new `matches` helper (`[[ =~ ]]` under `LC_ALL=C`, whole value). Gate 158 reject fixtures for a multi-line project, slug and label, plus multi-line `validate-path`/`validate-prefix` (all accepted by the grep form, checked).
+
+- [X] Review finding: implement.yml spec-branch derivation mishandles a project segment named specs
 
   `${SPEC_DIR_INPUT%specs/*}${SPEC_DIR_INPUT##*/}` yields the wrong branch for spec-dir `specs/specs/001-x`, which the regex accepts.
 
@@ -476,7 +486,9 @@ Source: maintainer issue-comment on PR #1022 asking to re-drive implement for T0
 
   Detail: The gated branch becomes `<prefix>specs/001-x`, the root branch of a different lifecycle; the grammar is only enforced later in the implement job.
 
-- [ ] Review finding: normalize_token strips project prefix from already project-relative paths
+  - Done (cycle 20): "Resolve the spec branch to gate" refuses a project part with a `specs` segment and derives the slug from the same split. `verify-implement-gate-suite-preflight.py` drives the step over root, subfolder and two refused spec-dirs. Its `INLINE_SPLIT_ALLOWED` count is unchanged.
+
+- [X] Review finding: normalize_token strips project prefix from already project-relative paths
 
   Tokens that are already project-relative, such as `<P>/app/.claude/...` for project `app`, are stripped again and misclassified as no-write or as the project's own specs.
 
@@ -484,7 +496,9 @@ Source: maintainer issue-comment on PR #1022 asking to re-drive implement for T0
 
   Detail: Misclassification when a subdirectory name equals the project's first segment.
 
-- [ ] Review finding: kv helper duplicated across read-spec-meta.sh and inspected-run-identity action
+  - Done (cycle 20): `readings()` replaces `normalize_token`. When the project folder has a subdirectory named like the token's first segment, the token is read both ways and is out of boundary only if both readings are, so it falls through (FR-015). `verify-write-boundary.py` adds fixtures with and without that subfolder.
+
+- [X] Review finding: kv helper duplicated across read-spec-meta.sh and inspected-run-identity action
 
   The same `kv KEY TEXT` shell helper is pasted in two places, which violates the repo's rule that shared logic has one home.
 
@@ -492,3 +506,5 @@ Source: maintainer issue-comment on PR #1022 asking to re-drive implement for T0
   - .github/actions/wing-commander-inspected-run-identity/action.yml
 
   Detail: A later fix to one copy would leave the other drifted with nothing failing. It belongs in a shared sourced helper plus a single-home gate check.
+
+  - Done (cycle 20): new `_shared/kv.sh`, sourced by both. Gate 159 (`verify-project-single-home.py`) gains the `inline-kv-helper` pattern (allowed only in kv.sh) and a reject fixture. `verify-reviewer-fail-closed.py` now copies kv.sh beside the reader.

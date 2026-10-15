@@ -123,12 +123,21 @@ if spec_dir.startswith("/") is False and "/specs/" in "/" + spec_dir:
     if head:
         project_prefix = head + "/"
 
-def normalize_token(token):
+def readings(token):
+    """The project-relative paths a token can name. A project-relative token
+    can itself start with the project's first segment (project `app`,
+    `app/.claude/x` naming `app/app/.claude/x`): when the project folder has
+    that subdirectory, the token is read both ways, and it is out of
+    boundary only when both readings are. The script runs at the checkout's
+    root (wing-commander-write-boundary)."""
     while token.startswith("./"):
         token = token[2:]
     if project_prefix and token.startswith(project_prefix):
-        token = token[len(project_prefix):]
-    return token
+        stripped = token[len(project_prefix):]
+        if os.path.isdir(project_prefix + token.split("/", 1)[0]):
+            return [stripped, token]
+        return [stripped]
+    return [token]
 
 
 # NO_WRITE_PATHS has already been through the shared normalize-write-path-
@@ -151,8 +160,8 @@ for line in lines:
         continue  # empty boundary -- nothing ever classifies (FR-015)
 
     def out_of_boundary(token):
-        normalized = normalize_token(token)
-        return any(normalized.startswith(prefix) for prefix in prefixes)
+        return all(any(path.startswith(prefix) for prefix in prefixes)
+                   for path in readings(token))
 
     if not all(out_of_boundary(t) for t in candidates):
         continue  # at least one candidate is in-reach -- falls through

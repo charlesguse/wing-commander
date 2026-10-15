@@ -178,6 +178,21 @@ def contain(case, script):
             git(tmp, "push", "-q", "origin", "HEAD:refs/heads/" + ref)
             git(tmp, "checkout", "-q", "main")
             git(tmp, "branch", "-q", "-D", "agent-side")
+        for ref, rel in case.get("agent_raw_pushes", {}).items():
+            # A commit-tree commit no local ref or HEAD reflog reaches,
+            # pushed by raw sha (through origin, or by URL so no
+            # remote-tracking ref moves).
+            idx = os.path.join(top, "raw-index")
+            env = dict(os.environ, GIT_INDEX_FILE=idx)
+            run = lambda *a: subprocess.run(["git", *a], cwd=tmp, env=env, check=True,  # noqa: E731
+                                            capture_output=True, text=True).stdout.strip()
+            run("read-tree", base)
+            blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=tmp, input="raw\n",
+                                  check=True, capture_output=True, text=True).stdout.strip()
+            run("update-index", "--add", "--cacheinfo", f"100644,{blob},{rel}")
+            sha = run("commit-tree", run("write-tree"), "-p", base, "-m", "raw")
+            os.remove(idx)
+            git(tmp, "push", "-q", origin if case.get("raw_push_by_url") else "origin", f"{sha}:refs/heads/{ref}")
         for ref, files in case.get("concurrent_pushes", {}).items():
             # Another lifecycle's run moves its own branch meanwhile, from a
             # clone this checkout never fetches.
@@ -227,7 +242,7 @@ def contain(case, script):
         if case.get("commit"):
             git(tmp, "add", "-A")
             git(tmp, "commit", "-q", "-m", "agent")
-        env = {"PROJECT": case["project"], "BASE_SHA": base, "DEFAULT_BRANCH": case.get("default_branch", "main"),
+        env = {"PROJECT": case["project"], "BASE_SHA": case.get("base_sha", base), "DEFAULT_BRANCH": case.get("default_branch", "main"),
                "HELPERS_DIR": helpers}
         r, _ = run_script(script, env, tmp, "wing-commander-containment")
         return r
@@ -867,14 +882,17 @@ def check_modes(errors):
             if lf and recorded != want_record:
                 errors.append(f"install-pre-push {name}: recorded slug {recorded!r}, want {want_record!r}")
     flt = action_step("wing-commander-containment", "Filter paths to the project folder")
-    with tempfile.TemporaryDirectory() as tmp:
-        paths = os.path.join(tmp, "manifest.txt")
-        with open(paths, "w", encoding="utf-8") as fh:
-            fh.write("a/b/x.md\nREADME.md\na/bc/y.md\na/b/c/z.md\n")
-        r, _ = run_script(flt, {"PROJECT": "a/b", "PATHS_FILE": paths}, tmp, "wing-commander-containment")
-        got = open(paths, encoding="utf-8").read().split()
-        if r.returncode != 0 or got != ["a/b/x.md", "a/b/c/z.md"]:
-            errors.append(f"filter: kept {got!r}, want ['a/b/x.md', 'a/b/c/z.md'] rc={r.returncode} {r.stderr!r}")
+    # The second body has no trailing newline (an agent-edited manifest):
+    # its last path must still be kept.
+    for body in ("a/b/x.md\nREADME.md\na/bc/y.md\na/b/c/z.md\n", "a/b/x.md\nREADME.md\na/bc/y.md\na/b/c/z.md"):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = os.path.join(tmp, "manifest.txt")
+            with open(paths, "w", encoding="utf-8") as fh:
+                fh.write(body)
+            r, _ = run_script(flt, {"PROJECT": "a/b", "PATHS_FILE": paths}, tmp, "wing-commander-containment")
+            got = open(paths, encoding="utf-8").read().split()
+            if r.returncode != 0 or got != ["a/b/x.md", "a/b/c/z.md"]:
+                errors.append(f"filter: kept {got!r} from {body!r}, want ['a/b/x.md', 'a/b/c/z.md'] rc={r.returncode} {r.stderr!r}")
 
 
 def rebase_step(step_id):

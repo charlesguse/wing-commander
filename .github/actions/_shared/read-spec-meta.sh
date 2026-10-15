@@ -56,8 +56,8 @@ SPEC_DIR="${3:-}"
 # project name is read by the one parser (project-name.sh), and one it cannot
 # read has no record here; a root name (no `/`) is taken as it always was.
 lib="$(dirname "$0")/project-name.sh"
-# kv KEY TEXT -> the value of `KEY=` in TEXT.
-kv() { printf '%s\n' "$2" | sed -n "s/^$1=//p"; }
+# shellcheck source=/dev/null
+. "$(dirname "$0")/kv.sh"
 if [ -z "$SPEC_DIR" ] && [ -n "$SLUG" ]; then
   case "$SLUG" in
     */*) if parsed="$(bash "$lib" parse slug "$SLUG" 2>/dev/null)"; then

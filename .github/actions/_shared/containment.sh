@@ -101,7 +101,8 @@ case "$mode" in
     outside "$project" "${3:-}"
     ;;
   inside)
-    while IFS= read -r path; do
+    # `|| [ -n ... ]`: a last path with no trailing newline is still read.
+    while IFS= read -r path || [ -n "$path" ]; do
       case "$path" in "$project"/*) printf '%s\n' "$path" ;; esac
     done
     ;;

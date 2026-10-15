@@ -24,7 +24,7 @@ prefix="${prefix#"${prefix%%[![:space:]]*}"}"
 prefix="${prefix%"${prefix##*[![:space:]]}"}"
 
 # review-gate-round-4 item 1: strip every leading "./" the same way the
-# classifier's normalize_token() already strips it from candidate tokens --
+# classifier's readings() already strips it from candidate tokens --
 # otherwise a no-write-paths entry spelled "./.claude/" never normalizes to
 # the same prefix as ".claude/" and both classification and the Edit()/
 # Write() glob silently no-op for it.

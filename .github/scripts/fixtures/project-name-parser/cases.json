@@ -32,6 +32,9 @@
      "env": {"SPEC_DRAFT_PREFIX": "wc/draft/", "SPEC_PREFIX": "wc/", "IMPL_PREFIX": "wc/"}}
   ],
   "reject": [
+    {"kind": "slug", "name": "ok\n../../etc/001-login"},
+    {"kind": "slug", "name": "ideas/alpha/001-login\nzz"},
+    {"kind": "label", "name": "spec:ideas/alpha/001-login\n"},
     {"kind": "branch", "name": "other/001-login"},
     {"kind": "branch", "name": "spec/ideas/Alpha/001-login"},
     {"kind": "branch", "name": "spec/ideas//001-login"},

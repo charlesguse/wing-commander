@@ -35,17 +35,25 @@ LABEL_BUDGET_BASE=44
 
 fail() { echo "project-name: $*" >&2; exit 1; }
 
+# matches VALUE ERE -- the ERE tested against the whole value. Never `printf
+# | grep -E`, which passes when any single line matches, so a value with an
+# embedded newline ($'ok\n../../etc') would pass.
+matches() {
+  local LC_ALL=C
+  [[ "$1" =~ $2 ]]
+}
+
 validate_path() {
   local p="$1" seg
   [ -n "$p" ] || fail "empty project path"
   case "$p" in /*) fail "absolute path '$p'" ;; esac
   [ "${#p}" -le "$MAX_PATH_LEN" ] || fail "'$p' is longer than $MAX_PATH_LEN characters"
-  printf '%s' "$p" | grep -Eq '^[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*)*$' \
+  matches "$p" '^[a-z0-9][a-z0-9-]*(/[a-z0-9][a-z0-9-]*)*$' \
     || fail "'$p' is not lowercase [a-z0-9-] segments separated by single '/'"
   local IFS=/
   for seg in $p; do
     [ "$seg" != "specs" ] || fail "'$p' has a segment named 'specs'"
-    printf '%s' "$seg" | grep -Eq '^[0-9]{3}-' && fail "'$p' has a segment shaped like a feature number ('$seg')"
+    matches "$seg" '^[0-9]{3}-' && fail "'$p' has a segment shaped like a feature number ('$seg')"
   done
   return 0
 }
@@ -134,7 +142,7 @@ parse() {
     /*) fail "'$name' has an empty project path before '${rest#/}'" ;;
     */*) proj="${rest%/*}" ;;
   esac
-  printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9-]+$' || fail "'$name' does not end in <NNN-slug>"
+  matches "$slug" '^[0-9]{3}-[a-z0-9-]+$' || fail "'$name' does not end in <NNN-slug>"
   if [ -n "$proj" ]; then validate_path "$proj" || exit 1; fi
   echo "project=$proj"
   echo "slug=$slug"
@@ -187,7 +195,7 @@ next_number() {
 
 validate_prefix() {
   local pfx="$1" bare fam
-  printf '%s' "$pfx" | grep -Eq '^[a-z0-9][a-z0-9-]*:$' || fail "routing prefix '$pfx' must match ^[a-z0-9][a-z0-9-]*:\$"
+  matches "$pfx" '^[a-z0-9][a-z0-9-]*:$' || fail "routing prefix '$pfx' must match ^[a-z0-9][a-z0-9-]*:\$"
   [ $(( ${#pfx} + MAX_PATH_LEN )) -le 50 ] || fail "routing prefix '$pfx' is too long (len + $MAX_PATH_LEN must be <= 50)"
   bare="${pfx%:}"
   # `route` stands for the whole write-boundary routing label family without

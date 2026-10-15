@@ -694,6 +694,30 @@ def check_open_pr(doc, bindir, errors):
         errors.append(f"open-pr: not gated on the label-first push having published ({cond!r})")
     if steps.index(step) < steps.index(step_by_id(steps, "publish-stranded")):
         errors.append("open-pr: runs before the label-first push")
+    # Review round 2: a failed create must not skip the success()-gated
+    # steps after it; a deferred step near the job's end turns it red, and
+    # the failed-post-agent-step report names that step.
+    if step.get("continue-on-error") is not True:
+        errors.append("open-pr: not continue-on-error, so a failed create skips every success()-gated step after it")
+    fail = step_by_id(steps, "unopened-pr")
+    if fail is None:
+        errors.append("open-pr: no 'Fail on an unopened subfolder spec PR' step turns a failed create red")
+    else:
+        fcond = str(fail.get("if", ""))
+        for outcome, want_run in (("failure", True), ("success", False), ("skipped", False)):
+            if evaluate_if(fcond, {"cancelled()": False, "steps.open-pr.outcome": outcome}) != want_run:
+                errors.append(f"unopened-pr: runs={not want_run} with open-pr outcome {outcome!r} ({fcond!r})")
+        if fail.get("continue-on-error"):
+            errors.append("unopened-pr: is continue-on-error, so it cannot fail the run")
+        failed_step = step_by_id(steps, "failed-step")
+        cands = str((failed_step or {}).get("with", {}).get("candidates-json", ""))
+        if "steps.unopened-pr.conclusion" not in cands or steps.index(failed_step) < steps.index(fail):
+            errors.append("unopened-pr: not among the failed-post-agent-step candidates read after it")
+        with tempfile.TemporaryDirectory() as tmp:
+            r, _, _ = run_step(fail["run"], {"PROJECT": "ideas/alpha", "BRANCH": "spec-draft/ideas/alpha/001-login"},
+                               tmp, bindir)
+            if r.returncode == 0 or "spec-draft/ideas/alpha/001-login" not in r.stdout:
+                errors.append(f"unopened-pr: did not fail naming the branch rc={r.returncode} {r.stdout!r}")
     # Review round 1: the siblings' guards -- a closed lifecycle or a
     # skipped agent opens no PR.
     open_ctx = {"cancelled()": False, "steps.lifecycle-gate.outputs.is-open": "true",
