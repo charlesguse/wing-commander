@@ -1555,11 +1555,13 @@ def _mut_statement_drift(steps):
 
 def _mut_substring_match():
     """(3) the classification rule's prefix-match relaxed to a substring
-    match."""
+    match. Spec 114 cycle 20 moved the test inside out_of_boundary(), where
+    it runs once per readings() path, so relaxing it here relaxes it for
+    both readings of a token."""
     script_path = os.path.abspath(CLASSIFY_SCRIPT)
     text = open(script_path, encoding="utf-8").read()
-    marker = "return any(normalized.startswith(prefix) for prefix in prefixes)"
-    replacement = "return any(prefix in normalized for prefix in prefixes)"
+    marker = "any(path.startswith(prefix) for prefix in prefixes)"
+    replacement = "any(prefix in path for prefix in prefixes)"
     if marker not in text:
         return None
     return script_path, text.replace(marker, replacement, 1)
