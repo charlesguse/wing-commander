@@ -244,6 +244,9 @@ def contain(case, script):
             git(path, "init", "-q")
             with open(os.path.join(path, "f.txt"), "w", encoding="utf-8") as fh:
                 fh.write("n\n")
+        for rel in case.get("force_add", []):
+            # An ignored file the agent force-adds (base .gitignore "x").
+            git(tmp, "add", "-f", "--", rel)
         if case.get("commit"):
             git(tmp, "add", "-A")
             git(tmp, "commit", "-q", "-m", "agent")
@@ -887,7 +890,8 @@ def check_modes(errors):
             want_record = "001-x" if ref.endswith("/001-x") else ""
             if lf and recorded != want_record:
                 errors.append(f"install-pre-push {name}: recorded slug {recorded!r}, want {want_record!r}")
-    flt = action_step("wing-commander-containment", "Filter paths to the project folder")
+    check_trusted_dir_released(errors, install)
+    flt =action_step("wing-commander-containment", "Filter paths to the project folder")
     # The second body has no trailing newline (an agent-edited manifest):
     # its last path must still be kept.
     for body in ("a/b/x.md\nREADME.md\na/bc/y.md\na/b/c/z.md\n", "a/b/x.md\nREADME.md\na/bc/y.md\na/b/c/z.md"):
@@ -899,6 +903,45 @@ def check_modes(errors):
             got = open(paths, encoding="utf-8").read().split()
             if r.returncode != 0 or got != ["a/b/x.md", "a/b/c/z.md"]:
                 errors.append(f"filter: kept {got!r} from {body!r}, want ['a/b/x.md', 'a/b/c/z.md'] rc={r.returncode} {r.stderr!r}")
+
+
+def check_trusted_dir_released(errors, install):
+    """Review-gate round 4: install-pre-push's read-only helper directory
+    gets owner write back once the check has read it, and a later install
+    in the same job releases an earlier set whose check never ran, so the
+    runner's cleanup of RUNNER_TEMP can remove them."""
+    def writable(path):
+        return bool(os.stat(path).st_mode & 0o200)
+
+    check = action_script("wing-commander-containment")
+    with tempfile.TemporaryDirectory() as tmp:
+        work, _, _ = staged_clone(tmp, {"base_files": ["a/b/x.md", "README.md"]})
+        env = {"PROJECT": "a/b", "HOOKS_DIR": os.path.join(tmp, "hooks"), "LF_PREFIX": "", "LF_NUM": "",
+               "RECORD": "", "RUNNER_TEMP": tmp}
+        r, out = run_script(install, env, work, "wing-commander-containment")
+        m = re.search(r"^helpers-dir=(.*)$", out, re.M)
+        if r.returncode != 0 or not m:
+            errors.append(f"trusted dir release: install failed rc={r.returncode} {r.stderr!r}")
+            return
+        first = m.group(1)
+        if writable(first):
+            errors.append("trusted dir release: install-pre-push left its helper copies' directory writable during the agent step")
+        r, out = run_script(install, env, work, "wing-commander-containment")
+        m = re.search(r"^helpers-dir=(.*)$", out, re.M)
+        if r.returncode != 0 or not m:
+            errors.append(f"trusted dir release: second install failed rc={r.returncode} {r.stderr!r}")
+            return
+        second = m.group(1)
+        if not writable(first):
+            errors.append("trusted dir release: a later install-pre-push left an earlier unchecked helper directory read-only")
+        with open(os.path.join(work, "a", "b", "x.md"), "a", encoding="utf-8") as fh:
+            fh.write("h\n")
+        r, _ = run_script(check, {"PROJECT": "a/b", "BASE_SHA": rev(work, "HEAD"), "DEFAULT_BRANCH": "main",
+                                  "HELPERS_DIR": second}, work, "wing-commander-containment")
+        if r.returncode != 0:
+            errors.append(f"trusted dir release: check over a change inside P failed rc={r.returncode} {r.stderr!r}")
+        if not writable(second):
+            errors.append("trusted dir release: the check left the helper copies' directory read-only, so RUNNER_TEMP cleanup cannot remove it")
 
 
 def rebase_step(step_id):

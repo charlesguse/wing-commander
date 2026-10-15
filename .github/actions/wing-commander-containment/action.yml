@@ -133,6 +133,12 @@ runs:
           echo "::error::wing-commander-containment: no containment helpers in '$helpers'."
           exit 1
         fi
+        # install-pre-push left the copies' directory read-only for the
+        # agent step; once this check has read them, give the owner write
+        # back so the runner's own cleanup of RUNNER_TEMP can remove it.
+        if [ -n "$HELPERS_DIR" ]; then
+          trap 'chmod u+w -- "$HELPERS_DIR" 2>/dev/null || true' EXIT
+        fi
         # Every git call below runs hardened (hooks, fsmonitor and global
         # config off; replace objects ignored) -- the agent ran in this job.
         # shellcheck source=/dev/null
@@ -289,6 +295,11 @@ runs:
         # post-agent check uses a second, read-only set under a fresh
         # random name (helpers-dir output).
         cp "${helpers[@]/#/$shared/}" "$hooks_dir/"
+        # An earlier read-only set in this job whose check never ran (its
+        # agent was skipped) is past use: make it removable again too.
+        for stale in "$RUNNER_TEMP"/wing-commander-containment-trusted.*; do
+          if [ -d "$stale" ]; then chmod u+w -- "$stale"; fi
+        done
         trusted="$(mktemp -d "$RUNNER_TEMP/wing-commander-containment-trusted.XXXXXXXX")"
         cp "${helpers[@]/#/$shared/}" "$trusted/"
         # The remote's branch heads before the agent runs: the post-agent

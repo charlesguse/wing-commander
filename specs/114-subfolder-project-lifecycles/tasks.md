@@ -593,7 +593,7 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
 ## Review Gate Round 4 Findings
 
-- [ ] Review finding: Project/slug split pasted inline across several workflows instead of project-name.sh
+- [X] Review finding: Project/slug split pasted inline across several workflows instead of project-name.sh
 
   tasks.yml, plan.yml, pr-conversation.yml and cleanup.yml re-derive project and spec dir with inline case/parameter expansion and their own slug regex, skipping the 28-char limit and specs-segment rule in project-name.sh, which breaks the one-home rule.
 
@@ -604,7 +604,9 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
   Detail: Grammar or spec-dir shape changes must land in about seven places; drifted copies fail nothing.
 
-- [ ] Review finding: 0555 chmod on trusted helper dir can leave undeletable directory in RUNNER_TEMP
+  - Duplicate of MF-21, resolved by MF-41's recorded precedent (cycle 23, no behaviour change): these are the `permissions: {}` one-step pre-jobs with no pipeline checkout, whose output names the next job's concurrency group. A drifted copy does fail something: each site is a counted allowance in Gate 159's `INLINE_SPLIT_ALLOWED`, and the next job re-reads the name through `wing-commander-project`, which refuses a name the split reads differently (a project over 28 characters or with a `specs` segment included). MF-21 stays open as the tracker.
+
+- [X] Review finding: 0555 chmod on trusted helper dir can leave undeletable directory in RUNNER_TEMP
 
   install-pre-push makes the trusted helper directory read-only (0555) and nothing restores write permission, so non-root cleanup or rm -rf fails and leaks one directory per run on persistent runners.
 
@@ -612,7 +614,9 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
   Detail: Needs a trap or cleanup step that chmods u+w before removal.
 
-- [ ] Review finding: Bash(gh api:*) denied for every subfolder agent with no opt-out
+  - Done (cycle 23): check mode restores owner write on its `helpers-dir` from an EXIT trap once it has read the copies, and `install-pre-push` restores it on any earlier set in the job's `$RUNNER_TEMP` (one whose check never ran) before taking its own. Gate 160 `check_trusted_dir_released` asserts the dir is read-only after install, writable after a later install and after the check (fails without either half, checked). The last set of a job whose final check was skipped stays read-only; listed in the contract.
+
+- [X] Review finding: Bash(gh api:*) denied for every subfolder agent with no opt-out
 
   wing-commander-tool-args appends the gh api denial after overrides when project is set, so no allowed-tools-override or extra-allowed-tools can reopen even a read-only GET in a project.
 
@@ -620,7 +624,9 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
   Detail: Stage prompts that read through gh api work at repo root but are refused in a project, so the agent wastes turns.
 
-- [ ] Review finding: Containment untracked-file check ignores gitignored files outside the project
+  - Resolved by precedent, no behaviour change (cycle 23): the same finding as review-gate round 1's "Blanket gh api deny cannot be reopened and blocks reads", settled by spec 051 FR-006 (#338): `gh api` cannot be bounded to GET, so the deny is not reopenable by design (the constant's comment and `contracts/containment-and-trusted-checkout.md` say so).
+
+- [X] Review finding: Containment untracked-file check ignores gitignored files outside the project
 
   git ls-files --others --exclude-standard omits ignored paths, so an agent writing an ignored file outside the project folder is not flagged.
 
@@ -628,10 +634,14 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
   Detail: The guard also adds /.wing-commander-pipeline/ to info/exclude; ignored files cannot be committed but a later step could read them.
 
-- [ ] Review finding: Inspected-run identity slug resolution now rejects non-NNN-slug branches
+  - Accepted gap, recorded (cycle 23): an uncommitted ignored file never reaches the branch, and listing ignored paths would fail every agent whose gate runs leave `__pycache__/` at the workspace root. A force-added, committed one is flagged by the diff legs. Gate 160 fixtures `ignored_outside_force_added_and_committed` (fail) and `ignored_outside_uncommitted_is_an_accepted_gap` (pass); the contract's "Accepted residual gaps" names it.
+
+- [X] Review finding: Inspected-run identity slug resolution now rejects non-NNN-slug branches
 
   The old code accepted any text after the pipeline prefix as the slug; the new parser requires NNN-slug and strips -iterN only as a trailing implement suffix, so non-conforming branch names resolve to an empty slug.
 
   - .github/actions/wing-commander-inspected-run-identity/action.yml
 
   Detail: The watchdog and fold-cycle guard lose identity for such branches.
+
+  - Intended narrowing (FR-013, MF-20), now made visible (cycle 23): the pipeline only creates `[P/]NNN-slug` branches, so a prefixed name the parser refuses names no lifecycle. It now falls through to the metrics-record fallback, where the old split took it whole as the slug and skipped the fallback. The step summary names the refusal. Gate 19 scenario "a prefixed head the shared parser refuses" (slug from the record, summary line), and Gate 158 root reject fixtures `spec/login`, `spec-draft/001-Login_x`, `implement/login-iter2`.

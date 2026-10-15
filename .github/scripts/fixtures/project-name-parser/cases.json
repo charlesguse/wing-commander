@@ -53,7 +53,10 @@
     {"kind": "slug", "name": "//001-login"},
     {"kind": "label", "name": "spec:/001-login"},
     {"kind": "branch", "name": "spec//001-login"},
-    {"kind": "branch", "name": "implement//001-login-iter2"}
+    {"kind": "branch", "name": "implement//001-login-iter2"},
+    {"kind": "branch", "name": "spec/login"},
+    {"kind": "branch", "name": "spec-draft/001-Login_x"},
+    {"kind": "branch", "name": "implement/login-iter2"}
   ],
   "attribution": [
     {

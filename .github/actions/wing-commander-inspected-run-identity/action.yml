@@ -228,6 +228,17 @@ runs:
         fi
         slug_source=""
         [ -z "$slug" ] || slug_source="head-branch"
+        # Before spec 114 any text after a pipeline prefix was taken as the
+        # slug. A prefixed branch the parser refuses (no NNN-, uppercase,
+        # -iterN on a non-implement branch) never names a pipeline-created
+        # lifecycle, so it now falls through to the metrics record below;
+        # say so rather than lose it silently.
+        if [ -z "$slug" ]; then
+          case "$HEAD_BRANCH" in
+            "$SPEC_DRAFT_PREFIX"?*|"$SPEC_PREFIX"?*|"$PLAN_PREFIX"?*|"$TASKS_PREFIX"?*|"$IMPL_PREFIX"?*)
+              echo "spec-slug: head branch '$HEAD_BRANCH' carries a pipeline prefix but is not a [P/]NNN-slug name the shared parser reads (spec 114, FR-013), so it names no lifecycle." >> "$GITHUB_STEP_SUMMARY" ;;
+          esac
+        fi
 
         # #322 metrics-record fallback -- the header explains both the
         # fallback and its FR-008/#750 identity_is_own guard. This step is

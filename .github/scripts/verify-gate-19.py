@@ -1433,6 +1433,21 @@ SPEC_SLUG_SCENARIOS = [
         expect_download=True,
         expect_run_view=True,
     ),
+    # Spec 114 (FR-013): the head is read by the shared parser, so a
+    # prefixed branch that is no [P/]NNN-slug name (which the old inline
+    # split took whole as the slug) names no lifecycle: it falls through to
+    # the record, and the summary says why.
+    dict(
+        name="a prefixed head the shared parser refuses: no head-branch slug, "
+             "the record fallback runs, and the summary names the refusal",
+        head_branch="spec/feature-x",
+        records=[RECORD_045],
+        show_json=SPEC_META_FIXTURE,
+        expect=dict(slug="045-auto-release-verified-head", **{"slug-source": "metrics-record",
+                                                              "lifecycle-issue": "296"}),
+        expect_download=True,
+        expect_summary="head branch 'spec/feature-x' carries a pipeline prefix but is not",
+    ),
 ]
 
 
@@ -1513,6 +1528,8 @@ def suite_spec_slug(script, env, tmproot):
                 f"{'to be' if sc.get('expect_run_view') else 'NOT to be'} read with "
                 f"gh run view (a handed-in head must be used as-is); "
                 f"gh was invoked as: {gh_calls or '(never)'}")
+        if sc.get("expect_summary") and sc["expect_summary"] not in summary:
+            failures.append(f"{tag} the step summary does not say {sc['expect_summary']!r}: {summary!r}")
         if "expect_draft_read" in sc:
             draft_read = any(c.startswith("show refs/remotes/origin/spec-draft/")
                              for c in git_calls)

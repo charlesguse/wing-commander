@@ -98,6 +98,21 @@
       "expect": "fail",
       "names": ["ünïcode.txt"]
     },
+    "ignored_outside_force_added_and_committed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", ".gitignore"],
+      "create": ["build/x"],
+      "force_add": ["build/x"],
+      "commit": true,
+      "expect": "fail",
+      "names": ["build/x"]
+    },
+    "ignored_outside_uncommitted_is_an_accepted_gap": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", ".gitignore"],
+      "create": ["build/x"],
+      "expect": "pass"
+    },
     "nested_folder_move_inside": {
       "project": "a",
       "base_files": ["a/b/README.md", "a/b/specs/001-x/spec.md"],
