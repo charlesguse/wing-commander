@@ -66,6 +66,14 @@ if [ ! -e .git ]; then
   exit 0
 fi
 
+# Keep the trusted checkout out of `git add -A`: untracked, it would be swept
+# in as a gitlink (mode 160000) by an agent's commit. .git/info/exclude is
+# local to this job's clone, so it changes nothing the branch carries (#1043).
+if excl="$(git rev-parse --git-path info/exclude 2>/dev/null)"; then
+  mkdir -p -- "$(dirname -- "$excl")" 2>/dev/null || true
+  grep -qxF "/$PIPE/" "$excl" 2>/dev/null || printf '/%s/\n' "$PIPE" >> "$excl" 2>/dev/null || true
+fi
+
 listing="$(mktemp)" || fail "pipeline-checkout guard: could not create a temporary file; refusing to continue unchecked."
 trap 'rm -f "$listing"' EXIT
 
