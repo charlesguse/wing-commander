@@ -425,3 +425,70 @@ Source: maintainer issue-comment on PR #1022 asking to re-drive implement for T0
 
   - Done (cycle 19): the manifest seed and the scope check's `git show` run with `-c core.quotepath=off`. The rebase agent's grant has no `git -c` (granting it would open `-c core.hooksPath`), so its prompt keeps `git diff --name-only --diff-filter=U` and tells it to append each name unquoted. Gate 160's `check_rebase_manifest_unquoted` drives a real conflict on `a/b/café.md` through rebase.yml's own seeding line, filter mode and the real "Verify AI resolution scope" step; reverting either site fails it (checked both). For ASCII names root behaviour is unchanged; both sites still list them identically.
 - [ ] MF-T068e (T068) Confirm root-lifecycle behaviour stays byte-identical (the containment skip for root lifecycles is untouched) and that `python .github/scripts/run-local-gates.py` passes. If any `if:`/`continue-on-error:` gating changed, get a `review-step-gating` pass. (PR #1022)
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: Containment check mode fails open on git pipeline errors
+
+  The changed-path pipeline in the containment action's check mode has no exit-status check, so a failing git diff/ls-files yields an empty outside list and reports everything inside P.
+
+  - .github/actions/wing-commander-containment/action.yml
+
+  Detail: Script runs with set -uo pipefail but no -e; an unreachable BASE_SHA gives empty output and the step passes. The preceding trusted-base lookup does fail closed.
+
+- [ ] Review finding: containment.sh inside mode drops final line without trailing newline
+
+  `inside` uses `while IFS= read -r path` without `|| [ -n "$path" ]`, so a last path with no trailing newline is dropped, unlike `outside`.
+
+  - .github/actions/_shared/containment.sh
+
+  Detail: Rebase conflict manifest edited by the agent may lack a trailing newline; the filter step then loses the last conflicted path and the scope check misreports it as extra.
+
+- [ ] Review finding: intake 'Open the spec PR (subfolder project)' hard-fails without continue-on-error
+
+  The step exits 1 after 3 gh pr create attempts, skipping later success()-gated post-agent steps and producing a misleading failure cause; it is also absent from the failed-post-agent-step candidates.
+
+  - .github/workflows/intake.yml
+
+  Detail: Neighbouring steps use continue-on-error plus a dedicated refusal step. Needs a review-step-gating pass.
+
+- [ ] Review finding: Pushed-branch containment check misses commits pushed by raw sha
+
+  The check only inspects remote tips reachable from HEAD, local branches or the HEAD reflog, so an out-of-project commit pushed by sha to another ref is never checked.
+
+  - .github/actions/wing-commander-containment/action.yml
+
+  Detail: commit-tree or hash-object content pushed with `git push origin <sha>:refs/heads/other` is not an ancestor of local_tips, so it is skipped and containment passes.
+
+- [ ] Review finding: project-name.sh grammar checks accept multi-line values
+
+  validate_path and the slug check use `printf | grep -Eq '^...$'`, which succeeds if any single line matches, so embedded newlines pass.
+
+  - .github/actions/_shared/project-name.sh
+
+  Detail: A value like $'ok\n../../etc' passes, then flows into paths, GITHUB_OUTPUT lines and the agent prompt.
+
+- [ ] Review finding: implement.yml spec-branch derivation mishandles a project segment named specs
+
+  `${SPEC_DIR_INPUT%specs/*}${SPEC_DIR_INPUT##*/}` yields the wrong branch for spec-dir `specs/specs/001-x`, which the regex accepts.
+
+  - .github/workflows/implement.yml
+
+  Detail: The gated branch becomes `<prefix>specs/001-x`, the root branch of a different lifecycle; the grammar is only enforced later in the implement job.
+
+- [ ] Review finding: normalize_token strips project prefix from already project-relative paths
+
+  Tokens that are already project-relative, such as `<P>/app/.claude/...` for project `app`, are stripped again and misclassified as no-write or as the project's own specs.
+
+  - .github/actions/_shared/classify-out-of-boundary-tasks.sh
+
+  Detail: Misclassification when a subdirectory name equals the project's first segment.
+
+- [ ] Review finding: kv helper duplicated across read-spec-meta.sh and inspected-run-identity action
+
+  The same `kv KEY TEXT` shell helper is pasted in two places, which violates the repo's rule that shared logic has one home.
+
+  - .github/actions/_shared/read-spec-meta.sh
+  - .github/actions/wing-commander-inspected-run-identity/action.yml
+
+  Detail: A later fix to one copy would leave the other drifted with nothing failing. It belongs in a shared sourced helper plus a single-home gate check.
