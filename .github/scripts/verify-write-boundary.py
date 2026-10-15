@@ -788,6 +788,18 @@ def check_subfolder_classification(root, script_path=CLASSIFY_SCRIPT):
         if rc != 0 or outputs.get("out-of-boundary-count", "") != str(expect_count):
             failures.append(f"(c-114) {name}: expected count {expect_count}, rc={rc} "
                             f"got {outputs.get('out-of-boundary-count')!r}")
+    # The cwd guard: run from a subdirectory of a git work tree, the script
+    # must refuse (exit 3) instead of silently misclassifying.
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(["git", "init", "-q", tmp], check=True, capture_output=True)
+        sub = os.path.join(tmp, "sub")
+        os.makedirs(sub)
+        rc, out, outputs = run_classify(
+            "- [ ] T001 edit `.claude/skills/x/SKILL.md`", ".claude/",
+            script_path=script_path, cwd=sub)
+    if rc != 3:
+        failures.append(f"(c-114) a run from a subdirectory of the work tree "
+                        f"must exit 3, got rc={rc}: {out.strip()}")
     return failures
 
 

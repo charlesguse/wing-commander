@@ -85,10 +85,12 @@ fi
 # tokens like app/.claude/x. Assert the invariant instead of assuming it: when
 # cwd is inside a git work tree it must be that tree's top level. (Outside any
 # work tree there is nothing to compare against, and the check is skipped.)
+# Exit 3 (not the usage exit 1) so the write-boundary composite can annotate
+# it as an ::error:: rather than a generic crash warning.
 _toplevel="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [ -n "$_toplevel" ] && [ "$(cd "$_toplevel" && pwd -P)" != "$(pwd -P)" ]; then
   echo "classify-out-of-boundary-tasks.sh: must run at the checkout root ($_toplevel), not $(pwd -P)" >&2
-  exit 1
+  exit 3
 fi
 
 # review-gate-round-3: normalize each no-write-paths entry through the ONE
