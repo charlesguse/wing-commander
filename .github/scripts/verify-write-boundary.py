@@ -236,7 +236,7 @@ def read_spec_meta_env(repo):
 
 
 def run_classify(unchecked_items, no_write_paths, tasks_path=f"{SPEC_DIR}/tasks.md",
-                  spec_dir=SPEC_DIR, script_path=CLASSIFY_SCRIPT, cwd=None):
+                  spec_dir=SPEC_DIR, script_path=CLASSIFY_SCRIPT, cwd=None, env=None):
     """Drives the SHIPPED classify-out-of-boundary-tasks.sh directly
     (contracts/write-boundary-gate.md's Inputs section), never a Python
     re-implementation of the classification rule. `script_path` is
@@ -247,7 +247,7 @@ def run_classify(unchecked_items, no_write_paths, tasks_path=f"{SPEC_DIR}/tasks.
     proc = subprocess.run([BASH, script, unchecked_items, no_write_paths,
                            tasks_path, spec_dir],
                           capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", cwd=cwd)
+                          errors="replace", cwd=cwd, env=env)
     fd, out_path = tempfile.mkstemp()
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -799,6 +799,20 @@ def check_subfolder_classification(root, script_path=CLASSIFY_SCRIPT):
             script_path=script_path, cwd=sub)
     if rc != 3:
         failures.append(f"(c-114) a run from a subdirectory of the work tree "
+                        f"must exit 3, got rc={rc}: {out.strip()}")
+    # A git failure that is NOT "not a git repository" (dubious ownership,
+    # broken git) must fail closed, not skip the guard.
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as stub:
+        stub_git = os.path.join(stub, "git")
+        with open(stub_git, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write('#!/bin/sh\necho "fatal: detected dubious ownership in repository" >&2\nexit 128\n')
+        os.chmod(stub_git, 0o755)
+        env = dict(os.environ, PATH=stub + os.pathsep + os.environ.get("PATH", ""))
+        rc, out, outputs = run_classify(
+            "- [ ] T001 edit `.claude/skills/x/SKILL.md`", ".claude/",
+            script_path=script_path, cwd=tmp, env=env)
+    if rc != 3:
+        failures.append(f"(c-114) a git failure other than 'not a git repository' "
                         f"must exit 3, got rc={rc}: {out.strip()}")
     return failures
 

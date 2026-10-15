@@ -84,10 +84,21 @@ fi
 # a run from anywhere but the checkout's root would silently misclassify
 # tokens like app/.claude/x. Assert the invariant instead of assuming it: when
 # cwd is inside a git work tree it must be that tree's top level. (Outside any
-# work tree there is nothing to compare against, and the check is skipped.)
+# work tree -- git says "not a git repository" -- there is nothing to compare
+# against and the check is skipped; any other git failure (dubious ownership,
+# broken git) fails closed rather than skipping.)
 # Exit 3 (not the usage exit 1) so the write-boundary composite can annotate
 # it as an ::error:: rather than a generic crash warning.
-_toplevel="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+_git_err="$(mktemp)"
+if ! _toplevel="$(git rev-parse --show-toplevel 2>"$_git_err")"; then
+  _toplevel=""
+  if ! grep -q 'not a git repository' "$_git_err"; then
+    echo "classify-out-of-boundary-tasks.sh: cannot verify the checkout root: $(cat "$_git_err")" >&2
+    rm -f "$_git_err"
+    exit 3
+  fi
+fi
+rm -f "$_git_err"
 if [ -n "$_toplevel" ] && [ "$(cd "$_toplevel" && pwd -P)" != "$(pwd -P)" ]; then
   echo "classify-out-of-boundary-tasks.sh: must run at the checkout root ($_toplevel), not $(pwd -P)" >&2
   exit 3
