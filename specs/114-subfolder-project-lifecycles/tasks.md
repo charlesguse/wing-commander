@@ -648,7 +648,7 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
 ## Review Gate Round 5 Findings
 
-- [ ] Review finding: Intake claim release fallback skipped when intake job succeeds
+- [X] Review finding: Intake claim release fallback skipped when intake job succeeds
 
   release-claim job's needs.intake.result != 'success' clause skips it when the in-job 'Release the intake claim' step (continue-on-error) failed, leaving spec-intake-claimed on the issue and blocking later intakes.
 
@@ -656,7 +656,9 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
   Detail: Gate the fallback on claim-released != 'true' alone.
 
-- [ ] Review finding: Project/spec-dir split and slug regex pasted into many workflows
+  - Done (cycle 24): `release-claim`'s `if:` drops the `needs.intake.result != 'success'` clause and is gated on `claim-released != 'true'` alone; its comment says a failed in-job release inside a successful intake is retried there. `verify-intake-routing.py`'s release-claim table now expects `("success", "")` to run (fails against the old `if:`). Gate output: `verify-intake-routing: OK`.
+
+- [X] Review finding: Project/spec-dir split and slug regex pasted into many workflows
 
   The slug split (project=${slug%/*}, specs/${slug##*/}) and the slug regex are copied inline across tasks.yml, plan.yml, pr-conversation.yml and cleanup.yml, and sed project= kv copies exist beside kv.sh. This breaks the single-home rule and the copies accept slugs the shared parser rejects.
 
@@ -668,15 +670,21 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
   Detail: Move into the shared parser and add a single-home check to an existing gate.
 
-- [ ] Review finding: Blanket gh api deny for subfolder lifecycles breaks stages that grant it
+  - Duplicate of round 4's "Project/slug split pasted inline across several workflows" and of MF-21, resolved by MF-41's recorded precedent (cycle 24, no behaviour change): the sites are `permissions: {}` pre-jobs with no pipeline checkout; each is a counted allowance in Gate 159's `INLINE_SPLIT_ALLOWED`, and the next job re-reads the name through `wing-commander-project`, which refuses a name the shared parser rejects. MF-21 stays open as the tracker.
+
+- [X] Review finding: Blanket gh api deny for subfolder lifecycles breaks stages that grant it
 
   The deny of Bash(gh api:*) is appended last in tool-args and cannot be reopened, so pr-conversation's act route, whose default allowed tools include gh api, loses all gh api calls for subfolder lifecycles, silently. The tooling statement omits the deny.
 
   - .github/actions/wing-commander-tool-args/action.yml
   - .github/workflows/pr-conversation.yml
 
-- [ ] Review finding: Inspected-run identity no longer resolves malformed pipeline-prefixed branches
+  - Resolved by precedent, no behaviour change (cycle 24): the same finding as round 1's and round 4's gh api deny findings, settled by spec 051 FR-006 (#338): `gh api` cannot be bounded to GET, so the deny is not reopenable by design. Not silent: the deny is added before tool-args step 4, so the rendered tooling statement drops `gh api` from the commands the run permits, and the agent reads that list.
+
+- [X] Review finding: Inspected-run identity no longer resolves malformed pipeline-prefixed branches
 
   Branches with a pipeline prefix that do not parse as [P/]NNN-slug (spec/foo, impl/001-x-iter) now yield an empty slug and no spec-meta read, where the old code attributed them. Watchdog and fold-cycle-guard see no lifecycle, with only a step-summary trace.
 
   - .github/actions/wing-commander-inspected-run-identity/action.yml
+
+  - Duplicate of round 4's "Inspected-run identity slug resolution now rejects non-NNN-slug branches", resolved there (cycle 23, intended narrowing per FR-013 and MF-20): the pipeline only creates `[P/]NNN-slug` branches, a refused name falls through to the metrics-record fallback, and Gate 19 and Gate 158 fixtures cover it. No behaviour change.

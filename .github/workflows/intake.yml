@@ -1934,14 +1934,13 @@ jobs:
   # start) never reaches its last step; and the release there can itself
   # fail inside an intake that fails too. Any of these would leave a claim
   # that refuses every later intake. always(), with no concurrency group,
-  # so this job is never itself the one left pending. Skipped when the
-  # intake job succeeded or reported claim-released: a failed in-job
-  # release inside an otherwise successful intake (the release step is
-  # continue-on-error) is not retried here, and its claim stays until
-  # removed by hand.
+  # so this job is never itself the one left pending. Gated on
+  # claim-released alone, not on the intake job's result: the release
+  # step is continue-on-error, so a failed in-job release inside an
+  # otherwise successful intake is retried here too.
   release-claim:
     needs: [verify-image-prerequisites, routing-gate, intake]
-    if: always() && needs.verify-image-prerequisites.result != 'failure' && needs.routing-gate.outputs.claim-label != '' && needs.intake.result != 'success' && needs.intake.outputs.claim-released != 'true'
+    if: always() && needs.verify-image-prerequisites.result != 'failure' && needs.routing-gate.outputs.claim-label != '' && needs.intake.outputs.claim-released != 'true'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}

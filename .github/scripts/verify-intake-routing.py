@@ -298,12 +298,13 @@ def check_rerun_race(doc, bindir, errors):
         rc_if = " ".join(str(rc_job.get("if", "")).split())
         if "always()" not in rc_if:
             errors.append(f"race: release-claim's if: is not always()-gated ({rc_if!r})")
-        # MF-39: it runs whenever the intake job did not succeed and did not
-        # report the claim released -- including a job that failed before
-        # any step ran -- and never otherwise.
+        # MF-39: it runs whenever the intake job did not report the claim
+        # released -- including a job that failed before any step ran, and
+        # a successful one whose continue-on-error release failed (review
+        # gate round 5) -- and never otherwise.
         for result, released, want in (("cancelled", "", True), ("skipped", "", True), ("failure", "", True),
                                        ("failure", "true", False), ("success", "true", False),
-                                       ("success", "", False), ("cancelled", "true", False)):
+                                       ("success", "", True), ("cancelled", "true", False)):
             ctx = {"always()": True, "cancelled()": False, "needs.verify-image-prerequisites.result": "success",
                    "needs.routing-gate.outputs.claim-label": CLAIM, "needs.intake.result": result,
                    "needs.intake.outputs.claim-released": released}
