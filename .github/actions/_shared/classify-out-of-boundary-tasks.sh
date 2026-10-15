@@ -80,6 +80,17 @@ if [ $# -lt 4 ]; then
   exit 1
 fi
 
+# readings() probes the project folder with os.path.isdir relative to cwd, so
+# a run from anywhere but the checkout's root would silently misclassify
+# tokens like app/.claude/x. Assert the invariant instead of assuming it: when
+# cwd is inside a git work tree it must be that tree's top level. (Outside any
+# work tree there is nothing to compare against, and the check is skipped.)
+_toplevel="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -n "$_toplevel" ] && [ "$(cd "$_toplevel" && pwd -P)" != "$(pwd -P)" ]; then
+  echo "classify-out-of-boundary-tasks.sh: must run at the checkout root ($_toplevel), not $(pwd -P)" >&2
+  exit 1
+fi
+
 # review-gate-round-3: normalize each no-write-paths entry through the ONE
 # shared helper also called by wing-commander-tool-args/action.yml's
 # compose step, before this value ever reaches the Python classifier below
