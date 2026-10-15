@@ -590,3 +590,48 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
   Detail: If an allow-list or override lets that agent push or commit, an out-of-folder change is never detected. The cycle and retry agents are covered.
 
   - Done (cycle 22): "Install containment pre-push hook (progress)" (`containment-hook-progress`, the agent's own conditions plus a non-empty project) directly before the agent, and "Check agent changes stay inside the project folder (progress)" (`containment-progress`, from the hook's pre-agent SHA and helpers-dir) after the re-checkout and remote refresh; it is in the failed-post-agent-step candidates. Gate 160's snapshot-freshness and guard checks pass over it. The `review-step-gating` skill lives under `.claude/`, which this run reads but did not run as a separate session; see the cycle-22 final message.
+
+## Review Gate Round 4 Findings
+
+- [ ] Review finding: Project/slug split pasted inline across several workflows instead of project-name.sh
+
+  tasks.yml, plan.yml, pr-conversation.yml and cleanup.yml re-derive project and spec dir with inline case/parameter expansion and their own slug regex, skipping the 28-char limit and specs-segment rule in project-name.sh, which breaks the one-home rule.
+
+  - .github/workflows/tasks.yml
+  - .github/workflows/plan.yml
+  - .github/workflows/pr-conversation.yml
+  - .github/workflows/cleanup.yml
+
+  Detail: Grammar or spec-dir shape changes must land in about seven places; drifted copies fail nothing.
+
+- [ ] Review finding: 0555 chmod on trusted helper dir can leave undeletable directory in RUNNER_TEMP
+
+  install-pre-push makes the trusted helper directory read-only (0555) and nothing restores write permission, so non-root cleanup or rm -rf fails and leaks one directory per run on persistent runners.
+
+  - .github/actions/wing-commander-containment/action.yml
+
+  Detail: Needs a trap or cleanup step that chmods u+w before removal.
+
+- [ ] Review finding: Bash(gh api:*) denied for every subfolder agent with no opt-out
+
+  wing-commander-tool-args appends the gh api denial after overrides when project is set, so no allowed-tools-override or extra-allowed-tools can reopen even a read-only GET in a project.
+
+  - .github/actions/wing-commander-tool-args/action.yml
+
+  Detail: Stage prompts that read through gh api work at repo root but are refused in a project, so the agent wastes turns.
+
+- [ ] Review finding: Containment untracked-file check ignores gitignored files outside the project
+
+  git ls-files --others --exclude-standard omits ignored paths, so an agent writing an ignored file outside the project folder is not flagged.
+
+  - .github/actions/wing-commander-containment/action.yml
+
+  Detail: The guard also adds /.wing-commander-pipeline/ to info/exclude; ignored files cannot be committed but a later step could read them.
+
+- [ ] Review finding: Inspected-run identity slug resolution now rejects non-NNN-slug branches
+
+  The old code accepted any text after the pipeline prefix as the slug; the new parser requires NNN-slug and strips -iterN only as a trailing implement suffix, so non-conforming branch names resolve to an empty slug.
+
+  - .github/actions/wing-commander-inspected-run-identity/action.yml
+
+  Detail: The watchdog and fold-cycle guard lose identity for such branches.
