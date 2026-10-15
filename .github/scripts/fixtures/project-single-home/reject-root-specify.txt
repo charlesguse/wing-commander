@@ -1,0 +1,1 @@
+          test -f .specify/memory/constitution.md

@@ -1,0 +1,253 @@
+# wing-commander-project — the front door to `_shared/project-name.sh`,
+# the one home of subfolder-project logic (spec 114, research.md D1).
+#
+# Resolves which project a lifecycle belongs to and the names derived from
+# it. Intake passes `routing-label-prefix` and `issue-number` and gets the
+# project from the issue's live routing label; every later stage passes
+# `identity` (any branch, label, slug or spec-dir of the lifecycle) and gets
+# the same (project, slug) pair back from the shared parser, so no stage
+# reads the label again; rebase discover passes `identities-json` and gets
+# every in-flight branch's names in one call. A routing failure (two routing labels, a path that
+# breaks the grammar, a folder that is not a Spec Kit project) fails the
+# step after posting a callout naming the folder on the lifecycle issue.
+#
+# Root lifecycles produce an empty `project` and root-shaped values, byte
+# for byte what the stages computed before this composite existed.
+#
+# Constitution VII: part of the published surface; adding it is a
+# minor-version change at the next release.
+name: wing-commander-project
+description: >-
+  Resolves a lifecycle's subfolder project (empty for the repository root)
+  from the issue's routing label or from any of its branch, label, slug or
+  spec-dir names, and returns the project-qualified names. Fails with a
+  callout naming the folder when the project is invalid.
+inputs:
+  routing-label-prefix:
+    description: >-
+      Intake only. The label prefix that routes an issue to a project folder
+      (for example `node:`). Empty disables routing and resolves the root.
+    required: false
+    default: ''
+  issue-number:
+    description: Intake only. The issue whose live labels carry the routing label.
+    required: false
+    default: ''
+  findings-label-prefix:
+    description: >-
+      Intake only. The prefix of the labels stage findings are filed under
+      (intake's own `findings-label-prefix` input). A routing prefix that
+      overlaps it is refused like the fixed label families (FR-023).
+    required: false
+    default: ''
+  identity:
+    description: >-
+      Later stages. A branch, label, slug or spec-dir name of the lifecycle.
+    required: false
+    default: ''
+  identity-kind:
+    description: One of branch, label, slug, spec-dir. Used with `identity` or `identities-json`.
+    required: false
+    default: slug
+  identities-json:
+    description: >-
+      A JSON array of names of `identity-kind`, read in one call (rebase
+      discover's in-flight branches). Fills `names-json`; a name the parser
+      refuses maps to null and fails nothing, so the caller decides.
+    required: false
+    default: ''
+  token:
+    description: Token for reading labels and posting the failure callout.
+    required: false
+    default: ''
+  check-folder:
+    description: "`true` to also verify the folder is a Spec Kit project on this checkout."
+    required: false
+    default: 'true'
+  allocate-number:
+    description: >-
+      Intake only. `true` to also allocate the next feature number for the
+      resolved project (`project-name.sh next-number`): the highest of the
+      project's `specs/` and the anchored spec-draft and spec branches, plus
+      one. Empty `project` allocates for the repository root.
+    required: false
+    default: 'false'
+  spec-draft-prefix:
+    description: Branch prefix of spec drafts; used only by allocate-number.
+    required: false
+    default: spec-draft/
+  spec-prefix:
+    description: Branch prefix of spec branches; used only by allocate-number.
+    required: false
+    default: spec/
+outputs:
+  num:
+    description: The allocated feature number (allocate-number only).
+    value: ${{ steps.number.outputs.num }}
+  project:
+    description: The project path, empty for the repository root.
+    value: ${{ steps.resolve.outputs.project }}
+  slug:
+    description: The NNN-slug, when known.
+    value: ${{ steps.resolve.outputs.slug }}
+  spec-dir:
+    description: The repository-relative spec directory, when the slug is known.
+    value: ${{ steps.resolve.outputs.spec-dir }}
+  spec-dir-rel:
+    description: The project-relative spec directory, when the slug is known.
+    value: ${{ steps.resolve.outputs.spec-dir-rel }}
+  slug-qualified:
+    description: P/NNN-slug (just NNN-slug for the root), when the slug is known.
+    value: ${{ steps.resolve.outputs.slug-qualified }}
+  slug-budget:
+    description: The longest NNN-slug the spec label can carry; empty for the root.
+    value: ${{ steps.resolve.outputs.slug-budget }}
+  prompt-paragraph:
+    description: >-
+      The project-folder paragraph for an agent prompt, with its own leading
+      and trailing blank lines; empty for the root. Splice it onto the end
+      of an existing prompt line, never on a line of its own.
+    value: ${{ steps.resolve.outputs.prompt-paragraph }}
+  names-json:
+    description: >-
+      identities-json only. A JSON object mapping each name to
+      {project, slug, qualified, spec_dir, spec_dir_rel}, or to null when
+      the parser refuses it.
+    value: ${{ steps.batch.outputs.names-json }}
+runs:
+  using: composite
+  steps:
+    - name: Resolve project
+      id: resolve
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ROUTING_PREFIX: ${{ inputs.routing-label-prefix }}
+        ISSUE: ${{ inputs.issue-number }}
+        IDENTITY: ${{ inputs.identity }}
+        IDENTITY_KIND: ${{ inputs.identity-kind }}
+        CHECK_FOLDER: ${{ inputs.check-folder }}
+        FINDINGS_LABEL_PREFIX: ${{ inputs.findings-label-prefix }}
+      run: |
+        lib="$GITHUB_ACTION_PATH/../_shared/project-name.sh"
+        callout() {
+          echo "::error::$1"
+          if [ -n "${GH_TOKEN:-}" ] && [ -n "$ISSUE" ]; then
+            gh issue comment "$ISSUE" --body "⚠️ **Wing Commander · project routing** — $1" || true
+          fi
+        }
+        project=''
+        slug=''
+        if [ -n "$IDENTITY" ]; then
+          if ! out=$(bash "$lib" parse "$IDENTITY_KIND" "$IDENTITY" 2>&1); then
+            callout "cannot read a project from \`$IDENTITY\`: $out"
+            exit 1
+          fi
+          project=$(printf '%s\n' "$out" | sed -n 's/^project=//p')
+          slug=$(printf '%s\n' "$out" | sed -n 's/^slug=//p')
+        elif [ -n "$ROUTING_PREFIX" ]; then
+          if ! err=$(bash "$lib" validate-prefix "$ROUTING_PREFIX" 2>&1); then
+            callout "$err"
+            exit 1
+          fi
+          # Unreadable labels refuse: falling back to the root would put a
+          # routed issue's spec in the wrong project.
+          if ! all=$(gh issue view "$ISSUE" --json labels --jq '.labels[].name'); then
+            callout "could not read the labels of issue #$ISSUE to find its routing label. Nothing was created."
+            exit 1
+          fi
+          labels=$(printf '%s\n' "$all" | while IFS= read -r l; do case "$l" in "$ROUTING_PREFIX"*) printf '%s\n' "$l" ;; esac; done)
+          count=$(printf '%s' "$labels" | grep -c . || true)
+          if [ "$count" -gt 1 ]; then
+            callout "this issue carries $count routing labels ($(printf '%s' "$labels" | tr '\n' ' ')); exactly one is allowed. Nothing was created."
+            exit 1
+          fi
+          if [ "$count" -eq 1 ]; then
+            project="${labels#"$ROUTING_PREFIX"}"
+            if [ -z "$project" ]; then
+              callout "the routing label \`$labels\` names no project folder. Nothing was created."
+              exit 1
+            fi
+          fi
+        fi
+        if [ -n "$project" ]; then
+          if ! err=$(bash "$lib" validate-path "$project" 2>&1 >/dev/null); then
+            callout "project folder \`$project\` is invalid: $err"
+            exit 1
+          fi
+          if [ "$CHECK_FOLDER" = true ] && ! err=$(bash "$lib" check-folder "$project" 2>&1); then
+            callout "project folder \`$project\` is not usable: $err"
+            exit 1
+          fi
+        fi
+        {
+          echo "project=$project"
+          echo "slug=$slug"
+          if [ -n "$slug" ]; then
+            bash "$lib" spec-dir "$project" "$slug" | sed 's/^/spec-dir=/'
+            echo "spec-dir-rel=specs/$slug"
+            echo "slug-qualified=${project:+$project/}$slug"
+          else
+            echo "spec-dir="
+            echo "spec-dir-rel="
+            echo "slug-qualified="
+          fi
+          if [ -n "$project" ]; then echo "slug-budget=$(bash "$lib" slug-budget "$project")"; else echo "slug-budget="; fi
+          # The agent-prompt paragraph a later stage splices onto a line of
+          # its prompt (spec 114, FR-006): blank lines and all, so a root
+          # prompt, which gets nothing, stays byte-identical. Only the
+          # grammar-checked project path is interpolated.
+          if [ -n "$project" ]; then
+            echo "prompt-paragraph<<WC_PROJECT_GUIDANCE_EOF"
+            echo ""
+            echo ""
+            echo "PROJECT FOLDER: this lifecycle lives in the project folder \`$project/\`, a Spec Kit project of its own. Read its constitution at \`$project/.specify/memory/constitution.md\`, its extension hooks at \`$project/.specify/extensions.yml\` and each skill at \`$project/.claude/skills/<name>/SKILL.md\` -- never the repository root's \`.specify/\` or \`.claude/skills/\`. Give every tool a repository-relative path; everything this run writes lies inside \`$project/\`, apart from the scratch files these instructions name outside the repository."
+            echo ""
+            echo "WC_PROJECT_GUIDANCE_EOF"
+          else
+            echo "prompt-paragraph="
+          fi
+        } >> "$GITHUB_OUTPUT"
+
+    # Many names in one call (spec 114, FR-013): each through `names`, so a
+    # caller holding a list never splits one by hand.
+    - name: Resolve names (batch)
+      id: batch
+      if: inputs.identities-json != ''
+      shell: bash
+      env:
+        IDENTITIES_JSON: ${{ inputs.identities-json }}
+        IDENTITY_KIND: ${{ inputs.identity-kind }}
+      run: |
+        set -uo pipefail
+        lib="$GITHUB_ACTION_PATH/../_shared/project-name.sh"
+        if ! names="$(printf '%s' "$IDENTITIES_JSON" | jq -r '.[]')"; then
+          echo "::error::wing-commander-project: identities-json is not a JSON array of names"
+          exit 1
+        fi
+        json='{}'
+        while IFS= read -r name; do
+          [ -n "$name" ] || continue
+          if out="$(bash "$lib" names "$IDENTITY_KIND" "$name" 2>/dev/null)"; then
+            entry="$(printf '%s\n' "$out" | jq -Rnc '[inputs | capture("^(?<k>[a-z_]+)=(?<v>.*)$") | {(.k): .v}] | add')"
+          else
+            entry=null
+          fi
+          json="$(printf '%s' "$json" | jq -c --arg n "$name" --argjson e "$entry" '. + {($n): $e}')"
+        done <<< "$names"
+        echo "names-json=$json" >> "$GITHUB_OUTPUT"
+
+    # Per-project feature numbering (FR-009, FR-010). The root reproduces the
+    # numbers intake allocated before this composite existed.
+    - name: Allocate feature number
+      id: number
+      if: inputs.allocate-number == 'true'
+      shell: bash
+      env:
+        PROJECT: ${{ steps.resolve.outputs.project }}
+        SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
+        SPEC_PREFIX: ${{ inputs.spec-prefix }}
+      run: |
+        num="$(bash "$GITHUB_ACTION_PATH/../_shared/project-name.sh" next-number "$PROJECT")" || exit 1
+        echo "num=$num" >> "$GITHUB_OUTPUT"
+        echo "Allocated feature number $num${PROJECT:+ for project $PROJECT}." >> "$GITHUB_STEP_SUMMARY"

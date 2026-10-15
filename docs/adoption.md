@@ -609,6 +609,40 @@ With the wrappers in place, run the smoke test in
 [docs/setup.md](setup.md#5-smoke-test): open an issue, apply `spec-request`,
 and a spec PR built from **your** templates and constitution appears.
 
+## Multiple projects in one repository
+
+A repository can hold several Spec Kit projects in subfolders (for example
+`ideas/alpha/`), each with its own `.specify/`, `.claude/skills/speckit-*`,
+constitution and `specs/`. An issue is routed to one project and its whole
+lifecycle runs inside that folder. Root-only repositories need none of this
+and behave exactly as before.
+
+- **Turn routing on.** Pass `routing-label-prefix` (for example `node:`) to
+  the intake wrapper. An issue labelled `node:ideas/alpha` is routed to
+  `ideas/alpha/`. Exactly one such label is allowed; two or more are refused
+  with a callout and nothing is created. The prefix must not overlap a
+  pipeline label family -- one being the start of the other counts as an
+  overlap: `spec:`, `stage:`, `model:`, `board:`, `disposition:`, the
+  stage-findings labels (`findings`, and your `findings-label-prefix`,
+  `found-by:` by default), `route-out-of-boundary`, `spec-request` and
+  `spec-proposal`.
+- **Create one `node:<path>` label per project.** The folder must already be
+  a Spec Kit project; intake names the folder and the missing piece if not.
+- **Widen the path filters.** The plan wrapper (and the tasks wrapper in `pr`
+  mode) filters on `specs/**`; widen it to `**/specs/**` so a spec PR under
+  a project folder triggers the next stage.
+- **Restart forms differ.** A manual restart of plan or tasks takes
+  `slug=<P>/<NNN-slug>`; implement, finalize and the fold-cycle guard take
+  `spec_dir=<P>/specs/<NNN-slug>`.
+- **Parent instructions reach the agent.** Instruction files in the folders
+  above a project (a repository-root `CLAUDE.md`, for instance) may still be
+  read by a subfolder agent, so keep root instructions valid for every
+  project. The agent can write only inside its project folder.
+- **`extra-allowed-tools` paths resolve to the workspace root,** not to the
+  project folder: write `ideas/alpha/scripts/x.sh`, not `scripts/x.sh`.
+- **Graduating a project.** Copy the folder to a new repository root; its
+  `spec-meta.json` files record `specs/<NNN-slug>` and need no edits.
+
 ## Version pinning
 
 | Pin | Behavior | Choose it when |

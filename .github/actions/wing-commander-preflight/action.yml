@@ -99,6 +99,17 @@ inputs:
       (FR-010). Empty (default) performs no check.
     required: false
     default: ""
+  project:
+    description: >
+      Subfolder project path (the wing-commander-project composite's
+      `project` output). When set, the spec-kit presence check runs inside
+      that folder -- .specify/, .claude/skills/speckit-*, the constitution
+      and the real-entry rule -- and the version-drift warning reads the
+      folder's own init-options.json. Empty (default) checks the repository
+      root exactly as before. require-files and spec-dir stay
+      repository-relative.
+    required: false
+    default: ""
 
 outputs:
   refused:
@@ -132,6 +143,7 @@ runs:
         AWS_ROLE_ARN_INPUT: ${{ inputs.aws-role-arn }}
         AWS_REGION_INPUT: ${{ inputs.aws-region }}
         BRANCH_PREFIXES: ${{ inputs.branch-prefixes }}
+        PROJECT: ${{ inputs.project }}
       run: |
         set -uo pipefail
 
@@ -171,7 +183,15 @@ runs:
 
         # 2. Spec-kit presence (FR-009, constitution VI): the consuming
         #    repository owns its artifacts; this pipeline never bundles them.
-        if [ "$REQUIRE_SPECKIT" = "true" ]; then
+        #    A subfolder project (spec 114) carries its own artifacts inside
+        #    its folder; the one check-folder rule (names the folder and the
+        #    missing piece, refuses symlinked entries) replaces the root
+        #    checks below.
+        if [ "$REQUIRE_SPECKIT" = "true" ] && [ -n "$PROJECT" ]; then
+          if ! project_err="$(bash "$GITHUB_ACTION_PATH/../_shared/project-name.sh" check-folder "$PROJECT" 2>&1)"; then
+            fail "${project_err#project-name: } See docs/adoption.md#prerequisites."
+          fi
+        elif [ "$REQUIRE_SPECKIT" = "true" ]; then
           if [ ! -d ".specify" ]; then
             fail "the consumer checkout has no \`.specify/\` directory — this repository has not been initialized with spec-kit. Run \`specify init\` in the consuming repository (and add a constitution via /speckit-constitution) before wiring up pipeline stages. See docs/adoption.md#prerequisites."
           fi
@@ -211,10 +231,11 @@ runs:
 
         # 5. Best-effort spec-kit version warning (research.md D7): warn,
         #    never fail — init-options.json is not guaranteed present.
-        if [ -f ".specify/init-options.json" ]; then
-          v=$(jq -r '.speckit_version // empty' .specify/init-options.json 2>/dev/null || true)
+        init_options="${PROJECT:+$PROJECT/}.specify/init-options.json"
+        if [ -f "$init_options" ]; then
+          v=$(jq -r '.speckit_version // empty' "$init_options" 2>/dev/null || true)
           if [ -n "$v" ] && [ "$v" != "$SPECKIT_SUPPORTED_VERSION" ]; then
-            echo "::warning::wing-commander preflight: this repository's spec-kit version ($v, from .specify/init-options.json) differs from the pipeline's supported version ($SPECKIT_SUPPORTED_VERSION). The stage will still run, but behavior is only verified against the supported version."
+            echo "::warning::wing-commander preflight: this repository's spec-kit version ($v, from $init_options) differs from the pipeline's supported version ($SPECKIT_SUPPORTED_VERSION). The stage will still run, but behavior is only verified against the supported version."
             echo "⚠️ spec-kit version mismatch: repository has $v, pipeline supports $SPECKIT_SUPPORTED_VERSION (continuing)." >> "$GITHUB_STEP_SUMMARY"
           fi
         fi

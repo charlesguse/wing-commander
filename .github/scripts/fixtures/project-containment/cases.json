@@ -1,0 +1,479 @@
+{
+  "tool_args": {
+    "nested_project": {
+      "project": "a/b",
+      "denied": [".claude/**", ".git/**", "a/.claude/**", "a/b/.claude/**", "a/b/**/.claude/**"]
+    },
+    "single_segment_project": {
+      "project": "ideas",
+      "denied": [".claude/**", ".git/**", "ideas/.claude/**", "ideas/**/.claude/**"],
+      "not_denied": ["Edit(ideas/**)"]
+    },
+    "denies_hold_with_no_write_paths_overridden": {
+      "project": "a/b",
+      "no_write_paths": "docs/",
+      "disallowed_override": "",
+      "denied": ["docs/**", "a/.claude/**", "a/b/**/.claude/**", ".wing-commander-pipeline/**"],
+      "denied_tools": ["Bash(git push --no-verify:*)"]
+    },
+    "routed_intake_denied_every_push": {
+      "project": "ideas/alpha",
+      "default_allowed": "Read,Edit,Bash(git commit:*),Bash(git push:*)",
+      "extra_allowed": "Bash(git push:*)",
+      "project_deny_tools": "Bash(git push:*)",
+      "denied_tools": ["Bash(git push:*)"],
+      "not_stated": ["git push"]
+    },
+    "project_deny_tools_ignored_at_the_root": {
+      "project": "",
+      "default_allowed": "Read,Bash(git push:*)",
+      "project_deny_tools": "Bash(git push:*)",
+      "allowed": ["Read", "Bash(git push:*)"],
+      "not_denied": ["git push"]
+    },
+    "raw_api_denied_for_a_project_even_when_extra_allowed": {
+      "project": "ideas/alpha",
+      "default_allowed": "Read,Edit,Bash(gh api:*),Bash(gh pr view:*)",
+      "extra_allowed": "Bash(gh api:*)",
+      "denied_tools": ["Bash(gh api:*)"],
+      "not_stated": ["gh api"]
+    },
+    "raw_api_untouched_at_the_root": {
+      "project": "",
+      "default_allowed": "Read,Edit,Bash(gh api:*)",
+      "allowed": ["Read", "Edit", "Bash(gh api:*)"],
+      "not_denied": ["gh api"]
+    },
+    "hook_bypass_denied_for_a_project": {
+      "project": "ideas/alpha",
+      "default_allowed": "Read,Edit,Bash(git push:*)",
+      "denied_tools": ["Bash(git push --no-verify:*)", "Bash(git push* --no-veri*)"],
+      "not_denied": ["git push -n"]
+    },
+    "project_spec_kit_script_grants": {
+      "project": "ideas/alpha",
+      "default_allowed": "Read,Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/setup-plan.sh:*),Bash(git status:*)",
+      "allowed": ["Read", "Bash(.specify/scripts/bash/check-prerequisites.sh:*)", "Bash(bash .specify/scripts/bash/setup-plan.sh:*)", "Bash(git status:*)",
+                  "Bash(ideas/alpha/.specify/scripts/bash/check-prerequisites.sh:*)", "Bash(bash ideas/alpha/.specify/scripts/bash/setup-plan.sh:*)"],
+      "denied": [".claude/**", "ideas/alpha/.claude/**"]
+    },
+    "root_spec_kit_script_grants_unchanged": {
+      "project": "",
+      "default_allowed": "Read,Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/setup-plan.sh:*)",
+      "allowed": ["Read", "Bash(.specify/scripts/bash/check-prerequisites.sh:*)", "Bash(bash .specify/scripts/bash/setup-plan.sh:*)"],
+      "not_denied": [".claude/", "--no-verify"]
+    }
+  },
+  "containment": {
+    "inside_edit": {
+      "project": "a/b",
+      "base_files": ["a/b/specs/001-x/spec.md", "README.md"],
+      "modify": ["a/b/specs/001-x/spec.md"],
+      "expect": "pass"
+    },
+    "inside_new_file": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "create": ["a/b/src/new.py"],
+      "expect": "pass"
+    },
+    "special_names_inside_uncommitted": {
+      "project": "a/b",
+      "base_files": ["a/b/café.md", "README.md"],
+      "modify": ["a/b/café.md"],
+      "create": ["a/b/q\"uote.md", "a/b/tab\tname.md", "a/b/back\\slash.md"],
+      "expect": "pass"
+    },
+    "special_names_inside_committed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "create": ["a/b/naïve.md", "a/b/q\"uote.md", "a/b/tab\tname.md"],
+      "commit": true,
+      "expect": "pass"
+    },
+    "special_name_outside": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "create": ["ünïcode.txt"],
+      "expect": "fail",
+      "names": ["ünïcode.txt"]
+    },
+    "ignored_outside_force_added_and_committed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", ".gitignore"],
+      "create": ["build/x"],
+      "force_add": ["build/x"],
+      "commit": true,
+      "expect": "fail",
+      "names": ["build/x"]
+    },
+    "ignored_outside_uncommitted_is_an_accepted_gap": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", ".gitignore"],
+      "create": ["build/x"],
+      "expect": "pass"
+    },
+    "nested_folder_move_inside": {
+      "project": "a",
+      "base_files": ["a/b/README.md", "a/b/specs/001-x/spec.md"],
+      "move": [["a/b", "a/c"]],
+      "commit": true,
+      "expect": "pass"
+    },
+    "child_index_readme_inside": {
+      "project": "a",
+      "base_files": ["a/README.md", "a/b/x.md"],
+      "modify": ["a/README.md"],
+      "expect": "pass"
+    },
+    "uncommitted_outside": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "modify": ["README.md"],
+      "expect": "fail",
+      "names": ["README.md"]
+    },
+    "committed_outside": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "a/other.md"],
+      "modify": ["a/other.md"],
+      "commit": true,
+      "expect": "fail",
+      "names": ["a/other.md"]
+    },
+    "untracked_outside": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "create": ["stray.txt"],
+      "expect": "fail",
+      "names": ["stray.txt"]
+    },
+    "sibling_prefix_is_outside": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "create": ["a/bc/y.md"],
+      "expect": "fail",
+      "names": ["a/bc/y.md"]
+    },
+    "root_lifecycle_skipped": {
+      "project": "",
+      "base_files": ["README.md"],
+      "modify": ["README.md"],
+      "expect": "pass"
+    },
+    "untracked_trusted_checkout_ignored": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "nested_repo": [".wing-commander-pipeline"],
+      "modify": ["a/b/x.md"],
+      "expect": "pass"
+    },
+    "nested_trusted_checkout_name_is_outside": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "nested_repo": ["a/.wing-commander-pipeline"],
+      "expect": "fail",
+      "names": ["a/.wing-commander-pipeline"]
+    },
+    "committed_move_into_project": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "outside.md"],
+      "move": [["outside.md", "a/b/outside.md"]],
+      "commit": true,
+      "expect": "fail",
+      "names": ["outside.md"]
+    },
+    "staged_move_into_project": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "outside.md"],
+      "move": [["outside.md", "a/b/outside.md"]],
+      "expect": "fail",
+      "names": ["outside.md"]
+    },
+    "earlier_pushed_violation_caught_after_restart": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "earlier_run": ["README.md"],
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["README.md"]
+    },
+    "earlier_run_inside_passes_after_restart": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "earlier_run": ["a/b/y.md"],
+      "modify": ["a/b/x.md"],
+      "expect": "pass"
+    },
+    "unresolvable_default_branch_fails_closed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "default_branch": "no-such-branch",
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["merge base"]
+    },
+    "delete_outside_with_near_identical_add_inside": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "docs/guide.md"],
+      "copy": [["docs/guide.md", "a/b/guide.md"]],
+      "remove": ["docs/guide.md"],
+      "commit": true,
+      "expect": "fail",
+      "names": ["docs/guide.md"]
+    },
+    "agent_push_to_another_branch_outside_project": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "agent_pushes": {"spec/other/001-x": ["README.md"]},
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["spec/other/001-x"]
+    },
+    "agent_push_to_another_branch_inside_project": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "agent_pushes": {"scratch": ["a/b/y.md"]},
+      "expect": "pass"
+    },
+    "concurrent_run_moving_its_own_branch_is_not_the_agents": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "concurrent_pushes": {"spec/q/002-y": ["q/spec.md"], "main": ["README.md"]},
+      "modify": ["a/b/x.md"],
+      "expect": "pass"
+    },
+    "concurrent_run_fetched_by_the_agent_is_not_the_agents": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "concurrent_pushes": {"spec/q/002-y": ["q/spec.md"], "main": ["README.md"]},
+      "agent_fetch": true,
+      "modify": ["a/b/x.md"],
+      "expect": "pass"
+    },
+    "agent_push_to_another_branch_then_fetch_still_fails": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "agent_pushes": {"spec/other/001-x": ["README.md"]},
+      "concurrent_pushes": {"spec/q/002-y": ["q/spec.md"]},
+      "agent_fetch": true,
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["spec/other/001-x"]
+    },
+    "agent_push_of_a_raw_sha_through_origin_fails": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "agent_raw_pushes": {"spec/other/003-z": "README.md"},
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["spec/other/003-z"]
+    },
+    "agent_push_of_a_raw_sha_by_url_fails": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "agent_raw_pushes": {"spec/other/004-w": "README.md"},
+      "raw_push_by_url": true,
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["spec/other/004-w"]
+    },
+    "agent_push_of_a_raw_sha_inside_project_passes": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "agent_raw_pushes": {"scratch": "a/b/raw.md"},
+      "concurrent_pushes": {"spec/q/002-y": ["q/spec.md"]},
+      "agent_fetch": true,
+      "expect": "pass"
+    },
+    "unreachable_base_sha_fails_closed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "base_sha": "0123456789abcdef0123456789abcdef01234567",
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["could not list the changed paths"]
+    },
+    "agent_push_then_lost_tip_fails_closed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "agent_pushes": {"scratch": ["a/b/y.md"]},
+      "lose_pushed_tips": true,
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["cannot be checked", "scratch"]
+    },
+    "crafted_outside_name_cannot_forge_output": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "create": ["evil\nWC_EOF\nforged=1"],
+      "expect": "fail",
+      "output_forbids_lines": ["evil", "WC_EOF", "forged=1"]
+    },
+    "missing_pre_agent_snapshot_fails_closed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "snapshot": true,
+      "drop_snapshot": true,
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["pre-agent snapshot"]
+    },
+    "suffix_named_remote_branch_is_not_the_default_tip": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "suffix_collision": true,
+      "modify": ["a/b/x.md"],
+      "expect": "pass"
+    },
+    "forged_tracking_ref_still_diffs_from_remote_tip": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "earlier_run": ["README.md"],
+      "forged_tracking_ref": true,
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["README.md"]
+    },
+    "merged_remote_branch_outside": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "remote_branch": ["README.md"],
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["README.md"]
+    },
+    "default_branch_resolved_from_remote_when_empty": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "earlier_run": ["README.md"],
+      "default_branch": "",
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["README.md"]
+    },
+    "default_branch_resolved_from_remote_inside_passes": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "default_branch": "",
+      "modify": ["a/b/x.md"],
+      "expect": "pass"
+    },
+    "no_remote_fails_closed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "no_remote": true,
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["merge base"]
+    }
+  },
+  "pre_push": {
+    "push_inside_allowed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["a/b/x.md", "a/b/c/new.md"],
+      "expect": "pass"
+    },
+    "push_special_names_inside_allowed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["a/b/café.md", "a/b/q\"uote.md", "a/b/tab\tname.md"],
+      "expect": "pass"
+    },
+    "push_outside_refused": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["a/b/x.md", "README.md"],
+      "expect": "fail",
+      "names": ["README.md"]
+    },
+    "push_sibling_prefix_refused": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "commit_files": ["a/bc/y.md"],
+      "expect": "fail",
+      "names": ["a/bc/y.md"]
+    },
+    "commits_already_on_a_remote_not_rechecked": {
+      "project": "a/b",
+      "base_files": ["README.md", "a/b/x.md"],
+      "expect": "pass"
+    },
+    "evil_merge_outside_refused": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["a/b/x.md"],
+      "evil_merge_files": ["README.md"],
+      "expect": "fail",
+      "names": ["README.md"]
+    },
+    "clean_merge_inside_allowed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["a/b/x.md"],
+      "evil_merge_files": ["a/b/x.md"],
+      "expect": "pass"
+    },
+    "branch_deletion_allowed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "commit_files": ["README.md"],
+      "stdin": "(delete) 0000000000000000000000000000000000000000 refs/heads/x {sha}",
+      "expect": "pass"
+    },
+    "merged_remote_branch_outside_refused": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "remote_branch": ["README.md"],
+      "commit_files": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["README.md"]
+    },
+    "replace_object_ignored": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["README.md"],
+      "replace_object": true,
+      "expect": "fail",
+      "names": ["README.md"]
+    }
+  },
+  "publish_stranded": {
+    "stranded_inside_published": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["a/b/x.md", "a/b/c/new.md"],
+      "expect": "pass"
+    },
+    "stranded_outside_not_published": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["a/b/x.md", "README.md"],
+      "expect": "fail",
+      "names": ["README.md"]
+    },
+    "stranded_sibling_prefix_not_published": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "commit_files": ["a/bc/y.md"],
+      "expect": "fail",
+      "names": ["a/bc/y.md"]
+    },
+    "root_lifecycle_unchecked": {
+      "project": "",
+      "base_files": ["a/b/x.md", "README.md"],
+      "commit_files": ["README.md"],
+      "expect": "pass"
+    }
+  }
+}

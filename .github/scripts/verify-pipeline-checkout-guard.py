@@ -72,6 +72,7 @@ import argparse
 import copy
 import glob
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -105,6 +106,7 @@ SYMLINK_CHECK = '[ -L "$p" ] || '
 PIPELINE_REF_ENV = "WC_PIPELINE_REF"
 GUARD_NAME = "Refuse a branch that tracks .wing-commander-pipeline/"
 ROOT_PATHS = (None, "", ".", "./")
+EXCLUDE_PATHSPEC = re.compile(r":\(exclude[^)]*\)" + re.escape(PIPE))
 
 
 def load_tree(root="."):
@@ -226,7 +228,11 @@ def check(docs, root="."):
             failures.append("{0}: names pipeline-checkout-guard.sh other than as GUARD_RUN -- the "
                             "guard must be read from the verified pipeline repository's object "
                             "store, never its working tree.".format(where))
-        if PIPE in body and ("ls-files" in body or "ls-tree" in body):
+        # An exclude pathspec naming the directory (spec 114's containment
+        # composite leaves the untracked trusted checkout out of its listing)
+        # lists nothing under it, so it is not a copy of the check.
+        scan = EXCLUDE_PATHSPEC.sub("", body)
+        if PIPE in scan and ("ls-files" in scan or "ls-tree" in scan):
             failures.append("{0}: lists tracked paths under {1} inline -- a pasted copy of the "
                             "check; call {2} instead (CLAUDE.md, one home).".format(
                                 where, PIPE, GUARD_SCRIPT))
@@ -296,6 +302,11 @@ def mutations(docs):
         steps_of(d).insert(0, {"name": "inline", "shell": "bash",
                                "run": "test -z \"$(git ls-files -- .wing-commander-pipeline)\""})
 
+    def inline_copy_beside_exclude(d):
+        steps_of(d).insert(0, {"name": "inline", "shell": "bash",
+                               "run": "git ls-files -- ':/' ':(exclude,top).wing-commander-pipeline'\n"
+                                      "test -z \"$(git ls-files -- .wing-commander-pipeline)\""})
+
     def no_symlink_check(d):
         run = steps_of(d)[i + 1]["run"]
         assert SYMLINK_CHECK in run
@@ -324,6 +335,7 @@ def mutations(docs):
         ("a guard without shell: bash", no_shell, "no `shell: bash`"),
         ("a guard with continue-on-error", coe, "has continue-on-error"),
         ("an inline copy of the check", inline_copy, "a pasted copy of the check"),
+        ("an inline copy beside an exclude pathspec", inline_copy_beside_exclude, "a pasted copy of the check"),
         ("an unguarded checkout in a composite", composite_unguarded, cpath),
     ]
 
@@ -399,6 +411,27 @@ def behavioural(repo_root):
         _write(consumer, planted, "planted\n")
         _git(consumer, "add", "-f", "--", os.path.join(PIPE, trusted), planted)
         _git(consumer, "commit", "-qm", "hostile")
+        _git(consumer, "checkout", "-q", "-f", "main")
+
+        # A branch tracking the directory under a project folder (spec 114
+        # FR-025): not overwriting the trusted checkout, but still refused.
+        _git(consumer, "checkout", "-q", "-b", "nested", "main")
+        nested = os.path.join("ideas", "alpha", "sub", PIPE, "x")
+        constitution = os.path.join("ideas", "alpha", ".specify", "memory", "constitution.md")
+        _write(consumer, nested, "nested\n")
+        _write(consumer, constitution, "constitution\n")
+        _git(consumer, "add", "-f", "--", nested, constitution)
+        _git(consumer, "commit", "-qm", "nested")
+        _git(consumer, "checkout", "-q", "-f", "main")
+
+        # A root-only repository tracking a directory of that name under a
+        # folder that is no project (no .specify/ at or above it): left
+        # alone, never deleted (FR-016).
+        _git(consumer, "checkout", "-q", "-b", "root-only-nested", "main")
+        unrelated = os.path.join("docs", "x", PIPE, "foo")
+        _write(consumer, unrelated, "docs\n")
+        _git(consumer, "add", "-f", "--", unrelated)
+        _git(consumer, "commit", "-qm", "root-only-nested")
         _git(consumer, "checkout", "-q", "-f", "main")
 
         for branch, target, prefix in (("symlink-dot", ".", ""),
@@ -516,6 +549,24 @@ def behavioural(repo_root):
             if not os.path.isfile(os.path.join(ws, "README")) or (
                     target != "." and not os.path.isdir(os.path.join(ws, target))):
                 bad.append("{0}: the refusal removed more than the path itself".format(branch))
+
+        ws = workspace("ws-nested", "nested")
+        r = _run_guard(ws, pipeline_ref=pipe_sha)
+        if r.returncode == 0 or "tracks 1 path(s)" not in r.stdout:
+            bad.append("nested branch: a branch tracking a project-folder "
+                       "{0}/ was expected to be refused, got rc={1}: {2}".format(
+                           PIPE, r.returncode, r.stdout))
+        if os.path.exists(os.path.join(ws, nested)):
+            bad.append("nested branch: the nested tracked file was not removed")
+
+        ws = workspace("ws-root-only-nested", "root-only-nested")
+        r = _run_guard(ws, pipeline_ref=pipe_sha)
+        if r.returncode != 0:
+            bad.append("root-only nested: a {0}/ under a folder that is no project was "
+                       "expected to pass, got rc={1}: {2}{3}".format(
+                           PIPE, r.returncode, r.stdout, r.stderr))
+        if not os.path.isfile(os.path.join(ws, unrelated)):
+            bad.append("root-only nested: the guard deleted a tracked file outside any project")
 
         ws = workspace("ws-hostile", "hostile")
         with open(os.path.join(ws, PIPE, trusted)) as f:

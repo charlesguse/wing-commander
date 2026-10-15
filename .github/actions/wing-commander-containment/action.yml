@@ -1,0 +1,351 @@
+# Fails a subfolder-project stage when its agent changed anything outside
+# the project folder P (specs/114-subfolder-project-lifecycles, FR-021).
+# Pure shell and git, no agent; its only network call is the hardened `git
+# ls-remote`/fetch of the default branch's tip. Runs after the agent step
+# and before any push, and is where containment is enforced (the pre-push
+# hook below is advisory). A root lifecycle (empty project) is skipped: the
+# whole repository is its project.
+#
+# Two more modes keep every workflow's use of _shared/containment.sh (and
+# intake's _shared/intake-pre-push.sh) behind this composite, so no
+# published stage resolves an internal helper itself (Gate 60):
+#   install-pre-push -- before an agent that pushes itself: copies the
+#     helpers out of the trusted pipeline checkout, writes a pre-push hook
+#     that refuses a push carrying a change outside P (or, with
+#     label-first-number set, intake's label-first check), and points
+#     core.hooksPath at it. Outputs the pre-agent HEAD, and snapshots the
+#     remote's branch heads for the post-agent check.
+#   filter -- narrows a newline-separated path file, in place, to the paths
+#     inside P (rebase's conflict manifest).
+#
+# Like every shared composite, this action is resolved from the pipeline
+# repository's own checkout (see the header of
+# .github/actions/wing-commander-context/action.yml), so it never assumes
+# it lives in the workspace-root repository.
+name: wing-commander-containment
+description: >
+  Fail the stage when any path changed since the pre-agent SHA (committed,
+  staged, modified or untracked) lies outside the project folder; or
+  install the containment pre-push hook; or filter a path list to the folder.
+
+inputs:
+  mode:
+    description: "check (the default), install-pre-push or filter."
+    required: false
+    default: check
+  project:
+    description: Project path P (empty for a root lifecycle, which skips the check).
+    required: false
+    default: ""
+  base-sha:
+    description: The commit the checkout was at before the agent step ran (check mode).
+    required: false
+    default: ""
+  default-branch:
+    description: >
+      The repository's default branch, which the calling job already
+      resolved. Empty means `git ls-remote --symref origin HEAD`. The check
+      also covers every commit since the merge base of HEAD and that
+      branch's tip as the remote reports it now (a hardened `git ls-remote`,
+      never the agent-rewritable origin/<default-branch>), so a violation an
+      earlier run already pushed is still caught after a restart. A branch,
+      tip or merge base that cannot be found fails the check.
+    required: false
+    default: ""
+  helpers-dir:
+    description: >
+      check mode: the read-only helper copies install-pre-push took before
+      the agent step (its helpers-dir output). The agent can reach the
+      pipeline checkout's own _shared/ in the workspace, so a job that
+      installed the hook checks with the copies; empty means _shared/.
+      When set, the check also tests every branch the remote gained or
+      moved since install-pre-push's snapshot of its heads
+      (remote-heads.before) whose tip this checkout pushed (see the step's
+      comment) -- a pushing agent can push any ref -- and fails without
+      that snapshot.
+    required: false
+    default: ""
+  hooks-dir:
+    description: >
+      install-pre-push mode: the core.hooksPath directory to write the hook
+      into, shared with any hook the job installed already. Empty means
+      $RUNNER_TEMP/wing-commander-containment-hooks.
+    required: false
+    default: ""
+  label-first-prefix:
+    description: "install-pre-push mode, intake only: the spec-draft branch prefix."
+    required: false
+    default: ""
+  label-first-number:
+    description: >
+      install-pre-push mode, intake only: the allocated feature number. When
+      set, the hook is intake's label-first check (_shared/intake-pre-push.sh
+      hook), which validates, records the slug in record-file and refuses the
+      push so the branch reaches the remote only after its label exists.
+    required: false
+    default: ""
+  record-file:
+    description: "install-pre-push mode, intake only: where the hook records the validated slug."
+    required: false
+    default: ""
+  paths-file:
+    description: "filter mode: the path file to narrow in place (created empty when missing)."
+    required: false
+    default: ""
+
+outputs:
+  outside-paths:
+    description: Newline-joined changed paths outside the project folder (empty when contained).
+    value: ${{ steps.check.outputs.outside-paths }}
+  pre-agent-sha:
+    description: install-pre-push mode -- HEAD when the hook was installed.
+    value: ${{ steps.install.outputs.pre-agent-sha }}
+  helpers-dir:
+    description: >
+      install-pre-push mode -- a read-only directory of helper copies taken
+      before the agent step, for the post-agent check's helpers-dir input.
+    value: ${{ steps.install.outputs.helpers-dir }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check containment
+      id: check
+      if: inputs.mode == 'check'
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        BASE_SHA: ${{ inputs.base-sha }}
+        DEFAULT_BRANCH: ${{ inputs.default-branch }}
+        HELPERS_DIR: ${{ inputs.helpers-dir }}
+      run: |
+        set -uo pipefail
+        if [ -z "$PROJECT" ]; then
+          echo "outside-paths=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [ -z "$BASE_SHA" ]; then
+          echo "::error::wing-commander-containment: check mode needs base-sha."
+          exit 1
+        fi
+        helpers="${HELPERS_DIR:-$GITHUB_ACTION_PATH/../_shared}"
+        if [ ! -f "$helpers/containment.sh" ] || [ ! -f "$helpers/git-push-hardening.sh" ]; then
+          echo "::error::wing-commander-containment: no containment helpers in '$helpers'."
+          exit 1
+        fi
+        # install-pre-push left the copies' directory read-only for the
+        # agent step; once this check has read them, give the owner write
+        # back so the runner's own cleanup of RUNNER_TEMP can remove it.
+        if [ -n "$HELPERS_DIR" ]; then
+          trap 'chmod u+w -- "$HELPERS_DIR" 2>/dev/null || true' EXIT
+        fi
+        # Every git call below runs hardened (hooks, fsmonitor and global
+        # config off; replace objects ignored) -- the agent ran in this job.
+        # shellcheck source=/dev/null
+        . "$helpers/git-push-hardening.sh"
+        wc_harden_git_env
+        export GIT_NO_REPLACE_OBJECTS=1
+        # An agent that pushes can push any ref, not only this job's branch.
+        # With the pre-agent snapshot install-pre-push took (helpers-dir),
+        # every branch the remote now carries that was created or moved
+        # since is a candidate. Only a tip this checkout holds can have been
+        # pushed from it, and it counts as pushed when it is reachable from
+        # HEAD, a local branch, HEAD's reflog or a remote-tracking ref's
+        # "update by push" reflog entry (a commit-tree commit pushed by raw
+        # sha through origin) -- or from no remote-tracking ref at all (one
+        # pushed by URL). A fetch writes only refs/remotes/*, logged as a
+        # fetch, so a branch another lifecycle's concurrent run moved is
+        # left alone even when the agent fetched its commits.
+        pushed=""
+        if [ -n "$HELPERS_DIR" ]; then
+          if [ ! -f "$helpers/remote-heads.before" ] || ! heads="$(git ls-remote origin 'refs/heads/*')"; then
+            echo "::error::wing-commander-containment: could not compare the remote's branches with the pre-agent snapshot, so pushes to other branches cannot be checked."
+            exit 1
+          fi
+          tracking="$(git for-each-ref --format='%(refname)' refs/remotes/)"
+          local_tips="$( { git rev-parse HEAD; git for-each-ref --format='%(objectname)' refs/heads/; git log -g --format=%H HEAD 2>/dev/null
+            while read -r r; do
+              [ -n "$r" ] && git log -g --format='%H %gs' "$r" 2>/dev/null | awk '$2 == "update" && $3 == "by" && $4 == "push" {print $1}'
+            done <<< "$tracking"; } | sort -u)"
+          remote_tips="$(git for-each-ref --format='%(objectname)' refs/remotes/ | sort -u)"
+          reaches() {
+            local t
+            while read -r t; do
+              if [ -n "$t" ] && git merge-base --is-ancestor "$1" "$t" 2>/dev/null; then
+                return 0
+              fi
+            done <<< "$2"
+            return 1
+          }
+          # A tip this checkout does not hold was never pushed from it --
+          # unless one of its reflogs names it: a commit it held, pushed and
+          # then lost (pruned, or its object removed) cannot be checked, so
+          # that head fails the check rather than pass unverified. One that
+          # no reflog names either is left alone as another run's move.
+          logs="$(git rev-parse --git-path logs)" || logs=""
+          lost=""
+          while read -r sha ref; do
+            [ -n "${ref:-}" ] || continue
+            if ! git cat-file -e "$sha^{commit}" 2>/dev/null; then
+              if [ -z "$logs" ] || grep -rqsF -- "$sha" "$logs"; then
+                lost="$lost ${ref#refs/heads/}"
+              fi
+              continue
+            fi
+            if ! reaches "$sha" "$local_tips" && reaches "$sha" "$remote_tips"; then
+              continue
+            fi
+            pushed="$pushed$ref $sha $ref 0"$'\n'
+          done < <(printf '%s\n' "$heads" | grep -vxF -f "$helpers/remote-heads.before" || true)
+          if [ -n "$lost" ]; then
+            echo "::error::wing-commander-containment: branch(es) moved to a commit this checkout's reflogs name but its object store no longer holds, so what they carry cannot be checked:$lost"
+            exit 1
+          fi
+        fi
+        # A restarted stage's BASE_SHA is the already-pushed tip, so the
+        # default branch's merge base is checked too, from the tip the
+        # remote reports now. Unresolvable is a failure, not a pass.
+        if ! tip="$(bash "$helpers/containment.sh" trusted-base "$PROJECT" "$DEFAULT_BRANCH")" \
+          || ! merge_base="$(git merge-base "$tip" HEAD)"; then
+          echo "::error::wing-commander-containment: could not find the merge base of the default branch's remote tip and HEAD, so changes already on this branch cannot be checked."
+          exit 1
+        fi
+        # --no-renames: a move into P must still name its source outside P.
+        # The untracked leg excludes only the root trusted checkout, anchored
+        # at the top; both diff legs stay unfiltered so a committed gitlink
+        # there is still flagged. -z: names reach the test unquoted, so a
+        # non-ASCII or special-character name inside P stays inside P.
+        # The path test's single home is _shared/containment.sh, which
+        # pr-conversation's pre-push hook runs too. Every listing leg must
+        # succeed: a git error (an unreachable base-sha) would otherwise
+        # leave an empty list that reads as contained. -q: a name holding a
+        # control character comes back shell-quoted, so each name is one
+        # line however the agent chose it and none can forge an output or
+        # summary line below.
+        listing="$(mktemp)"
+        if ! { git diff -z --name-only --no-renames "$BASE_SHA" HEAD \
+            && git diff -z --name-only --no-renames "$merge_base" HEAD \
+            && git diff -z --name-only --no-renames HEAD \
+            && git ls-files -z --others --exclude-standard -- ':/' ':(exclude,top).wing-commander-pipeline'; } > "$listing" \
+          || ! outside="$(sort -zu "$listing" | bash "$helpers/containment.sh" outside "$PROJECT" -z -q)"; then
+          echo "::error::wing-commander-containment: could not list the changed paths, so containment cannot be checked."
+          exit 1
+        fi
+        # Each pushed branch, through the same test the pre-push hook runs,
+        # from the default branch's trusted tip.
+        bad_refs=""
+        while read -r ref sha _; do
+          [ -n "${ref:-}" ] || continue
+          if ! printf '%s %s %s %s\n' "$ref" "$sha" "$ref" 0 \
+              | bash "$helpers/containment.sh" pre-push "$PROJECT" "$tip"; then
+            bad_refs="$bad_refs ${ref#refs/heads/}"
+            outside="${outside:+$outside$'\n'}branch ${ref#refs/heads/}"
+          fi
+        done <<< "$pushed"
+        if [ -n "$bad_refs" ]; then
+          echo "::error::wing-commander-containment: the agent pushed branch(es) carrying changes outside project folder '$PROJECT':$bad_refs"
+        fi
+        if [ -n "$outside" ]; then
+          # A fresh random delimiter as well: no line above can predict it.
+          eof="WC_EOF_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          if [ "$eof" = "WC_EOF_" ] || printf '%s\n' "$outside" | grep -qxF "$eof"; then
+            echo "::error::wing-commander-containment: could not pick a safe output delimiter."
+            exit 1
+          fi
+          {
+            echo "outside-paths<<$eof"
+            echo "$outside"
+            echo "$eof"
+          } >> "$GITHUB_OUTPUT"
+          echo "::error::wing-commander-containment: the agent changed paths outside project folder '$PROJECT': $(echo "$outside" | tr '\n' ' ')"
+          {
+            echo "❌ **wing-commander-containment failed** — changes outside \`$PROJECT/\`:"
+            echo '```'
+            echo "$outside"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+        fi
+        echo "outside-paths=" >> "$GITHUB_OUTPUT"
+        echo "✅ wing-commander-containment: every change lies inside \`$PROJECT/\`." >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Install containment pre-push hook
+      id: install
+      if: inputs.mode == 'install-pre-push'
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        HOOKS_DIR: ${{ inputs.hooks-dir }}
+        LF_PREFIX: ${{ inputs.label-first-prefix }}
+        LF_NUM: ${{ inputs.label-first-number }}
+        RECORD: ${{ inputs.record-file }}
+      run: |
+        set -euo pipefail
+        if [ -z "$PROJECT" ]; then
+          echo "::error::wing-commander-containment: install-pre-push needs a project; a root lifecycle installs no hook."
+          exit 1
+        fi
+        hooks_dir="${HOOKS_DIR:-$RUNNER_TEMP/wing-commander-containment-hooks}"
+        shared="$GITHUB_ACTION_PATH/../_shared"
+        read -ra helpers <<< "containment.sh project-name.sh intake-pre-push.sh git-push-hardening.sh"
+        mkdir -p "$hooks_dir"
+        # Copies, so a branch the agent checks out cannot rewrite the hook.
+        # The hook is advisory: the agent can repoint core.hooksPath or
+        # overwrite these copies (`git diff --output=<path>`). The enforcing
+        # post-agent check uses a second, read-only set under a fresh
+        # random name (helpers-dir output).
+        cp "${helpers[@]/#/$shared/}" "$hooks_dir/"
+        # An earlier read-only set in this job whose check never ran (its
+        # agent was skipped) is past use: make it removable again too.
+        for stale in "$RUNNER_TEMP"/wing-commander-containment-trusted.*; do
+          if [ -d "$stale" ]; then chmod u+w -- "$stale"; fi
+        done
+        trusted="$(mktemp -d "$RUNNER_TEMP/wing-commander-containment-trusted.XXXXXXXX")"
+        cp "${helpers[@]/#/$shared/}" "$trusted/"
+        # The remote's branch heads before the agent runs: the post-agent
+        # check tests every branch the agent created or moved, not only
+        # this job's own (an agent that pushes can name any ref).
+        if ! git ls-remote origin 'refs/heads/*' > "$trusted/remote-heads.before"; then
+          echo "::error::wing-commander-containment: could not list the remote's branches before the agent step."
+          exit 1
+        fi
+        chmod 0444 "$trusted"/*
+        chmod 0555 "$trusted"
+        echo "helpers-dir=$trusted" >> "$GITHUB_OUTPUT"
+        if [ -n "$LF_NUM" ]; then
+          if [ -z "$RECORD" ]; then
+            echo "::error::wing-commander-containment: the label-first hook needs a record-file."
+            exit 1
+          fi
+          printf '#!/usr/bin/env bash\nexec bash %q hook %q %q %q %q\n' "$hooks_dir/intake-pre-push.sh" "$LF_PREFIX" "$PROJECT" "$LF_NUM" "$RECORD" > "$hooks_dir/pre-push"
+        else
+          printf '#!/usr/bin/env bash\nexec bash %q pre-push %q\n' "$hooks_dir/containment.sh" "$PROJECT" > "$hooks_dir/pre-push"
+        fi
+        chmod +x "$hooks_dir/pre-push"
+        git config core.hooksPath "$hooks_dir"
+        echo "pre-agent-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+    - name: Filter paths to the project folder
+      if: inputs.mode == 'filter'
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        PATHS_FILE: ${{ inputs.paths-file }}
+      run: |
+        set -euo pipefail
+        if [ -z "$PROJECT" ] || [ -z "$PATHS_FILE" ]; then
+          echo "::error::wing-commander-containment: filter needs a project and a paths-file."
+          exit 1
+        fi
+        touch "$PATHS_FILE"
+        bash "$GITHUB_ACTION_PATH/../_shared/containment.sh" inside "$PROJECT" < "$PATHS_FILE" > "$PATHS_FILE.inside"
+        mv "$PATHS_FILE.inside" "$PATHS_FILE"
+
+    - name: Refuse an unknown mode
+      if: inputs.mode != 'check' && inputs.mode != 'install-pre-push' && inputs.mode != 'filter'
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+      run: |
+        echo "::error::wing-commander-containment: unknown mode '$MODE' (want check, install-pre-push or filter)."
+        exit 1

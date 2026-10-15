@@ -29,7 +29,10 @@ inputs:
     description: Same value as implement.yml's own input, comma-separated, unsplit.
     required: true
   spec-dir:
-    description: e.g. specs/090-stage-write-boundary
+    description: >-
+      Repository-relative spec directory, e.g. specs/090-stage-write-boundary
+      or P/specs/090-stage-write-boundary for a subfolder project (spec 114:
+      the project prefix is stripped from task paths before classifying).
     required: true
   tasks-path:
     description: e.g. specs/090-stage-write-boundary/tasks.md

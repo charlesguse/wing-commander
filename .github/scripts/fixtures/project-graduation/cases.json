@@ -1,0 +1,16 @@
+{
+  "why": "FR-008 / US4: a project folder copied out to a repository root works there unchanged",
+  "env": {"SPEC_DRAFT_PREFIX": "spec-draft/", "SPEC_PREFIX": "spec/"},
+  "project": "ideas/alpha",
+  "folder": {
+    "specs/001-login/spec-meta.json": {"issue": 41, "spec_dir": "specs/001-login", "feature_num": "001", "stage": "done", "iteration": 2, "spec_branch": "spec/ideas/alpha/001-login"},
+    "specs/002-signup/spec-meta.json": {"issue": 42, "spec_dir": "specs/002-signup", "feature_num": "002", "stage": "done", "iteration": 1, "spec_branch": "spec/ideas/alpha/002-signup"},
+    "specs/003-leaky/spec-meta.json": {"issue": 43, "spec_dir": "ideas/alpha/specs/003-leaky", "feature_num": "003", "stage": "implement", "iteration": 1, "spec_branch": "spec/ideas/alpha/003-leaky"}
+  },
+  "identity": [
+    {"slug": "001-login", "identity_ok": true, "issue": "41"},
+    {"slug": "002-signup", "identity_ok": true, "issue": "42"},
+    {"slug": "003-leaky", "identity_ok": false}
+  ],
+  "next_number": "004"
+}

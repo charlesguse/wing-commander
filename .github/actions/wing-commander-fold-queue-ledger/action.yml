@@ -15,7 +15,7 @@ inputs:
     description: "One of peek, peek-round, peek-implement-run, record-implement-run, claim-redispatch."
     required: true
   spec-dir:
-    description: "specs/NNN-slug -- identifies which ledger entry to use."
+    description: "Repository-relative [P/]specs/NNN-slug -- identifies which ledger entry to use (an opaque key; root values are unchanged)."
     required: true
   round:
     description: "Required by peek-round, record-implement-run, claim-redispatch; unused otherwise."

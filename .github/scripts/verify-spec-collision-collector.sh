@@ -88,6 +88,7 @@ import json
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -120,7 +121,7 @@ exit 1
 
 def run_case(*, prs=(), dirs=(), files=(), stage="intake", stage_source="name",
              conclusion="success", slug="046-watchdog-supervision-collectors",
-             fail_list=False, draft_prefix="", spec_prefix=""):
+             fail_list=False, draft_prefix="", spec_prefix="", tree=()):
     tmp = tempfile.mkdtemp()
     try:
         workdir, runner_temp, bindir, fixtures = (os.path.join(tmp, d) for d in
@@ -129,6 +130,9 @@ def run_case(*, prs=(), dirs=(), files=(), stage="intake", stage_source="name",
             os.makedirs(d)
         for name in dirs:
             os.makedirs(os.path.join(workdir, "specs", name))
+        # Repository-relative directories, for subfolder projects (spec 114).
+        for path in tree:
+            os.makedirs(os.path.join(workdir, path))
         for name in files:
             os.makedirs(os.path.join(workdir, "specs"), exist_ok=True)
             open(os.path.join(workdir, "specs", name), "w").close()
@@ -142,9 +146,16 @@ def run_case(*, prs=(), dirs=(), files=(), stage="intake", stage_source="name",
         for name in ("signals.json", "collector-outcomes.json"):
             with open(os.path.join(runner_temp, name), "w", encoding="utf-8") as fh:
                 fh.write("[]")
+        # The collector reads its project and bare slug from the shared
+        # parser through wing-commander-inspected-run-identity (spec 114,
+        # T066); derive them the same way.
+        parsed = subprocess.run([BASH, ".github/actions/_shared/project-name.sh", "names", "slug", slug],
+                                capture_output=True, text=True, check=False).stdout
+        names = dict(line.split("=", 1) for line in parsed.splitlines() if "=" in line)
         env = {"GITHUB_REPOSITORY": "charlesguse/wing-commander", "GH_TOKEN": "dummy",
                "RESOLVED_STAGE": stage, "RESOLVED_STAGE_SOURCE": stage_source,
                "RUN_CONCLUSION": conclusion, "SLUG": slug,
+               "OWN_PROJECT": names.get("project", ""), "LIFECYCLE_SLUG": names.get("slug", ""),
                "SPEC_DRAFT_PREFIX": draft_prefix, "SPEC_PREFIX": spec_prefix,
                "PATH": bindir + os.pathsep + os.environ["PATH"]}
         rc, out, _outputs, _summary = run_step(BASH, SCRIPT, workdir, env, runner_temp)
@@ -239,6 +250,37 @@ check("an unidentified stage records outcome unresolved, no signal",
 rc, out, sig, oc = run_case(conclusion="cancelled", prs=[(301, "spec-draft/046-a"),
                                                         (305, "spec/046-b")])
 check("a cancelled run is skipped", rc == 0 and sig == [] and oc == [],
+      f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+# spec 114 (FR-009/FR-010, research.md D13): numbering is per project, so
+# another project's NNN -- an open PR or a P/specs/ directory -- is no
+# claimant, and neither is the root's.
+rc, out, sig, oc = run_case(slug="ideas/alpha/004-login",
+                            prs=[(401, "spec-draft/ideas/alpha/004-login"),
+                                 (402, "spec/004-root-thing"),
+                                 (403, "spec-draft/ideas/beta/004-x"),
+                                 (404, "spec/ideas/alpha/sub/004-y")],
+                            tree=["specs/004-root", "ideas/beta/specs/004-b",
+                                  "ideas/alpha/sub/specs/004-n", "ideas/alpha/specs/005-c"])
+check("spec 114: another project's (or the root's) NNN is no claimant of a subfolder lifecycle",
+      rc == 0 and sig == [] and outcome(oc) == ["ok"],
+      f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+rc, out, sig, oc = run_case(slug="ideas/alpha/004-login",
+                            prs=[(401, "spec-draft/ideas/alpha/004-login"),
+                                 (405, "spec/ideas/alpha/004-other")],
+                            tree=["ideas/alpha/specs/004-landed"])
+check("spec 114: the same project's PRs and P/specs/ directory collide",
+      rc == 0 and sorted(c.get("pr", 0) for c in claimants(sig)) == [0, 401, 405]
+      and any(c.get("dir") == "ideas/alpha/specs/004-landed" for c in claimants(sig))
+      and outcome(oc) == ["ok"],
+      f"rc={rc} signals={sig} outcomes={oc}\n{out}")
+
+rc, out, sig, oc = run_case(prs=[(301, "spec-draft/046-watchdog-supervision-collectors"),
+                                 (306, "spec/ideas/alpha/046-sub")],
+                            tree=["ideas/alpha/specs/046-sub"])
+check("spec 114: a root lifecycle ignores a subfolder project's NNN",
+      rc == 0 and sig == [] and outcome(oc) == ["ok"],
       f"rc={rc} signals={sig} outcomes={oc}\n{out}")
 
 sys.exit(1 if failures else 0)
