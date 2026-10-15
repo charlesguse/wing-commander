@@ -79,7 +79,7 @@ runs:
         rc=$?
         set -e
         if [ "$rc" -eq 3 ]; then
-          echo "::error::wing-commander-write-boundary: classify-out-of-boundary-tasks.sh was run outside the checkout root (exit 3) -- the write-boundary classification did not run."
+          echo "::error::wing-commander-write-boundary: classify-out-of-boundary-tasks.sh could not verify the checkout root (exit 3: wrong cwd or a git failure) -- the write-boundary classification did not run."
         fi
         if [ "$rc" -ne 0 ]; then
           # Written to the step's own stdout, NOT redirected into

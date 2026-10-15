@@ -1565,6 +1565,21 @@ def check_classify_failure_handling(steps, root):
         failures.append(f"(l) a classify-script crash should degrade to an "
                         f"empty findings-json, got "
                         f"{outputs.get('findings-json')!r}")
+    # Exit 3 is the script's cwd/git guard: the composite must add an
+    # ::error:: annotation on top of the degrade-safely ::warning::.
+    with open(broken_script, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("#!/usr/bin/env bash\nexit 3\n")
+    rc, out, outputs, _ = run_step(BASH, steps[CLASSIFY_STEP], workdir, env, runner_temp)
+    if rc != 0:
+        failures.append(f"(l) {CLASSIFY_STEP!r} exited {rc} on classify exit 3 "
+                        f"-- it must degrade safely: {out.strip()}")
+    elif "::error::" not in out or "checkout root" not in out:
+        failures.append(f"(l) classify exit 3 produced no ::error:: "
+                        f"annotation naming the checkout root -- got output={out!r}")
+    elif outputs.get("all-unchecked-out-of-boundary") != "false":
+        failures.append(f"(l) classify exit 3 should degrade to "
+                        f"all-unchecked-out-of-boundary=false, got "
+                        f"{outputs.get('all-unchecked-out-of-boundary')!r}")
     return failures
 
 
