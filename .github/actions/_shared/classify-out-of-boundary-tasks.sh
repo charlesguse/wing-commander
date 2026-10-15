@@ -85,12 +85,14 @@ fi
 # tokens like app/.claude/x. Assert the invariant instead of assuming it: when
 # cwd is inside a git work tree it must be that tree's top level. (Outside any
 # work tree -- git says "not a git repository" -- there is nothing to compare
-# against and the check is skipped; any other git failure (dubious ownership,
-# broken git) fails closed rather than skipping.)
+# against and the check is skipped; any other git failure (broken git) fails
+# closed rather than skipping. safe.directory=* keeps a checkout owned by a
+# different user, as in container jobs, from tripping "dubious ownership" --
+# this probe only reads the top level, so trusting the directory is harmless.)
 # Exit 3 (not the usage exit 1) so the write-boundary composite can annotate
 # it as an ::error:: rather than a generic crash warning.
 _git_err="$(mktemp)"
-if ! _toplevel="$(git rev-parse --show-toplevel 2>"$_git_err")"; then
+if ! _toplevel="$(git -c safe.directory='*' rev-parse --show-toplevel 2>"$_git_err")"; then
   _toplevel=""
   if ! grep -q 'not a git repository' "$_git_err"; then
     echo "classify-out-of-boundary-tasks.sh: cannot verify the checkout root: $(cat "$_git_err")" >&2

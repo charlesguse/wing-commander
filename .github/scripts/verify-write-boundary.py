@@ -814,6 +814,21 @@ def check_subfolder_classification(root, script_path=CLASSIFY_SCRIPT):
     if rc != 3:
         failures.append(f"(c-114) a git failure other than 'not a git repository' "
                         f"must exit 3, got rc={rc}: {out.strip()}")
+    # Dubious ownership alone must not trip the guard: the probe passes
+    # safe.directory=*, so a git that only objects without it must succeed.
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as stub:
+        stub_git = os.path.join(stub, "git")
+        with open(stub_git, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write('#!/bin/sh\ncase "$*" in *safe.directory=*) pwd -P; exit 0;; esac\n'
+                     'echo "fatal: detected dubious ownership in repository" >&2\nexit 128\n')
+        os.chmod(stub_git, 0o755)
+        env = dict(os.environ, PATH=stub + os.pathsep + os.environ.get("PATH", ""))
+        rc, out, outputs = run_classify(
+            "- [ ] T001 edit `.claude/skills/x/SKILL.md`", ".claude/",
+            script_path=script_path, cwd=tmp, env=env)
+    if rc == 3:
+        failures.append(f"(c-114) dubious ownership must not trip the cwd guard "
+                        f"(probe needs safe.directory=*), got rc=3: {out.strip()}")
     return failures
 
 
