@@ -3,13 +3,17 @@
 # lifecycle's repository changes lie inside its project folder P. Two
 # consumers, one test:
 #
-#   containment.sh outside <P> [-z]
+#   containment.sh outside <P> [-z [-q]]
 #     Reads newline-separated repository-relative paths on stdin (NUL-
 #     separated with -z) and prints the ones outside P/, one per line. The
 #     wing-commander-containment composite feeds it the post-agent
 #     changed-path list from git's -z output: without -z, git quotes a
 #     non-ASCII or special-character name ("a/b/caf\303\251.md"), and the
-#     quoted form would read as a path outside P.
+#     quoted form would read as a path outside P. -q prints a name holding
+#     a control character (a newline, say) shell-quoted (printf %q), so
+#     every name the agent chose is exactly one line when the composite
+#     writes it to $GITHUB_OUTPUT and the step summary; other names,
+#     non-ASCII ones included, print as themselves.
 #
 #   containment.sh inside <P>
 #     The complement: prints the stdin paths inside P/. The composite's
@@ -51,13 +55,19 @@ if [ -f "$here/git-push-hardening.sh" ]; then
 fi
 
 outside() {
-  local project="$1" delim=$'\n' path
+  local project="$1" delim=$'\n' quote="" path
   [ "${2:-}" = "-z" ] && delim=''
+  [ "${3:-}" = "-q" ] && quote=1
   while IFS= read -r -d "$delim" path || [ -n "$path" ]; do
     [ -z "$path" ] && continue
     case "$path" in
       "$project"/*) ;;
-      *) printf '%s\n' "$path" ;;
+      *)
+        if [ -n "$quote" ] && [[ "$path" == *[[:cntrl:]]* ]]; then
+          printf '%q\n' "$path"
+        else
+          printf '%s\n' "$path"
+        fi ;;
     esac
   done
 }
@@ -98,7 +108,7 @@ fi
 
 case "$mode" in
   outside)
-    outside "$project" "${3:-}"
+    outside "$project" "${3:-}" "${4:-}"
     ;;
   inside)
     # `|| [ -n ... ]`: a last path with no trailing newline is still read.

@@ -113,6 +113,23 @@ def main():
         if got.get("meta_identity_ok") != "true" or got.get("meta_issue") != str(pre["record"]["issue"]):
             errors.append(f"pre-feature root record no longer passes: {got!r}")
         checked += 1
+    # The slug's project and the spec directory's must agree: alpha's branch
+    # carries beta's folder too, and reading beta's record off alpha's branch
+    # (or a root slug's branch) is not this specification's record.
+    with tempfile.TemporaryDirectory() as tmp:
+        record = {"spec_dir": "specs/001-x", "issue": 7, "stage": "plan", "iteration": 1}
+        files = {f"{p}/specs/001-x/spec-meta.json": record for p in ("alpha", "beta")}
+        work = repo(tmp, files, [f"{prefix}alpha/001-x", f"{prefix}001-x"])
+        for slug, spec_dir in (("alpha/001-x", "beta/specs/001-x"), ("001-x", "beta/specs/001-x"),
+                               ("alpha/001-x", "specs/001-x")):
+            got = read(work, prefix, slug, spec_dir)
+            if got.get("meta_found") == "true" or got.get("meta_identity_ok") == "true":
+                errors.append(f"cross-project read: slug {slug!r} with spec-dir {spec_dir!r} read a record ({got!r})")
+            checked += 1
+        got = read(work, prefix, "alpha/001-x", "alpha/specs/001-x")
+        if got.get("meta_identity_ok") != "true":
+            errors.append(f"same-project read: slug 'alpha/001-x' with spec-dir 'alpha/specs/001-x' refused ({got!r})")
+        checked += 1
     if errors:
         print("verify-spec-meta-self-identity: FAIL")
         for e in errors:

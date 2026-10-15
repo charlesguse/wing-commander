@@ -171,14 +171,30 @@ runs:
             done <<< "$2"
             return 1
           }
+          # A tip this checkout does not hold was never pushed from it --
+          # unless one of its reflogs names it: a commit it held, pushed and
+          # then lost (pruned, or its object removed) cannot be checked, so
+          # that head fails the check rather than pass unverified. One that
+          # no reflog names either is left alone as another run's move.
+          logs="$(git rev-parse --git-path logs)" || logs=""
+          lost=""
           while read -r sha ref; do
             [ -n "${ref:-}" ] || continue
-            git cat-file -e "$sha^{commit}" 2>/dev/null || continue
+            if ! git cat-file -e "$sha^{commit}" 2>/dev/null; then
+              if [ -z "$logs" ] || grep -rqsF -- "$sha" "$logs"; then
+                lost="$lost ${ref#refs/heads/}"
+              fi
+              continue
+            fi
             if ! reaches "$sha" "$local_tips" && reaches "$sha" "$remote_tips"; then
               continue
             fi
             pushed="$pushed$ref $sha $ref 0"$'\n'
           done < <(printf '%s\n' "$heads" | grep -vxF -f "$helpers/remote-heads.before" || true)
+          if [ -n "$lost" ]; then
+            echo "::error::wing-commander-containment: branch(es) moved to a commit this checkout's reflogs name but its object store no longer holds, so what they carry cannot be checked:$lost"
+            exit 1
+          fi
         fi
         # A restarted stage's BASE_SHA is the already-pushed tip, so the
         # default branch's merge base is checked too, from the tip the
@@ -196,13 +212,16 @@ runs:
         # The path test's single home is _shared/containment.sh, which
         # pr-conversation's pre-push hook runs too. Every listing leg must
         # succeed: a git error (an unreachable base-sha) would otherwise
-        # leave an empty list that reads as contained.
+        # leave an empty list that reads as contained. -q: a name holding a
+        # control character comes back shell-quoted, so each name is one
+        # line however the agent chose it and none can forge an output or
+        # summary line below.
         listing="$(mktemp)"
         if ! { git diff -z --name-only --no-renames "$BASE_SHA" HEAD \
             && git diff -z --name-only --no-renames "$merge_base" HEAD \
             && git diff -z --name-only --no-renames HEAD \
             && git ls-files -z --others --exclude-standard -- ':/' ':(exclude,top).wing-commander-pipeline'; } > "$listing" \
-          || ! outside="$(sort -zu "$listing" | bash "$helpers/containment.sh" outside "$PROJECT" -z)"; then
+          || ! outside="$(sort -zu "$listing" | bash "$helpers/containment.sh" outside "$PROJECT" -z -q)"; then
           echo "::error::wing-commander-containment: could not list the changed paths, so containment cannot be checked."
           exit 1
         fi
@@ -221,10 +240,16 @@ runs:
           echo "::error::wing-commander-containment: the agent pushed branch(es) carrying changes outside project folder '$PROJECT':$bad_refs"
         fi
         if [ -n "$outside" ]; then
+          # A fresh random delimiter as well: no line above can predict it.
+          eof="WC_EOF_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+          if [ "$eof" = "WC_EOF_" ] || printf '%s\n' "$outside" | grep -qxF "$eof"; then
+            echo "::error::wing-commander-containment: could not pick a safe output delimiter."
+            exit 1
+          fi
           {
-            echo "outside-paths<<WC_EOF"
+            echo "outside-paths<<$eof"
             echo "$outside"
-            echo "WC_EOF"
+            echo "$eof"
           } >> "$GITHUB_OUTPUT"
           echo "::error::wing-commander-containment: the agent changed paths outside project folder '$PROJECT': $(echo "$outside" | tr '\n' ' ')"
           {

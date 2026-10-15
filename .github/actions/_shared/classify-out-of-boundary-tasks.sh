@@ -125,16 +125,18 @@ if spec_dir.startswith("/") is False and "/specs/" in "/" + spec_dir:
 
 def readings(token):
     """The project-relative paths a token can name. A project-relative token
-    can itself start with the project's first segment (project `app`,
-    `app/.claude/x` naming `app/app/.claude/x`): when the project folder has
-    that subdirectory, the token is read both ways, and it is out of
-    boundary only when both readings are. The script runs at the checkout's
-    root (wing-commander-write-boundary)."""
+    can itself start with the whole project path (project `app`,
+    `app/.claude/x` naming `app/app/.claude/x`; project `ideas/alpha`,
+    `ideas/alpha/x` naming `ideas/alpha/ideas/alpha/x`): when the project
+    folder has that whole path as a subdirectory -- every segment, not only
+    the first -- the token is read both ways, and it is out of boundary
+    only when both readings are. The script runs at the checkout's root
+    (wing-commander-write-boundary)."""
     while token.startswith("./"):
         token = token[2:]
     if project_prefix and token.startswith(project_prefix):
         stripped = token[len(project_prefix):]
-        if os.path.isdir(project_prefix + token.split("/", 1)[0]):
+        if os.path.isdir(project_prefix + project_prefix.rstrip("/")):
             return [stripped, token]
         return [stripped]
     return [token]

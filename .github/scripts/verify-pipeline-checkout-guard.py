@@ -416,10 +416,22 @@ def behavioural(repo_root):
         # A branch tracking the directory under a project folder (spec 114
         # FR-025): not overwriting the trusted checkout, but still refused.
         _git(consumer, "checkout", "-q", "-b", "nested", "main")
-        nested = os.path.join("ideas", "alpha", PIPE, "x")
+        nested = os.path.join("ideas", "alpha", "sub", PIPE, "x")
+        constitution = os.path.join("ideas", "alpha", ".specify", "memory", "constitution.md")
         _write(consumer, nested, "nested\n")
-        _git(consumer, "add", "-f", "--", nested)
+        _write(consumer, constitution, "constitution\n")
+        _git(consumer, "add", "-f", "--", nested, constitution)
         _git(consumer, "commit", "-qm", "nested")
+        _git(consumer, "checkout", "-q", "-f", "main")
+
+        # A root-only repository tracking a directory of that name under a
+        # folder that is no project (no .specify/ at or above it): left
+        # alone, never deleted (FR-016).
+        _git(consumer, "checkout", "-q", "-b", "root-only-nested", "main")
+        unrelated = os.path.join("docs", "x", PIPE, "foo")
+        _write(consumer, unrelated, "docs\n")
+        _git(consumer, "add", "-f", "--", unrelated)
+        _git(consumer, "commit", "-qm", "root-only-nested")
         _git(consumer, "checkout", "-q", "-f", "main")
 
         for branch, target, prefix in (("symlink-dot", ".", ""),
@@ -546,6 +558,15 @@ def behavioural(repo_root):
                            PIPE, r.returncode, r.stdout))
         if os.path.exists(os.path.join(ws, nested)):
             bad.append("nested branch: the nested tracked file was not removed")
+
+        ws = workspace("ws-root-only-nested", "root-only-nested")
+        r = _run_guard(ws, pipeline_ref=pipe_sha)
+        if r.returncode != 0:
+            bad.append("root-only nested: a {0}/ under a folder that is no project was "
+                       "expected to pass, got rc={1}: {2}{3}".format(
+                           PIPE, r.returncode, r.stdout, r.stderr))
+        if not os.path.isfile(os.path.join(ws, unrelated)):
+            bad.append("root-only nested: the guard deleted a tracked file outside any project")
 
         ws = workspace("ws-hostile", "hostile")
         with open(os.path.join(ws, PIPE, trusted)) as f:

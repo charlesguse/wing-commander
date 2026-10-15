@@ -287,6 +287,23 @@
       "expect": "fail",
       "names": ["could not list the changed paths"]
     },
+    "agent_push_then_lost_tip_fails_closed": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "agent_pushes": {"scratch": ["a/b/y.md"]},
+      "lose_pushed_tips": true,
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["cannot be checked", "scratch"]
+    },
+    "crafted_outside_name_cannot_forge_output": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md"],
+      "create": ["evil\nWC_EOF\nforged=1"],
+      "expect": "fail",
+      "output_forbids_lines": ["evil", "WC_EOF", "forged=1"]
+    },
     "missing_pre_agent_snapshot_fails_closed": {
       "project": "a/b",
       "base_files": ["a/b/x.md"],

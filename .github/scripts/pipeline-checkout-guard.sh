@@ -42,7 +42,8 @@
 # - No repository at the workspace root (a checkout that failed before
 #   `git init`, under continue-on-error): nothing can be tracked; passes.
 # - `git ls-files` at the root fails: fails closed.
-# - The branch tracks nothing under .wing-commander-pipeline/: passes.
+# - The branch tracks nothing under .wing-commander-pipeline/ at the root
+#   or inside a project folder (a directory tracking .specify/): passes.
 # - Otherwise: deletes each path the branch tracks there, restores the
 #   pipeline checkout's tracked files from its own HEAD (so any always()-
 #   gated step that still runs after this failure loads the trusted
@@ -66,15 +67,37 @@ if [ ! -e .git ]; then
   exit 0
 fi
 
+all="$(mktemp)" || fail "pipeline-checkout guard: could not create a temporary file; refusing to continue unchecked."
 listing="$(mktemp)" || fail "pipeline-checkout guard: could not create a temporary file; refusing to continue unchecked."
-trap 'rm -f "$listing"' EXIT
+trap 'rm -f "$all" "$listing"' EXIT
 
 # A project working directory (spec 114 FR-025) must never hold a tracked
 # P/.wing-commander-pipeline/ either: the glob pathspecs match the directory
 # (or a symlink standing in for it) at the root and at any depth.
-if ! git ls-files -z -- "$PIPE" ":(glob)**/$PIPE" ":(glob)**/$PIPE/**" > "$listing"; then
+if ! git ls-files -z -- "$PIPE" ":(glob)**/$PIPE" ":(glob)**/$PIPE/**" > "$all"; then
   fail "pipeline-checkout guard: 'git ls-files' failed at the workspace root, so whether the checked-out branch tracks $PIPE/ is unknown; refusing to continue."
 fi
+
+# A nested match is refused only inside a project folder: some directory at
+# or above it (below the root) tracks a .specify/. A root-only repository's
+# own docs/x/.wing-commander-pipeline/ is its business and is left alone
+# (FR-016).
+while IFS= read -r -d '' p; do
+  case "$p" in
+    "$PIPE" | "$PIPE"/*) printf '%s\0' "$p" >> "$listing"; continue ;;
+    */"$PIPE") d="${p%/"$PIPE"}" ;;
+    *) d="${p%%/"$PIPE"/*}" ;;
+  esac
+  while [ -n "$d" ]; do
+    spec="$(git ls-files -- ":(literal)$d/.specify")" \
+      || fail "pipeline-checkout guard: 'git ls-files' failed at the workspace root, so whether $d is a project folder is unknown; refusing to continue."
+    if [ -n "$spec" ]; then
+      printf '%s\0' "$p" >> "$listing"
+      break
+    fi
+    case "$d" in */*) d="${d%/*}" ;; *) d="" ;; esac
+  done
+done < "$all"
 
 if [ ! -s "$listing" ]; then
   echo "pipeline-checkout guard: the checked-out branch tracks nothing under $PIPE/."

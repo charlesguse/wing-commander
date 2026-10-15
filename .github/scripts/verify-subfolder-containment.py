@@ -178,6 +178,11 @@ def contain(case, script):
             git(tmp, "push", "-q", "origin", "HEAD:refs/heads/" + ref)
             git(tmp, "checkout", "-q", "main")
             git(tmp, "branch", "-q", "-D", "agent-side")
+            if case.get("lose_pushed_tips"):
+                # The pushed commit's object is then lost from this
+                # checkout, while HEAD's reflog still names it.
+                sha = rev(tmp, "refs/remotes/origin/" + ref)
+                os.remove(os.path.join(tmp, ".git", "objects", sha[:2], sha[2:]))
         for ref, rel in case.get("agent_raw_pushes", {}).items():
             # A commit-tree commit no local ref or HEAD reflog reaches,
             # pushed by raw sha (through origin, or by URL so no
@@ -244,7 +249,8 @@ def contain(case, script):
             git(tmp, "commit", "-q", "-m", "agent")
         env = {"PROJECT": case["project"], "BASE_SHA": case.get("base_sha", base), "DEFAULT_BRANCH": case.get("default_branch", "main"),
                "HELPERS_DIR": helpers}
-        r, _ = run_script(script, env, tmp, "wing-commander-containment")
+        r, out = run_script(script, env, tmp, "wing-commander-containment")
+        r.github_output = out
         return r
 
 
@@ -1056,6 +1062,12 @@ def main():
             for p in case.get("names", []):
                 if p not in r.stdout + r.stderr:
                     errors.append(f"containment {name}: output does not name {p!r}")
+        # A crafted file name must not end the outside-paths heredoc and
+        # forge lines of its own in $GITHUB_OUTPUT.
+        lines = r.github_output.splitlines()
+        for bad in case.get("output_forbids_lines", []):
+            if bad in lines:
+                errors.append(f"containment {name}: $GITHUB_OUTPUT carries a forged line {bad!r}: {r.github_output!r}")
     for name, case in data.get("pre_push", {}).items():
         r = pre_push(case)
         if case["expect"] == "pass" and r.returncode != 0:

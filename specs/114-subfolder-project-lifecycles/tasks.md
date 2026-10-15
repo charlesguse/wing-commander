@@ -521,7 +521,7 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
 ## Review Gate Round 3 Findings
 
-- [ ] Review finding: Checkout guard nested pathspecs delete unrelated tracked files
+- [X] Review finding: Checkout guard nested pathspecs delete unrelated tracked files
 
   pipeline-checkout-guard.sh's new `:(glob)**/.wing-commander-pipeline` pathspecs also match any nested tracked directory of that name in root-only repos, so the guard runs rm -f on those files and fails the job.
 
@@ -529,7 +529,9 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
   Detail: A root-only repo tracking docs/x/.wing-commander-pipeline/foo makes the listing non-empty, so the guard deletes it and goes red. This breaks the FR-016 root-compat promise.
 
-- [ ] Review finding: Containment output heredoc uses fixed delimiter with agent-controlled names
+  - Done (cycle 22): a nested match is refused only inside a project folder (a directory at or above it, below the root, that tracks `.specify/`); the root match is unchanged. Gate 116's nested scenario now plants `ideas/alpha/.specify/` beside `ideas/alpha/sub/.wing-commander-pipeline/x` (still refused), and a new root-only scenario tracking `docs/x/.wing-commander-pipeline/foo` must pass and keep the file. Contract table updated.
+
+- [X] Review finding: Containment output heredoc uses fixed delimiter with agent-controlled names
 
   The containment action writes outside-path names verbatim into $GITHUB_OUTPUT using the fixed heredoc delimiter WC_EOF, and into $GITHUB_STEP_SUMMARY, so a crafted filename can inject extra outputs or forge the failure report.
 
@@ -537,7 +539,9 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
   Detail: A filename containing a newline, WC_EOF, then another line ends the heredoc early. Use a random delimiter or escape the paths.
 
-- [ ] Review finding: Containment check fails open when pushed branch tip is absent locally
+  - Done (cycle 22): both. `containment.sh outside <P> -z -q` prints a name holding a control character `%q`-quoted (one line each; other names, non-ASCII included, as themselves), and the composite writes `outside-paths` under a random `WC_EOF_<hex>` delimiter. Gate 160 fixture `crafted_outside_name_cannot_forge_output` (a file named `evil\nWC_EOF\nforged=1`) fails without the quoting (checked: the random delimiter alone still lets the name's lines through).
+
+- [X] Review finding: Containment check fails open when pushed branch tip is absent locally
 
   The post-agent branch check skips any remote branch whose tip commit is not in the local checkout (`git cat-file -e || continue`), so an unverifiable push passes green.
 
@@ -545,7 +549,9 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
   Detail: A push of a sha to a new branch, with the object pruned or missing locally, is skipped. Out-of-folder changes then go undetected. It should fail closed.
 
-- [ ] Review finding: check_folder symlink rejection misses .specify files and most skill files
+  - Done (cycle 22): a moved head whose tip is absent locally fails the check when any of this checkout's reflogs names that tip (pushed from here, then lost); one no reflog names stays another run's move, since failing every absent tip would fail every concurrent lifecycle's push (MF-57). Gate 160 fixture `agent_push_then_lost_tip_fails_closed` removes the pushed commit's object (fails without the fix, checked). The remaining gap (object and every reflog entry both dropped; no stage grants `git gc`/`prune`/`reflog`) is listed in the contract.
+
+- [X] Review finding: check_folder symlink rejection misses .specify files and most skill files
 
   project-name.sh check_folder rejects symlinks only for a fixed list of directories and the speckit skill dirs. It skips .specify/extensions.yml, init-options.json, .specify/scripts/**, and the other files of each skill.
 
@@ -553,7 +559,9 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
   Detail: A project branch that commits P/.specify/extensions.yml or a P/.specify/scripts/bash script as a symlink passes check-folder. The agent is then told to read or run it, and it resolves outside the project. This defeats the 'every piece of Spec Kit state must be real' rule.
 
-- [ ] Review finding: read-spec-meta identity check ignores mismatch between SLUG project and SPEC_DIR project
+  - Done (cycle 22): `check_folder` walks `P/.specify/**` and `P/.claude/skills/speckit-*/**` (globstar, dotglob) and refuses any symlink. `verify-project-path-grammar.py` reject fixtures for a symlinked `extensions.yml`, `init-options.json`, scripts file and a skill's non-SKILL.md file; the accept fixture now carries real copies of each.
+
+- [X] Review finding: read-spec-meta identity check ignores mismatch between SLUG project and SPEC_DIR project
 
   read-spec-meta.sh compares the record's spec_dir only to the project-relative tail (specs/NNN-slug). It never checks that the project in SLUG matches the project in SPEC_DIR.
 
@@ -561,7 +569,9 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
   Detail: SLUG=alpha/001-x with SPEC_DIR=beta/specs/001-x fetches branch alpha but reads beta's file. The record is marked meta_identity_ok=true even though it belongs to another project.
 
-- [ ] Review finding: classify-out-of-boundary-tasks readings() checks only first path segment of multi-segment project
+  - Done (cycle 22): the slug's project (empty for the root) must equal the spec directory's, both read by `project-name.sh parse`; a mismatch or an unparseable name has no record. Root names are not parsed, so root behaviour is unchanged. `verify-spec-meta-self-identity.py` adds alpha-vs-beta, root-vs-beta and alpha-vs-root reads that must find no record, and a same-project read that must pass.
+
+- [X] Review finding: classify-out-of-boundary-tasks readings() checks only first path segment of multi-segment project
 
   readings() decides whether a token could be project-relative by testing only the first path segment under the project, so a multi-segment project prefix such as ideas/alpha/ is mishandled.
 
@@ -569,10 +579,14 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
 
   Detail: Project ideas/alpha has an unrelated ideas/alpha/ideas/ dir. A task naming ideas/alpha/.claude/skills/x then gets both readings, and the project-relative one is classified in reach instead of out of boundary.
 
-- [ ] Review finding: Progress-comment agent in implement.yml has no containment check
+  - Done (cycle 22): the double reading needs the whole project path under the folder (`P/P`), not its first segment. `verify-write-boundary.py` fixtures: `ideas/alpha/ideas/` alone classifies the token out of boundary; `ideas/alpha/ideas/alpha/` keeps both readings. Self-test: 0 failures.
+
+- [X] Review finding: Progress-comment agent in implement.yml has no containment check
 
   The post-progress-comment agent gets the pipeline remove/re-checkout pair but no pre-push hook install and no containment check, and its conclusion is not in the failed-step candidates.
 
   - .github/workflows/implement.yml
 
   Detail: If an allow-list or override lets that agent push or commit, an out-of-folder change is never detected. The cycle and retry agents are covered.
+
+  - Done (cycle 22): "Install containment pre-push hook (progress)" (`containment-hook-progress`, the agent's own conditions plus a non-empty project) directly before the agent, and "Check agent changes stay inside the project folder (progress)" (`containment-progress`, from the hook's pre-agent SHA and helpers-dir) after the re-checkout and remote refresh; it is in the failed-post-agent-step candidates. Gate 160's snapshot-freshness and guard checks pass over it. The `review-step-gating` skill lives under `.claude/`, which this run reads but did not run as a separate session; see the cycle-22 final message.

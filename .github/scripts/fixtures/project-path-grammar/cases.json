@@ -46,9 +46,13 @@
     "symlinked-memory-dir": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas/alpha/.specify/memory"},
     "symlinked-scripts-dir": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.specify/scripts/bash/x.sh", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas/alpha/.specify/scripts"},
     "symlinked-skills-dir": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas/alpha/.claude/skills"},
-    "symlinked-skill-file": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"}
+    "symlinked-skill-file": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"},
+    "symlinked-extensions-yml": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas/alpha/.specify/extensions.yml"},
+    "symlinked-init-options": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas/alpha/.specify/init-options.json"},
+    "symlinked-script-file": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.specify/scripts/bash/common.sh", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas/alpha/.specify/scripts/bash/check-prerequisites.sh"},
+    "symlinked-skill-other-file": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"], "symlink": "ideas/alpha/.claude/skills/speckit-plan/references/notes.md"}
   },
-  "folder_accept": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md"]},
+  "folder_accept": {"project": "ideas/alpha", "files": ["ideas/alpha/.specify/memory/constitution.md", "ideas/alpha/.specify/extensions.yml", "ideas/alpha/.specify/init-options.json", "ideas/alpha/.specify/scripts/bash/check-prerequisites.sh", "ideas/alpha/.claude/skills/speckit-plan/SKILL.md", "ideas/alpha/.claude/skills/speckit-plan/references/notes.md"]},
   "nested": {
     "why": "US5 / FR-004: projects nest at any depth within the 28-character cap; each is checked against its OWN Spec Kit state, never an enclosing project's",
     "tree": ["a/.specify/memory/constitution.md", "a/.claude/skills/speckit-plan/SKILL.md", "a/specs/002-outer/spec.md",

@@ -771,6 +771,23 @@ def check_subfolder_classification(root, script_path=CLASSIFY_SCRIPT):
         if rc != 0 or outputs.get("out-of-boundary-count", "") != str(expect_count):
             failures.append(f"(c-114) {name}: expected count {expect_count}, rc={rc} "
                             f"got {outputs.get('out-of-boundary-count')!r}")
+    # A multi-segment project (`ideas/alpha`): only a subfolder holding the
+    # WHOLE project path (`ideas/alpha/ideas/alpha/`) makes a token read both
+    # ways; an unrelated `ideas/alpha/ideas/` does not.
+    for name, subdir, expect_count in (
+            ("a multi-segment project with an unrelated subfolder named like its first segment strips the token",
+             ("ideas",), 1),
+            ("a multi-segment project holding its whole path as a subfolder reads the token both ways",
+             ("ideas", "alpha"), 0)):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "ideas", "alpha", *subdir))
+            rc, out, outputs = run_classify(
+                "- [ ] T001 edit `ideas/alpha/.claude/skills/x/SKILL.md`", ".claude/",
+                tasks_path=f"{SUBFOLDER_SPEC_DIR}/tasks.md", spec_dir=SUBFOLDER_SPEC_DIR,
+                script_path=script_path, cwd=tmp)
+        if rc != 0 or outputs.get("out-of-boundary-count", "") != str(expect_count):
+            failures.append(f"(c-114) {name}: expected count {expect_count}, rc={rc} "
+                            f"got {outputs.get('out-of-boundary-count')!r}")
     return failures
 
 

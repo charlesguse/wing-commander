@@ -86,6 +86,15 @@ check_folder() {
     found=1
   done
   [ "$found" = 1 ] || fail "project folder '$p' has no .claude/skills/speckit-* skills"
+  # Nor any file below them: .specify/extensions.yml, init-options.json,
+  # .specify/scripts/** and every file of each skill are read or run too.
+  # globstar does not descend through a symlinked directory, and the
+  # directories above were already refused as symlinks.
+  shopt -s globstar dotglob nullglob
+  for d in "$p"/.specify/** "$p"/.claude/skills/speckit-*/**; do
+    [ ! -L "$d" ] || fail "project folder '$p': '${d#"$p"/}' is a symlink"
+  done
+  shopt -u globstar dotglob nullglob
   return 0
 }
 

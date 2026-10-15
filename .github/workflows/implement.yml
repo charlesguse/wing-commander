@@ -3156,6 +3156,18 @@ jobs:
         with:
           intended-turns: 15
 
+      # Containment pre-push hook (spec 114, FR-021) -- see clarify.yml.
+      # The progress agent is read-only by default, but an allow-list or
+      # override can reopen a write or a push, so it is checked like the
+      # cycle and retry agents, from a snapshot of its own.
+      - name: Install containment pre-push hook (progress)
+        id: containment-hook-progress
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true' && steps.tool-args-post-progress-comment.outputs.allowed-tools != '' && steps.project.outputs.project != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          mode: install-pre-push
+          project: ${{ steps.project.outputs.project }}
+
       # FR-025 exclusion (specs/071-agent-push-credential): this step's own
       # default-disallowed-tools already lists Bash(git:*) below -- it
       # never pushes, so the retry-bound prompt paragraph does not apply.
@@ -3248,6 +3260,17 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ env.WC_BOT_TOKEN }}
+
+      # Containment (spec 114, FR-021) -- see clarify.yml.
+      - name: Check agent changes stay inside the project folder (progress)
+        id: containment-progress
+        if: "!cancelled() && steps.progress.outcome != 'skipped' && steps.project.outputs.project != ''"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          project: ${{ steps.project.outputs.project }}
+          base-sha: ${{ steps.containment-hook-progress.outputs.pre-agent-sha }}
+          default-branch: ${{ inputs.default-branch }}
+          helpers-dir: ${{ steps.containment-hook-progress.outputs.helpers-dir }}
 
 
       # Deterministic posting: the agent above only composes the summary —
@@ -3820,7 +3843,7 @@ jobs:
       # classification (*)" step in this job carries continue-on-error
       # (research.md R13, so a non-healthy/exhausted verdict never strands
       # the retry/dispatch logic below it) and is deliberately excluded;
-      # only the two subfolder containment checks (spec 114), "Flip stage
+      # only the three subfolder containment checks (spec 114), "Flip stage
       # label (first cycle)" and "Dispatch next step" can actually
       # hard-fail this job.
       - name: Determine failed post-agent step
@@ -3838,6 +3861,7 @@ jobs:
               {"name": "Re-checkout pipeline repository (post-agent, progress)", "conclusion": "${{ steps.pipeline-recheckout-progress.conclusion }}"},
               {"name": "Check agent changes stay inside the project folder (cycle)", "conclusion": "${{ steps.containment-cycle.conclusion }}"},
               {"name": "Check agent changes stay inside the project folder (retry)", "conclusion": "${{ steps.containment-retry.conclusion }}"},
+              {"name": "Check agent changes stay inside the project folder (progress)", "conclusion": "${{ steps.containment-progress.conclusion }}"},
               {"name": "Flip stage label (first cycle)", "conclusion": "${{ steps.flip-label.conclusion }}"},
               {"name": "Dispatch next step", "conclusion": "${{ steps.dispatch-next.conclusion }}"}
             ]

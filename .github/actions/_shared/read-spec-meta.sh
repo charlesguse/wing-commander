@@ -66,6 +66,24 @@ if [ -z "$SPEC_DIR" ] && [ -n "$SLUG" ]; then
     *) SPEC_DIR="$(bash "$lib" spec-dir "" "$SLUG")" ;;
   esac
 fi
+# The branch is fetched by SLUG's project and the file read from SPEC_DIR's,
+# so the two must name the same project (the root being the empty one): a
+# slug alpha/001-x with spec-dir beta/specs/001-x would read beta's record
+# off alpha's branch. A mismatch, or a name the parser cannot read, has no
+# record here.
+project_of() { # project_of KIND NAME -> its project, or fails
+  local out
+  out="$(bash "$lib" parse "$1" "$2" 2>/dev/null)" || return 1
+  kv project "$out"
+}
+if [ -n "$SLUG" ] && [ -n "$SPEC_DIR" ]; then
+  slug_project="" dir_project=""
+  case "$SLUG" in */*) slug_project="$(project_of slug "$SLUG")" || slug_project="/" ;; esac
+  case "$SPEC_DIR" in specs/*) ;; *) dir_project="$(project_of spec-dir "$SPEC_DIR")" || dir_project="/" ;; esac
+  if [ "$slug_project" = "/" ] || [ "$slug_project" != "$dir_project" ]; then
+    SPEC_DIR=""
+  fi
+fi
 EXPECTED_SPEC_DIR=""
 case "$SPEC_DIR" in
   specs/*) EXPECTED_SPEC_DIR="$SPEC_DIR" ;;
