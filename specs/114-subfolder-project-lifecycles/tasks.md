@@ -518,3 +518,61 @@ Source: maintainer issue-comment on PR #1022 by @charlesguse (lint run 386663334
   - Done (cycle 21): the mutation now anchors on `any(path.startswith(prefix) for prefix in prefixes)` inside `out_of_boundary()`, which runs once per `readings()` path, so the substring relaxation covers both readings; fixture (c) still catches it.
 - [ ] MF-62 Confirm `verify-write-boundary.py --self-test` reports 0 failures. Then run `python .github/scripts/run-local-gates.py` and confirm the whole suite is green, so the lifecycle review gate on this PR can resume. (PR #1022)
   - Progress (cycle 21): `verify-write-boundary.py --self-test` reports 0 failure(s). The full gate suite could not run in this job (no pipeline checkout), so this stays open.
+
+## Review Gate Round 3 Findings
+
+- [ ] Review finding: Checkout guard nested pathspecs delete unrelated tracked files
+
+  pipeline-checkout-guard.sh's new `:(glob)**/.wing-commander-pipeline` pathspecs also match any nested tracked directory of that name in root-only repos, so the guard runs rm -f on those files and fails the job.
+
+  - .github/scripts/pipeline-checkout-guard.sh
+
+  Detail: A root-only repo tracking docs/x/.wing-commander-pipeline/foo makes the listing non-empty, so the guard deletes it and goes red. This breaks the FR-016 root-compat promise.
+
+- [ ] Review finding: Containment output heredoc uses fixed delimiter with agent-controlled names
+
+  The containment action writes outside-path names verbatim into $GITHUB_OUTPUT using the fixed heredoc delimiter WC_EOF, and into $GITHUB_STEP_SUMMARY, so a crafted filename can inject extra outputs or forge the failure report.
+
+  - .github/actions/wing-commander-containment/action.yml
+
+  Detail: A filename containing a newline, WC_EOF, then another line ends the heredoc early. Use a random delimiter or escape the paths.
+
+- [ ] Review finding: Containment check fails open when pushed branch tip is absent locally
+
+  The post-agent branch check skips any remote branch whose tip commit is not in the local checkout (`git cat-file -e || continue`), so an unverifiable push passes green.
+
+  - .github/actions/wing-commander-containment/action.yml
+
+  Detail: A push of a sha to a new branch, with the object pruned or missing locally, is skipped. Out-of-folder changes then go undetected. It should fail closed.
+
+- [ ] Review finding: check_folder symlink rejection misses .specify files and most skill files
+
+  project-name.sh check_folder rejects symlinks only for a fixed list of directories and the speckit skill dirs. It skips .specify/extensions.yml, init-options.json, .specify/scripts/**, and the other files of each skill.
+
+  - .github/actions/_shared/project-name.sh
+
+  Detail: A project branch that commits P/.specify/extensions.yml or a P/.specify/scripts/bash script as a symlink passes check-folder. The agent is then told to read or run it, and it resolves outside the project. This defeats the 'every piece of Spec Kit state must be real' rule.
+
+- [ ] Review finding: read-spec-meta identity check ignores mismatch between SLUG project and SPEC_DIR project
+
+  read-spec-meta.sh compares the record's spec_dir only to the project-relative tail (specs/NNN-slug). It never checks that the project in SLUG matches the project in SPEC_DIR.
+
+  - .github/actions/_shared/read-spec-meta.sh
+
+  Detail: SLUG=alpha/001-x with SPEC_DIR=beta/specs/001-x fetches branch alpha but reads beta's file. The record is marked meta_identity_ok=true even though it belongs to another project.
+
+- [ ] Review finding: classify-out-of-boundary-tasks readings() checks only first path segment of multi-segment project
+
+  readings() decides whether a token could be project-relative by testing only the first path segment under the project, so a multi-segment project prefix such as ideas/alpha/ is mishandled.
+
+  - .github/actions/_shared/classify-out-of-boundary-tasks.sh
+
+  Detail: Project ideas/alpha has an unrelated ideas/alpha/ideas/ dir. A task naming ideas/alpha/.claude/skills/x then gets both readings, and the project-relative one is classified in reach instead of out of boundary.
+
+- [ ] Review finding: Progress-comment agent in implement.yml has no containment check
+
+  The post-progress-comment agent gets the pipeline remove/re-checkout pair but no pre-push hook install and no containment check, and its conclusion is not in the failed-step candidates.
+
+  - .github/workflows/implement.yml
+
+  Detail: If an allow-list or override lets that agent push or commit, an out-of-folder change is never detected. The cycle and retry agents are covered.
