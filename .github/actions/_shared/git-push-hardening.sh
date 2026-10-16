@@ -11,7 +11,9 @@
 #     so neither can add a hook, a credential helper or a URL rewrite;
 #   - core.hooksPath=/dev/null and core.fsmonitor=false are set through
 #     GIT_CONFIG_COUNT, which outranks the repository's own .git/config,
-#     so a planted pre-push hook or fsmonitor command cannot run.
+#     so a planted pre-push hook or fsmonitor command cannot run;
+#   - GIT_NO_REPLACE_OBJECTS=1, so a planted refs/replace/* cannot swap
+#     the commits or trees git reads.
 # The entries are APPENDED after any GIT_CONFIG_KEY_n the caller already
 # set (a container job's safe.directory entry -- see clarify.yml), never
 # written over them. Global and system config are dropped whole, by design
@@ -31,6 +33,7 @@ wc_harden_git_env() {
   GIT_CONFIG_GLOBAL="$(mktemp)"
   export GIT_CONFIG_GLOBAL
   export GIT_CONFIG_NOSYSTEM=1
+  export GIT_NO_REPLACE_OBJECTS=1
   n="${GIT_CONFIG_COUNT:-0}"
   case "$n" in
     '' | *[!0-9]*) n=0 ;;

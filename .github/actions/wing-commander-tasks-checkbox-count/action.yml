@@ -32,7 +32,10 @@ inputs:
       origin/spec/NNN-slug for the pushed tip).
     required: true
   path:
-    description: Path to tasks.md within that ref (e.g. specs/NNN-slug/tasks.md).
+    description: >-
+      Repository-relative path to tasks.md within that ref (e.g.
+      specs/NNN-slug/tasks.md, or P/specs/NNN-slug/tasks.md for a subfolder
+      project).
     required: true
 outputs:
   checked-count:

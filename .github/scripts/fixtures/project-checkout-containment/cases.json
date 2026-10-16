@@ -1,0 +1,44 @@
+{
+  "grants": {
+    "absolute-pipeline-grant-passes": {
+      "project_wired": true,
+      "grant": "Bash(python3 -I ${GITHUB_WORKSPACE}/.wing-commander-pipeline/.github/scripts/git_read.py:*)",
+      "expect": "pass"
+    },
+    "absolute-expression-grant-passes": {
+      "project_wired": true,
+      "grant": "Read(${{ github.workspace }}/.wing-commander-pipeline/**)",
+      "expect": "pass"
+    },
+    "relative-pipeline-grant-refused": {
+      "project_wired": true,
+      "grant": "Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)",
+      "expect": "fail"
+    },
+    "relative-repository-tooling-grant-refused": {
+      "project_wired": true,
+      "grant": "Bash(python .github/scripts/run-local-gates.py)",
+      "expect": "fail"
+    },
+    "absolute-repository-tooling-grant-passes": {
+      "project_wired": true,
+      "grant": "Bash(python ${GITHUB_WORKSPACE}/.github/scripts/run-local-gates.py)",
+      "expect": "pass"
+    },
+    "unwired-root-job-keeps-relative-grant": {
+      "project_wired": false,
+      "grant": "Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*)",
+      "expect": "pass"
+    }
+  },
+  "tool_args": {
+    "project-gets-absolute-twins": {
+      "project": "ideas/alpha",
+      "default_allowed": "Read,Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*),Bash(python .github/scripts/run-local-gates.py:*),Bash(python3 .github/scripts/verify-*),Bash(git status:*)"
+    },
+    "root-composition-unchanged": {
+      "project": "",
+      "default_allowed": "Read,Bash(python3 -I .wing-commander-pipeline/.github/scripts/git_read.py:*),Bash(python .github/scripts/run-local-gates.py:*)"
+    }
+  }
+}

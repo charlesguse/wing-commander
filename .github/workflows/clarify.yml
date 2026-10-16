@@ -421,38 +421,6 @@ jobs:
           kind: info
           summary: "This lifecycle issue is closed — no action was taken."
 
-      # Deterministic fail-fast before any billable work (FR-004, FR-009).
-      - name: Preflight
-        id: preflight
-        if: steps.lifecycle-gate.outputs.is-open == 'true'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
-        with:
-          oauth-token: ${{ secrets.claude-code-oauth-token }}
-          api-key: ${{ secrets.anthropic-api-key }}
-          require-speckit: "true"
-          use-bedrock: ${{ inputs.use-bedrock }}
-          aws-role-arn: ${{ inputs.aws-role-arn }}
-          aws-region: ${{ inputs.aws-region }}
-
-      # Refusal note (research.md D1): the preflight step ran and declined —
-      # always()-gated so it fires regardless of the step's own failure.
-      - name: Report preflight refusal on lifecycle issue
-        if: always() && steps.preflight.outputs.refused == 'true'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
-        with:
-          token: ${{ github.token }}
-          issue-number: ${{ inputs.issue-number }}
-          kind: action
-          summary: "This stage could not start — ${{ steps.preflight.outputs.reason }}"
-
-      - name: Configure AWS credentials for Bedrock
-        if: steps.lifecycle-gate.outputs.is-open == 'true'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
-        with:
-          use-bedrock: ${{ inputs.use-bedrock }}
-          aws-role-arn: ${{ inputs.aws-role-arn }}
-          aws-region: ${{ inputs.aws-region }}
-
       # Event-agnostic (research.md D2): the stage fetches the issue's labels
       # itself instead of reading the caller's event payload.
       - name: Fetch issue labels
@@ -542,6 +510,55 @@ jobs:
           kind: action
           summary: "This stage could not start — ${{ steps.identity.outputs.reason }}"
 
+      # Subfolder project (spec 114, FR-007): the same (project, slug) pair the
+      # parser reads from the lifecycle's spec label. Empty at the repository
+      # root, where nothing below changes.
+      - name: Resolve project
+        id: project
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.ctx.outputs.spec-slug != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ steps.ctx.outputs.spec-slug }}
+          identity-kind: slug
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ github.token }}
+          check-folder: 'false'
+
+      # Deterministic fail-fast before any billable work (FR-004, FR-009).
+      # After "Resolve project" (spec 114, FR-005): a subfolder lifecycle's
+      # Spec Kit state is checked inside its folder, not at the root.
+      - name: Preflight
+        id: preflight
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-preflight
+        with:
+          oauth-token: ${{ secrets.claude-code-oauth-token }}
+          api-key: ${{ secrets.anthropic-api-key }}
+          require-speckit: "true"
+          project: ${{ steps.project.outputs.project }}
+          use-bedrock: ${{ inputs.use-bedrock }}
+          aws-role-arn: ${{ inputs.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
+      # Refusal note (research.md D1): the preflight step ran and declined —
+      # always()-gated so it fires regardless of the step's own failure.
+      - name: Report preflight refusal on lifecycle issue
+        if: always() && steps.preflight.outputs.refused == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "This stage could not start — ${{ steps.preflight.outputs.reason }}"
+
+      - name: Configure AWS credentials for Bedrock
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
+        with:
+          use-bedrock: ${{ inputs.use-bedrock }}
+          aws-role-arn: ${{ inputs.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
       # clean: false — a default `git clean` here would delete the untracked
       # .wing-commander-pipeline checkout the composite steps below still need.
       - name: Checkout draft spec branch as wing-commander-bot
@@ -562,6 +579,17 @@ jobs:
           p=.wing-commander-pipeline; want="$(cd "$GITHUB_WORKSPACE" && pwd -P)/$p"
           if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
           git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
+
+      # Stale-folder check (spec 114, T036): re-validate the recorded folder
+      # on the ref this stage works from; fails naming the folder.
+      - name: Check project folder on the checked-out ref
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.project.outputs.project != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ steps.ctx.outputs.spec-slug }}
+          identity-kind: slug
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ github.token }}
 
       # Recorded before the agent step runs so a later publish call
       # (specs/071-agent-push-credential) can report how many commits, if
@@ -617,6 +645,7 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          project: ${{ steps.project.outputs.project }}
           step-label: "clarify"
 
       - name: Compute agent turn ceiling
@@ -625,6 +654,19 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: ${{ inputs.max-turns }}
+
+      # Containment (spec 114, FR-021) for an agent that pushes itself: the
+      # post-agent check below runs only after a push already left the
+      # runner, so a pre-push hook refuses any push carrying a change
+      # outside the project folder first (wing-commander-containment,
+      # install-pre-push mode). Skipped for a root lifecycle.
+      - name: Install containment pre-push hook
+        id: containment-hook
+        if: steps.project.outputs.project != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          mode: install-pre-push
+          project: ${{ steps.project.outputs.project }}
 
       # (canonical copy: push-credential-retry; do not condense)
       # This step's prompt below carries the retry-bound paragraph for a
@@ -641,7 +683,10 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          SPECIFY_FEATURE_DIRECTORY: ${{ steps.ctx.outputs.spec-dir }}
+          SPECIFY_FEATURE_DIRECTORY: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.ctx.outputs.spec-dir) || steps.ctx.outputs.spec-dir }}
+          # Spec Kit's project-root override (spec 114, research.md D9) -- see
+          # intake.yml. Empty at the repository root.
+          SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           # (canonical copy: synchronous-subagents; do not condense)
           # Force subagents synchronous — headless has no turn-boundary resume,
           # so a backgrounded subagent silently yields an unbuilt deliverable
@@ -679,7 +724,7 @@ jobs:
           prompt: |
             You are the clarification stage of this repository's spec pipeline,
             working on the draft spec in ${{ steps.ctx.outputs.spec-dir }} for
-            lifecycle issue #${{ inputs.issue-number }}.
+            lifecycle issue #${{ inputs.issue-number }}.${{ steps.project.outputs.prompt-paragraph }}
 
             A reply to the clarification questions was posted. Open these two
             files directly with the Read tool:
@@ -783,6 +828,32 @@ jobs:
             --allowedTools "${{ steps.tool-args-clarify.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-clarify.outputs.disallowed-tools }}"
 
+      # Spec 114 (MF-46): the agent can write the pipeline checkout in the
+      # workspace (`git log/diff --output=<path>`), and every step below
+      # runs a composite from it -- the containment check, label first, the
+      # stranded-commit push. For a subfolder lifecycle it is deleted and
+      # checked out again at the job's pinned ref before any of them runs.
+      # always(), not !cancelled(): the always() verdict and metrics steps
+      # below run pipeline code in a cancelled run too, and a checkout is a
+      # read, never a remote rewrite. verify-subfolder-containment.py
+      # (check_pipeline_recheckout) holds every subfolder-capable agent to
+      # this pair.
+      - name: Remove the agent-writable pipeline checkout (post-agent)
+        id: pipeline-rm
+        if: always() && steps.agent.outcome != 'skipped' && steps.project.outputs.project != ''
+        run: rm -rf -- .wing-commander-pipeline
+
+      - name: Re-checkout pipeline repository (post-agent)
+        id: pipeline-recheckout
+        if: always() && steps.agent.outcome != 'skipped' && steps.project.outputs.project != ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
       # !cancelled(), not always() (spec 052, should-fix per maintainer
       # review of PR #407): a run cancelled during the agent step must not
       # still perform a network mint and a remote rewrite in the cancel
@@ -812,6 +883,18 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Containment (spec 114, FR-021): a subfolder lifecycle's agent changes
+      # nothing outside its project folder. Skipped for root lifecycles.
+      - name: Check agent changes stay inside the project folder
+        id: containment
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && steps.project.outputs.project != ''"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          project: ${{ steps.project.outputs.project }}
+          base-sha: ${{ steps.pre-agent.outputs.before-sha }}
+          default-branch: ${{ inputs.default-branch }}
+          helpers-dir: ${{ steps.containment-hook.outputs.helpers-dir }}
+
       # (canonical copy: push-rescue; do not condense)
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
@@ -825,11 +908,12 @@ jobs:
       # failed agent step (FR-019).
       - name: Publish stranded commits (post-agent)
         id: publish-stranded
-        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && steps.containment.outcome != 'failure'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:
           before-sha: ${{ steps.pre-agent.outputs.before-sha }}
+          project: ${{ steps.project.outputs.project }}
 
       # deterministic, transcript-only verdict (healthy/exhausted/failed/unclassifiable) replacing
       # the raw outcome check the action's post-hoc rejection can no longer be trusted to reflect
@@ -1299,6 +1383,9 @@ jobs:
         with:
           candidates-json: >-
             [
+              {"name": "Remove the agent-writable pipeline checkout (post-agent)", "conclusion": "${{ steps.pipeline-rm.conclusion }}"},
+              {"name": "Re-checkout pipeline repository (post-agent)", "conclusion": "${{ steps.pipeline-recheckout.conclusion }}"},
+              {"name": "Check agent changes stay inside the project folder", "conclusion": "${{ steps.containment.conclusion }}"},
               {"name": "Fail on agent API error", "conclusion": "${{ steps.api-error.conclusion }}"},
               {"name": "Fail loud on non-healthy agent verdict", "conclusion": "${{ steps.verdict-fail.conclusion }}"},
               {"name": "Fail on unresolved clarification markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"}
@@ -1404,11 +1491,21 @@ jobs:
         run: |
           spec_slug="$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("spec:"))][0] // "" | sub("^spec:"; "")')"
           echo "slug=$spec_slug" >> "$GITHUB_OUTPUT"
-          if [ -n "$spec_slug" ]; then
-            echo "spec-dir=specs/$spec_slug" >> "$GITHUB_OUTPUT"
-          else
-            echo "spec-dir=" >> "$GITHUB_OUTPUT"
-          fi
+
+      # The label's [P/]NNN-slug names its spec dir [P/]specs/NNN-slug
+      # through the shared parser (spec 114, FR-013). Best-effort: this job
+      # reports a stall, so a name it cannot read leaves the dir empty
+      # rather than failing the report.
+      - name: Resolve spec dir independently
+        id: identity-names
+        if: needs.clarify.outputs.refusal-reason == '' && steps.identity.outputs.slug != ''
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ steps.identity.outputs.slug }}
+          identity-kind: slug
+          token: ${{ github.token }}
+          check-folder: 'false'
 
       # (canonical copy: failed-step-naming; do not condense)
       # FR-004/FR-011 (spec 052, maintainer review of PR #407): a credential
@@ -1439,7 +1536,7 @@ jobs:
         with:
           token: ${{ steps.ctx.outputs.token }}
           issue-number: ${{ inputs.issue-number }}
-          spec-dir: ${{ steps.identity.outputs.spec-dir }}
+          spec-dir: ${{ steps.identity-names.outputs.spec-dir }}
           spec-branch: spec/${{ steps.identity.outputs.slug }}
           stage-label: "stage:clarify"
           reason: ${{ steps.reason.outputs.reason }}

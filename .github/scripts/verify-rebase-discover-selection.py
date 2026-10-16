@@ -121,7 +121,21 @@ def git(cwd, *args):
 
 
 def meta(slug, issue, stage="implement"):
-    return json.dumps({"spec_dir": "specs/" + slug, "issue": issue, "stage": stage})
+    return json.dumps({"spec_dir": "specs/" + slug.rsplit("/", 1)[-1], "issue": issue,
+                       "stage": stage})
+
+
+# spec 114 (FR-007/FR-008): a subfolder project's branch is <prefix>P/NNN-slug,
+# its spec lives at P/specs/NNN-slug, and its spec-meta records the
+# project-relative specs/NNN-slug. A record carrying the P/ prefix fails the
+# self-identity check.
+SUBFOLDER = "ideas/alpha/015-sub"
+SUBFOLDER_BAD = "ideas/alpha/016-bad-meta"
+# T066/MF-21: names come from wing-commander-project's batch mode. A P/ name
+# the parser refuses is excluded; a root name it refuses reads as it always
+# did (FR-016).
+SUBFOLDER_UNPARSED = "ideas/alpha/Not-A-Lifecycle"
+ROOT_UNPARSED = "hand-made"
 
 
 # slug -> lifecycle issue number. Every branch carries a valid spec-meta.
@@ -140,7 +154,13 @@ BRANCHES = {
     "012-other-bot": 12,       # #831: another App's marker with current SHAs: selected
     "013-fork-pr-only": 13,    # #916: closed, only a fork's same-named PR open: excluded
     "014-login-not-bot": 14,   # #831: the App's login on a non-Bot user (synthetic): selected
+    SUBFOLDER: 15,             # spec 114: a subfolder project's branch: selected
+    SUBFOLDER_BAD: 16,         # spec 114: spec-meta records P/specs/...: excluded
+    SUBFOLDER_UNPARSED: 17,    # T066: the parser refuses a P/ name: excluded, warned
+    ROOT_UNPARSED: 18,         # T066: a root name the parser refuses: selected as before
 }
+
+PROJECT_ACTION = ".github/actions/wing-commander-project/action.yml"
 
 
 def build(tmp):
@@ -159,15 +179,21 @@ def build(tmp):
     tips = {}
     for slug, number in BRANCHES.items():
         git(work, "checkout", "-q", "-b", "spec/" + slug, "main")
-        d = os.path.join(work, "specs", slug)
+        project, _, leaf = slug.rpartition("/")
+        d = os.path.join(work, project, "specs", leaf)
         os.makedirs(d)
-        open(os.path.join(d, "spec-meta.json"), "w").write(meta(slug, number))
-        git(work, "add", "specs")
+        record = meta(slug, number)
+        if slug == SUBFOLDER_BAD:
+            record = json.dumps({"spec_dir": project + "/specs/" + leaf, "issue": number,
+                                 "stage": "implement"})
+        open(os.path.join(d, "spec-meta.json"), "w").write(record)
+        git(work, "add", "-A")
         git(work, "commit", "-q", "-m", slug)
         git(work, "push", "-q", "origin", "spec/" + slug)
         tips[slug] = git(work, "rev-parse", "HEAD")
     git(work, "checkout", "-q", "main")
     shutil.rmtree(os.path.join(work, "specs"), ignore_errors=True)
+    shutil.rmtree(os.path.join(work, "ideas"), ignore_errors=True)
     return work, tips, git(work, "rev-parse", "main")
 
 
@@ -217,6 +243,23 @@ def fixture(tips, main):
     }
 
 
+def names_json(work, runner_temp):
+    """The discover job's own two steps before "Select in-flight branches":
+    "List in-flight branch names" against the real origin, then
+    wing-commander-project's batch step over that list, as shipped."""
+    listing = find_step(REBASE, "List in-flight branch names")["run"]
+    rc, output, outputs, _ = run_step(BASH, listing, work, {"SPEC_PREFIX": "spec/"}, runner_temp)
+    if rc != 0:
+        sys.exit("::error::verify-rebase-discover-selection: the list step failed rc={0}\n{1}".format(rc, output))
+    batch = find_step(PROJECT_ACTION, "Resolve names (batch)")["run"]
+    env = {"IDENTITIES_JSON": outputs.get("slugs", ""), "IDENTITY_KIND": "slug",
+           "GITHUB_ACTION_PATH": os.path.abspath(os.path.dirname(PROJECT_ACTION))}
+    rc, output, outputs, _ = run_step(BASH, batch, work, env, runner_temp)
+    if rc != 0:
+        sys.exit("::error::verify-rebase-discover-selection: the batch names step failed rc={0}\n{1}".format(rc, output))
+    return outputs.get("names-json", "")
+
+
 def run(script, tmp, work, fx):
     bindir = os.path.join(tmp, "bin")
     os.makedirs(bindir, exist_ok=True)
@@ -235,7 +278,7 @@ def run(script, tmp, work, fx):
         "PATH": bindir + os.pathsep + os.environ["PATH"],
         "GH_TOKEN": "x", "DB": "main", "SPEC_PREFIX": "spec/", "BOT_LOGIN": BOT,
         "GITHUB_REPOSITORY": REPO, "STUB_PY": stub_py, "STUB_FIXTURE": fx_path,
-        "STUB_LOG": log,
+        "STUB_LOG": log, "NAMES_JSON": names_json(work, runner_temp),
     }
     rc, output, outputs, summary = run_step(BASH, script, work, env, runner_temp)
     return rc, output, outputs, summary
@@ -267,9 +310,25 @@ def suite(script, quiet=False):
             chosen = None
         want = ["001-open", "003-closed-open-pr", "005-forged-marker",
                 "007-issue-read-fails", "008-pr-read-fails", "010-stale-last",
-                "011-comments-fail", "012-other-bot", "014-login-not-bot"]
+                "011-comments-fail", "012-other-bot", "014-login-not-bot", ROOT_UNPARSED, SUBFOLDER]
         ck("selects exactly the in-flight branches", chosen == want,
            "selected {0}, want {1}".format(chosen, want))
+        ck("T066: a P/ name the project parser refuses is excluded, warned",
+           "spec/{0} excluded — the project parser does not read it".format(SUBFOLDER_UNPARSED) in output, output)
+        try:
+            sub = [b for b in json.loads(outputs.get("branches", "null")) if b["slug"] == SUBFOLDER]
+        except (TypeError, ValueError):
+            sub = []
+        sub = sub[0] if sub else {}
+        ck("spec 114: a subfolder branch carries its repository-relative spec_dir",
+           sub.get("spec_dir") == "ideas/alpha/specs/015-sub", sub)
+        ck("spec 114: a subfolder branch carries its project",
+           sub.get("project") == "ideas/alpha", sub)
+        ck("spec 114: a subfolder branch's artifact_key is slash-free",
+           sub.get("artifact_key") == "ideas__alpha__015-sub", sub)
+        ck("spec 114: a spec-meta recording P/specs/... fails the self-identity check",
+           "spec/{0} excluded".format(SUBFOLDER_BAD) in output
+           and "does not identify specs/016-bad-meta" in output, output)
         ck("#916: a closed issue with no open PR is noted, not warned",
            "spec/002-parked` excluded from auto-rebase: its lifecycle issue (#2) is closed" in summary
            and "spec/002-parked excluded" not in output,
@@ -307,6 +366,18 @@ MUTATIONS = (
      'echo "::warning::wing-commander rebase discover: ${SPEC_PREFIX}$1 kept', 'true "'),
     ("#831 first marker read instead of the last",
      "| last // empty')", "| first // empty')"),
+    ("spec 114 subfolder spec dir read at the root",
+     'spec_dir="${project:+$project/}$rel_dir"', 'spec_dir="$rel_dir"'),
+    ("spec 114 self-identity compares the repository-relative dir",
+     'if [ "$meta_dir" != "$rel_dir" ]; then', 'if [ "$meta_dir" != "$spec_dir" ]; then'),
+    ("spec 114 artifact_key keeps the slash",
+     'artifact_key: ($slug | gsub("/"; "__"))', 'artifact_key: $slug'),
+    ("spec 114 project not emitted",
+     'project: $project,', 'project: "",'),
+    ("T066 the parsed project dropped",
+     "project=\"$(printf '%s' \"$names\" | jq -r '.project')\"", 'project=""'),
+    ("T066 a refused P/ name read at the root",
+     "*/*)\n", "*/*/*/*/*)\n"),
 )
 
 

@@ -80,6 +80,32 @@ if [ $# -lt 4 ]; then
   exit 1
 fi
 
+# readings() probes the project folder with os.path.isdir relative to cwd, so
+# a run from anywhere but the checkout's root would silently misclassify
+# tokens like app/.claude/x. Assert the invariant instead of assuming it: when
+# cwd is inside a git work tree it must be that tree's top level. (Outside any
+# work tree -- git says "not a git repository" -- there is nothing to compare
+# against and the check is skipped; any other git failure (broken git) fails
+# closed rather than skipping. safe.directory=* keeps a checkout owned by a
+# different user, as in container jobs, from tripping "dubious ownership" --
+# this probe only reads the top level, so trusting the directory is harmless.)
+# Exit 3 (not the usage exit 1) so the write-boundary composite can annotate
+# it as an ::error:: rather than a generic crash warning.
+_git_err="$(mktemp)"
+if ! _toplevel="$(git -c safe.directory='*' rev-parse --show-toplevel 2>"$_git_err")"; then
+  _toplevel=""
+  if ! grep -q 'not a git repository' "$_git_err"; then
+    echo "classify-out-of-boundary-tasks.sh: cannot verify the checkout root: $(cat "$_git_err")" >&2
+    rm -f "$_git_err"
+    exit 3
+  fi
+fi
+rm -f "$_git_err"
+if [ -n "$_toplevel" ] && [ "$(cd "$_toplevel" && pwd -P)" != "$(pwd -P)" ]; then
+  echo "classify-out-of-boundary-tasks.sh: must run at the checkout root ($_toplevel), not $(pwd -P)" >&2
+  exit 3
+fi
+
 # review-gate-round-3: normalize each no-write-paths entry through the ONE
 # shared helper also called by wing-commander-tool-args/action.yml's
 # compose step, before this value ever reaches the Python classifier below
@@ -110,12 +136,36 @@ tasks_path = os.environ["TASKS_PATH"]
 # spec_dir is accepted for interface parity with the composite's own
 # inputs (contracts/write-boundary-mechanism.md §3) -- every findings-json
 # field this script emits is anchored to tasks_path, per data-model.md.
-_spec_dir = os.environ.get("SPEC_DIR", "")
+spec_dir = os.environ.get("SPEC_DIR", "")
 
-def normalize_token(token):
+# Spec 114: a subfolder project's spec_dir is "<P>/specs/<NNN-slug>" and its
+# no-write-paths are project-relative (specs/, .claude/ ...). A task line may
+# name a path either project-relative or repository-relative ("<P>/specs/x"),
+# so the project prefix is stripped before the comparison and both forms
+# classify like their root equivalents. Root (no prefix) is unchanged.
+project_prefix = ""
+if spec_dir.startswith("/") is False and "/specs/" in "/" + spec_dir:
+    head = ("/" + spec_dir).split("/specs/", 1)[0].lstrip("/")
+    if head:
+        project_prefix = head + "/"
+
+def readings(token):
+    """The project-relative paths a token can name. A project-relative token
+    can itself start with the whole project path (project `app`,
+    `app/.claude/x` naming `app/app/.claude/x`; project `ideas/alpha`,
+    `ideas/alpha/x` naming `ideas/alpha/ideas/alpha/x`): when the project
+    folder has that whole path as a subdirectory -- every segment, not only
+    the first -- the token is read both ways, and it is out of boundary
+    only when both readings are. The script runs at the checkout's root
+    (wing-commander-write-boundary)."""
     while token.startswith("./"):
         token = token[2:]
-    return token
+    if project_prefix and token.startswith(project_prefix):
+        stripped = token[len(project_prefix):]
+        if os.path.isdir(project_prefix + project_prefix.rstrip("/")):
+            return [stripped, token]
+        return [stripped]
+    return [token]
 
 
 # NO_WRITE_PATHS has already been through the shared normalize-write-path-
@@ -138,8 +188,8 @@ for line in lines:
         continue  # empty boundary -- nothing ever classifies (FR-015)
 
     def out_of_boundary(token):
-        normalized = normalize_token(token)
-        return any(normalized.startswith(prefix) for prefix in prefixes)
+        return all(any(path.startswith(prefix) for prefix in prefixes)
+                   for path in readings(token))
 
     if not all(out_of_boundary(t) for t in candidates):
         continue  # at least one candidate is in-reach -- falls through

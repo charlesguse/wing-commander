@@ -10,7 +10,7 @@ description: >
 
 inputs:
   spec-dir:
-    description: "specs/NNN-slug -- identifies which ledger entry to use."
+    description: "Repository-relative [P/]specs/NNN-slug -- identifies which ledger entry to use (an opaque key; root values are unchanged)."
     required: true
   kind:
     description: "One of act, dispatch, implement."

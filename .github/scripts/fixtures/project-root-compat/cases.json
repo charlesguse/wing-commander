@@ -1,0 +1,23 @@
+{
+  "why": "FR-016 / SC-003: a root adopter sees exactly the names, groups and records it saw before spec 114",
+  "env": {"SPEC_DRAFT_PREFIX": "spec-draft/", "SPEC_PREFIX": "spec/", "IMPL_PREFIX": "implement/"},
+  "names": [
+    {"kind": "branch", "name": "spec-draft/012-root-login", "slug": "012-root-login"},
+    {"kind": "branch", "name": "spec/012-root-login", "slug": "012-root-login"},
+    {"kind": "branch", "name": "implement/012-root-login-iter4", "slug": "012-root-login"},
+    {"kind": "label", "name": "spec:012-root-login", "slug": "012-root-login"},
+    {"kind": "slug", "name": "012-root-login", "slug": "012-root-login"},
+    {"kind": "spec-dir", "name": "specs/012-root-login", "slug": "012-root-login"}
+  ],
+  "spec_dir": "specs/012-root-login",
+  "slug_budget": 44,
+  "routing_off": {
+    "routing_label_prefix": "",
+    "labels": ["spec-request", "node:ideas/alpha"],
+    "numbering_group": "wing-commander-intake"
+  },
+  "pre_feature_spec_meta": {
+    "path": "specs/012-root-login/spec-meta.json",
+    "record": {"issue": 12, "spec_dir": "specs/012-root-login", "feature_num": "012", "stage": "implement", "iteration": 3, "spec_branch": "spec/012-root-login"}
+  }
+}

@@ -4635,6 +4635,45 @@ jobs:
         if: "!cancelled()"
         run: bash .github/scripts/wing-commander-fold-queue-ledger-tests/run-tests.sh
 
+      # Gates 157-164 — specs/114-subfolder-project-lifecycles (FR-002,
+      # FR-005, FR-007, FR-013, FR-014, FR-016, FR-019, FR-021, FR-022,
+      # FR-025). Gate 157 drives _shared/project-name.sh over the path
+      # grammar, the folder rules (symlinks included), the label budget and
+      # the routing-prefix overlap rules; Gate 158 drives its name parser
+      # over every name kind and asserts one lifecycle parses to one
+      # (project, slug) pair. Gate 159 keeps root-only path patterns and
+      # inline project splits out of project-aware files; Gate 160 runs the
+      # containment composite, the project-aware denies and the rescue's
+      # scope; Gate 161 keeps pipeline-checkout grants workspace-rooted;
+      # Gate 162 drives intake's routing and label-first publish; Gate 163
+      # scopes feature numbering and spec collisions to a project; Gate 164
+      # checks spec-meta's self-identity in a project and after graduation.
+      # Fixtures live beside each gate under .github/scripts/fixtures/.
+      - name: Gate 157 — project path grammar, folder rules, label budget and routing prefix
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-project-path-grammar.py
+      - name: Gate 158 — one parser reads every project name kind
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-project-name-parser.py
+      - name: Gate 159 — project-aware files hold no root-only path pattern
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-project-single-home.py
+      - name: Gate 160 — subfolder containment (project-aware denies, outside-folder guard)
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-subfolder-containment.py
+      - name: Gate 161 — pipeline-checkout grants stay workspace-rooted under a project folder
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-pipeline-checkout-containment.py
+      - name: Gate 162 — intake routing (prefix, label count, folder, re-run refusal, slug budget)
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-intake-routing.py
+      - name: Gate 163 — per-project feature numbering and spec-collision scope
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-project-numbering.py
+      - name: Gate 164 — spec-meta self-identity in a project and after graduation
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-spec-meta-self-identity.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
