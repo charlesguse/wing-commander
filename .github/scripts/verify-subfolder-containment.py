@@ -1059,11 +1059,22 @@ def check_trusted_checkout_excluded(errors):
         if "*.log" not in lines or "/.wing-commander-pipeline/" not in lines:
             errors.append(f"trusted checkout exclude: appending the exclude line corrupted an info/exclude with no trailing newline: {lines!r}")
     # Single home: the guard writes info/exclude in exactly one place (#1043
-    # pasted a second copy beside #1030's).
+    # pasted a second copy beside #1030's). The counter must ignore a comment
+    # that quotes the path and see a write however it spells the path.
+    if exclude_sites("# via --git-path info/exclude\nx=\"$(git rev-parse --git-path info/exclude)\"\n") != 1 \
+            or exclude_sites("x=\"$(git rev-parse --git-path info/exclude)\"\necho >> .git/info/exclude\n") != 2:
+        errors.append("trusted checkout exclude: the single-home counter miscounts its fixtures")
     with open(GUARD, encoding="utf-8") as fh:
-        sites = fh.read().count("--git-path info/exclude")
+        sites = exclude_sites(fh.read())
     if sites != 1:
-        errors.append(f"trusted checkout exclude: {GUARD} resolves info/exclude in {sites} places; keep exactly one")
+        errors.append(f"trusted checkout exclude: {os.path.relpath(GUARD, ROOT)} names info/exclude "
+                      f"on {sites} code lines; keep exactly one")
+
+
+def exclude_sites(text):
+    """Code (non-comment) lines of a shell script that name info/exclude."""
+    return sum(1 for line in text.splitlines()
+               if "info/exclude" in line and not line.lstrip().startswith("#"))
 
 
 def rev(cwd, ref):
