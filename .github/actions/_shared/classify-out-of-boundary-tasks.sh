@@ -80,6 +80,32 @@ if [ $# -lt 4 ]; then
   exit 1
 fi
 
+# readings() probes the project folder with os.path.isdir relative to cwd, so
+# a run from anywhere but the checkout's root would silently misclassify
+# tokens like app/.claude/x. Assert the invariant instead of assuming it: when
+# cwd is inside a git work tree it must be that tree's top level. (Outside any
+# work tree -- git says "not a git repository" -- there is nothing to compare
+# against and the check is skipped; any other git failure (broken git) fails
+# closed rather than skipping. safe.directory=* keeps a checkout owned by a
+# different user, as in container jobs, from tripping "dubious ownership" --
+# this probe only reads the top level, so trusting the directory is harmless.)
+# Exit 3 (not the usage exit 1) so the write-boundary composite can annotate
+# it as an ::error:: rather than a generic crash warning.
+_git_err="$(mktemp)"
+if ! _toplevel="$(git -c safe.directory='*' rev-parse --show-toplevel 2>"$_git_err")"; then
+  _toplevel=""
+  if ! grep -q 'not a git repository' "$_git_err"; then
+    echo "classify-out-of-boundary-tasks.sh: cannot verify the checkout root: $(cat "$_git_err")" >&2
+    rm -f "$_git_err"
+    exit 3
+  fi
+fi
+rm -f "$_git_err"
+if [ -n "$_toplevel" ] && [ "$(cd "$_toplevel" && pwd -P)" != "$(pwd -P)" ]; then
+  echo "classify-out-of-boundary-tasks.sh: must run at the checkout root ($_toplevel), not $(pwd -P)" >&2
+  exit 3
+fi
+
 # review-gate-round-3: normalize each no-write-paths entry through the ONE
 # shared helper also called by wing-commander-tool-args/action.yml's
 # compose step, before this value ever reaches the Python classifier below
