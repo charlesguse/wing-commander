@@ -968,6 +968,15 @@ def check_root_compat(bindir, errors):
     group = interpolate(doc["jobs"]["intake"]["concurrency"]["group"], ctx)
     if group != off["numbering_group"]:
         errors.append(f"root-compat: routing-off numbering group {group!r}, want {off['numbering_group']!r}")
+    # The routing gate is skipped, so no claim was taken: release-claim stays
+    # off for every intake result, or it runs `--remove-label ""` (FR-016).
+    rc_if = " ".join(str(doc["jobs"]["release-claim"].get("if", "")).split())
+    for result in ("success", "failure", "cancelled", "skipped"):
+        rctx = {"always()": True, "cancelled()": False, "needs.verify-image-prerequisites.result": "skipped",
+                "needs.routing-gate.outputs.claim-label": "", "needs.intake.result": result,
+                "needs.intake.outputs.claim-released": ""}
+        if evaluate_if(rc_if, rctx):
+            errors.append(f"root-compat: release-claim runs with routing off for intake result={result!r} ({rc_if!r})")
 
 
 def check_created(data, steps, bindir, errors):
