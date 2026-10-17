@@ -3162,17 +3162,35 @@ jobs:
           } > "$RUNNER_TEMP/pr-body.md"
           url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$DB" \
             --head "$BRANCH" --title "chore: bump Spec Kit to v$CANDIDATE" --body-file "$RUNNER_TEMP/pr-body.md")"
-          gh issue comment "$ISSUE" --body "Opened $url — awaiting review and merge (this feature never merges its own PR)."
           # specs/115-board-loop-self-merge FR-013: the verification that just
           # passed is recorded on the PR as a hidden-marker comment bound to
-          # its head SHA; board-loop's merge job reads it back (bot-authored
-          # comments only) as the gate for merging this PR. This stage still
-          # never merges it.
+          # the commit it ran on -- the local branch just pushed, never a
+          # re-read of the PR's head, which a push after `gh pr create` could
+          # have moved to a commit nobody verified. board-loop's merge job
+          # reads it back (bot-authored comments only) as the gate for merging
+          # this PR; this stage still never merges it. The record is the PR's
+          # only route to merging, so a transient failure to post it is
+          # retried before anything else is said, and a lasting one fails
+          # this step loudly and says on the issue that the PR is a human
+          # merge (a re-run would decline the candidate as already proposed).
           pr_number="${url##*/}"
-          head_sha="$(gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
+          head_sha="$(git rev-parse "refs/heads/$BRANCH")"
           record="$(python3 -I .wing-commander-pipeline/.github/scripts/board_item_marker.py \
             --bump-verification "$head_sha" "$TIER" passed "$GITHUB_RUN_ID")"
-          gh pr comment "$pr_number" --repo "$GITHUB_REPOSITORY" --body "$record"
+          posted=false
+          for delay in 0 5 15; do
+            sleep "$delay"
+            if gh pr comment "$pr_number" --repo "$GITHUB_REPOSITORY" --body "$record"; then
+              posted=true
+              break
+            fi
+          done
+          if [ "$posted" != true ]; then
+            echo "::error::act: opened $url but could not post its wc-bump-verification record after 3 attempts -- the board loop will not merge it; it awaits a human merge."
+            gh issue comment "$ISSUE" --body "Opened $url, but its verification record could not be posted, so the board loop will not merge it — awaiting a human review and merge (this feature never merges its own PR)." || true
+            exit 1
+          fi
+          gh issue comment "$ISSUE" --body "Opened $url — awaiting review and merge (this feature never merges its own PR)."
           echo "act: opened $url for v$CANDIDATE." >> "$GITHUB_STEP_SUMMARY"
 
       # T017: verification failed — .specify/init-options.json is left
