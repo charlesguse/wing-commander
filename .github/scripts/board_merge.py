@@ -257,10 +257,16 @@ def decide(payload):
                          bool(payload["paused"]), bool(payload["switch_on"]))
 
 
+def _not_merged_reason(decision):
+    """The unmet condition; a decision that allowed the merge but whose PR
+    was merged by someone else, or at another head, has none, so it is named."""
+    return decision.get("unmet_reason") or "merged_elsewhere"
+
+
 def outcome_record(decision, outcome, refusal_class=None):
     """The MERGE_OUTCOME_MARKER payload for one announcement."""
     reason = refusal_class if outcome in ("refused", "transient") else (
-        decision.get("unmet_reason") if outcome == "not-merged" else None)
+        _not_merged_reason(decision) if outcome == "not-merged" else None)
     return {"head_sha": decision.get("head_sha"), "class": decision.get("class"),
             "outcome": outcome, "reason": reason}
 
@@ -319,7 +325,8 @@ def render_announcement(decision, outcome, snapshot=None, merge_sha=None, refusa
     quoted = _unfence((stderr or "").strip())
     if outcome == "merged":
         text = ("Merged ({0} class) at head_sha {1}; squash commit {2}.\n\nConditions: {3}.\n\n"
-                "Proof: {4}.".format(klass, head, merge_sha, results, prove_disposition(snapshot or {})))
+                "Proof: {4}.".format(klass, head, merge_sha or "(not yet reported by GitHub)", results,
+                                     prove_disposition(snapshot or {})))
     elif outcome == "refused":
         text = ("GitHub refused the merge of head_sha {0} ({1} class), refusal_class {2}:\n\n```\n{3}\n```\n\n"
                 "Nothing reached main by another route; handed to a maintainer.".format(
@@ -332,7 +339,7 @@ def render_announcement(decision, outcome, snapshot=None, merge_sha=None, refusa
                     head, klass, refusal_class, quoted, after))
     else:
         text = ("Not merged ({0} class) at head_sha {1}: unmet condition `{2}`.\n\nConditions: {3}.".format(
-            klass, head, decision.get("unmet_reason"), results))
+            klass, head, _not_merged_reason(decision), results))
     record = json.dumps(outcome_record(decision, outcome, refusal_class), sort_keys=True)
     return "{0}\n\n<!-- {1}: {2} -->".format(_defang(text), MERGE_OUTCOME_MARKER, record)
 
