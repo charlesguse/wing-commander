@@ -1710,6 +1710,20 @@ jobs:
           spec-dir: ${{ steps.spec.outputs.spec-dir }}
           tasks-path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
 
+      # specs/117-implement-stall-handoff (FR-005): validates the agent's
+      # optional blocker record and hands back the stop-rule script that
+      # "Read back cycle outcome" below runs. The rule itself lives only in
+      # _shared/decide-implement-outcome.sh -- see
+      # wing-commander-implement-outcome.
+      - name: Validate implement blocker (cycle)
+        id: blocker-cycle
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-implement-outcome
+        with:
+          blocker-path: ${{ steps.ctx.outputs.runner-temp }}/implement-blocker.json
+          ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+
       # FR-008 (spec 052): the WC_BOT_TOKEN relay above keeps every step
       # after each agent step credentialed. The agent step's OWN push
       # credential while it is still running is covered separately --
@@ -1737,6 +1751,13 @@ jobs:
           CHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.checked-count }}
           UNCHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.unchecked-count }}
           REMAINING_TIP: ${{ steps.checkbox-tip-cycle.outputs.unchecked-items }}
+          IMPL_CHECKED_BASE: ${{ steps.checkbox-base-cycle.outputs.impl-checked-count }}
+          IMPL_CHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-checked-count }}
+          IMPL_UNCHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-unchecked-count }}
+          MAX_ITERATIONS: ${{ steps.cap.outputs.max }}
+          BLOCKER_VALID: ${{ steps.blocker-cycle.outputs.blocker-valid }}
+          BLOCKER_TEXT: ${{ steps.blocker-cycle.outputs.blocker-text }}
+          DECIDE_SCRIPT: ${{ steps.blocker-cycle.outputs.decide-script }}
           WRITE_BOUNDARY_ALL_OOB: ${{ steps.write-boundary-cycle.outputs.all-unchecked-out-of-boundary }}
           WRITE_BOUNDARY_FINDINGS_JSON: ${{ steps.write-boundary-cycle.outputs.findings-json }}
           # The second alternative rides only on a RESOLVED slug: with an
@@ -1820,43 +1841,27 @@ jobs:
           fi
           echo "ok=$ok" >> "$GITHUB_OUTPUT"
           echo "truncated=$truncated" >> "$GITHUB_OUTPUT"
-          converged=""
           converge_sha=""
-          handoff=false
-          if [ "$ok" = "true" ] && [ "$truncated" = "true" ]; then
-            converged=false
-          elif [ "$ok" = "true" ]; then
+          if [ "$ok" = "true" ] && [ "$truncated" != "true" ]; then
             while read -r sha subject; do
               case "$subject" in converge:*) converge_sha="$sha"; break ;; esac
             done < <(git log --format='%H %s' "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" -- "$SPEC_DIR/tasks.md")
-            # FR-010a (spec 059): the FR-010 hand-off's progress test --
-            # reuses the identical checked-count comparison Arm A above
-            # already performs, now run unconditionally rather than only
-            # inside the VERDICT=="exhausted" branch (research.md D1).
-            if [ "${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}" ]; then
-              progressed=true
-            else
-              progressed=false
-            fi
-            # FR-001/FR-002/FR-010b (spec 059): zero unchecked tasks at the
-            # pushed tip wins regardless of whether a converge: commit
-            # landed — replacing "no converge commit ⇒ converged" (spec
-            # 057's failure: a cycle can stop healthy with the loop's own
-            # convergence pass never reached, leaving tasks.md untouched).
-            if [ "${UNCHECKED_TIP:-1}" -eq 0 ]; then
-              converged=true
-            else
-              converged=false
-            fi
           fi
-          # FR-010 (spec 059): a healthy cycle that makes no progress and
-          # lands no converge: commit hands off to finalize instead of
-          # looping to the iteration cap or being reported converged.
-          # FR-010b already decided converged=true above before progressed
-          # is even consulted, so handoff is never true when converged=true.
-          if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ] && [ "$progressed" = "false" ] && [ -z "$converge_sha" ]; then
-            handoff=true
-          fi
+          # specs/117-implement-stall-handoff (FR-003..FR-006): converged,
+          # progressed and handoff come from the one shared stop rule
+          # (decide-implement-outcome.sh, reached through
+          # wing-commander-implement-outcome). Counts are implementation
+          # tasks only, so a standing instruction or a [maintainer] task can
+          # neither hold the loop open nor count as progress, and a healthy
+          # cycle that checked nothing new now hands off only on a validated
+          # blocker or the iteration cap.
+          decision="$(OK="$ok" TRUNCATED="$truncated" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::error::decide-implement-outcome.sh failed"; exit 1; }
+          pick() { printf '%s\n' "$decision" | sed -n "s/^$1=//p"; }
+          converged="$(pick converged)"
+          progressed="$(pick progressed)"
+          handoff="$(pick handoff)"
+          stall_reason="$(pick stall-reason)"
+          stall_comment="$(pick stall-comment)"
           # specs/090-stage-write-boundary (FR-007/FR-011, research.md D5;
           # PR #836 review, item 2): routed = ok && !truncated &&
           # all-unchecked-out-of-boundary -- deliberately NOT gated on spec
@@ -1892,7 +1897,7 @@ jobs:
               routed_titles=$(printf '%s' "$WRITE_BOUNDARY_FINDINGS_JSON" | jq -r '[.[].title] | join("; ")')
               reason="the only remaining work is outside the implement stage's write boundary, so the loop is ending here rather than dispatching another cycle: $routed_titles"
             elif [ "$handoff" = "true" ]; then
-              reason="the cycle checked nothing new, so the loop is ending here rather than dispatching another cycle"
+              reason="$stall_reason, so the loop is ending here rather than dispatching another cycle"
             else
               parts=()
               if [ -n "$converge_sha" ]; then
@@ -1903,8 +1908,10 @@ jobs:
               fi
               if [ "${#parts[@]}" -eq 2 ]; then
                 reason="${parts[0]} and ${parts[1]}"
-              else
+              elif [ "${#parts[@]}" -eq 1 ]; then
                 reason="${parts[0]}"
+              else
+                reason="the cycle checked nothing new and recorded no blocker, so the next cycle runs"
               fi
             fi
           fi
@@ -1912,6 +1919,7 @@ jobs:
           echo "converged=$converged" >> "$GITHUB_OUTPUT"
           echo "progressed=$progressed" >> "$GITHUB_OUTPUT"
           echo "handoff=$handoff" >> "$GITHUB_OUTPUT"
+          echo "stall-comment=$stall_comment" >> "$GITHUB_OUTPUT"
           echo "routed=$routed" >> "$GITHUB_OUTPUT"
           echo "write-boundary-findings-json=$WRITE_BOUNDARY_FINDINGS_JSON" >> "$GITHUB_OUTPUT"
           echo "Cycle: tasks.md unchecked-count at tip = ${UNCHECKED_TIP:-0}, progressed=${progressed:-n/a}." >> "$GITHUB_STEP_SUMMARY"
@@ -2616,6 +2624,17 @@ jobs:
           spec-dir: ${{ steps.spec.outputs.spec-dir }}
           tasks-path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
 
+      # specs/117-implement-stall-handoff (FR-005): mirrors the cycle arm's
+      # blocker validation above -- see "Validate implement blocker (cycle)".
+      - name: Validate implement blocker (retry)
+        id: blocker-retry
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-implement-outcome
+        with:
+          blocker-path: ${{ steps.ctx.outputs.runner-temp }}/implement-blocker.json
+          ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
+          path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+
       - name: Read back retry outcome
         id: retry-outcome
         shell: bash
@@ -2639,6 +2658,13 @@ jobs:
           CHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.checked-count }}
           UNCHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.unchecked-count }}
           REMAINING_TIP: ${{ steps.checkbox-tip-retry.outputs.unchecked-items }}
+          IMPL_CHECKED_BASE: ${{ steps.checkbox-base-retry.outputs.impl-checked-count }}
+          IMPL_CHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-checked-count }}
+          IMPL_UNCHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-unchecked-count }}
+          MAX_ITERATIONS: ${{ steps.cap.outputs.max }}
+          BLOCKER_VALID: ${{ steps.blocker-retry.outputs.blocker-valid }}
+          BLOCKER_TEXT: ${{ steps.blocker-retry.outputs.blocker-text }}
+          DECIDE_SCRIPT: ${{ steps.blocker-retry.outputs.decide-script }}
           WRITE_BOUNDARY_ALL_OOB: ${{ steps.write-boundary-retry.outputs.all-unchecked-out-of-boundary }}
           WRITE_BOUNDARY_FINDINGS_JSON: ${{ steps.write-boundary-retry.outputs.findings-json }}
         run: |
@@ -2716,45 +2742,22 @@ jobs:
           fi
           echo "ok=$ok" >> "$GITHUB_OUTPUT"
           echo "truncated=$truncated" >> "$GITHUB_OUTPUT"
-          converged=""
           converge_sha=""
-          handoff=false
-          if [ "$ok" = "true" ] && [ "$truncated" = "true" ]; then
-            converged=false
-          elif [ "$ok" = "true" ]; then
+          if [ "$ok" = "true" ] && [ "$truncated" != "true" ]; then
             while read -r sha subject; do
               case "$subject" in converge:*) converge_sha="$sha"; break ;; esac
             done < <(git log --format='%H %s' "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" -- "$SPEC_DIR/tasks.md")
-            # FR-010a (spec 059): the FR-010 hand-off's progress test,
-            # measured from the RETRY's own base (research.md D2's "own
-            # base") -- reuses the identical checked-count comparison Arm A
-            # above already performs, now run unconditionally rather than
-            # only inside the VERDICT=="exhausted" branch (research.md D1).
-            if [ "${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}" ]; then
-              progressed=true
-            else
-              progressed=false
-            fi
-            # FR-001/FR-002/FR-010b (spec 059): zero unchecked tasks at the
-            # pushed tip wins regardless of whether a converge: commit
-            # landed — replacing "no converge commit ⇒ converged" (spec
-            # 057's failure: a cycle can stop healthy with the loop's own
-            # convergence pass never reached, leaving tasks.md untouched).
-            if [ "${UNCHECKED_TIP:-1}" -eq 0 ]; then
-              converged=true
-            else
-              converged=false
-            fi
           fi
-          # FR-010 (spec 059): a healthy retry that makes no progress of
-          # its own and lands no converge: commit hands off to finalize
-          # instead of looping to the iteration cap or being reported
-          # converged. FR-010b already decided converged=true above before
-          # progressed is even consulted, so handoff is never true when
-          # converged=true.
-          if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$converged" = "false" ] && [ "$progressed" = "false" ] && [ -z "$converge_sha" ]; then
-            handoff=true
-          fi
+          # specs/117-implement-stall-handoff: the one shared stop rule,
+          # measured from the RETRY's own base -- see "Read back cycle
+          # outcome" above.
+          decision="$(OK="$ok" TRUNCATED="$truncated" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::error::decide-implement-outcome.sh failed"; exit 1; }
+          pick() { printf '%s\n' "$decision" | sed -n "s/^$1=//p"; }
+          converged="$(pick converged)"
+          progressed="$(pick progressed)"
+          handoff="$(pick handoff)"
+          stall_reason="$(pick stall-reason)"
+          stall_comment="$(pick stall-comment)"
           # specs/090-stage-write-boundary (FR-007/FR-011, research.md D5;
           # PR #836 review, item 2): mirrors the cycle arm's identical
           # routed computation above -- NOT gated on handoff.
@@ -2773,7 +2776,7 @@ jobs:
               routed_titles=$(printf '%s' "$WRITE_BOUNDARY_FINDINGS_JSON" | jq -r '[.[].title] | join("; ")')
               reason="the only remaining work is outside the implement stage's write boundary, so the loop is ending here rather than dispatching another cycle: $routed_titles"
             elif [ "$handoff" = "true" ]; then
-              reason="the cycle checked nothing new, so the loop is ending here rather than dispatching another cycle"
+              reason="$stall_reason, so the loop is ending here rather than dispatching another cycle"
             else
               parts=()
               if [ -n "$converge_sha" ]; then
@@ -2784,8 +2787,10 @@ jobs:
               fi
               if [ "${#parts[@]}" -eq 2 ]; then
                 reason="${parts[0]} and ${parts[1]}"
-              else
+              elif [ "${#parts[@]}" -eq 1 ]; then
                 reason="${parts[0]}"
+              else
+                reason="the cycle checked nothing new and recorded no blocker, so the next cycle runs"
               fi
             fi
           fi
@@ -2793,6 +2798,7 @@ jobs:
           echo "converged=$converged" >> "$GITHUB_OUTPUT"
           echo "progressed=$progressed" >> "$GITHUB_OUTPUT"
           echo "handoff=$handoff" >> "$GITHUB_OUTPUT"
+          echo "stall-comment=$stall_comment" >> "$GITHUB_OUTPUT"
           echo "routed=$routed" >> "$GITHUB_OUTPUT"
           echo "write-boundary-findings-json=$WRITE_BOUNDARY_FINDINGS_JSON" >> "$GITHUB_OUTPUT"
           echo "Retry: tasks.md unchecked-count at tip = ${UNCHECKED_TIP:-0}, progressed=${progressed:-n/a}." >> "$GITHUB_STEP_SUMMARY"
@@ -2899,13 +2905,15 @@ jobs:
           RETRY_WRITE_BOUNDARY_FINDINGS_JSON: ${{ steps.retry-outcome.outputs.write-boundary-findings-json }}
           PRIMARY_REASON: ${{ steps.outcome.outputs.reason }}
           RETRY_REASON: ${{ steps.retry-outcome.outputs.reason }}
+          PRIMARY_STALL_COMMENT: ${{ steps.outcome.outputs.stall-comment }}
+          RETRY_STALL_COMMENT: ${{ steps.retry-outcome.outputs.stall-comment }}
           ESCALATION_MODEL: ${{ inputs.escalation-model }}
           RETRY_NORMALISED: ${{ steps.retry-verdict.outputs.normalised-transcript }}
         run: |
           if [ "$RETRY_RAN" = "true" ]; then
-            ok="$RETRY_OK"; truncated="$RETRY_TRUNCATED"; converged="$RETRY_CONVERGED"; progressed="$RETRY_PROGRESSED"; handoff="$RETRY_HANDOFF"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"; routed="$RETRY_ROUTED"; write_boundary_findings_json="$RETRY_WRITE_BOUNDARY_FINDINGS_JSON"
+            ok="$RETRY_OK"; truncated="$RETRY_TRUNCATED"; converged="$RETRY_CONVERGED"; progressed="$RETRY_PROGRESSED"; handoff="$RETRY_HANDOFF"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"; routed="$RETRY_ROUTED"; write_boundary_findings_json="$RETRY_WRITE_BOUNDARY_FINDINGS_JSON"; stall_comment="$RETRY_STALL_COMMENT"
           else
-            ok="$PRIMARY_OK"; truncated="$PRIMARY_TRUNCATED"; converged="$PRIMARY_CONVERGED"; progressed="$PRIMARY_PROGRESSED"; handoff="$PRIMARY_HANDOFF"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"; routed="$PRIMARY_ROUTED"; write_boundary_findings_json="$PRIMARY_WRITE_BOUNDARY_FINDINGS_JSON"
+            ok="$PRIMARY_OK"; truncated="$PRIMARY_TRUNCATED"; converged="$PRIMARY_CONVERGED"; progressed="$PRIMARY_PROGRESSED"; handoff="$PRIMARY_HANDOFF"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"; routed="$PRIMARY_ROUTED"; write_boundary_findings_json="$PRIMARY_WRITE_BOUNDARY_FINDINGS_JSON"; stall_comment="$PRIMARY_STALL_COMMENT"
           fi
           # A retry the API refused before its first model response — e.g. a
           # spend/rate-limit kill, observed live on issue #231's stall notice —
@@ -2953,6 +2961,7 @@ jobs:
             echo "converged=$converged"
             echo "progressed=$progressed"
             echo "handoff=$handoff"
+            echo "stall-comment=$stall_comment"
             echo "tier=$tier"
             echo "reason=$reason"
             echo "routed=$routed"
@@ -3674,6 +3683,7 @@ jobs:
           HANDOFF: ${{ steps.final.outputs.handoff }}
           ROUTED: ${{ steps.final.outputs.routed }}
           REASON: ${{ steps.final.outputs.reason }}
+          STALL_COMMENT: ${{ steps.final.outputs.stall-comment }}
           TIER: ${{ steps.final.outputs.tier }}
           REMAINING: ${{ steps.final.outputs.remaining }}
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
@@ -3698,6 +3708,10 @@ jobs:
             # spec grew" from "the cycle ran short" from "the loop is
             # ending here" without opening the branch.
             [ -n "$REASON" ] && reason_line="**Why:** $REASON."
+            # specs/117-implement-stall-handoff (FR-006): a stop with
+            # implementation outstanding says how many tasks and why, from
+            # decide-implement-outcome.sh's own stall-comment.
+            [ -n "$STALL_COMMENT" ] && reason_line="$reason_line"$'\n\n'"$STALL_COMMENT"
             body=$(printf '%s\n' \
               "$1" \
               "" \
@@ -3798,8 +3812,8 @@ jobs:
                 "Cycle $ITERATION: remaining work is outside the write boundary and was routed — handing off before the iteration cap ($MAX)"
             else
               post_handoff_remaining_work \
-                "⚠️ **No further progress this cycle** — cycle $ITERATION checked nothing new and landed no convergence commit, so the loop is ending here rather than dispatching another cycle. Remaining work identified by the last convergence pass:" \
-                "Cycle $ITERATION made no progress and landed no converge commit — handing off before the iteration cap ($MAX)"
+                "⚠️ **Implementation is stalled** — the loop is ending here after cycle $ITERATION rather than dispatching another cycle. Remaining work identified by the last convergence pass:" \
+                "Cycle $ITERATION stopped the loop with implementation outstanding — handing off (iteration cap $MAX)"
             fi
           elif [ "$ITERATION" -lt "$MAX" ]; then
             if [ -n "$SELF_WORKFLOW" ]; then

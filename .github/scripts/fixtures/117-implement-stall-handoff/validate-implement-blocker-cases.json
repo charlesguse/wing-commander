@@ -1,0 +1,17 @@
+[
+  {"name": "valid", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"jq is not installed\"}", "valid": true, "text": "missing-tool: jq is not installed (T002)"},
+  {"name": "missing-file", "blocker": null, "valid": false, "reason": "no blocker file"},
+  {"name": "malformed-json", "blocker": "{nope", "valid": false, "reason": "not valid JSON"},
+  {"name": "not-an-object", "blocker": "[1]", "valid": false, "reason": "not a JSON object"},
+  {"name": "extra-key", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"x\",\"more\":1}", "valid": false, "reason": "keys are not exactly"},
+  {"name": "missing-key", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\"}", "valid": false, "reason": "keys are not exactly"},
+  {"name": "non-string-value", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":5}", "valid": false, "reason": "must all be strings"},
+  {"name": "kind-not-listed", "blocker": "{\"task\":\"T002\",\"kind\":\"tired\",\"detail\":\"x\"}", "valid": false, "reason": "kind is not one of"},
+  {"name": "detail-empty", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"\"}", "valid": false, "reason": "detail is empty"},
+  {"name": "detail-multiline", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"a\\nb\"}", "valid": false, "reason": "single line"},
+  {"name": "detail-301-chars", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"@X301@\"}", "valid": false, "reason": "longer than 300"},
+  {"name": "task-bad-shape", "blocker": "{\"task\":\"task 2\",\"kind\":\"missing-tool\",\"detail\":\"x\"}", "valid": false, "reason": "not a task id"},
+  {"name": "task-absent", "blocker": "{\"task\":\"T099\",\"kind\":\"missing-tool\",\"detail\":\"x\"}", "valid": false, "reason": "not an unchecked implementation task"},
+  {"name": "task-already-checked", "blocker": "{\"task\":\"T001\",\"kind\":\"missing-tool\",\"detail\":\"x\"}", "valid": false, "reason": "not an unchecked implementation task"},
+  {"name": "task-is-maintainer", "blocker": "{\"task\":\"T003\",\"kind\":\"missing-tool\",\"detail\":\"x\"}", "valid": false, "reason": "not an unchecked implementation task"}
+]
