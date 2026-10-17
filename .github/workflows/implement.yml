@@ -1036,6 +1036,22 @@ jobs:
             echo "Stage is '$STAGE' at iteration $RECORDED; dispatched iteration $ITERATION is a duplicate or out-of-order notification — nothing to do." >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # specs/117-implement-stall-handoff (FR-010): a dispatch that the guard
+      # skipped because the lifecycle is already in review used to leave the
+      # lifecycle issue silent. It stays a no-op, but says why and names the
+      # only re-entry. Not limited to a hand-run dispatch: a re-delivered
+      # notification at stage review gets the same one-line explanation, and
+      # no input is added to tell the two apart (Principle VII).
+      - name: Explain skipped dispatch at review stage
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip == 'true' && steps.meta.outputs.stage == 'review'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "Implement did nothing: this lifecycle is already in review"
+          body: "A dispatch at iteration ${{ inputs.iteration }} was skipped because spec-meta.json records stage `review` (iteration ${{ steps.meta.outputs.recorded-iteration }}). No cycle ran. To send work back to implement, comment on the implementation PR: the PR-conversation stage folds a maintainer comment into a Maintainer Feedback cycle, which is the only re-entry from review."
+
       # The iteration cap, from the max-iterations input (research.md D5).
       - name: Resolve iteration cap
         id: cap

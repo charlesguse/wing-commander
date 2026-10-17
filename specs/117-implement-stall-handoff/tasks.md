@@ -88,7 +88,7 @@
 
 **Independent Test**: the idempotency guard posts the required comment for stage `review`; the Maintainer Feedback cycle start comment contains the remaining count.
 
-- [ ] T022 [US4] In `.github/workflows/implement.yml`'s idempotency-guard step, when spec-meta stage is `review` and the dispatch is manual, post a lifecycle-issue comment through the existing comment composite stating nothing ran, why, and that a comment on the implementation PR (folded into a Maintainer Feedback cycle by pr-conversation) is the only re-entry; keep the skip behaviour. If a new input such as `is-manual-dispatch` is needed, declare it typed, optional and additive (Principle VII) and note it for the release notes
+- [x] T022 [US4] In `.github/workflows/implement.yml`'s idempotency-guard step, when spec-meta stage is `review` and the dispatch is manual, post a lifecycle-issue comment through the existing comment composite stating nothing ran, why, and that a comment on the implementation PR (folded into a Maintainer Feedback cycle by pr-conversation) is the only re-entry; keep the skip behaviour. If a new input such as `is-manual-dispatch` is needed, declare it typed, optional and additive (Principle VII) and note it for the release notes
 - [ ] T023 [US4] Make the Maintainer Feedback cycle's start comment in `.github/workflows/implement.yml` include `max-iterations - iteration` cycles remaining (floor 0) from spec-meta; do not write any state or reset the cap (data-model.md Re-entry)
 - [ ] T024 [US4] Add to `verify-implement-stall-handoff.py` assertions that the guard step posts the review-stage explanation comment (text names the PR-comment route), that the re-entry start comment computes remaining cycles with a floor of 0, and a fixture case for the remaining-count arithmetic (iteration 4 of 5 → 1; iteration 5 of 5 → 0); verify any added input is declared in the published `implement.yml` contract
 
@@ -98,10 +98,10 @@
 
 ## Phase 7: Polish & Cross-Cutting
 
-- [ ] T025 [P] Update the live docs under `docs/` for the implement loop's stop rule (blocker field, iteration-cap backstop, stall comment, re-entry and cap behaviour) and finalize's remaining-work report (two lists, standing instructions omitted, stall framing); do not edit spec 059's merged documents (FR-013)
-- [ ] T026 Add the "single home" checks to `verify-implement-stall-handoff.py`: no copy of the classification, stop-rule or remaining-work rendering appears in any workflow `run:` block outside the `_shared` scripts; confirm the gate's `lint-workflows.yml` invocation is the same one `run-local-gates.py` runs
+- [x] T025 [P] Update the live docs under `docs/` for the implement loop's stop rule (blocker field, iteration-cap backstop, stall comment, re-entry and cap behaviour) and finalize's remaining-work report (two lists, standing instructions omitted, stall framing); do not edit spec 059's merged documents (FR-013)
+- [x] T026 Add the "single home" checks to `verify-implement-stall-handoff.py`: no copy of the classification, stop-rule or remaining-work rendering appears in any workflow `run:` block outside the `_shared` scripts; confirm the gate's `lint-workflows.yml` invocation is the same one `run-local-gates.py` runs
 - [ ] T027 Run `python .github/scripts/run-local-gates.py` and fix fallout; per CLAUDE.md also give the `implement.yml`/`finalize.yml` edits a pass from the `review-step-gating` skill
-- [ ] T028 [P] Walk `specs/117-implement-stall-handoff/quickstart.md` against the fixtures and confirm SC-001 (#1022 replay) and SC-002 (#737 replay) hold
+- [x] T028 [P] Walk `specs/117-implement-stall-handoff/quickstart.md` against the fixtures and confirm SC-001 (#1022 replay) and SC-002 (#737 replay) hold
 - [ ] T029 [maintainer] After merge, re-drive one finalize run and one implement cycle via `gh workflow run` on the wrapper that can dispatch them, and record on lifecycle issue #992 that the run took the changed path (`prove-after-merge` skill)
 - [ ] T030 [maintainer] Note the additive widening of the published `wing-commander-tasks-checkbox-count` composite outputs (and any new `implement.yml` input) in the release notes
 

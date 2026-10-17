@@ -276,7 +276,53 @@ def check_implement_wiring():
         fail("implement.yml still carries the inline zero-progress hand-off rule")
 
 
+def check_review_stage_comment():
+    global CASES
+    impl = read(os.path.join(ROOT, ".github", "workflows", "implement.yml"))
+    m = re.search(r"- name: Explain skipped dispatch at review stage\n(.*?)\n\n", impl, re.S)
+    CASES += 1
+    if not m:
+        fail("implement.yml: no 'Explain skipped dispatch at review stage' step")
+        return
+    step = m.group(1)
+    for needle in ("steps.guard.outputs.skip == 'true'",
+                   "steps.meta.outputs.stage == 'review'",
+                   "comment on the implementation PR", "Maintainer Feedback"):
+        CASES += 1
+        if needle not in step:
+            fail(f"implement.yml: the review-stage explanation step lacks {needle!r}")
+
+
+def check_single_home():
+    """No copy of the classification, stop rule or remaining-work rendering
+    in a workflow run: block outside the _shared scripts (CLAUDE.md "Shared
+    logic has exactly one home")."""
+    global CASES
+    forbidden = {
+        "the [maintainer] classification": "is_maintainer(",
+        "the standing-instruction table": "is_standing(",
+        "the zero-progress hand-off rule": "checked nothing new, so the loop",
+        "the remaining-work headings": "printf '## Unfinished",
+    }
+    for path in sorted(glob.glob(os.path.join(ROOT, ".github", "workflows", "*.yml"))):
+        if os.path.basename(path) == "lint-workflows.yml":
+            continue
+        text = read(path)
+        for what, needle in forbidden.items():
+            CASES += 1
+            if needle in text:
+                fail(f"{os.path.basename(path)} carries {what} ({needle!r}); its one home is "
+                     ".github/actions/_shared/")
+    # The gate itself runs the way run-local-gates.py derives it from lint-workflows.yml.
+    CASES += 1
+    lint = read(os.path.join(ROOT, ".github", "workflows", "lint-workflows.yml"))
+    if "run: python3 .github/scripts/verify-implement-stall-handoff.py" not in lint:
+        fail("lint-workflows.yml does not invoke verify-implement-stall-handoff.py")
+
+
 def main():
+    check_review_stage_comment()
+    check_single_home()
     check_blocker()
     check_decide()
     check_classification()
