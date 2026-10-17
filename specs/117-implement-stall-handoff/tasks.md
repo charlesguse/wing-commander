@@ -135,9 +135,9 @@
 
 ## Maintainer Feedback
 
-- [ ] T027a Fix `verify-gate-24.py`: in implement.yml's "Read back retry outcome" step (~:2654), stop hard-exiting on `steps.retry` (its failure is declared survivable by a `continue-on-error` step above); degrade gracefully so steps below still run (per the `review-step-gating` skill)
-- [ ] T027b Fix `verify-fold-dispatch-once.py`: give the "Dispatch implement once for the whole review" step a default for `MAX_ITERATIONS` (or pass it in the env block the gate harness reproduces) so scenarios 1, 5 and 6 bind it
-- [ ] T027c Fix `verify-project-single-home.py`: route implement.yml's 2 inline kv-helper hits through `_shared/project-name.sh` / `wing-commander-project` (0 allowed)
-- [ ] T027d Fix `verify-intake-routing.py`: record pr-conversation.yml's new `max-iterations` input in `interface.json` additions
+- [x] T027a Fix `verify-gate-24.py`: in implement.yml's "Read back retry outcome" step (~:2654), stop hard-exiting on `steps.retry` (its failure is declared survivable by a `continue-on-error` step above); degrade gracefully so steps below still run (per the `review-step-gating` skill)
+- [x] T027b Fix `verify-fold-dispatch-once.py`: give the "Dispatch implement once for the whole review" step a default for `MAX_ITERATIONS` (or pass it in the env block the gate harness reproduces) so scenarios 1, 5 and 6 bind it
+- [x] T027c Fix `verify-project-single-home.py`: route implement.yml's 2 inline kv-helper hits through `_shared/project-name.sh` / `wing-commander-project` (0 allowed)
+- [x] T027d Fix `verify-intake-routing.py`: record pr-conversation.yml's new `max-iterations` input in `interface.json` additions
 - [ ] T027e Give the implement.yml and finalize.yml edits a `review-step-gating` skill pass and fix findings
 - [ ] T027f Re-run `python .github/scripts/run-local-gates.py` until green (gate 62 may be skipped without Docker); T029 and T030 remain maintainer steps
