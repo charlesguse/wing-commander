@@ -1579,7 +1579,7 @@ jobs:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
-          summary: ${{ steps.remaining-work.outputs.stalled == 'true' && 'Stalled with implementation outstanding' || 'Maintainer steps remain' }}
+          summary: ${{ steps.remaining-work.outputs.stalled == 'true' && 'Stalled with implementation outstanding' || steps.remaining-work.outputs.stalled == 'false' && 'Maintainer steps remain' || 'Remaining work' }}
           body-file: ${{ runner.temp }}/finalize-remaining.md
           timing: "after this PR merges"
           retry-delays: "5 15 45"

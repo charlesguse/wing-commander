@@ -75,6 +75,13 @@ counts="$(printf '%s\n' "$content" | awk '
     # clause) is a real task even when it starts like a standing instruction.
     if (t ~ /^(complete every remaining|keep the gates green|after each cycle)/) {
       if (t ~ /`|\/|\.(sh|py|yml|yaml|md|json)([^a-z]|$)|(and|then|,) (fix|add|create|write|update|implement)/) return 0
+      # Only filler may follow the prefix: any other word ("for the new
+      # parser") names a deliverable, so the line is a real task.
+      n = split(t, words, /[^a-z]+/)
+      for (i = 1; i <= n; i++) {
+        if (words[i] == "") continue
+        if (!(words[i] in FILLER)) return 0
+      }
       return 1
     }
     if (t ~ /^run the (full )?gate suite/) {
@@ -95,6 +102,10 @@ counts="$(printf '%s\n' "$content" | awk '
     t = line
     sub(/^[ \t]*- \[[ xX]\][ \t]*/, "", t)
     return (t ~ /^([TM][0-9]+[a-z]?[ \t]+)?(\[[^]]*\][ \t]+)*\[maintainer\]([ \t]|$)/)
+  }
+  BEGIN {
+    nf = split("complete every remaining unchecked task tasks item items in this the file list keep gates green after each cycle phase push pushing commit committing before locally throughout run full gate suite and ci on at all times still until done re read plan tasks", fw, " ")
+    for (k = 1; k <= nf; k++) FILLER[fw[k]] = 1
   }
   {
     stripped = $0

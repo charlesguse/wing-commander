@@ -1050,7 +1050,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip == 'true' && steps.meta.outputs.stage == 'review'
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
         run: |
@@ -1064,7 +1064,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip == 'true' && steps.meta.outputs.stage == 'review' && steps.review-explained.outputs.explained != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
-          token: ${{ github.token }}
+          token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: info
           summary: "Implement did nothing: this lifecycle is already in review"
@@ -1897,7 +1897,7 @@ jobs:
           # neither hold the loop open nor count as progress, and a healthy
           # cycle that checked nothing new now hands off only on a validated
           # blocker or the iteration cap.
-          decision="$(OK="$ok" TRUNCATED="$truncated" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false)")"; }
+          decision="$(OK="$ok" TRUNCATED="$truncated" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "$ok" != true ] || { [ "$truncated" != true ] && [ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false; })")"; }
           pick() { printf '%s\n' "$decision" | grep -m1 "^$1=" | cut -d= -f2- || true; }
           converged="$(pick converged)"
           progressed="$(pick progressed)"
@@ -2796,7 +2796,7 @@ jobs:
           # specs/117-implement-stall-handoff: the one shared stop rule,
           # measured from the RETRY's own base -- see "Read back cycle
           # outcome" above.
-          decision="$(OK="$ok" TRUNCATED="$truncated" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false)")"; }
+          decision="$(OK="$ok" TRUNCATED="$truncated" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "$ok" != true ] || { [ "$truncated" != true ] && [ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false; })")"; }
           pick() { printf '%s\n' "$decision" | grep -m1 "^$1=" | cut -d= -f2- || true; }
           converged="$(pick converged)"
           progressed="$(pick progressed)"
@@ -3756,7 +3756,9 @@ jobs:
             # specs/117-implement-stall-handoff (FR-006): a stop with
             # implementation outstanding says how many tasks and why, from
             # decide-implement-outcome.sh's own stall-comment.
-            [ -n "$STALL_COMMENT" ] && reason_line="$reason_line"$'\n\n'"$STALL_COMMENT"
+            # It already states the reason, so it replaces the **Why:** line
+            # rather than repeating it.
+            [ -n "$STALL_COMMENT" ] && reason_line="$STALL_COMMENT"
             body=$(printf '%s\n' \
               "$1" \
               "" \
@@ -3869,6 +3871,7 @@ jobs:
               fence='```'
               reason_line=""
               [ -n "$REASON" ] && reason_line="**Why:** $REASON."
+              [ -n "$STALL_COMMENT" ] && reason_line="$STALL_COMMENT"
               body=$(printf '%s\n' \
                 "🔁 **Cycle $ITERATION completed without converging.** Remaining work identified by the convergence pass:" \
                 "" \

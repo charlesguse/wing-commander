@@ -78,9 +78,23 @@ runs:
           echo "has-remaining=false" >> "$GITHUB_OUTPUT"
         fi
         # The renderer is the one source of the count (routed items excluded).
-        impl_count="$(cat "$RUNNER_TEMP/wc-remaining-impl-count.txt" 2>/dev/null)" || impl_count=0
+        impl_count="$(cat "$RUNNER_TEMP/wc-remaining-impl-count.txt" 2>/dev/null)" || impl_count=""
+        case "$impl_count" in
+          ''|*[!0-9]*)
+            # Count file missing or garbage: never report 0 while the report
+            # body may still carry an Unfinished implementation section.
+            # Fall back to the report's own heading, and leave impl-count
+            # empty so no reader mistakes the gap for zero.
+            impl_count=""
+            if grep -q '^## Unfinished implementation' "$OUTPUT_PATH"; then impl_stalled=true; else impl_stalled=false; fi
+            echo "::warning::render-remaining-work.sh wrote no usable implementation count; deriving stalled=$impl_stalled from the report heading"
+            ;;
+          *)
+            if [ "$impl_count" -gt 0 ]; then impl_stalled=true; else impl_stalled=false; fi
+            ;;
+        esac
         echo "impl-count=$impl_count" >> "$GITHUB_OUTPUT"
-        if [ "$impl_count" -gt 0 ]; then
+        if [ "$impl_stalled" = "true" ]; then
           echo "stalled=true" >> "$GITHUB_OUTPUT"
         else
           echo "stalled=false" >> "$GITHUB_OUTPUT"

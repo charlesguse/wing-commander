@@ -388,7 +388,7 @@
 
   Detail: Around implement.yml line 1913. The removed zero-progress hand-off is not replaced.
 
-- [ ] Review finding: Decide-script fallback ignores OK and TRUNCATED and emits no stall comment
+- [x] Review finding: Decide-script fallback ignores OK and TRUNCATED and emits no stall comment
 
   When DECIDE_SCRIPT is empty and decide fails, the fallback marks an unhealthy (ok=false) or truncated cycle with 0 unchecked tasks as converged, sets progressed=false, and emits no stall-comment or stall-reason, so FR-006 reporting is dropped at the cap.
 
@@ -403,7 +403,7 @@
   - .github/workflows/implement.yml
   - .github/workflows/tasks.yml
 
-- [ ] Review finding: Stall comment duplicates the reason and is never posted in the standalone branch
+- [x] Review finding: Stall comment duplicates the reason and is never posted in the standalone branch
 
   The stall-comment is appended to a reason_line that already states the same reason, so the reason shows twice. The standalone no-SELF_WORKFLOW branch (the 'Cycle N completed without converging' comment) never uses STALL_COMMENT.
 
@@ -411,7 +411,7 @@
 
   Detail: Around line 3759, and lines 3870-3885.
 
-- [ ] Review finding: Review-stage explanation callout uses github.token and a fragile grep dedupe
+- [x] Review finding: Review-stage explanation callout uses github.token and a fragile grep dedupe
 
   The callout posts as github-actions[bot] rather than the bot identity the other callouts use. Its dedupe greps the summary text from `gh issue view`, which may return only the first page of comments or break if the header format changes. The step posts anyway if the lookup fails, so the comment can repeat on redelivered notifications.
 
@@ -419,7 +419,7 @@
 
   Detail: Around line 1883.
 
-- [ ] Review finding: Blocker sanitiser is locale-dependent and validates raw text before sanitising
+- [x] Review finding: Blocker sanitiser is locale-dependent and validates raw text before sanitising
 
   The [:alnum:] character class behaves differently in UTF-8 and C locales. Length and usable-text checks run on raw text, but the emitted text is the sanitised version. A detail of only non-ASCII text can validate and then produce a blank hand-off reason.
 
@@ -427,7 +427,7 @@
 
   Detail: Around line 397.
 
-- [ ] Review finding: Standing-instruction classifier can drop real tasks from implementation counts
+- [x] Review finding: Standing-instruction classifier can drop real tasks from implementation counts
 
   A line like '- [ ] Keep the gates green for the new parser' matches the standing prefix but has no backtick, slash, extension or verb clause. is_standing returns 1 and the task is excluded from impl-unchecked-count, so the loop can report converged=true with unbuilt work.
 
@@ -435,7 +435,7 @@
 
   Detail: Around line 18.
 
-- [ ] Review finding: Finalize announce summary labels every non-'true' stalled value as 'Maintainer steps remain'
+- [x] Review finding: Finalize announce summary labels every non-'true' stalled value as 'Maintainer steps remain'
 
   A failed or skipped renderer (stalled empty), or a routed-only remainder, is labelled 'Maintainer steps remain'. Only the has-remaining=unknown gating on the announce step guards this; the summary expression itself has no guard.
 
@@ -443,7 +443,7 @@
 
   Detail: Around line 1847.
 
-- [ ] Review finding: remaining-work action defaults impl_count to 0 or garbage when the count file is missing
+- [x] Review finding: remaining-work action defaults impl_count to 0 or garbage when the count file is missing
 
   If the impl-count file is missing or non-numeric, impl_count falls back to 0 or garbage and the `-gt 0` test errors. The action then reports stalled=false and impl-count=0 while the report body still has '## Unfinished implementation', so the banner and callout contradict the report.
 
@@ -451,7 +451,7 @@
 
   Detail: Around line 557.
 
-- [ ] Review finding: decide-implement-outcome compares unvalidated numeric env values
+- [x] Review finding: decide-implement-outcome compares unvalidated numeric env values
 
   MAX_ITERATIONS and the IMPL_*_TIP counts are used in `[ -gt ]` without validation. An empty or non-numeric value errors to stderr and takes the false branch, so the cap hand-off silently never fires or progressed is wrongly false, while the script exits 0.
 
