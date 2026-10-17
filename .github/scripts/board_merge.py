@@ -117,6 +117,19 @@ def evaluate_fix(snapshot, review_converged, backstop_holds, paused, switch_on):
     return _decision(snapshot, "fix", CONDITIONS_FIX, results)
 
 
+def _bot_commit_author(author, bot_login):
+    """`gh` reports an empty login for a commit whose git email maps to no
+    GitHub account. The App's own commits then still carry its noreply email
+    (`<id>+<slug>[bot]@users.noreply.github.com`), which only that App can
+    author; any other empty-login commit is not the bot's."""
+    author = author or {}
+    if (author.get("login") or "").strip():
+        return _is_bot(author.get("login"), bot_login)
+    email = (author.get("email") or "").strip().lower()
+    slug = _slug(bot_login)
+    return bool(slug) and email.endswith("+{0}[bot]@users.noreply.github.com".format(slug))
+
+
 def _attributed_to_auto_update(snapshot, bot_login):
     """Research D4: bot author, the stage's branch shape, the tracking marker
     in the body, every commit bot-authored, and no constitution change."""
@@ -132,7 +145,7 @@ def _attributed_to_auto_update(snapshot, bot_login):
         return False
     for commit in commits:
         authors = (commit or {}).get("authors") or []
-        if not authors or not all(_is_bot((a or {}).get("login"), bot_login) for a in authors):
+        if not authors or not all(_bot_commit_author(a, bot_login) for a in authors):
             return False
     return not _touches_constitution(snapshot)
 
@@ -274,6 +287,12 @@ def _defang(text):
     return (text or "").replace("<!--", "<\u200b!--")
 
 
+def _unfence(text):
+    """Quoted stderr goes inside a ``` fence, so a ``` of its own must not
+    close it."""
+    return (text or "").replace("```", "``\u200b`")
+
+
 def prove_disposition(snapshot):
     """What follows a merge, in the words of the announcement. The classifier
     is board_prove.actions_only() -- the one prove-gate/prove use -- never a
@@ -293,7 +312,7 @@ def render_announcement(decision, outcome, snapshot=None, merge_sha=None, refusa
     klass = decision.get("class")
     results = ", ".join("{0}={1}".format(name, "pass" if ok else "FAIL")
                         for name, ok in (decision.get("conditions") or {}).items())
-    quoted = (stderr or "").strip()
+    quoted = _unfence((stderr or "").strip())
     if outcome == "merged":
         text = ("Merged ({0} class) at head_sha {1}; squash commit {2}.\n\nConditions: {3}.\n\n"
                 "Proof: {4}.".format(klass, head, merge_sha, results, prove_disposition(snapshot or {})))

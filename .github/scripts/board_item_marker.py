@@ -528,7 +528,18 @@ def main():
     parser.add_argument("--bump-verification", nargs=4, default=None,
                         metavar=("HEAD_SHA", "TIER", "RESULT", "RUN_ID"),
                         help="spec 115: print a wc-bump-verification comment body instead of a marker")
+    parser.add_argument("--carry-round-from", default=None, metavar="COMMENTS_JSON",
+                        help="spec 115: take --round from the newest marker in this issue-comments "
+                             "JSON array (needs --bot-login), so a merged/handed-over marker does "
+                             "not reset the review round budget")
+    parser.add_argument("--bot-login", default=None)
     args = parser.parse_args()
+    if args.carry_round_from:
+        if not args.bot_login:
+            parser.error("--carry-round-from needs --bot-login")
+        with open(args.carry_round_from, encoding="utf-8") as fh:
+            carried = read_marker(json.load(fh), args.bot_login) or {}
+        args.round = carried.get("round") or 0
     if args.bump_verification:
         print(render_bump_verification(*args.bump_verification))
         return
