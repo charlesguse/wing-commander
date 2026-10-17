@@ -4267,6 +4267,7 @@ jobs:
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_spec_request_body import fenced_section
+          from board_spec_request_body import utf16_len
           from wc_convergence import round_findings, round_record_marker
 
           runner_temp = os.environ["RUNNER_TEMP"]
@@ -4308,10 +4309,28 @@ jobs:
           # so the body stays under GitHub's 65536-character limit however
           # many the reviewer returns (a 422 here would repeat the review
           # every run); 57000 // MAX_SHOWN stays well above one fence's
-          # own overhead.
+          # own overhead. The recurring-findings section and the round
+          # record (spec 116) go after the findings, so they are built
+          # first and their length comes out of that 57000.
+          tail = []
+          entries = round_findings(findings, os.environ.get("ISSUE_NUMBER", ""))
+          decision_path = os.path.join(runner_temp, "board-convergence.json")
+          if os.path.isfile(decision_path):
+              with open(decision_path, encoding="utf-8") as fh:
+                  recurring = set(json.load(fh).get("recurrences") or [])
+              titles = [e["title"] for e in entries if e["fingerprint"] in recurring]
+              if titles:
+                  tail.append("")
+                  tail.append(fenced_section(
+                      "### Recurring findings -- fixed in an earlier round and raised again, so that fix did not hold (reviewer agent titles, shown as text):",
+                      "\n".join(titles), 8000))
+          round_ = os.environ.get("ROUND", "")
+          if not parse_failed and round_.isdigit():
+              tail.append("")
+              tail.append(round_record_marker(int(round_) + 1, os.environ.get("HEAD_SHA", ""), entries))
           MAX_SHOWN = 25
           shown = findings[:MAX_SHOWN]
-          budget = 57000 // max(1, len(shown))
+          budget = (57000 - utf16_len("\n".join(tail))) // max(1, len(shown))
           for n, f in enumerate(shown, 1):
               scope = "in-scope (will be fixed on this PR)" if f.get("in_scope") else "out-of-scope (filed as its own issue)"
               text = [str(f.get("title", "(untitled)")), "", str(f.get("what", ""))]
@@ -4330,21 +4349,7 @@ jobs:
               lines.append("")
               lines.append("{0} more finding(s) not shown; see the out-of-scope issues and the next round.".format(
                   len(findings) - len(shown)))
-          entries = round_findings(findings, os.environ.get("ISSUE_NUMBER", ""))
-          decision_path = os.path.join(runner_temp, "board-convergence.json")
-          if os.path.isfile(decision_path):
-              with open(decision_path, encoding="utf-8") as fh:
-                  recurring = set(json.load(fh).get("recurrences") or [])
-              titles = [e["title"] for e in entries if e["fingerprint"] in recurring]
-              if titles:
-                  lines.append("")
-                  lines.append(fenced_section(
-                      "### Recurring findings -- fixed in an earlier round and raised again, so that fix did not hold (reviewer agent titles, shown as text):",
-                      "\n".join(titles), 8000))
-          round_ = os.environ.get("ROUND", "")
-          if not parse_failed and round_.isdigit():
-              lines.append("")
-              lines.append(round_record_marker(int(round_) + 1, os.environ.get("HEAD_SHA", ""), entries))
+          lines.extend(tail)
 
           with open(os.path.join(runner_temp, "board-review-body.md"), "w", encoding="utf-8") as fh:
               fh.write("\n".join(lines) + "\n")

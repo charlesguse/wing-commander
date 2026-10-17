@@ -839,6 +839,7 @@ jobs:
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_spec_request_body import fenced_section
+          from board_spec_request_body import utf16_len
           from wc_convergence import round_findings, round_record_marker
 
           runner_temp = os.environ["RUNNER_TEMP"]
@@ -874,9 +875,17 @@ jobs:
                   "{0} further finding(s) failed validation and were "
                   "dropped; they are not shown, and this round is not read "
                   "as a clean review.".format(dropped))
+          # The round record goes after the findings, so its length comes
+          # out of their 57000 -- see board-loop.yml's "Compose the review
+          # body".
+          tail = []
+          if not parse_failed and round_.isdigit():
+              tail.append("")
+              tail.append(round_record_marker(int(round_), head_sha,
+                                              round_findings(findings, os.environ["ISSUE"])))
           MAX_SHOWN = 25
           shown = findings[:MAX_SHOWN]
-          budget = 57000 // max(1, len(shown))
+          budget = (57000 - utf16_len("\n".join(tail))) // max(1, len(shown))
           for n, f in enumerate(shown, 1):
               scope = "in-scope (would be folded into tasks.md)" if f.get("in_scope") else "out-of-scope (filed as its own issue)"
               text = [str(f.get("title", "(untitled)")), "", str(f.get("what", ""))]
@@ -894,10 +903,7 @@ jobs:
           if len(findings) > len(shown):
               lines.append("")
               lines.append("{0} more finding(s) not shown.".format(len(findings) - len(shown)))
-          if not parse_failed and round_.isdigit():
-              lines.append("")
-              lines.append(round_record_marker(int(round_), head_sha,
-                                               round_findings(findings, os.environ["ISSUE"])))
+          lines.extend(tail)
 
           with open(os.path.join(runner_temp, "lifecycle-review-body.md"), "w", encoding="utf-8") as fh:
               fh.write("\n".join(lines) + "\n")
