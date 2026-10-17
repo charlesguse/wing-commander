@@ -1552,12 +1552,18 @@ jobs:
       - name: Check for remaining manual work
         id: remaining
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        env:
+          RENDERED_HAS_REMAINING: ${{ steps.remaining-work.outputs.has-remaining }}
+          RENDERED_STALLED: ${{ steps.remaining-work.outputs.stalled }}
         run: |
-          remaining_file="$RUNNER_TEMP/finalize-remaining.md"
-          if [ -s "$remaining_file" ] && [ -n "$(tr -d '[:space:]' < "$remaining_file")" ]; then
-            echo "has-remaining=true" >> "$GITHUB_OUTPUT"
+          # Re-publishes the renderer's own answer (wing-commander-remaining-work)
+          # rather than recomputing it from the file, so the two cannot diverge.
+          # An empty stalled output means the renderer failed: neither branch
+          # below announces anything (the verify step has already failed).
+          if [ "$RENDERED_STALLED" = "" ]; then
+            echo "has-remaining=unknown" >> "$GITHUB_OUTPUT"
           else
-            echo "has-remaining=false" >> "$GITHUB_OUTPUT"
+            echo "has-remaining=$RENDERED_HAS_REMAINING" >> "$GITHUB_OUTPUT"
           fi
 
       # Retried (#662): run 36264390069 lost this post to one transient

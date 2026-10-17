@@ -55,7 +55,10 @@ runs:
         # The script path goes out first: a validator failure (unreadable
         # tasks.md) must not strand the caller without the stop-rule script.
         echo "decide-script=$(cd "$GITHUB_ACTION_PATH/../_shared" && pwd)/decide-implement-outcome.sh" >> "$GITHUB_OUTPUT"
-        out="$(bash "$GITHUB_ACTION_PATH/../_shared/validate-implement-blocker.sh" "$BLOCKER_PATH" "$REF" "$TASKS_PATH")" || exit 1
-        printf '%s\n' "$out" >> "$GITHUB_OUTPUT"
-        # Consumed: the retry arm must not re-read the primary arm's record.
+        rc=0
+        out="$(bash "$GITHUB_ACTION_PATH/../_shared/validate-implement-blocker.sh" "$BLOCKER_PATH" "$REF" "$TASKS_PATH")" || rc=$?
+        # Consumed whether or not it validated: the retry arm must not
+        # re-read the primary arm's record.
         rm -f "$BLOCKER_PATH"
+        [ "$rc" -eq 0 ] || exit "$rc"
+        printf '%s\n' "$out" >> "$GITHUB_OUTPUT"

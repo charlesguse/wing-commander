@@ -95,5 +95,6 @@ done <<<"$impl_items"
 # becomes a space (drops emphasis, quotes-as-markup, leading >, autolink
 # characters), and bare "www." hosts lose their dot.
 detail="$(printf '%s' "$detail" | sed -E -e 's#[Ww][Ww][Ww]\.# #g' -e "s/[^[:alnum:] .,:;'-]/ /g")"
+[[ "$detail" =~ [[:alnum:]] ]] || invalid "detail has no usable text after sanitising"
 
 printf 'blocker-valid=true\nblocker-text=%s: %s (%s)\nblocker-invalid-reason=\n' "$kind" "$detail" "$task"

@@ -1,0 +1,18 @@
+checked-count=1
+unchecked-count=4
+unchecked-items<<WING_COMMANDER_UNCHECKED_ITEMS_EOF
+- [ ] Keep the gates green by fixing `verify-x.py`
+- [ ] After each cycle, update `.github/scripts/y.sh`
+- [ ] Complete every remaining step in docs/guide.md
+- [ ] Keep the gates green
+WING_COMMANDER_UNCHECKED_ITEMS_EOF
+impl-checked-count=0
+impl-unchecked-count=3
+standing-count=1
+impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF
+- [ ] Keep the gates green by fixing `verify-x.py`
+- [ ] After each cycle, update `.github/scripts/y.sh`
+- [ ] Complete every remaining step in docs/guide.md
+WING_COMMANDER_IMPL_ITEMS_EOF
+maintainer-items<<WING_COMMANDER_MAINTAINER_ITEMS_EOF
+WING_COMMANDER_MAINTAINER_ITEMS_EOF
