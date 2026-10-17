@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,6 +31,6 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain, all left open by the owner's 2026-10-17 decision for the clarify stage: FR-012 (policy when analyze objects without a constitution conflict), FR-016 (model tier for the analyze step, the owner's by constitution II), FR-020 (part 3 in or out).
+- All three [NEEDS CLARIFICATION] markers were resolved by the owner's answers on #994 (2026-10-17): FR-012 holds only on a constitution conflict and otherwise dispatches with the report linked; FR-016 runs the analyze step on `claude-sonnet-5-5`; FR-020 puts part 3 (Story 5) out of scope until parts 1–2 land.
 - The feature is pipeline infrastructure; its "users" are the owner and maintainers. Named workflows, composites, stall reasons and budget variables are the pipeline's own vocabulary and the layer each requirement touches (constitution VII requires every document to state its layer), not technology choices.
 - Thresholds (FR-006) and line-level attribution (FR-005) are taken from the precedent the owner recorded (#998), not guessed.

@@ -10,6 +10,14 @@
 
 **Input**: User description: "Review loops that notice they aren't converging, and an analyze check before folded review tasks reach implement. The pipeline's review loops stop for two reasons only: a clean round, or a spent budget. Nothing in either loop asks whether it is converging, nothing checks a folded review task against the spec before implement builds it, and the pipeline never runs `/speckit-analyze`. Proposal: (1) an analyze check at fold time, (2) convergence signals on every review round computed by code with an early `not-converging` stop, (3, optional) one home for the reviewer's judgement procedure. Owner decision 2026-10-17: promote as the umbrella over #833; thresholds and line-level attribution are settled by the merged `review-until-clean` skill (#998); when analyze objects, part 3, and the analyze step's model tier stay open."
 
+## Clarifications
+
+### Session 2026-10-17
+
+- Q: When analyze objects to a fold task without a constitution conflict, hold, dispatch anyway, or hold only on a constitution conflict? → A: (c) Hold the dispatch only on a constitution conflict; for any other inconsistency or duplication naming a fold task, dispatch with the analyze report linked (FR-012).
+- Q: Which model tier should the fold-time consistency check run on? → A: Sonnet — `claude-sonnet-5-5`, the tier plan and tasks use (constitution II) (FR-016).
+- Q: Is part 3 (one shared file for the reviewer's judgement procedure) in scope? → A: (a) Out of scope for now, revisited once parts 1 and 2 land; the published contract (constitution VII) is untouched (FR-020, Story 5).
+
 ## Context
 
 The pipeline runs two automated review loops:
@@ -72,13 +80,13 @@ As the owner, when a review fold appends tasks to tasks.md, I want those new tas
 
 **Why this priority**: The failure is reasoned rather than observed, and it adds a new agent step; it is valuable but less urgent than removing a false green and the observed thrash.
 
-**Independent Test**: Fold a review task that directly contradicts a functional requirement in a fixture spec. The analyze check must run between the fold commit and the implement dispatch, return a structured finding naming the fold task and the conflicting requirement, and deterministic code must apply the hold/dispatch policy to it.
+**Independent Test**: Fold a review task that conflicts with the constitution, and separately one that contradicts a functional requirement in a fixture spec without a constitution conflict. The analyze check must run between the fold commit and the implement dispatch and return a structured finding naming the fold task and the conflicting location; deterministic code must hold the first and dispatch the second with the report linked.
 
 **Acceptance Scenarios**:
 
 1. **Given** a fold appends a section to tasks.md, **When** the fold commit completes, **Then** a read-only consistency check runs over spec.md, plan.md and tasks.md, scoped to the new fold section, before implement is dispatched.
 2. **Given** the check returns a finding that conflicts with the constitution, **When** deterministic code evaluates the result, **Then** the implement dispatch is held and the conflict is posted on the lifecycle issue as an owner question with the options: amend the spec (the review is right), drop the fold task (the spec is right), or proceed anyway.
-3. **Given** the check returns an inconsistency or duplication finding naming a fold task (not a constitution conflict), **When** deterministic code evaluates the result, **Then** the outcome follows the policy selected in FR-012.
+3. **Given** the check returns an inconsistency or duplication finding naming a fold task (not a constitution conflict), **When** deterministic code evaluates the result, **Then** the dispatch is not held: implement is dispatched and the analyze report, including that finding, is linked on the lifecycle issue (FR-012).
 4. **Given** the check returns no findings, or only findings outside the hold policy, **When** deterministic code evaluates the result, **Then** implement is dispatched as today, with the report linked on the lifecycle issue.
 5. **Given** the fold came from a human review through pr-conversation's `act` path, **When** the fold commits, **Then** the same check runs as for a fold from the lifecycle review gate's `disposition` path.
 6. **Given** the owner answers a held conflict, **When** the answer is "proceed anyway" or "drop the fold task", **Then** the hold is released and implement is dispatched against the resulting tasks.md; **When** the answer is "amend the spec", **Then** the lifecycle waits for the spec amendment and is dispatched afterward.
@@ -100,17 +108,17 @@ As a maintainer, I want the convergence-signal arithmetic to live in one module 
 
 ---
 
-### User Story 5 - One home for the reviewer's judgement procedure (Priority: P3, optional)
+### User Story 5 - One home for the reviewer's judgement procedure (Priority: P3, deferred — out of scope)
 
 As a maintainer, I want the procedure for verifying a finding, refuting it against an FR, and carrying a "dismissed" list between rounds to live in one file read by both the pipeline reviewers and local sessions, instead of inline in each reviewer prompt.
 
-**Why this priority**: Optional in the request; its scope depends on whether a published stage (pr-conversation) would have to ship the file — see FR-020.
+**Why this priority**: Optional in the request. The owner placed it out of scope for this feature (2026-10-17), to be revisited once Stories 1–4 land — see FR-020. It is recorded here so the revisit has its statement of intent.
 
-**Independent Test**: Each reviewer prompt references the shared procedure file and no reviewer prompt carries an inline copy of it; a gate enforces the pointer.
+**Independent Test**: None for this feature; no reviewer prompt changes for it.
 
 **Acceptance Scenarios**:
 
-1. **Given** the shared procedure file is in scope, **When** any automated reviewer in scope runs, **Then** it reads the procedure from that file and carries the dismissed list from earlier rounds.
+1. **Given** this feature has shipped, **When** any automated reviewer runs, **Then** its prompt and the published contract are unchanged by Story 5.
 
 ---
 
@@ -160,18 +168,18 @@ As a maintainer, I want the procedure for verifying a finding, refuting it again
 **Analyze check at fold time (fold composites — published contract)**
 
 - **FR-011**: After `wing-commander-fold-commit` appends a fold section to tasks.md and before `wing-commander-fold-dispatch` starts implement, the pipeline MUST run the vendored, read-only `/speckit-analyze` over spec.md, plan.md and tasks.md, scoped by its arguments to the new fold section: check the new tasks against the spec, the plan, earlier fold sections, and the constitution. The single insertion point MUST serve both fold callers (pr-conversation's `act` and the lifecycle review gate's `disposition`), preserving spec 062 FR-017's single home for fold logic.
-- **FR-012**: The analyze agent MUST return structured findings (severity, category, the fold task named, the location it conflicts with). Deterministic code — never the agent — MUST decide hold or dispatch from those findings. A constitution conflict MUST hold the dispatch. For an inconsistency or duplication finding naming a fold task that is not a constitution conflict, the policy is [NEEDS CLARIFICATION: when analyze objects to a fold task without a constitution conflict, should the pipeline (a) hold the dispatch and ask the owner, (b) dispatch anyway and post the report, or (c) — the owner's precedent-check recommendation — hold only on a constitution conflict and dispatch with the report linked otherwise?]
+- **FR-012**: The analyze agent MUST return structured findings (severity, category, the fold task named, the location it conflicts with). Deterministic code — never the agent — MUST decide hold or dispatch from those findings. A constitution conflict MUST hold the dispatch. Only a constitution conflict holds the dispatch: an inconsistency or duplication finding naming a fold task that is not a constitution conflict MUST NOT hold it; implement is dispatched and the analyze report is linked on the lifecycle issue (FR-015).
 - **FR-013**: When the analyze step itself fails (error, timeout, schema mismatch), the pipeline MUST name the failure on the lifecycle issue and MUST NOT present the dispatch as checked; it holds the dispatch for the owner, reusing the FR-014 question with the options "proceed anyway" and "retry the check".
 - **FR-014**: On a hold, the pipeline MUST post the conflict on the lifecycle issue as an owner question with these options: the review is right, so amend the spec; the spec is right, so drop the fold task; or proceed anyway. The owner's answer MUST release the hold through an ordinary GitHub action (constitution III).
 - **FR-015**: When dispatch proceeds, the analyze report MUST be linked on the lifecycle issue.
-- **FR-016**: Any new input, output or secret the fold composites gain for this check MUST be added deliberately to the published contract (constitution VII), with the stage reading no ambient repository state; the analyze step MUST declare an explicit model and a bounded `--max-turns` (constitution II). The model tier for this step is [NEEDS CLARIFICATION: which model tier should the fold-time consistency check run on — Opus (it reasons over the spec like specify/clarify), Sonnet (it elaborates an already-solid spec like plan/tasks), or Haiku (it classifies conflicts) — given that constitution II assigns tiers by task weight and no precedent places a consistency check?]
+- **FR-016**: Any new input, output or secret the fold composites gain for this check MUST be added deliberately to the published contract (constitution VII), with the stage reading no ambient repository state; the analyze step MUST declare an explicit model and a bounded `--max-turns` (constitution II). The analyze step MUST run on `claude-sonnet-5-5`, the tier the plan and tasks stages use (constitution II).
 - **FR-017**: The analyze step's agent MUST be read-only: it MUST NOT write files, commit, or push.
 
 **Single homes (consuming instrument)**
 
 - **FR-018**: The convergence-signal arithmetic (attribution, churn, growth) MUST live in one module under `.github/scripts/`, called by both review loops and by the `review-until-clean` skill's thrash check; the skill's `scripts/thrash_signals.py` is the starting point and MUST become a caller of (or be replaced by) that module.
 - **FR-019**: A gate MUST fail when a second copy of the convergence-signal arithmetic appears in a workflow, composite or skill, in the manner of `verify-metrics-summary-record-emission.py`; every failure branch it ships MUST have a checked-in fixture (constitution VIII).
-- **FR-020**: The shared reviewer-judgement procedure (Story 5) is [NEEDS CLARIFICATION: is part 3 in scope? Options: (a) out for now, revisit after parts 1–2 land — the precedent check's recommendation; (b) in, for the repository-only loops (lifecycle-review-gate, board-loop) only, read from the trusted copy; (c) in for all reviewers including pr-conversation, shipping the file with the pipeline checkout as part of the published contract.]
+- **FR-020**: The shared reviewer-judgement procedure (Story 5) is out of scope for this feature, to be revisited once parts 1 and 2 (recurrence and convergence signals; the fold-time analyze check) have landed. No reviewer prompt is changed for it, and the published contract (constitution VII) is untouched by it.
 
 ### Key Entities
 
@@ -189,8 +197,8 @@ As a maintainer, I want the procedure for verifying a finding, refuting it again
 - **SC-001**: Zero review rounds whose only in-scope findings are recurrences resolve as clean or post a passing status, verified by a checked-in fixture that replays #833's case.
 - **SC-002**: Replaying the recorded round histories of #954 and #969 through the signal computation stops each at or before round 3 with `not-converging`, rather than at a budget or an agreed stopping point.
 - **SC-003**: On the same recorded history, the local skill and the automated loops compute identical signals (one module, one answer).
-- **SC-004**: A fixture fold task that contradicts a fixture spec's FR is held before implement is dispatched in 100% of runs, and the owner question names both the task and the requirement.
-- **SC-005**: Folds that analyze finds no conflict in reach implement with no added owner touchpoint beyond a linked report.
+- **SC-004**: A fixture fold task that conflicts with the constitution is held before implement is dispatched in 100% of runs, and the owner question names both the task and the constitution principle it conflicts with.
+- **SC-005**: Folds in which analyze finds no constitution conflict — including folds with inconsistency or duplication findings — reach implement with no added owner touchpoint beyond a linked report; a fixture fold task that contradicts a fixture spec's FR without a constitution conflict is dispatched with the report linked, the report naming both the task and the requirement.
 - **SC-006**: No review loop exceeds the existing 5-round budget, and no lifecycle or fix PR is merged by a loop that stopped `not-converging`.
 - **SC-007**: Every new gate's failure branches are exercised by a checked-in fixture, and the full local gate suite passes.
 
@@ -210,3 +218,5 @@ As a maintainer, I want the procedure for verifying a finding, refuting it again
 - Implement's own zero-progress stop (#992).
 - The board loop's fix routing.
 - Automatically resolving a held conflict without the owner.
+- A shared file for the reviewer's judgement procedure (part 3 / Story 5); deferred until parts 1–2 land (FR-020).
+- Holding the dispatch on an analyze finding that is not a constitution conflict (FR-012).
