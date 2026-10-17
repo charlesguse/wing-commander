@@ -1505,6 +1505,18 @@ in-scope fold-in is still committed and pushed to `spec/<slug>`; the PR
 reply then says no implement workflow is configured and gives you the
 `spec_dir`/`issue`/`iteration` payload to dispatch by hand.
 
+Before that dispatch, a fold that added tasks gets a **fold-time analyze
+check** (spec 116): one extra read-only agent run on `claude-sonnet-5-5`
+(Read/Grep/Glob only, a 12-turn ceiling, billed like any other stage run)
+checks the new tasks against your spec, plan, earlier folds and
+constitution. It needs no new input or secret. A constitution conflict, or
+a check that fails, holds the dispatch and posts an owner question on the
+lifecycle issue; anything else dispatches as before, with the analyze
+report linked there. This repository releases a hold with
+`wing-commander-fold-hold.yml` (a `/fold-hold proceed|drop|amend|retry`
+comment); without such a wrapper of your own, dispatch a held fold by hand
+once you have settled the question.
+
 Deliberately **no `workflow_dispatch`** — this is the only stage that is
 purely event-triggered, since its whole purpose is reacting to a review or
 comment. Authorization is **two layers**, and the split matters: the
