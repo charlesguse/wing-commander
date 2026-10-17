@@ -1042,8 +1042,26 @@ jobs:
       # only re-entry. Not limited to a hand-run dispatch: a re-delivered
       # notification at stage review gets the same one-line explanation, and
       # no input is added to tell the two apart (Principle VII).
-      - name: Explain skipped dispatch at review stage
+      # Posted once per lifecycle: a re-delivered or duplicate notification
+      # finds the earlier explanation and stays silent. A failed lookup
+      # degrades to posting (a repeated line beats a silent skip).
+      - name: Check for an earlier review-stage explanation
+        id: review-explained
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip == 'true' && steps.meta.outputs.stage == 'review'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+        run: |
+          if gh issue view "$ISSUE_NUMBER" --json comments --jq '.comments[].body' 2>/dev/null | grep -qF 'Implement did nothing: this lifecycle is already in review'; then
+            echo "explained=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "explained=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Explain skipped dispatch at review stage
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip == 'true' && steps.meta.outputs.stage == 'review' && steps.review-explained.outputs.explained != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ github.token }}
@@ -1879,7 +1897,7 @@ jobs:
           # neither hold the loop open nor count as progress, and a healthy
           # cycle that checked nothing new now hands off only on a validated
           # blocker or the iteration cap.
-          decision="$(OK="$ok" TRUNCATED="$truncated" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading the cycle as not converged and not handed off so the steps below still run"; decision="$(printf 'converged=false\nprogressed=false\nhandoff=false\n')"; }
+          decision="$(OK="$ok" TRUNCATED="$truncated" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false)")"; }
           pick() { printf '%s\n' "$decision" | grep -m1 "^$1=" | cut -d= -f2- || true; }
           converged="$(pick converged)"
           progressed="$(pick progressed)"
@@ -2778,7 +2796,7 @@ jobs:
           # specs/117-implement-stall-handoff: the one shared stop rule,
           # measured from the RETRY's own base -- see "Read back cycle
           # outcome" above.
-          decision="$(OK="$ok" TRUNCATED="$truncated" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading the cycle as not converged and not handed off so the steps below still run"; decision="$(printf 'converged=false\nprogressed=false\nhandoff=false\n')"; }
+          decision="$(OK="$ok" TRUNCATED="$truncated" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false)")"; }
           pick() { printf '%s\n' "$decision" | grep -m1 "^$1=" | cut -d= -f2- || true; }
           converged="$(pick converged)"
           progressed="$(pick progressed)"

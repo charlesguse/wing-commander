@@ -11,6 +11,7 @@
   {"name": "detail-empty", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"\"}", "valid": false, "reason": "detail is empty"},
   {"name": "task-trailing-newline", "blocker": "{\"task\":\"T002\\n\",\"kind\":\"missing-tool\",\"detail\":\"x\"}", "valid": false, "reason": "task is not a task id"},
   {"name": "detail-newline-only", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"\\n\"}", "valid": false, "reason": "single line"},
+  {"name": "detail-symbols-only", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"@#$%^&*\"}", "valid": false, "reason": "no usable text"},
   {"name": "detail-multiline", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"a\\nb\"}", "valid": false, "reason": "single line"},
   {"name": "detail-301-chars", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"@X301@\"}", "valid": false, "reason": "longer than 300"},
   {"name": "task-bad-shape", "blocker": "{\"task\":\"task 2\",\"kind\":\"missing-tool\",\"detail\":\"x\"}", "valid": false, "reason": "not a task id"},

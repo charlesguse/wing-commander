@@ -70,9 +70,13 @@ counts="$(printf '%s\n' "$content" | awk '
     t = tolower(line)
     sub(/^[ \t]*- \[[ xX]\][ \t]*/, "", t)
     sub(/^[tm][0-9]+[ \t]*/, "", t)
-    if (t ~ /^complete every remaining/) return 1
-    if (t ~ /^keep the gates green/) return 1
-    if (t ~ /^after each cycle/) return 1
+    # Ambiguity counts as implementation for every prefix: a line that names a
+    # deliverable (a backtick span, a path, or a "fix"/"add"/"create" verb
+    # clause) is a real task even when it starts like a standing instruction.
+    if (t ~ /^(complete every remaining|keep the gates green|after each cycle)/) {
+      if (t ~ /`|\/|\.(sh|py|yml|yaml|md|json)([^a-z]|$)|(and|then|,) (fix|add|create|write|update|implement)/) return 0
+      return 1
+    }
     if (t ~ /^run the (full )?gate suite/) {
       # Ambiguity counts as implementation (spec edge case): only the bare
       # instruction, optionally "locally" and/or "before pushing", is
@@ -103,15 +107,15 @@ counts="$(printf '%s\n' "$content" | awk '
     if ($0 ~ /^[ \t]*- \[[xX ]\]/) {
       is_checked = ($0 ~ /^[ \t]*- \[[xX]\]/)
       if (is_checked) checked++; else { unchecked++; items = items $0 "\n" }
-      if (is_checked) {
-        # Classification applies to unchecked lines only: a checked line is
-        # finished work whatever it says, so base and tip counts stay
-        # comparable for the progress test.
-        impl_checked++
-      } else if (is_standing($0)) {
-        standing++
+      # One classification for both states, so ticking a standing or
+      # [maintainer] line never reads as implementation progress and the
+      # implementation total (checked + unchecked) is the same at base and tip.
+      if (is_standing($0)) {
+        if (!is_checked) standing++
       } else if (is_maintainer($0)) {
-        maint = maint $0 "\n"
+        if (!is_checked) maint = maint $0 "\n"
+      } else if (is_checked) {
+        impl_checked++
       } else {
         impl_unchecked++
         impl_items = impl_items $0 "\n"
