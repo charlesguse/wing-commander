@@ -5755,15 +5755,19 @@ jobs:
             class=bump
             gh pr list -R "$GITHUB_REPOSITORY" --state open --limit 100 \
               --json number,author,headRefName,createdAt > "$RUNNER_TEMP/board-merge-open-prs.json" \
-              || { echo "::error::board-loop merge: could not list the open PRs -- no bump candidate is looked for this run."; exit 1; }
+              || { echo "::warning::board-loop merge: could not list the open PRs -- no bump candidate is looked for this run."; exit 0; }
             shaped="$(python3 -I "$scripts/board_merge.py" bump-shaped --bot-login "$BOT_LOGIN" < "$RUNNER_TEMP/board-merge-open-prs.json")" \
               || { echo "::error::board-loop merge: board_merge.py bump-shaped failed."; exit 1; }
             fields="$(python3 -I "$scripts/board_merge.py" snapshot-fields)" \
               || { echo "::error::board-loop merge: board_merge.py snapshot-fields failed."; exit 1; }
             : > "$RUNNER_TEMP/board-merge-bump-snapshots.jsonl"
             for n in $shaped; do
-              gh pr view "$n" -R "$GITHUB_REPOSITORY" --json "$fields" >> "$RUNNER_TEMP/board-merge-bump-snapshots.jsonl" \
-                || { echo "::error::board-loop merge: could not snapshot bump PR #$n -- no bump candidate is picked this run."; exit 1; }
+              # One flaky call skips that PR for this run; the others are still evaluated.
+              if ! gh pr view "$n" -R "$GITHUB_REPOSITORY" --json "$fields" > "$RUNNER_TEMP/board-merge-bump-one.json"; then
+                echo "::warning::board-loop merge: could not snapshot bump PR #$n -- it is skipped this run."
+                continue
+              fi
+              cat "$RUNNER_TEMP/board-merge-bump-one.json" >> "$RUNNER_TEMP/board-merge-bump-snapshots.jsonl"
             done
             picked="$(jq -s '.' "$RUNNER_TEMP/board-merge-bump-snapshots.jsonl" \
               | python3 -I "$scripts/board_merge.py" pick-bump --bot-login "$BOT_LOGIN")" \
@@ -5889,6 +5893,13 @@ jobs:
               exit 0
             fi
             echo "::warning::board-loop merge: GitHub did not merge PR #$PR_NUMBER (attempt $attempt): $(head -c 500 "$stderr_file")"
+            # A 5xx or timeout can follow a merge GitHub did complete, and the
+            # retry then fails "already merged": a PR on main is `merged`.
+            if [ "$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json state --jq .state 2>/dev/null)" = "MERGED" ]; then
+              merge_sha="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json mergeCommit --jq '.mergeCommit.oid // empty')" || merge_sha=""
+              { echo "outcome=merged"; echo "merge-sha=$merge_sha"; } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             refusal_class="$(python3 -I "$scripts/board_merge.py" classify-refusal < "$stderr_file")" || refusal_class=other
             if ! python3 -I "$scripts/board_merge.py" retryable "$refusal_class"; then
               { echo "outcome=refused"; echo "refusal-class=$refusal_class"; } >> "$GITHUB_OUTPUT"
@@ -5934,6 +5945,8 @@ jobs:
           PR_NUMBER: ${{ steps.candidate.outputs.pr }}
           ISSUE_NUMBER: ${{ steps.candidate.outputs.issue }}
           CLASS: ${{ steps.candidate.outputs.class }}
+          BRANCH: ${{ steps.candidate.outputs.branch }}
+          BASE_SHA: ${{ steps.candidate.outputs.base-sha }}
           MAY_MERGE: ${{ steps.decide.outputs.may-merge }}
           OUTCOME: ${{ steps.merge.outputs.outcome }}
           MERGE_SHA: ${{ steps.merge.outputs.merge-sha }}
@@ -5963,20 +5976,33 @@ jobs:
             exit 0
           fi
           marker=""
-          if [ "$CLASS" = "fix" ] && [ "$outcome" = "merged" ]; then
-            marker="$(python3 -I "$scripts/board_item_marker.py" --step merged --pr "$PR_NUMBER" --merge-sha "$MERGE_SHA")" \
-              || { echo "::error::board-loop merge: could not render the step=merged marker."; exit 1; }
-          elif [ "$CLASS" = "fix" ] && [ "$outcome" = "refused" ]; then
-            marker="$(python3 -I "$scripts/board_item_marker.py" --step handed-over --pr "$PR_NUMBER")" \
-              || { echo "::error::board-loop merge: could not render the step=handed-over marker."; exit 1; }
+          if [ "$CLASS" = "fix" ] && { [ "$outcome" = "merged" ] || [ "$outcome" = "refused" ]; }; then
+            # The marker keeps the item's branch, base and review round: it
+            # replaces the issue's newest marker, which resume and prove read.
+            gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
+              --jq '.[] | {created_at, body, user}' | jq -s '.' > "$RUNNER_TEMP/board-merge-issue-comments.json" \
+              || { echo "::error::board-loop merge: could not read issue #$ISSUE_NUMBER's comments for the marker's round."; exit 1; }
+            marker_args=(--pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA"
+                         --carry-round-from "$RUNNER_TEMP/board-merge-issue-comments.json" --bot-login "$BOT_LOGIN")
+            if [ "$outcome" = "merged" ]; then
+              marker="$(python3 -I "$scripts/board_item_marker.py" --step merged "${marker_args[@]}" --merge-sha "$MERGE_SHA")" \
+                || { echo "::error::board-loop merge: could not render the step=merged marker."; exit 1; }
+            else
+              marker="$(python3 -I "$scripts/board_item_marker.py" --step handed-over "${marker_args[@]}")" \
+                || { echo "::error::board-loop merge: could not render the step=handed-over marker."; exit 1; }
+            fi
           fi
+          # The issue comment (and its marker) goes first: the PR comment is
+          # the dedup source above, so it must be posted last, or a failed
+          # issue post would be skipped as "already announced" forever.
+          issue_body="$body"
+          if [ -n "$marker" ]; then
+            issue_body="$(printf '%s\n\n%s' "$body" "$marker")"
+          fi
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$issue_body" \
+            || { echo "::error::board-loop merge: the announcement could not be posted on issue #$ISSUE_NUMBER."; exit 1; }
           gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body" \
             || { echo "::error::board-loop merge: the announcement could not be posted on PR #$PR_NUMBER."; exit 1; }
-          if [ -n "$marker" ]; then
-            body="$(printf '%s\n\n%s' "$body" "$marker")"
-          fi
-          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body" \
-            || { echo "::error::board-loop merge: the announcement could not be posted on issue #$ISSUE_NUMBER."; exit 1; }
 
       - name: Agent run metrics summary (merge)
         id: metrics-summary

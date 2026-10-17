@@ -184,6 +184,31 @@ def check_bump_pick_and_dedup():
         ok("quoted stderr cannot carry a marker into the App's announcement")
 
 
+def check_round2_findings():
+    """Review round 2: an empty commit-author login with the App's noreply
+    email is still the bot's; any other empty-login commit is not; quoted
+    stderr cannot close its code fence."""
+    bot = "wing-commander[bot]"
+    snap = _bump_snapshot(3, "2026-10-03T00:00:00Z", "ddd4", [_verified("ddd4", 20)])
+    mapped = dict(snap, commits=[{"authors": [{"login": "", "email": "12345+wing-commander[bot]@users.noreply.github.com"}]}])
+    foreign = dict(snap, commits=[{"authors": [{"login": "", "email": "someone@example.com"}]}])
+    spoof = dict(snap, commits=[{"authors": [{"login": "", "email": "12345+other[bot]@users.noreply.github.com"}]}])
+    if not board_merge._attributed_to_auto_update(mapped, bot):
+        fail("a bot commit whose login gh reports empty (noreply email) is not attributed to the bot")
+    elif board_merge._attributed_to_auto_update(foreign, bot) or board_merge._attributed_to_auto_update(spoof, bot):
+        fail("an empty-login commit by someone other than the bot is attributed to the bot")
+    else:
+        ok("an empty-login bot commit is attributed by its noreply email; others are not")
+    decision = board_merge.decide({"class": "bump", "snapshot": snap, "bot_login": bot,
+                                   "paused": False, "switch_on": True})
+    text = board_merge.render_announcement(decision, "refused", snap, refusal_class="other",
+                                           stderr="boom\n```\n# injected heading")
+    if text.count("```") != 2:
+        fail("quoted stderr closes its code fence: {0} fence markers".format(text.count("```")))
+    else:
+        ok("quoted stderr cannot close its code fence")
+
+
 def job_block(lines, job):
     """The lines of top-level job `job` (two-space indent) up to the next job."""
     start = None
@@ -344,6 +369,15 @@ def check_board_loop():
     else:
         ok("switch-off readiness text unchanged")
 
+    issue_post = merge_code.find("gh issue comment \"$ISSUE_NUMBER\"")
+    pr_post = merge_code.find("gh pr comment \"$PR_NUMBER\"")
+    if issue_post < 0 or pr_post < 0 or issue_post > pr_post:
+        fail("the announce step must post the issue comment (with its marker) before the PR comment, "
+             "which is the dedup source")
+    if '"MERGED"' not in merge_code:
+        fail("the merge step must treat an already-MERGED PR as merged before classifying a failure")
+    if "--carry-round-from" not in merge_code or "--base-sha" not in merge_code:
+        fail("the merged/handed-over markers must carry branch, base_sha and the round")
     if re.search(r"gh\s+workflow\s+run\b", merge_code):
         fail("the merge job dispatches a run itself; proof comes only from prove-gate (research D8)")
     else:
@@ -398,6 +432,7 @@ def main():
         check_refusal_fixtures()
     check_transient_refusals()
     check_bump_pick_and_dedup()
+    check_round2_findings()
     check_structural_self_test()
     check_board_loop()
     check_auto_update()
