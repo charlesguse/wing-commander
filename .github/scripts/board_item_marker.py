@@ -222,7 +222,8 @@ def read_marker(issue_comments, bot_login):
 
 def write_marker(step, round, pr, branch, base_sha, spec_request=None,
                  outcome_reason=None, recovery_attempted=False,
-                 nr_count=None, nr_head_sha=None, nr_class=None, nr_reason=None):
+                 nr_count=None, nr_head_sha=None, nr_class=None, nr_reason=None,
+                 merge_sha=None):
     """Renders the run announcement plus the HTML-comment marker line.
     Appended to the loop's own human-legible status comment -- never the
     comment's only content (FR-044) -- by the caller.
@@ -252,7 +253,10 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None,
     a `readiness` marker (and, for the threshold handover only, a
     `stalled` marker's `nr_head_sha`, D7). Each is serialized only when not
     None -- an absent field, not a null-valued one, so every marker that
-    carries no not-ready record keeps its existing shape."""
+    carries no not-ready record keeps its existing shape.
+
+    merge_sha (spec 115): the squash commit on main, meaningful only on a
+    `merged` marker; serialized only when not None, like the fields above."""
     payload_dict = {"step": step, "round": round, "pr": pr, "branch": branch,
                     "base_sha": base_sha, "outcome_reason": outcome_reason,
                     "recovery_attempted": recovery_attempted}
@@ -266,7 +270,9 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None,
         payload_dict["nr_class"] = nr_class
     if nr_reason is not None:
         payload_dict["nr_reason"] = nr_reason
-    payload = json.dumps(payload_dict, sort_keys=True)
+    if merge_sha is not None:
+        payload_dict["merge_sha"] = merge_sha
+    payload =json.dumps(payload_dict, sort_keys=True)
     marker = "<!-- wing-commander-board-item: {0} -->".format(payload)
 
     server_url = os.environ.get("GITHUB_SERVER_URL")
@@ -279,6 +285,19 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None,
 
 
 STALLED_STEP = "stalled"
+
+# spec 115: the hidden marker the auto-update stage's act job posts on its
+# upgrade PR once per verification; board_merge.py reads it back (bot-authored
+# comments only) as the gate for merging a dependency bump.
+BUMP_VERIFICATION_MARKER = "wc-bump-verification"
+
+
+def render_bump_verification(head_sha, tier, result, run_id):
+    """The comment body for one BumpVerificationRecord (data-model.md)."""
+    payload = json.dumps({"head_sha": head_sha, "tier": tier, "result": result,
+                          "run_id": str(run_id)}, sort_keys=True)
+    return ("Spec Kit upgrade verification ({0}): {1} on {2}.\n\n"
+            "<!-- {3}: {4} -->".format(tier, result, head_sha, BUMP_VERIFICATION_MARKER, payload))
 
 
 # Any review-round verdict line naming a PR: converged, budget-spent,
@@ -504,7 +523,15 @@ def main():
     parser.add_argument("--nr-reason", default=None,
                         help="specs/093-not-ready-board-release: the unmet condition (FR-002), "
                              "which the FR-009 dedup compares")
+    parser.add_argument("--merge-sha", default=None,
+                        help="spec 115: the squash commit SHA, with --step merged")
+    parser.add_argument("--bump-verification", nargs=4, default=None,
+                        metavar=("HEAD_SHA", "TIER", "RESULT", "RUN_ID"),
+                        help="spec 115: print a wc-bump-verification comment body instead of a marker")
     args = parser.parse_args()
+    if args.bump_verification:
+        print(render_bump_verification(*args.bump_verification))
+        return
     if args.record_stall_summary:
         if args.issue is None or not args.from_step:
             parser.error("--record-stall-summary needs --issue N --from-step <name>")
@@ -524,7 +551,8 @@ def main():
                        outcome_reason=args.outcome_reason,
                        recovery_attempted=args.recovery_attempted,
                        nr_count=args.nr_count, nr_head_sha=args.nr_head_sha,
-                       nr_class=args.nr_class, nr_reason=args.nr_reason))
+                       nr_class=args.nr_class, nr_reason=args.nr_reason,
+                       merge_sha=args.merge_sha or None))
 
 
 if __name__ == "__main__":
