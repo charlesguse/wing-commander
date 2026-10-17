@@ -193,8 +193,11 @@ def check_round2_findings():
     mapped = dict(snap, commits=[{"authors": [{"login": "", "email": "12345+wing-commander[bot]@users.noreply.github.com"}]}])
     foreign = dict(snap, commits=[{"authors": [{"login": "", "email": "someone@example.com"}]}])
     spoof = dict(snap, commits=[{"authors": [{"login": "", "email": "12345+other[bot]@users.noreply.github.com"}]}])
+    plain = dict(snap, commits=[{"authors": [{"login": "", "email": "wing-commander[bot]@users.noreply.github.com"}]}])
     if not board_merge._attributed_to_auto_update(mapped, bot):
         fail("a bot commit whose login gh reports empty (noreply email) is not attributed to the bot")
+    elif not board_merge._attributed_to_auto_update(plain, bot):
+        fail("a bot commit with the auto-update stage's plain <slug>[bot] noreply email is not attributed to the bot")
     elif board_merge._attributed_to_auto_update(foreign, bot) or board_merge._attributed_to_auto_update(spoof, bot):
         fail("an empty-login commit by someone other than the bot is attributed to the bot")
     else:
@@ -211,13 +214,8 @@ def check_round2_findings():
 
 def job_block(lines, job):
     """The lines of top-level job `job` (two-space indent) up to the next job."""
-    start = None
-    for i, line in enumerate(lines):
-        if line == "  {0}:".format(job):
-            start = i
-        elif start is not None and re.fullmatch(r"  [A-Za-z0-9_-]+:", line):
-            return lines[start:i]
-    return lines[start:] if start is not None else None
+    span = job_span(lines, job)
+    return lines[span[0]:span[1]] if span else None
 
 
 def job_span(lines, job):
@@ -279,6 +277,14 @@ def merge_job_shape_problems(merge_job):
     return problems
 
 
+def find_merge_calls(code):
+    """Every `gh pr merge` call with its backslash-continued lines. A line is
+    any run of characters that is not a backslash-newline, so a continuation's
+    flags are part of the call and are checked with it."""
+    line_re = r"(?:[^\\\n]|\\(?!\n))*"
+    return re.findall(r"gh\s+pr\s+merge\b" + line_re + r"(?:\\\n" + line_re + r")*", code)
+
+
 def _run_blocks_text(lines):
     return "\n".join(line for line in lines if not line.lstrip().startswith("#"))
 
@@ -317,6 +323,9 @@ def check_structural_self_test():
     for label, job in (("contents: write", widened), ("gh | grep -q", piped), ("no retry", unretried)):
         if not merge_job_shape_problems(job):
             fail("self-test: a merge job with {0} is not caught".format(label))
+    continued = find_merge_calls('gh pr merge "$PR" --squash \\\n  --rebase --match-head-commit "$SHA"\n')
+    if len(continued) != 1 or "--rebase" not in continued[0] or "--match-head-commit" not in continued[0]:
+        fail("self-test: flags on a backslash-continued `gh pr merge` line are not part of the call")
     if not failures:
         ok("self-test: the merge-job rules catch a pasted merge line, widened permissions, "
            "a gh | grep -q pipe and a missing retry")
@@ -341,7 +350,7 @@ def check_board_loop():
                            (r"event=APPROVE\b", "event=APPROVE")):
         if re.search(pattern, code):
             fail("{0} contains {1}".format(BOARD_LOOP, label))
-    merge_calls = re.findall(r"gh\s+pr\s+merge\b[^\n]*(?:\\\n[^\n]*)*", merge_code)
+    merge_calls = find_merge_calls(merge_code)
     if not merge_calls:
         fail("the merge job never calls `gh pr merge`")
     for call in merge_calls:

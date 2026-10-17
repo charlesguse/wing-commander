@@ -5880,24 +5880,45 @@ jobs:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           PR_NUMBER: ${{ steps.candidate.outputs.pr }}
           HEAD_SHA: ${{ steps.decide.outputs.head-sha }}
+          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         run: |
           set -uo pipefail
           scripts="$RUNNER_TEMP/wc-pristine/scripts"
           stderr_file="$RUNNER_TEMP/board-merge-stderr.txt"
           pin_sha="$HEAD_SHA"
           attempt=1
+          # GitHub can report mergeCommit empty for a moment after the merge:
+          # re-read it a few times so the announcement and the merged marker
+          # (which prove-gate needs) carry the SHA.
+          read_merge_sha() {
+            local sha=""
+            for _ in 1 2 3 4 5; do
+              sha="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json mergeCommit --jq '.mergeCommit.oid // empty')" || sha=""
+              [ -n "$sha" ] && break
+              sleep 3
+            done
+            printf '%s' "$sha"
+          }
           while :; do
             if gh pr merge "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --squash --match-head-commit "$pin_sha" 2> "$stderr_file"; then
-              merge_sha="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json mergeCommit --jq '.mergeCommit.oid // empty')" || merge_sha=""
+              merge_sha="$(read_merge_sha)"
               { echo "outcome=merged"; echo "merge-sha=$merge_sha"; } >> "$GITHUB_OUTPUT"
               exit 0
             fi
             echo "::warning::board-loop merge: GitHub did not merge PR #$PR_NUMBER (attempt $attempt): $(head -c 500 "$stderr_file")"
             # A 5xx or timeout can follow a merge GitHub did complete, and the
-            # retry then fails "already merged": a PR on main is `merged`.
+            # retry then fails "already merged": a PR on main is `merged` only
+            # when this App merged the pinned head. Merged by anyone else, or
+            # at another head, it is not this run's merge to announce.
             if [ "$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json state --jq .state 2>/dev/null)" = "MERGED" ]; then
-              merge_sha="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json mergeCommit --jq '.mergeCommit.oid // empty')" || merge_sha=""
-              { echo "outcome=merged"; echo "merge-sha=$merge_sha"; } >> "$GITHUB_OUTPUT"
+              merged_by="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json mergedBy,headRefOid \
+                --jq '[((.mergedBy.login // "") | sub("^app/"; "") | sub("\\[bot\\]$"; "") | ascii_downcase), .headRefOid] | join(" ")' 2>/dev/null)" || merged_by=""
+              if [ "$merged_by" = "$(printf '%s' "$BOT_SLUG" | tr '[:upper:]' '[:lower:]') $pin_sha" ]; then
+                merge_sha="$(read_merge_sha)"
+                { echo "outcome=merged"; echo "merge-sha=$merge_sha"; } >> "$GITHUB_OUTPUT"
+              else
+                echo "outcome=not-merged" >> "$GITHUB_OUTPUT"
+              fi
               exit 0
             fi
             refusal_class="$(python3 -I "$scripts/board_merge.py" classify-refusal < "$stderr_file")" || refusal_class=other
