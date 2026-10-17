@@ -3,7 +3,7 @@
   "spec_dir": "specs/117-implement-stall-handoff",
   "feature_num": "117",
   "stage": "implement",
-  "iteration": 4,
+  "iteration": 5,
   "spec_branch": "spec/117-implement-stall-handoff",
   "pending_re_review_from": [
     "charlesguse"
