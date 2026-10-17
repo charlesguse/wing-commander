@@ -1,0 +1,21 @@
+checked-count=0
+unchecked-count=8
+unchecked-items<<WING_COMMANDER_UNCHECKED_ITEMS_EOF
+- [ ] Complete every remaining unchecked task
+- [ ] M001 Complete every remaining unchecked task
+- [ ] Keep the gates green
+- [ ] Run the gate suite
+- [ ] Run the full gate suite
+- [ ] After each cycle, re-read the plan
+- [ ] T010 Run the gate suite and fix the fallout
+- [ ] T011 Run the full gate suite on `.github/scripts/x.py`
+WING_COMMANDER_UNCHECKED_ITEMS_EOF
+impl-checked-count=0
+impl-unchecked-count=2
+standing-count=6
+impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF
+- [ ] T010 Run the gate suite and fix the fallout
+- [ ] T011 Run the full gate suite on `.github/scripts/x.py`
+WING_COMMANDER_IMPL_ITEMS_EOF
+maintainer-items<<WING_COMMANDER_MAINTAINER_ITEMS_EOF
+WING_COMMANDER_MAINTAINER_ITEMS_EOF
