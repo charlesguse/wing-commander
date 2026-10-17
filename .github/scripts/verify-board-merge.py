@@ -114,6 +114,28 @@ def check_transient_refusals():
         ok("head-moved, base-moved and 5xx merge failures are retried, not handed over")
 
 
+# gh's own refusal before it calls the API (pkg/cmd/pr/merge blockedReason):
+# BLOCKED and BEHIND are branch protection, DIRTY is a conflict. All three
+# say "is not mergeable", so the class comes from the reason after it.
+GH_BLOCKED_REASONS = (
+    ("X Pull request o/r#12 is not mergeable: the base branch policy prohibits the merge.", "protection"),
+    ("X Pull request o/r#12 is not mergeable: the head branch is not up to date with the base branch.",
+     "protection"),
+    ("X Pull request o/r#12 is not mergeable: the merge commit cannot be cleanly created.", "conflict"),
+)
+
+
+def check_gh_blocked_reasons():
+    """Full review of PR #1059: the handover names the refusal reason
+    (FR-010), so a protection refusal is never announced as a conflict."""
+    bad = [(err, want, board_merge.classify_refusal(err)) for err, want in GH_BLOCKED_REASONS
+           if board_merge.classify_refusal(err) != want]
+    for err, want, got in bad:
+        fail("gh's refusal {0!r} classifies as {1!r}, expected {2!r}".format(err, got, want))
+    if not bad:
+        ok("gh's own not-mergeable reasons classify as protection or conflict by their reason")
+
+
 def _bump_snapshot(number, created, head, comments=(), body_issue=77):
     return {"number": number, "createdAt": created, "headRefOid": head,
             "author": {"login": "app/wing-commander"},
@@ -455,6 +477,36 @@ def check_board_loop():
             fail("{0} carries a refusal regex; classify_refusal() is its one home".format(path))
 
 
+def check_readiness_head_binding():
+    """Full review of PR #1059: decide() trusts readiness's backstop only at
+    `readiness_head_sha`, so that output must be the head the backstop step
+    measured (its own `git rev-parse HEAD` after the branch fetch), not only
+    the head a later `gh pr view` read: a push between the two would bind a
+    backstop measured on one head to another."""
+    with open(BOARD_LOOP, encoding="utf-8") as fh:
+        readiness = job_block(fh.read().splitlines(), "readiness")
+    if readiness is None:
+        fail("{0} has no `readiness` job".format(BOARD_LOOP))
+        return
+    text = "\n".join(readiness)
+    steps = {block.split("\n", 1)[0]: block for block in re.split(r"\n      - name: ", text)}
+    backstop = steps.get("Re-apply the route backstop to the current final diff", "")
+    evaluate = steps.get("Evaluate readiness", "")
+    problems = []
+    if 'MEASURED_HEAD_SHA="$(git rev-parse HEAD)"' not in backstop or "head-sha=" not in backstop:
+        problems.append("the backstop step does not output the head it measured (git rev-parse HEAD)")
+    if "BACKSTOP_HEAD_SHA: ${{ steps.final-diff-backstop.outputs.head-sha }}" not in evaluate:
+        problems.append("Evaluate readiness does not read the backstop step's measured head")
+    elif not re.search(r'decision\["head_sha"\] == backstop_head', evaluate):
+        problems.append("Evaluate readiness writes head-sha without comparing it to the backstop's measured head")
+    if "head-sha: ${{ steps.decide.outputs.head-sha }}" not in text:
+        problems.append("the readiness job's head-sha output is not Evaluate readiness's bound head")
+    for problem in problems:
+        fail("readiness head binding: {0}".format(problem))
+    if not problems:
+        ok("readiness's head-sha output is the head its backstop measured, or empty")
+
+
 def check_auto_update():
     if not os.path.isfile(AUTO_UPDATE):
         fail("{0} does not exist".format(AUTO_UPDATE))
@@ -481,7 +533,9 @@ def main():
     check_round2_findings()
     check_quoted_verification_record()
     check_structural_self_test()
+    check_gh_blocked_reasons()
     check_board_loop()
+    check_readiness_head_binding()
     check_auto_update()
     print("verify-board-merge: {0} failure(s).".format(failures))
     return 1 if failures else 0

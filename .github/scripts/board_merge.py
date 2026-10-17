@@ -92,9 +92,14 @@ def _decision(snapshot, klass, names, results):
             "may_merge": unmet is None, "unmet_reason": unmet, "conditions": conditions}
 
 
-def eligible_fix_class(snapshot):
-    """FR-012: a fix PR is the loop's own `fix/<issue>-<slug>` branch; never a
-    spec, plan or lifecycle PR, and never one touching the constitution."""
+def eligible_fix_class(snapshot, bot_login):
+    """FR-001/FR-012: a fix PR is one the loop opened -- its App is the PR's
+    author (a branch name anyone can push or fork under is not enough) -- on
+    the loop's own `fix/<issue>-<slug>` branch; never a spec, plan or
+    lifecycle PR, and never one touching the constitution."""
+    author = snapshot.get("author") or {}
+    if author.get("is_bot") is not True or not _is_bot(author.get("login"), bot_login):
+        return False
     branch = snapshot.get("headRefName") or ""
     if branch.startswith(NON_CANDIDATE_BRANCH_PREFIXES):
         return False
@@ -103,13 +108,13 @@ def eligible_fix_class(snapshot):
     return not _touches_constitution(snapshot)
 
 
-def evaluate_fix(snapshot, review_converged, backstop_holds, paused, switch_on):
+def evaluate_fix(snapshot, review_converged, backstop_holds, paused, switch_on, bot_login):
     rollup = snapshot.get("statusCheckRollup") or []
     checks_green = _checks_green(rollup)
     results = {
         "switch_on": switch_on,
         "kill_switch_clear": not paused,
-        "eligible_class": eligible_fix_class(snapshot),
+        "eligible_class": eligible_fix_class(snapshot, bot_login),
         "checks_green": checks_green,
         "gate_suite_green": checks_green and _gate_suite_green(rollup),
         "review_converged": review_converged,
@@ -232,7 +237,10 @@ def evaluate_bump(snapshot, records, bot_login, paused, switch_on):
 
 # Checked in this order: a missing scope is never mistaken for a transient
 # failure, and a transient one is checked before `not mergeable`, which
-# GitHub also says while mergeability is still being computed.
+# GitHub also says while mergeability is still being computed. Protection is
+# checked before conflict: gh's own pre-merge refusal reads "is not
+# mergeable: <reason>" for a policy block and an out-of-date head too, so the
+# reason, not the prefix, names the class.
 _REFUSAL_PATTERNS = (
     ("workflow-scope", re.compile(r"workflows?`?\s+(permission|scope)|without\s+`?workflows?`?|"
                                   r"workflow\s+scope", re.IGNORECASE)),
@@ -240,11 +248,11 @@ _REFUSAL_PATTERNS = (
                              r"HTTP 5\d\d|bad gateway|service unavailable|gateway time-?out|"
                              r"timed out|connection reset|mergeab\w+ (state )?(is )?(still )?"
                              r"(unknown|being computed)|merge already in progress", re.IGNORECASE)),
-    ("conflict", re.compile(r"not mergeable|merge conflict|conflicts? with|cannot be cleanly created",
-                            re.IGNORECASE)),
     ("protection", re.compile(r"protected branch|required status|required review|review is required|"
                               r"approving review|branch protection|base branch policy|"
-                              r"repository rule", re.IGNORECASE)),
+                              r"repository rule|not up to date with the base", re.IGNORECASE)),
+    ("conflict", re.compile(r"not mergeable|merge conflict|conflicts? with|cannot be cleanly created",
+                            re.IGNORECASE)),
 )
 
 
@@ -259,15 +267,15 @@ def classify_refusal(stderr):
 def decide(payload):
     """payload: {"class": "fix"|"bump", "snapshot": gh pr view JSON,
     "switch_on", "paused", and for fix "review_converged", "backstop_holds",
-    "readiness_head_sha"; for bump "bot_login"}. A fix backstop measured on a
+    "readiness_head_sha"; "bot_login" for both}. A fix backstop measured on a
     head other than the snapshot's is not a backstop that holds."""
     snapshot = payload["snapshot"]
+    bot_login = payload.get("bot_login") or ""
     if payload["class"] == "fix":
         backstop = bool(payload.get("backstop_holds")) and (
             payload.get("readiness_head_sha") == snapshot.get("headRefOid"))
         return evaluate_fix(snapshot, bool(payload.get("review_converged")), backstop,
-                            bool(payload["paused"]), bool(payload["switch_on"]))
-    bot_login = payload.get("bot_login") or ""
+                            bool(payload["paused"]), bool(payload["switch_on"]), bot_login)
     return evaluate_bump(snapshot, bump_records(snapshot.get("comments"), bot_login), bot_login,
                          bool(payload["paused"]), bool(payload["switch_on"]))
 

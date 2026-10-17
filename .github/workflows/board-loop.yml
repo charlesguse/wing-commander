@@ -5165,6 +5165,11 @@ jobs:
           set -uo pipefail
           base_sha="$(git merge-base origin/main HEAD)"
           export BASE_SHA="$base_sha"
+          # specs/115-board-loop-self-merge: the head this backstop measures,
+          # which the merge job's backstop_holds is bound to (Evaluate
+          # readiness below).
+          MEASURED_HEAD_SHA="$(git rev-parse HEAD)"
+          export MEASURED_HEAD_SHA
           # --no-renames: see fix's "Re-apply the route backstop to the
           # final diff".
           git -c core.quotePath=false diff --no-renames "$base_sha" HEAD > "$RUNNER_TEMP/board-readiness-final-diff.patch"
@@ -5207,6 +5212,7 @@ jobs:
               # base-sha is select's own one-time read and can be stale by
               # the time readiness runs.
               fh.write("base-sha={0}\n".format(os.environ.get("BASE_SHA", "")))
+              fh.write("head-sha={0}\n".format(os.environ.get("MEASURED_HEAD_SHA", "")))
           PYEOF
 
       # FR-051/FR-052 (#604): this re-check gates EVERY durable action
@@ -5264,6 +5270,7 @@ jobs:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
           BACKSTOP_HOLDS: ${{ steps.final-diff-backstop.outputs.holds }}
+          BACKSTOP_HEAD_SHA: ${{ steps.final-diff-backstop.outputs.head-sha }}
           PAUSED: ${{ steps.killswitch-recheck.outputs.paused }}
         run: |
           set -uo pipefail
@@ -5290,7 +5297,13 @@ jobs:
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write("ready={0}\n".format("true" if decision["ready"] else "false"))
-              fh.write("head-sha={0}\n".format(decision["head_sha"] or ""))
+              # specs/115-board-loop-self-merge: the merge job trusts the
+              # backstop only at this head, so it is the head the backstop
+              # step measured AND this snapshot read; a push between the two
+              # leaves it empty, and the merge job's backstop_holds fails.
+              backstop_head = os.environ.get("BACKSTOP_HEAD_SHA") or ""
+              fh.write("head-sha={0}\n".format(
+                  decision["head_sha"] if decision["head_sha"] and decision["head_sha"] == backstop_head else ""))
           PYEOF
 
       # FR-066/FR-068: names head_sha and every condition's result; states
