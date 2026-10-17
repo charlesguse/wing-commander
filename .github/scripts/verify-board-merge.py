@@ -552,6 +552,39 @@ def check_pass2_findings():
         ok("a PR merged elsewhere is announced as merged elsewhere, keeping its outcome record")
 
 
+def check_stalled_tracking_issue():
+    """Owner's decision on pass 3's C2 (#903, option b): a maintainer /stop
+    on a bump PR's auto-update:tracking issue leaves it board:stalled, and
+    the pick skips every bump PR closing a stalled tracking issue, so the
+    release is removing the label, as for a fix item. The merge job must
+    hand the pick the open board:stalled issues."""
+    bot = "wing-commander[bot]"
+    stalled = _bump_snapshot(6, "2026-10-06T00:00:00Z", "fff6", [_verified("fff6", 40)], body_issue=88)
+    other = _bump_snapshot(7, "2026-10-07T00:00:00Z", "ggg7", [_verified("ggg7", 41)], body_issue=77)
+    try:
+        held = board_merge.pick_bump_candidate([stalled], bot, ["88"])
+        released = board_merge.pick_bump_candidate([stalled], bot, ["12"])
+        next_up = board_merge.pick_bump_candidate([stalled, other], bot, [88])
+    except TypeError as exc:
+        fail("pick_bump_candidate takes no stalled tracking issues: {0}".format(exc))
+        return
+    if held is not None:
+        fail("a bump PR whose tracking issue is board:stalled is still picked: got {0!r}".format(held))
+    elif not isinstance(released, dict) or released.get("pr") != 6:
+        fail("a bump PR is held although its tracking issue is not board:stalled: got {0!r}".format(released))
+    elif not isinstance(next_up, dict) or next_up.get("pr") != 7:
+        fail("a stalled tracking issue's bump PR hides another tracking issue's: got {0!r}".format(next_up))
+    else:
+        ok("a bump PR whose tracking issue is board:stalled is skipped until the label is removed")
+    with open(BOARD_LOOP, encoding="utf-8") as fh:
+        merge_code = _run_blocks_text(job_block(fh.read().splitlines(), "merge") or [])
+    if not re.search(r"pick-bump\b[^\n]*--stalled-issues\s+\"\$\w+\"", merge_code) \
+            or not re.search(r"gh\s+issue\s+list\b[^\n]*--label\s+board:stalled", merge_code):
+        fail("the merge job does not hand pick-bump the open board:stalled issues (--stalled-issues)")
+    else:
+        ok("the merge job hands pick-bump the open board:stalled issues")
+
+
 def check_auto_update():
     if not os.path.isfile(AUTO_UPDATE):
         fail("{0} does not exist".format(AUTO_UPDATE))
@@ -582,6 +615,7 @@ def main():
     check_board_loop()
     check_readiness_head_binding()
     check_pass2_findings()
+    check_stalled_tracking_issue()
     check_auto_update()
     print("verify-board-merge: {0} failure(s).".format(failures))
     return 1 if failures else 0

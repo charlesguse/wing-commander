@@ -5784,11 +5784,17 @@ jobs:
               fi
               cat "$RUNNER_TEMP/board-merge-bump-one.json" >> "$RUNNER_TEMP/board-merge-bump-snapshots.jsonl"
             done
+            # A maintainer /stop on a tracking issue leaves it board:stalled
+            # (the stop-check composite's record); removing the label is the
+            # release. A failed read is never "not stalled".
+            stalled="$(gh issue list -R "$GITHUB_REPOSITORY" --state open --label board:stalled --limit 1000 \
+              --json number --jq '[.[].number] | map(tostring) | join(" ")')" \
+              || { echo "::warning::board-loop merge: could not list the board:stalled issues -- no bump candidate is looked for this run."; exit 0; }
             picked="$(jq -s '.' "$RUNNER_TEMP/board-merge-bump-snapshots.jsonl" \
-              | python3 -I "$scripts/board_merge.py" pick-bump --bot-login "$BOT_LOGIN")" \
+              | python3 -I "$scripts/board_merge.py" pick-bump --bot-login "$BOT_LOGIN" --stalled-issues "$stalled")" \
               || { echo "::error::board-loop merge: board_merge.py pick-bump failed."; exit 1; }
             if [ -z "$picked" ]; then
-              echo "board-loop merge: no ready fix PR and no auto-update PR to evaluate this run (none open, none with a tracking issue, or each handed over at its head)." >> "$GITHUB_STEP_SUMMARY"
+              echo "board-loop merge: no ready fix PR and no auto-update PR to evaluate this run (none open, none with a tracking issue, each tracking issue board:stalled, or each handed over at its head)." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             pr="$(printf '%s' "$picked" | jq -r '.pr')"
