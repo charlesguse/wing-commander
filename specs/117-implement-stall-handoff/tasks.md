@@ -128,3 +128,7 @@
 - **MVP**: Phase 1, Phase 2 and US1 (T001-T010): the honest remaining-work report, the defect still live after #996. US2 (T011-T013) is the other P1 and makes the marker real; ship with MVP if the same PR.
 - **Then**: US3 (stop rule), US4 (re-entry legibility), Polish.
 - Keep to at most one concurrent local agent per review pass; commit after each task or logical group.
+
+## Phase 8: Convergence
+
+- [ ] T031 Make the Maintainer Feedback re-entry dispatch comment in `.github/workflows/pr-conversation.yml` (the "Implementation cycle N dispatched" reply, which is where that start comment actually lives, not `implement.yml`) state how many cycles remain (`max-iterations - iteration`, floor 0), taking the cap and recorded iteration from existing inputs or spec-meta without writing any state; then extend `verify-implement-stall-handoff.py` with the T024 remaining-count cases (iteration 4 of 5 → 1; 5 of 5 → 0) per FR-011 (missing)
