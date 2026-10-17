@@ -930,6 +930,12 @@ RESUME_CASES = [
     ("awaiting-merge, PR unresolved, board:owned fallback PR found -> no-op",
      _resume_env("awaiting-merge", "42", False, "OPEN", "99", from_fallback=True),
      {"step": "awaiting-merge", "recovered_via_fallback": False, "pr_number": ""}),
+    # spec 115: a handed-over item is released exactly like an
+    # awaiting-merge one, so an unresolved PR never lets the fallback
+    # re-adopt the PR GitHub refused and readiness re-report it.
+    ("handed-over, PR unresolved, board:owned fallback PR found -> no-op (spec 115)",
+     _resume_env("handed-over", "42", False, "OPEN", "99", from_fallback=True),
+     {"step": "awaiting-merge", "recovered_via_fallback": False, "pr_number": ""}),
     ("awaiting-merge, PR CLOSED -> triage, FR-022 cleared",
      _resume_env("awaiting-merge", "42", True, "CLOSED", "42"),
      dict(_CLEARED, step="triage")),
@@ -2318,7 +2324,8 @@ def _mutations(text):
         "'awaiting-merge') && needs.select.outputs.pr != '')",
         after="\n  readiness:\n")
     sub("resume clause 0 (awaiting-merge hold) disabled",
-        "elif marker_step == AWAITING_MERGE_STEP and (not pr_from_marker or pr_state == \"OPEN\"):",
+        "elif (marker_step in (AWAITING_MERGE_STEP, HANDED_OVER_STEP)\n"
+        "                and (not pr_from_marker or pr_state == \"OPEN\")):",
         "elif False:")
     # specs/096-durable-prove-entry FR-007/FR-008/FR-009 (research.md D7):
     # a resolved-by-number, MERGED, issue-still-open marker must resolve to

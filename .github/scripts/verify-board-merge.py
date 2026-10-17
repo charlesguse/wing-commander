@@ -101,6 +101,9 @@ TRANSIENT_STDERRS = (
     "GraphQL: Base branch was modified. Review and try the merge again. (mergePullRequest)",
     "HTTP 502: Bad Gateway (https://api.github.com/graphql)",
     "HTTP 503: Service Unavailable",
+    # Pass 2 of review-until-clean on PR #1059: the API's own refusal while
+    # mergeability is unknown (gh's pre-check saw no blocked state).
+    "GraphQL: Pull Request is not mergeable (mergePullRequest)",
 )
 
 
@@ -140,6 +143,7 @@ def _bump_snapshot(number, created, head, comments=(), body_issue=77):
     return {"number": number, "createdAt": created, "headRefOid": head,
             "author": {"login": "app/wing-commander"},
             "headRefName": "auto-update-spec-kit/v1.2.{0}".format(number),
+            "baseRefName": "main",
             "body": "Upgrade\nCloses #{0}\n{1}".format(body_issue, board_merge.BUMP_BODY_MARKER),
             "commits": [{"authors": [{"login": "app/wing-commander"}]}],
             "files": [{"path": ".specify/x"}],
@@ -507,6 +511,47 @@ def check_readiness_head_binding():
         ok("readiness's head-sha output is the head its backstop measured, or empty")
 
 
+def check_pass2_findings():
+    """Pass 2 of review-until-clean on PR #1059: whether the App merged a PR
+    is decided by board_merge.merged_by_us(), never by a second copy of the
+    login normalization in workflow jq; a PR merged by someone else is
+    announced as merged elsewhere, never as "Not merged"; and the merge job,
+    which reads no history, checks out shallow."""
+    bot = "wing-commander[bot]"
+    merged_by_us = getattr(board_merge, "merged_by_us", None)
+    if merged_by_us is None:
+        fail("board_merge.py has no merged_by_us(): who merged the PR is decided in workflow shell")
+    else:
+        cases = (({"mergedBy": {"login": "app/wing-commander"}, "headRefOid": "aaa1"}, "aaa1", True),
+                 ({"mergedBy": {"login": "Wing-Commander[bot]"}, "headRefOid": "aaa1"}, "aaa1", True),
+                 ({"mergedBy": {"login": "app/wing-commander"}, "headRefOid": "bbb2"}, "aaa1", False),
+                 ({"mergedBy": {"login": "someone"}, "headRefOid": "aaa1"}, "aaa1", False),
+                 ({"mergedBy": None, "headRefOid": "aaa1"}, "aaa1", False),
+                 ({"mergedBy": {"login": "app/wing-commander"}, "headRefOid": ""}, "", False))
+        bad = [(pr, head) for pr, head, want in cases if merged_by_us(pr, bot, head) != want]
+        for pr, head in bad:
+            fail("merged_by_us({0!r}, head {1!r}) is wrong".format(pr, head))
+        if not bad:
+            ok("merged_by_us() holds only for this App's merge at the pinned head")
+    with open(BOARD_LOOP, encoding="utf-8") as fh:
+        merge_job = job_block(fh.read().splitlines(), "merge") or []
+    merge_code = _run_blocks_text(merge_job)
+    if re.search(r"sub\(\s*\"\^app/", merge_code) or "merged-by-us" not in merge_code:
+        fail("the merge step normalizes mergedBy.login in jq instead of asking board_merge.py merged-by-us "
+             "(the login rule's one home is board_merge._slug)")
+    elif any(re.fullmatch(r"\s*fetch-depth:\s*0\s*", line) for line in merge_job):
+        fail("the merge job checks out with fetch-depth: 0; it reads no history")
+    else:
+        ok("the merge job asks board_merge.py who merged the PR and checks out shallow")
+    decision = {"head_sha": "aaa1", "class": "fix", "may_merge": True, "unmet_reason": None,
+                "conditions": {"switch_on": True}}
+    text = board_merge.render_announcement(decision, "not-merged", {})
+    if text.startswith("Not merged") or "merged_elsewhere" not in text:
+        fail("a PR merged by someone else is announced as {0!r}".format(text.split("\n", 1)[0]))
+    else:
+        ok("a PR merged elsewhere is announced as merged elsewhere, keeping its outcome record")
+
+
 def check_auto_update():
     if not os.path.isfile(AUTO_UPDATE):
         fail("{0} does not exist".format(AUTO_UPDATE))
@@ -536,6 +581,7 @@ def main():
     check_gh_blocked_reasons()
     check_board_loop()
     check_readiness_head_binding()
+    check_pass2_findings()
     check_auto_update()
     print("verify-board-merge: {0} failure(s).".format(failures))
     return 1 if failures else 0

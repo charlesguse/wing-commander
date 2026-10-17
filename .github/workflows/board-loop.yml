@@ -1217,7 +1217,7 @@ jobs:
 
           sys.path.insert(0, ".github/scripts")
           from board_eligibility import (
-              PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP, BREACH_STEP,
+              PRE_FIX_STEPS, FIX_OR_LATER_STEPS, AWAITING_MERGE_STEP, BREACH_STEP, HANDED_OVER_STEP,
               is_not_ready_handover, not_ready_head_moved, readmission_round)
           from board_item_marker import STALLED_STEP, head_moved_since_last_review, is_loop_branch
 
@@ -1270,9 +1270,12 @@ jobs:
               # prove runs), so it resolves on the step alone rather than
               # falling through to clause 4's triage.
               step = "prove"
-          elif marker_step == AWAITING_MERGE_STEP and (not pr_from_marker or pr_state == "OPEN"):
+          elif (marker_step in (AWAITING_MERGE_STEP, HANDED_OVER_STEP)
+                and (not pr_from_marker or pr_state == "OPEN")):
               # #532: readiness already reported this PR ready and handed
-              # it to a human. select() never picks it while its PR may
+              # it to a human -- or, spec 115, GitHub refused the merge
+              # job's merge and handed-over records the same hand-off.
+              # select() never picks it while its PR may
               # still be open (board_eligibility._awaiting_merge_holds),
               # so this is reached only on a race (reopened between the
               # two lookups) or a lookup that 404ed here (#564). Either way it
@@ -5709,7 +5712,6 @@ jobs:
         uses: actions/checkout@v5
         with:
           persist-credentials: false
-          fetch-depth: 0
 
       # #583: see the fix-agent job's "Snapshot helper scripts" step.
       - name: Snapshot helper scripts (before any agent runs)
@@ -5924,9 +5926,11 @@ jobs:
             # when this App merged the pinned head. Merged by anyone else, or
             # at another head, it is not this run's merge to announce.
             if [ "$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json state --jq .state 2>/dev/null)" = "MERGED" ]; then
-              merged_by="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json mergedBy,headRefOid \
-                --jq '[((.mergedBy.login // "") | sub("^app/"; "") | sub("\\[bot\\]$"; "") | ascii_downcase), .headRefOid] | join(" ")' 2>/dev/null)" || merged_by=""
-              if [ "$merged_by" = "$(printf '%s' "$BOT_SLUG" | tr '[:upper:]' '[:lower:]') $pin_sha" ]; then
+              gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json mergedBy,headRefOid \
+                > "$RUNNER_TEMP/board-merge-merged-by.json" 2>/dev/null \
+                || : > "$RUNNER_TEMP/board-merge-merged-by.json"
+              if python3 -I "$scripts/board_merge.py" merged-by-us --bot-login "$BOT_SLUG" --head-sha "$pin_sha" \
+                   < "$RUNNER_TEMP/board-merge-merged-by.json"; then
                 merge_sha="$(read_merge_sha)"
                 { echo "outcome=merged"; echo "merge-sha=$merge_sha"; } >> "$GITHUB_OUTPUT"
               else

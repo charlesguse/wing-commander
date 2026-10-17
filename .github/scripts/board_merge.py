@@ -46,7 +46,7 @@ OUTCOMES = ("merged", "refused", "transient", "not-merged")
 
 # The `gh pr view --json` fields every snapshot carries: one list for the
 # candidate scan and the fresh fetch, so both hold the same shape.
-SNAPSHOT_FIELDS = ("number,createdAt,headRefOid,statusCheckRollup,author,headRefName,"
+SNAPSHOT_FIELDS = ("number,createdAt,headRefOid,statusCheckRollup,author,headRefName,baseRefName,"
                    "commits,files,comments,body")
 # Appended to every merge announcement on the PR: which head, which outcome,
 # which reason. It is what keeps a repeated outcome from being re-announced
@@ -54,6 +54,10 @@ SNAPSHOT_FIELDS = ("number,createdAt,headRefOid,statusCheckRollup,author,headRef
 MERGE_OUTCOME_MARKER = "wc-board-merge-outcome"
 
 CONSTITUTION_PATH = ".specify/memory/constitution.md"
+# FR-005: every autonomous merge is a squash commit on main. `gh pr merge`
+# merges into whatever base the PR targets now, so a PR retargeted at any
+# other branch is in neither class.
+BASE_BRANCH = "main"
 BUMP_BRANCH_RE = re.compile(r"auto-update-spec-kit/v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?")
 # The body the auto-update act job writes (auto-update-spec-kit.yml "Open
 # version-bump PR"): its hidden marker and the `Closes #N` that links the
@@ -81,6 +85,10 @@ def _is_bot(login, bot_login):
     return bool(bot_login) and _slug(login) == _slug(bot_login)
 
 
+def _targets_main(snapshot):
+    return snapshot.get("baseRefName") == BASE_BRANCH
+
+
 def _touches_constitution(snapshot):
     return any((f or {}).get("path") == CONSTITUTION_PATH for f in snapshot.get("files") or [])
 
@@ -96,7 +104,9 @@ def eligible_fix_class(snapshot, bot_login):
     """FR-001/FR-012: a fix PR is one the loop opened -- its App is the PR's
     author (a branch name anyone can push or fork under is not enough) -- on
     the loop's own `fix/<issue>-<slug>` branch; never a spec, plan or
-    lifecycle PR, and never one touching the constitution."""
+    lifecycle PR, never one touching the constitution, and only into main."""
+    if not _targets_main(snapshot):
+        return False
     author = snapshot.get("author") or {}
     if author.get("is_bot") is not True or not _is_bot(author.get("login"), bot_login):
         return False
@@ -142,7 +152,10 @@ def _bot_commit_author(author, bot_login):
 
 def _attributed_to_auto_update(snapshot, bot_login):
     """Research D4: bot author, the stage's branch shape, the tracking marker
-    in the body, every commit bot-authored, and no constitution change."""
+    in the body, every commit bot-authored, no constitution change, and
+    only into main (FR-005)."""
+    if not _targets_main(snapshot):
+        return False
     if not _is_bot((snapshot.get("author") or {}).get("login"), bot_login):
         return False
     if BUMP_BRANCH_RE.fullmatch(snapshot.get("headRefName") or "") is None:
@@ -237,17 +250,22 @@ def evaluate_bump(snapshot, records, bot_login, paused, switch_on):
 
 # Checked in this order: a missing scope is never mistaken for a transient
 # failure, and a transient one is checked before `not mergeable`, which
-# GitHub also says while mergeability is still being computed. Protection is
-# checked before conflict: gh's own pre-merge refusal reads "is not
-# mergeable: <reason>" for a policy block and an out-of-date head too, so the
-# reason, not the prefix, names the class.
+# GitHub also says while mergeability is still being computed. gh refuses a
+# known conflict itself ("Pull request #N is not mergeable: <reason>"), so
+# the API's bare "Pull Request is not mergeable" reaches stderr only when gh
+# saw no blocked state, i.e. mergeability was still unknown: it is
+# transient, and the retry's gh pre-check names a real conflict by its
+# reason. Protection is checked before conflict: gh's own pre-merge refusal
+# reads "is not mergeable: <reason>" for a policy block and an out-of-date
+# head too, so the reason, not the prefix, names the class.
 _REFUSAL_PATTERNS = (
     ("workflow-scope", re.compile(r"workflows?`?\s+(permission|scope)|without\s+`?workflows?`?|"
                                   r"workflow\s+scope", re.IGNORECASE)),
     ("transient", re.compile(r"(head|base) branch was modified|try the merge again|"
                              r"HTTP 5\d\d|bad gateway|service unavailable|gateway time-?out|"
                              r"timed out|connection reset|mergeab\w+ (state )?(is )?(still )?"
-                             r"(unknown|being computed)|merge already in progress", re.IGNORECASE)),
+                             r"(unknown|being computed)|pull request is not mergeable|"
+                             r"merge already in progress", re.IGNORECASE)),
     ("protection", re.compile(r"protected branch|required status|required review|review is required|"
                               r"approving review|branch protection|base branch policy|"
                               r"repository rule|not up to date with the base", re.IGNORECASE)),
@@ -278,6 +296,15 @@ def decide(payload):
                             bool(payload["paused"]), bool(payload["switch_on"]), bot_login)
     return evaluate_bump(snapshot, bump_records(snapshot.get("comments"), bot_login), bot_login,
                          bool(payload["paused"]), bool(payload["switch_on"]))
+
+
+def merged_by_us(pr, bot_login, head_sha):
+    """`pr` is `gh pr view --json mergedBy,headRefOid` of a MERGED PR: this
+    App merged it, at `head_sha`. Anyone else's merge, or one at another
+    head, is not this run's merge to announce."""
+    pr = pr or {}
+    return (bool(head_sha) and pr.get("headRefOid") == head_sha
+            and _is_bot((pr.get("mergedBy") or {}).get("login"), bot_login))
 
 
 def _not_merged_reason(decision):
@@ -360,6 +387,10 @@ def render_announcement(decision, outcome, snapshot=None, merge_sha=None, refusa
         text = ("The merge of head_sha {0} ({1} class) failed transiently twice, refusal_class {2}:\n\n"
                 "```\n{3}\n```\n\nNothing reached main. Not handed over as refused: {4}.".format(
                     head, klass, refusal_class, quoted, after))
+    elif _not_merged_reason(decision) == "merged_elsewhere":
+        text = ("Merged elsewhere (`merged_elsewhere`): this PR ({0} class) was merged, but not by the board "
+                "loop at head_sha {1}, so this run announces no merge of its own.\n\nConditions: {2}.".format(
+                    klass, head, results))
     else:
         text = ("Not merged ({0} class) at head_sha {1}: unmet condition `{2}`.\n\nConditions: {3}.".format(
             klass, head, _not_merged_reason(decision), results))
@@ -451,6 +482,18 @@ def main():
                 err = fh.read()
         print(render_announcement(decision, a.outcome, snapshot, a.merge_sha, a.refusal_class, err))
     announce_cmd.set_defaults(func=_announce)
+    merged_by_cmd = sub.add_parser("merged-by-us", help="gh pr view --json mergedBy,headRefOid on stdin -> "
+                                                        "exit 0 when this App merged it at --head-sha")
+    merged_by_cmd.add_argument("--bot-login", required=True)
+    merged_by_cmd.add_argument("--head-sha", required=True)
+
+    def _merged_by(a):
+        try:
+            pr = json.load(sys.stdin)
+        except ValueError:
+            sys.exit(1)
+        sys.exit(0 if isinstance(pr, dict) and merged_by_us(pr, a.bot_login, a.head_sha) else 1)
+    merged_by_cmd.set_defaults(func=_merged_by)
     shaped_cmd = sub.add_parser("bump-shaped", help="gh pr list JSON on stdin -> auto-update-shaped PR numbers")
     shaped_cmd.add_argument("--bot-login", required=True)
     shaped_cmd.set_defaults(func=lambda a: print(" ".join(str(n) for n in bump_shaped(json.load(sys.stdin),

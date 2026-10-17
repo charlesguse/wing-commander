@@ -27,7 +27,7 @@ The job never exists on the switch-off path. The readiness report and marker sta
 3. Re-check the kill switch (`wing-commander-board-stop-check`); the switch variable is the job-start `vars` value (no token can re-read a variable).
 4. Fetch the snapshot fresh. The fix class's backstop is the one `readiness` measured, trusted only while the snapshot's head equals the head readiness measured it on (`readiness_head_sha`: the head its backstop step checked out, and empty when a later read of the PR saw another); a moved head fails `backstop_holds`.
 5. `board_merge.py` evaluates and writes a decision JSON.
-6. If `may_merge`, run `gh pr merge --squash <pr> --match-head-commit <head_sha>`, capturing stderr. A failure `classify_refusal` calls `transient` (head or base moved, a 5xx, mergeability still being computed) is retried once, only after the snapshot is re-fetched and the decision re-derived from it, pinned to the head that decision names. A second transient failure is outcome `transient`, never `refused`.
+6. If `may_merge`, run `gh pr merge --squash <pr> --match-head-commit <head_sha>`, capturing stderr. A failure `classify_refusal` calls `transient` (head or base moved, a 5xx, mergeability still being computed, including the API's bare "Pull Request is not mergeable" that reaches stderr only when gh's own pre-check saw no blocked state) is retried once, only after the snapshot is re-fetched and the decision re-derived from it, pinned to the head that decision names. A second transient failure is outcome `transient`, never `refused`.
 7. Announce on the PR and the issue, once per head, outcome and reason: every announcement ends with a `wc-board-merge-outcome` marker (`head_sha`, `class`, `outcome`, `reason`), and an outcome the PR's snapshot already carries from the App is not posted again.
 8. Fix class: write the issue marker `merged` or `handed-over`. Bump class: no board item marker; the `refused` outcome marker on the PR releases it until its head moves.
 
@@ -42,13 +42,13 @@ Fix PR: posted on the PR and the resolved issue. Bump: posted on the PR and the 
 - **Merged**: head SHA, class, every condition's result, and the prove disposition (re-drive pending, or why not needed).
 - **Refused**: head SHA, `refusal_class`, GitHub's stderr quoted, and the sentence "handed to a maintainer".
 - **Transient**: head SHA, the class, GitHub's stderr quoted, and that it is not handed over as refused.
-- **Not merged**: the failed condition's name.
+- **Not merged**: the failed condition's name. A PR merged by someone else, or at another head, is announced as merged elsewhere (`merged_elsewhere`), never as "Not merged".
 
 Quoted text never carries a marker: `<!--` in it is defanged before the App posts it.
 
 ## `board_merge.py` interface
 
-- `evaluate_fix(snapshot, review_converged, backstop_holds, paused, switch_on, bot_login)` returns a MergeDecision. `eligible_class` holds only for a PR the App authored (`author.is_bot` and the App's login) on a `fix/<issue>-<slug>` branch.
+- `evaluate_fix(snapshot, review_converged, backstop_holds, paused, switch_on, bot_login)` returns a MergeDecision. `eligible_class` holds only for a PR the App authored (`author.is_bot` and the App's login) on a `fix/<issue>-<slug>` branch whose base is `main` (FR-005); `attributed_to_auto_update` also requires base `main`.
 - `evaluate_bump(snapshot, records, bot_login, paused, switch_on)` returns a MergeDecision.
 - `classify_refusal(stderr)` returns one of `workflow-scope`, `transient`, `conflict`, `protection`, `other`; `RETRYABLE_REFUSAL_CLASSES` names the ones retried (`transient`).
 - `pick_bump_candidate(snapshots, bot_login)` returns `{pr, issue}` or None; `handed_over_at_head(snapshot, bot_login)` and `already_announced(snapshot, bot_login, record)` read the App's own outcome markers.
