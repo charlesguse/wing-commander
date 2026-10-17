@@ -380,7 +380,7 @@
 
   Detail: Around line 1851.
 
-- [ ] Review finding: verify-board-merge gate uses a fixed line slice for the if: block
+- [x] Review finding: verify-board-merge gate uses a fixed line slice for the if: block
 
   The gate looks for the switch variables in `merge_job[1:12]` instead of parsing the job's `if:` expression, so it is position-dependent. Adding lines to `if:` breaks it, and a variable moved elsewhere can still pass.
 
@@ -388,7 +388,7 @@
 
   Detail: Around line 1344.
 
-- [ ] Review finding: Formatting typo in board_item_marker.py
+- [x] Review finding: Formatting typo in board_item_marker.py
 
   The changed line `payload =json.dumps(...)` is missing a space after `=`, which pycodestyle E225 would flag.
 
