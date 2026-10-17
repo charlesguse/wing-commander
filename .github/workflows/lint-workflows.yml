@@ -4673,12 +4673,29 @@ jobs:
       - name: Gate 164 — spec-meta self-identity in a project and after graduation
         if: "!cancelled()"
         run: python3 .github/scripts/verify-spec-meta-self-identity.py
+      # Gates 165-166 — specs/116-review-convergence-analyze. Gate 165 keeps
+      # the review loops' convergence arithmetic and thresholds in
+      # wc_convergence.py alone (FR-010, FR-018, FR-019); its fixtures run
+      # the rules, the replays, the round records, both loops' shipped steps
+      # and the skill's parity (SC-001..SC-003). Gate 166 holds the fold-time
+      # analyze check between fold commit and dispatch in every caller, its
+      # agent read-only, bounded and on claude-sonnet-5-5 (FR-011..FR-017);
+      # its fixtures run the composite's decision and shipped shell.
       - name: Gate 165 — the review-convergence arithmetic has exactly one home
         if: "!cancelled()"
         run: python3 .github/scripts/verify-convergence-single-home.py
       - name: Gate 166 — fold-analyze sits between fold commit and dispatch, read-only and bounded
         if: "!cancelled()"
         run: python3 .github/scripts/verify-fold-analyze-wiring.py
+      - name: Gate 166 self-test — a missing stage/agent/decide step, a dispatch that ignores a hold, a widened or unpinned agent and an agent inside the composite each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-analyze-wiring.py --self-test
+      - name: Gate 165 fixtures — wc_convergence rules, replays, round records and skill parity
+        if: "!cancelled()"
+        run: bash .github/scripts/wc_convergence_tests/run-tests.sh
+      - name: Gate 166 fixtures — wing-commander-fold-analyze's decision and its shipped stage/decide shell
+        if: "!cancelled()"
+        run: bash .github/scripts/wing-commander-fold-analyze-tests/run-tests.sh
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

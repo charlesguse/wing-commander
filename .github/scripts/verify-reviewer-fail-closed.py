@@ -108,8 +108,11 @@ LIFECYCLE_WORKFLOW = os.path.join(".github", "workflows", "lifecycle-review-gate
 LIFECYCLE_EXTRACT_STEP = "Extract and validate the review findings"
 LIFECYCLE_PARTITION_STEP = "Partition, dedup, and render this round's findings"
 
+# wc_convergence.py/wc_review_finding_fingerprint.py: "Compose the review
+# body" appends the round record spec 116's convergence signals read back.
 SHARED_SCRIPTS = ("wc_fence_extract.py", "verify-board-review-finding-schema.py",
-                  "wc_schema_pattern.py", "board_spec_request_body.py")
+                  "wc_schema_pattern.py", "board_spec_request_body.py",
+                  "wc_convergence.py", "wc_review_finding_fingerprint.py")
 SHARED_SCHEMAS = ("board-review-finding.schema.json",)
 PRISTINE_DIR = "wc-pristine"
 # board_eligibility.py: board_item_marker.py imports STALLED_LABEL from it

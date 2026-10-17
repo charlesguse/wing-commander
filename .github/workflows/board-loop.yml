@@ -4010,8 +4010,14 @@ jobs:
             [{"title": "one line", "what": "one line, no line breaks",
               "evidence": {"file_paths": ["..."], "detail": "optional"},
               "in_scope": true|false,
+              "line": 42,
               "fingerprint_basis": {"file_path": "...", "gate_or_artifact": "one line naming what this is"}}]
             ```
+
+            `line` is optional: the 1-based line in fingerprint_basis.file_path,
+            at this PR's head, where the finding sits. Give it whenever the
+            finding has one line; omit it for a whole-file concern rather
+            than guess.
           claude_args: |
             --model ${{ needs.resolve-model.outputs.model }}
             --max-turns ${{ steps.review-ceiling.outputs.ceiling }}
@@ -4202,14 +4208,53 @@ jobs:
               fh.write("parse-failed={0}\n".format("true" if parse_failed else "false"))
           PYEOF
 
+      # specs/116 (FR-001..FR-009): this round's convergence signals,
+      # computed by wc_convergence (the one home of the arithmetic) from
+      # the round records earlier rounds appended to this PR's own reviews
+      # (see "Compose the review body"), with every earlier round's
+      # in-scope findings as the fixed ledger -- review-fixup fixed them
+      # before this review. Rounds here are 0-based (round 0 is the first
+      # review), so the module sees round + 1, and the budget's own stop
+      # round, BOARD_LOOP_ROUND_BUDGET + 1, names the budget as the reason
+      # when a rule trips on it too. A failed evaluation fails the job
+      # before any durable action; the next run resumes this round.
+      - name: Evaluate this round's convergence
+        id: convergence
+        if: steps.extract.outputs.parse-failed == 'false' && steps.extract.outputs.in-scope-count != '0'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
+          ROUND: ${{ steps.pr.outputs.round }}
+          ROUND_BUDGET: ${{ env.BOARD_LOOP_ROUND_BUDGET }}
+          HEAD_SHA: ${{ steps.checkout-pr.outputs.head-sha }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" --paginate --jq '.[]' \
+            | jq -s '.' > "$RUNNER_TEMP/board-pr-reviews.json"
+          python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_convergence.py" evaluate \
+            --reviews "$RUNNER_TEMP/board-pr-reviews.json" --bot-login "$BOT_LOGIN" \
+            --round "$((ROUND + 1))" --head-sha "$HEAD_SHA" --issue "$ISSUE_NUMBER" \
+            --findings "$RUNNER_TEMP/board-review-findings.json" --base origin/main \
+            --resolved-from-history --budget "$((ROUND_BUDGET + 1))" \
+            --decision-out "$RUNNER_TEMP/board-convergence.json" \
+            --handoff-out "$RUNNER_TEMP/board-convergence-handoff.md"
+
       # FR-029/research.md D10: COMMENT only -- GitHub rejects APPROVE and
       # REQUEST_CHANGES from the PR's own author identity, and this loop's
       # PR and its review share the wing-commander-bot App identity.
+      # specs/116: a recurrence is named here, on the PR (FR-003), and a
+      # parsed round's record is appended LAST, the history the next
+      # round's "Evaluate this round's convergence" reads back.
       - name: Compose the review body
         id: compose-review
         env:
           PARSE_FAILED: ${{ steps.extract.outputs.parse-failed }}
           DROPPED_COUNT: ${{ steps.extract.outputs.dropped-count }}
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
+          ROUND: ${{ steps.pr.outputs.round }}
+          HEAD_SHA: ${{ steps.checkout-pr.outputs.head-sha }}
         run: |
           set -uo pipefail
           python3 -I - <<'PYEOF'
@@ -4219,6 +4264,7 @@ jobs:
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_spec_request_body import fenced_section
+          from wc_convergence import round_findings, round_record_marker
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-review-findings.json"), encoding="utf-8") as fh:
@@ -4281,6 +4327,21 @@ jobs:
               lines.append("")
               lines.append("{0} more finding(s) not shown; see the out-of-scope issues and the next round.".format(
                   len(findings) - len(shown)))
+          entries = round_findings(findings, os.environ.get("ISSUE_NUMBER", ""))
+          decision_path = os.path.join(runner_temp, "board-convergence.json")
+          if os.path.isfile(decision_path):
+              with open(decision_path, encoding="utf-8") as fh:
+                  recurring = set(json.load(fh).get("recurrences") or [])
+              titles = [e["title"] for e in entries if e["fingerprint"] in recurring]
+              if titles:
+                  lines.append("")
+                  lines.append(fenced_section(
+                      "### Recurring findings -- fixed in an earlier round and raised again, so that fix did not hold (reviewer agent titles, shown as text):",
+                      "\n".join(titles), 8000))
+          round_ = os.environ.get("ROUND", "")
+          if not parse_failed and round_.isdigit():
+              lines.append("")
+              lines.append(round_record_marker(int(round_) + 1, os.environ.get("HEAD_SHA", ""), entries))
 
           with open(os.path.join(runner_temp, "board-review-body.md"), "w", encoding="utf-8") as fh:
               fh.write("\n".join(lines) + "\n")
@@ -4528,12 +4589,16 @@ jobs:
           DROPPED_COUNT: ${{ steps.extract.outputs.dropped-count }}
           ROUND: ${{ steps.pr.outputs.round }}
           ROUND_BUDGET: ${{ env.BOARD_LOOP_ROUND_BUDGET }}
+          CONVERGENCE_STOP: ${{ steps.convergence.outputs.stop }}
         run: |
           set -uo pipefail
           # #499 round 4: != "false", not = "true" -- an empty or missing
           # PARSE_FAILED output (the extract step itself failed to run, or
           # its outputs step never executed) must stall too, not silently
           # fall through to the in-scope-count branch below.
+          # specs/116 FR-006/FR-009: the budget is checked before the
+          # convergence stop, so it still stops the loop whatever the
+          # signals say; a not-converging stop takes the same stall below.
           if [ "$PARSE_FAILED" != "false" ]; then
             echo "outcome=stalled" >> "$GITHUB_OUTPUT"
             echo "stall-reason=parse-failed" >> "$GITHUB_OUTPUT"
@@ -4543,7 +4608,12 @@ jobs:
           elif [ "$IN_SCOPE_COUNT" -eq 0 ]; then
             echo "outcome=converged" >> "$GITHUB_OUTPUT"
           elif [ "$ROUND" -lt "$ROUND_BUDGET" ]; then
-            echo "outcome=continue" >> "$GITHUB_OUTPUT"
+            if [ "${CONVERGENCE_STOP:-false}" = "true" ]; then
+              echo "outcome=stalled" >> "$GITHUB_OUTPUT"
+              echo "stall-reason=not-converging" >> "$GITHUB_OUTPUT"
+            else
+              echo "outcome=continue" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "outcome=stalled" >> "$GITHUB_OUTPUT"
             echo "stall-reason=budget-spent" >> "$GITHUB_OUTPUT"
@@ -4608,12 +4678,25 @@ jobs:
             # as in "Compose the review body" above.
             remaining="$(python3 -I -c "import json, os, sys; sys.path.insert(0, os.path.join(os.environ['RUNNER_TEMP'], 'wc-pristine', 'scripts')); from board_spec_request_body import fenced_section; f = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'board-review-findings.json'), encoding='utf-8')); print(fenced_section('Open in-scope findings (reviewer agent titles, shown as text):', '\n'.join(str(x.get('title', '')) for x in f if x.get('in_scope') is True), 20000))")" \
               || remaining="(the open findings could not be rendered)"
+            # specs/116 FR-008: the signals behind the stop -- every rule
+            # that tripped, each round's values and the unattributable
+            # count -- from "Evaluate this round's convergence"; on the
+            # budget's own round they are listed too.
+            signals=""
+            [ ! -s "$RUNNER_TEMP/board-convergence-handoff.md" ] || signals="$(cat "$RUNNER_TEMP/board-convergence-handoff.md")"$'\n\n'
             marker="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --step stalled --issue "$ISSUE_NUMBER" --add-label "board:stalled")" \
               || { echo "::error::board-loop review ($STALL_REASON): board:stalled could not be added to issue #$ISSUE_NUMBER -- no stalled marker is posted (#604)."; exit 1; }
+            if [ "$STALL_REASON" = "not-converging" ]; then
+              lead="$(printf 'Review round %s on PR #%s stopped before the round budget (%s): the review loop is not converging. The PR is left open, unmerged. Removing board:stalled is the sole re-eligibility condition.' "$ROUND" "$PR_NUMBER" "$ROUND_BUDGET")"
+              from_step="review (not converging)"
+            else
+              lead="$(printf 'Review round budget (%s) spent on PR #%s with in-scope findings still open. The PR is left open, unmerged. Removing board:stalled is the sole re-eligibility condition.' "$ROUND_BUDGET" "$PR_NUMBER")"
+              from_step="review (round budget spent)"
+            fi
             # FR-011 -- see triage's own comment on this idiom above.
-            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf 'Review round budget (%s) spent on PR #%s with in-scope findings still open. The PR is left open, unmerged. Removing board:stalled is the sole re-eligibility condition.\n\n%s\n\n%s' "$ROUND_BUDGET" "$PR_NUMBER" "$remaining" "$marker")" \
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$(printf '%s\n\n%s\n\n%s%s' "$lead" "$remaining" "$signals" "$marker")" \
               || { echo "::error::board-loop review ($STALL_REASON): board:stalled was applied to issue #$ISSUE_NUMBER but the stalled-marker comment could not be posted."; exit 1; }
-            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "review (round budget spent)"
+            python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_item_marker.py" --record-stall-summary --issue "$ISSUE_NUMBER" --from-step "$from_step"
           fi
 
       - name: Compose tool args (review-fixup)
