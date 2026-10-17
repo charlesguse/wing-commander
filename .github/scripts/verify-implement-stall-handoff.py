@@ -167,11 +167,45 @@ def check_finalize_wiring():
         fail("wing-commander-remaining-work does not call _shared/render-remaining-work.sh")
 
 
+MAINTAINER_KINDS = (
+    "real workflow dispatch or run re-drive",
+    "reading or\n            changing repository variables or settings",
+    "opening or merging a\n            separate human-merged PR",
+    "post-merge proof",
+    "constitution\n            amendment merge",
+)
+
+
+def check_prompts():
+    global CASES
+    tasks = read(os.path.join(ROOT, ".github", "workflows", "tasks.yml"))
+    for needle in ("`[maintainer]`", '"Maintainer\n            follow-up" phase'):
+        CASES += 1
+        if tasks.count(needle) < 2:
+            fail(f"tasks.yml: both prompts must carry {needle!r}")
+    for kind in MAINTAINER_KINDS:
+        CASES += 1
+        if tasks.count(kind) < 2:
+            fail(f"tasks.yml: both prompts must list the maintainer kind {kind!r}")
+    impl = read(os.path.join(ROOT, ".github", "workflows", "implement.yml"))
+    CASES += 1
+    if impl.count("Tasks marked `[maintainer]` are for the repository owner: skip") < 2:
+        fail("implement.yml: both prompts must carry the [maintainer] skip rule")
+    # A tasks.md whose only unchecked lines are maintainer-tagged has nothing
+    # left for the loop (SC-003, loop side).
+    proc = count_script(read(os.path.join(FIXTURES,
+                                          "count-tasks-checkboxes-maintainer-only.md")))
+    CASES += 1
+    if "impl-unchecked-count=0\n" not in proc.stdout:
+        fail("maintainer-only tasks.md must yield impl-unchecked-count=0")
+
+
 def main():
     check_classification()
     check_composite_outputs()
     check_render()
     check_finalize_wiring()
+    check_prompts()
     if FAILURES:
         print(f"verify-implement-stall-handoff: {len(FAILURES)} failure(s) in {CASES} case(s)")
         return 1
