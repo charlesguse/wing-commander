@@ -5022,6 +5022,16 @@ jobs:
     concurrency:
       group: wing-commander-board-loop
       cancel-in-progress: false
+    # specs/115-board-loop-self-merge: what the merge job needs to find this
+    # run's ready fix PR. The merge job re-derives everything else itself
+    # from a fresh snapshot; these only name the candidate and carry the
+    # backstop this job measured, with the head it measured it on.
+    outputs:
+      ready: ${{ steps.decide.outputs.ready }}
+      head-sha: ${{ steps.decide.outputs.head-sha }}
+      backstop-holds: ${{ steps.final-diff-backstop.outputs.holds }}
+      pr-number: ${{ steps.pr.outputs.pr-number }}
+      issue-number: ${{ needs.select.outputs.issue-number }}
     steps:
       # A directed dispatch needs the issue marker read -- and therefore the
       # pristine snapshot below -- before it even knows which PR to check
@@ -5280,6 +5290,7 @@ jobs:
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write("ready={0}\n".format("true" if decision["ready"] else "false"))
+              fh.write("head-sha={0}\n".format(decision["head_sha"] or ""))
           PYEOF
 
       # FR-066/FR-068: names head_sha and every condition's result; states
@@ -5639,6 +5650,408 @@ jobs:
         with:
           name: metrics-record-readiness
           path: ${{ runner.temp }}/wing-commander-metrics-record-readiness.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+  # specs/115-board-loop-self-merge (contracts/board-merge.md): the one place
+  # this loop merges, and only while `vars.WING_COMMANDER_BOARD_AUTO_MERGE` is
+  # 'true' (unset, the job never exists and readiness's "Awaiting a human
+  # merge" report stands as before). Two classes may merge, both decided by
+  # board_merge.py from a snapshot of the exact head SHA fetched fresh below,
+  # never by this shell: the fix PR readiness just reported ready, and a
+  # Spec Kit upgrade PR the auto-update stage opened and verified. A refusal
+  # from GitHub (the App has no Workflows permission, so a workflow-touching
+  # PR ends here) is handed to a maintainer and nothing else is tried.
+  # `github.event_name != 'pull_request'` keeps this off the closed-PR
+  # trigger, and directed proof runs never merge.
+  merge:
+    needs: [select, readiness]
+    if: >-
+      !cancelled()
+      && github.event_name != 'pull_request'
+      && inputs.directed-stage == ''
+      && vars.WING_COMMANDER_BOARD_AUTO_MERGE == 'true'
+      && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      # The kill-switch re-check's `gh run cancel` runs on github.token,
+      # which the App token cannot stand in for -- see the
+      # wing-commander-board-stop-check composite's header. Nothing else in
+      # this job writes with github.token.
+      actions: write
+    # One board item is in flight repository-wide. A directed proof run
+    # and a merged item's own prove run — neither of which selects a
+    # board item or opens a fix PR — are the only runs permitted to
+    # overlap an ordinary board-loop run, or each other when they prove
+    # distinct merged items. Every other pair of board-loop.yml runs
+    # queues rather than races or cancels.
+    concurrency:
+      group: wing-commander-board-loop
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # #583: see the fix-agent job's "Snapshot helper scripts" step.
+      - name: Snapshot helper scripts (before any agent runs)
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/wc-pristine"
+          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet origin "$GITHUB_SHA"
+          fi
+          mkdir "$dest"
+          git archive --format=tar "$GITHUB_SHA" .github/scripts .github/schemas | tar -x -C "$dest" --strip-components=1
+          chmod -R a-w "$dest"
+
+      # see this file's header for why every job does this
+      - name: Checkout board-loop's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Record trusted-copy provenance
+        run: |
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+      - name: Write-protect board-loop's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
+      # Research D5: this run's readiness-ready fix PR, else one open PR
+      # shaped like the auto-update stage's. Every auto-update-shaped PR is
+      # snapshotted and board_merge.py picks among them, skipping one handed
+      # over at its current head, so one stuck PR never hides a newer
+      # verified one. The pick only names the candidate: the decision below
+      # re-derives everything from its own fresh fetch.
+      - name: Resolve the merge candidate
+        id: candidate
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          READY: ${{ needs.readiness.outputs.ready }}
+          FIX_PR: ${{ needs.readiness.outputs.pr-number }}
+          FIX_ISSUE: ${{ needs.readiness.outputs.issue-number }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+        run: |
+          set -uo pipefail
+          scripts="$RUNNER_TEMP/wc-pristine/scripts"
+          if [ "$READY" = "true" ] && [ -n "$FIX_PR" ] && [ -n "$FIX_ISSUE" ]; then
+            class=fix
+            pr="$FIX_PR"
+            issue="$FIX_ISSUE"
+          else
+            class=bump
+            gh pr list -R "$GITHUB_REPOSITORY" --state open --limit 100 \
+              --json number,author,headRefName,createdAt > "$RUNNER_TEMP/board-merge-open-prs.json" \
+              || { echo "::warning::board-loop merge: could not list the open PRs -- no bump candidate is looked for this run."; exit 0; }
+            shaped="$(python3 -I "$scripts/board_merge.py" bump-shaped --bot-login "$BOT_LOGIN" < "$RUNNER_TEMP/board-merge-open-prs.json")" \
+              || { echo "::error::board-loop merge: board_merge.py bump-shaped failed."; exit 1; }
+            fields="$(python3 -I "$scripts/board_merge.py" snapshot-fields)" \
+              || { echo "::error::board-loop merge: board_merge.py snapshot-fields failed."; exit 1; }
+            : > "$RUNNER_TEMP/board-merge-bump-snapshots.jsonl"
+            for n in $shaped; do
+              # One flaky call skips that PR for this run; the others are still evaluated.
+              if ! gh pr view "$n" -R "$GITHUB_REPOSITORY" --json "$fields" > "$RUNNER_TEMP/board-merge-bump-one.json"; then
+                echo "::warning::board-loop merge: could not snapshot bump PR #$n -- it is skipped this run."
+                continue
+              fi
+              cat "$RUNNER_TEMP/board-merge-bump-one.json" >> "$RUNNER_TEMP/board-merge-bump-snapshots.jsonl"
+            done
+            picked="$(jq -s '.' "$RUNNER_TEMP/board-merge-bump-snapshots.jsonl" \
+              | python3 -I "$scripts/board_merge.py" pick-bump --bot-login "$BOT_LOGIN")" \
+              || { echo "::error::board-loop merge: board_merge.py pick-bump failed."; exit 1; }
+            if [ -z "$picked" ]; then
+              echo "board-loop merge: no ready fix PR and no auto-update PR to evaluate this run (none open, none with a tracking issue, or each handed over at its head)." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            pr="$(printf '%s' "$picked" | jq -r '.pr')"
+            issue="$(printf '%s' "$picked" | jq -r '.issue')"
+          fi
+          # The stop-point record the re-check below may write names the
+          # branch and the base this candidate was measured against.
+          branch="$(gh pr view "$pr" -R "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)" \
+            || { echo "::error::board-loop merge: could not read PR #$pr's branch."; exit 1; }
+          base_sha="$(gh pr view "$pr" -R "$GITHUB_REPOSITORY" --json baseRefOid --jq .baseRefOid)" \
+            || { echo "::error::board-loop merge: could not read PR #$pr's base."; exit 1; }
+          { echo "class=$class"; echo "pr=$pr"; echo "issue=$issue"; echo "branch=$branch"; echo "base-sha=$base_sha"; } >> "$GITHUB_OUTPUT"
+
+      # FR-051/FR-052: see readiness's re-check. Every durable step below
+      # carries `steps.killswitch-recheck.outputs.paused == 'false'`, so an
+      # empty output (the re-check never ran) acts on nothing.
+      - name: Re-check kill switch and stop requests
+        id: killswitch-recheck
+        if: steps.candidate.outputs.pr != ''
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-board-stop-check
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          cancel-token: ${{ github.token }}
+          bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
+          issue-number: ${{ steps.candidate.outputs.issue }}
+          initial-paused: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED == 'true' }}
+          marker-branch: ${{ steps.candidate.outputs.branch }}
+          marker-base-sha: ${{ steps.candidate.outputs.base-sha }}
+
+      - name: Record the stand-down (merge)
+        if: steps.killswitch-recheck.outputs.paused == 'true'
+        env:
+          ISSUE_NUMBER: ${{ steps.candidate.outputs.issue }}
+          STOP_CAUSE_PHRASE: ${{ steps.killswitch-recheck.outputs.stop-cause-phrase }}
+        run: |
+          set -uo pipefail
+          echo "board-loop: $STOP_CAUSE_PHRASE found immediately before the merge job's durable actions on issue #$ISSUE_NUMBER -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
+
+      # FR-036/FR-037: the snapshot is fetched in one `gh pr view` call so
+      # the head SHA and the checks that ran on it are one moment's state.
+      - name: Fetch the PR snapshot at its current head
+        id: snapshot
+        if: steps.candidate.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          PR_NUMBER: ${{ steps.candidate.outputs.pr }}
+        run: |
+          set -uo pipefail
+          fields="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_merge.py" snapshot-fields)" \
+            || { echo "::error::board-loop merge: board_merge.py snapshot-fields failed -- nothing is merged."; exit 1; }
+          gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json "$fields" \
+            > "$RUNNER_TEMP/board-merge-snapshot.json" \
+            || { echo "::error::board-loop merge: could not fetch PR #$PR_NUMBER's snapshot -- nothing is merged."; exit 1; }
+
+      # The decision's inputs other than the snapshot are written once, so
+      # the merge step's one retry re-decides on a re-fetched snapshot with
+      # exactly these.
+      - name: Decide whether the PR may merge
+        id: decide
+        if: steps.candidate.outputs.pr != ''
+        env:
+          CLASS: ${{ steps.candidate.outputs.class }}
+          # The switch as of the job start: no token can read a repository
+          # variable mid-job (the App has no Variables permission and
+          # GITHUB_TOKEN can never hold one), and the job starts minutes
+          # before the merge. The kill switch is re-checked live below.
+          SWITCH_ON: ${{ vars.WING_COMMANDER_BOARD_AUTO_MERGE }}
+          PAUSED: ${{ steps.killswitch-recheck.outputs.paused }}
+          READY: ${{ needs.readiness.outputs.ready }}
+          BACKSTOP_HOLDS: ${{ needs.readiness.outputs.backstop-holds }}
+          READINESS_HEAD_SHA: ${{ needs.readiness.outputs.head-sha }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+        run: |
+          set -uo pipefail
+          jq -n --arg class "$CLASS" --arg switch_on "$SWITCH_ON" --arg paused "$PAUSED" \
+            --arg ready "$READY" --arg backstop "$BACKSTOP_HOLDS" --arg head "$READINESS_HEAD_SHA" --arg bot "$BOT_LOGIN" \
+            '{class: $class, switch_on: ($switch_on == "true"),
+              paused: ($paused != "false"), review_converged: ($ready == "true"),
+              backstop_holds: ($backstop == "true"), readiness_head_sha: $head, bot_login: $bot}' \
+            > "$RUNNER_TEMP/board-merge-inputs.json" \
+            || { echo "::error::board-loop merge: could not write the decision inputs -- nothing is merged."; exit 1; }
+          python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_merge.py" decide \
+            --inputs "$RUNNER_TEMP/board-merge-inputs.json" --snapshot "$RUNNER_TEMP/board-merge-snapshot.json" \
+            > "$RUNNER_TEMP/board-merge-decision.json" \
+            || { echo "::error::board-loop merge: board_merge.py could not decide -- nothing is merged."; exit 1; }
+          {
+            echo "may-merge=$(jq -r '.may_merge' "$RUNNER_TEMP/board-merge-decision.json")"
+            echo "head-sha=$(jq -r '.head_sha' "$RUNNER_TEMP/board-merge-decision.json")"
+          } >> "$GITHUB_OUTPUT"
+
+      # The App token, not GITHUB_TOKEN: the merge's pull_request: closed
+      # event must reach prove-gate (a GITHUB_TOKEN merge starts no
+      # workflow). Pinned to the evaluated head SHA, so a push after the
+      # snapshot is refused by GitHub and nothing reaches main. Never
+      # --admin, never an approval, never auto-merge, one merge method.
+      # A transient failure (board_merge.RETRYABLE_REFUSAL_CLASSES) is
+      # retried once, and only after the snapshot is re-fetched and the
+      # decision re-derived from it, pinned to the head that decision names;
+      # a second transient failure is `transient`, never `refused`.
+      - name: Squash-merge the evaluated head
+        id: merge
+        if: steps.decide.outputs.may-merge == 'true' && steps.killswitch-recheck.outputs.paused == 'false'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          PR_NUMBER: ${{ steps.candidate.outputs.pr }}
+          HEAD_SHA: ${{ steps.decide.outputs.head-sha }}
+          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
+        run: |
+          set -uo pipefail
+          scripts="$RUNNER_TEMP/wc-pristine/scripts"
+          stderr_file="$RUNNER_TEMP/board-merge-stderr.txt"
+          pin_sha="$HEAD_SHA"
+          attempt=1
+          # GitHub can report mergeCommit empty for a moment after the merge:
+          # re-read it a few times so the announcement and the merged marker
+          # (which prove-gate needs) carry the SHA.
+          read_merge_sha() {
+            local sha=""
+            for _ in 1 2 3 4 5; do
+              sha="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json mergeCommit --jq '.mergeCommit.oid // empty')" || sha=""
+              [ -n "$sha" ] && break
+              sleep 3
+            done
+            printf '%s' "$sha"
+          }
+          while :; do
+            if gh pr merge "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --squash --match-head-commit "$pin_sha" 2> "$stderr_file"; then
+              merge_sha="$(read_merge_sha)"
+              { echo "outcome=merged"; echo "merge-sha=$merge_sha"; } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::warning::board-loop merge: GitHub did not merge PR #$PR_NUMBER (attempt $attempt): $(head -c 500 "$stderr_file")"
+            # A 5xx or timeout can follow a merge GitHub did complete, and the
+            # retry then fails "already merged": a PR on main is `merged` only
+            # when this App merged the pinned head. Merged by anyone else, or
+            # at another head, it is not this run's merge to announce.
+            if [ "$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json state --jq .state 2>/dev/null)" = "MERGED" ]; then
+              merged_by="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json mergedBy,headRefOid \
+                --jq '[((.mergedBy.login // "") | sub("^app/"; "") | sub("\\[bot\\]$"; "") | ascii_downcase), .headRefOid] | join(" ")' 2>/dev/null)" || merged_by=""
+              if [ "$merged_by" = "$(printf '%s' "$BOT_SLUG" | tr '[:upper:]' '[:lower:]') $pin_sha" ]; then
+                merge_sha="$(read_merge_sha)"
+                { echo "outcome=merged"; echo "merge-sha=$merge_sha"; } >> "$GITHUB_OUTPUT"
+              else
+                echo "outcome=not-merged" >> "$GITHUB_OUTPUT"
+              fi
+              exit 0
+            fi
+            refusal_class="$(python3 -I "$scripts/board_merge.py" classify-refusal < "$stderr_file")" || refusal_class=other
+            if ! python3 -I "$scripts/board_merge.py" retryable "$refusal_class"; then
+              { echo "outcome=refused"; echo "refusal-class=$refusal_class"; } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$attempt" -ge 2 ]; then
+              { echo "outcome=transient"; echo "refusal-class=$refusal_class"; } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            attempt=2
+            sleep 20
+            # Re-fetched beside the first snapshot and decision, replacing
+            # them only once both are whole: a failed re-fetch leaves the
+            # announcement reading the pair the first attempt used.
+            fields="$(python3 -I "$scripts/board_merge.py" snapshot-fields)" \
+              && gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json "$fields" > "$RUNNER_TEMP/board-merge-snapshot.retry.json" \
+              && python3 -I "$scripts/board_merge.py" decide \
+                   --inputs "$RUNNER_TEMP/board-merge-inputs.json" --snapshot "$RUNNER_TEMP/board-merge-snapshot.retry.json" \
+                   > "$RUNNER_TEMP/board-merge-decision.retry.json" \
+              || { { echo "outcome=transient"; echo "refusal-class=$refusal_class"; } >> "$GITHUB_OUTPUT"
+                   echo "::warning::board-loop merge: could not re-derive the decision for the retry -- not retried."; exit 0; }
+            mv "$RUNNER_TEMP/board-merge-snapshot.retry.json" "$RUNNER_TEMP/board-merge-snapshot.json"
+            mv "$RUNNER_TEMP/board-merge-decision.retry.json" "$RUNNER_TEMP/board-merge-decision.json"
+            if [ "$(jq -r '.may_merge' "$RUNNER_TEMP/board-merge-decision.json")" != "true" ]; then
+              echo "outcome=not-merged" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            pin_sha="$(jq -r '.head_sha' "$RUNNER_TEMP/board-merge-decision.json")"
+          done
+
+      # FR-008/FR-009/FR-010: every outcome is announced on the PR and the
+      # issue, once per head, outcome and reason (board_merge.py announce
+      # prints nothing when the PR's snapshot already carries it). A refusal
+      # is classified and handed over: for the fix class the issue's marker
+      # releases the item (merged, handed-over) so it is not retried; for
+      # the bump class the outcome marker on the PR releases it until its
+      # head moves. The bump class writes no board item marker on the
+      # tracking issue: that issue is not a board item.
+      - name: Announce the outcome
+        if: steps.decide.outputs.may-merge != '' && steps.killswitch-recheck.outputs.paused == 'false'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          PR_NUMBER: ${{ steps.candidate.outputs.pr }}
+          ISSUE_NUMBER: ${{ steps.candidate.outputs.issue }}
+          CLASS: ${{ steps.candidate.outputs.class }}
+          BRANCH: ${{ steps.candidate.outputs.branch }}
+          BASE_SHA: ${{ steps.candidate.outputs.base-sha }}
+          MAY_MERGE: ${{ steps.decide.outputs.may-merge }}
+          OUTCOME: ${{ steps.merge.outputs.outcome }}
+          MERGE_SHA: ${{ steps.merge.outputs.merge-sha }}
+          REFUSAL_CLASS: ${{ steps.merge.outputs.refusal-class }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+        run: |
+          set -uo pipefail
+          scripts="$RUNNER_TEMP/wc-pristine/scripts"
+          outcome="$OUTCOME"
+          if [ -z "$outcome" ]; then
+            if [ "$MAY_MERGE" != "false" ]; then
+              echo "::error::board-loop merge: the merge step reported no outcome -- nothing to announce."
+              exit 1
+            fi
+            outcome=not-merged
+          fi
+          args=(--decision "$RUNNER_TEMP/board-merge-decision.json" --snapshot "$RUNNER_TEMP/board-merge-snapshot.json"
+                --outcome "$outcome" --bot-login "$BOT_LOGIN")
+          case "$outcome" in
+            merged)
+              [ -n "$MERGE_SHA" ] || echo "::warning::board-loop merge: GitHub reported no merge commit for PR #$PR_NUMBER; the announcement and marker carry no merge_sha."
+              args+=(--merge-sha "$MERGE_SHA") ;;
+            refused|transient) args+=(--refusal-class "$REFUSAL_CLASS" --stderr-file "$RUNNER_TEMP/board-merge-stderr.txt") ;;
+          esac
+          body="$(python3 -I "$scripts/board_merge.py" announce "${args[@]}")" \
+            || { echo "::error::board-loop merge: could not render the $outcome announcement."; exit 1; }
+          if [ -z "$body" ]; then
+            echo "board-loop merge: PR #$PR_NUMBER $outcome at this head (already announced)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          marker=""
+          if [ "$CLASS" = "fix" ] && { [ "$outcome" = "merged" ] || [ "$outcome" = "refused" ]; }; then
+            # The marker keeps the item's branch, base and review round: it
+            # replaces the issue's newest marker, which resume and prove read.
+            gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
+              --jq '.[] | {created_at, body, user}' | jq -s '.' > "$RUNNER_TEMP/board-merge-issue-comments.json" \
+              || { echo "::error::board-loop merge: could not read issue #$ISSUE_NUMBER's comments for the marker's round."; exit 1; }
+            marker_args=(--pr "$PR_NUMBER" --branch "$BRANCH" --base-sha "$BASE_SHA"
+                         --carry-round-from "$RUNNER_TEMP/board-merge-issue-comments.json" --bot-login "$BOT_LOGIN")
+            if [ "$outcome" = "merged" ]; then
+              marker="$(python3 -I "$scripts/board_item_marker.py" --step merged "${marker_args[@]}" --merge-sha "$MERGE_SHA")" \
+                || { echo "::error::board-loop merge: could not render the step=merged marker."; exit 1; }
+            else
+              marker="$(python3 -I "$scripts/board_item_marker.py" --step handed-over "${marker_args[@]}")" \
+                || { echo "::error::board-loop merge: could not render the step=handed-over marker."; exit 1; }
+            fi
+          fi
+          # The issue comment (and its marker) goes first: the PR comment is
+          # the dedup source above, so it must be posted last, or a failed
+          # issue post would be skipped as "already announced" forever.
+          issue_body="$body"
+          if [ -n "$marker" ]; then
+            issue_body="$(printf '%s\n\n%s' "$body" "$marker")"
+          fi
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body "$issue_body" \
+            || { echo "::error::board-loop merge: the announcement could not be posted on issue #$ISSUE_NUMBER."; exit 1; }
+          gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body" \
+            || { echo "::error::board-loop merge: the announcement could not be posted on PR #$PR_NUMBER."; exit 1; }
+
+      - name: Agent run metrics summary (merge)
+        id: metrics-summary
+        if: always()
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
+        with:
+          transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
+          model: ''
+          stage: board-loop
+          run-label: >-
+            ${{ steps.killswitch-recheck.outputs.stop-cause != '' && format('merge: {0}', steps.killswitch-recheck.outputs.stop-cause-run-label) ||
+                (steps.merge.outputs.outcome == 'merged' && 'merged' ||
+                (steps.merge.outputs.outcome == 'refused' && 'merge refused' ||
+                (steps.merge.outputs.outcome == 'transient' && 'merge failed transiently' ||
+                ((steps.merge.outputs.outcome == 'not-merged' || steps.decide.outputs.may-merge == 'false') && 'not merged' || 'no candidate')))) }}
+          record-path: ${{ runner.temp }}/wing-commander-metrics-record-merge.json
+          spec-identity-is-own: 'false'
+
+      - name: Upload metrics record (merge)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record-merge
+          path: ${{ runner.temp }}/wing-commander-metrics-record-merge.json
           if-no-files-found: ignore
           retention-days: 90
 

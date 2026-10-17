@@ -33,7 +33,7 @@ BOARD_LOOP_YML = os.path.join(REPO_ROOT, ".github", "workflows", "board-loop.yml
 # fix-agent/gate-suite-fix/fix/review/gate-suite-review-fixup/
 # review-fixup-publish/readiness/prove-gate/prove) -- every one of them must
 # carry this comment (T009; spec 095 added the four split-out jobs).
-EXPECTED_YAML_BLOCK_COUNT = 12
+EXPECTED_YAML_BLOCK_COUNT = 13
 
 
 def _normalize(text):

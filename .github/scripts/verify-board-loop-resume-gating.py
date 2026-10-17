@@ -2499,9 +2499,11 @@ def _mutations(text):
     # select's two prove markers, fix's review hand-off and breach, review's
     # readiness and round, readiness's awaiting-merge, triage's hand-over
     # ("$marker_step"), prove's three (close-on-merge, proven, prove), and
-    # readiness's not-ready record (specs/093-not-ready-board-release).
-    if len(other_at) != 12:
-        raise AssertionError("self-test: expected 12 non-stalled marker renders, found {0}".format(len(other_at)))
+    # readiness's not-ready record (specs/093-not-ready-board-release), and
+    # the merge job's merged and handed-over records
+    # (specs/115-board-loop-self-merge).
+    if len(other_at) != 14:
+        raise AssertionError("self-test: expected 14 non-stalled marker renders, found {0}".format(len(other_at)))
     for n, at in enumerate(other_at):
         guard_at = text.index('|| { echo "::error::', at)
         guard_start = text.rindex(" \\\n", at, guard_at)
@@ -2595,12 +2597,12 @@ def run_selftest(text):
         module = os.path.join(scripts, "board_eligibility.py")
         with open(module, encoding="utf-8") as fh:
             src = fh.read()
-        old = '"readiness", AWAITING_MERGE_STEP, "prove"'
+        old = '"readiness", AWAITING_MERGE_STEP,'
         if old not in src:
             failures.append("mutation `{0}`: fixture text not found in board_eligibility.py".format(label))
         else:
             with open(module, "w", encoding="utf-8") as fh:
-                fh.write(src.replace(old, '"readiness", "prove"', 1))
+                fh.write(src.replace(old, '"readiness",', 1))
             found = select_lookup_findings(yaml.safe_load(text), tmp)
             if not found:
                 failures.append("mutation `{0}` was NOT detected".format(label))

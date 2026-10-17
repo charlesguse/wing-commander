@@ -158,6 +158,8 @@ def pr_json(pr, fields):
             out[f] = pr.get("head")
         elif f == "state":
             out[f] = "OPEN"
+        elif f == "headRefOid":
+            out[f] = pr.get("headRefOid") or "0123456789abcdef0123456789abcdef01234567"
         else:
             out[f] = pr.get(f)
     return out
@@ -178,10 +180,22 @@ def maybe_fail(argv):
     issue gets filed. Without injection that branch can only be desk-read,
     which is exactly how #167 shipped.
     """
+    have = set(argv)
+    # $GH_STUB_FAIL_ONCE: the same selectors, each failing only the first
+    # call it matches -- a transient failure a retry gets past.
+    once = os.environ.get("GH_STUB_FAIL_ONCE", "").strip()
+    if once:
+        spent_path = STATE + ".failed-once"
+        spent = set(open(spent_path, encoding="utf-8").read().splitlines()) if os.path.exists(spent_path) else set()
+        for sel in (p.strip() for p in once.split(",")):
+            if sel and sel not in spent and set(sel.split()).issubset(have):
+                with open(spent_path, "a", encoding="utf-8") as fh:
+                    fh.write(sel + "\n")
+                sys.stderr.write("gh: injected one-time failure for '%s' (GH_STUB_FAIL_ONCE)\n" % sel)
+                return True
     spec = os.environ.get("GH_STUB_FAIL", "").strip()
     if not spec:
         return False
-    have = set(argv)
     for sel in (p.strip() for p in spec.split(",")):
         if sel and set(sel.split()).issubset(have):
             sys.stderr.write("gh: injected failure for '%s' (GH_STUB_FAIL)\n" % sel)
@@ -323,6 +337,11 @@ def main():
             fields = (opt(argv, "--json") or "body").split(",")
             emit(pr_json(pr, fields), argv)
             return 0
+        if sub == "comment":
+            if not pr:
+                sys.stderr.write("gh: pr not found\n"); return 1
+            pr.setdefault("comments", []).append({"body": body_of(argv)})
+            save(s); return 0
 
     # ---- gh label create ------------------------------------------------
     if cmd == "label" and argv[1] == "create":
