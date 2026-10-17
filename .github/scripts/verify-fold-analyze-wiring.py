@@ -33,7 +33,9 @@ The dispatch's `if:` also carries `!cancelled()`, so a failed post or log
 upload between the decision and the dispatch cannot strand a fold the check
 let through; a step that writes a hold's resolved marker runs after the
 dispatch, never before it, so a release that never dispatched leaves the
-hold open to answer again; and pr-conversation (the published caller)
+hold open to answer again, and the step after it that records a
+dispatched release carries `!cancelled()` so it is never skipped; and
+pr-conversation (the published caller)
 replies on the PR when its fold is held, as it does when one dispatches.
 
 The fold-analyze steps' rationale comments live once, in
@@ -184,6 +186,13 @@ def check_caller(path, steps, preceding):
             failures.append(f"{path}: {early} writes a hold's resolved marker before "
                             f"{DISPATCH} runs -- a release that never dispatches "
                             f"would close the hold with nothing left to answer.")
+        unrecorded = [s.get("name") for s in steps[dispatch + 1:]
+                      if "resolved-marker" in str(s.get("run") or "")
+                      and "!cancelled()" not in str(s.get("if") or "")]
+        if unrecorded:
+            failures.append(f"{path}: {unrecorded} records a dispatched release without "
+                            f"!cancelled() -- a failed step above skips it, the hold "
+                            f"stays open, and a second answer dispatches again.")
     if path == PUBLISHED_CALLER and not any(
             "decision == 'hold'" in str(s.get("if") or "")
             and "gh pr comment" in str(s.get("run") or "") for s in steps):
@@ -382,6 +391,12 @@ def self_test():
         "run": "python3 wc_fold_hold.py resolved-marker --fold-id x --resolution retry"})
     case("a resolved marker written before the dispatch is caught",
          any("resolved marker" in f for f in check_caller(rel_path, closed_early, rel_pre)))
+
+    implicit = copy.deepcopy(rel)
+    rec = idx(implicit, lambda s: "resolved-marker" in str(s.get("run") or ""))
+    implicit[rec]["if"] = implicit[rec]["if"].replace("!cancelled() && ", "")
+    case("a release record without !cancelled() is caught",
+         any("second answer" in f for f in check_caller(rel_path, implicit, rel_pre)))
 
     texts = _caller_texts()
     pasted = dict(texts)

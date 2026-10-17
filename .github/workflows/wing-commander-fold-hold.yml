@@ -350,9 +350,12 @@ jobs:
       # included -- leaves it open to answer again. A retry that held again
       # posted a fresh hold-state marker above, which is now the open hold
       # (wc_fold_hold.py reads the newest), so it records nothing here.
+      # !cancelled(): a dispatched release is recorded even when a step
+      # above failed (the retry's outcome post), or a second answer would
+      # dispatch the same fold again.
       - name: Record the release on the lifecycle issue
         if: >-
-          steps.fold-dispatch.outcome == 'success'
+          !cancelled() && steps.fold-dispatch.outcome == 'success'
           && (needs.resolve.outputs.action == 'proceed' || needs.resolve.outputs.action == 'drop'
               || needs.resolve.outputs.action == 'retry')
         env:
