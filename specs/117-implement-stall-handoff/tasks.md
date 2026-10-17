@@ -141,3 +141,86 @@
 - [x] T027d Fix `verify-intake-routing.py`: record pr-conversation.yml's new `max-iterations` input in `interface.json` additions
 - [ ] T027e Give the implement.yml and finalize.yml edits a `review-step-gating` skill pass and fix findings
 - [ ] T027f Re-run `python .github/scripts/run-local-gates.py` until green (gate 62 may be skipped without Docker); T029 and T030 remain maintainer steps
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: pr-conversation max-iterations input never passed by wrapper
+
+  The new max-iterations input defaults to 5 and no wrapper passes it, so 'Cycles remaining' is wrong whenever WING_COMMANDER_MAX_ITERATIONS is set.
+
+  - .github/workflows/pr-conversation.yml
+
+  Detail: implement wrapper passes fromJSON(vars.WING_COMMANDER_MAX_ITERATIONS || '5'); pr-conversation does not, so the count can disagree with implement.yml's cap.
+
+- [ ] Review finding: Agent-controlled blocker detail posted unescaped to issue comment
+
+  The blocker detail text from untrusted agent output is only length- and shape-checked, then posted verbatim in the stall comment, allowing mentions, links and markdown injection.
+
+  - .github/actions/_shared/validate-implement-blocker.sh
+
+  Detail: Flows through blocker-text, stall-reason and stall-comment into gh issue comment.
+
+- [ ] Review finding: Validate implement blocker steps hard-fail and strand the loop
+
+  The new validate steps exit 1 with no continue-on-error, so the job fails and the read-back, consolidate, dispatch and hand-off steps below are skipped.
+
+  - .github/workflows/implement.yml
+
+  Detail: The script exits non-zero when tasks.md is unreadable at origin/<branch>. The review-step-gating pass (T027e) is still unchecked.
+
+- [ ] Review finding: Not-converged banner can say 0 tasks remain
+
+  The finalize banner takes its count from IMPL_COUNT (implementation tasks only), so a not-converged PR can read '0 tasks remain' when only maintainer or routed tasks are left.
+
+  - .github/workflows/finalize.yml
+
+  Detail: impl-count can be 0 or empty, and the :-0 default applies if the render step was skipped.
+
+- [ ] Review finding: Hand-off comment lists raw unchecked items next to implementation count
+
+  The stall comment prints REMAINING (the unclassified unchecked-items list, including standing instructions and maintainer tasks) beside an 'N implementation task(s)' statement, so the counts disagree.
+
+  - .github/workflows/implement.yml
+
+  Detail: Should use the classified impl-unchecked-items instead.
+
+- [ ] Review finding: Standing-instruction heuristic can drop real implementation tasks
+
+  The 'Run the gate suite' prefix match exempts lines only if they contain 'and fix', a backtick or '/', so a task like 'Run the gate suite, then fix fallout' is classified as standing and dropped from the unfinished count.
+
+  - .github/actions/_shared/count-tasks-checkboxes.sh
+
+  Detail: The spec's edge case says to count ambiguous lines as implementation, but this heuristic errs the other way and can report converged with unbuilt work.
+
+- [ ] Review finding: Routed item substitution renders a doubled bullet
+
+  Routed write-boundary items render as '- - [ ] T011 ...' because the rendered line already begins with '- [ ]', and the gate fixture asserts the malformed output.
+
+  - .github/actions/_shared/render-remaining-work.sh
+  - render-remaining-work-routed.expected
+
+  Detail: The PR body and lifecycle issue show a nested bullet.
+
+- [ ] Review finding: Blocker gate test writes into shared tmp and leaks temp dirs
+
+  The test writes blocker files to the parent of a mkdtemp directory (the shared temp root), and git_repo_with and render never clean up their temp dirs.
+
+  - .github/scripts/verify-implement-stall-handoff.py
+
+  Detail: Shared filenames can race or go stale across concurrent gate runs.
+
+- [ ] Review finding: Blocker detail length check is locale-dependent
+
+  The 300-character limit uses bash ${#detail}, which counts bytes in a C locale, so non-ASCII details are accepted or rejected depending on the image locale.
+
+  - .github/actions/_shared/validate-implement-blocker.sh
+
+  Detail: Using jq 'length' counts codepoints regardless of locale.
+
+- [ ] Review finding: Zero-progress cycles with no blocker run to the iteration cap
+
+  The old early hand-off on no progress was removed with no cheaper no-op detection, so a stuck agent that omits or malforms the blocker re-runs identically until the cap, spending the usage window.
+
+  - .github/workflows/implement.yml
+
+  Detail: With the default cap of 5, five identical cycles can run before the loop stops.
