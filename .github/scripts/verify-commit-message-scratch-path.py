@@ -137,6 +137,10 @@ EXEMPT_SITES = {
         "pure analysis agent -- \"commit\" appears only inside descriptive "
         "evidence vocabulary (\"tool name, branch, commit counts, matched "
         "sentinel\"), never as an instruction to compose one.",
+    ("watchdog.yml", "Diagnose shadow"):
+        "spec 110's read-only diagnose shadow -- its prompt is byte-equal to "
+        "Diagnose's (Gate 146), so the same descriptive \"commit counts\" "
+        "wording applies, and it holds no commit or write tool at all.",
 }
 
 # implement.yml's two sites: FR-013's deeper, render-executing check.

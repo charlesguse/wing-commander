@@ -1,0 +1,14 @@
+# Failure branch: a published stage's agent denies .git/** only in its
+# defaults, which an adopter's disallowed-tools-override replaces.
+on:
+  workflow_call: {}
+jobs:
+  act:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Write,Edit"
+          default-disallowed-tools: "WebSearch,Edit(.git/**),Write(.git/**)"
+          disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          step-label: "fixture.act"

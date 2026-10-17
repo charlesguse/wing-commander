@@ -48,7 +48,49 @@ set -uo pipefail
 SPEC_PREFIX="${1:-}"
 SLUG="${2:-}"
 SPEC_DIR="${3:-}"
-[ -n "$SPEC_DIR" ] || SPEC_DIR="specs/$SLUG"
+# A subfolder project's lifecycle slug is "<P>/<NNN-slug>" and its spec
+# directory "<P>/specs/<NNN-slug>" (spec 114). The file is located at that
+# repository-relative path, but the record is portable by copy (FR-008): the
+# spec_dir it carries is project-relative, exactly "specs/<NNN-slug>", so the
+# identity check compares against that, never against the project path. A
+# project name is read by the one parser (project-name.sh), and one it cannot
+# read has no record here; a root name (no `/`) is taken as it always was.
+lib="$(dirname "$0")/project-name.sh"
+# shellcheck source=/dev/null
+. "$(dirname "$0")/kv.sh"
+if [ -z "$SPEC_DIR" ] && [ -n "$SLUG" ]; then
+  case "$SLUG" in
+    */*) if parsed="$(bash "$lib" parse slug "$SLUG" 2>/dev/null)"; then
+           SPEC_DIR="$(bash "$lib" spec-dir "$(kv project "$parsed")" "$(kv slug "$parsed")")"
+         fi ;;
+    *) SPEC_DIR="$(bash "$lib" spec-dir "" "$SLUG")" ;;
+  esac
+fi
+# The branch is fetched by SLUG's project and the file read from SPEC_DIR's,
+# so the two must name the same project (the root being the empty one): a
+# slug alpha/001-x with spec-dir beta/specs/001-x would read beta's record
+# off alpha's branch. A mismatch, or a name the parser cannot read, has no
+# record here.
+project_of() { # project_of KIND NAME -> its project, or fails
+  local out
+  out="$(bash "$lib" parse "$1" "$2" 2>/dev/null)" || return 1
+  kv project "$out"
+}
+if [ -n "$SLUG" ] && [ -n "$SPEC_DIR" ]; then
+  slug_project="" dir_project=""
+  case "$SLUG" in */*) slug_project="$(project_of slug "$SLUG")" || slug_project="/" ;; esac
+  case "$SPEC_DIR" in specs/*) ;; *) dir_project="$(project_of spec-dir "$SPEC_DIR")" || dir_project="/" ;; esac
+  if [ "$slug_project" = "/" ] || [ "$slug_project" != "$dir_project" ]; then
+    SPEC_DIR=""
+  fi
+fi
+EXPECTED_SPEC_DIR=""
+case "$SPEC_DIR" in
+  specs/*) EXPECTED_SPEC_DIR="$SPEC_DIR" ;;
+  *) if parsed="$(bash "$lib" parse spec-dir "$SPEC_DIR" 2>/dev/null)"; then
+       EXPECTED_SPEC_DIR="$(bash "$lib" spec-dir "" "$(kv slug "$parsed")")"
+     fi ;;
+esac
 
 meta_fetch_ok=false
 meta_found=false
@@ -63,7 +105,7 @@ field() { printf '%s' "$1" | jq -r "$2" 2>/dev/null || true; }
 # only VALUE ERE     -> VALUE when it matches the whole-line pattern, else empty.
 only() { printf '%s' "$1" | grep -E "$2" || true; }
 
-if [ -n "$SLUG" ]; then
+if [ -n "$SLUG" ] && [ -n "$SPEC_DIR" ]; then
   branch="${SPEC_PREFIX}${SLUG}"
   if git fetch --no-tags --quiet origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" 2>/dev/null; then
     meta_fetch_ok=true
@@ -74,7 +116,7 @@ if [ -n "$SLUG" ]; then
      && printf '%s' "$meta" | jq -e . >/dev/null 2>&1; then
     meta_found=true
     meta_spec_dir="$(only "$(field "$meta" '.spec_dir // empty')" '^specs/[A-Za-z0-9._-]+$')"
-    if [ -n "$meta_spec_dir" ] && [ "$meta_spec_dir" = "$SPEC_DIR" ]; then
+    if [ -n "$meta_spec_dir" ] && [ "$meta_spec_dir" = "$EXPECTED_SPEC_DIR" ]; then
       meta_identity_ok=true
     fi
     meta_issue="$(only "$(field "$meta" '.issue // empty')" '^[0-9]+$')"

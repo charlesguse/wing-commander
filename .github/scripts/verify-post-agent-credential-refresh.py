@@ -327,6 +327,13 @@ NO_REMOTE_REFRESH_JOBS = {
     # fix and review (#733/#848, tracked on #889).
     (".github/workflows/board-loop.yml", "triage"),
     (".github/workflows/board-loop.yml", "route"),
+    # spec 095: fix-agent and review no longer push -- fix and
+    # review-fixup-publish push from a fresh checkout through
+    # wing-commander-hardened-push with env.WC_BOT_TOKEN. Writing a fresh
+    # token into the remote of a checkout an agent just wrote would only
+    # leave a live credential where nothing uses it (code review of #990).
+    (".github/workflows/board-loop.yml", "fix-agent"),
+    (".github/workflows/board-loop.yml", "review"),
     # T009 (spec 052's own tasks.md): classify-and-announce resolves
     # spec-meta.json via the contents API rather than a "Checkout spec
     # branch" step, so there is no persisted git remote credential to
@@ -503,7 +510,7 @@ SUBJECT_FLOOR = {
     ".github/workflows/rebase.yml": {"rebase"},
     ".github/workflows/cleanup.yml": {"teardown-done"},
     ".github/workflows/watchdog.yml": {"diagnose"},
-    ".github/workflows/board-loop.yml": {"triage", "route", "fix", "review"},
+    ".github/workflows/board-loop.yml": {"triage", "route", "fix-agent", "review"},
 }
 
 # (workflow_path, job_name) -> ExemptionEntry -- every entry a derived
@@ -557,6 +564,19 @@ EXEMPT_JOBS = {
             "An agent step bounded by its own 10-minute timeout is the "
             "design for a short job, not debt awaiting a fix."),
         decided_by=(558,),
+        condition=_wall_clock_bound_ok,
+    ),
+    (".github/workflows/agent-startup-check.yml", "startup-agent"): ExemptionEntry(
+        reason=(
+            "credential-free start-up probe (spec 112): no model credential "
+            "is minted, so nothing exists to refresh -- the startup-agent "
+            "job carries timeout-minutes: 10"),
+        issue=(),
+        permanent=True,
+        permanent_reason=(
+            "A probe that holds no credential has nothing to refresh; its "
+            "10-minute timeout is the design, not debt awaiting a fix."),
+        decided_by=(974,),
         condition=_wall_clock_bound_ok,
     ),
 }
@@ -1768,12 +1788,12 @@ def mut_board_loop_fixer_refresh_inlined(loaded):
     """Check 5 (code review of #947): board-loop names its refresh steps
     "Refresh authenticated remote (post-agent, <agent>)", which the
     single-home pattern used to miss. Reverted to an inline block."""
-    job = loaded[".github/workflows/board-loop.yml"]["jobs"]["fix"]
-    step = _find_step(job, "Refresh authenticated remote (post-agent, fixer)")
-    assert step is not None, "fixture assumption broken: step renamed"
-    step.pop("uses", None)
-    step.pop("with", None)
-    step["run"] = 'git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/o/r"'
+    job = loaded[".github/workflows/board-loop.yml"]["jobs"]["fix-agent"]
+    # spec 095 dropped fix-agent's own refresh (it no longer pushes), so the
+    # board-loop-named step is put back inline, the way it would regress.
+    job["steps"].append({
+        "name": "Refresh authenticated remote (post-agent, fixer)",
+        "run": 'git remote set-url origin "https://x-access-token:${WC_BOT_TOKEN}@github.com/o/r"'})
 
 
 def mut_upper_case_step_references(loaded):
@@ -1997,7 +2017,7 @@ def self_test():
              ".github/workflows/auto-update-spec-kit.yml [e2e-stage]: "
              "credential-status call"),
             (mut_board_loop_fixer_refresh_inlined,
-             ".github/workflows/board-loop.yml [fix] step 'Refresh "
+             ".github/workflows/board-loop.yml [fix-agent] step 'Refresh "
              "authenticated remote (post-agent, fixer)' does not call the "
              "wing-commander-refresh-remote composite")):
         mutated = copy.deepcopy(base)

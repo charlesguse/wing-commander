@@ -1,0 +1,25 @@
+# Failure branch: the implement agent spells its own .git deny -- a second
+# literal list beside the no-write-paths boundary.
+on:
+  workflow_call:
+    inputs:
+      no-write-paths:
+        type: string
+        required: false
+        default: ".claude/,.git/"
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Write,Edit"
+          default-disallowed-tools: "WebSearch,Edit(.git/**),Write(.git/**)"
+          no-write-paths: ${{ inputs.no-write-paths }}
+          step-label: "implement.cycle"
+      - uses: ./.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Write,Edit"
+          default-disallowed-tools: "WebSearch"
+          no-write-paths: ${{ inputs.no-write-paths }}
+          step-label: "implement.retry"

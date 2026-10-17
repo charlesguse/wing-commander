@@ -43,6 +43,16 @@ FIXTURES_DIR = os.path.join(
 EXPECTED_CASES = {
     "stale-check-summary", "no-checks", "open-findings",
     "backstop-breach", "kill-switch-set", "all-clear",
+    # specs/093-not-ready-board-release FR-005: the unmet condition's
+    # class (expected.unmet_class) -- a CheckRun still running is
+    # self-clearing (stale-check-summary); a failed check, or open findings
+    # behind a still-running check, is durable.
+    "failed-check", "pending-check-open-findings",
+    # The kill switch is never self-clearing, even behind a pending check.
+    "pending-check-kill-switch",
+    # Every check green but no lint-workflows entry: durable, since that
+    # check may never run for a PR outside its paths (code review of #1010).
+    "lint-missing-durable",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"
@@ -117,6 +127,8 @@ def run():
         ok = got["ready"] == expected["ready"]
         if expected.get("reason_contains"):
             ok = ok and expected["reason_contains"] in (got.get("unmet_reason") or "")
+        if "unmet_class" in expected:
+            ok = ok and got.get("unmet_class") == expected["unmet_class"]
         if not ok:
             failures += 1
             print("::error::verify-board-readiness: {0}: expected {1!r}, "

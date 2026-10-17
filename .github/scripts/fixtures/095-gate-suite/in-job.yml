@@ -1,0 +1,52 @@
+# Failure branch: the gate suite still runs in the credential-bearing publisher.
+on: workflow_dispatch
+permissions: {}
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.wc-pristine-repo/.github/actions/wing-commander-gate-bundle
+        with:
+          site: board-fix
+  gate:
+    needs: [agent]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.wc-pristine-repo/.github/actions/wing-commander-contained-gate-suite
+        timeout-minutes: 60
+        with:
+          site: board-fix
+  publish:
+    needs: [agent, gate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
+      - id: in-job-suite
+        run: |
+          set +e
+          python3 .github/scripts/run-local-gates.py > log 2>&1
+      - id: gate-suite
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-gate-verdict
+        with:
+          site: board-fix
+      - uses: ./.wc-pristine-repo/.github/actions/wing-commander-hardened-push
+        with:
+          branch: b
+          token: ${{ env.WC_BOT_TOKEN }}
+          expected-head-sha: x

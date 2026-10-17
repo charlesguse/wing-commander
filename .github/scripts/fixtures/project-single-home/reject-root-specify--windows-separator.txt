@@ -1,0 +1,1 @@
+          Get-Content ".specify\memory\constitution.md"

@@ -355,6 +355,25 @@ def publish(repo, body):
     return path
 
 
+# Each switch and the env name board-status.yml passes it under; the
+# repository variable is that name prefixed with WING_COMMANDER_. The one
+# home of this mapping: the whats-on-me skill's board_now.py reads it too.
+SWITCH_ENV = {
+    "auto_release_paused": "AUTO_RELEASE_PAUSED",
+    "board_loop_paused": "BOARD_LOOP_PAUSED",
+    "lifecycle_auto_merge": "LIFECYCLE_AUTO_MERGE",
+    "review_gate_paused": "LIFECYCLE_REVIEW_GATE_PAUSED",
+    "tasks_review": "TASKS_REVIEW",
+}
+
+
+def switches_from(get):
+    """The switches dict snapshot() takes, with get(env_name) -> raw value."""
+    switches = {key: get(env) or "" for key, env in SWITCH_ENV.items()}
+    switches["tasks_review"] = switches["tasks_review"].strip().lower()
+    return switches
+
+
 def main(argv):
     if len(argv) >= 3 and argv[1] == "render":
         with open(argv[2], encoding="utf-8") as fh:
@@ -362,14 +381,7 @@ def main(argv):
         return 0
     if len(argv) == 2 and argv[1] == "publish":
         repo = os.environ["GITHUB_REPOSITORY"]
-        switches = {
-            "auto_release_paused": os.environ.get("AUTO_RELEASE_PAUSED", ""),
-            "board_loop_paused": os.environ.get("BOARD_LOOP_PAUSED", ""),
-            "lifecycle_auto_merge": os.environ.get("LIFECYCLE_AUTO_MERGE", ""),
-            "review_gate_paused": os.environ.get("LIFECYCLE_REVIEW_GATE_PAUSED", ""),
-            "tasks_review": os.environ.get("TASKS_REVIEW", "").strip().lower(),
-        }
-        body = render(snapshot(repo, switches))
+        body = render(snapshot(repo, switches_from(lambda env: os.environ.get(env, ""))))
         target = publish(repo, body)
         print("board-status: wrote {0}".format(target))
         summary = os.environ.get("GITHUB_STEP_SUMMARY")

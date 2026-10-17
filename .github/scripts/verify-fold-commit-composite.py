@@ -127,6 +127,11 @@ def run_fold(root, step_script, section_content, fold_id="leg-a",
         "FOLD_SUMMARY": summary,
         "ACTOR_LOGIN": actor,
         "PATH": bindir + os.pathsep + os.environ.get("PATH", ""),
+        # spec 095: the step sources _shared/git-push-hardening.sh beside
+        # the shipped composite.
+        "GITHUB_ACTION_PATH": os.path.dirname(os.path.abspath(ACTION)),
+        "PUSH_TOKEN": "",
+        "EXPECTED_BRANCH": "",
     }
     rc, out, outputs, _summary = run_step(resolve_bash(), step_script, repo,
                                           env, root)

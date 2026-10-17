@@ -54,8 +54,14 @@ the PR body's `Fixes #N` and the marker's presence, never its step.
 Known limit: a push to the PR head after the ready report does not bring
 the item back to readiness.
 
-A not-ready outcome leaves the marker as it was, so the next run picks the
-item up at `readiness` again.
+A not-ready outcome's "picked up again on a later run" (FR-067) is bounded
+by specs/093-not-ready-board-release, not unconditional: a durable unmet
+condition whose PR head has not moved holds the item out of selection
+after the first such outcome, and three not-ready outcomes on the same PR
+hand it to a human once, under `board:stalled`, rather than picking it up
+forever. `specs/093-not-ready-board-release/contracts/not-ready-hold.md`
+is the canonical statement of the hold/count/handover this superseded;
+see it for the marker fields a not-ready outcome now writes.
 
 ## Entry at step `breach` (#530)
 

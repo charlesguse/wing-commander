@@ -1,0 +1,13 @@
+{
+  "5094": [
+    {
+      "created_at": "2026-01-05T00:00:00Z",
+      "body": "Not ready on PR #9094: checks not green on head_sha deadbeef94 (stale or failing). Picked up again on a later run.\n\n**Run:** https://github.com/example/repo/actions/runs/1\n\n<!-- wing-commander-board-item: {\"base_sha\": null, \"branch\": null, \"nr_class\": \"durable\", \"nr_count\": \"one\", \"pr\": 9094, \"round\": 0, \"step\": \"readiness\"} -->",
+      "user": {
+        "login": "wing-commander-bot[bot]",
+        "type": "Bot"
+      }
+    }
+  ],
+  "5095": []
+}

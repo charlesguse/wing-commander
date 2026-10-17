@@ -87,7 +87,7 @@
     },
     {
       "file": ".github/workflows/board-loop.yml",
-      "job": "review",
+      "job": "review-fixup-publish",
       "pushes": "a follow-up commit on the same fix/<issue-number>-<slug> board-item branch, never a spec branch",
       "issue": null,
       "permanent": true,

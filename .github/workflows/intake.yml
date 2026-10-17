@@ -208,6 +208,16 @@ on:
         type: number
         required: false
         default: 3
+      routing-label-prefix:
+        description: >
+          Label prefix that routes an issue to a subfolder project (for
+          example `node:` -- an issue labelled `node:ideas/alpha` runs its
+          whole lifecycle inside `ideas/alpha/`, spec 114). Empty (default)
+          disables routing: the lifecycle runs at the repository root,
+          unchanged.
+        type: string
+        required: false
+        default: ""
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -232,7 +242,7 @@ on:
         required: false
     outputs:
       spec-dir:
-        description: "specs/NNN-slug directory the intake created (empty if no spec was produced)"
+        description: "Repository-relative [P/]specs/NNN-slug directory the intake created (empty if no spec was produced); P is the routed project folder, absent at the repository root"
         value: ${{ jobs.intake.outputs.spec-dir }}
       feature-num:
         description: "The 3-digit feature number allocated for this intake"
@@ -319,9 +329,13 @@ jobs:
           # wrong is the difference between a fixable message and a puzzle.
           if ! missing=$(docker run --rm -e REQUIRED_TOOLS="$REQUIRED_TOOLS" \
             --entrypoint sh "$IMAGE" -c \
-            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done' \
+            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done; if command -v git >/dev/null 2>&1; then v=$(git --version 2>/dev/null); n=${v#git version }; n=${n%% *}; case "$n" in *.*) ;; *) n=;; esac; maj=${n%%.*}; r=${n#*.}; min=${r%%.*}; case "$maj.$min" in .|*[!0-9.]*|.*|*.) echo "could not parse git version from \"$v\"" >&2; exit 1;; esac; if [ "$maj" -lt 2 ] || { [ "$maj" -eq 2 ] && [ "$min" -lt 38 ]; }; then echo "git $n is older than the 2.38 minimum" >&2; exit 1; fi; fi' \
             2>docker-inspect-error.log); then
-            echo "::error::wing-commander verify-image-prerequisites: could not run a POSIX shell inside $IMAGE to check its prerequisites -- $(cat docker-inspect-error.log)"
+            if grep -qE 'is older than the 2\.38 minimum|could not parse git version' docker-inspect-error.log; then
+              echo "::error::wing-commander verify-image-prerequisites: $IMAGE failed the git version floor -- $(cat docker-inspect-error.log)${missing:+ (also missing required tool(s):$missing)}"
+            else
+              echo "::error::wing-commander verify-image-prerequisites: could not run a POSIX shell inside $IMAGE to check its prerequisites -- $(cat docker-inspect-error.log)"
+            fi
             exit 1
           fi
 
@@ -329,6 +343,154 @@ jobs:
             echo "::error::wing-commander verify-image-prerequisites: $IMAGE is missing required tool(s):$missing"
             exit 1
           fi
+
+  # Per-issue routing gate (spec 114, FR-001/FR-003/FR-012, research.md
+  # D8). A job holds one concurrency group, so with routing on this small
+  # job holds `wing-commander-intake-issue/<issue>` and runs the prefix
+  # check, the routing-label count and the re-run refusal; the numbering
+  # job below `needs:` it and holds the per-project numbering group. With
+  # routing off it is skipped and intake is unchanged (FR-016).
+  routing-gate:
+    needs: verify-image-prerequisites
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && inputs.routing-label-prefix != ''"
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    concurrency:
+      group: wing-commander-intake-issue/${{ inputs.issue-number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    outputs:
+      project: ${{ steps.project.outputs.project }}
+      # 'true' when this gate refused the intake itself (and posted its own
+      # callout), so the stalled job does not report a stall on top.
+      refused: ${{ (steps.project.outcome == 'failure' || steps.rerun.outputs.existing != '') && 'true' || '' }}
+      # The claim label this gate put on the issue (empty when it claimed
+      # nothing), for the intake job to release.
+      claim-label: ${{ steps.rerun.outputs.claim-label }}
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # pin the exact commit, never a branch -- see specs/010-reusable-pipeline/research.md.
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN"               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref"               | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          # A private pipeline repository is not readable by the caller's
+          # GITHUB_TOKEN — pipeline-repo-token covers that case (docs/adoption.md).
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      # A closed lifecycle is inert (specs/022-gate-closed-lifecycle); the
+      # intake job below posts the note, so this gate only stands aside.
+      - name: Check lifecycle issue state
+        id: lifecycle-gate
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-lifecycle-gate
+        with:
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ github.token }}
+
+      # Subfolder routing (spec 114, FR-001/FR-003/FR-023): validate the
+      # prefix, read the issue's live labels, require at most one
+      # `<routing-label-prefix>P` label and validate P against the
+      # project-path grammar; a refusal posts a callout naming the labels or
+      # the folder. The folder itself is checked by intake's Preflight.
+      - name: Resolve routed project
+        id: project
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          routing-label-prefix: ${{ inputs.routing-label-prefix }}
+          findings-label-prefix: ${{ inputs.findings-label-prefix }}
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ github.token }}
+          check-folder: 'false'
+
+      # Re-run refusal (spec 114, FR-003): with routing on, an issue that
+      # already carries any `spec:` label has been specified once; a second
+      # intake would allocate a second spec for it, possibly in another
+      # project. Held inside the per-issue group so a concurrent run on the
+      # same issue is serialized behind this one.
+      #
+      # The group alone ends with this job, before the intake job creates the
+      # `spec:` label, so a second intake queued behind it would pass. The
+      # check therefore also claims the issue, inside the group: it reads the
+      # claim label alongside the `spec:` labels and, finding neither, puts
+      # the claim on the issue. The claim label's single home is this step's
+      # `claim-label` output; the intake job's "Release the intake claim"
+      # removes it at its end, when the `spec:` label (if any) has taken over.
+      # It starts with `spec`, a family no routing prefix may overlap
+      # (project-name.sh validate-prefix).
+      - name: Check for an existing spec label (routing only)
+        id: rerun
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && inputs.routing-label-prefix != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ inputs.issue-number }}
+        run: |
+          claim=spec-intake-claimed
+          existing="$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("spec:") or . == "'"$claim"'")] | join(", ")')"
+          echo "existing=$existing" >> "$GITHUB_OUTPUT"
+          if [ -z "$existing" ]; then
+            gh label create "$claim" --color EDEDED --description "Wing Commander: an intake is running for this issue" --force >/dev/null
+            gh issue edit "$ISSUE" --add-label "$claim" >/dev/null
+            echo "claim-label=$claim" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Refuse a re-run on an already-specified issue
+        if: steps.rerun.outputs.existing != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: action
+          summary: "Intake already ran, or is running, for this issue — it carries ${{ steps.rerun.outputs.existing }}. Nothing was created. If only spec-intake-claimed is listed and no intake run is in progress, a cancelled run left it: remove that label and re-run intake."
+
+      - name: Stop after a refused re-run
+        if: steps.rerun.outputs.existing != ''
+        run: |
+          echo "::error::wing-commander intake: this issue already carries a spec label; with routing on, intake refuses a re-run."
+          exit 1
 
   intake:
     # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
@@ -354,14 +516,18 @@ jobs:
       deployment: ${{ inputs.environment-deployment }}
     # Serialize intakes (in the CONSUMING repository — concurrency groups are
     # scoped to the caller) so concurrent runs cannot allocate the same
-    # feature number.
+    # feature number. Numbering is per project (spec 114, research.md D8):
+    # the root keeps `wing-commander-intake`, a routed project P takes
+    # `wing-commander-intake/P`.
     concurrency:
-      group: wing-commander-intake
+      group: wing-commander-intake${{ needs.routing-gate.outputs.project && format('/{0}', needs.routing-gate.outputs.project) || '' }}
       cancel-in-progress: false
     # if: tolerates a skipped image check without widening to run merely
-    # because the workflow was not cancelled (#224) -- see clarify.yml.
-    needs: verify-image-prerequisites
-    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure'"
+    # because the workflow was not cancelled (#224) -- see clarify.yml. A
+    # skipped routing gate (routing off) is tolerated the same way; a failed
+    # one refused the intake.
+    needs: [verify-image-prerequisites, routing-gate]
+    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure' && needs.routing-gate.result != 'failure'"
     permissions:
       contents: write
       pull-requests: write
@@ -379,6 +545,9 @@ jobs:
       credential-refresh-ok: ${{ steps.credential-status.outputs.ok }}
       commits-published: ${{ steps.publish-stranded.outputs.commits-published }}
       push-ok: ${{ steps.publish-stranded.outputs.push-ok }}
+      # 'true' once "Release the intake claim" removed the routing claim;
+      # release-claim runs whenever it did not (spec 114, FR-003).
+      claim-released: ${{ steps.release-claim.outputs.released }}
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
@@ -437,6 +606,8 @@ jobs:
           summary: "This lifecycle issue is closed — no action was taken."
 
       # Deterministic fail-fast before any billable work (FR-004, FR-009).
+      # A routed project (resolved by the routing-gate job, spec 114) is
+      # checked inside its folder, naming it; empty at the root.
       - name: Preflight
         id: preflight
         if: steps.lifecycle-gate.outputs.is-open == 'true'
@@ -445,7 +616,8 @@ jobs:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "true"
-          require-files: ".claude/skills/speckit-specify/SKILL.md|specify init (spec-kit's claude integration)"
+          project: ${{ needs.routing-gate.outputs.project }}
+          require-files: "${{ needs.routing-gate.outputs.project && format('{0}/', needs.routing-gate.outputs.project) || '' }}.claude/skills/speckit-specify/SKILL.md|specify init (spec-kit's claude integration)"
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
@@ -493,7 +665,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
         run: |
-          db="${DEFAULT_BRANCH:-$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)}"
+          db="${DEFAULT_BRANCH:-}"
+          [ -n "$db" ] || db="$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)"
           echo "name=$db" >> "$GITHUB_OUTPUT"
 
       # clean: false — a default `git clean` here would delete the untracked
@@ -529,29 +702,61 @@ jobs:
       # current checkout, which cannot see specs still in flight on unmerged
       # spec-draft/ branches. Compute the next free number across specs/ AND
       # every open pipeline branch, and hand it to the agent.
+      #
+      # Spec 114 (FR-009, FR-010): the scan itself now lives in
+      # _shared/project-name.sh, reached through wing-commander-project; the
+      # number is per project (the root counts only root specs and branches,
+      # exactly as before). The composite re-reads the routing label so this
+      # step names the same project as "Resolve routed project" above.
       - name: Allocate feature number
         id: num
         if: steps.lifecycle-gate.outputs.is-open == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          routing-label-prefix: ${{ inputs.routing-label-prefix }}
+          findings-label-prefix: ${{ inputs.findings-label-prefix }}
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ env.WC_BOT_TOKEN }}
+          check-folder: 'false'
+          allocate-number: 'true'
+          spec-draft-prefix: ${{ inputs.spec-draft-prefix }}
+          spec-prefix: ${{ inputs.spec-prefix }}
+
+      # This job holds the numbering group of the project the routing gate
+      # resolved; a routing label changed since then would allocate under
+      # another project's group (spec 114, FR-012). Refuse rather than race.
+      - name: Refuse a routing label changed since the routing gate
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.num.outputs.project != needs.routing-gate.outputs.project
         env:
-          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
-          SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          GATE_PROJECT: ${{ needs.routing-gate.outputs.project }}
+          NOW_PROJECT: ${{ steps.num.outputs.project }}
         run: |
-          highest=$(
-            {
-              ls -d specs/[0-9][0-9][0-9]-* 2>/dev/null | sed 's|^specs/||'
-              git ls-remote --heads origin "refs/heads/$SPEC_DRAFT_PREFIX*" "refs/heads/$SPEC_PREFIX*" \
-                | sed -E 's|^[0-9a-f]+[[:space:]]+refs/heads/||' \
-                | while IFS= read -r ref; do
-                    case "$ref" in
-                      "$SPEC_DRAFT_PREFIX"*) printf '%s\n' "${ref#"$SPEC_DRAFT_PREFIX"}" ;;
-                      "$SPEC_PREFIX"*) printf '%s\n' "${ref#"$SPEC_PREFIX"}" ;;
-                    esac
-                  done
-            } | grep -oE '^[0-9]{3}' | sort -n | tail -1
-          )
-          num=$(printf '%03d' $(( 10#${highest:-000} + 1 )))
-          echo "num=$num" >> "$GITHUB_OUTPUT"
-          echo "Allocated feature number $num (highest in use: ${highest:-none})." >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::wing-commander intake: the issue's routing label changed while intake was queued (routing gate resolved '$GATE_PROJECT', now '$NOW_PROJECT'). Nothing was created; re-run intake."
+          exit 1
+
+      # Label first and the slug budget, in deterministic code (spec 114,
+      # FR-014, FR-021). A routed agent is denied `git push` outright
+      # (tool-args' project-deny-tools below); this pre-push hook is a
+      # backstop that refuses any push it would still make, after checking
+      # <spec-draft-prefix>P/<NNN-slug>, the label budget and the project
+      # folder (wing-commander-containment's install-pre-push mode,
+      # label-first inputs). It makes no API call, and its read-only helper
+      # copies serve the post-agent containment check. "Label first" and
+      # "Publish stranded commits (post-agent)" below run the same check,
+      # create the spec label, put it on the issue and only then push, under
+      # their declared token. Routing on and a subfolder target only; the
+      # root is unchanged (FR-016).
+      - name: Install label-first pre-push hook (subfolder project)
+        id: label-first-hook
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && inputs.routing-label-prefix != '' && steps.num.outputs.project != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          mode: install-pre-push
+          project: ${{ steps.num.outputs.project }}
+          hooks-dir: ${{ runner.temp }}/wing-commander-intake-hooks
+          label-first-prefix: ${{ inputs.spec-draft-prefix }}
+          label-first-number: ${{ steps.num.outputs.num }}
+          record-file: ${{ runner.temp }}/wing-commander-intake-hooks/validated-slug
 
       # Tie the run back to the issue the moment intake starts, with a link.
       - name: Report run started on issue
@@ -610,6 +815,36 @@ jobs:
             discussion actually settled something the body doesn't capture,
             update the body before this spec is finalized.
 
+      # Project-folder paragraph for the agent prompt (spec 114, FR-006,
+      # FR-014). Empty at the repository root, so a root prompt is byte for
+      # byte unchanged. The paragraph carries only validated values: the
+      # project path matched the grammar and the budget is an integer.
+      - name: Compose project guidance (intake)
+        id: project-guidance
+        if: steps.lifecycle-gate.outputs.is-open == 'true'
+        env:
+          PROJECT: ${{ steps.num.outputs.project }}
+          SLUG_BUDGET: ${{ steps.num.outputs.slug-budget }}
+        run: |
+          {
+            echo "routing-notes<<WC_INTAKE_PROJECT_GUIDANCE_EOF"
+            if [ -n "$PROJECT" ]; then
+              # Blank lines around the paragraph; none at the root, whose
+              # prompt stays byte-identical (FR-016).
+              echo ""
+              echo ""
+              echo "PROJECT FOLDER: this issue is routed to the project folder \`$PROJECT/\`, a Spec Kit project of its own. Use its .specify/, its constitution and its .claude/skills, not the repository root's. Everything this run writes lies inside \`$PROJECT/\`, apart from the step 5 commit-message and step 6 PR-body scratch files. Where the steps below name a path, branch or label, read it as follows:"
+              echo "- <spec-dir> is \`$PROJECT/specs/<NNN-slug>\`. Give every tool a repository-relative path."
+              echo "- The branch is \`<prefix>$PROJECT/<NNN-slug>\` and the spec label is \`spec:$PROJECT/<NNN-slug>\`."
+              echo "- spec-meta.json records \"spec_dir\": \"specs/<NNN-slug>\" (relative to the project, without \`$PROJECT/\`), so the folder can be copied out unchanged."
+              echo "- <NNN-slug> may be at most $SLUG_BUDGET characters long, the most the spec label can carry. Choose a shorter slug rather than exceed it."
+              echo "- Do not push. Skip step 5's \`git push\` (still commit there): this run cannot push. After you finish, the pipeline checks the branch (the allocated number, a slug within the budget above, every change inside \`$PROJECT/\`), creates the spec label BEFORE it publishes your branch, puts the label and stage:spec on the issue and opens the pull request. A branch that fails the check is not published."
+              echo "- So skip step 6's \`gh pr create\` (still write the PR body file it names) and step 7's two label commands; still return the final result step 7 describes."
+              echo ""
+            fi
+            echo "WC_INTAKE_PROJECT_GUIDANCE_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Compose commit-message guidance (intake)
         id: commit-guidance-intake
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
@@ -626,6 +861,13 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          project: ${{ steps.num.outputs.project }}
+          # A routed agent cannot push at all: "Publish stranded commits
+          # (post-agent)" is the branch's one push, after its label exists
+          # (spec 114 FR-014). The pipeline also creates and applies the spec
+          # label and opens the PR, so those calls are denied too; the agent
+          # keeps gh issue comment.
+          project-deny-tools: "Bash(git push:*),Bash(gh label create:*),Bash(gh issue edit:*),Bash(gh pr create:*)"
           step-label: "intake"
 
       - name: Compute agent turn ceiling
@@ -648,6 +890,13 @@ jobs:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           # subagents forced synchronous, no turn-boundary resume (#1462/#1499) -- see clarify.yml.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
+          # Spec Kit's project-root override (spec 114, research.md D9): the
+          # vendored scripts resolve .specify/ and specs/ under this folder.
+          # Empty at the repository root, where the scripts ignore it. The
+          # scripts resolve a relative SPECIFY_FEATURE_DIRECTORY under this
+          # folder too, so every stage that sets both passes the feature
+          # directory absolute (workspace/P/specs/NNN-slug) for a project.
+          SPECIFY_INIT_DIR: ${{ steps.num.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.num.outputs.project) || '' }}
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
@@ -699,7 +948,7 @@ jobs:
                missing in it, NOT in `clarifications`. `specified: false` is what
                tells the pipeline no spec was ever attempted, so it must not post
                a follow-up questionnaire on top of your comment.
-            3. Run the /speckit-specify skill (.claude/skills/speckit-specify/SKILL.md)
+            3. Run the /speckit-specify skill (${{ steps.num.outputs.project && format('{0}/', steps.num.outputs.project) || '' }}.claude/skills/speckit-specify/SKILL.md)
                using the feature description assembled in step 1 (title + body,
                plus any qualifying comments folded in). Follow the skill
                completely (spec directory under specs/, quality checklist,
@@ -713,7 +962,7 @@ jobs:
                  (pre-computed to account for specs in flight on unmerged
                  branches). When the skill auto-generates the spec directory,
                  use ${{ steps.num.outputs.num }} as the 3-digit prefix instead
-                 of scanning specs/.
+                 of scanning specs/.${{ steps.project-guidance.outputs.routing-notes }}
             4. Write <spec-dir>/spec-meta.json:
                {"issue": ${{ inputs.issue-number }}, "spec_dir": "<spec-dir>",
                 "feature_num": "<NNN>", "stage": "spec", "iteration": 0,
@@ -784,7 +1033,7 @@ jobs:
             - Never prefix a command with an environment assignment.
               `SPECIFY_FEATURE_DIRECTORY=... some-script.sh` is denied.
             - The .specify scripts are not executable in this checkout — always
-              invoke them as `bash .specify/scripts/bash/<name>.sh ...`.
+              invoke them as `bash ${{ steps.num.outputs.project && format('{0}/', steps.num.outputs.project) || '' }}.specify/scripts/bash/<name>.sh ...`.
             - Use bare git verbs from the repo root; `git -C <path> ...` is
               denied.
             - A denied `gh` call is the allowlist refusing it, never an
@@ -808,6 +1057,24 @@ jobs:
             --json-schema '{"type":"object","properties":{"specified":{"type":"boolean"},"clarifications":{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"},"context":{"type":["string","null"]},"options":{"type":"array","items":{"type":"object","properties":{"answer":{"type":"string"},"implications":{"type":["string","null"]}},"required":["answer"]}}},"required":["question"]}},"findings":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string","minLength":1},"what":{"type":"string","minLength":1},"evidence":{"type":"object","properties":{"file_paths":{"type":"array","items":{"type":"string","minLength":1},"minItems":1},"detail":{"type":"string"}},"required":["file_paths"],"additionalProperties":false},"fingerprint_basis":{"type":"object","properties":{"file_path":{"type":"string","minLength":1},"gate_or_artifact":{"type":"string","minLength":1}},"required":["file_path","gate_or_artifact"],"additionalProperties":false}},"required":["title","what","evidence","fingerprint_basis"],"additionalProperties":false}}},"required":["specified","clarifications"]}'
             --allowedTools "${{ steps.tool-args-intake.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-intake.outputs.disallowed-tools }}"
+
+      # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
+      # any step runs pipeline code -- see clarify.yml.
+      - name: Remove the agent-writable pipeline checkout (post-agent)
+        id: pipeline-rm
+        if: always() && steps.agent.outcome != 'skipped' && steps.num.outputs.project != ''
+        run: rm -rf -- .wing-commander-pipeline
+
+      - name: Re-checkout pipeline repository (post-agent)
+        id: pipeline-recheckout
+        if: always() && steps.agent.outcome != 'skipped' && steps.num.outputs.project != ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
 
       # !cancelled(), not always() (spec 052, should-fix per maintainer
       # review of PR #407): a run cancelled during the agent step must not
@@ -837,16 +1104,103 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Containment (spec 114, FR-021) -- see clarify.yml.
+      - name: Check agent changes stay inside the project folder
+        id: containment
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && steps.num.outputs.project != ''"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          project: ${{ steps.num.outputs.project }}
+          base-sha: ${{ steps.pre-agent.outputs.before-sha }}
+          default-branch: ${{ inputs.default-branch }}
+          helpers-dir: ${{ steps.label-first-hook.outputs.helpers-dir }}
+
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
-      # along -- see clarify.yml.
+      # along -- see clarify.yml. For a routed subfolder project this is the
+      # branch's one publishing push (the hook above refuses the agent's):
+      # "Label first" checks the branch, creates the spec label and puts it
+      # on the issue; the push then re-runs the check and publishes only
+      # the branch that step labelled (label-first-* inputs, spec 114
+      # FR-014).
+      - name: Label first (subfolder project)
+        id: label-first
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && inputs.routing-label-prefix != '' && steps.num.outputs.project != '' && steps.containment.outcome != 'failure'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-label-first
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ inputs.issue-number }}
+          project: ${{ steps.num.outputs.project }}
+          number: ${{ steps.num.outputs.num }}
+          prefix: ${{ inputs.spec-draft-prefix }}
+          default-branch: ${{ inputs.default-branch }}
+
       - name: Publish stranded commits (post-agent)
         id: publish-stranded
-        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && steps.containment.outcome != 'failure'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:
           before-sha: ${{ steps.pre-agent.outputs.before-sha }}
+          project: ${{ steps.num.outputs.project }}
+          # Routed subfolder only: exactly the branch "Label first" labelled
+          # (empty when it labelled none, which publishes nothing).
+          branch: ${{ inputs.routing-label-prefix != '' && steps.num.outputs.project != '' && steps.label-first.outputs.slug != '' && format('{0}{1}/{2}', inputs.spec-draft-prefix, steps.num.outputs.project, steps.label-first.outputs.slug) || '' }}
+          label-first-issue: ${{ inputs.routing-label-prefix != '' && steps.num.outputs.project != '' && inputs.issue-number || '' }}
+          label-first-number: ${{ steps.num.outputs.num }}
+          label-first-prefix: ${{ inputs.spec-draft-prefix }}
+          label-first-slug: ${{ steps.label-first.outputs.slug }}
+
+      # Spec 114 (FR-014): a routed subfolder intake's agent never publishes
+      # its branch, so it opens no pull request and sets no label; once the
+      # push above has published the branch, label first, this step adds
+      # stage:spec and opens the spec PR from the body file the agent wrote.
+      # The title comes from spec.md's heading. Idempotent: each attempt
+      # first looks for an open PR from the branch, so a create that landed
+      # before its response was lost is not repeated. By now the label and
+      # the branch exist, so a re-run of intake is refused; a create that
+      # still fails after three attempts names the branch to open the PR
+      # from by hand. continue-on-error, so the steps below still run;
+      # "Fail on an unopened subfolder spec PR" turns it into the red run.
+      - name: Open the spec PR (subfolder project)
+        id: open-pr
+        if: "!cancelled() && steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent.outcome != 'skipped' && steps.publish-stranded.outputs.push-ok == 'true' && steps.publish-stranded.outputs.label-first-slug != ''"
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE: ${{ inputs.issue-number }}
+          PROJECT: ${{ steps.num.outputs.project }}
+          SLUG: ${{ steps.publish-stranded.outputs.label-first-slug }}
+          PREFIX: ${{ inputs.spec-draft-prefix }}
+          BASE: ${{ steps.defbranch.outputs.name }}
+          BODY_FILE: ${{ runner.temp }}/intake-pr-body.md
+          RECORD: ${{ runner.temp }}/wing-commander-intake-hooks/validated-slug
+        run: |
+          set -euo pipefail
+          branch="$PREFIX$PROJECT/$SLUG"
+          if [ ! -s "$RECORD" ]; then
+            echo "Note: the agent never pushed $branch itself; the pipeline published it." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          gh issue edit "$ISSUE" --add-label "stage:spec" >/dev/null
+          title="$(sed -n '1{s/^#[[:space:]]*//;s/^Feature Specification:[[:space:]]*//;p;}' "$PROJECT/specs/$SLUG/spec.md" 2>/dev/null || true)"
+          [ -n "$title" ] || title="$SLUG"
+          if [ ! -s "$BODY_FILE" ]; then
+            printf 'Specification at %s.\n\nCloses nothing — lifecycle issue: #%s\n' "$PROJECT/specs/$SLUG" "$ISSUE" > "$BODY_FILE"
+          fi
+          for attempt in 1 2 3; do
+            existing="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty' || true)"
+            if [ -n "$existing" ]; then
+              echo "Spec PR #$existing for $branch is open." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            if gh pr create --base "$BASE" --head "$branch" --title "Spec: $title (#$ISSUE)" --body-file "$BODY_FILE"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 10)); fi
+          done
+          echo "::error::wing-commander intake stage: could not open the spec PR from $branch (project $PROJECT) after 3 attempts. The branch and its spec label are published, so a re-run of intake is refused: open the PR from $branch to $BASE by hand."
+          exit 1
 
       # deterministic, transcript-only verdict (healthy/exhausted/failed/unclassifiable) replacing
       # the raw outcome check the action's post-hoc rejection can no longer be trusted to reflect
@@ -904,20 +1258,43 @@ jobs:
       # declared outputs (the agent may have legitimately stopped without a
       # spec: an undiscernible request).
       - name: Resolve created spec
-        id: created
+        id: created-ref
         if: steps.lifecycle-gate.outputs.is-open == 'true'
         env:
           NUM: ${{ steps.num.outputs.num }}
+          PROJECT: ${{ steps.num.outputs.project }}
+          SLUG_BUDGET: ${{ steps.num.outputs.slug-budget }}
           SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
-          ref=$(git ls-remote --heads origin "refs/heads/$SPEC_DRAFT_PREFIX$NUM-*" | awk '{print $2}' | head -1)
-          branch="${ref#refs/heads/"$SPEC_DRAFT_PREFIX"}"
-          if [ -n "$branch" ]; then
-            echo "spec-dir=specs/$branch" >> "$GITHUB_OUTPUT"
+          ref=$(git ls-remote --heads origin "refs/heads/$SPEC_DRAFT_PREFIX${PROJECT:+$PROJECT/}$NUM-*" | awk '{print $2}' | head -1)
+          slug="${ref#refs/heads/"$SPEC_DRAFT_PREFIX"}"
+          if [ -n "$slug" ]; then
+            # Spec 114 (FR-014): a subfolder slug must fit the spec label.
+            if [ -n "$PROJECT" ] && [ "${#slug}" -gt "$(( ${#PROJECT} + 1 + SLUG_BUDGET ))" ]; then
+              echo "::error::wing-commander intake: '$slug' is longer than the $SLUG_BUDGET characters after '$PROJECT/' the spec label for project $PROJECT can carry."
+              exit 1
+            fi
+            echo "slug=$slug" >> "$GITHUB_OUTPUT"
+            echo "branch=${ref#refs/heads/}" >> "$GITHUB_OUTPUT"
           else
-            echo "spec-dir=" >> "$GITHUB_OUTPUT"
+            echo "slug=" >> "$GITHUB_OUTPUT"
+            echo "branch=" >> "$GITHUB_OUTPUT"
             echo "No $SPEC_DRAFT_PREFIX$NUM-* branch found — intake produced no spec." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # The created [P/]NNN-slug names its spec dir through the shared parser
+      # (spec 114, FR-013); `spec-dir` stays empty when intake produced no
+      # spec (this step is skipped).
+      - name: Resolve created spec dir
+        id: created
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.created-ref.outputs.slug != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ steps.created-ref.outputs.slug }}
+          identity-kind: slug
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ env.WC_BOT_TOKEN }}
+          check-folder: 'false'
 
       # specs/056-stage-found-defect-filing: the agent's structured result
       # may carry an optional `findings` array (FR-007) alongside
@@ -1312,10 +1689,10 @@ jobs:
           summary: "Answer the open clarification questions"
           body-file: ${{ runner.temp }}/intake-clarification.md
 
-      # Same jq-side startswith() filter "Label spec PR to match the issue"
-      # already uses below — gh pr list --head takes an exact branch name,
-      # not a glob, so the NNN-slug suffix (unknown at this point) must be
-      # matched client-side.
+      # The PR is found by the exact branch "Resolve created spec" read back
+      # (`gh pr list --head` takes an exact name), so neither a subfolder
+      # project's <prefix>P/NNN-slug nor another project's NNN is mistaken
+      # for it (spec 114) -- "Label spec PR to match the issue" does the same.
       # Two guards, because `needed == 'false'` is true on the no-spec path
       # as well as the happy path. `specified == 'true'` excludes the step 2
       # STOP (the agent never attempted a spec, so there is no PR to point
@@ -1335,11 +1712,12 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'false' && steps.clarification.outputs.specified == 'true' && steps.clarification.outputs.blocked != 'true' && steps.created.outputs.spec-dir != ''
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          NUM: ${{ steps.num.outputs.num }}
-          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
+          BRANCH: ${{ steps.created-ref.outputs.branch }}
         run: |
-          url=$(gh pr list --state open --json url,headRefName \
-            --jq "[.[] | select(.headRefName | startswith(\"$SPEC_DRAFT_PREFIX$NUM-\"))][0].url // empty")
+          url=""
+          if [ -n "$BRANCH" ]; then
+            url=$(gh pr list --state open --head "$BRANCH" --json url --jq '.[0].url // empty')
+          fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
       - name: Announce spec PR ready for review
@@ -1361,13 +1739,15 @@ jobs:
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ inputs.issue-number }}
-          NUM: ${{ steps.num.outputs.num }}
-          SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
+          BRANCH: ${{ steps.created-ref.outputs.branch }}
         run: |
-          pr=$(gh pr list --state open --json number,headRefName \
-            --jq "[.[] | select(.headRefName | startswith(\"$SPEC_DRAFT_PREFIX$NUM-\"))][0].number // empty")
+          pr=""
+          # An empty --head would match every PR, so no branch means no PR.
+          if [ -n "$BRANCH" ]; then
+            pr=$(gh pr list --state open --head "$BRANCH" --json number --jq '.[0].number // empty')
+          fi
           if [ -z "$pr" ]; then
-            echo "No $SPEC_DRAFT_PREFIX$NUM-* PR found — intake produced no spec; nothing to label." >> "$GITHUB_STEP_SUMMARY"
+            echo "No open PR for ${BRANCH:-a spec branch} found — intake produced no spec; nothing to label." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           labels=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name] | join(",")')
@@ -1447,6 +1827,53 @@ jobs:
           echo "::error::wing-commander intake stage: failing the run — the spec still carries colon-form [NEEDS CLARIFICATION: markers while the structured result reported none (see the error above). No readiness callout was posted."
           exit 1
 
+      # Spec 114 (FR-014): a routed subfolder intake's branch reaches the
+      # remote only through "Label first" and "Publish stranded commits
+      # (post-agent)", both continue-on-error so the claim release and the
+      # metrics still run. A refusal there (an over-budget, misnumbered or
+      # out-of-project branch, or a push refused after the label landed)
+      # would otherwise end green, its only trace "intake produced no spec";
+      # this step turns it into the red run, naming the refusal. An agent
+      # that committed nothing leaves the label step green with no slug, so
+      # it never fires here. A spec branch "Resolve created spec" finds on the
+      # remote with no slug from the label step reached the remote around
+      # label-first, so it fails the run too. A failed containment check
+      # skips "Label first" (no orphan spec label to refuse every re-run)
+      # and this step, so that check is the run's only red.
+      - name: Fail on a refused subfolder publish
+        id: refused-publish
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && inputs.routing-label-prefix != '' && steps.num.outputs.project != '' && steps.containment.outcome != 'failure' && (steps.label-first.outcome == 'failure' || (steps.label-first.outputs.slug != '' && steps.publish-stranded.outputs.push-ok != 'true') || (steps.created-ref.outputs.slug != '' && steps.label-first.outputs.slug == ''))"
+        env:
+          LABEL_OUTCOME: ${{ steps.label-first.outcome }}
+          PROJECT: ${{ steps.num.outputs.project }}
+          SLUG: ${{ steps.label-first.outputs.slug }}
+          CREATED: ${{ steps.created-ref.outputs.slug }}
+          PREFIX: ${{ inputs.spec-draft-prefix }}
+        run: |
+          if [ "$LABEL_OUTCOME" != "failure" ] && [ -z "$SLUG" ] && [ -n "$CREATED" ]; then
+            echo "::error::wing-commander intake stage: failing the run — $PREFIX$CREATED reached the remote without the label-first check for project $PROJECT; spec:$CREATED was never created by the pipeline. Delete the branch before re-running intake."
+          elif [ "$LABEL_OUTCOME" = "failure" ]; then
+            echo "::error::wing-commander intake stage: failing the run — the label-first check refused the branch the agent committed for project $PROJECT (see the error above); nothing was labelled or published."
+          else
+            echo "::error::wing-commander intake stage: failing the run — the push of $PREFIX$PROJECT/$SLUG was refused after spec:$PROJECT/$SLUG was labelled (see the warning above); the branch was not published."
+          fi
+          echo "Intake refused to publish the subfolder spec branch for project $PROJECT — see the error in this job." >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      # Spec 114 (FR-014): "Open the spec PR (subfolder project)" is
+      # continue-on-error so the steps after it still run; a spec PR it
+      # could not open is turned into the red run here, deferred to the
+      # job's last steps like the refusal above.
+      - name: Fail on an unopened subfolder spec PR
+        id: unopened-pr
+        if: "!cancelled() && steps.open-pr.outcome == 'failure'"
+        env:
+          PROJECT: ${{ steps.num.outputs.project }}
+          BRANCH: ${{ inputs.spec-draft-prefix }}${{ steps.num.outputs.project }}/${{ steps.publish-stranded.outputs.label-first-slug }}
+        run: |
+          echo "::error::wing-commander intake stage: failing the run — the spec PR from $BRANCH (project $PROJECT) could not be opened (see the error above); the branch and its spec label are published, so open the PR by hand."
+          exit 1
+
       # FR-011: names the specific post-agent step that failed, for the
       # stalled job to read instead of the generic "a step after it did not
       # complete" -- see clarify.yml.
@@ -1471,27 +1898,49 @@ jobs:
         with:
           candidates-json: >-
             [
+              {"name": "Remove the agent-writable pipeline checkout (post-agent)", "conclusion": "${{ steps.pipeline-rm.conclusion }}"},
+              {"name": "Re-checkout pipeline repository (post-agent)", "conclusion": "${{ steps.pipeline-recheckout.conclusion }}"},
+              {"name": "Check agent changes stay inside the project folder", "conclusion": "${{ steps.containment.conclusion }}"},
               {"name": "Fail loud on non-healthy agent verdict", "conclusion": "${{ steps.verdict-fail.conclusion }}"},
               {"name": "Fail on invalid agent result", "conclusion": "${{ steps.invalid-result.conclusion }}"},
-              {"name": "Fail on unresolved clarification markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"}
+              {"name": "Fail on unresolved clarification markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"},
+              {"name": "Fail on a refused subfolder publish", "conclusion": "${{ steps.refused-publish.conclusion }}"},
+              {"name": "Fail on an unopened subfolder spec PR", "conclusion": "${{ steps.unopened-pr.conclusion }}"}
             ]
 
-  # Survivor job (the #224 idiom, research.md D4): new for intake — this
-  # stage has no exhausted-retry loop, so it admits only the abnormal-
-  # termination arm. Split internally on refusal-reason == '' (D3's
-  # mutual-exclusion arm — a refusal already posted its own in-job note,
-  # FR-006). spec-dir is always empty (research.md D5): intake dying at
-  # entry means no spec-meta.json was ever written for this feature — the
-  # same "record could not be updated" branch every other stage takes only
-  # on a rarer failure, not a bespoke intake-only wording.
-  stalled:
-    needs: [verify-image-prerequisites, intake]
-    if: |
-      needs.verify-image-prerequisites.result != 'failure' &&
-      !cancelled() &&
-      ( needs.intake.result == 'failure' ||
-        needs.intake.result == 'skipped' ) &&
-      needs.intake.outputs.refusal-reason == ''
+      # Release the routing gate's claim on the issue (spec 114, FR-003,
+      # FR-012) -- see the gate's "Check for an existing spec label". By now
+      # the issue's `spec:` label, if this run created one, carries the
+      # re-run refusal; a run that created none leaves the issue free for a
+      # re-run. always(), not !cancelled(): a cancelled or failed intake must
+      # not strand the claim, and removing one label is no remote rewrite.
+      - name: Release the intake claim
+        id: release-claim
+        if: always() && needs.routing-gate.outputs.claim-label != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ inputs.issue-number }}
+          CLAIM: ${{ needs.routing-gate.outputs.claim-label }}
+        run: |
+          gh issue edit "$ISSUE" --remove-label "$CLAIM"
+          echo "released=true" >> "$GITHUB_OUTPUT"
+
+  # The same release for an intake job that did not release the claim
+  # itself (spec 114, FR-003, FR-012): an intake still pending in its
+  # numbering group when the run is cancelled, or superseded there, never
+  # starts; one that fails before any step runs (a container that will not
+  # start) never reaches its last step; and the release there can itself
+  # fail inside an intake that fails too. Any of these would leave a claim
+  # that refuses every later intake. always(), with no concurrency group,
+  # so this job is never itself the one left pending. Gated on
+  # claim-released alone, not on the intake job's result: the release
+  # step is continue-on-error, so a failed in-job release inside an
+  # otherwise successful intake is retried here too.
+  release-claim:
+    needs: [verify-image-prerequisites, routing-gate, intake]
+    if: always() && needs.verify-image-prerequisites.result != 'failure' && needs.routing-gate.outputs.claim-label != '' && needs.intake.outputs.claim-released != 'true'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -1509,8 +1958,57 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
+    permissions:
+      issues: write
+    steps:
+      - name: Release the intake claim (intake job did not release it)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ inputs.issue-number }}
+          CLAIM: ${{ needs.routing-gate.outputs.claim-label }}
+        run: gh issue edit "$ISSUE" --remove-label "$CLAIM"
+
+  # Survivor job (the #224 idiom, research.md D4): new for intake — this
+  # stage has no exhausted-retry loop, so it admits only the abnormal-
+  # termination arm. Split internally on refusal-reason == '' (D3's
+  # mutual-exclusion arm — a refusal already posted its own in-job note,
+  # FR-006). spec-dir is always empty (research.md D5): intake dying at
+  # entry means no spec-meta.json was ever written for this feature — the
+  # same "record could not be updated" branch every other stage takes only
+  # on a rarer failure, not a bespoke intake-only wording.
+  # A routing-gate refusal (spec 114) already posted its own callout, so it
+  # is excluded here like an in-job refusal.
+  stalled:
+    needs: [verify-image-prerequisites, routing-gate, intake]
+    if: |
+      needs.verify-image-prerequisites.result != 'failure' &&
+      !cancelled() &&
+      ( needs.intake.result == 'failure' ||
+        needs.intake.result == 'skipped' ) &&
+      needs.intake.outputs.refusal-reason == '' &&
+      needs.routing-gate.outputs.refused != 'true'
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    # The numbering group -- see the intake job.
     concurrency:
-      group: wing-commander-intake
+      group: wing-commander-intake${{ needs.routing-gate.outputs.project && format('/{0}', needs.routing-gate.outputs.project) || '' }}
       cancel-in-progress: false
     permissions:
       contents: write

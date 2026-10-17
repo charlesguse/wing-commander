@@ -1,0 +1,12 @@
+# Failure branch: the hardening runs in one step and the push in another --
+# the exported GIT_CONFIG_* variables die with the first step's shell.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        . "$GITHUB_ACTION_PATH/../_shared/git-push-hardening.sh"
+        wc_harden_git_env
+    - shell: bash
+      run: |
+        git push

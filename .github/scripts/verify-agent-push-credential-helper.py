@@ -52,8 +52,12 @@ WHAT THIS CHECKS
    contains `Bash(git push:*)`) that also has a post-agent
    `wing-commander-context` (or `scoped-app-token`) re-mint in its own
    window has a `wing-commander-publish-stranded-commits` call in that
-   SAME window, sharing that re-mint's exact `if:` condition. Absent ->
-   FAIL, naming the workflow, job, and agent step.
+   SAME window, sharing that re-mint's exact `if:` condition -- or that
+   condition plus exactly ` && steps.<cid>.outcome != 'failure'`, where
+   <cid> is a `wing-commander-containment` check-mode step in the same
+   window (spec 114: a failed containment check is never rescued; any
+   other suffix fails). Absent -> FAIL, naming the workflow, job, and
+   agent step.
    Companion clause (auto-update-spec-kit.yml only): its scratch-repository
    publish call attaches to a deterministic step ("Re-mint scratch-
    repository App token (post-agent)"), not an agent step -- `decide` itself
@@ -95,6 +99,9 @@ import subprocess
 import sys
 
 import yaml
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_repo_files import repo_files  # noqa: E402
 
 AGENT_ACTION_RE = re.compile(r"^anthropics/claude-code-action@")
 PUBLISH_MARKER = "wing-commander-publish-stranded-commits"
@@ -242,6 +249,36 @@ def check_private_key_containment(loaded):
     return failures
 
 
+CONTAINMENT_MARKER = "wing-commander-containment"
+CONTAINMENT_SUFFIX_RE = re.compile(r" && steps\.([\w-]+)\.outcome != 'failure'")
+
+
+def _is_containment_check(step):
+    """-> True for a wing-commander-containment call in check mode (mode
+    absent means check)."""
+    if not str((step or {}).get("uses", "")).endswith("/" + CONTAINMENT_MARKER):
+        return False
+    return str(((step or {}).get("with") or {}).get("mode", "check")) == "check"
+
+
+def publish_if_matches(publish_if, remint_if, window):
+    """-> True when the publish call's if: equals the re-mint's exactly, or
+    equals it plus exactly ` && steps.<cid>.outcome != 'failure'` where
+    <cid> is a containment check-mode step in the same post-agent window
+    (specs/114-subfolder-project-lifecycles MF-36/MF-44: a failed
+    containment check never triggers a rescue push). Every other suffix is
+    rejected."""
+    if publish_if == remint_if:
+        return True
+    if not publish_if.startswith(remint_if):
+        return False
+    m = CONTAINMENT_SUFFIX_RE.fullmatch(publish_if[len(remint_if):])
+    if not m:
+        return False
+    return any((s or {}).get("id") == m.group(1) and _is_containment_check(s)
+               for s in window)
+
+
 def check_job(path, job_name, job):
     """-> (failures, push_capable_count)."""
     failures = []
@@ -267,7 +304,8 @@ def check_job(path, job_name, job):
             if remint is not None:
                 remint_if = str((remint or {}).get("if", ""))
                 publishes = [s for s in after if PUBLISH_MARKER in str((s or {}).get("uses", ""))]
-                if not any(str((p or {}).get("if", "")) == remint_if for p in publishes):
+                if not any(publish_if_matches(str((p or {}).get("if", "")), remint_if, after)
+                           for p in publishes):
                     failures.append(
                         f"{path} [{job_name}] agent step {name!r} has a "
                         f"post-agent context re-mint but no "
@@ -337,42 +375,17 @@ def _is_self(path, rel):
 
 
 def _repo_files(root="."):
-    """-> every file check 3 scans, repo-root-relative ('/'-separated).
-
-    The git-tracked files (`git ls-files -z`) when `root` is the top of a
-    git working tree -- the repository's content is what is committed, not
-    whatever else sits on disk. An implement run checks the pipeline
-    repository out at `.wing-commander-pipeline/` beside the tree under
-    test, untracked; walking the filesystem scanned that copy of this very
-    gate, whose source quotes the two JWT strings, and failed the gate and
-    its self-test on every implement cycle (#808, #822, #823). Same idiom
-    as verify-stage-tool-lists.py's _glob_has_match(). Outside a git
-    working tree (a synthetic fixture) there is nothing to ask, so the
-    on-disk files stand in for tracked ones, `.git/` excluded.
-    """
+    """-> every file check 3 scans: wc_repo_files.repo_files() (the
+    git-tracked files, so the untracked `.wing-commander-pipeline/`
+    checkout an implement run places beside the tree is not scanned --
+    #808, #822, #823)."""
     try:
-        top = subprocess.run(
-            ["git", "-C", root, "rev-parse", "--show-toplevel"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # Only when root IS the top: a fixture directory nested inside some
-        # other repository's work tree is not that repository.
-        if top.returncode == 0 and os.path.realpath(
-                os.fsdecode(top.stdout).strip()) == os.path.realpath(root):
-            proc = subprocess.run(
-                ["git", "-C", root, "ls-files", "-z"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if proc.returncode == 0:
-                return sorted(os.fsdecode(p) for p in proc.stdout.split(b"\0") if p)
-    except OSError:
-        pass
-    rels = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        if ".git" in dirnames:
-            dirnames.remove(".git")
-        for filename in filenames:
-            rels.append(os.path.relpath(
-                os.path.join(dirpath, filename), root).replace(os.sep, "/"))
-    return sorted(rels)
+        return repo_files(root)
+    except RuntimeError as exc:
+        # git could not list a real working tree: a gate verdict, not a
+        # traceback (and never a silent walk of untracked checkouts).
+        print(f"FAIL: {exc}")
+        sys.exit(1)
 
 
 def check_no_jwt_construction(root="."):
@@ -476,6 +489,45 @@ def mut_delete_publish_after_clarify_agent(loaded):
     del steps[idx]
 
 
+def _clarify_publish_step(loaded):
+    steps = loaded[".github/workflows/clarify.yml"]["jobs"]["clarify"]["steps"]
+    step = next((s for s in steps
+                 if (s or {}).get("name") == "Publish stranded commits (post-agent)"), None)
+    assert step is not None, "fixture assumption broken: step renamed"
+    assert str(step.get("if", "")).endswith(" && steps.containment.outcome != 'failure'"), \
+        "fixture assumption broken: clarify's publish if: lost its containment clause"
+    return steps, step
+
+
+def mut_publish_if_other_suffix(loaded):
+    """MF-44: a suffix other than the containment clause (here the
+    publish call also skipped on a successful agent) is rejected."""
+    _steps, step = _clarify_publish_step(loaded)
+    step["if"] = str(step["if"]) + " && steps.agent.outcome != 'success'"
+
+
+def mut_publish_if_suffix_names_non_containment_step(loaded):
+    """MF-44: the clause naming a step that is not a containment check
+    (here the agent itself) is rejected."""
+    _steps, step = _clarify_publish_step(loaded)
+    step["if"] = str(step["if"]).replace("steps.containment.", "steps.agent.")
+
+
+def mut_publish_if_suffix_names_install_mode(loaded):
+    """MF-44: the clause naming a containment step in install-pre-push
+    mode (not check mode) is rejected."""
+    steps, step = _clarify_publish_step(loaded)
+    check = next(s for s in steps if (s or {}).get("id") == "containment")
+    check.setdefault("with", {})["mode"] = "install-pre-push"
+
+
+def mut_publish_if_suffix_wrong_outcome(loaded):
+    """MF-44: `!= 'success'` in place of `!= 'failure'` is rejected."""
+    _steps, step = _clarify_publish_step(loaded)
+    step["if"] = str(step["if"]).replace(
+        "steps.containment.outcome != 'failure'", "steps.containment.outcome != 'success'")
+
+
 def mut_non_push_capable_gets_retry_paragraph(loaded):
     """check 4: attach the retry-bound prompt paragraph to a fixture step
     whose allowed-tools carry no Bash(git push:*) -- finalize's summarize
@@ -562,6 +614,18 @@ def self_test(root="."):
         ("the stranded-commit-publish call after clarify.yml's agent step "
          "deleted", mut_delete_publish_after_clarify_agent,
          ["clarify.yml"]),
+        ("clarify's publish if: carrying a suffix other than the "
+         "containment clause", mut_publish_if_other_suffix,
+         ["clarify.yml", "FR-020 care point 2"]),
+        ("clarify's publish if: clause naming a non-containment step",
+         mut_publish_if_suffix_names_non_containment_step,
+         ["clarify.yml", "FR-020 care point 2"]),
+        ("clarify's publish if: clause naming a containment step in "
+         "install-pre-push mode", mut_publish_if_suffix_names_install_mode,
+         ["clarify.yml", "FR-020 care point 2"]),
+        ("clarify's publish if: clause testing != 'success'",
+         mut_publish_if_suffix_wrong_outcome,
+         ["clarify.yml", "FR-020 care point 2"]),
         ("the retry-bound prompt paragraph attached to a fixture step "
          "whose allowed-tools carry no Bash(git push:*)",
          mut_non_push_capable_gets_retry_paragraph, ["finalize.yml", "FR-025"]),

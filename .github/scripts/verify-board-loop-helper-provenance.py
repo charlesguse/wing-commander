@@ -16,7 +16,7 @@ imports from that copy.
 
 WHAT IT CHECKS
 --------------
-In each of fix, review and readiness:
+In each of fix-agent, fix, review, review-fixup-publish and readiness:
   1. exactly one "Snapshot helper scripts" step, directly after the job's
      own actions/checkout step, before any agent step and before any other
      step that references the snapshot. The job's own checkout is the only
@@ -30,10 +30,12 @@ In each of fix, review and readiness:
   2. the three snapshot steps' run: blocks are identical;
   3. an allowlist over every other run: block. Each python call is
      `python3 -I -`, `python3 -I -c`, or `python3 -I` on a script under
-     "$RUNNER_TEMP/wc-pristine/scripts/"; the one exception is the
-     gate-suite steps' `python3 .github/scripts/run-local-gates.py` (the
-     gate suite checks the agent's change, so it runs the agent's tree by
-     design). The interpreter must be spelled exactly `python3`: a path
+     "$RUNNER_TEMP/wc-pristine/scripts/", with no exception: the gate
+     suite, which runs the agent's tree by design and was this rule's one
+     carve-out, now runs in the credential-free gate-suite-fix and
+     gate-suite-review-fixup jobs (spec 095; Gate 152 holds it there), so
+     a run-local-gates.py call back in one of these jobs fails here as a
+     working-tree script. The interpreter must be spelled exactly `python3`: a path
      to it (/usr/bin/python3, venv/bin/python3), a versioned name
      (python3.12) or plain `python` is refused, so every spelling reaches
      the same argument check (#593). -I keeps the working directory off
@@ -73,7 +75,7 @@ from wc_shell_harness import resolve_bash, run_step, use_utf8_stdout  # noqa: E4
 import yaml  # noqa: E402
 
 WORKFLOW = os.path.join(".github", "workflows", "board-loop.yml")
-JOBS = ("fix", "review", "readiness")
+JOBS = ("fix-agent", "fix", "review", "review-fixup-publish", "readiness")
 SNAPSHOT_NAME = "Snapshot helper scripts (before any agent runs)"
 # Gate 104's subject, not this gate's (spec 086): the sidecar checkout that
 # every board-loop job takes so its composites resolve from $GITHUB_SHA. It
@@ -81,8 +83,6 @@ SNAPSHOT_NAME = "Snapshot helper scripts (before any agent runs)"
 # checkout" count by name -- see WHAT IT CHECKS, 1.
 TRUSTED_COPY_NAME = "Checkout board-loop's own trusted copy (composites)"
 AGENT_USES = "anthropics/claude-code-action@"
-GATE_SUITE_IDS = ("gate-suite", "gate-suite-review-fixup")
-GATE_SUITE_CALL = "python3 .github/scripts/run-local-gates.py"
 PRISTINE = "wc-pristine"
 # The $RUNNER_TEMP/wc-pristine helper-script snapshot this gate is about,
 # never the unrelated .wc-pristine-repo composite sidecar (Gate 104's
@@ -127,10 +127,10 @@ FORBIDDEN_RES = (
 )
 
 
-def run_problems(run, is_gate_suite):
+def run_problems(run):
     """Allowlist problems for one run: block (see WHAT IT CHECKS, 3)."""
     problems = []
-    scan = run.replace(GATE_SUITE_CALL, "") if is_gate_suite else run
+    scan = run
     code = COMMENT_LINE_RE.sub("", scan)
     for m in PYTHON_CALL_RE.finditer(code):
         if (m.group("prefix") is not None or m.group("name") != ALLOWED_PYTHON_NAME
@@ -199,7 +199,7 @@ def structural_problems(doc):
             run = str(step["run"])
             if PRISTINE_REFERENCE_RE.search(run) and i < snap:
                 problems.append("{0} reads the snapshot before it is taken".format(label))
-            for p in run_problems(run, step.get("id") in GATE_SUITE_IDS):
+            for p in run_problems(run):
                 problems.append("{0}: {1}".format(label, p))
     if len(set(snapshot_runs.values())) > 1:
         problems.append("the snapshot steps' run: blocks differ between {0}".format(
@@ -348,11 +348,11 @@ def comment_case_failures():
     for prose in COMMENT_PROSE:
         for indent in ("", "          "):
             comment = "echo start\n{0}# {1}\necho done\n".format(indent, prose)
-            got = run_problems(comment, False)
+            got = run_problems(comment)
             if got:
                 failures.append("comment {0!r} (indent {1}) trips the gate: {2}".format(
                     prose, len(indent), got[0]))
-        if not run_problems("echo start\n{0}\necho done\n".format(prose), False):
+        if not run_problems("echo start\n{0}\necho done\n".format(prose)):
             failures.append("the same text as code is not caught: {0!r}".format(prose))
         else:
             print("note: comment skipped, code caught: {0!r}".format(prose))
@@ -365,6 +365,13 @@ def _job_steps(doc, job_id):
 
 def _snapshot_index(steps):
     return next(i for i, s in enumerate(steps) if (s or {}).get("name") == SNAPSHOT_NAME)
+
+
+def mut_gate_suite_back_in_fix(doc):
+    """spec 095: the in-job gate suite the carve-out once allowed."""
+    _job_steps(doc, "fix").append({"name": "Run local gate suite (fixer)", "id": "gate-suite",
+                                   "run": "set +e\npython3 .github/scripts/run-local-gates.py\n"})
+    return doc
 
 
 def mut_snapshot_dropped(doc):
@@ -418,6 +425,8 @@ MUTATIONS = [
     ("subprocess.run([sys.executable, ...])", mut_sys_executable, False, "uses sys.executable"),
     ("eval (...)", mut_eval, False, "uses eval("),
     ("compile(...)", mut_compile, False, "uses compile("),
+    ("the gate suite runs in fix again (the retired carve-out)", mut_gate_suite_back_in_fix, True,
+     "names the working tree's .github/scripts"),
     ("readiness's snapshot step is removed", mut_snapshot_dropped, True, None),
     ("the review job's snapshot is taken after the reviewer agent", mut_snapshot_after_agent, True, None),
     ("the snapshot copies the working tree instead of $GITHUB_SHA", mut_snapshot_from_worktree, False,
@@ -471,7 +480,8 @@ def main():
         print("Gate 98 self-test: {0} mutation(s), each caught; {1} comment case(s) "
               "skipped as comments and caught as code.".format(len(MUTATIONS), len(COMMENT_PROSE)))
     else:
-        print("Gate 98: fix, review and readiness import helpers only from the "
+        print("Gate 98: fix-agent, fix, review, review-fixup-publish and readiness import "
+              "helpers only from the "
               "pristine $GITHUB_SHA snapshot, taken before any agent runs.")
     return 0
 

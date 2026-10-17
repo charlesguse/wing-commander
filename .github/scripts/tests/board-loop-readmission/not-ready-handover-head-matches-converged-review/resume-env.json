@@ -1,0 +1,18 @@
+{
+  "MARKER_STEP": "stalled",
+  "MARKER_JSON": "{\"step\": \"stalled\", \"pr\": 42, \"nr_head_sha\": \"2222222222222222222222222222222222222b\"}",
+  "BRANCH": "fix/396-board-item",
+  "MARKER_PR": "42",
+  "PR_FROM_MARKER": "true",
+  "PR_FROM_FALLBACK": "false",
+  "PR_OWNED": "true",
+  "PR_STATE": "OPEN",
+  "PR_NUMBER": "42",
+  "PR_HEAD_SHA": "3333333333333333333333333333333333333c",
+  "MARKER_ROUND": "0",
+  "MARKER_BASE_SHA": "abc1234",
+  "ISSUE_NUMBER": "396",
+  "COMMENTS_PATH": ".github/scripts/tests/board-loop-readmission/not-ready-handover-head-matches-converged-review/comments.json",
+  "BOT_LOGIN": "wing-commander-bot[bot]",
+  "GH_STUB_HEAD_REF_OID": "1111111111111111111111111111111111111a"
+}

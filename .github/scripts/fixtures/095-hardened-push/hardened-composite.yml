@@ -1,0 +1,11 @@
+# Passing shape: the composite sources the one hardening script and calls
+# it before it commits or pushes.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        . "$GITHUB_ACTION_PATH/../_shared/git-push-hardening.sh"
+        wc_harden_git_env
+        git commit -m "x"
+        git push

@@ -1,0 +1,11 @@
+# Failure branch: a covered agent can still Write under .git/.
+on: workflow_dispatch
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Write,Edit"
+          default-disallowed-tools: "WebSearch,Edit(.git/**)"
+          step-label: "fixture.fixer"

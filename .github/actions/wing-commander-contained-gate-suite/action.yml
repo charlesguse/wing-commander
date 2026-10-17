@@ -1,0 +1,65 @@
+# wing-commander-contained-gate-suite — run the local gate suite on an
+# agent-authored head in a credential-free job, and upload a
+# head-SHA-bound verdict (spec 095 FR-001..FR-006).
+#
+# The caller job holds `permissions: contents: read`, no App token, and
+# checks out github.sha with persist-credentials: false and full history.
+# This composite is taken from that trusted commit; the head is hostile
+# input and only its commits are read (contracts/workspace-bundle.md). The
+# verdict is read fail-closed by wing-commander-gate-verdict in the job
+# that acts on it.
+#
+# Constitution VII: every input is optional with a default.
+name: wing-commander-contained-gate-suite
+description: >-
+  Verifies a workspace bundle (or resolves an already-fetched branch),
+  checks out its head, runs the local gate suite and uploads a gate
+  verdict artifact. An absent or unverifiable head yields a failing
+  verdict, never a skip.
+inputs:
+  site:
+    description: "Verdict site: board-fix, board-review-fixup, implement-cycle or implement-retry."
+    required: false
+    default: board-fix
+  bundle-artifact:
+    description: Name of the workspace bundle artifact; empty means wc-gate-bundle-<site>.
+    required: false
+    default: ""
+  head-ref:
+    description: >-
+      A branch the trusted checkout already fetched (origin/<head-ref>) to
+      gate instead of a bundle -- for a head this run did not write, such
+      as implement's spec branch at cycle start. Empty means use the bundle.
+    required: false
+    default: ""
+outputs:
+  verdict-artifact:
+    description: Name of the uploaded verdict artifact.
+    value: wc-gate-verdict-${{ inputs.site }}
+runs:
+  using: composite
+  steps:
+    - name: Download workspace bundle
+      if: inputs.head-ref == ''
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.bundle-artifact || format('wc-gate-bundle-{0}', inputs.site) }}
+        path: ${{ runner.temp }}/wc-gate-bundle
+    - name: Run the gate suite on the head
+      shell: bash
+      env:
+        SITE: ${{ inputs.site }}
+        TRUSTED_SHA: ${{ github.sha }}
+        BUNDLE_DIR: ${{ runner.temp }}/wc-gate-bundle
+        VERDICT_OUT: ${{ runner.temp }}/wc-gate-verdict.json
+        HEAD_REF: ${{ inputs.head-ref }}
+      run: |
+        bash "$GITHUB_ACTION_PATH/../_shared/contained-gate-suite.sh" "$SITE" "$BUNDLE_DIR" "$TRUSTED_SHA" "$VERDICT_OUT" "$HEAD_REF"
+    - name: Upload gate verdict
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v6
+      with:
+        name: wc-gate-verdict-${{ inputs.site }}
+        path: ${{ runner.temp }}/wc-gate-verdict.json
+        if-no-files-found: error

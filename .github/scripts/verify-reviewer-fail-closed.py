@@ -1768,17 +1768,19 @@ def _sh_select(script, cwd):
 
 
 def _stage_select_trusted_copy(repo):
-    """Copies the real _shared/read-spec-meta.sh and
-    wc_lifecycle_review_marker.py (+ its board_item_marker.py dependency)
-    into .wc-pristine-repo -- the step under test resolves both from
-    there, never the workspace root (T073)."""
+    """Copies the real _shared/read-spec-meta.sh (+ the project-name.sh
+    parser it reads names with, spec 114, and the kv.sh helper it sources) and wc_lifecycle_review_marker.py
+    (+ its board_item_marker.py dependency) into .wc-pristine-repo -- the
+    step under test resolves both from there, never the workspace root
+    (T073)."""
     actions_dir = os.path.join(repo, ".wc-pristine-repo", ".github", "actions", "_shared")
     scripts_dir = os.path.join(repo, ".wc-pristine-repo", ".github", "scripts")
     os.makedirs(actions_dir, exist_ok=True)
     os.makedirs(scripts_dir, exist_ok=True)
-    shutil.copyfile(
-        os.path.join(".github", "actions", "_shared", "read-spec-meta.sh"),
-        os.path.join(actions_dir, "read-spec-meta.sh"))
+    for name in ("read-spec-meta.sh", "project-name.sh", "kv.sh"):
+        shutil.copyfile(
+            os.path.join(".github", "actions", "_shared", name),
+            os.path.join(actions_dir, name))
     for name in ("wc_lifecycle_review_marker.py", "board_item_marker.py"):
         shutil.copyfile(os.path.join(".github", "scripts", name),
                         os.path.join(scripts_dir, name))

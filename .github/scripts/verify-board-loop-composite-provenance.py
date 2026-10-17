@@ -285,6 +285,18 @@ def mut_write_protect_dropped(doc):
     return doc
 
 
+def mut_gate_job_raw_reference(doc):
+    """spec 095: the credential-free gate-suite-fix job resolves its
+    contained-gate-suite composite from the workspace -- the job that runs
+    the fixer's tree would then run a composite the fixer could have
+    edited. File-wide rule (a) covers the new jobs with no list to update."""
+    steps = _job_steps(doc, "gate-suite-fix")
+    step = next(s for s in steps
+                if "wing-commander-contained-gate-suite" in str((s or {}).get("uses", "")))
+    step["uses"] = RAW_PREFIX + "wing-commander-contained-gate-suite"
+    return doc
+
+
 def mut_gitignore_removed(text):
     return "".join(line for line in text.splitlines(keepends=True)
                    if SIDECAR_PATH not in line)
@@ -310,6 +322,8 @@ MUTATIONS = [
      "doc", mut_raw_uses_outside_jobs_tuple, "rule (a)"),
     ("the write-protect step is dropped from fix, leaving the sidecar writable",
      "doc", mut_write_protect_dropped, "rule (f)"),
+    ("gate-suite-fix resolves the contained gate suite from the workspace (spec 095)",
+     "doc", mut_gate_job_raw_reference, "rule (a)"),
 ]
 
 

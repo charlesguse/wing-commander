@@ -101,6 +101,42 @@ fires only when the ones above it don't apply:
    clause and falls to clause 1's disqualification and clause 4's triage,
    with the same FR-022 clearing as any other stale fix-or-later marker.
 
+0.5a. (specs/093-not-ready-board-release FR-008/D7) The marker's step is
+   stalled, it carries both pr and nr_head_sha (this feature's own
+   not-ready handover, never any other stall site's marker, which keeps
+   pr: null), and its pr resolves OPEN
+     -> step = "readiness" when `head_moved_since_last_review(pr_number,
+        comments, bot_login)` (`board_item_marker.py`, the one shared
+        determination, same as clause 2b) is False -- the head matches the
+        last converged review, so do not re-review; step = "review"
+        otherwise (a moved or unresolvable head), the same outcome clause 2
+        already produces for every other stalled marker. nr_head_sha is
+        not compared here.
+   A stalled marker lacking either field is unaffected and falls through
+   unchanged to clause 2 below. A handover whose pr has since been merged
+   or closed falls to clause 4's triage, with the pr cleared like the rest
+   of the abandoned attempt (FR-022) -- not to prove, which nothing in the
+   job graph consumes (board_eligibility._merged_fix_holds(), #532).
+
+0.5b. (specs/093-not-ready-board-release FR-001/FR-007/D3) The marker's
+   step is readiness, its pr resolves OPEN, and it carries a not-ready
+   record of either class (contracts/not-ready-hold.md) whose head SHA differs
+   from the pr's current head (`board_eligibility.not_ready_head_moved()`,
+   the hold's own module, never an inline comparison -- FR-003)
+     -> step = "review", never "readiness" -- the held item is
+        automatically re-admitted the moment its head moves, at review
+        (a human's new commits have not been through an independent
+        review), continuing rather than resetting the round and not-ready
+        count: the not-ready count is carried through unchanged, and the
+        round advances by one, so each re-admission spends one round of
+        the budget (SC-009). A
+        self-clearing record is never held, but its moved head needs the
+        same review (SC-010). A readiness marker with no not-ready record,
+        or one whose head is unchanged, is unaffected and falls
+        through to clause 1, which resolves step = "readiness" there (the
+        hold itself, contracts/not-ready-hold.md, keeps such an item off
+        select()'s candidate list in the first place).
+
 1. The marker names a pr number, and it resolves (pre-fix: no pr required;
    fix-or-later: the resolved pr's state == OPEN)
      -> step = the marker's own step.
@@ -124,7 +160,8 @@ fires only when the ones above it don't apply:
 
    b. Otherwise (spec 100 FR-006/FR-006a/FR-006b -- a label-removed
       stalled item always reaches this clause, since every stall site's
-      marker is pr=None): compute `head_moved_since_last_review(pr_number,
+      marker is pr=None -- except spec 093's not-ready handover, which
+      clause 0.5a resolves first): compute `head_moved_since_last_review(pr_number,
       comments, bot_login)` (`board_item_marker.py`) -- whether the PR's
       live head SHA differs from the SHA the loop's own most recent
       *converged* review-round verdict comment recorded for that PR.
@@ -200,3 +237,7 @@ live state, not the marker's say-so, decides which clause applies.
 | spec 100 US3 AS5 (re-admitted at `review`, fresh round budget spent again) | clause 2b `review` branch + a fresh round-0 restart |
 | spec 100 FR-006b edge case (no reviewed head resolvable) | clause 2b defaults to `review` |
 | spec 100 FR-006a (label-less stall is always deliberate) | precondition of this whole clause -- see "Marker source" above and FR-001/FR-002 |
+| specs/093-not-ready-board-release US2 AS3 (this feature's own stalled handover marker, board:stalled removed, head unchanged) | clause 0.5a → readiness |
+| specs/093-not-ready-board-release US3 AS1-AS4 (readiness marker, durable not-ready record, head moved) | clause 0.5b → review, nr_count carried, round + 1 |
+| specs/093-not-ready-board-release SC-010 (readiness marker, self-clearing not-ready record, head moved) | clause 0.5b → review |
+| specs/093-not-ready-board-release handover marker, its PR merged / closed since | clause 4 → `triage`, pr cleared |

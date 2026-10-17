@@ -1,0 +1,1 @@
+{"schema_version": 1, "site": "board-fix", "trusted_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "outcome": "fail", "first_failure": "Gate 3 failed", "exit_code": 1}

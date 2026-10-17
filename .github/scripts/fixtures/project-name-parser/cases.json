@@ -1,0 +1,105 @@
+{
+  "env": {"SPEC_DRAFT_PREFIX": "spec-draft/", "SPEC_PREFIX": "spec/", "IMPL_PREFIX": "implement/"},
+  "accept": [
+    {"kind": "branch", "name": "spec-draft/001-login", "project": "", "slug": "001-login"},
+    {"kind": "branch", "name": "spec/001-login", "project": "", "slug": "001-login"},
+    {"kind": "branch", "name": "implement/001-login-iter3", "project": "", "slug": "001-login"},
+    {"kind": "branch", "name": "spec-draft/ideas/alpha/001-login", "project": "ideas/alpha", "slug": "001-login"},
+    {"kind": "branch", "name": "spec/ideas/alpha/001-login", "project": "ideas/alpha", "slug": "001-login"},
+    {"kind": "branch", "name": "implement/ideas/alpha/001-login-iter12", "project": "ideas/alpha", "slug": "001-login"},
+    {"kind": "label", "name": "spec:001-login", "project": "", "slug": "001-login"},
+    {"kind": "label", "name": "spec:ideas/alpha/001-login", "project": "ideas/alpha", "slug": "001-login"},
+    {"kind": "slug", "name": "001-login", "project": "", "slug": "001-login"},
+    {"kind": "slug", "name": "ideas/alpha/001-login", "project": "ideas/alpha", "slug": "001-login"},
+    {"kind": "spec-dir", "name": "specs/001-login", "project": "", "slug": "001-login"},
+    {"kind": "spec-dir", "name": "ideas/alpha/specs/001-login", "project": "ideas/alpha", "slug": "001-login"},
+    {"kind": "spec-dir", "name": "a/b/c/specs/002-x", "project": "a/b/c", "slug": "002-x"},
+    {"kind": "label", "name": "spec:a/b/001-x", "project": "a/b", "slug": "001-x"},
+    {"kind": "label", "name": "spec:c/b/001-x", "project": "c/b", "slug": "001-x"},
+    {"kind": "branch", "name": "spec/001-login-iter3", "project": "", "slug": "001-login-iter3"},
+    {"kind": "branch", "name": "spec-draft/ideas/alpha/001-retry-iter2", "project": "ideas/alpha", "slug": "001-retry-iter2"},
+    {"kind": "branch", "name": "wc/001-login-iter2", "project": "", "slug": "001-login",
+     "env": {"SPEC_DRAFT_PREFIX": "wc/draft/", "SPEC_PREFIX": "wc/spec/", "IMPL_PREFIX": "wc/"}},
+    {"kind": "branch", "name": "wc/ideas/alpha/001-login-iter3", "project": "ideas/alpha", "slug": "001-login",
+     "env": {"SPEC_DRAFT_PREFIX": "wc/draft/", "SPEC_PREFIX": "wc/spec/", "IMPL_PREFIX": "wc/"}},
+    {"kind": "branch", "name": "wc/spec/001-login-iter2", "project": "", "slug": "001-login-iter2",
+     "env": {"SPEC_DRAFT_PREFIX": "wc/draft/", "SPEC_PREFIX": "wc/spec/", "IMPL_PREFIX": "wc/"}},
+    {"kind": "branch", "name": "wc/impl/001-x-iter2", "project": "", "slug": "001-x",
+     "env": {"SPEC_DRAFT_PREFIX": "wc/draft/", "SPEC_PREFIX": "wc/", "IMPL_PREFIX": "wc/impl/"}},
+    {"kind": "branch", "name": "wc/001-x-iter2", "project": "", "slug": "001-x-iter2",
+     "env": {"SPEC_DRAFT_PREFIX": "wc/draft/", "SPEC_PREFIX": "wc/", "IMPL_PREFIX": "wc/impl/"}},
+    {"kind": "branch", "name": "wc/001-x-iter2", "project": "", "slug": "001-x",
+     "env": {"SPEC_DRAFT_PREFIX": "wc/draft/", "SPEC_PREFIX": "wc/", "IMPL_PREFIX": "wc/"}}
+  ],
+  "reject": [
+    {"kind": "slug", "name": "ok\n../../etc/001-login"},
+    {"kind": "slug", "name": "ideas/alpha/001-login\nzz"},
+    {"kind": "label", "name": "spec:ideas/alpha/001-login\n"},
+    {"kind": "branch", "name": "other/001-login"},
+    {"kind": "branch", "name": "spec/ideas/Alpha/001-login"},
+    {"kind": "branch", "name": "spec/ideas//001-login"},
+    {"kind": "branch", "name": "spec/ideas/alpha/login"},
+    {"kind": "label", "name": "node:ideas/alpha"},
+    {"kind": "label", "name": "spec:ideas/specs/001-login"},
+    {"kind": "label", "name": "spec:../001-login"},
+    {"kind": "slug", "name": "ideas/alpha/01-login"},
+    {"kind": "spec-dir", "name": "ideas/alpha/001-login"},
+    {"kind": "spec-dir", "name": "specs/001-login/extra"},
+    {"kind": "spec-dir", "name": "ideas/alpha/specs/001-login/spec.md"},
+    {"kind": "bogus", "name": "001-login"},
+    {"kind": "branch", "name": "spec/ideas/alpha/001-login/extra"},
+    {"kind": "branch", "name": "implement/ideas/alpha/001-login-iter2/x"},
+    {"kind": "slug", "name": "/001-login"},
+    {"kind": "slug", "name": "//001-login"},
+    {"kind": "label", "name": "spec:/001-login"},
+    {"kind": "branch", "name": "spec//001-login"},
+    {"kind": "branch", "name": "implement//001-login-iter2"},
+    {"kind": "branch", "name": "spec/login"},
+    {"kind": "branch", "name": "spec-draft/001-Login_x"},
+    {"kind": "branch", "name": "implement/login-iter2"}
+  ],
+  "attribution": [
+    {
+      "why": "nested projects (US5): a/b and c/b share their last segment, and a/b/c nests inside a/b; the project is the whole path, never its last segment",
+      "lifecycles": [
+        {"project": "a/b", "slug": "001-x", "spec_dir": "a/b/specs/001-x", "names": [
+          {"kind": "branch", "name": "spec/a/b/001-x"},
+          {"kind": "label", "name": "spec:a/b/001-x"},
+          {"kind": "spec-dir", "name": "a/b/specs/001-x"}]},
+        {"project": "c/b", "slug": "001-x", "spec_dir": "c/b/specs/001-x", "names": [
+          {"kind": "branch", "name": "spec/c/b/001-x"},
+          {"kind": "label", "name": "spec:c/b/001-x"},
+          {"kind": "spec-dir", "name": "c/b/specs/001-x"}]},
+        {"project": "a/b/c", "slug": "001-x", "spec_dir": "a/b/c/specs/001-x", "names": [
+          {"kind": "branch", "name": "implement/a/b/c/001-x-iter1"},
+          {"kind": "label", "name": "spec:a/b/c/001-x"},
+          {"kind": "spec-dir", "name": "a/b/c/specs/001-x"}]},
+        {"project": "a", "slug": "001-x", "spec_dir": "a/specs/001-x", "names": [
+          {"kind": "branch", "name": "spec-draft/a/001-x"},
+          {"kind": "slug", "name": "a/001-x"}]}
+      ]
+    },
+    {
+      "why": "watchdog / fold-cycle-guard: the same NNN-slug in two projects is two lifecycles, each named by every one of its forms",
+      "lifecycles": [
+        {"project": "ideas/alpha", "slug": "004-login", "spec_dir": "ideas/alpha/specs/004-login", "names": [
+          {"kind": "branch", "name": "spec-draft/ideas/alpha/004-login"},
+          {"kind": "branch", "name": "spec/ideas/alpha/004-login"},
+          {"kind": "branch", "name": "implement/ideas/alpha/004-login-iter2"},
+          {"kind": "label", "name": "spec:ideas/alpha/004-login"},
+          {"kind": "spec-dir", "name": "ideas/alpha/specs/004-login"}]},
+        {"project": "ideas/beta", "slug": "004-login", "spec_dir": "ideas/beta/specs/004-login", "names": [
+          {"kind": "branch", "name": "spec-draft/ideas/beta/004-login"},
+          {"kind": "branch", "name": "spec/ideas/beta/004-login"},
+          {"kind": "branch", "name": "implement/ideas/beta/004-login-iter2"},
+          {"kind": "label", "name": "spec:ideas/beta/004-login"},
+          {"kind": "spec-dir", "name": "ideas/beta/specs/004-login"}]},
+        {"project": "", "slug": "004-login", "spec_dir": "specs/004-login", "names": [
+          {"kind": "branch", "name": "spec/004-login"},
+          {"kind": "branch", "name": "implement/004-login-iter2"},
+          {"kind": "label", "name": "spec:004-login"},
+          {"kind": "spec-dir", "name": "specs/004-login"}]}
+      ]
+    }
+  ]
+}

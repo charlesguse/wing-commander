@@ -1,0 +1,1 @@
+{"verdict": "setup-failed", "step": "Run Claude Code Action", "error_contains": "Failed to install Claude Code", "note": "synthetic: shaped on claude-code-action@v1 action.yml and run.ts at 1d6de8c"}

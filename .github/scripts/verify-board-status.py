@@ -16,6 +16,7 @@ Two halves, both driven for real:
 """
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -323,9 +324,41 @@ def runtime_half():
         os.environ["PATH"] = old_path
 
 
+def switches_half():
+    # board_now.py (the whats-on-me skill) reads the repository variables
+    # straight from gh, as WING_COMMANDER_ + each env name in
+    # bs.SWITCH_ENV, so that mapping must match what board-status.yml
+    # actually passes -- one env line per switch, from that variable.
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with open(os.path.join(root, ".github", "workflows", "board-status.yml"), encoding="utf-8") as fh:
+        text = fh.read()
+    passed = dict(re.findall(r"^\s+([A-Z_]+): \$\{\{ vars\.WING_COMMANDER_([A-Z_]+) \}\}\s*$", text, re.M))
+    check("board-status.yml passes each switch in bs.SWITCH_ENV, from WING_COMMANDER_<its env name>",
+          passed == {env: env for env in bs.SWITCH_ENV.values()}, (passed, bs.SWITCH_ENV))
+    got = bs.switches_from({"TASKS_REVIEW": " Required "}.get)
+    check("switches_from fills every switch and normalises tasks_review",
+          got == dict({k: "" for k in bs.SWITCH_ENV}, tasks_review="required"), got)
+
+    # When gh can't list the variables (a Claude Code session's proxy
+    # refuses them), board_now.py must stop rather than render every switch
+    # as unset: that would report the board loop running and auto-merge off
+    # whatever the real switches say.
+    sys.path.insert(0, os.path.join(root, ".claude", "skills", "whats-on-me", "scripts"))
+    import board_now
+    import subprocess
+    board_now.gh = lambda *a: subprocess.CompletedProcess(a, 1, "", "HTTP 403")
+    try:
+        board_now.switches_for("o/r")
+        stopped = False
+    except SystemExit as err:
+        stopped = err.code not in (None, 0)
+    check("board_now.py exits non-zero when it can't read the switches", stopped)
+
+
 def main():
     render_half()
     runtime_half()
+    switches_half()
     print("verify-board-status: {0} failure(s).".format(len(failures)))
     return 1 if failures else 0
 

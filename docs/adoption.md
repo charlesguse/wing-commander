@@ -609,6 +609,40 @@ With the wrappers in place, run the smoke test in
 [docs/setup.md](setup.md#5-smoke-test): open an issue, apply `spec-request`,
 and a spec PR built from **your** templates and constitution appears.
 
+## Multiple projects in one repository
+
+A repository can hold several Spec Kit projects in subfolders (for example
+`ideas/alpha/`), each with its own `.specify/`, `.claude/skills/speckit-*`,
+constitution and `specs/`. An issue is routed to one project and its whole
+lifecycle runs inside that folder. Root-only repositories need none of this
+and behave exactly as before.
+
+- **Turn routing on.** Pass `routing-label-prefix` (for example `node:`) to
+  the intake wrapper. An issue labelled `node:ideas/alpha` is routed to
+  `ideas/alpha/`. Exactly one such label is allowed; two or more are refused
+  with a callout and nothing is created. The prefix must not overlap a
+  pipeline label family -- one being the start of the other counts as an
+  overlap: `spec:`, `stage:`, `model:`, `board:`, `disposition:`, the
+  stage-findings labels (`findings`, and your `findings-label-prefix`,
+  `found-by:` by default), `route-out-of-boundary`, `spec-request` and
+  `spec-proposal`.
+- **Create one `node:<path>` label per project.** The folder must already be
+  a Spec Kit project; intake names the folder and the missing piece if not.
+- **Widen the path filters.** The plan wrapper (and the tasks wrapper in `pr`
+  mode) filters on `specs/**`; widen it to `**/specs/**` so a spec PR under
+  a project folder triggers the next stage.
+- **Restart forms differ.** A manual restart of plan or tasks takes
+  `slug=<P>/<NNN-slug>`; implement, finalize and the fold-cycle guard take
+  `spec_dir=<P>/specs/<NNN-slug>`.
+- **Parent instructions reach the agent.** Instruction files in the folders
+  above a project (a repository-root `CLAUDE.md`, for instance) may still be
+  read by a subfolder agent, so keep root instructions valid for every
+  project. The agent can write only inside its project folder.
+- **`extra-allowed-tools` paths resolve to the workspace root,** not to the
+  project folder: write `ideas/alpha/scripts/x.sh`, not `scripts/x.sh`.
+- **Graduating a project.** Copy the folder to a new repository root; its
+  `spec-meta.json` files record `specs/<NNN-slug>` and need no edits.
+
 ## Version pinning
 
 | Pin | Behavior | Choose it when |
@@ -819,7 +853,7 @@ things to know before you bind one:
   timer is paid once per job, not once per call. A job skipped by its own
   `if:` never prompts.
 
-  **Two documented exceptions, both registered and machine-checked by Gate
+  **Three documented exceptions, all registered and machine-checked by Gate
   7 — not oversights.**
 
   1. **`pr-conversation`'s `act` job.** It does **not** honour
@@ -843,6 +877,22 @@ things to know before you bind one:
      repository.
      The jobs it gates — the ones that actually run agents and push
      commits — are bound normally.
+  3. **`implement`'s `gate-suite-implement-cycle` job.** It runs the spec
+     branch's own local gate suite (code earlier cycles' agents wrote)
+     holding read-only permissions and no App token, and hands its verdict
+     to the `implement` job. It is deliberately unbound: binding it would
+     bring the environment's secrets into the one job built to hold none,
+     and cost a prompt per cycle for a job that writes nothing. The
+     `implement` job, which acts on the verdict, is bound normally. In a
+     repository with no `.github/scripts/run-local-gates.py` it only checks
+     out and reports that there is no suite. It holds no `id-token` either,
+     so where `github.job_workflow_sha` comes through empty it cannot find
+     the pipeline commit: set the `pipeline-ref` input, or the cycle-start
+     suite is reported as skipped for that reason. It checks the pipeline
+     repository out with its own read-only `GITHUB_TOKEN` only, never
+     `pipeline-repo-token`, so with a private pipeline repository that
+     token cannot read, the cycle-start suite is likewise skipped and named
+     (the agent can still run the suite itself).
 
   Counting the jobs that do run:
 
@@ -941,6 +991,20 @@ know before you set either:
   a malformed JSON-looking value (starts with `[` but doesn't parse) fails at
   GitHub's own expression-evaluation time, not with a pipeline-authored
   error.
+- **The agent action floats on `@v1`, and its start-up is checked.** Stages
+  consume `anthropics/claude-code-action@v1`, so the action's own
+  dependencies can change under an image that passed the tool-presence check.
+  The image prerequisite probe also requires **git >= 2.38** (it names the
+  version found). Separately, the published
+  [`agent-startup-check.yml`](#agent-startup-check) runs the real action's
+  setup in your image with no model credential and classifies the log: a
+  red `classify-startup` job either names the failing setup step and quotes
+  its error (`setup-failed`) or says it could not reach its subject (the
+  image did not pull or start, for example). It is opt-in, a workflow of its own that you call on a schedule;
+  no stage calls it, so a wrapper that does not call it changes nothing.
+  This repository calls it from its daily dogfood run and on every
+  reference-image rebuild, so a dependency change that breaks an image
+  surfaces within a day.
 - **`container-image` runs every job of the stage inside that image**,
   exactly as written (registry, repository, tag or digest — whatever you'd
   hand `docker pull`). Before any agent-bearing job's own container is
@@ -1113,12 +1177,18 @@ know before you set either:
   adopters.** `ghcr.io/charlesguse/wing-commander-e2e-image`, built from
   `.github/docker/e2e-reference-image/Dockerfile` and published by
   `.github/workflows/wing-commander-e2e-reference-image.yml`, installs
-  exactly the tools this document's prerequisite-check list names — nothing
-  more — and exists solely so wing-commander's own scheduled `auto-release.yml`
+  the tools this document's prerequisite-check list names plus only what
+  this repository's own implement jobs need on top of them (pyyaml and a
+  `python` alias for its local gate suite, and the shellcheck and yamllint
+  its implement prompt names, none of which an adopter image needs) and
+  exists solely so wing-commander's own scheduled `auto-release.yml`
   verification can dogfood the `container:` code path above end to end
   (specs/054-e2e-container-coverage). This repository's maintainers own it:
-  a change to `.github/scripts/required-tools.txt` is what triggers rebuilding
-  it, enforced at PR time by Gate 62 (`.github/scripts/verify-gate-62.py`,
+  a change to `.github/scripts/required-tools.txt` or to the Dockerfile
+  triggers rebuilding it, after which a maintainer repins the new digest
+  by hand wherever `WING_COMMANDER_CONTAINER_IMAGE` names it
+  ([docs/setup.md](setup.md)), this repository included. Its contents are
+  enforced at PR time by Gate 62 (`.github/scripts/verify-gate-62.py`,
   which builds the image and inspects it the same way the prerequisite check
   above inspects yours) and, at run time, by the same prerequisite check
   every adopter's own image already goes through. Bring your own image for
@@ -1322,9 +1392,11 @@ Findings filing: `findings-filing-enabled` (boolean, default `true`;
 [Stage-found defect filing](#stage-found-defect-filing).
 
 Write boundary: `no-write-paths` (string, comma-separated path prefixes,
-default `.claude/`; `WING_COMMANDER_IMPLEMENT_NO_WRITE_PATHS`) — paths this
-stage's agent may not target with `Edit`/`Write`, stated in its prompt
-before its first tool call. `write-boundary-label-prefix` (string, default
+default `.claude/,.git/`; `WING_COMMANDER_IMPLEMENT_NO_WRITE_PATHS`) — paths
+this stage's agent may not target with `Edit`/`Write`, stated in its prompt
+before its first tool call. Keep `.git/` in an override: it denies the
+agent's `Edit`/`Write` tools the repository's git hooks and config (a
+value planted by any other route is neutralised at the push instead). `write-boundary-label-prefix` (string, default
 `route-out-of-boundary`; `WING_COMMANDER_WRITE_BOUNDARY_LABEL_PREFIX`) —
 label prefix for a task routed out of the write boundary; deliberately
 distinct from `findings-label-prefix` so the board loop never treats a
@@ -1338,7 +1410,7 @@ or one-cycle-at-a-time manual.
 
 | | |
 |---|---|
-| Inputs | `spec-dir` (string, required); `issue-number` (number, required); `converged` (boolean, required); `summary-model` (string, `claude-haiku-4-5`); `max-turns` (number, `20`) |
+| Inputs | `spec-dir` (string, required); `issue-number` (number, required); `converged` (boolean, required); `summary-model` (string, `claude-haiku-5-5`); `max-turns` (number, `20`) |
 | Preconditions | full artifact set on `spec/NNN-slug`; branch has commits ahead of your default branch; no final PR exists yet (any state) |
 | Side effects | final PR `spec/NNN-slug` → default branch (summary, changed files, remaining-manual-work); same remaining-work list commented on the issue; `spec-meta.json` → `review`; `stage:review` label |
 | Outputs | `pr-number` |
@@ -1359,7 +1431,7 @@ issue instead of losing it as an orphan line.
 
 | | |
 |---|---|
-| Inputs | `head-ref`, `base-ref` (string, required); `merged` (boolean, required); `pr-number` (number, required); `merge-commit-sha` (string, `""`); `summary-model` (string, `claude-haiku-4-5`); `max-turns` (number, `20`) |
+| Inputs | `head-ref`, `base-ref` (string, required); `merged` (boolean, required); `pr-number` (number, required); `merge-commit-sha` (string, `""`); `summary-model` (string, `claude-haiku-5-5`); `max-turns` (number, `20`) |
 | Preconditions | matched spec's artifacts exist and self-identify consistently (identity refusal otherwise) |
 | Side effects | self-selects exactly one outcome from the raw PR facts: merged final PR → full teardown + issue closed (`teardown-done`); unmerged draft PR → draft deleted, issue left open (`teardown-rejected`); unmerged final/plan/tasks/impl PR (the `plan/`, `tasks/`, `impl/` prefixes are configurable defaults, set via `WING_COMMANDER_PLAN_PREFIX`/`WING_COMMANDER_TASKS_PREFIX`/`WING_COMMANDER_IMPL_PREFIX`) → marked stalled, nothing deleted (`mark-stalled`); everything else → no-op |
 | Outputs | `outcome` (`teardown-done` \| `teardown-rejected` \| `mark-stalled` \| `none`) |
@@ -1505,6 +1577,77 @@ jobs:
       speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
       speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 ```
+
+### watchdog
+
+Inspects one completed run (`run-id`) and files, routes or reports what its
+read-only diagnose agent finds. See [Stage 9 — Watchdog](architecture.md#stage-9--watchdog-watchdogyml-wrapper-wing-commander-8-watchdogyml)
+for the design. Only the diagnose inputs are listed here.
+
+| | |
+|---|---|
+| Inputs | `run-id` (string, required); `run-name` (string, `""`); `diagnose-model` (string, `claude-opus-5-5`); `diagnose-max-turns` (number, `30`); `diagnose-shadow-enabled` (boolean, `false`); `diagnose-shadow-model` (string, `claude-haiku-5-5`); `diagnose-shadow-max-turns` (number, `8`) |
+
+The three `diagnose-shadow-*` inputs (spec 110) run an optional second,
+read-only diagnose on the same evidence after the acting diagnose has
+filed, routed and reported everything. It acts on nothing: every step is
+`continue-on-error`, its credential is `github.token`, its tool list is
+fixed read-only and ignores your tool-list inputs, and its result only
+becomes a `trial` object on its own metrics record (`run_label:
+diagnose-shadow`, artifact `metrics-record-diagnose-shadow`). It is off
+unless your wrapper passes `diagnose-shadow-enabled: true`; the stage reads
+no repository variable for it. This repository's
+`wing-commander-8-watchdog.yml` computes the value in a `trial-bound` job
+from `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE` and the metrics branch (60 days
+or 300 compared runs, whichever comes first), and
+`wing-commander-trial-summary.yml` summarises the trial. A copy of that
+job in your wrapper references the composite from the pipeline repository
+(`charlesguse/wing-commander/.github/actions/wing-commander-trial-bound@<your pin>`)
+rather than by local path.
+
+### agent-startup-check
+
+Runs `anthropics/claude-code-action@v1` (the reference every stage uses)
+inside `container-image` with no model credential, and classifies its log
+with `classify-agent-startup.py`, checked out from the pipeline repository
+at the running workflow's own commit. It never reaches a model: with no
+credential the action stops at its credential check, which is the "setup
+completed" evidence. Not a lifecycle stage: none of the Common inputs about
+agents, spec-kit, the App or chaining apply, and it takes no model
+credential. Contract: [agent-startup-check.md](../specs/112-agent-startup-image-check/contracts/agent-startup-check.md).
+
+| | |
+|---|---|
+| Inputs | `container-image` (string, `""` = the whole workflow is a no-op); `runner`, `environment`, `environment-deployment`, `pipeline-repo`, `pipeline-ref` (as in Common inputs, except that this workflow holds no `id-token`, so set `pipeline-ref` whenever `github.job_workflow_sha` comes through empty) |
+| Secrets | `container-registry-username` / `container-registry-password` (optional, for a private image); `pipeline-repo-token` (optional, only for a [private pipeline repository](#private-pipeline-repository)) |
+| Permissions | The calling job grants `actions: read` (classify-startup reads the startup-agent job's log) and `contents: read` |
+| Jobs | `verify-image-prerequisites` (the same tool-list and git-floor probe every stage runs), `startup-agent` (inside `container-image`), `classify-startup` (on `runner` directly, not in the image, so it can report on an image that cannot start a shell; it needs `gh`, `jq` and `python3` on the runner, which GitHub's hosted runners carry) |
+
+```yaml
+jobs:
+  agent-startup-check:
+    permissions:
+      actions: read
+      contents: read
+    uses: charlesguse/wing-commander/.github/workflows/agent-startup-check.yml@v2
+    with:
+      container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE }}
+    secrets:
+      container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+      container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
+```
+
+Trigger it on a `schedule` or `workflow_dispatch`: the agent action does
+not support `push`. It exists from the first release that ships spec 112;
+an older pin has no such file. A matrix over several images works:
+`classify-startup` finds its own call's `startup-agent` job by the job-name
+prefix it shares with it, and reports an ambiguous lookup as
+`unclassified` rather than guessing. `classify-startup`'s job summary carries the verdict
+(`setup-completed`, `setup-failed` with the step and quoted error, or
+`unclassified` when the check could not reach its subject) and the
+`verify-image-prerequisites` result beside it. The start-up check runs
+whatever the prerequisite check found: an image that fails both shows two
+red jobs, each with its own reason, and neither result hides the other.
 
 ## Chaining payload contract
 

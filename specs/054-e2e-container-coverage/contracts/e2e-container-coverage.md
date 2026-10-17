@@ -83,6 +83,15 @@ asserting an exact key set) — no consumer-side breaking change.
   registration shape so `run-local-gates.py` and `verify-gate-wiring.py`
   pick it up with no separate manifest (Constitution VIII: reachable
   through the gate registry, runs the same subject locally and in CI).
+- **This repository's implement jobs (#989)**: wing-commander pins its own
+  `WING_COMMANDER_CONTAINER_IMAGE` to this image, so the gate also runs
+  `.github/workflows/implement.yml`'s "Preflight: gate-suite prerequisites"
+  steps (cycle and retry) inside the built image and requires `ready=true`,
+  and requires every command the implement agent prompt names (its lint
+  tools and the suite interpreter, `python`) to be on
+  the image's PATH. Both lists are read from implement.yml, never copied;
+  tools the job installs for itself (actionlint) are stubbed.
+  `required-tools.txt` stays the adopter contract and does not gain them.
 - **Failure mode**: names every missing tool at once (SC-007), the same
   one-container-start-checks-everything shape the run-time prerequisite
   check already uses — not a per-tool failure that stops at the first

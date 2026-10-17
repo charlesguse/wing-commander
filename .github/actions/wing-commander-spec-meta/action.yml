@@ -37,8 +37,10 @@ inputs:
     required: true
   spec-dir:
     description: >-
-      Spec directory to read spec-meta.json from and to check the file's
-      spec_dir against. Empty means specs/<slug>.
+      Repository-relative spec directory to read spec-meta.json from
+      ([P/]specs/<NNN-slug>); the file's own spec_dir is checked against
+      its project-relative tail (specs/<NNN-slug>). Empty means specs/<slug>,
+      or <P>/specs/<NNN-slug> when slug is <P>/<NNN-slug>.
     required: false
     default: ""
 outputs:

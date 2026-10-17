@@ -140,6 +140,14 @@ SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
    `(==|!=)` alternation. A pattern-matching gate that only reads
    comparisons (verify-gate-24.py) splits on nothing and is not matched.
 
+9. repo-files (code review of spec 101's Gate 93 check 6): a gate script
+   that decides "which files are the repository" itself instead of
+   through `.github/scripts/wc_repo_files.py`. verify-agent-push-
+   credential-helper.py, verify-stage-tool-lists.py and Gate 93 each
+   carried one, and they disagreed on tracked-only listing, the toplevel
+   check and the environment git ran with (#808/#822/#823). Matched by a
+   `"ls-files"` argument and an `os.walk(` fallback in one file.
+
 Plus a promotion-prevention pass (FR-025): every `workflow_call`-only
 stage workflow and every non-underscore-prefixed composite action scanned
 for any reference resolving into a `_shared/` path.
@@ -306,6 +314,12 @@ DECLARED_HOMES = {
     # Code review of #940: the GitHub-expression evaluator every gate that
     # evaluates a shipped `if:` uses -- see check_gha_expr_evaluator.
     "gha-expr-evaluator": ".github/scripts/wc_gha_expr.py",
+    # specs/113-gh-callsite-locator FR-011 (CLAUDE.md: "add the 'single home'
+    # check to the nearest existing gate"): the one module that finds `gh`
+    # call sites in a `run:` block. Gate 12 and Gate 28 import it; a script
+    # growing a shell scanner of its own is what this check catches.
+    "gh-callsite-locator": ".github/scripts/wc_gh_callsites.py",
+    "repo-files": ".github/scripts/wc_repo_files.py",
     # specs/062-lifecycle-review-gate T031/T042: the append-tasks.md-
     # section/flip-stage/union-actor/commit+push fold sequence.
     # pr-conversation.yml's `act` job (T033) and lifecycle-review-gate.yml's
@@ -768,6 +782,58 @@ def check_gha_expr_evaluator(root="."):
     return findings
 
 
+REPO_FILES_LS_RE = re.compile(r"""["']ls-files["']""")
+REPO_FILES_WALK_RE = re.compile(r"\bos\.walk\(")
+
+
+def check_repo_files(root="."):
+    home = DECLARED_HOMES["repo-files"]
+    findings = []
+    for path in script_files(root):
+        if path in (home, THIS_GATE):
+            continue
+        text = read(root, path)
+        m = REPO_FILES_LS_RE.search(text)
+        if m is not None and REPO_FILES_WALK_RE.search(text):
+            findings.append(Finding(path, "repo-files",
+                                    line_of(text, m.start()), m.group(0)))
+    return findings
+
+
+# --------------------------------------------------------------------------
+# Check: gh-callsite-locator (file-wide, over .github/scripts -- specs/113
+# FR-011)
+# --------------------------------------------------------------------------
+# A shell scanner is a script that skips heredoc bodies (a regex opening
+# `<<-?[ \t]*` or `<<-?\s*` and capturing the delimiter) AND steps through
+# `$(` by index (`startswith("$(", i)`): the two things a scanner needs to
+# tell a command from text. Either sign alone is common -- a regex that
+# finds a heredoc to read its body, a `$(` search in a fixture -- so only
+# the pair is a second locator. Matched on the SOURCE text of the scanner.
+# Each sign takes the spellings a second scanner would plausibly use: the
+# heredoc opener `<<`, an optional `-` (escaped or grouped, optional), then
+# blank-skipping (`\s`, `[ \t]`, `[\t ]`, `[ \t]*`); the `$(` step as a
+# startswith, find or index call on that literal.
+SCANNER_HEREDOC_RE = re.compile(r"<<[-\\?()]{0,8}(?:\[ ?\\t ?\]|\\s|\[\\t ?\])")
+SCANNER_SUBST_RE = re.compile(r"""(?:startswith|find|index)\(\s*["']\$\(["']""")
+
+
+def check_gh_callsite_locator(root="."):
+    home = DECLARED_HOMES["gh-callsite-locator"]
+    findings = []
+    for path in script_files(root):
+        # This gate names both signs itself, in this comment and its pastes.
+        if path in (home, THIS_GATE):
+            continue
+        text = read(root, path)
+        m = SCANNER_HEREDOC_RE.search(text)
+        if m is not None and SCANNER_SUBST_RE.search(text):
+            findings.append(Finding(
+                path, "gh-callsite-locator", line_of(text, m.start()),
+                "shell scanner: a heredoc-opener regex plus `$(` stepping"))
+    return findings
+
+
 # --------------------------------------------------------------------------
 # Check: fold-commit (per-step, single-fragment)
 # --------------------------------------------------------------------------
@@ -1212,11 +1278,27 @@ def check_local_action_before_checkout(root="."):
     return findings
 
 
+# Also the bare directory (`shared=".../.github/actions/_shared"`, with or
+# without a trailing slash), which a variable then indexes, and a
+# parent-directory variable followed by `/_shared` (`"$actions/_shared/x.sh"`):
+# each indirection resolves the same helpers. A composite's own
+# `$GITHUB_ACTION_PATH/../_shared` is the sanctioned form and does not match.
+PROMOTION_RE = re.compile(SHARED_REF_RE.pattern
+                          + r"|\.github/actions/_shared/?(?![\w./-])"
+                          + r"|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/_shared(?![\w.-])")
+
+
+def _blank_comment_lines(text):
+    """Comment-only lines (YAML or shell) blanked, line numbers kept: prose
+    naming the rule is not a resolution."""
+    return "\n".join("" if line.lstrip().startswith("#") else line for line in text.split("\n"))
+
+
 def check_promotion(root="."):
     findings = []
     for path in _relativize(root, published_stages(root)):
-        text = read(root, path)
-        for m in SHARED_REF_RE.finditer(text):
+        text = _blank_comment_lines(read(root, path))
+        for m in PROMOTION_RE.finditer(text):
             findings.append(Finding(path, "promotion", line_of(text, m.start()),
                                     m.group(0)))
     actions_base = os.path.join(root, ACTIONS_DIR)
@@ -1228,8 +1310,8 @@ def check_promotion(root="."):
                 candidate = os.path.join(ACTIONS_DIR, name, fname).replace(os.sep, "/")
                 if not os.path.isfile(os.path.join(root, candidate)):
                     continue
-                text = read(root, candidate)
-                for m in SHARED_REF_RE.finditer(text):
+                text = _blank_comment_lines(read(root, candidate))
+                for m in PROMOTION_RE.finditer(text):
                     findings.append(Finding(candidate, "promotion",
                                             line_of(text, m.start()), m.group(0)))
     return findings
@@ -1475,6 +1557,8 @@ ALL_CHECKS = {
     "board-stop-check": check_board_stop_check,
     "transcript-normalise": check_transcript_normalise,
     "gha-expr-evaluator": check_gha_expr_evaluator,
+    "gh-callsite-locator": check_gh_callsite_locator,
+    "repo-files": check_repo_files,
     "verdict-shape": check_verdict_shape,
     "token-mint": check_token_mint,
     "mode-tag-shape": check_mode_tag_shape,
@@ -1839,6 +1923,10 @@ def _clean_tree(root):
           "\"$cancel_run_id\" -R \"$GITHUB_REPOSITORY\" 2>/dev/null || true\n")
     _write(root, DECLARED_HOMES["gha-expr-evaluator"],
           "def evaluate(expr, ctx):\n    return Parser(expr, ctx).parse()\n")
+    _write(root, DECLARED_HOMES["gh-callsite-locator"],
+          "def locate(script):\n    return []\n")
+    _write(root, DECLARED_HOMES["repo-files"],
+          "def repo_files(root):\n    return _git(root, \"ls-files\") or os.walk(root)\n")
     _write(root, DECLARED_HOMES["transcript-normalise"],
           "#!/usr/bin/env bash\n"
           "jq -cs 'map(if type==\"array\" then .[] else . end) "
@@ -1952,6 +2040,24 @@ def selftest_third_paste_fails(check_key, paste_path, paste_content):
                 f"got: {findings}")
         else:
             note(f"[{case}] passed ({hits[0].path}:{hits[0].line})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def selftest_third_paste_passes(check_key, paste_path, paste_content):
+    case = f"{paste_path} carries one sign of {check_key} only and is not flagged"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        _write(tmp, paste_path, paste_content)
+        findings, hard = evaluate(tmp)
+        hits = [f for f in findings if f.check == check_key and f.path == paste_path]
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif hits:
+            fail(f"[{case}] unexpected {check_key} finding: {hits[0]}")
+        else:
+            note(f"[{case}] passed")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -2334,6 +2440,72 @@ def selftest_promotion_fails():
             note(f"[{case}] passed")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    # spec 114 review: the directory named alone, through a variable, is
+    # the same promotion as naming a file in it.
+    case = "a published stage resolving _shared through a variable fails"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        _write(tmp, ".github/workflows/published-stage.yml",
+              "on:\n  workflow_call: {}\njobs:\n  x:\n    runs-on: ubuntu-latest\n"
+              "    steps:\n      - run: |\n"
+              "          shared=\"$GITHUB_WORKSPACE/.wing-commander-pipeline/.github/actions/_shared\"\n"
+              "          cp \"$shared/containment.sh\" .\n")
+        findings, hard = evaluate(tmp)
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif not any(f.check == "promotion" and f.path == ".github/workflows/published-stage.yml" for f in findings):
+            fail(f"[{case}] a `shared=` variable naming _shared was not caught")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    # MF-40: a trailing-slash directory and a parent-directory variable
+    # followed by /_shared/ are the same promotion; a comment naming the
+    # rule and a composite's own $GITHUB_ACTION_PATH/../_shared are not.
+    for case, body, want in (
+        ("a trailing `_shared/` directory is caught",
+         "          shared=\"$GITHUB_WORKSPACE/.wing-commander-pipeline/.github/actions/_shared/\"\n", True),
+        ("a parent-directory variable followed by /_shared/ is caught",
+         "          actions=\"$GITHUB_WORKSPACE/.wing-commander-pipeline/.github/actions\"\n"
+         "          bash \"$actions/_shared/containment.sh\" outside P\n", True),
+        ("a braced parent-directory variable followed by /_shared is caught",
+         "          cp \"${ACTIONS_DIR}/_shared\" -r .\n", True),
+        ("a comment naming .github/actions/_shared/ is not a resolution",
+         "          # never resolve .github/actions/_shared/ directly\n          echo ok\n", False),
+    ):
+        tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+        try:
+            _clean_tree(tmp)
+            _write(tmp, ".github/workflows/published-stage.yml",
+                   "on:\n  workflow_call: {}\njobs:\n  x:\n    runs-on: ubuntu-latest\n"
+                   "    steps:\n      - run: |\n" + body)
+            findings, hard = evaluate(tmp)
+            got = any(f.check == "promotion" and f.path == ".github/workflows/published-stage.yml" for f in findings)
+            if hard:
+                fail(f"[{case}] unexpected hard failure(s): {hard}")
+            elif got != want:
+                fail(f"[{case}] promotion {'not ' if want else ''}flagged")
+            else:
+                note(f"[{case}] passed")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    case = "a composite's own $GITHUB_ACTION_PATH/../_shared passes"
+    tmp = tempfile.mkdtemp(prefix="wc-single-home-")
+    try:
+        _clean_tree(tmp)
+        _write(tmp, ".github/actions/wing-commander-x/action.yml",
+               "name: x\nruns:\n  using: composite\n  steps:\n    - shell: bash\n"
+               "      run: bash \"$GITHUB_ACTION_PATH/../_shared/containment.sh\" outside P\n")
+        findings, hard = evaluate(tmp)
+        if hard:
+            fail(f"[{case}] unexpected hard failure(s): {hard}")
+        elif any(f.check == "promotion" for f in findings):
+            fail(f"[{case}] the sanctioned composite form was flagged")
+        else:
+            note(f"[{case}] passed")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def selftest_missing_declared_home_fails_loud():
@@ -2708,6 +2880,33 @@ def run_selftest():
         selftest_third_paste_fails(
             "gha-expr-evaluator", f".github/scripts/verify-third-{slug}.py",
             "import re\n" + body)
+    # specs/113-gh-callsite-locator FR-011: a second shell scanner -- both
+    # signs together -- is caught; either sign alone is not.
+    selftest_third_paste_fails(
+        "gh-callsite-locator", ".github/scripts/verify-third-scanner.py",
+        "import re\n"
+        "HEREDOC = re.compile(r\"<<-?[ \\t]*\\\\?(['\\\"]?)([\\w]+)\\1\")\n"
+        "def scan(text, i):\n"
+        "    if text.startswith(\"$(\", i):\n        return i + 2\n")
+    selftest_third_paste_fails(
+        "gh-callsite-locator", ".github/scripts/verify-third-scanner-spelled.py",
+        "import re\n"
+        "HEREDOC = re.compile(r\"<<(-?)[\\t ]*(\\w+)\")\n"
+        "def scan(text, i):\n"
+        "    return text.find(\"$(\", i)\n")
+    selftest_third_paste_passes(
+        "gh-callsite-locator", ".github/scripts/verify-third-heredoc-only.py",
+        "import re\n"
+        "HEREDOC = re.compile(r\"<<-?[ \\t]*\\\\?(['\\\"]?)([\\w]+)\\1\")\n")
+    selftest_third_paste_passes(
+        "gh-callsite-locator", ".github/scripts/verify-third-subst-only.py",
+        "def scan(text, i):\n    if text.startswith(\"$(\", i):\n        return i + 2\n")
+    # Code review of spec 101: the tracked-files-else-walk listing three gate
+    # scripts each carried before wc_repo_files.py.
+    selftest_third_paste_fails(
+        "repo-files", ".github/scripts/verify-third-repo-files.py",
+        "proc = subprocess.run([\"git\", \"-C\", root, \"ls-files\", \"-z\"])\n"
+        "for d, _x, names in os.walk(root):\n    pass\n")
     selftest_third_paste_fails(
         "verdict-shape", ".github/workflows/third-verdict.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"

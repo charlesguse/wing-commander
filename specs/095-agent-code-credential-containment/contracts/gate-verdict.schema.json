@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Gate verdict (spec 095)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "site", "trusted_sha", "head_sha", "outcome", "first_failure", "exit_code"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "site": { "enum": ["board-fix", "board-review-fixup", "implement-cycle", "implement-retry"] },
+    "trusted_sha": { "type": "string", "pattern": "\\A[0-9a-f]{40}\\Z" },
+    "head_sha": { "type": "string", "pattern": "\\A[0-9a-f]{40}\\Z" },
+    "outcome": { "enum": ["pass", "fail"] },
+    "first_failure": { "type": "string", "maxLength": 4000 },
+    "exit_code": { "type": "integer" }
+  }
+}

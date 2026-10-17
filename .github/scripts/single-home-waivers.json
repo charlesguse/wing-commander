@@ -79,6 +79,24 @@
       "permanent_reason": "A conceptually distinct fingerprint and schema (spec 057 D11/D12), not a copy to consolidate.",
       "decided_by": "#408",
       "reason": "specs/057-autonomous-board-loop research.md D12: the review job's out-of-scope filing uses its OWN fingerprint formula, sha256(\"<issue>|<norm(title)>|<norm(file_path)>\") -- deliberately distinct from spec 056's stage-finding formula (sha256(STAGE|norm(file_path)|norm(gate_or_artifact))) per D11's own explanation for why board review needed a second schema/channel in the first place -- and separately calls verify-board-review-finding-schema.py's validate_finding() (T041) to filter malformed findings, the same discipline spec 056's own D5/D11 use, but against a DIFFERENT schema (board-review-finding.schema.json, not stage-finding.schema.json). The three fragments Gate 60 keys on (sha256, fingerprint_basis, validate_finding) are each genuinely present for a genuinely different, unrelated reason than spec 056's mechanism -- structurally similar shell, conceptually distinct feature, exactly the case this waiver mechanism exists for."
+    },
+    {
+      "file": ".github/scripts/verify-stop-point-recording.py",
+      "check": "gh-callsite-locator",
+      "pattern": "shell scanner",
+      "count": 1,
+      "issue": "#889",
+      "decided_by": "#993",
+      "reason": "specs/113-gh-callsite-locator FR-012: #954's script-call reader (this file's _blank_from) is a shell scanner of its own, and moving it onto wc_gh_callsites.py is a separate lifecycle. Until then the single-home check tolerates it, tracked on the maintenance backlog #889 (the line 'migrate the #954 script-call readers onto wc_gh_callsites'). Remove this waiver when that line is done."
+    },
+    {
+      "file": ".github/scripts/wc_gate_registry.py",
+      "check": "gh-callsite-locator",
+      "pattern": "shell scanner",
+      "count": 1,
+      "issue": "#889",
+      "decided_by": "#993",
+      "reason": "specs/113-gh-callsite-locator FR-012: #954's script-call reader also lives in wc_gate_registry.py (_shell_prepass, which finds the scripts a run: block calls). It is the same reader family as verify-stop-point-recording.py's and migrates with it, in its own lifecycle, tracked on the maintenance backlog #889 (the line 'migrate the #954 script-call readers onto wc_gh_callsites'). Remove this waiver when that line is done."
     }
   ]
 }

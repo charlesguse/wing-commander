@@ -1,0 +1,9 @@
+# Failure branch: a composite reachable from a covered job pushes without
+# hardening its git environment first.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        git commit -m "x"
+        git push

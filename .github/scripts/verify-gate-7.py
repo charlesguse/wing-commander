@@ -225,6 +225,25 @@ CASES = [
                          job("verify-image-prerequisites", BOUND))},
      True, ("verify-image-prerequisites", "environment:")),
 
+    # specs/095: implement.yml's credential-free gate-suite job is unbound
+    # by design, and the exemption is file- and job-scoped.
+    ("registered exemption: an unbound gate-suite-implement-cycle in "
+     "implement.yml passes beside bound siblings",
+     {"implement.yml": stage(job("implement", BOUND),
+                             job("gate-suite-implement-cycle", UNBOUND))},
+     False, ()),
+
+    ("the gate-suite exemption is asserted, not merely skipped: binding "
+     "gate-suite-implement-cycle back fails",
+     {"implement.yml": stage(job("implement", BOUND),
+                             job("gate-suite-implement-cycle", BOUND))},
+     True, ("gate-suite-implement-cycle", "environment:")),
+
+    ("the gate-suite exemption is file-scoped: the same unbound job in "
+     "another stage still fails",
+     {"stage.yml": stage(job("gate-suite-implement-cycle", UNBOUND))},
+     True, ("'gate-suite-implement-cycle'", "no environment")),
+
     ("the exemption is job-name-scoped: a differently named unbound job in "
      "a file that also has the exempt one still fails",
      {"stage.yml": stage(job("verify-image-prerequisites", UNBOUND),

@@ -40,14 +40,64 @@ inputs:
   push-token:
     description: >
       Already-minted token to build an explicit authenticated push URL
-      from, for a target whose remote carries no stored credential (the
-      same explicit-URL idiom orphan-branch-reset/action.yml uses).
-      Empty (the default) pushes to the `origin` remote as-is -- every
-      in-scope stage's own spec-branch checkout.
+      from (the same explicit-URL idiom orphan-branch-reset/action.yml
+      uses). The push then goes from a shim repository with no config of
+      its own, so nothing in the checkout's .git/config can redirect it
+      (spec 095 FR-016/FR-017) -- a caller whose agent wrote the checkout
+      passes it. Empty (the default) pushes to the `origin` remote as-is.
     required: false
     default: ""
   push-repo:
     description: "owner/name to push to, required together with push-token."
+    required: false
+    default: ""
+  branch:
+    description: >
+      The branch this call may publish. When set, a checkout left on any
+      other branch (or a detached HEAD) is not pushed: push-ok=false.
+      Empty (the default) publishes whatever branch the checkout is on.
+    required: false
+    default: ""
+  project:
+    description: >
+      The lifecycle's project folder P (specs/114-subfolder-project-lifecycles,
+      FR-021). When set, a push whose not-yet-published commits touch any
+      path outside P/ is refused (push-ok=false) through
+      _shared/containment.sh -- this rescue runs on !cancelled(), after the
+      containment check, so it must not publish what that check failed.
+      Empty (the default, and every root lifecycle) skips the check.
+    required: false
+    default: ""
+  label-first-issue:
+    description: >
+      Intake only, for a subfolder project (specs/114-subfolder-project-lifecycles,
+      FR-014): the lifecycle issue number. When set together with project,
+      this is the routed intake's one publishing push (its pre-push hook
+      validates and refuses the agent's own): the branch first passes
+      `_shared/intake-pre-push.sh check` -- only
+      <label-first-prefix>P/<label-first-number>-<slug>, a slug within the
+      label budget, every commit inside P -- and its slug must equal
+      label-first-slug, the one wing-commander-label-first created the
+      spec:P/<NNN-slug> label for and put on the issue before this push.
+      The check always runs (never skipped on a remote-tracking ref, which
+      the agent can rewrite); an empty label-first-slug publishes nothing,
+      and branch must be exactly <label-first-prefix>P/<label-first-slug>.
+      A refusal is push-ok=false. Empty (the default) skips it.
+    required: false
+    default: ""
+  label-first-number:
+    description: "The feature number intake allocated, required together with label-first-issue."
+    required: false
+    default: ""
+  label-first-prefix:
+    description: "Intake's spec-draft branch prefix, used together with label-first-issue."
+    required: false
+    default: ""
+  label-first-slug:
+    description: >
+      The <NNN-slug> wing-commander-label-first validated and labelled
+      (its `slug` output). With label-first-issue set, a branch whose slug
+      differs, or an empty value, is not pushed.
     required: false
     default: ""
 
@@ -67,6 +117,11 @@ outputs:
       "false" covers a genuine race (e.g. a concurrent force-push), not a
       credential failure.
     value: ${{ steps.publish.outputs.push-ok }}
+  label-first-slug:
+    description: >
+      The <NNN-slug> the label-first check validated (empty when
+      label-first-issue is unset or the check refused).
+    value: ${{ steps.publish.outputs.label-first-slug }}
 
 runs:
   using: composite
@@ -79,12 +134,39 @@ runs:
         WORKDIR: ${{ inputs.workdir }}
         PUSH_TOKEN: ${{ inputs.push-token }}
         PUSH_REPO: ${{ inputs.push-repo }}
+        EXPECTED_BRANCH: ${{ inputs.branch }}
+        PROJECT: ${{ inputs.project }}
+        LF_ISSUE: ${{ inputs.label-first-issue }}
+        LF_NUM: ${{ inputs.label-first-number }}
+        LF_PREFIX: ${{ inputs.label-first-prefix }}
+        LF_SLUG: ${{ inputs.label-first-slug }}
       run: |
         set -uo pipefail
         dir="${WORKDIR:-.}"
+        # spec 095 FR-015/FR-016: an agent step ran in this job just before,
+        # so every git call below runs with hooks, fsmonitor and
+        # global/system config neutralised -- git-push-hardening.sh is the
+        # one home of that environment.
+        # shellcheck source=../_shared/git-push-hardening.sh
+        . "$GITHUB_ACTION_PATH/../_shared/git-push-hardening.sh"
+        # spec 114 FR-014: the routed intake's label first. The check is the
+        # one intake's pre-push hook runs (that hook cannot fire here: the
+        # hardened environment switches hooks off), and the branch must be
+        # the one wing-commander-label-first already labelled.
+        label_first() {
+          local branch="$1" slug
+          slug="$(printf 'HEAD %s refs/heads/%s 0\n' "$(git rev-parse HEAD)" "$branch" \
+            | bash "$GITHUB_ACTION_PATH/../_shared/intake-pre-push.sh" check "$LF_PREFIX" "$PROJECT" "$LF_NUM")" || return 1
+          if [ -z "$LF_SLUG" ] || [ "$slug" != "$LF_SLUG" ]; then
+            echo "::error::wing-commander intake: push refused -- '$slug' has no spec label yet (the label-first step labelled '${LF_SLUG:-nothing}')" >&2
+            return 1
+          fi
+          echo "label-first-slug=$slug" >> "$GITHUB_OUTPUT"
+        }
         (
+          wc_harden_git_env
           cd "$dir"
-          branch="$(git rev-parse --abbrev-ref HEAD)"
+          branch="$(wc_current_branch)"
           # git push already updates the local remote-tracking ref for the
           # branch it moved, so a cycle that already pushed cleanly counts
           # 0 commits ahead of origin here, not every commit since job
@@ -97,9 +179,41 @@ runs:
             count="$(git rev-list --count "${BEFORE_SHA}..HEAD" 2>/dev/null)" || count=0
           fi
           echo "commits-published=$count" >> "$GITHUB_OUTPUT"
-          target="origin"
-          [ -n "$PUSH_TOKEN" ] && target="https://x-access-token:${PUSH_TOKEN}@github.com/${PUSH_REPO}.git"
-          if git push "$target" "HEAD:$branch"; then
+          if [ -n "${LF_ISSUE:-}" ] && [ -z "$LF_SLUG" ]; then
+            # Label first labelled nothing (an agent that committed no spec,
+            # or a refusal it has already named): nothing to publish.
+            echo "wing-commander-publish-stranded-commits: label first labelled no branch -- nothing is published." >> "$GITHUB_STEP_SUMMARY"
+            echo "push-ok=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "${LF_ISSUE:-}" ] && [ "$EXPECTED_BRANCH" != "$LF_PREFIX$PROJECT/$LF_SLUG" ]; then
+            echo "::warning::wing-commander-publish-stranded-commits: label first needs branch '$LF_PREFIX$PROJECT/$LF_SLUG', but this call was given '${EXPECTED_BRANCH:-no branch}' -- nothing is published."
+            echo "push-ok=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$EXPECTED_BRANCH" ] && [ "$branch" != "$EXPECTED_BRANCH" ]; then
+            echo "::warning::wing-commander-publish-stranded-commits: the checkout is on '$branch', not '$EXPECTED_BRANCH' -- nothing is published."
+            echo "push-ok=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "${LF_ISSUE:-}" ] && ! label_first "$branch"; then
+            # Always re-run, never skipped on a remote-tracking ref: the
+            # agent can rewrite refs/remotes/*.
+            # The check also runs the containment test below, and has
+            # already named its refusal.
+            echo "::warning::wing-commander-publish-stranded-commits: the label-first check refused '$branch' -- nothing is published."
+            echo "push-ok=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$PROJECT" ] && ! printf 'HEAD %s refs/heads/%s 0\n' "$(git rev-parse HEAD)" "$branch" \
+              | bash "$GITHUB_ACTION_PATH/../_shared/containment.sh" pre-push "$PROJECT"; then
+            # spec 114 FR-021: the same test pr-conversation's pre-push hook
+            # runs, over the commits this push would publish that no remote
+            # carries yet. containment.sh has already named the paths.
+            echo "::warning::wing-commander-publish-stranded-commits: the unpublished commits touch paths outside project folder '$PROJECT' -- nothing is published."
+            echo "push-ok=false" >> "$GITHUB_OUTPUT"
+          elif [ -n "$PUSH_TOKEN" ]; then
+            # spec 095 FR-016/FR-017: an explicit destination, pushed from a
+            # shim repository, so no insteadOf/pushurl the agent could have
+            # left in this checkout's .git/config can redirect the token.
+            if wc_push_from_shim "$(git rev-parse HEAD)" "$branch" "$PUSH_REPO" "$PUSH_TOKEN"; then
+              echo "push-ok=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "push-ok=false" >> "$GITHUB_OUTPUT"
+            fi
+          elif git push origin "HEAD:$branch"; then
             echo "push-ok=true" >> "$GITHUB_OUTPUT"
           else
             echo "push-ok=false" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,25 @@
+# Passing shape: an implement-shaped stage carries .git/ as an entry of its
+# one no-write-paths boundary, passed through to every agent's tool args.
+on:
+  workflow_call:
+    inputs:
+      no-write-paths:
+        type: string
+        required: false
+        default: ".claude/,.git/"
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Write,Edit"
+          default-disallowed-tools: "WebSearch"
+          no-write-paths: ${{ inputs.no-write-paths }}
+          step-label: "implement.cycle"
+      - uses: ./.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Write,Edit"
+          default-disallowed-tools: "WebSearch"
+          no-write-paths: ${{ inputs.no-write-paths }}
+          step-label: "implement.retry"

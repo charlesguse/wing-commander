@@ -29,10 +29,11 @@ BOARD_LOOP_WORKFLOW_MD = os.path.join(
     REPO_ROOT, "specs", "057-autonomous-board-loop", "contracts", "board-loop-workflow.md")
 BOARD_LOOP_YML = os.path.join(REPO_ROOT, ".github", "workflows", "board-loop.yml")
 
-# board-loop.yml's per-job concurrency: blocks (select/triage/route/fix/
-# review/readiness/prove-gate/prove) -- every one of them must carry this
-# comment (T009).
-EXPECTED_YAML_BLOCK_COUNT = 8
+# board-loop.yml's per-job concurrency: blocks (select/triage/route/
+# fix-agent/gate-suite-fix/fix/review/gate-suite-review-fixup/
+# review-fixup-publish/readiness/prove-gate/prove) -- every one of them must
+# carry this comment (T009; spec 095 added the four split-out jobs).
+EXPECTED_YAML_BLOCK_COUNT = 12
 
 
 def _normalize(text):

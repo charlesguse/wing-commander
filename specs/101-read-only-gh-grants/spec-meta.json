@@ -1,0 +1,9 @@
+{
+  "issue": 759,
+  "spec_dir": "specs/101-read-only-gh-grants",
+  "feature_num": "101",
+  "stage": "review",
+  "iteration": 10,
+  "spec_branch": "spec/101-read-only-gh-grants",
+  "pending_re_review_from": []
+}

@@ -325,9 +325,13 @@ jobs:
           # wrong is the difference between a fixable message and a puzzle.
           if ! missing=$(docker run --rm -e REQUIRED_TOOLS="$REQUIRED_TOOLS" \
             --entrypoint sh "$IMAGE" -c \
-            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done' \
+            'for t in $REQUIRED_TOOLS; do command -v "$t" >/dev/null 2>&1 || printf " %s" "$t"; done; if command -v git >/dev/null 2>&1; then v=$(git --version 2>/dev/null); n=${v#git version }; n=${n%% *}; case "$n" in *.*) ;; *) n=;; esac; maj=${n%%.*}; r=${n#*.}; min=${r%%.*}; case "$maj.$min" in .|*[!0-9.]*|.*|*.) echo "could not parse git version from \"$v\"" >&2; exit 1;; esac; if [ "$maj" -lt 2 ] || { [ "$maj" -eq 2 ] && [ "$min" -lt 38 ]; }; then echo "git $n is older than the 2.38 minimum" >&2; exit 1; fi; fi' \
             2>docker-inspect-error.log); then
-            echo "::error::wing-commander verify-image-prerequisites: could not run a POSIX shell inside $IMAGE to check its prerequisites -- $(cat docker-inspect-error.log)"
+            if grep -qE 'is older than the 2\.38 minimum|could not parse git version' docker-inspect-error.log; then
+              echo "::error::wing-commander verify-image-prerequisites: $IMAGE failed the git version floor -- $(cat docker-inspect-error.log)${missing:+ (also missing required tool(s):$missing)}"
+            else
+              echo "::error::wing-commander verify-image-prerequisites: could not run a POSIX shell inside $IMAGE to check its prerequisites -- $(cat docker-inspect-error.log)"
+            fi
             exit 1
           fi
 
@@ -368,6 +372,8 @@ jobs:
     outputs:
       qualifies: ${{ steps.identity.outputs.qualifies }}
       slug: ${{ steps.identity.outputs.slug }}
+      # The subfolder project P (spec 114), empty at the repository root.
+      project: ${{ steps.identity.outputs.project }}
       spec-dir: ${{ steps.identity.outputs.spec-dir }}
       default-branch: ${{ steps.identity.outputs.default-branch }}
       reason: ${{ steps.identity.outputs.reason }}
@@ -429,16 +435,22 @@ jobs:
              && [ "${head_ref#"$PLAN_PREFIX"}" = "$head_ref" ] \
              && [ "${head_ref#"$TASKS_PREFIX"}" = "$head_ref" ]; then
             candidate="${head_ref#"$SPEC_PREFIX"}"
-            if printf '%s' "$candidate" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
+            # A subfolder project's branch carries P/NNN-slug (spec 114); its
+            # spec lives at P/specs/NNN-slug. The act job's
+            # wing-commander-project step enforces P's grammar.
+            if printf '%s' "$candidate" | grep -Eq '^([a-z0-9][a-z0-9-]*/)*[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
               qualifies=true
               slug="$candidate"
             fi
           fi
+          project=""
+          case "$slug" in */*) project="${slug%/*}" ;; esac
 
           {
             echo "qualifies=$qualifies"
             echo "slug=$slug"
-            echo "spec-dir=${slug:+specs/$slug}"
+            echo "project=$project"
+            echo "spec-dir=${slug:+${project:+$project/}specs/${slug##*/}}"
             echo "default-branch=$default_branch"
           } >> "$GITHUB_OUTPUT"
           if [ "$qualifies" != "true" ]; then
@@ -495,6 +507,8 @@ jobs:
       qualifies: ${{ needs.resolve-identity.outputs.qualifies }}
       spec-dir: ${{ needs.resolve-identity.outputs.spec-dir }}
       slug: ${{ needs.resolve-identity.outputs.slug }}
+      # The subfolder project P (spec 114), for act's preflight.
+      project: ${{ needs.resolve-identity.outputs.project }}
       default-branch: ${{ needs.resolve-identity.outputs.default-branch }}
       issue-number: ${{ steps.meta.outputs.issue-number }}
       # #287 — the prose-free-output rule, stated once here (the act and
@@ -596,6 +610,9 @@ jobs:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "true"
+          # spec 114 (FR-005): a subfolder lifecycle's Spec Kit state lives
+          # in its folder; resolve-identity already resolved P.
+          project: ${{ needs.resolve-identity.outputs.project }}
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
@@ -938,7 +955,7 @@ jobs:
             with `log`, `diff` or `show` and git's usual arguments — plain
             `git` is denied) — you have no write tools at all in this step.
 
-            Read .specify/memory/constitution.md and
+            Read ${{ needs.resolve-identity.outputs.project && format('{0}/', needs.resolve-identity.outputs.project) || '' }}.specify/memory/constitution.md and
             ${{ needs.resolve-identity.outputs.spec-dir }}/{spec.md,plan.md,tasks.md}
             for context, then decide, for each distinguishable request
             inside the staged text, which ONE of these categories it is:
@@ -952,7 +969,7 @@ jobs:
               clearly in-scope nor clearly warranting its own spec MUST
               classify as needs-info rather than guessing which home it
               belongs in.
-            - push-back: conflicts with .specify/memory/constitution.md
+            - push-back: conflicts with ${{ needs.resolve-identity.outputs.project && format('{0}/', needs.resolve-identity.outputs.project) || '' }}.specify/memory/constitution.md
               (e.g. asks to merge/approve this PR, bypass review, or widen
               tool access) — name the specific principle.
             - new-functionality: distinct from the current spec's scope.
@@ -1849,6 +1866,8 @@ jobs:
           oauth-token: ${{ secrets.claude-code-oauth-token }}
           api-key: ${{ secrets.anthropic-api-key }}
           require-speckit: "true"
+          # spec 114 (FR-005) -- see classify-and-announce's preflight.
+          project: ${{ needs.classify-and-announce.outputs.project }}
           use-bedrock: ${{ inputs.use-bedrock }}
           aws-role-arn: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
@@ -2141,6 +2160,20 @@ jobs:
             echo "leg-start=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } >> "$GITHUB_OUTPUT"
 
+      # Subfolder project (spec 114, FR-007, FR-022): the P of a
+      # `P/NNN-slug` lifecycle, for the act agents' project-aware denies.
+      # Skipped for a root slug (no `/`), so nothing below changes there.
+      - name: Resolve project
+        id: project
+        if: steps.relay-gate.outputs.proceed == 'true' && contains(needs.classify-and-announce.outputs.slug, '/')
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ needs.classify-and-announce.outputs.slug }}
+          identity-kind: slug
+          issue-number: ${{ needs.classify-and-announce.outputs.issue-number }}
+          token: ${{ env.WC_BOT_TOKEN }}
+          check-folder: 'false'
+
       - name: Checkout working tree for this leg
         if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.needs-checkout == 'true'
         uses: actions/checkout@v5
@@ -2160,6 +2193,18 @@ jobs:
           if [ -L "$p" ] || [ ! -d "$p" ] || [ -L "$p/.git" ] || [ ! -d "$p/.git" ] || [ "$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)" != "$want" ] || { [[ "${WC_PIPELINE_REF:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$(git -C "$p" rev-parse HEAD 2>/dev/null)" != "$(git -C "$p" rev-parse --verify -q "${WC_PIPELINE_REF}^{commit}" 2>/dev/null)" ]; }; then rm -rf -- "$p"; echo "::error::wing-commander: $p is no longer the trusted pipeline checkout (a symlink, a missing or replaced .git, or another commit): the branch just checked out replaced it. Removed it so no later step loads branch code from there (#611)."; exit 1; fi
           git -C "$p" cat-file blob HEAD:.github/scripts/pipeline-checkout-guard.sh | bash -s
 
+      # Stale-folder check (spec 114, T036) -- see clarify.yml. One check
+      # covers the act and act.fold routes: both run the agent below on this
+      # checkout.
+      - name: Check project folder on the checked-out ref
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.needs-checkout == 'true' && steps.project.outputs.project != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+        with:
+          identity: ${{ needs.classify-and-announce.outputs.slug }}
+          identity-kind: slug
+          issue-number: ${{ needs.classify-and-announce.outputs.issue-number }}
+          token: ${{ env.WC_BOT_TOKEN }}
+
       # research.md D1: deterministic code, not a prompt instruction — the
       # agent's own prompt and allowed-tools list below are unchanged. Every
       # commit this leg makes in this checkout for the rest of the job
@@ -2178,6 +2223,23 @@ jobs:
           printf '%s\n' "printf '\\n%s\\n' 'Wing-Commander-Run-Id: ${{ github.run_id }}' >> \"\$1\"" >> "$hooks_dir/prepare-commit-msg"
           chmod +x "$hooks_dir/prepare-commit-msg"
           git config core.hooksPath "$hooks_dir"
+
+      # Containment (spec 114, FR-021) for an agent that pushes itself: the
+      # act agent commits and pushes on some routes, so a check after it ran
+      # would come too late. A pre-push hook beside the run-attribution hook
+      # refuses any push carrying a change outside the project folder
+      # (wing-commander-containment's install-pre-push mode, which copies its
+      # helper out of the trusted pipeline checkout). Also records the
+      # pre-agent HEAD for the post-agent check below. Skipped for a root
+      # lifecycle, so nothing changes there.
+      - name: Install containment pre-push hook for this leg
+        id: containment-hook
+        if: steps.relay-gate.outputs.proceed == 'true' && steps.route.outputs.needs-checkout == 'true' && steps.project.outputs.project != ''
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          mode: install-pre-push
+          project: ${{ steps.project.outputs.project }}
+          hooks-dir: ${{ runner.temp }}/wing-commander-fold-hooks
 
       # Drafted-content is already-classified data (T006), but still not
       # fresh instructions — staged to a file, not interpolated (constitution V).
@@ -2231,6 +2293,11 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          # spec 095 FR-018: .git/ through the write boundary tool-args applies
+          # after any adopter override or extra-allowed-tools, so neither can
+          # reopen it -- see implement.yml's no-write-paths input.
+          no-write-paths: ".git/"
+          project: ${{ steps.project.outputs.project }}
           step-label: "pr-conversation.act"
 
       # The fold route's own, narrower grant: no Bash(git commit:*)/
@@ -2247,6 +2314,9 @@ jobs:
           extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
           allowed-tools-override: ${{ inputs.allowed-tools-override }}
           disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          # .git/ deny -- see the act step's tool args above in this file.
+          no-write-paths: ".git/"
+          project: ${{ steps.project.outputs.project }}
           step-label: "pr-conversation.act.fold"
 
       # T010: the shared bounded agent step every mutation route uses. Never
@@ -2273,7 +2343,9 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          SPECIFY_FEATURE_DIRECTORY: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          SPECIFY_FEATURE_DIRECTORY: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, needs.classify-and-announce.outputs.spec-dir) || needs.classify-and-announce.outputs.spec-dir }}
+          # Spec Kit's project-root override -- see intake.yml.
+          SPECIFY_INIT_DIR: ${{ steps.project.outputs.project && format('{0}/{1}', steps.ctx.outputs.workspace, steps.project.outputs.project) || '' }}
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
@@ -2285,7 +2357,7 @@ jobs:
             You are the act step of this repository's PR conversation
             stage, executing ONE already-classified request from PR
             #${{ inputs.pr-number }} (${{ needs.classify-and-announce.outputs.spec-dir }},
-            lifecycle issue #${{ needs.classify-and-announce.outputs.issue-number }}).
+            lifecycle issue #${{ needs.classify-and-announce.outputs.issue-number }}).${{ steps.project.outputs.prompt-paragraph }}
 
             Drafted content for this classification is staged at
             /tmp/wing-commander/act-drafted-content.json.
@@ -2379,6 +2451,22 @@ jobs:
             --allowedTools "${{ steps.tool-args-act.outputs.allowed-tools || steps.tool-args-act-fold.outputs.allowed-tools }}"
             --disallowedTools "${{ steps.tool-args-act.outputs.disallowed-tools || steps.tool-args-act-fold.outputs.disallowed-tools }}"
 
+      # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
+      # any step runs pipeline code -- see clarify.yml.
+      - name: Remove the agent-writable pipeline checkout (post-agent)
+        if: always() && steps.agent.outcome != 'skipped' && steps.project.outputs.project != ''
+        run: rm -rf -- .wing-commander-pipeline
+
+      - name: Re-checkout pipeline repository (post-agent)
+        if: always() && steps.agent.outcome != 'skipped' && steps.project.outputs.project != ''
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
       # !cancelled(), not always() (spec 052, should-fix per maintainer
       # review of PR #407): a run cancelled during the agent step must not
       # still perform a network mint and a remote rewrite in the cancel
@@ -2407,6 +2495,20 @@ jobs:
         with:
           token: ${{ env.WC_BOT_TOKEN }}
 
+      # Containment (spec 114, FR-021) -- see clarify.yml. The pre-push hook
+      # above stops an out-of-folder push; this names any out-of-folder
+      # change the agent left unpushed or pushed around the hook
+      # (`--no-verify`).
+      - name: Check agent changes stay inside the project folder
+        id: containment
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && steps.containment-hook.outputs.pre-agent-sha != ''"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+        with:
+          project: ${{ steps.project.outputs.project }}
+          base-sha: ${{ steps.containment-hook.outputs.pre-agent-sha }}
+          default-branch: ${{ needs.classify-and-announce.outputs.default-branch }}
+          helpers-dir: ${{ steps.containment-hook.outputs.helpers-dir }}
+
       # Deterministic rescue for work the agent could not push itself --
       # runs whether or not a later agent step ever would have carried it
       # along -- see clarify.yml. before-sha reused from
@@ -2415,11 +2517,18 @@ jobs:
       # anything, so it demonstrably predates this job's own checkout).
       - name: Publish stranded commits (post-agent)
         id: publish-stranded
-        if: "!cancelled() && steps.agent.outcome != 'skipped'"
+        if: "!cancelled() && steps.agent.outcome != 'skipped' && steps.containment.outcome != 'failure'"
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits
         with:
           before-sha: ${{ needs.classify-and-announce.outputs.base-sha }}
+          # spec 095 FR-016/FR-017: an explicit destination, pushed from a shim
+          # repository -- see wing-commander-publish-stranded-commits. No
+          # branch: input, because an unrelated-change leg's agent publishes
+          # on a branch it cut itself.
+          push-token: ${{ env.WC_BOT_TOKEN }}
+          push-repo: ${{ github.repository }}
+          project: ${{ steps.project.outputs.project }}
 
       - name: Compute agent run verdict
         id: agent-verdict
@@ -2548,6 +2657,9 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-commit
         with:
           token: ${{ env.WC_BOT_TOKEN }}
+          # spec 095 FR-016/FR-017 -- see wing-commander-fold-commit.
+          push-token: ${{ env.WC_BOT_TOKEN }}
+          branch: ${{ steps.route.outputs.checkout-ref }}
           spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
           section-file: /tmp/wing-commander/act-fold-section.md
           fold-id: ${{ matrix.id }}

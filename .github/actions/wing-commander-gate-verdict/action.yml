@@ -1,0 +1,78 @@
+# wing-commander-gate-verdict — read a credential-free gate-suite job's
+# verdict artifact fail-closed, in the job that acts on it (spec 095
+# FR-002..FR-004). The one reader is .github/scripts/wc_gate_verdict.py,
+# resolved beside this composite (the trusted copy the caller resolved
+# the composite from), never from the workspace.
+#
+# An absent artifact (the gate job failed, timed out or was skipped, or
+# was cancelled with no gate-job-result passed), an unreadable or
+# malformed one, one bound to another head
+# or another trusted commit, and a reader that cannot run all read as
+# outcome=fail with a reason -- never as a pass, never as an empty value.
+# first-failure is cleaned of control characters by wc_step_output; a
+# caller rendering it into a comment still fences it.
+#
+# Constitution VII: every input is optional with a default.
+name: wing-commander-gate-verdict
+description: >-
+  Downloads wc-gate-verdict-<site> and reads it fail-closed against the
+  expected head SHA and this run's github.sha, emitting outcome
+  (pass/fail), reason and first-failure.
+inputs:
+  site:
+    description: "Verdict site: board-fix, board-review-fixup, implement-cycle or implement-retry."
+    required: false
+    default: board-fix
+  expected-head-sha:
+    description: The commit about to be acted on; a verdict for any other head reads as a failure.
+    required: false
+    default: ""
+  gate-job-result:
+    description: >-
+      The gate-suite job's needs.<job>.result. 'cancelled' -- the job was
+      replaced while pending in a shared concurrency group, so no suite ran
+      -- yields outcome=cancelled: still not a pass, so nothing is pushed,
+      but not a red suite a caller would report either. Empty (the default)
+      reads the artifact alone.
+    required: false
+    default: ""
+outputs:
+  outcome:
+    description: "pass or fail -- never empty -- or cancelled when gate-job-result says so."
+    value: ${{ steps.read.outputs.outcome }}
+  reason:
+    description: Why the reader chose its outcome.
+    value: ${{ steps.read.outputs.reason }}
+  first-failure:
+    description: The first failing gate's line (untrusted text, control characters stripped).
+    value: ${{ steps.read.outputs.first-failure }}
+runs:
+  using: composite
+  steps:
+    - name: Download gate verdict
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: wc-gate-verdict-${{ inputs.site }}
+        path: ${{ runner.temp }}/wc-gate-verdict-in-${{ inputs.site }}
+    - name: Read gate verdict (fail-closed)
+      id: read
+      shell: bash
+      env:
+        SITE: ${{ inputs.site }}
+        EXPECTED_HEAD_SHA: ${{ inputs.expected-head-sha }}
+        GATE_JOB_RESULT: ${{ inputs.gate-job-result }}
+        VERDICT_FILE: ${{ runner.temp }}/wc-gate-verdict-in-${{ inputs.site }}/wc-gate-verdict.json
+      run: |
+        if [ "$GATE_JOB_RESULT" = "cancelled" ]; then
+          printf 'outcome=cancelled\nreason=gate suite job cancelled before it ran\nfirst-failure=\n' >> "$GITHUB_OUTPUT"
+          echo "gate verdict ($SITE): the gate suite job was cancelled -- nothing is pushed, and no suite result is reported." >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        if ! result="$(python3 -I "$GITHUB_ACTION_PATH/../../scripts/wc_gate_verdict.py" read \
+            --file "$VERDICT_FILE" --expected-head-sha "$EXPECTED_HEAD_SHA" \
+            --trusted-sha "$GITHUB_SHA" --site "$SITE")"; then
+          result="$(printf 'outcome=fail\nreason=gate verdict reader failed\nfirst-failure=gate verdict reader failed')"
+        fi
+        printf '%s\n' "$result" >> "$GITHUB_OUTPUT"
+        echo "gate verdict ($SITE): $(printf '%s\n' "$result" | grep -m1 '^reason=' | cut -c8-)" >> "$GITHUB_STEP_SUMMARY"

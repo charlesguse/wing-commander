@@ -1,0 +1,1 @@
+          case "$SLUG" in */*) own_project="${SLUG%/*}" ;; esac

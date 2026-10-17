@@ -146,8 +146,14 @@ outputs:
     description: Where the slug came from — `head-branch`, `metrics-record`, or empty when none resolved.
     value: ${{ steps.resolve.outputs.slug-source }}
   spec-dir:
-    description: specs/<slug>, or empty.
+    description: "[P/]specs/<NNN-slug>, or empty."
     value: ${{ steps.resolve.outputs.spec-dir }}
+  project:
+    description: The lifecycle's project P from the shared parser (spec 114), empty at the root or when no slug resolved.
+    value: ${{ steps.resolve.outputs.project }}
+  lifecycle-slug:
+    description: The bare NNN-slug, without the project, or empty.
+    value: ${{ steps.resolve.outputs.lifecycle-slug }}
   lifecycle-issue:
     description: The lifecycle issue number from spec-meta.json on the spec branch (else the spec-draft branch), or empty.
     value: ${{ steps.resolve.outputs.lifecycle-issue }}
@@ -207,16 +213,32 @@ runs:
           HEAD_BRANCH="$(GH_TOKEN="$ACTIONS_TOKEN" gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch --jq '.headBranch // empty' 2>/dev/null || true)"
         fi
 
+        # Project and lifecycle come from the one parser (spec 114, FR-013):
+        # it strips whichever pipeline prefix the branch carries (-iterN only
+        # from an implement branch) and reads [P/]NNN-slug, so a name it
+        # cannot read is no pipeline branch here.
+        lib="$GITHUB_ACTION_PATH/../_shared/project-name.sh"
+        # shellcheck source=/dev/null
+        . "$GITHUB_ACTION_PATH/../_shared/kv.sh"
+        export SPEC_DRAFT_PREFIX SPEC_PREFIX PLAN_PREFIX TASKS_PREFIX IMPL_PREFIX
         slug=""
-        case "$HEAD_BRANCH" in
-          "${SPEC_DRAFT_PREFIX}"*) slug="${HEAD_BRANCH#"$SPEC_DRAFT_PREFIX"}" ;;
-          "${SPEC_PREFIX}"*)       slug="${HEAD_BRANCH#"$SPEC_PREFIX"}" ;;
-          "${PLAN_PREFIX}"*)       slug="${HEAD_BRANCH#"$PLAN_PREFIX"}" ;;
-          "${TASKS_PREFIX}"*)      slug="${HEAD_BRANCH#"$TASKS_PREFIX"}" ;;
-          "${IMPL_PREFIX}"*)       slug="${HEAD_BRANCH#"$IMPL_PREFIX"}"; slug="${slug%-iter*}" ;;
-        esac
+        names=""
+        if [ -n "$HEAD_BRANCH" ] && names="$(bash "$lib" names branch "$HEAD_BRANCH" 2>/dev/null)"; then
+          slug="$(kv qualified "$names")"
+        fi
         slug_source=""
         [ -z "$slug" ] || slug_source="head-branch"
+        # Before spec 114 any text after a pipeline prefix was taken as the
+        # slug. A prefixed branch the parser refuses (no NNN-, uppercase,
+        # -iterN on a non-implement branch) never names a pipeline-created
+        # lifecycle, so it now falls through to the metrics record below;
+        # say so rather than lose it silently.
+        if [ -z "$slug" ]; then
+          case "$HEAD_BRANCH" in
+            "$SPEC_DRAFT_PREFIX"?*|"$SPEC_PREFIX"?*|"$PLAN_PREFIX"?*|"$TASKS_PREFIX"?*|"$IMPL_PREFIX"?*)
+              echo "spec-slug: head branch '$HEAD_BRANCH' carries a pipeline prefix but is not a [P/]NNN-slug name the shared parser reads (spec 114, FR-013), so it names no lifecycle." >> "$GITHUB_STEP_SUMMARY" ;;
+          esac
+        fi
 
         # #322 metrics-record fallback -- the header explains both the
         # fallback and its FR-008/#750 identity_is_own guard. This step is
@@ -239,11 +261,13 @@ runs:
               [ "$is_own" = "true" ] || continue
               d="$(jq -r '.spec.spec_dir // empty' "$rec" 2>/dev/null || true)"
               case "$d" in
-                specs/?*) record_dir="$d"; break ;;
+                specs/?*|?*/specs/?*) record_dir="$d"; break ;;
               esac
             done < <(find "$mr_dir" -type f -name '*.json' 2>/dev/null | sort)
-            if [ -n "$record_dir" ]; then
-              slug="${record_dir#specs/}"
+            # [P/]specs/<NNN-slug> -> [P/]<NNN-slug> (spec 114), through the
+            # parser.
+            if [ -n "$record_dir" ] && names="$(bash "$lib" names spec-dir "$record_dir" 2>/dev/null)"; then
+              slug="$(kv qualified "$names")"
               slug_source="metrics-record"
             fi
           fi
@@ -258,7 +282,10 @@ runs:
         spec_dir=""
         meta_stage=""
         if [ -n "$slug" ]; then
-          spec_dir="specs/$slug"
+          # A subfolder lifecycle's slug is <P>/<NNN-slug>; its spec
+          # directory is repository-relative <P>/specs/<NNN-slug> (spec 114,
+          # contracts/project-path-and-names.md), named by the parser above.
+          spec_dir="$(kv spec_dir "$names")"
           # One home for this read (#340, Gate 61): _shared/read-spec-meta.sh
           # fetches the branch, reads the file and applies the self-identity
           # check; its values are sanitised, so eval is safe.
@@ -293,6 +320,8 @@ runs:
           echo "slug=$slug"
           echo "slug-source=$slug_source"
           echo "spec-dir=$spec_dir"
+          echo "project=$(kv project "$names")"
+          echo "lifecycle-slug=$(kv slug "$names")"
           echo "lifecycle-issue=$issue"
           echo "meta-stage=$meta_stage"
           echo "stalled-label=$stalled_label"
@@ -344,8 +373,9 @@ runs:
     # data-model.md table so every FR-002 consumer can read one
     # resolved-stage output instead of matching a display name itself.
     # Wing Commander · 8 watchdog IS included (maintainer review, fold
-    # leg-3): the only watchdog record (metrics-record-diagnose) is written
-    # when diagnose runs, so a clean or early-failed watchdog run leaves
+    # leg-3): the watchdog's records (metrics-record-diagnose, and spec
+    # 110's metrics-record-diagnose-shadow when the trial is on) are
+    # written only when diagnose runs, so a clean or early-failed watchdog run leaves
     # record-stage empty and must still resolve here, or the self-dispatch
     # cap guard (Self-dispatch depth's if:) and four collectors skip
     # unresolved for every such run.

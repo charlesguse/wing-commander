@@ -1,0 +1,75 @@
+# wing-commander-gate-bundle — package an agent-authored workspace's new
+# commits as a git bundle for a credential-free gate-suite job, or restore
+# them in the job that publishes them (spec 095,
+# contracts/workspace-bundle.md). Constitution VII: inputs are optional
+# with defaults.
+name: wing-commander-gate-bundle
+description: >-
+  mode build (the default): builds bundle.git (base-sha..HEAD) and
+  meta.json (base_sha, head_sha, site) and uploads them as
+  wc-gate-bundle-<site>. mode restore: downloads that artifact, fetches
+  its commits and checks out expected-head-sha (on branch, when given),
+  failing unless HEAD is exactly that commit.
+inputs:
+  mode:
+    description: "build or restore."
+    required: false
+    default: build
+  site:
+    description: "Gate site: board-fix, board-review-fixup, implement-cycle or implement-retry."
+    required: false
+    default: board-fix
+  base-sha:
+    description: "build: commit the agent started from; the bundle holds base-sha..HEAD."
+    required: false
+    default: ""
+  expected-head-sha:
+    description: >-
+      restore: the head SHA the producing job reported as its own output.
+      The bundle's meta.json is never trusted for it.
+    required: false
+    default: ""
+  branch:
+    description: "restore: local branch to check the head out on; empty detaches."
+    required: false
+    default: ""
+outputs:
+  head-sha:
+    description: The bundled (build) or restored (restore) head SHA.
+    value: ${{ steps.build.outputs.head-sha || steps.restore.outputs.head-sha }}
+runs:
+  using: composite
+  steps:
+    - name: Build workspace bundle
+      id: build
+      if: inputs.mode != 'restore'
+      shell: bash
+      env:
+        SITE: ${{ inputs.site }}
+        BASE_SHA: ${{ inputs.base-sha }}
+        OUT_DIR: ${{ runner.temp }}/wc-gate-bundle-out
+      run: |
+        bash "$GITHUB_ACTION_PATH/../_shared/build-gate-bundle.sh" "$SITE" "$BASE_SHA" "$OUT_DIR"
+    - name: Upload workspace bundle
+      if: inputs.mode != 'restore'
+      uses: actions/upload-artifact@v6
+      with:
+        name: wc-gate-bundle-${{ inputs.site }}
+        path: ${{ runner.temp }}/wc-gate-bundle-out
+        if-no-files-found: error
+    - name: Download workspace bundle
+      if: inputs.mode == 'restore'
+      uses: actions/download-artifact@v4
+      with:
+        name: wc-gate-bundle-${{ inputs.site }}
+        path: ${{ runner.temp }}/wc-gate-bundle-in
+    - name: Restore the bundled commits
+      id: restore
+      if: inputs.mode == 'restore'
+      shell: bash
+      env:
+        BUNDLE_DIR: ${{ runner.temp }}/wc-gate-bundle-in
+        EXPECTED_HEAD_SHA: ${{ inputs.expected-head-sha }}
+        BRANCH: ${{ inputs.branch }}
+      run: |
+        bash "$GITHUB_ACTION_PATH/../_shared/restore-gate-bundle.sh" "$BUNDLE_DIR" "$EXPECTED_HEAD_SHA" "$BRANCH"

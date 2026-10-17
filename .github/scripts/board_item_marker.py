@@ -174,6 +174,45 @@ def find_latest_marker_matching(issue_comments, bot_login, predicate,
     return dated_matches[-1] if dated_matches else None
 
 
+def same_not_ready_comment_id(issue_comments, bot_login, pr_number, head_sha, unmet_reason):
+    """specs/093-not-ready-board-release FR-009: the id of the comment that
+    carries the newest loop marker when that marker records a not-ready
+    outcome for the same PR, head SHA and unmet condition (its own pr/
+    nr_head_sha/nr_reason, never the comment's prose), else None. The
+    readiness report edits that comment in place instead of posting a
+    duplicate."""
+    pair = read_marker_with_timestamp(issue_comments, bot_login)
+    if pair is None:
+        return None
+    created_at, marker = pair
+    if not (marker.get("step") == "readiness" and marker.get("pr") == pr_number
+            and marker.get("nr_head_sha") == head_sha and marker.get("nr_reason") == unmet_reason):
+        return None
+    # The comment that carries THIS marker: same timestamp is not enough
+    # (two loop comments can share a second).
+    for comment in issue_comments or []:
+        if not (is_loop_marker_author(comment, bot_login) and comment.get("created_at") == created_at
+                and str(comment.get("id") or "").isdigit()):
+            continue
+        match = last_marker_match(comment.get("body") or "")
+        try:
+            carried = json.loads(match.group(1)) if match else None
+        except ValueError:
+            carried = None
+        if carried == marker:
+            return int(comment["id"])
+    return None
+
+
+def directed_carry(issue_comments, bot_login):
+    """A directed review/readiness run's view of the issue's newest marker:
+    the PR it names and the not-ready count a directed review carries
+    forward (specs/093-not-ready-board-release), as select does for an
+    ordinary run. Returns {"pr", "nr_count"}; "" / 0 when absent."""
+    marker = read_marker(issue_comments, bot_login) or {}
+    return {"pr": marker.get("pr") or "", "nr_count": marker.get("nr_count") or 0}
+
+
 def read_marker(issue_comments, bot_login):
     """As read_marker_with_timestamp(), returning only the marker dict (or
     None)."""
@@ -182,7 +221,8 @@ def read_marker(issue_comments, bot_login):
 
 
 def write_marker(step, round, pr, branch, base_sha, spec_request=None,
-                  outcome_reason=None, recovery_attempted=False):
+                 outcome_reason=None, recovery_attempted=False,
+                 nr_count=None, nr_head_sha=None, nr_class=None, nr_reason=None):
     """Renders the run announcement plus the HTML-comment marker line.
     Appended to the loop's own human-legible status comment -- never the
     comment's only content (FR-044) -- by the caller.
@@ -205,12 +245,27 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None,
     included unconditionally so every pre-feature positional call site
     keeps working and its marker simply carries
     `"outcome_reason": null, "recovery_attempted": false` alongside the
-    five existing keys."""
+    five existing keys.
+
+    nr_count/nr_head_sha/nr_class/nr_reason (specs/093-not-ready-board-release,
+    contracts/not-ready-hold.md): the not-ready record, meaningful only on
+    a `readiness` marker (and, for the threshold handover only, a
+    `stalled` marker's `nr_head_sha`, D7). Each is serialized only when not
+    None -- an absent field, not a null-valued one, so every marker that
+    carries no not-ready record keeps its existing shape."""
     payload_dict = {"step": step, "round": round, "pr": pr, "branch": branch,
-                     "base_sha": base_sha, "outcome_reason": outcome_reason,
-                     "recovery_attempted": recovery_attempted}
+                    "base_sha": base_sha, "outcome_reason": outcome_reason,
+                    "recovery_attempted": recovery_attempted}
     if spec_request is not None:
         payload_dict["spec_request"] = spec_request
+    if nr_count is not None:
+        payload_dict["nr_count"] = nr_count
+    if nr_head_sha is not None:
+        payload_dict["nr_head_sha"] = nr_head_sha
+    if nr_class is not None:
+        payload_dict["nr_class"] = nr_class
+    if nr_reason is not None:
+        payload_dict["nr_reason"] = nr_reason
     payload = json.dumps(payload_dict, sort_keys=True)
     marker = "<!-- wing-commander-board-item: {0} -->".format(payload)
 
@@ -438,6 +493,17 @@ def main():
                              "e.g. 'review (round budget spent)'")
     parser.add_argument("--outcome-reason", default=None)
     parser.add_argument("--recovery-attempted", action="store_true")
+    # An empty --nr-count means "no record" (a passthrough output that was
+    # never set, e.g. resolve-pr-branch's default ""), never an error.
+    parser.add_argument("--nr-count", type=lambda v: int(v) if v != "" else None, default=None,
+                        help="specs/093-not-ready-board-release: the not-ready outcome count (FR-004(a))")
+    parser.add_argument("--nr-head-sha", default=None,
+                        help="specs/093-not-ready-board-release: the PR head SHA the not-ready decision was measured against")
+    parser.add_argument("--nr-class", default=None,
+                        help="specs/093-not-ready-board-release: 'self-clearing' or 'durable' (FR-005)")
+    parser.add_argument("--nr-reason", default=None,
+                        help="specs/093-not-ready-board-release: the unmet condition (FR-002), "
+                             "which the FR-009 dedup compares")
     args = parser.parse_args()
     if args.record_stall_summary:
         if args.issue is None or not args.from_step:
@@ -456,7 +522,9 @@ def main():
             sys.exit(1)
     print(write_marker(step, args.round, args.pr, args.branch, args.base_sha,
                        outcome_reason=args.outcome_reason,
-                       recovery_attempted=args.recovery_attempted))
+                       recovery_attempted=args.recovery_attempted,
+                       nr_count=args.nr_count, nr_head_sha=args.nr_head_sha,
+                       nr_class=args.nr_class, nr_reason=args.nr_reason))
 
 
 if __name__ == "__main__":
