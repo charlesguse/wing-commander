@@ -5694,6 +5694,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      # #583: see the fix-agent job's "Snapshot helper scripts" step.
       - name: Snapshot helper scripts (before any agent runs)
         run: |
           set -euo pipefail
@@ -5893,7 +5894,7 @@ jobs:
               || { echo "::error::board-loop merge: could not render the not-merged announcement."; exit 1; }
             # One "Not merged" per head and condition, not one per hourly run.
             key="$(printf '%s' "$body" | head -n 1)"
-            if gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json comments --jq '.comments[].body' | grep -qF -- "$key"; then
+            if gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate --jq '.[].body' | grep -qF -- "$key"; then
               echo "board-loop merge: PR #$PR_NUMBER still not merged (already announced)." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi

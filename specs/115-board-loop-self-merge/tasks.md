@@ -138,9 +138,9 @@
 
 ## Maintainer Feedback
 
-- [ ] MF001 Make `verify-lifecycle-merge-preconditions.py` (and `--self-test`) pass: in board-loop.yml's `merge` job "Announce the outcome" step, read comments via `gh api "repos/$GITHUB_REPOSITORY/issues/$N/comments" --paginate` (REST `user.type` for `is_loop_marker_author()`) instead of `gh ... view --json comments` (#826).
-- [ ] MF002 Make `verify-snapshot-integrity-statement.py` (and `--self-test`, Gate 153) pass: the `merge` job's snapshot step must point at the statement (see the fix-agent job's "Snapshot helper scripts" step).
-- [ ] MF003 Fix `verify-board-loop-resume-gating.py --self-test` (expected 12 non-stalled marker renders, found 14): account for the new merge job's marker renders in the self-test.
-- [ ] MF004 Fix `.github/scripts/auto-update-spec-kit-tests/run-tests.sh` scenario S5: the version-bump step must exit 0 and the PR must carry the `wc-bump-verification` record bound to its head.
+- [x] MF001 Make `verify-lifecycle-merge-preconditions.py` (and `--self-test`) pass: in board-loop.yml's `merge` job "Announce the outcome" step, read comments via `gh api "repos/$GITHUB_REPOSITORY/issues/$N/comments" --paginate` (REST `user.type` for `is_loop_marker_author()`) instead of `gh ... view --json comments` (#826).
+- [x] MF002 Make `verify-snapshot-integrity-statement.py` (and `--self-test`, Gate 153) pass: the `merge` job's snapshot step must point at the statement (see the fix-agent job's "Snapshot helper scripts" step).
+- [x] MF003 Fix `verify-board-loop-resume-gating.py --self-test` (expected 12 non-stalled marker renders, found 14): account for the new merge job's marker renders in the self-test.
+- [x] MF004 Fix `.github/scripts/auto-update-spec-kit-tests/run-tests.sh` scenario S5: the version-bump step must exit 0 and the PR must carry the `wc-bump-verification` record bound to its head.
 - [ ] MF005 Complete T028: extend `verify-constitution-merge-class-parity.py` so `WING_COMMANDER_BOARD_AUTO_MERGE` must appear in both the constitution and `board-loop.yml`.
 - [ ] MF006 Re-run `python .github/scripts/run-local-gates.py` until green (Gate 62 may be skipped without Docker). T033 (post-merge proof) remains a maintainer step.
