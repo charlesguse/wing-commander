@@ -71,6 +71,12 @@ outputs:
       folded-json, for a caller that made its fold in this same job and
       passes it straight to wing-commander-fold-dispatch.
     value: ${{ steps.fold.outputs.folded-json }}
+  ref-before:
+    description: The tip before the fold commit, when folded is 'true'. Empty otherwise.
+    value: ${{ steps.fold.outputs.ref-before }}
+  ref-after:
+    description: The tip after the fold commit (same as commit-sha), when folded is 'true'. Empty otherwise.
+    value: ${{ steps.fold.outputs.ref-after }}
 
 runs:
   using: composite
@@ -114,6 +120,7 @@ runs:
         git config user.name  "$bot_login"
         git config user.email "${bot_login}@users.noreply.github.com"
         git add "$SPEC_DIR/tasks.md" "$SPEC_DIR/spec-meta.json"
+        ref_before="$(git rev-parse HEAD)"
         git commit -m "fold(${FOLD_ID}): ${FOLD_SUMMARY}"
         # spec 095 FR-015/FR-016: pr-conversation's act agent ran in this
         # job before this push, so it runs with hooks, fsmonitor and
@@ -136,4 +143,6 @@ runs:
         fi
         echo "folded=true" >> "$GITHUB_OUTPUT"
         echo "commit-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        echo "ref-before=$ref_before" >> "$GITHUB_OUTPUT"
+        echo "ref-after=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
         echo "folded-json=$(jq -cn --arg id "$FOLD_ID" --arg summary "$FOLD_SUMMARY" '[{id: $id, summary: $summary}]')" >> "$GITHUB_OUTPUT"
