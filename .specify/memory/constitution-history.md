@@ -6,6 +6,23 @@ A new amendment adds its report to the top of this list (below this
 header), not to `constitution.md` -- see CLAUDE.md.
 
 <!--
+Sync Impact Report — 2026-10-17
+Version change: 2.5.0 → 2.6.0 (MINOR: Principle X gains the switch that governs the board loop's two existing merge classes. No class is added or widened; the conditions each class already requires are unchanged.)
+Modified principles:
+  X. Bounded Autonomy — The Pipeline Works Its Own Board: one passage added after the prove sentence. Both board-loop merge classes (the bounded fix-PR merge and the verified dependency-bump merge) run only while `WING_COMMANDER_BOARD_AUTO_MERGE` is `true`. It is one switch for both classes and defaults to off; while off, the loop fixes, reviews and reports but never merges. `WING_COMMANDER_BOARD_LOOP_PAUSED` is the kill switch. Every such merge re-derives its conditions from a fresh snapshot of the exact head SHA, and a workflow-scope refusal is handed to a maintainer, never routed around. This mirrors what the lifecycle pull request merge already says for `WING_COMMANDER_LIFECYCLE_AUTO_MERGE`.
+Modified sections: none
+Added sections: none
+Removed sections: none
+Templates requiring updates:
+  ✅ .specify/templates/plan-template.md — no change needed (Constitution Check is generic)
+  ✅ .specify/templates/spec-template.md — no change needed (no principle references)
+  ✅ .specify/templates/tasks-template.md — no change needed (no principle references)
+  ✅ .specify/extensions.yml — absent, so no before/after_constitution hooks apply
+Motivation: spec 115 (`specs/115-board-loop-self-merge`, lifecycle #903) builds the board loop's merge for the two classes Principle X already authorizes. The owner's clarify answer (#903 Q1, option A) chose one default-off switch for both classes, with the loop's existing pause switch as the kill switch.
+Worked example: spec 115's lifecycle PR (#1059) carries the merge job, `board_merge.py` and `verify-board-merge.py`. Its `verify-constitution-merge-class-parity.py` checks the switch in both directions, and it waives the constitution half in `EXEMPT_UNDOCUMENTED_SWITCHES` until this amendment lands (tracker #889). Delete that entry once both have merged.
+Follow-up TODOs: remove the `EXEMPT_UNDOCUMENTED_SWITCHES` entry after #1059 and this amendment are both on main.
+-->
+<!--
 Sync Impact Report — 2026-10-14
 Version change: 2.4.0 → 2.5.0 (MINOR: three existing clauses are widened to cover lifecycles that run in a project subfolder of the consuming repository. No principle is added, removed or redefined, and every root-level reading is unchanged because the project path `P` is empty for the root project. Materially expanding where the artifacts live and how far the `.claude/` deny reaches is MINOR, not PATCH (spec 114 FR-024))
 Modified principles:
