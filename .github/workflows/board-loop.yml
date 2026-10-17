@@ -5787,8 +5787,10 @@ jobs:
             # A maintainer /stop on a tracking issue leaves it board:stalled
             # (the stop-check composite's record); removing the label is the
             # release. A failed read is never "not stalled".
-            stalled="$(gh issue list -R "$GITHUB_REPOSITORY" --state open --label board:stalled --limit 1000 \
-              --json number --jq '[.[].number] | map(tostring) | join(" ")')" \
+            # Filtered in jq, not by a label flag: resume-gating reads a gh
+            # call naming the label as applying it.
+            stalled="$(gh issue list -R "$GITHUB_REPOSITORY" --state open --limit 1000 --json number,labels \
+              --jq '[.[] | select(.labels | map(.name) | index("board:stalled")) | .number | tostring] | join(" ")')" \
               || { echo "::warning::board-loop merge: could not list the board:stalled issues -- no bump candidate is looked for this run."; exit 0; }
             picked="$(jq -s '.' "$RUNNER_TEMP/board-merge-bump-snapshots.jsonl" \
               | python3 -I "$scripts/board_merge.py" pick-bump --bot-login "$BOT_LOGIN" --stalled-issues "$stalled")" \

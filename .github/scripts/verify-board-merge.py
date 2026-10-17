@@ -579,7 +579,8 @@ def check_stalled_tracking_issue():
     with open(BOARD_LOOP, encoding="utf-8") as fh:
         merge_code = _run_blocks_text(job_block(fh.read().splitlines(), "merge") or [])
     if not re.search(r"pick-bump\b[^\n]*--stalled-issues\s+\"\$\w+\"", merge_code) \
-            or not re.search(r"gh\s+issue\s+list\b[^\n]*--label\s+board:stalled", merge_code):
+            or not re.search(r"gh\s+issue\s+list\b[^\n]*--state\s+open\b[^\n]*--json\s+number,labels\b", merge_code) \
+            or 'index("board:stalled")' not in merge_code:
         fail("the merge job does not hand pick-bump the open board:stalled issues (--stalled-issues)")
     else:
         ok("the merge job hands pick-bump the open board:stalled issues")
