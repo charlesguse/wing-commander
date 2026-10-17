@@ -55,8 +55,13 @@ def parse(text):
     for f in data["findings"]:
         if not isinstance(f, dict) or f.get("category") not in CATEGORIES:
             return None
-        if any(not isinstance(f.get(k, ""), str) for k in KEYS):
-            return None
+        # null reads as absent ("principle" is for constitution conflicts
+        # only); any other non-string is a schema mismatch.
+        for k in KEYS:
+            if f.get(k) is None:
+                f[k] = ""
+            elif not isinstance(f[k], str):
+                return None
     return data["findings"]
 
 

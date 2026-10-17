@@ -153,21 +153,6 @@ jobs:
           gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" \
             --body "$(printf 'Fold `%s` stays held while the spec is amended. Answer `/fold-hold proceed` once the amendment has landed on the spec branch, and implement is dispatched then.' "$FOLD_ID")"
 
-      # A retry re-runs the check, whose outcome may hold the same fold
-      # again: the old hold is closed first, so a fresh hold posted below
-      # is the open one.
-      - name: Close the hold before a retry
-        if: needs.resolve.outputs.action == 'retry'
-        env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          ISSUE: ${{ github.event.issue.number }}
-          FOLD_ID: ${{ needs.resolve.outputs.fold-id }}
-        run: |
-          set -euo pipefail
-          marker="$(python3 .wc-pristine-repo/.github/scripts/wc_fold_hold.py resolved-marker --fold-id "$FOLD_ID" --resolution retry)"
-          gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" \
-            --body "$(printf 'Re-running the analyze check on fold `%s`.\n\n%s' "$FOLD_ID" "$marker")"
-
       - name: Drop the held fold's tasks
         id: drop
         if: needs.resolve.outputs.action == 'drop'
@@ -264,8 +249,9 @@ jobs:
           intended-turns: 12
           run-label: fold-analyze
 
-      # The transcript is the only record of what the analyze agent did;
-      # it is kept whatever the agent's outcome (Gate 16).
+      # Why the analyze agent's transcript is uploaded whatever its outcome
+      # -- see lifecycle-review-gate.yml's "Upload Claude execution log
+      # (fold analyze)".
       - name: Upload Claude execution log (fold analyze)
         if: always() && steps.analyze-agent.outcome != 'skipped'
         uses: actions/upload-artifact@v6
@@ -289,10 +275,9 @@ jobs:
           stage: fold-hold
           spec-identity-is-own: 'false'
 
-      # review-step-gating resolution 4: continue-on-error, not a hard
-      # exit -- the decide step below is this check's own fallback: a
-      # non-healthy run holds the fold as analyze-failed (FR-013), and that
-      # hold must still be decided and posted.
+      # Why this fail-loud step is continue-on-error, not a hard exit --
+      # see lifecycle-review-gate.yml's "Fail loud on non-healthy agent
+      # verdict (fold analyze)".
       - name: Fail loud on non-healthy agent verdict (fold analyze)
         id: analyze-verdict-fail
         if: always() && steps.analyze-agent.outcome != 'skipped' && steps.analyze-verdict.outputs.verdict != 'healthy'
@@ -360,13 +345,16 @@ jobs:
           implement-workflow: ${{ needs.resolve.outputs.implement-workflow }}
           folded-json: ${{ needs.resolve.outputs.folded-json }}
 
-      # A hold is released once: proceed and drop close it only after the
-      # dispatch above ran, so a failed release leaves it open to answer
-      # again.
+      # A hold is released once, and only after the dispatch above ran, so
+      # a failed release -- a retry whose re-check never decided or posted
+      # included -- leaves it open to answer again. A retry that held again
+      # posted a fresh hold-state marker above, which is now the open hold
+      # (wc_fold_hold.py reads the newest), so it records nothing here.
       - name: Record the release on the lifecycle issue
         if: >-
           steps.fold-dispatch.outcome == 'success'
-          && (needs.resolve.outputs.action == 'proceed' || needs.resolve.outputs.action == 'drop')
+          && (needs.resolve.outputs.action == 'proceed' || needs.resolve.outputs.action == 'drop'
+              || needs.resolve.outputs.action == 'retry')
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ github.event.issue.number }}

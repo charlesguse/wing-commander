@@ -134,6 +134,14 @@ def validate_finding(obj):
     item shape, else (False, reason) naming the first field that failed."""
     if not isinstance(obj, dict):
         return False, "finding must be a JSON object, got {0}".format(type(obj).__name__)
+    # spec 116 FR-005: an invalid optional `line` makes the finding
+    # unattributable, never rejects it -- dropping a real in-scope finding
+    # over its line number could leave a round reading clean. The bad line
+    # is removed from `obj` in place, so the caller keeps the finding
+    # without it.
+    if "line" in obj and _validate_value(
+            obj["line"], ITEM_SCHEMA["properties"]["line"], "finding.line"):
+        del obj["line"]
     err = _validate_value(obj, ITEM_SCHEMA, "finding")
     if err:
         return False, err
@@ -147,7 +155,8 @@ def validate_finding(obj):
 # (FR-064's own bullet-5 enumeration for this gate), plus two titles that
 # are not a single line (#583): an embedded LF, and a trailing LF alone;
 # and a lone surrogate in `what`, which cannot be encoded as UTF-8; plus
-# spec 116's optional `line`: present and valid, zero, and not an integer.
+# spec 116's optional `line`: present and valid, and zero or not an
+# integer -- both kept, with the bad line dropped (FR-005).
 # ----------------------------------------------------------------------------
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests", "board-review-finding-schema")
@@ -174,6 +183,11 @@ def self_test():
         with open(path, encoding="utf-8") as fh:
             finding = json.load(fh)
         ok, reason = validate_finding(finding)
+        if ok and name.endswith("-dropped.json") and "line" in finding:
+            bad += 1
+            print("[FAIL] {0}: expected its invalid line dropped, still {1!r}".format(
+                name, finding["line"]))
+            continue
         if expect_valid and not ok:
             bad += 1
             print("[FAIL] {0}: expected valid, got: {1}".format(name, reason))

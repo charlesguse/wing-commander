@@ -63,6 +63,14 @@ class DecideTests(unittest.TestCase):
         for answer in ("amend", "drop", "proceed"):
             self.assertIn("/fold-hold " + answer, r["question-markdown"])
 
+    def test_null_principle_on_a_non_conflict_still_dispatches(self):
+        # "principle" is for constitution conflicts only; an agent that
+        # writes null there has not failed the check.
+        r = run([finding("inconsistency", principle=None)])
+        self.assertEqual((r["decision"], r["hold-reason"]), ("dispatch", ""))
+        self.assertEqual(run([finding("inconsistency", principle=7)])["hold-reason"],
+                         "analyze-failed")
+
     def test_fr_contradiction_only_dispatches_with_report_naming_both(self):
         r = run([finding("inconsistency", location="spec.md FR-006")])
         self.assertEqual(r["decision"], "dispatch")

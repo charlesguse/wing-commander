@@ -3524,6 +3524,16 @@ jobs:
         with:
           intended-turns: 12
 
+      # use-bedrock: this job runs no other agent, so the analyze agent's
+      # AWS role is assumed here, as `act` does before its own agent.
+      - name: Configure AWS credentials for Bedrock (fold analyze)
+        if: steps.analyze-stage.outputs.tasks != '' && steps.analyze-stage.outputs.tasks != '0'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials
+        with:
+          use-bedrock: ${{ inputs.use-bedrock }}
+          aws-role-arn: ${{ inputs.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
       - name: Analyze the round's folds
         id: analyze-agent
         if: steps.analyze-stage.outputs.tasks != '' && steps.analyze-stage.outputs.tasks != '0'
@@ -3579,8 +3589,9 @@ jobs:
           intended-turns: 12
           run-label: fold-analyze
 
-      # The transcript is the only record of what the analyze agent did;
-      # it is kept whatever the agent's outcome (Gate 16).
+      # Why the analyze agent's transcript is uploaded whatever its outcome
+      # -- see lifecycle-review-gate.yml's "Upload Claude execution log
+      # (fold analyze)".
       - name: Upload Claude execution log (fold analyze)
         if: always() && steps.analyze-agent.outcome != 'skipped'
         uses: actions/upload-artifact@v6
@@ -3606,10 +3617,9 @@ jobs:
           spec-issue: ${{ needs.classify-and-announce.outputs.issue-number }}
           spec-identity-is-own: 'false'
 
-      # review-step-gating resolution 4: continue-on-error, not a hard
-      # exit -- the decide step below is this check's own fallback: a
-      # non-healthy run holds the fold as analyze-failed (FR-013), and that
-      # hold must still be decided and posted.
+      # Why this fail-loud step is continue-on-error, not a hard exit --
+      # see lifecycle-review-gate.yml's "Fail loud on non-healthy agent
+      # verdict (fold analyze)".
       - name: Fail loud on non-healthy agent verdict (fold analyze)
         id: analyze-verdict-fail
         if: always() && steps.analyze-agent.outcome != 'skipped' && steps.analyze-verdict.outputs.verdict != 'healthy'
@@ -3662,10 +3672,13 @@ jobs:
             --base-sha "$BASE_SHA" --fold-ref-before "$BASE_SHA" --fold-ref-after "$FOLD_AFTER" \
             --folded-json "${ROUND_FOLDED_JSON:-$FOLDED_JSON}" --implement-workflow "$IMPLEMENT_WORKFLOW"
 
+      # !cancelled(): a failed outcome post or log upload above must not
+      # strand a fold the analyze check let through (lifecycle-review-gate.yml's
+      # dispatch reads the decision the same way).
       - name: Dispatch implement once for the whole review
         id: fold-dispatch
         if: >-
-          needs.fold-turn-dispatch.outputs.should-dispatch == 'true'
+          !cancelled() && needs.fold-turn-dispatch.outputs.should-dispatch == 'true'
           && (steps.analyze-fold.outputs.decision == 'dispatch' || steps.analyze-fold.outputs.decision == 'skipped')
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-dispatch
         with:
@@ -3678,6 +3691,24 @@ jobs:
           folded-json: ${{ needs.fold-turn-dispatch.outputs.folded-json }}
           round-folded-json: ${{ needs.fold-turn-dispatch.outputs.round-folded-json }}
           fold-queue-token: ${{ needs.fold-turn-dispatch.outputs.implement-token }}
+
+      # specs/116 FR-014: the analyze check held this review's fold(s), so
+      # no cycle was dispatched. Say so on the PR, so the reviewer whose
+      # review folded is not left without a reply; the owner question
+      # itself is on the lifecycle issue.
+      - name: Reply that this review's fold(s) are held
+        shell: bash
+        if: "!cancelled() && needs.fold-turn-dispatch.outputs.should-dispatch == 'true' && steps.analyze-fold.outputs.decision == 'hold'"
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          ISSUE: ${{ needs.classify-and-announce.outputs.issue-number }}
+          HOLD_REASON: ${{ steps.analyze-fold.outputs.hold-reason }}
+        run: |
+          set -euo pipefail
+          body_file="$RUNNER_TEMP/dispatch-once-held-reply.md"
+          echo "This review's fold(s) are committed, but no implement cycle was dispatched: the fold-time analyze check held them (\`$HOLD_REASON\`). The owner question is on #$ISSUE; implement is dispatched once a maintainer answers it there." > "$body_file"
+          gh pr comment "$PR_NUMBER" --body-file "$body_file"
 
       # spec 075 FR-014/FR-015, reconciled 2026-09-29: this run's own claim
       # declined because it folded nothing of its own -- the tip moved
@@ -3713,7 +3744,7 @@ jobs:
       # disagree (research.md D3).
       - name: Reply to this review's fold(s)
         shell: bash
-        if: steps.fold-dispatch.outcome == 'success'
+        if: "!cancelled() && steps.fold-dispatch.outcome == 'success'"
         env:
           FOLDED: ${{ steps.fold-dispatch.outputs.folded }}
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}

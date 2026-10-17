@@ -964,6 +964,9 @@ jobs:
       # table) and its recurrences (FR-003), for `report` to name.
       convergence-b64: ${{ steps.partition.outputs.convergence-b64 }}
       recurrences: ${{ steps.partition.outputs.recurrences }}
+      # specs/116 FR-014: a held fold dispatched nothing, so `report` must
+      # not say implement was re-dispatched.
+      analyze-decision: ${{ steps.analyze-fold.outputs.decision }}
     steps:
       - name: Resolve the PR's head ref
         id: pr
@@ -1216,8 +1219,11 @@ jobs:
           if in_scope_survivors:
               with open(os.path.join(runner_temp, "lifecycle-pr-reviews.json"), encoding="utf-8") as fh:
                   records = read_round_records(json.load(fh), os.environ["BOT_LOGIN"])
+              # Every in-scope finding, filed or not: the population the
+              # review job's round record carries, so this round's count
+              # and the earlier rounds' read back compare like with like.
               current = {"round": round_, "head_sha": os.environ["HEAD_SHA"],
-                         "findings": round_findings([f for f, _ in in_scope_survivors], issue)}
+                         "findings": round_findings(findings, issue)}
               decision = evaluate(records, current, "origin/main", ".", resolved=sorted(folded_fps))
               recurring_fps = set(decision["recurrences"])
           stop = bool(decision and decision["stop"])
@@ -1675,6 +1681,7 @@ jobs:
           FILED_FINGERPRINTS: ${{ needs.disposition.outputs.filed-fingerprints }}
           CONVERGENCE_B64: ${{ needs.disposition.outputs.convergence-b64 }}
           RECURRENCES: ${{ needs.disposition.outputs.recurrences }}
+          ANALYZE_DECISION: ${{ needs.disposition.outputs.analyze-decision }}
           COST_LINE: ${{ needs.review.outputs.cost-line }}
         run: |
           set -uo pipefail
@@ -1715,7 +1722,10 @@ jobs:
             detail="$(printf 'The review loop is not converging, so it stops before the round budget with %s in-scope finding(s) still open; nothing was folded. This PR is not selected again until a human intervenes.\n\n%s' "${FINDINGS_OPEN:-0}" "$handoff")"
           else
             result="findings"
-            detail="${IN_SCOPE_COUNT:-0} in-scope and ${OUT_OF_SCOPE_COUNT:-0} out-of-scope finding(s) were posted on PR #$PR_NUMBER. In-scope survivors (after dedup) were folded into tasks.md and re-dispatched implement; out-of-scope survivors were filed as their own issue(s). ${FINDINGS_OPEN:-0} in-scope finding(s) from this round remain open."
+            redispatch="and re-dispatched implement"
+            # specs/116 FR-014: the fold-time analyze check held the fold.
+            [ "${ANALYZE_DECISION:-}" != "hold" ] || redispatch="but implement is held for the owner by the fold-time analyze check (see the \`/fold-hold\` question on this issue)"
+            detail="${IN_SCOPE_COUNT:-0} in-scope and ${OUT_OF_SCOPE_COUNT:-0} out-of-scope finding(s) were posted on PR #$PR_NUMBER. In-scope survivors (after dedup) were folded into tasks.md $redispatch; out-of-scope survivors were filed as their own issue(s). ${FINDINGS_OPEN:-0} in-scope finding(s) from this round remain open."
             # specs/116 FR-003: a recurrence is named, never dropped.
             if [ -n "${RECURRENCES:-}" ]; then
               detail="$(printf '%s\n\nRecurring finding(s) -- folded before, raised again, so the earlier fix did not hold: %s' "$detail" "$(printf '%s' "$RECURRENCES" | sed 's/,/, /g')")"

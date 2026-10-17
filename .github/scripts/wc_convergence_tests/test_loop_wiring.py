@@ -25,7 +25,7 @@ from wc_shell_harness import find_step, resolve_bash, run_step  # noqa: E402
 LIFECYCLE = os.path.join(ROOT, ".github", "workflows", "lifecycle-review-gate.yml")
 BOARD = os.path.join(ROOT, ".github", "workflows", "board-loop.yml")
 HELPERS = ("wc_convergence.py", "wc_review_finding_fingerprint.py", "board_item_marker.py",
-           "board_spec_request_body.py")
+           "board_spec_request_body.py", "wc_lifecycle_review_marker.py")
 BOT = "wing-commander-bot[bot]"
 ISSUE = "42"
 BASH = resolve_bash()
@@ -100,13 +100,13 @@ class LoopRepo(unittest.TestCase):
 class LifecyclePartition(LoopRepo):
     STEP = "Partition, dedup, and render this round's findings"
 
-    def partition(self, round_, head, findings, reviews, folded=()):
+    def partition(self, round_, head, findings, reviews, folded=(), filed=()):
         self.write_temp("lifecycle-review-findings-artifact/lifecycle-review-findings.json", findings)
         self.write_temp("lifecycle-pr-reviews.json", reviews)
         self.git("checkout", "-q", head)
         gate = {"round": round_ - 1, "head_sha": "prev", "outcome": "findings",
                 "findings_open": 1, "folded_fingerprints": list(folded),
-                "filed_fingerprints": [], "updated_at": None}
+                "filed_fingerprints": list(filed), "updated_at": None}
         return self.run_shipped(LIFECYCLE, self.STEP, {
             "ISSUE": ISSUE, "PR_NUMBER": "7", "HEAD_SHA": head, "BOT_LOGIN": BOT,
             "ROUND_BUDGET": "5", "REVIEW_GATE_JSON": json.dumps(gate)})
@@ -144,6 +144,19 @@ class LifecyclePartition(LoopRepo):
         self.assertTrue(decision["stop"])
         self.assertIn("count-not-falling", decision["tripped"])
 
+    def test_round_three_counts_filed_in_scope_findings_as_its_record_does(self):
+        # The review job's round record counts every in-scope finding,
+        # filed or not; this round's count must too, or the trend compares
+        # two populations (round 2's 2 against this round's 1).
+        out = self.partition(3, self.h3, [finding("H", "f.py", 5), finding("X", "f.py", 6)], [
+            review(1, self.h1, [entry("A", "f.py", 4), entry("B", "f.py", 5),
+                                entry("C", "f.py", 6)], "t1"),
+            review(2, self.h2, [entry("D", "f.py", 4), entry("E", "f.py", 5)], "t2")],
+            filed=[fingerprint(ISSUE, "X", "f.py")])
+        self.assertEqual(out["outcome"], "not-converging")
+        decision = json.loads(base64.b64decode(out["convergence-b64"]))
+        self.assertIn("count-not-falling", decision["tripped"])
+
     def test_round_three_with_a_falling_count_on_original_lines_folds(self):
         out = self.partition(3, self.h3, [finding("H", "f.py", 5)], [
             review(1, self.h1, [entry("A", "f.py", 4), entry("B", "f.py", 5),
@@ -151,6 +164,36 @@ class LifecyclePartition(LoopRepo):
             review(2, self.h2, [entry("D", "f.py", 4), entry("E", "f.py", 5)], "t2")])
         self.assertEqual(out["outcome"], "findings")
         self.assertIn("Review finding: H", self.section())
+
+
+class LifecycleReport(LoopRepo):
+    STEP = "Compose and post the round's outcome"
+
+    def post(self, analyze_decision):
+        bindir = os.path.join(self.tmp.name, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        sent = os.path.join(self.tmp.name, "sent.txt")
+        stub = os.path.join(bindir, "gh")
+        with open(stub, "w", encoding="utf-8") as fh:
+            fh.write("#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" >> '{0}'\n".format(sent))
+        os.chmod(stub, os.stat(stub).st_mode | stat.S_IEXEC)
+        self.run_shipped(LIFECYCLE, self.STEP, {
+            "GH_TOKEN": "x", "GITHUB_REPOSITORY": "o/r", "ISSUE": ISSUE, "PR_NUMBER": "7",
+            "HEAD_SHA": self.h2, "REVIEW_RESULT": "success", "PARSE_FAILED": "false",
+            "IN_SCOPE_COUNT": "1", "OUT_OF_SCOPE_COUNT": "0", "ROUND": "2",
+            "DISPOSITION_RESULT": "success", "DISPOSITION_OUTCOME": "findings",
+            "FINDINGS_OPEN": "1", "FOLDED_FINGERPRINTS": "", "FILED_FINGERPRINTS": "",
+            "CONVERGENCE_B64": "", "RECURRENCES": "", "ANALYZE_DECISION": analyze_decision,
+            "COST_LINE": "", "PATH": bindir + os.pathsep + os.environ["PATH"]},
+            path_prepend=bindir)
+        with open(sent, encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_a_held_fold_is_not_reported_as_re_dispatched(self):
+        body = self.post("hold")
+        self.assertNotIn("re-dispatched implement", body)
+        self.assertIn("held for the owner", body)
+        self.assertIn("re-dispatched implement", self.post("dispatch"))
 
 
 class BoardRound(LoopRepo):

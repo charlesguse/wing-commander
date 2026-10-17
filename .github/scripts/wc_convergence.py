@@ -300,9 +300,11 @@ def compute_history(base, rounds, ledger, cwd):
             size = diff_size(base, heads[i], cwd)["lines"]
             growth = (float(size) / first_size - 1) if first_size else None
             churn = _churn(origins, heads, i, cwd)["total"] if i else 0
+        recorded = rnd.get("count")
         out.append({
             "round": rnd["round"],
-            "count": len(rnd.get("findings", [])),
+            "count": recorded if isinstance(recorded, int) and not isinstance(recorded, bool)
+            else len(rnd.get("findings", [])),
             "attributable": attributable,
             "self_inflicted": self_inflicted,
             "unattributable": unattributable,
@@ -399,7 +401,10 @@ def round_record_marker(round_, head_sha, entries):
     """The HTML-comment marker a loop appends, LAST, to the review body it
     posts on the PR for one round (data-model "Review round record").
     Titles stay out of it: the record carries identifiers only."""
-    payload = {"round": round_, "head_sha": head_sha,
+    # count is the round's whole in-scope count; only the first
+    # MAX_RECORDED_FINDINGS entries are kept, so a later round's trend
+    # reads count, never len(findings).
+    payload = {"round": round_, "head_sha": head_sha, "count": len(entries),
                "findings": [{"fingerprint": e["fingerprint"], "file": e["file"],
                              "line": e["line"]}
                             for e in entries[:MAX_RECORDED_FINDINGS]]}
@@ -458,7 +463,11 @@ def evaluate(records, current, base, cwd, resolved=None, budget=None,
     decision = decide(history, budget=budget)
     decision["recurrences"] = history[-1]["recurrences"] if history else []
     decision["git_ok"] = bool(history and history[-1].get("git_ok"))
-    decision["open_findings"] = current.get("findings", [])
+    # Identifiers only: the decision crosses job outputs, and the
+    # reviewer's free-text title is never part of it.
+    decision["open_findings"] = [
+        {"fingerprint": f.get("fingerprint"), "file": f.get("file"), "line": f.get("line")}
+        for f in current.get("findings", [])]
     return decision
 
 
@@ -471,11 +480,17 @@ def _pct(value, signed=False):
 def render_handoff(decision):
     rounds = decision["signals"]
     n = rounds[-1]["round"] if rounds else 0
-    lines = ["<!-- wing-commander-not-converging: round={0} -->".format(n)]
-    if decision.get("reason") == "budget-spent":
+    lines = []
+    if not decision.get("stop"):
+        # No rule tripped (the board loop's budget-spent stall still lists
+        # the signals): neither the not-converging marker nor its lead.
+        lines.append("Convergence signals: no rule tripped.")
+    elif decision.get("reason") == "budget-spent":
+        lines.append("<!-- wing-commander-not-converging: round={0} -->".format(n))
         lines.append("Review stopped: the round budget is spent (stall reason "
                      "`budget-spent`). The PR is left open and unmerged.")
     else:
+        lines.append("<!-- wing-commander-not-converging: round={0} -->".format(n))
         lines.append("Review stopped: not converging (stall reason "
                      "`not-converging`). The PR is left open and unmerged.")
     lines.append("")

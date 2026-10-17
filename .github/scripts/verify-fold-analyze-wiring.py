@@ -25,7 +25,20 @@ THE SHAPE, PER CALLER JOB
 The agent step: `--model claude-sonnet-5-5`, a `--max-turns` ceiling,
 `--allowedTools` a subset of Read,Grep,Glob, and `--disallowedTools`
 naming Write, Edit and Bash. Its prompt points at the composite's staged
-instructions-file (the one home of the instructions).
+instructions-file (the one home of the instructions). An agent that passes
+`use_bedrock` is preceded in its job by wing-commander-bedrock-credentials,
+or every Bedrock adopter's check fails and holds every fold.
+
+The dispatch's `if:` also carries `!cancelled()`, so a failed post or log
+upload between the decision and the dispatch cannot strand a fold the check
+let through; a step that writes a hold's resolved marker runs after the
+dispatch, never before it, so a release that never dispatched leaves the
+hold open to answer again; and pr-conversation (the published caller)
+replies on the PR when its fold is held, as it does when one dispatches.
+
+The fold-analyze steps' rationale comments live once, in
+lifecycle-review-gate.yml; the other callers point at it (CLAUDE.md's
+"Shared logic has exactly one home").
 
 Every failure branch is exercised by --self-test, which mutates the real
 tree's own shapes (Constitution VIII); it also runs wc_fold_hold.py's
@@ -51,6 +64,16 @@ CALLERS = (
      "wing-commander-fold-commit"),
     (".github/workflows/pr-conversation.yml", "dispatch-once", None),
     (".github/workflows/wing-commander-fold-hold.yml", "release", None),
+)
+# The published caller: a held fold is answered on the PR, as a dispatched
+# one is (constitution VII: nothing beyond one extra read-only agent run).
+PUBLISHED_CALLER = ".github/workflows/pr-conversation.yml"
+BEDROCK = "wing-commander-bedrock-credentials"
+# The fold-analyze steps' rationale comments, and their one home.
+CANONICAL_COMMENTS_HOME = ".github/workflows/lifecycle-review-gate.yml"
+CANONICAL_COMMENTS = (
+    "the decide step below is this check's own fallback",
+    "The transcript is the only record of what the analyze agent did",
 )
 ANALYZE = "wing-commander-fold-analyze"
 DISPATCH = "wing-commander-fold-dispatch"
@@ -128,6 +151,12 @@ def check_caller(path, steps, preceding):
         if not agent_id or f"steps.{agent_id}.outcome" not in outcome:
             failures.append(f"{path}: the decide step's agent-outcome does not read "
                             f"the analyze agent step's own outcome.")
+        bedrock = str((steps[agent].get("with") or {}).get("use_bedrock") or "")
+        if bedrock and bedrock != "false" and not any(
+                BEDROCK in _uses(s) for s in steps[:agent]):
+            failures.append(f"{path}: the analyze agent passes use_bedrock but no "
+                            f"{BEDROCK} step precedes it in its job -- a Bedrock "
+                            f"adopter's check fails and holds every fold.")
     if decide < stage:
         failures.append(f"{path}: the decide step runs before the stage step.")
     if preceding is not None:
@@ -145,7 +174,42 @@ def check_caller(path, steps, preceding):
             failures.append(f"{path}: the {DISPATCH} step's if: does not admit only "
                             f"decision dispatch/skipped -- a hold, or a decide step "
                             f"that never ran, must withhold dispatch.")
+        if "!cancelled()" not in cond:
+            failures.append(f"{path}: the {DISPATCH} step's if: lacks !cancelled() -- "
+                            f"a failed step between the decision and the dispatch "
+                            f"strands a fold the check let through.")
+        early = [s.get("name") for s in steps[:dispatch]
+                 if "resolved-marker" in str(s.get("run") or "")]
+        if early:
+            failures.append(f"{path}: {early} writes a hold's resolved marker before "
+                            f"{DISPATCH} runs -- a release that never dispatches "
+                            f"would close the hold with nothing left to answer.")
+    if path == PUBLISHED_CALLER and not any(
+            "decision == 'hold'" in str(s.get("if") or "")
+            and "gh pr comment" in str(s.get("run") or "") for s in steps):
+        failures.append(f"{path}: no step replies on the PR when the fold is held -- "
+                        f"the review that folded gets no answer.")
     return failures
+
+
+def check_comment_homes(texts):
+    """texts: {caller path: raw text}. Each rationale lives in its home only."""
+    failures = []
+    for phrase in CANONICAL_COMMENTS:
+        homes = sorted(p for p, t in texts.items() if phrase in t)
+        if homes != [CANONICAL_COMMENTS_HOME]:
+            failures.append(f"the fold-analyze comment {phrase!r} is in {homes}; it "
+                            f"lives once, in {CANONICAL_COMMENTS_HOME}, and the other "
+                            f"callers point at it (-- see).")
+    return failures
+
+
+def _caller_texts():
+    texts = {}
+    for path, _job, _pre in CALLERS:
+        with open(path, encoding="utf-8") as fh:
+            texts[path] = fh.read()
+    return texts
 
 
 def check_composite(doc):
@@ -177,6 +241,7 @@ def check_all():
             failures.append(f"{path}: no steps found for job {job!r}.")
             continue
         failures += check_caller(path, steps, preceding)
+    failures += check_comment_homes(_caller_texts())
     return failures
 
 
@@ -290,6 +355,39 @@ def self_test():
             s.pop("shell", None)
     case("a run step without shell: bash is caught",
          any("shell: bash" in f for f in comp_mutation(drop_shell)))
+
+    uncancelled = copy.deepcopy(steps)
+    uncancelled[idx(uncancelled, is_dispatch)]["if"] = (
+        "steps.analyze-fold.outputs.decision == 'dispatch'")
+    case("a dispatch without !cancelled() is caught", caught(uncancelled, "!cancelled()"))
+
+    pub_path, pub_job, pub_pre = CALLERS[1]
+    pub = _find_job(_load(pub_path), pub_job)["steps"]
+
+    def pub_caught(mutated, word):
+        return any(word in f for f in check_caller(pub_path, mutated, pub_pre))
+
+    case("the published caller's analyze agent without Bedrock credentials is caught",
+         pub_caught([s for s in pub if BEDROCK not in _uses(s)], "use_bedrock"))
+    case("the published caller without a PR reply on a hold is caught",
+         pub_caught([s for s in pub if not ("decision == 'hold'" in str(s.get("if") or "")
+                                            and "gh pr comment" in str(s.get("run") or ""))],
+                    "replies on the PR"))
+
+    rel_path, rel_job, rel_pre = CALLERS[2]
+    rel = _find_job(_load(rel_path), rel_job)["steps"]
+    closed_early = copy.deepcopy(rel)
+    closed_early.insert(idx(closed_early, is_stage), {
+        "name": "Close the hold before a retry",
+        "run": "python3 wc_fold_hold.py resolved-marker --fold-id x --resolution retry"})
+    case("a resolved marker written before the dispatch is caught",
+         any("resolved marker" in f for f in check_caller(rel_path, closed_early, rel_pre)))
+
+    texts = _caller_texts()
+    pasted = dict(texts)
+    pasted[rel_path] += "\n# " + CANONICAL_COMMENTS[0] + "\n"
+    case("a fold-analyze rationale comment pasted into a second caller is caught",
+         any("lives once" in f for f in check_comment_homes(pasted)))
 
     import wc_fold_hold
     case("wc_fold_hold.py's own self-test passes", wc_fold_hold.self_test() == 0)

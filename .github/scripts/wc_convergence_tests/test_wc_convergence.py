@@ -112,6 +112,17 @@ class RuleFixtures(unittest.TestCase):
         self.assertIn("round budget is spent", text)
         self.assertIn("Tripped: count-not-falling", text)
 
+    def test_handoff_without_a_trip_is_not_a_not_converging_stop(self):
+        # The board loop's budget-spent stall embeds this hand-off whether
+        # or not a rule tripped; without a trip it must not claim one.
+        with open(os.path.join(HERE, "fixtures", "rules", "s9-budget-round-without-trip.json"),
+                  encoding="utf-8") as fh:
+            data = json.load(fh)
+        text = wc.render_handoff(wc.decide(data["history"], budget=data["budget"]))
+        self.assertNotIn("wing-commander-not-converging", text)
+        self.assertNotIn("not converging", text)
+        self.assertIn("no rule tripped", text)
+
     def test_handoff_says_when_git_signals_are_unknown(self):
         d = wc.decide([rnd(1, 3), rnd(2, 3), rnd(3, 3)])
         d["git_ok"] = False
@@ -271,6 +282,14 @@ class RoundRecords(unittest.TestCase):
         self.assertEqual([(r["round"], r["head_sha"]) for r in records], [(1, "bbb"), (2, "ccc")])
         self.assertNotIn("title", json.dumps(records))
 
+    def test_marker_keeps_the_whole_count_past_its_entry_cap(self):
+        entries = [{"fingerprint": "fp{0}".format(i), "file": "x.py", "line": 1}
+                   for i in range(wc.MAX_RECORDED_FINDINGS + 30)]
+        rec = wc.read_round_records([self.review(wc.round_record_marker(2, "h", entries),
+                                                 "2026-01-01T00:00:00Z")], self.BOT)[0]
+        self.assertEqual(len(rec["findings"]), wc.MAX_RECORDED_FINDINGS)
+        self.assertEqual(rec["count"], wc.MAX_RECORDED_FINDINGS + 30)
+
     def test_only_the_apps_last_marker_counts(self):
         real = wc.round_record_marker(1, "real", [])
         forged = wc.round_record_marker(1, "forged", [])
@@ -305,6 +324,26 @@ class EvaluateInGit(GitBacked):
                         self.repo, resolved=["fp-F"])
         self.assertEqual(d["recurrences"], ["fp-F"])
         self.assertFalse(d["stop"])  # round 2: recorded, never an early stop
+
+    def test_a_falling_count_past_the_entry_cap_is_falling(self):
+        base, h0, h1, h2 = self.build()
+        many = [{"fingerprint": "fp{0}".format(i), "file": "f.py", "line": 1}
+                for i in range(wc.MAX_RECORDED_FINDINGS + 30)]
+        reviews = [{"body": wc.round_record_marker(r, h, es), "submitted_at": "t{0}".format(r),
+                    "user": {"login": "bot[bot]", "type": "Bot"}}
+                   for r, h, es in ((1, h0, many), (2, h1, many[:-10]))]
+        records = wc.read_round_records(reviews, "bot[bot]")
+        current = {"round": 3, "head_sha": h2, "findings": many[:-20]}
+        d = wc.evaluate(records, current, base, self.repo)
+        self.assertNotIn("count-not-falling", d["tripped"])
+
+    def test_open_findings_carry_identifiers_only(self):
+        base, h0, h1, h2 = self.build()
+        current = {"round": 2, "head_sha": h1,
+                   "findings": [{"fingerprint": "x", "file": "f.py", "line": 4,
+                                 "title": "agent text"}]}
+        d = wc.evaluate([{"round": 1, "head_sha": h0, "findings": []}], current, base, self.repo)
+        self.assertEqual(d["open_findings"], [{"fingerprint": "x", "file": "f.py", "line": 4}])
 
     def test_later_records_are_ignored_and_unreachable_heads_degrade(self):
         base, h0, h1, h2 = self.build()
