@@ -320,3 +320,78 @@
   Both functions in verify-board-merge.py scan for a job header and stop at the next two-space key; job_block should be derived from job_span to keep one home.
 
   - .github/scripts/verify-board-merge.py
+
+## Review Gate Round 4 Findings
+
+- [ ] Review finding: Unrecognised gh pr merge failures are classed non-retryable
+
+  Rate-limit, expired-token and network errors fall into class `other`, so the outcome is `refused` and the PR is permanently handed over or skipped until its head moves.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: Around line 1991: the `retryable` check exits 1 for class `other`.
+
+- [ ] Review finding: Already-merged PR yields a garbled not-merged announcement
+
+  When the PR is already MERGED by someone else, the step emits outcome=not-merged while may_merge=true, so the announcement says unmet condition `None` and the outcome record stores reason None.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: Around line 1983; affects render_announcement and outcome_record.
+
+- [ ] Review finding: Merged outcome reported even when merge_sha is empty
+
+  If read_merge_sha returns empty after 5 tries, the job still reports outcome=merged and writes the step=merged marker without merge_sha, which prove-gate needs. It neither fails nor warns.
+
+  - .github/workflows/board-loop.yml
+  - .github/scripts/board_item_marker.py
+
+  Detail: Around line 1971.
+
+- [ ] Review finding: Fix-class markers drop spec_request and other fields
+
+  --carry-round-from passes through only `round`, so the new merged/handed-over marker replaces the newest marker and loses spec_request and nr_* fields. A newest marker that is missing or unparseable resets the round to 0.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: Around line 2067; contradicts the comment that the marker keeps branch, base and round.
+
+- [ ] Review finding: Auto-update-spec-kit closes and deletes the PR on persistent comment failure
+
+  After three failed `gh pr comment` calls the step runs `gh pr close --delete-branch` and then fails. A lasting cause such as permissions makes this loop on every run, and the comment's claim that the PR is proposed afresh is unverified.
+
+  - .github/workflows/auto-update-spec-kit.yml
+
+  Detail: Around line 3679.
+
+- [ ] Review finding: Bump verification marker trusted from any bot-authored comment
+
+  Any comment posted as the same App that quotes a `wc-bump-verification ... passed` marker creates a trusted pass record. Only the head SHA binds it, and `_defang` protects only render_announcement.
+
+  - .github/scripts/board_merge.py
+
+  Detail: Around line 440, verification_passed_at_head.
+
+- [ ] Review finding: Candidate step makes redundant gh pr view calls
+
+  headRefName and baseRefOid are fetched in separate gh pr view calls, and the snapshot step fetches the PR a third time. This costs API round-trips, and the reads can disagree if the PR moves between them.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: Around line 1851.
+
+- [ ] Review finding: verify-board-merge gate uses a fixed line slice for the if: block
+
+  The gate looks for the switch variables in `merge_job[1:12]` instead of parsing the job's `if:` expression, so it is position-dependent. Adding lines to `if:` breaks it, and a variable moved elsewhere can still pass.
+
+  - .github/scripts/verify-board-merge.py
+
+  Detail: Around line 1344.
+
+- [ ] Review finding: Formatting typo in board_item_marker.py
+
+  The changed line `payload =json.dumps(...)` is missing a space after `=`, which pycodestyle E225 would flag.
+
+  - .github/scripts/board_item_marker.py
+
+  Detail: Line 183.
