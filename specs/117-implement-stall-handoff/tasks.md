@@ -494,7 +494,7 @@
 
   Detail: If DECIDE_SCRIPT is empty because blocker-cycle failed, the cap branch posts only the generic message with no outstanding-task count.
 
-- [ ] Review finding: Blocker task id regex rejects suffixed task ids
+- [x] Review finding: Blocker task id regex rejects suffixed task ids
 
   The blocker validator requires T[0-9]+ exactly, but the task-line format and is_maintainer allow ids such as T012a, so a real blocker on such a task is dropped as invalid.
 
