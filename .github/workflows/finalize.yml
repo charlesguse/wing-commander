@@ -797,6 +797,7 @@ jobs:
       # with a stall statement. Not continue-on-error: a missing count would
       # otherwise render as "no manual work remains", so "Verify agent
       # output" fails the job on the absent finalize-remaining.md instead.
+      # The composite removes that file when the renderer itself fails.
       - name: Render remaining work
         id: remaining-work
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && steps.checkbox-tip-finalize.outcome == 'success'

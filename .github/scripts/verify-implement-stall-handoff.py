@@ -182,6 +182,59 @@ def check_finalize_wiring():
         fail("wing-commander-remaining-work does not call _shared/render-remaining-work.sh")
 
 
+def run_remaining_work_composite(renderer, impl_text):
+    """Run wing-commander-remaining-work's run: block with `renderer` as its
+    _shared/render-remaining-work.sh; return (proc, outputs, report-or-None)."""
+    import yaml
+    action = yaml.safe_load(read(os.path.join(
+        ROOT, ".github", "actions", "wing-commander-remaining-work", "action.yml")))
+    script = next(st["run"] for st in action["runs"]["steps"] if st.get("id") == "render")
+    tmp = _tmpdir("wc-117-composite-")
+    os.makedirs(os.path.join(tmp, "_shared"))
+    os.makedirs(os.path.join(tmp, "action"))
+    shutil.copy(renderer, os.path.join(tmp, "_shared", "render-remaining-work.sh"))
+    out_file = os.path.join(tmp, "github-output")
+    report = os.path.join(tmp, "finalize-remaining.md")
+    env = {**os.environ, "GITHUB_ACTION_PATH": os.path.join(tmp, "action"),
+           "RUNNER_TEMP": tmp, "GITHUB_OUTPUT": out_file,
+           "MAINTAINER_ITEMS": "", "IMPL_ITEMS": impl_text, "ROUTED_ITEMS": "",
+           "OUTPUT_PATH": report}
+    proc = run(["bash", "-c", script], env=env)
+    outputs = dict(line.split("=", 1) for line in
+                   (read(out_file).splitlines() if os.path.exists(out_file) else []))
+    return proc, outputs, (read(report) if os.path.exists(report) else None)
+
+
+def check_remaining_work_composite():
+    """A renderer failure must not leave a report that reads as "no manual
+    work remains": the composite removes it (so finalize's "Verify agent
+    output" fails on the absent file) and still exits 0 so that step runs."""
+    global CASES
+    impl = "- [ ] T002 Unchecked code\n"
+    proc, outputs, report = run_remaining_work_composite(
+        os.path.join(SHARED, "render-remaining-work.sh"), impl)
+    for what, ok in (("exits 0", proc.returncode == 0),
+                     ("writes the report", report is not None and "## Unfinished implementation" in report),
+                     ("impl-count=1", outputs.get("impl-count") == "1"),
+                     ("stalled=true", outputs.get("stalled") == "true")):
+        CASES += 1
+        if not ok:
+            fail(f"wing-commander-remaining-work (renderer ok): expected it {what}; "
+                 f"rc={proc.returncode} outputs={outputs} stderr={proc.stderr}")
+    stub = os.path.join(_tmpdir("wc-117-stub-"), "render.sh")
+    with open(stub, "w", encoding="utf-8") as fh:
+        fh.write("#!/usr/bin/env bash\nexit 3\n")
+    proc, outputs, report = run_remaining_work_composite(stub, impl)
+    for what, ok in (("exits 0 (keeps Verify agent output reachable)", proc.returncode == 0),
+                     ("leaves no report file", report is None),
+                     ("does not claim stalled=false", outputs.get("stalled") != "false"),
+                     ("reports has-remaining=false", outputs.get("has-remaining") == "false")):
+        CASES += 1
+        if not ok:
+            fail(f"wing-commander-remaining-work (renderer fails): expected it {what}; "
+                 f"rc={proc.returncode} outputs={outputs} report={report!r}")
+
+
 MAINTAINER_KINDS = (
     "real workflow dispatch or run re-drive",
     "reading or\n            changing repository variables or settings",
@@ -367,6 +420,7 @@ def main():
     check_composite_outputs()
     check_render()
     check_finalize_wiring()
+    check_remaining_work_composite()
     check_prompts()
     check_implement_wiring()
     if FAILURES:
