@@ -20,6 +20,14 @@ The immediate cause was a defect since fixed (#989, fixed by #996): the pinned c
 
 Re-entering implement from review is also awkward. A manual implement dispatch on a review-stage lifecycle is a silent no-op: the idempotency guard skips because spec-meta says `review` (run 38004803493, `stage: review, iteration: 4`). The working route is a maintainer comment on the implementation PR, which the PR-conversation stage folds into a Maintainer Feedback cycle — but with the iteration cap at 5, a lifecycle that stopped at iteration 3 or 4 has only one or two cycles left.
 
+## Clarifications
+
+### Session 2026-10-17
+
+- Q: Which stop rule replaces "one zero-progress cycle ends the loop"? → A: (c) Hand off only when the cycle names a concrete blocker, in a shape-validated, agent-supplied field that deterministic code reads; otherwise dispatch another cycle, with the iteration cap as the backstop. (FR-005, FR-006)
+- Q: What does a manual implement dispatch on a review-stage lifecycle do? → A: (b) It stays a no-op, but posts on the lifecycle issue why it did nothing and points at the maintainer-comment route (a comment on the implementation PR, folded into a Maintainer Feedback cycle by pr-conversation), which stays the only re-entry. (FR-010)
+- Q: Does a re-entry reset the iteration cap? → A: (a) No — it uses whatever iterations remain, and the lifecycle issue says how many are left. (FR-011)
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - The final PR tells the owner what is theirs and what is unfinished (Priority: P1)
@@ -57,23 +65,25 @@ When the tasks stage generates a task that only a maintainer can perform — dis
 
 ### User Story 3 - The loop hands off only when continuing cannot help (Priority: P2)
 
-A lifecycle with ordinary implementation tasks still open is not handed to finalize merely because one cycle checked no new task. The stop rule chosen in clarify decides when a zero-progress cycle ends the loop, and every hand-off with implementation outstanding is reported as a stall on the lifecycle issue.
+A lifecycle with ordinary implementation tasks still open is not handed to finalize merely because one cycle checked no new task. A zero-progress cycle ends the loop only when it names a concrete blocker in a shape-validated field; otherwise another cycle runs, with the iteration cap as the backstop. Every hand-off with implementation outstanding is reported as a stall on the lifecycle issue.
 
 **Why this priority**: The original trigger. After #996 the early-stop evidence is weaker, so it ranks below the still-live reporting defect, but the revisit condition spec 059 FR-011 named has been met.
 
-**Independent Test**: Feed the read-back fixtures for (a) a zero-progress cycle with outstanding code tasks and no stated blocker, (b) a zero-progress cycle naming a concrete blocker, and (c) a cycle that made progress, and confirm each yields the dispatch-or-hand-off outcome the chosen stop rule specifies.
+**Independent Test**: Feed the read-back fixtures for (a) a zero-progress cycle with outstanding code tasks and no stated blocker, (b) a zero-progress cycle naming a concrete blocker, and (c) a cycle that made progress, and confirm (a) dispatches another cycle, (b) hands off as a stall quoting the blocker, and (c) dispatches another cycle; add (d) a zero-progress cycle whose blocker field is malformed, which must dispatch another cycle.
 
 **Acceptance Scenarios**:
 
-1. **Given** a healthy zero-progress cycle that leaves outstanding implementation tasks and is below the iteration cap, **When** the read-back decides the outcome, **Then** it applies the stop rule fixed by FR-005, deterministically from inputs a reviewer can re-derive.
-2. **Given** a cycle that made progress and leaves outstanding tasks below the cap, **When** the read-back decides, **Then** another cycle is dispatched (unchanged from spec 059 FR-008).
-3. **Given** a cycle that checks the last outstanding implementation task, **When** the read-back decides, **Then** the loop converges in that same cycle (unchanged from spec 059 FR-010b).
+1. **Given** a healthy zero-progress cycle that leaves outstanding implementation tasks, is below the iteration cap and names no blocker (or a blocker field that fails shape validation), **When** the read-back decides the outcome, **Then** another cycle is dispatched.
+2. **Given** a healthy zero-progress cycle below the cap that names a concrete blocker in a well-formed blocker field, **When** the read-back decides the outcome, **Then** it hands off to finalize and the lifecycle issue receives a stall comment quoting the blocker and the outstanding implementation-task count.
+3. **Given** zero-progress cycles that name no blocker and repeat until the iteration cap is reached, **When** the read-back decides at the cap, **Then** it hands off as a stall with the iteration cap as the stated reason.
+4. **Given** a cycle that made progress and leaves outstanding tasks below the cap, **When** the read-back decides, **Then** another cycle is dispatched (unchanged from spec 059 FR-008).
+5. **Given** a cycle that checks the last outstanding implementation task, **When** the read-back decides, **Then** the loop converges in that same cycle (unchanged from spec 059 FR-010b).
 
 ---
 
 ### User Story 4 - Re-entering implement from review is explicit (Priority: P3)
 
-A maintainer who wants more implement cycles on a lifecycle already in review gets a visible outcome: either the re-entry route works and is documented, or a dispatch that does nothing says why on the lifecycle issue. The maintainer knows how many cycles the re-entry has left.
+A maintainer who wants more implement cycles on a lifecycle already in review gets a visible outcome: a manual implement dispatch still does nothing, but says why on the lifecycle issue and points at the maintainer-comment route on the implementation PR, which stays the only re-entry. The maintainer knows how many cycles the re-entry has left, since re-entry does not reset the iteration cap.
 
 **Why this priority**: The PR-comment route already works (#982, #991, #990 finished that way). What is missing is legibility: a silent no-op and an undocumented cap interaction.
 
@@ -81,8 +91,8 @@ A maintainer who wants more implement cycles on a lifecycle already in review ge
 
 **Acceptance Scenarios**:
 
-1. **Given** a lifecycle whose spec-meta stage is `review`, **When** a maintainer dispatches implement manually, **Then** the lifecycle issue receives a comment stating what happened and why, never silence.
-2. **Given** a re-entry into implement from review, **When** a cycle starts, **Then** the iteration cap that applies is the one FR-011 fixes, and the lifecycle issue states how many cycles remain.
+1. **Given** a lifecycle whose spec-meta stage is `review`, **When** a maintainer dispatches implement manually, **Then** no cycle runs and the lifecycle issue receives a comment stating that nothing ran, why, and that a comment on the implementation PR is the way to re-enter — never silence.
+2. **Given** a lifecycle that stopped at iteration 4 under a cap of 5, **When** a maintainer comment on the implementation PR re-enters implement, **Then** the cap is not reset, the lifecycle issue states that 1 cycle remains, and the loop hands off at the cap as usual.
 
 ---
 
@@ -110,8 +120,8 @@ A maintainer who wants more implement cycles on a lifecycle already in review ge
 
 **Stop rule (implement read-back)**
 
-- **FR-005**: For a healthy cycle below the iteration cap that checks no new implementation task and leaves implementation tasks outstanding, the read-back MUST [NEEDS CLARIFICATION: which stop rule replaces "one zero-progress cycle ends the loop"? (a) allow N consecutive zero-progress cycles before hand-off; (b) add spec 059 FR-011's deferred "keep working while tasks remain" prompt line, keeping the one-cycle rule; (c) hand off only when the cycle names a concrete blocker, otherwise dispatch another cycle. Precedent check recommends (c).] The decision MUST be computed by deterministic code from inputs a reviewer can re-derive (Principle IX); any agent-supplied input it consumes (e.g. a named blocker under option c) MUST be validated for shape before it can change the outcome.
-- **FR-006**: Every hand-off to finalize with implementation tasks still outstanding MUST be reported on the lifecycle issue as a stall, naming the count of outstanding implementation tasks and the reason the loop stopped (zero-progress rule, named blocker, or iteration cap).
+- **FR-005**: For a healthy cycle below the iteration cap that checks no new implementation task and leaves implementation tasks outstanding, the read-back MUST hand off to finalize only when the cycle names a concrete blocker in a dedicated, agent-supplied blocker field; otherwise it MUST dispatch another cycle, with the iteration cap as the backstop. This replaces spec 059 FR-010's "one zero-progress cycle ends the loop". The decision MUST be computed by deterministic code from inputs a reviewer can re-derive (Principle IX); the blocker field is the only agent-supplied input it consumes, and it MUST be validated for shape before it can change the outcome — a missing, empty or malformed blocker field counts as no blocker and yields another cycle.
+- **FR-006**: Every hand-off to finalize with implementation tasks still outstanding MUST be reported on the lifecycle issue as a stall, naming the count of outstanding implementation tasks and the reason the loop stopped (the named blocker, quoted from the validated field, or the iteration cap).
 
 **Finalize labelling**
 
@@ -121,8 +131,8 @@ A maintainer who wants more implement cycles on a lifecycle already in review ge
 
 **Re-entry**
 
-- **FR-010**: A manual implement dispatch on a lifecycle whose spec-meta stage is `review` MUST [NEEDS CLARIFICATION: should a review-stage manual dispatch (a) be supported as a documented re-entry that runs a cycle, or (b) stay a no-op that posts on the lifecycle issue why it did nothing and points at the maintainer-comment route? Precedent check recommends (b).] and in either case MUST NOT be silent on the lifecycle issue.
-- **FR-011**: A re-entry into implement from review (by whichever route FR-010 supports, including the existing maintainer-comment route) MUST [NEEDS CLARIFICATION: does a re-entry reset the iteration cap (a) no — it uses the remaining iterations under the existing cap; (b) yes — it starts a fresh cap; (c) it grants a fixed small allowance beyond the cap? Precedent check recommends (a).] and the lifecycle issue MUST be told how many cycles remain when the re-entry starts.
+- **FR-010**: A manual implement dispatch on a lifecycle whose spec-meta stage is `review` MUST stay a no-op that runs no cycle, and MUST post on the lifecycle issue why it did nothing, pointing at the maintainer-comment route (a comment on the implementation PR, which the PR-conversation stage folds into a Maintainer Feedback cycle). It MUST NOT be silent on the lifecycle issue. The maintainer-comment route remains the only re-entry into implement from review.
+- **FR-011**: A re-entry into implement from review (the maintainer-comment route, per FR-010) MUST NOT reset the iteration cap: it uses whatever iterations remain under the existing cap, and the lifecycle issue MUST be told how many cycles remain when the re-entry starts.
 
 **Proof and gates**
 
@@ -152,7 +162,8 @@ A maintainer who wants more implement cycles on a lifecycle already in review ge
 
 - The maintainer marker is a fixed literal token on the task line chosen during planning; spec 059 rejected an implement-time `**BLOCKED**` marker because it was authored judgment at the gate. This marker differs: it is assigned by the tasks stage from a closed list of action kinds (FR-001), it is visible in the tasks PR / auto-commit for review, and the gate that acts on it only checks for its presence. Spec 059's checkbox-delta discriminator stays the progress test; this feature narrows which lines it counts.
 - Lifecycles already on `main` or in flight keep their tasks.md as-is; the edge-case defaults above (unmarked = implementation) apply to them.
-- The iteration cap default (5) and the per-spec concurrency group are unchanged unless FR-011's answer changes cap behaviour on re-entry.
-- The maintainer-comment re-entry route through the PR-conversation stage remains supported whichever FR-010 option is chosen.
+- The iteration cap default (5) and the per-spec concurrency group are unchanged; re-entry does not reset the cap (FR-011).
+- The maintainer-comment re-entry route through the PR-conversation stage remains supported and is the only re-entry from review (FR-010).
+- The blocker field's name, location and accepted shape are chosen during planning; FR-005 fixes only that it is a dedicated field validated by deterministic code, and that anything failing validation counts as no blocker.
 - The changes touch the tasks, implement and finalize stage workflows and their shared composites; any new input or output on a published stage workflow is a deliberate widening of the published contract (Principle VII) to be identified in planning.
 - #989/#996 (PyYAML in the pinned image) is fixed and out of scope.

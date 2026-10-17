@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,6 +31,6 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain by design (CI intake does not wait): FR-005 (stop rule), FR-010 (review-stage manual dispatch), FR-011 (iteration cap on re-entry). They are posted to lifecycle issue #992 for the clarify stage.
+- The three clarifications posted to lifecycle issue #992 were answered by the owner on 2026-10-17 and folded in (see spec.md "Clarifications"): FR-005 stop rule = hand off only on a shape-validated named blocker, else another cycle, cap as backstop; FR-010 review-stage manual dispatch = explained no-op pointing at the maintainer-comment route; FR-011 re-entry = no cap reset, remaining cycles reported.
 - The spec names pipeline artifacts (tasks.md, spec-meta, the lifecycle issue) because they are the user-facing surface of this repository's product; it does not prescribe how the workflows implement the rules.
 - Task routing and finalize labelling directions were taken from the 2026-10-17 precedent check (recommendation: yes to both; drop standing instructions from the callout); only their mechanics are left to planning.
