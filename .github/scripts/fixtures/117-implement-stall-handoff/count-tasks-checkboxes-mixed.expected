@@ -5,9 +5,9 @@ unchecked-items<<WING_COMMANDER_UNCHECKED_ITEMS_EOF
 - [ ] T003 [maintainer] Re-drive one run
 - [ ] Keep the gates green
 WING_COMMANDER_UNCHECKED_ITEMS_EOF
-impl-checked-count=1
+impl-checked-count=3
 impl-unchecked-count=1
-standing-count=2
+standing-count=1
 impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF
 - [ ] T002 Unchecked code in `b.sh`
 WING_COMMANDER_IMPL_ITEMS_EOF

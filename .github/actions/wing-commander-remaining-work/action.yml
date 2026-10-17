@@ -57,6 +57,7 @@ runs:
         printf '%s\n' "$MAINTAINER_ITEMS" > "$RUNNER_TEMP/wc-remaining-maintainer.txt"
         printf '%s\n' "$IMPL_ITEMS" > "$RUNNER_TEMP/wc-remaining-impl.txt"
         printf '%s\n' "$ROUTED_ITEMS" > "$RUNNER_TEMP/wc-remaining-routed.txt"
+        RENDER_IMPL_COUNT_FILE="$RUNNER_TEMP/wc-remaining-impl-count.txt" \
         bash "$GITHUB_ACTION_PATH/../_shared/render-remaining-work.sh" \
           "$RUNNER_TEMP/wc-remaining-maintainer.txt" \
           "$RUNNER_TEMP/wc-remaining-impl.txt" \
@@ -66,7 +67,8 @@ runs:
         else
           echo "has-remaining=false" >> "$GITHUB_OUTPUT"
         fi
-        impl_count="$(grep -c '[^[:space:]]' "$RUNNER_TEMP/wc-remaining-impl.txt" || true)"
+        # The renderer is the one source of the count (routed items excluded).
+        impl_count="$(cat "$RUNNER_TEMP/wc-remaining-impl-count.txt" 2>/dev/null || echo 0)"
         echo "impl-count=$impl_count" >> "$GITHUB_OUTPUT"
         if [ "$impl_count" -gt 0 ]; then
           echo "stalled=true" >> "$GITHUB_OUTPUT"

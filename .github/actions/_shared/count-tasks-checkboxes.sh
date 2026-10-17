@@ -85,10 +85,12 @@ counts="$(printf '%s\n' "$content" | awk '
     return 0
   }
   function is_maintainer(line,    t) {
+    # The token sits in the leading tag run: optional T###/M### id, then
+    # bracket tags ([P], [US1], ...), so a long id or several tags cannot
+    # push it out of range. Prose later in the line never matches.
     t = line
-    sub(/^[ \t]*- \[[ xX]\]/, "", t)
-    t = substr(t, 1, 40)
-    return index(t, " [maintainer] ") > 0
+    sub(/^[ \t]*- \[[ xX]\][ \t]*/, "", t)
+    return (t ~ /^([TM][0-9]+[a-z]?[ \t]+)?(\[[^]]*\][ \t]+)*\[maintainer\]([ \t]|$)/)
   }
   {
     stripped = $0
@@ -101,12 +103,15 @@ counts="$(printf '%s\n' "$content" | awk '
     if ($0 ~ /^[ \t]*- \[[xX ]\]/) {
       is_checked = ($0 ~ /^[ \t]*- \[[xX]\]/)
       if (is_checked) checked++; else { unchecked++; items = items $0 "\n" }
-      if (is_standing($0)) {
+      if (is_checked) {
+        # Classification applies to unchecked lines only: a checked line is
+        # finished work whatever it says, so base and tip counts stay
+        # comparable for the progress test.
+        impl_checked++
+      } else if (is_standing($0)) {
         standing++
       } else if (is_maintainer($0)) {
-        if (!is_checked) maint = maint $0 "\n"
-      } else if (is_checked) {
-        impl_checked++
+        maint = maint $0 "\n"
       } else {
         impl_unchecked++
         impl_items = impl_items $0 "\n"

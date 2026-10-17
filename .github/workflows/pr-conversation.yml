@@ -3548,8 +3548,10 @@ jobs:
           # specs/117 FR-011: cycles left under the cap, floor 0; no state
           # is written and the cap is not reset.
           remaining=0
-          if [[ "$next" =~ ^[0-9]+$ && "$MAX_ITERATIONS" =~ ^[0-9]+$ && "$MAX_ITERATIONS" -gt "$next" ]]; then
-            remaining=$((MAX_ITERATIONS - next))
+          # 10# so a leading zero ("08") is decimal, not a bad octal.
+          if [[ "$next" =~ ^[0-9]+$ && "$MAX_ITERATIONS" =~ ^[0-9]+$ ]] \
+            && [ "$((10#$MAX_ITERATIONS))" -gt "$((10#$next))" ]; then
+            remaining=$((10#$MAX_ITERATIONS - 10#$next))
           fi
 
           # Defensive only: this step only runs after a winning claim,
