@@ -293,6 +293,31 @@ def check_review_stage_comment():
             fail(f"implement.yml: the review-stage explanation step lacks {needle!r}")
 
 
+def check_reentry_remaining():
+    """FR-011: the Maintainer Feedback re-dispatch reply names the cycles
+    remaining, floor 0. The arithmetic block is extracted from
+    pr-conversation.yml and run, so the gate exercises the shipped text."""
+    global CASES
+    text = read(os.path.join(ROOT, ".github", "workflows", "pr-conversation.yml"))
+    m = re.search(r"          remaining=0\n(.*?\n          fi\n)", text, re.S)
+    CASES += 1
+    if not m:
+        fail("pr-conversation.yml: the re-dispatch reply computes no 'remaining' count")
+        return
+    for needle in ("max-iterations:", "MAX_ITERATIONS: ${{ inputs.max-iterations }}",
+                   "Cycles remaining under the iteration cap"):
+        CASES += 1
+        if needle not in text:
+            fail(f"pr-conversation.yml lacks {needle!r}")
+    snippet = "remaining=0\n" + m.group(1)
+    for nxt, cap, want in (("4", "5", "1"), ("5", "5", "0"), ("7", "5", "0")):
+        CASES += 1
+        res = run(["bash", "-c", snippet + 'echo "$remaining"'],
+                  env={**os.environ, "next": nxt, "MAX_ITERATIONS": cap})
+        if res.stdout.strip() != want:
+            fail(f"remaining-count iteration {nxt} of {cap}: got {res.stdout.strip()!r}, want {want!r}")
+
+
 def check_single_home():
     """No copy of the classification, stop rule or remaining-work rendering
     in a workflow run: block outside the _shared scripts (CLAUDE.md "Shared
@@ -322,6 +347,7 @@ def check_single_home():
 
 def main():
     check_review_stage_comment()
+    check_reentry_remaining()
     check_single_home()
     check_blocker()
     check_decide()
