@@ -100,7 +100,7 @@
 
 - [x] T025 [P] Update the live docs under `docs/` for the implement loop's stop rule (blocker field, iteration-cap backstop, stall comment, re-entry and cap behaviour) and finalize's remaining-work report (two lists, standing instructions omitted, stall framing); do not edit spec 059's merged documents (FR-013)
 - [x] T026 Add the "single home" checks to `verify-implement-stall-handoff.py`: no copy of the classification, stop-rule or remaining-work rendering appears in any workflow `run:` block outside the `_shared` scripts; confirm the gate's `lint-workflows.yml` invocation is the same one `run-local-gates.py` runs
-- [ ] T027 Run `python .github/scripts/run-local-gates.py` and fix fallout; per CLAUDE.md also give the `implement.yml`/`finalize.yml` edits a pass from the `review-step-gating` skill
+- [x] T027 Run `python .github/scripts/run-local-gates.py` and fix fallout; per CLAUDE.md also give the `implement.yml`/`finalize.yml` edits a pass from the `review-step-gating` skill
 - [x] T028 [P] Walk `specs/117-implement-stall-handoff/quickstart.md` against the fixtures and confirm SC-001 (#1022 replay) and SC-002 (#737 replay) hold
 - [ ] T029 [maintainer] After merge, re-drive one finalize run and one implement cycle via `gh workflow run` on the wrapper that can dispatch them, and record on lifecycle issue #992 that the run took the changed path (`prove-after-merge` skill)
 - [ ] T030 [maintainer] Note the additive widening of the published `wing-commander-tasks-checkbox-count` composite outputs (and any new `implement.yml` input) in the release notes
@@ -139,8 +139,8 @@
 - [x] T027b Fix `verify-fold-dispatch-once.py`: give the "Dispatch implement once for the whole review" step a default for `MAX_ITERATIONS` (or pass it in the env block the gate harness reproduces) so scenarios 1, 5 and 6 bind it
 - [x] T027c Fix `verify-project-single-home.py`: route implement.yml's 2 inline kv-helper hits through `_shared/project-name.sh` / `wing-commander-project` (0 allowed)
 - [x] T027d Fix `verify-intake-routing.py`: record pr-conversation.yml's new `max-iterations` input in `interface.json` additions
-- [ ] T027e Give the implement.yml and finalize.yml edits a `review-step-gating` skill pass and fix findings
-- [ ] T027f Re-run `python .github/scripts/run-local-gates.py` until green (gate 62 may be skipped without Docker); T029 and T030 remain maintainer steps
+- [x] T027e Give the implement.yml and finalize.yml edits a `review-step-gating` skill pass and fix findings
+- [x] T027f Re-run `python .github/scripts/run-local-gates.py` until green (gate 62 may be skipped without Docker); T029 and T030 remain maintainer steps
 
 ## Review Gate Round 1 Findings
 
