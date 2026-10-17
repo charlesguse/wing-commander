@@ -93,7 +93,7 @@ def history_from_report(report, counts, recurring=0):
         rounds.append({
             "round": k, "count": count,
             "attributable": si["of"], "self_inflicted": si["count"],
-            "unattributable": 0,
+            "unattributable": report.get("unattributable", 0) if latest else 0,
             "churn": report["churn"][k - 2]["total"] if k > 1 else 0,
             "growth": (float(report["growth"][k - 1]["lines"]) / first - 1) if first else None,
             "recurrences": ["recurring"] * recurring if latest else [],

@@ -1279,9 +1279,9 @@ jobs:
           # IN-SCOPE findings alone -- a round whose only survivors are
           # out-of-scope (still filed above) is "clean" exactly like a
           # round with no findings at all, never held against the PR's
-          # readiness or gate status. This also covers the case where
-          # every in-scope survivor was already folded in a prior round
-          # (new_folded empty despite a nonzero raw in-scope-count).
+          # readiness or gate status. An in-scope survivor folded in a
+          # prior round is no longer skipped: it recurs and is folded again
+          # (spec 116 FR-002), so it keeps the round "findings".
           findings_open = len(new_folded)
           outcome = "findings" if new_folded else "clean"
           if stop:

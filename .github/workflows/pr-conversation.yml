@@ -3383,6 +3383,10 @@ jobs:
       deployment: ${{ inputs.environment-deployment }}
     permissions:
       contents: read
+      # use-bedrock: the analyze agent's AWS role is assumed through OIDC
+      # (wing-commander-bedrock-credentials). An OIDC token writes nothing
+      # to this repository, so the job stays read-only.
+      id-token: write
     outputs:
       fold-id: ${{ steps.analyze-stage.outputs.fold-id }}
       tip: ${{ steps.analyze-tip.outputs.tip }}

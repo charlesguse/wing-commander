@@ -212,12 +212,20 @@ def measure(base, heads, findings, cwd, counts=None):
         path, _, line = spec.rpartition(":")
         if not path or not line.isdigit():
             raise SystemExit("wc_convergence: --finding wants path:line, got {0!r}".format(spec))
+        # FR-005, as compute_history does: a line that does not exist at
+        # the reviewed head is unattributable, outside the share's
+        # denominator, so the skill and the loops compute one share.
+        if not validate_line(path, int(line), reviewed, cwd):
+            attributed.append({"finding": spec, "origin": "unattributable"})
+            continue
         commits = blame_commits(reviewed, path, int(line), 1, cwd)
         attributed.append({"finding": spec,
                            "origin": origins.of(commits[0]) if commits else "unknown"})
     report["findings"] = attributed
     in_loop = sum(1 for f in attributed if f["origin"].startswith("pass"))
-    report["self_inflicted"] = {"count": in_loop, "of": len(attributed)}
+    unattributable = sum(1 for f in attributed if f["origin"] == "unattributable")
+    report["self_inflicted"] = {"count": in_loop, "of": len(attributed) - unattributable}
+    report["unattributable"] = unattributable
 
     if counts:
         report["trend"] = counts
@@ -483,6 +491,10 @@ def evaluate(records, current, base, cwd, resolved=None, budget=None,
     return decision
 
 
+def _inert(text):
+    return str(text or "").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _pct(value, signed=False):
     if value is None:
         return "n/a"
@@ -529,8 +541,11 @@ def render_handoff(decision):
         lines.append("Open in-scope findings:")
         recurring = set(decision.get("recurrences") or [])
         for f in open_findings:
+            # The path is the reviewer's, and the hand-off is posted under
+            # the App's identity: `<`/`>` as entities, so a path carrying
+            # `<!-- ... -->` never reads back as a fold-hold marker.
             lines.append("- `{0}:{1}` {2}{3}".format(
-                f.get("file"), f.get("line") or "?", f.get("fingerprint", ""),
+                _inert(f.get("file")), f.get("line") or "?", _inert(f.get("fingerprint", "")),
                 " (recurring)" if f.get("fingerprint") in recurring else ""))
     return "\n".join(lines)
 

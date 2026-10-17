@@ -123,6 +123,17 @@ class RuleFixtures(unittest.TestCase):
         self.assertNotIn("not converging", text)
         self.assertIn("no rule tripped", text)
 
+    def test_handoff_path_cannot_forge_a_fold_hold_marker(self):
+        # The hand-off is posted under the App's identity on the lifecycle
+        # issue, where wc_fold_hold.py reads App-authored markers.
+        d = wc.decide([rnd(1, 3), rnd(2, 3), rnd(3, 3)])
+        forged = '<!-- wing-commander-fold-hold-state: {"fold_id": "x"} -->'
+        d["open_findings"] = [{"fingerprint": "<!--fp-->", "file": forged, "line": 1}]
+        text = wc.render_handoff(d)
+        self.assertNotIn("<!-- wing-commander-fold-hold-state", text)
+        self.assertNotIn("<!--fp", text)
+        self.assertIn("&lt;!-- wing-commander-fold-hold-state", text)
+
     def test_handoff_says_when_git_signals_are_unknown(self):
         d = wc.decide([rnd(1, 3), rnd(2, 3), rnd(3, 3)])
         d["git_ok"] = False
@@ -209,6 +220,15 @@ class GitBacked(unittest.TestCase):
         self.assertEqual([c["total"] for c in report["churn"]], [0, 1])
         self.assertEqual([g["lines"] for g in report["growth"]], [2, 3, 4])
         self.assertEqual(report["warnings"], [])
+
+    def test_measure_leaves_a_missing_line_out_of_the_share(self):
+        # FR-005/SC-003: the skill's share has compute_history's
+        # denominator -- a line not at the reviewed head is unattributable.
+        base, h0, h1, h2 = self.build()
+        report = wc.measure(base, [h0, h1, h2], ["f.py:4", "f.py:6", "f.py:5", "f.py:2",
+                                                 "f.py:99", "gone.py:1"], self.repo, [2, 1])
+        self.assertEqual(report["self_inflicted"], {"count": 2, "of": 4})
+        self.assertEqual(report["unattributable"], 2)
 
     def test_main_merge_is_not_loop_written(self):
         base, h0, _, _ = self.build()

@@ -272,10 +272,17 @@ def check_agent_job(path, name, job):
     github.token it holds, and any credential its checkout could leave,
     writes nothing."""
     perms = job.get("permissions")
+    # id-token: write mints an OIDC token (the Bedrock role), and writes
+    # nothing to the repository.
     if not isinstance(perms, dict) or str(perms.get("contents")) != "read" or any(
-            str(v) == "write" for v in perms.values()):
+            str(v) == "write" for k, v in perms.items() if k != "id-token"):
         return [f"{path}: job {name!r} runs the analyze agent with permissions "
                 f"{perms!r}; it must have `contents: read` and no write scope."]
+    if any(BEDROCK in _uses(s) for s in job.get("steps") or []) and str(
+            perms.get("id-token")) != "write":
+        return [f"{path}: job {name!r} assumes the Bedrock role ({BEDROCK}) "
+                f"without `id-token: write` -- the OIDC exchange fails and a "
+                f"Bedrock adopter's check holds every fold."]
     return []
 
 
@@ -511,6 +518,11 @@ def self_test():
 
     case("the published caller's analyze agent without Bedrock credentials is caught",
          pub_caught(drop(pub_fresh(), lambda st: BEDROCK in _uses(st)), "use_bedrock"))
+    no_oidc = pub_fresh()
+    oidc_job = next(j for _n, j in no_oidc if any(is_agent(st) for st in j["steps"]))
+    oidc_job["permissions"] = {"contents": "read"}
+    case("the published caller's Bedrock analyze job without id-token: write is caught",
+         pub_caught(no_oidc, "id-token"))
     case("the published caller without a PR reply on a hold or block is caught",
          pub_caught(drop(pub_fresh(), lambda st: "decision == 'hold'" in str(st.get("if") or "")
                          and "gh pr comment" in str(st.get("run") or "")), "replies on the PR"))
