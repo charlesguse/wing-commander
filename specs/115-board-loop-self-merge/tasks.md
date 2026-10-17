@@ -211,3 +211,61 @@
   - .github/scripts/verify-board-merge.py
 
   Detail: Around line 859.
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: Announce step dedups on the PR comment, so a failed issue comment never gets its marker
+
+  board-loop.yml posts the PR comment before the issue comment, and the PR comment is the dedup source; if the issue-comment post fails, later runs see the PR record, skip, and the merged/handed-over marker is never written.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: Around line 1953. A refused fix item stays eligible and is re-refused hourly; a merged item gets no merged marker.
+
+- [ ] Review finding: Merge retry does not check whether the first attempt already merged
+
+  A transient 5xx or timeout after a server-side merge makes the retry fail with 'already merged', which is classed other/refused, so a PR already on main is recorded as handed-over.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: Around line 1866. Check the PR state before retrying and treat MERGED as the merged outcome.
+
+- [ ] Review finding: merged/handed-over markers drop branch, base_sha and round
+
+  The markers are rendered with only --step and --pr, so round is 0 and branch/base_sha are null, and they replace the issue's newest marker that resume and prove logic reads.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: Around line 1946. A re-admitted item restarts with its review round budget reset.
+
+- [ ] Review finding: Bump-PR attribution check fails when the commit author login is empty
+
+  _attributed_to_auto_update requires every commit author login to be the App bot, but gh reports an empty login when the git email does not map to a GitHub account, so such bump PRs are never merged.
+
+  - .github/scripts/board_merge.py
+
+  Detail: Around line 361. The fixtures use app/wing-commander as the login, so they cannot catch this.
+
+- [ ] Review finding: Quoted stderr can escape its code fence
+
+  board_merge.py puts GitHub stderr inside a ``` fence and _defang only handles '<!--', so an embedded ``` line closes the fence and the rest renders as live markdown.
+
+  - .github/scripts/board_merge.py
+
+  Detail: Around line 539.
+
+- [ ] Review finding: Verification-record post failure leaves the bump PR permanently without a record
+
+  If three gh pr comment attempts fail, the step exits 1 after the PR is open, and a re-run declines the candidate as already proposed, so the PR never gets wc-bump-verification.
+
+  - .github/workflows/auto-update-spec-kit.yml
+
+  Detail: Around line 1597.
+
+- [ ] Review finding: A transient API error in the candidate step fails the whole merge job
+
+  The bump scan runs gh pr list and gh pr view per PR and exits 1 on any failure, so one flaky call turns the job red and the bump candidate is not evaluated.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: Around line 1736.
