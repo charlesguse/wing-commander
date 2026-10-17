@@ -293,3 +293,86 @@
   - .github/actions/wing-commander-remaining-work/action.yml
 
   Detail: Take the count from the renderer so there is one source for it.
+
+## Review Gate Round 3 Findings
+
+- [ ] Review finding: Checked standing/maintainer lines counted as implementation progress
+
+  count-tasks-checkboxes.sh counts every checked line as impl_checked, so ticking a standing or [maintainer] line raises the count and reads as progress, contrary to the comments and action description.
+
+  - .github/actions/_shared/count-tasks-checkboxes.sh
+
+  Detail: decide-implement-outcome.sh tests tip > base on impl-checked-count; the count-tasks-checkboxes-mixed fixture encodes impl-checked-count=3 including checked standing and maintainer lines.
+
+- [ ] Review finding: is_standing prefix match drops real tasks from the implementation count
+
+  is_standing matches by prefix, so a real task starting with 'Keep the gates green', 'After each cycle' or 'Complete every remaining' is excluded from impl-unchecked and the loop can report converged early.
+
+  - .github/actions/_shared/count-tasks-checkboxes.sh
+
+  Detail: Only the 'run the gate suite' branch has a bare-instruction guard; the other three prefixes have none.
+
+- [ ] Review finding: Decide-script fallback forces converged=false ignoring UNCHECKED_TIP
+
+  When DECIDE_SCRIPT is empty or fails, the one-line fallback yields converged=false even if UNCHECKED_TIP=0, so a finished spec can keep dispatching implement cycles until the cap.
+
+  - .github/workflows/implement.yml
+
+  Detail: Fallback near line 1928; it should derive converged from UNCHECKED_TIP=0 at minimum.
+
+- [ ] Review finding: Blocker file removal skipped when validator fails
+
+  In wing-commander-implement-outcome, `|| exit 1` runs before `rm -f "$BLOCKER_PATH"`, so a validator failure leaves a stale blocker that the retry arm can re-read.
+
+  - .github/actions/wing-commander-implement-outcome/action.yml
+
+  Detail: If tasks.md is unreadable at the ref the validator exits non-zero. The retry then hands off on a blocker the retry agent never wrote.
+
+- [ ] Review finding: decide/pick() read-back block duplicated in cycle and retry arms
+
+  The decide invocation, failure fallback and pick() helper are pasted into both arms of implement.yml, and the blocker and [maintainer] prompt paragraphs are duplicated across implement and tasks prompts. This violates the single-home rule in CLAUDE.md.
+
+  - .github/workflows/implement.yml
+  - .github/workflows/tasks.yml
+
+  Detail: Copies at about lines 1928 and 2073; no gate catches drift between them.
+
+- [ ] Review finding: has-remaining computed twice in finalize
+
+  The 'Check for remaining manual work' step recomputes has-remaining from the file even though the wing-commander-remaining-work composite already outputs it, so the two can diverge.
+
+  - .github/workflows/finalize.yml
+
+  Detail: Use steps.remaining-work.outputs.has-remaining and drop the step.
+
+- [ ] Review finding: Callout summary mislabels when renderer failed or only routed items remain
+
+  The finalize callout summary falls back to 'Maintainer steps remain' whenever stalled is not exactly 'true', including when the renderer failed and left outputs empty. Routed out-of-boundary items are folded into the maintainer section while stalled ignores them, so the label cannot tell the cases apart.
+
+  - .github/workflows/finalize.yml
+
+  Detail: Around line 1576.
+
+- [ ] Review finding: Skipped-dispatch callout posts a comment on every duplicate at review stage
+
+  The 'Explain skipped dispatch at review stage' step posts a new, misleading 'Implement did nothing' comment on the lifecycle issue for every duplicate or late notification, with no dedupe.
+
+  - .github/workflows/implement.yml
+
+  Detail: Around line 1798.
+
+- [ ] Review finding: Routed [maintainer] items not rewritten in the remaining-work render
+
+  render-remaining-work.sh renders maintainer items in mode `all`, which computes `hit` but prints the raw line, so a [maintainer] task routed by the write-boundary lookup loses its 'routed, see <url>' pointer.
+
+  - .github/actions/_shared/render-remaining-work.sh
+
+  Detail: Only implementation items get the routed rendering (about line 265).
+
+- [ ] Review finding: Blocker detail sanitization can leave a blank detail that passes validation
+
+  validate-implement-blocker.sh turns every character outside the allow-list into a space after the non-blank check, so a detail of CJK text or symbols passes validation and then collapses to blanks in the hand-off comment.
+
+  - .github/actions/_shared/validate-implement-blocker.sh
+
+  Detail: Around line 393. The result reads like 'missing-tool:      (T007)', a valid blocker with no usable reason.
