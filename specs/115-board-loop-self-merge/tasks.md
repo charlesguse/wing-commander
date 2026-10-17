@@ -395,3 +395,55 @@
   - .github/scripts/board_item_marker.py
 
   Detail: Line 183.
+
+## Review Gate Round 5 Findings
+
+- [ ] Review finding: Merge step reports not-merged with may_merge=true when PR was merged by another actor
+
+  In board-loop.yml the merge step emits outcome=not-merged while may_merge stays true and unmet_reason is null, so the announcement names 'unmet condition None' and the dedup marker has a null reason.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: Around line 1996; a human merge between snapshot and gh pr merge leaves the fix-class issue with no merged/handed-over marker, so it is re-evaluated every run.
+
+- [ ] Review finding: Unrecognised gh pr merge failures are classed 'other' and handed over permanently
+
+  Rate limits, expired tokens or network errors that match no known pattern are classed non-retryable 'other', so a fix-class item gets a permanent handed-over marker and a bump PR is skipped until its head moves.
+
+  - .github/workflows/board-loop.yml
+  - .github/scripts/board_merge.py
+
+  Detail: Around line 2001; classify_refusal returns other and retryable exits 1, so a transient failure becomes a permanent refusal.
+
+- [ ] Review finding: merged outcome and marker are written with an empty merge SHA
+
+  If read_merge_sha returns empty after 5 reads, the step still reports outcome=merged and writes the merged marker with the merge_sha field dropped, so prove has no SHA to resolve.
+
+  - .github/workflows/board-loop.yml
+  - .github/scripts/board_item_marker.py
+
+  Detail: Around line 1981; the announcement reads 'squash commit ' with nothing after it.
+
+- [ ] Review finding: --carry-round-from carries only round, dropping other marker fields
+
+  The merged and handed-over markers replace the newest marker but drop spec_request, nr_* and outcome_reason, and the round resets to 0 if the newest marker is missing or unparseable.
+
+  - .github/scripts/board_item_marker.py
+
+  Detail: Around line 224; contradicts the workflow comment that the marker keeps the item's branch, base and review round.
+
+- [ ] Review finding: Forged wc-bump-verification marker in any App-authored comment is trusted
+
+  Any comment authored by the App that contains a 'wc-bump-verification ... passed' marker is accepted as a passing record bound only by head SHA, and _defang only protects render_announcement.
+
+  - .github/scripts/board_merge.py
+
+  Detail: Around line 413; App comments that echo untrusted stderr or PR content could satisfy verification_passed_at_head on a gate that auto-merges a dependency bump.
+
+- [ ] Review finding: Failed verification-record post closes the PR and deletes the branch on every run
+
+  auto-update-spec-kit.yml closes the PR and deletes its branch if the record cannot be posted after 3 tries, so a persistent cause repeats this every scheduled run.
+
+  - .github/workflows/auto-update-spec-kit.yml
+
+  Detail: Around line 3688; the comment's claim that the next run proposes this version again is not verified.
