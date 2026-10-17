@@ -29,6 +29,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import board_merge  # noqa: E402
 from board_readiness import CONDITIONS as READINESS_CONDITIONS  # noqa: E402
+from board_item_marker import render_bump_verification  # noqa: E402
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 FIXTURES_DIR = os.path.join(SCRIPTS_DIR, "fixtures", "board-merge")
@@ -131,8 +132,7 @@ def _bot_comment(body, cid, created="2026-10-01T00:00:00Z"):
 
 
 def _verified(head, cid):
-    return _bot_comment("ok\n\n<!-- wc-bump-verification: " + json.dumps(
-        {"head_sha": head, "result": "passed", "run_id": "1", "tier": "lightweight"}) + " -->", cid)
+    return _bot_comment(render_bump_verification(head, "lightweight", "passed", "1"), cid)
 
 
 def check_bump_pick_and_dedup():
@@ -182,6 +182,32 @@ def check_bump_pick_and_dedup():
         fail("a marker quoted from GitHub's stderr becomes a trusted record in the App's own announcement")
     else:
         ok("quoted stderr cannot carry a marker into the App's announcement")
+
+
+def check_quoted_verification_record():
+    """Lifecycle review of PR #1059 (F3): only render_announcement() defangs
+    a quoted marker, and other App comments quote untrusted text (issue
+    bodies, stderr). A record counts only as the whole comment the
+    auto-update stage posts, so a marker quoted inside other text, even a
+    byte-exact copy of a real record, is not a pass."""
+    bot = "wing-commander[bot]"
+    record = render_bump_verification("eee5", "lightweight", "passed", "7")
+    quoted = _bot_comment("The issue body says:\n\n> " + record.replace("\n", "\n> ") + "\n\nLooking into it.", 30)
+    embedded = _bot_comment("Triage notes.\n\n" + record, 31)
+    exact = _bot_comment(record + "\n", 32)
+    bad = []
+    for label, comment in (("quoted in a blockquote", quoted), ("after other text", embedded)):
+        snap = _bump_snapshot(5, "2026-10-05T00:00:00Z", "eee5", [comment])
+        decision = board_merge.decide({"class": "bump", "snapshot": snap, "bot_login": bot,
+                                       "paused": False, "switch_on": True})
+        if decision.get("may_merge") or board_merge.bump_records([comment], bot):
+            bad.append(label)
+    for label in bad:
+        fail("an App comment quoting a wc-bump-verification marker {0} counts as a pass".format(label))
+    if not board_merge.bump_records([exact], bot):
+        fail("the record the auto-update stage posts (render_bump_verification) no longer counts")
+    elif not bad:
+        ok("a wc-bump-verification marker counts only as the whole record comment, never quoted in another")
 
 
 def check_round2_findings():
@@ -453,6 +479,7 @@ def main():
     check_transient_refusals()
     check_bump_pick_and_dedup()
     check_round2_findings()
+    check_quoted_verification_record()
     check_structural_self_test()
     check_board_loop()
     check_auto_update()

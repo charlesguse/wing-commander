@@ -56,4 +56,6 @@ Quoted text never carries a marker: `<!--` in it is defanged before the App post
 
 ## Auto-update stage change
 
-The act job posts one `wc-bump-verification` marker comment per verification on the upgrade PR, bound to the commit it verified and pushed (never a re-read of the PR's head). A failed post is retried; a lasting failure fails the step and says on the issue that the PR awaits a human merge. The stage never merges its own PR (FR-013).
+The act job posts one `wc-bump-verification` marker comment per verification on the upgrade PR, bound to the commit it verified and pushed (never a re-read of the PR's head). The comment is the record and nothing else: `board_merge.bump_records()` counts a marker only when the App comment's whole body is exactly what `board_item_marker.render_bump_verification()` renders for it. Other App comments quote untrusted text (issue bodies, GitHub's stderr), so a marker quoted inside one is never a pass, even when it copies a real record byte for byte.
+
+A failed post is retried; a lasting failure fails the step and says on the issue that the PR awaits a human merge. The PR stays open and its branch stays, so the next run's guard declines the candidate as already open; the stage never closes the PR to re-propose it, which would repeat the same lasting failure on every scheduled run. The stage never merges its own PR (FR-013).

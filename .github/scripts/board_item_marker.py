@@ -293,7 +293,9 @@ BUMP_VERIFICATION_MARKER = "wc-bump-verification"
 
 
 def render_bump_verification(head_sha, tier, result, run_id):
-    """The comment body for one BumpVerificationRecord (data-model.md)."""
+    """The comment body for one BumpVerificationRecord (data-model.md). It is
+    the whole record: board_merge.bump_records() counts a marker only in a
+    comment that is exactly this body."""
     payload = json.dumps({"head_sha": head_sha, "tier": tier, "result": result,
                           "run_id": str(run_id)}, sort_keys=True)
     return ("Spec Kit upgrade verification ({0}): {1} on {2}.\n\n"
