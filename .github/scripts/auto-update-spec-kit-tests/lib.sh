@@ -71,6 +71,9 @@ new_step_env() {
   export GITHUB_OUTPUT="$WORK/github_output"; : > "$GITHUB_OUTPUT"
   export GITHUB_STEP_SUMMARY="$WORK/step_summary"; : > "$GITHUB_STEP_SUMMARY"
   export GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-charlesguse/wing-commander}"
+  # The runner always sets it; outside Actions a step under `set -u` that
+  # names it (the act job's verification record) would die unbound.
+  export GITHUB_RUN_ID="${GITHUB_RUN_ID:-4242}"
   export GH_STATE="$WORK/gh-state.json"
   export GH_CALLS="$WORK/gh-calls.log"; : > "$GH_CALLS"
   echo '{}' > "$GH_STATE"

@@ -206,12 +206,29 @@ check_contains "S5 PR body records what was verified" "$PRBODY" "lightweight+end
 check_contains "S5/SC-012 PR body names the scratch repository" "$PRBODY" "wing-commander-e2e-42"
 check "S5 PR is NOT merged by the workflow" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(list(s['prs'].values())[0]['mergedAt'])")" "None"
 check "S5 no merge call was ever made" "$(grep -c 'pr merge' "$GH_CALLS")" "0"
-check_contains "S5/115 the PR carries a wc-bump-verification record bound to its head" \
+# Bound to the commit that was verified and pushed, never to a re-read of the
+# PR's head (the stub serves a different headRefOid, so a re-read fails this).
+check_contains "S5/115 the PR carries a wc-bump-verification record bound to the verified commit" \
   "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(list(s['prs'].values())[0]['comments'][0]['body'])")" \
-  'wc-bump-verification: {"head_sha": "0123456789abcdef0123456789abcdef01234567", "result": "passed"'
+  "wc-bump-verification: {\"head_sha\": \"$(git rev-parse auto-update-spec-kit/v0.15.1)\", \"result\": \"passed\""
 check "S5 issue got a comment linking the PR" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(len(s['issues']['42']['comments']))")" "1"
 check "S5 branch pushed, via the authenticated URL" "$(remote_refs 'refs/heads/auto-update-spec-kit/v0.15.1')" "1"
 check "S5 default branch pin untouched (PR not merged)" "$(git show main:.specify/init-options.json | jq -r .speckit_version)" "0.13.0"
+cd - >/dev/null
+
+echo
+echo "=== Scenario 5b (115): a transient failure posting the verification record is retried ==="
+R4B="$(build)"; new_step_env; cd "$R4B"
+git checkout -q -B auto-update-spec-kit/v0.15.1 main
+mkopts 0.15.1; git add -A; git commit -qm "chore: bump Spec Kit to v0.15.1"
+git checkout -q main
+printf '{"issues":{"42":{"number":42,"state":"open","body":"watching","labels":[],"comments":[]}},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
+GHA_SUBST=("steps.ctx.outputs.token=stub")
+export GH_TOKEN=stub BRANCH="auto-update-spec-kit/v0.15.1" CANDIDATE=0.15.1 ISSUE=42 TIER="lightweight" DB=main DETAIL=""
+GH_STUB_FAIL_ONCE="pr comment" run_step 'auto-update-spec-kit__act__*version-bump-pr*.sh' >"$WORK/act4b.log" 2>&1
+check "S5b version-bump step exit code after one failed record post" "$?" "0"
+check "S5b the PR still carries exactly one wc-bump-verification record" \
+  "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(sum('wc-bump-verification' in c['body'] for c in list(s['prs'].values())[0].get('comments',[])))")" "1"
 cd - >/dev/null
 
 echo
