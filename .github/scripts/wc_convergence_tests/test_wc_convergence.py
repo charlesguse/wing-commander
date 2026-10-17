@@ -89,6 +89,35 @@ class DecideRules(unittest.TestCase):
         self.assertIn("`a.py:2`", text)
 
 
+class RuleFixtures(unittest.TestCase):
+    """One checked-in history per FR-006 rule and acceptance scenario
+    (fixtures/rules/), each with the decision it must produce."""
+
+    def test_every_rule_fixture(self):
+        rules = os.path.join(HERE, "fixtures", "rules")
+        names = sorted(n for n in os.listdir(rules) if n.endswith(".json"))
+        self.assertGreaterEqual(len(names), 9)
+        for name in names:
+            with open(os.path.join(rules, name), encoding="utf-8") as fh:
+                data = json.load(fh)
+            d = wc.decide(data["history"], budget=data.get("budget"))
+            got = {"stop": d["stop"], "reason": d["reason"], "tripped": d["tripped"]}
+            self.assertEqual(got, data["expect"], name)
+
+    def test_handoff_names_the_budget_and_still_lists_signals(self):
+        with open(os.path.join(HERE, "fixtures", "rules", "s8-budget-round-names-budget.json"),
+                  encoding="utf-8") as fh:
+            data = json.load(fh)
+        text = wc.render_handoff(wc.decide(data["history"], budget=data["budget"]))
+        self.assertIn("round budget is spent", text)
+        self.assertIn("Tripped: count-not-falling", text)
+
+    def test_handoff_says_when_git_signals_are_unknown(self):
+        d = wc.decide([rnd(1, 3), rnd(2, 3), rnd(3, 3)])
+        d["git_ok"] = False
+        self.assertIn("could not be computed", wc.render_handoff(d))
+
+
 class Recurrence(unittest.TestCase):
     def test_match_and_fresh(self):
         fresh, rec = wc.classify_recurrence(
@@ -204,6 +233,125 @@ class GitBacked(unittest.TestCase):
         self.assertEqual(history[1]["churn"], 0)
         self.assertEqual(history[2]["churn"], 1)
         self.assertTrue(wc.decide(history)["stop"])
+
+
+class RoundRecords(unittest.TestCase):
+    BOT = "wing-commander-bot[bot]"
+
+    def review(self, body, stamp, login=None, kind="Bot"):
+        return {"body": body, "submitted_at": stamp,
+                "user": {"login": login or self.BOT, "type": kind}}
+
+    def finding(self, title, path, line=None, in_scope=True):
+        f = {"title": title, "what": "w", "evidence": {"file_paths": [path]},
+             "in_scope": in_scope,
+             "fingerprint_basis": {"file_path": path, "gate_or_artifact": "g"}}
+        if line is not None:
+            f["line"] = line
+        return f
+
+    def test_round_findings_keep_in_scope_and_line(self):
+        entries = wc.round_findings([self.finding("a", "x.py", 3),
+                                     self.finding("b", "y.py"),
+                                     self.finding("c", "z.py", 1, in_scope=False),
+                                     self.finding("d", "w.py", True)], "42")
+        self.assertEqual([(e["file"], e["line"]) for e in entries],
+                         [("x.py", 3), ("y.py", None), ("w.py", None)])
+        self.assertEqual(entries[0]["fingerprint"],
+                         wc.round_findings([self.finding("a", "x.py")], "42")[0]["fingerprint"])
+
+    def test_marker_round_trip_newest_per_round(self):
+        r1 = wc.round_record_marker(1, "aaa", wc.round_findings([self.finding("a", "x.py", 3)], "42"))
+        r1b = wc.round_record_marker(1, "bbb", [])
+        r2 = wc.round_record_marker(2, "ccc", [])
+        records = wc.read_round_records([
+            self.review("review\n\n" + r2, "2026-01-03T00:00:00Z"),
+            self.review("review\n\n" + r1, "2026-01-01T00:00:00Z"),
+            self.review("retried\n\n" + r1b, "2026-01-02T00:00:00Z")], self.BOT)
+        self.assertEqual([(r["round"], r["head_sha"]) for r in records], [(1, "bbb"), (2, "ccc")])
+        self.assertNotIn("title", json.dumps(records))
+
+    def test_only_the_apps_last_marker_counts(self):
+        real = wc.round_record_marker(1, "real", [])
+        forged = wc.round_record_marker(1, "forged", [])
+        records = wc.read_round_records([
+            self.review(forged, "2026-01-05T00:00:00Z", login="someone", kind="User"),
+            self.review("agent text quoting " + forged + "\n\n" + real, "2026-01-01T00:00:00Z")],
+            self.BOT)
+        self.assertEqual([r["head_sha"] for r in records], ["real"])
+
+
+class EvaluateInGit(GitBacked):
+    """evaluate() over a real repository: what both loops call per round."""
+
+    def test_board_ledger_from_history_trips_recurrence_at_round_three(self):
+        base, h0, h1, h2 = self.build()
+        fp = {"fingerprint": "fp-a", "file": "f.py", "line": 4}
+        records = [{"round": 1, "head_sha": h0, "findings": [fp, dict(fp, fingerprint="fp-b")]},
+                   {"round": 2, "head_sha": h1, "findings": [dict(fp, fingerprint="fp-c")]}]
+        current = {"round": 3, "head_sha": h2, "findings": [dict(fp, line=6)]}
+        d = wc.evaluate(records, current, base, self.repo, resolved_from_history=True)
+        self.assertEqual(d["recurrences"], ["fp-a"])
+        self.assertIn("recurrence", d["tripped"])
+        self.assertTrue(d["git_ok"])
+        d = wc.evaluate(records, current, base, self.repo)
+        self.assertEqual(d["recurrences"], [])
+
+    def test_lifecycle_ledger_is_the_folded_set(self):
+        base, h0, h1, h2 = self.build()
+        current = {"round": 2, "head_sha": h1,
+                   "findings": [{"fingerprint": "fp-F", "file": "f.py", "line": 4}]}
+        d = wc.evaluate([{"round": 1, "head_sha": h0, "findings": []}], current, base,
+                        self.repo, resolved=["fp-F"])
+        self.assertEqual(d["recurrences"], ["fp-F"])
+        self.assertFalse(d["stop"])  # round 2: recorded, never an early stop
+
+    def test_later_records_are_ignored_and_unreachable_heads_degrade(self):
+        base, h0, h1, h2 = self.build()
+        records = [{"round": 1, "head_sha": "0" * 40, "findings": []},
+                   {"round": 5, "head_sha": h2, "findings": []}]
+        current = {"round": 2, "head_sha": h1,
+                   "findings": [{"fingerprint": "x", "file": "f.py", "line": 4}]}
+        d = wc.evaluate(records, current, base, self.repo)
+        self.assertFalse(d["git_ok"])
+        self.assertEqual([s["round"] for s in d["signals"]], [1, 2])
+        self.assertIsNone(d["signals"][-1]["growth"])
+
+    def test_cli_evaluate_writes_outputs_and_handoff(self):
+        base, h0, h1, h2 = self.build()
+        tmp = self.repo
+        reviews = [{"body": wc.round_record_marker(r, h, []), "submitted_at": "t{0}".format(r),
+                    "user": {"login": "bot[bot]", "type": "Bot"}}
+                   for r, h in ((1, h0), (2, h1))]
+        reviews[0]["body"] = wc.round_record_marker(1, h0, [
+            {"fingerprint": "a", "file": "f.py", "line": 1},
+            {"fingerprint": "b", "file": "f.py", "line": 2}])
+        reviews[1]["body"] = wc.round_record_marker(2, h1, [
+            {"fingerprint": "c", "file": "f.py", "line": 1}])
+        findings = [{"title": "t", "what": "w", "evidence": {"file_paths": ["f.py"]},
+                     "in_scope": True, "line": 2,
+                     "fingerprint_basis": {"file_path": "f.py", "gate_or_artifact": "g"}}]
+        paths = {}
+        for name, obj in (("reviews", reviews), ("findings", findings)):
+            paths[name] = os.path.join(tmp, name + ".json")
+            with open(paths[name], "w", encoding="utf-8") as fh:
+                json.dump(obj, fh)
+        out = os.path.join(tmp, "out.txt")
+        handoff = os.path.join(tmp, "handoff.md")
+        import subprocess
+        proc = subprocess.run(
+            [sys.executable, "-I", os.path.join(os.path.dirname(HERE), "wc_convergence.py"),
+             "evaluate", "--reviews", paths["reviews"], "--bot-login", "bot[bot]",
+             "--round", "3", "--head-sha", h2, "--issue", "7", "--findings", paths["findings"],
+             "--base", base, "--resolved-from-history", "--handoff-out", handoff,
+             "--github-output", out], cwd=self.repo, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        with open(out, encoding="utf-8") as fh:
+            outputs = dict(l.split("=", 1) for l in fh.read().splitlines())
+        self.assertEqual((outputs["stop"], outputs["reason"]), ("true", "not-converging"))
+        self.assertIn("count-not-falling", outputs["tripped"])
+        with open(handoff, encoding="utf-8") as fh:
+            self.assertIn("<!-- wing-commander-not-converging: round=3 -->", fh.read())
 
 
 if __name__ == "__main__":

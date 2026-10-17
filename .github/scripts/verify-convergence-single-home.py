@@ -10,9 +10,14 @@ one changes -- the same failure the per-run cost line once had in 12
 run-blocks (see verify-metrics-summary-record-emission.py).
 
 Scanned: every .github/workflows/*.yml, every file under .github/actions/,
-and every script under .claude/skills/*/scripts/. Exempt: wc_convergence.py
-itself and its tests (not scanned at all), and the review-until-clean
-skill's thrash_signals.py, which is the skill's CLI over the module.
+and every script under .claude/skills/*/scripts/ -- the review-until-clean
+skill's thrash_signals.py included: since T005 it is a thin CLI over the
+module and must carry no copy of its own. wc_convergence.py itself and its
+tests live under .github/scripts/ and are not scanned at all.
+
+The skill's thrash check must also CALL the module (US4 scenario 1): a
+skill script that drops the module and prints nothing would carry no copy
+and still pass the scan, so the skill script is required to import it.
 
 Each failure branch has a checked-in fixture in
 verify-convergence-single-home-fixtures/ (Constitution VIII): `bad-*` files
@@ -31,11 +36,6 @@ from wc_convergence import THRESHOLDS  # noqa: E402
 ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 FIXTURES = os.path.join(HERE, "verify-convergence-single-home-fixtures")
 
-# Allowed callers of the shared module (relative to the repo root).
-EXEMPT = {
-    ".claude/skills/review-until-clean/scripts/thrash_signals.py",
-}
-
 # Arithmetic: blame attribution, rewritten-range diff, diff-size numstat.
 ARITHMETIC_RE = re.compile(
     r"\bgit\s+blame\b|\"blame\"|'blame'|--numstat|\bremoved_ranges\b|"
@@ -44,6 +44,10 @@ ARITHMETIC_RE = re.compile(
 # the module so a new threshold is covered the day it is added.
 THRESHOLD_RE = re.compile(
     "|".join(r"\b{0}\b".format(re.escape(k)) for k in sorted(THRESHOLDS)))
+
+SKILL_CALLER = ".claude/skills/review-until-clean/scripts/thrash_signals.py"
+IMPORT_RE = re.compile(r"^\s*(?:import\s+wc_convergence\b|from\s+wc_convergence\s+import\b)",
+                       re.MULTILINE)
 
 failures = []
 
@@ -76,8 +80,6 @@ def case_real_tree_has_no_copy():
     scanned = 0
     for path in tree_files():
         rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
-        if rel in EXEMPT:
-            continue
         if "/_tests/" in rel or "-tests/" in rel:
             continue
         try:
@@ -96,6 +98,30 @@ def case_real_tree_has_no_copy():
     else:
         print("note: {0} file(s) scanned; none carries a copy of the "
               "convergence arithmetic or thresholds".format(scanned))
+
+
+def calls_module(text):
+    return bool(IMPORT_RE.search(text))
+
+
+def case_skill_calls_the_module():
+    path = os.path.join(ROOT, SKILL_CALLER)
+    if not os.path.isfile(path):
+        fail("{0} is missing; the review-until-clean skill's thrash check "
+             "has no CLI".format(SKILL_CALLER))
+        return
+    with open(path, encoding="utf-8") as fh:
+        if not calls_module(fh.read()):
+            fail("{0} does not import wc_convergence; the skill's thrash "
+                 "check must call the one home of the arithmetic".format(SKILL_CALLER))
+    for name in sorted(os.listdir(FIXTURES)):
+        if not name.startswith(("caller-bad-", "caller-ok-")):
+            continue
+        with open(os.path.join(FIXTURES, name), encoding="utf-8") as fh:
+            got = calls_module(fh.read())
+        if got != name.startswith("caller-ok-"):
+            fail("fixture {0} was judged {1} by the caller check".format(
+                name, "a caller" if got else "not a caller"))
 
 
 def case_fixtures_are_judged_correctly():
@@ -124,6 +150,7 @@ def case_fixtures_are_judged_correctly():
 def main():
     case_real_tree_has_no_copy()
     case_fixtures_are_judged_correctly()
+    case_skill_calls_the_module()
     if failures:
         print("verify-convergence-single-home: {0} failure(s)".format(len(failures)))
         return 1

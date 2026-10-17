@@ -15,9 +15,19 @@ lines are self-inflicted.
               "findings": [{"fingerprint": "...", "file": "a.py", "line": 3}]},
              ...]
 
+Each loop persists one round record per round -- its round, reviewed head
+and in-scope findings' fingerprint/file/line -- as a marker appended LAST to
+the review it posts on the PR (round_record_marker), and reads earlier
+rounds back off the PR's reviews (read_round_records): no new datastore.
+
 CLI:
   wc_convergence.py decide --history <json file> --base <ref> \\
       [--ledger <json file>] [--json]
+  wc_convergence.py record --round N --head-sha SHA --issue I --findings F
+  wc_convergence.py evaluate --reviews F --bot-login L --round N \\
+      --head-sha SHA --issue I --findings F [--base REF] [--resolved fp,...] \\
+      [--resolved-from-history] [--budget N] [--decision-out F] [--handoff-out F]
+  wc_convergence.py render-handoff --decision F
 """
 import argparse
 import json
@@ -247,49 +257,71 @@ def classify_recurrence(findings, ledger):
     return fresh, recurrences
 
 
+def _resolve_heads(base, rounds, cwd):
+    """(base, heads) as full SHAs, or None when any of them is unreachable.
+
+    A loop's earlier head can be gone from the checkout (a force-push, a
+    shallow fetch); the git-derived signals are then unknowable, never
+    guessed, and only the count and recurrence signals are computed.
+    """
+    try:
+        return rev(base, cwd), [rev(r["head_sha"], cwd) for r in rounds]
+    except (SystemExit, KeyError, TypeError):
+        return None
+
+
 def compute_history(base, rounds, ledger, cwd):
     """Fill each round's signals from git. Never agent-supplied."""
     cwd = _toplevel(cwd)
-    base = rev(base, cwd)
-    heads = [rev(r["head_sha"], cwd) for r in rounds]
-    origins = Origins(base, heads, cwd)
-    first_size = diff_size(base, heads[0], cwd)["lines"] if heads else 0
+    resolved_heads = _resolve_heads(base, rounds, cwd)
+    git_ok = resolved_heads is not None
+    if git_ok:
+        base, heads = resolved_heads
+        origins = Origins(base, heads, cwd)
+        first_size = diff_size(base, heads[0], cwd)["lines"] if heads else 0
     resolved = dict((ledger or {}).get("resolved") or {})
     out = []
     for i, rnd in enumerate(rounds):
-        head = heads[i]
         attributable = self_inflicted = unattributable = 0
         for f in rnd.get("findings", []):
-            if not validate_line(f.get("file"), f.get("line"), head, cwd):
+            if not git_ok or not validate_line(f.get("file"), f.get("line"), heads[i], cwd):
                 unattributable += 1
                 continue
             attributable += 1
-            commits = blame_commits(head, f["file"], f["line"], 1, cwd)
+            commits = blame_commits(heads[i], f["file"], f["line"], 1, cwd)
             if commits and origins.of(commits[0]).startswith("pass"):
                 self_inflicted += 1
         # Only fingerprints resolved in an earlier round can recur.
         earlier = dict((fp, r) for fp, r in resolved.items() if r < rnd["round"])
         _, recurrences = classify_recurrence(rnd.get("findings", []), {
             "resolved": earlier, "dismissed": (ledger or {}).get("dismissed")})
-        size = diff_size(base, head, cwd)["lines"]
+        growth = churn = None
+        if git_ok:
+            size = diff_size(base, heads[i], cwd)["lines"]
+            growth = (float(size) / first_size - 1) if first_size else None
+            churn = _churn(origins, heads, i, cwd)["total"] if i else 0
         out.append({
             "round": rnd["round"],
             "count": len(rnd.get("findings", [])),
             "attributable": attributable,
             "self_inflicted": self_inflicted,
             "unattributable": unattributable,
-            "churn": _churn(origins, heads, i, cwd)["total"] if i else 0,
-            "growth": (float(size) / first_size - 1) if first_size else None,
+            "churn": churn,
+            "growth": growth,
             "recurrences": [f.get("fingerprint") for f in recurrences],
             "findings": rnd.get("findings", []),
+            "git_ok": git_ok,
         })
     return out
 
 
-def decide(history, thresholds=THRESHOLDS):
+def decide(history, thresholds=THRESHOLDS, budget=None):
     """Evaluate the FR-006 rules on computed round records.
 
     Returns {signals, tripped, stop, reason}. Empty tripped before round 3.
+    budget is the first round the loop's own budget stops (the loop stops
+    it whatever this says, FR-009); a trip on that same round names the
+    budget as the reason and still lists the tripped signals.
     """
     if not history:
         return {"signals": [], "tripped": [], "stop": False, "reason": None}
@@ -322,62 +354,243 @@ def decide(history, thresholds=THRESHOLDS):
             tripped.append("recurrence")
         n = thresholds["consecutive_churn_rounds"]
         recent = signals[-n:]
-        if len(recent) == n and all(s["churn"] > 0 for s in recent):
+        if len(recent) == n and all((s["churn"] or 0) > 0 for s in recent):
             tripped.append("churn-streak")
         growth = signals[-1]["growth"]
         if growth is not None and growth > thresholds["growth_ratio"]:
             tripped.append("growth")
     stop = bool(tripped)
+    reason = "not-converging" if stop else None
+    if stop and budget is not None and latest["round"] >= budget:
+        reason = "budget-spent"
     return {"signals": signals, "tripped": tripped, "stop": stop,
-            "reason": "not-converging" if stop else None}
+            "reason": reason}
+
+
+ROUND_MARKER = "wing-commander-convergence-round"
+ROUND_MARKER_RE = re.compile(
+    r"<!--\s*" + re.escape(ROUND_MARKER) + r":\s*(\{.*?\})\s*-->", re.DOTALL)
+ROUND_MARKER_OPEN_RE = re.compile(r"<!--\s*" + re.escape(ROUND_MARKER) + r":")
+MAX_RECORDED_FINDINGS = 50
+
+
+def round_findings(findings, issue):
+    """The in-scope reviewer findings of one round, as round-record entries.
+
+    The fingerprint is wc_review_finding_fingerprint's (unchanged, research
+    D4); `line` is the reviewer's optional line (D5), never part of it.
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from wc_review_finding_fingerprint import fingerprint
+    out = []
+    for f in findings or []:
+        if not isinstance(f, dict) or f.get("in_scope") is not True:
+            continue
+        path = str((f.get("fingerprint_basis") or {}).get("file_path") or "")
+        line = f.get("line")
+        out.append({"fingerprint": fingerprint(issue, f.get("title", ""), path),
+                    "file": path,
+                    "line": line if isinstance(line, int) and not isinstance(line, bool) else None,
+                    "title": str(f.get("title", ""))})
+    return out
+
+
+def round_record_marker(round_, head_sha, entries):
+    """The HTML-comment marker a loop appends, LAST, to the review body it
+    posts on the PR for one round (data-model "Review round record").
+    Titles stay out of it: the record carries identifiers only."""
+    payload = {"round": round_, "head_sha": head_sha,
+               "findings": [{"fingerprint": e["fingerprint"], "file": e["file"],
+                             "line": e["line"]}
+                            for e in entries[:MAX_RECORDED_FINDINGS]]}
+    return "<!-- {0}: {1} -->".format(ROUND_MARKER, json.dumps(payload, sort_keys=True))
+
+
+def read_round_records(comments, bot_login):
+    """Every round record this App posted, newest per round, by round.
+
+    comments: REST-shaped reviews or comments ({body, user: {login, type},
+    submitted_at|created_at}). Only the App's own bot-authored bodies count,
+    and only the LAST marker opener in a body (agent text quoted earlier in
+    the same body cannot forge one) -- board_item_marker's rules, reused.
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from board_item_marker import is_loop_marker_author, last_marker_match
+    by_round = {}
+    for c in comments or []:
+        if not isinstance(c, dict) or not is_loop_marker_author(c, bot_login):
+            continue
+        match = last_marker_match(c.get("body") or "", ROUND_MARKER_RE, ROUND_MARKER_OPEN_RE)
+        if not match:
+            continue
+        try:
+            rec = json.loads(match.group(1))
+        except ValueError:
+            continue
+        if not isinstance(rec, dict) or not isinstance(rec.get("round"), int) \
+                or not isinstance(rec.get("head_sha"), str) \
+                or not isinstance(rec.get("findings"), list):
+            continue
+        stamp = c.get("submitted_at") or c.get("created_at") or ""
+        if rec["round"] not in by_round or stamp >= by_round[rec["round"]][0]:
+            by_round[rec["round"]] = (stamp, rec)
+    return [by_round[k][1] for k in sorted(by_round)]
+
+
+def evaluate(records, current, base, cwd, resolved=None, budget=None,
+             resolved_from_history=False):
+    """One loop round's convergence decision (FR-004..FR-009).
+
+    records: earlier rounds' records (read_round_records); only those
+    before current["round"] are used. current: this round's record with
+    its entries (round_findings). resolved: fingerprints already folded
+    (lifecycle gate's marker); resolved_from_history also counts every
+    earlier round's findings as fixed (the board loop, whose review-fixup
+    fixes each round's in-scope findings before the next review).
+    """
+    rounds = [r for r in records if r["round"] < current["round"]] + [current]
+    ledger = {"resolved": dict((fp, 0) for fp in (resolved or [])), "dismissed": []}
+    if resolved_from_history:
+        for r in rounds[:-1]:
+            for f in r.get("findings", []):
+                ledger["resolved"].setdefault(f.get("fingerprint"), r["round"])
+    history = compute_history(base, rounds, ledger, cwd)
+    decision = decide(history, budget=budget)
+    decision["recurrences"] = history[-1]["recurrences"] if history else []
+    decision["git_ok"] = bool(history and history[-1].get("git_ok"))
+    decision["open_findings"] = current.get("findings", [])
+    return decision
+
+
+def _pct(value, signed=False):
+    if value is None:
+        return "n/a"
+    return ("{0:+.0%}" if signed else "{0:.0%}").format(value)
 
 
 def render_handoff(decision):
     rounds = decision["signals"]
     n = rounds[-1]["round"] if rounds else 0
-    lines = ["<!-- wing-commander-not-converging: round={0} -->".format(n),
-             "Review stopped: not converging (stall reason `not-converging`). "
-             "The PR is left open and unmerged.", ""]
+    lines = ["<!-- wing-commander-not-converging: round={0} -->".format(n)]
+    if decision.get("reason") == "budget-spent":
+        lines.append("Review stopped: the round budget is spent (stall reason "
+                     "`budget-spent`). The PR is left open and unmerged.")
+    else:
+        lines.append("Review stopped: not converging (stall reason "
+                     "`not-converging`). The PR is left open and unmerged.")
+    lines.append("")
     lines.append("Tripped: " + (", ".join(decision["tripped"]) or "none"))
+    if decision.get("git_ok") is False:
+        lines.append("")
+        lines.append("An earlier round's head is unreachable from this "
+                     "checkout, so self-inflicted share, churn and growth "
+                     "could not be computed.")
     lines.append("")
     lines.append("| Round | Findings | Self-inflicted share | Churn | Growth | Recurrences |")
     lines.append("|---|---|---|---|---|---|")
     for s in rounds:
-        share = "n/a" if s["self_inflicted_share"] is None else "{0:.0%}".format(s["self_inflicted_share"])
-        growth = "n/a" if s["growth"] is None else "{0:+.0%}".format(s["growth"])
         lines.append("| {0} | {1} | {2} | {3} | {4} | {5} |".format(
-            s["round"], s["count"], share, s["churn"], growth, len(s["recurrences"])))
+            s["round"], s["count"], _pct(s["self_inflicted_share"]),
+            "n/a" if s["churn"] is None else s["churn"],
+            _pct(s["growth"], signed=True), len(s["recurrences"])))
     unattributable = sum(s["unattributable"] for s in rounds)
     lines.append("")
     lines.append("Unattributable findings: {0}".format(unattributable))
     open_findings = decision.get("open_findings") or []
     if open_findings:
         lines.append("")
-        lines.append("Open findings:")
+        lines.append("Open in-scope findings:")
+        recurring = set(decision.get("recurrences") or [])
         for f in open_findings:
-            lines.append("- `{0}:{1}` {2}".format(
-                f.get("file"), f.get("line") or "?", f.get("fingerprint", "")))
+            lines.append("- `{0}:{1}` {2}{3}".format(
+                f.get("file"), f.get("line") or "?", f.get("fingerprint", ""),
+                " (recurring)" if f.get("fingerprint") in recurring else ""))
     return "\n".join(lines)
+
+
+def _load_json(path):
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _write_outputs(path, pairs):
+    if not path:
+        return
+    with open(path, "a", encoding="utf-8") as fh:
+        for k, v in pairs:
+            fh.write("{0}={1}\n".format(k, v))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
-    d = sub.add_parser("decide")
+    d = sub.add_parser("decide", help="signals and decision over a recorded history")
     d.add_argument("--history", required=True, help="JSON file: list of rounds")
     d.add_argument("--base", default="origin/main")
     d.add_argument("--ledger", help="JSON file: {resolved:{fp:round}, dismissed:[fp]}")
     d.add_argument("--json", action="store_true")
+
+    r = sub.add_parser("record", help="print one round's record marker")
+    r.add_argument("--round", type=int, required=True)
+    r.add_argument("--head-sha", required=True)
+    r.add_argument("--issue", required=True)
+    r.add_argument("--findings", required=True, help="JSON file: the round's reviewer findings")
+
+    e = sub.add_parser("evaluate", help="a loop round's convergence decision")
+    e.add_argument("--reviews", required=True,
+                   help="JSON file: the PR's reviews (REST shape) carrying earlier round records")
+    e.add_argument("--bot-login", required=True)
+    e.add_argument("--round", type=int, required=True)
+    e.add_argument("--head-sha", required=True)
+    e.add_argument("--issue", required=True)
+    e.add_argument("--findings", required=True, help="JSON file: this round's reviewer findings")
+    e.add_argument("--base", default="origin/main")
+    e.add_argument("--resolved", default="", help="comma-separated already-folded fingerprints")
+    e.add_argument("--resolved-from-history", action="store_true")
+    e.add_argument("--budget", type=int)
+    e.add_argument("--decision-out", help="write the decision JSON here")
+    e.add_argument("--handoff-out", help="write the hand-off markdown here")
+    e.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT", ""))
+
+    h = sub.add_parser("render-handoff", help="render a decision JSON as the hand-off")
+    h.add_argument("--decision", required=True)
     args = parser.parse_args()
-    with open(args.history, encoding="utf-8") as fh:
-        rounds = json.load(fh)
-    ledger = None
-    if args.ledger:
-        with open(args.ledger, encoding="utf-8") as fh:
-            ledger = json.load(fh)
+
+    if args.cmd == "record":
+        entries = round_findings(_load_json(args.findings), args.issue)
+        print(round_record_marker(args.round, args.head_sha, entries))
+        return 0
+    if args.cmd == "render-handoff":
+        print(render_handoff(_load_json(args.decision)))
+        return 0
+    if args.cmd == "evaluate":
+        entries = round_findings(_load_json(args.findings), args.issue)
+        current = {"round": args.round, "head_sha": args.head_sha, "findings": entries}
+        records = read_round_records(_load_json(args.reviews), args.bot_login)
+        decision = evaluate(records, current, args.base, os.getcwd(),
+                            resolved=[f for f in args.resolved.split(",") if f],
+                            budget=args.budget,
+                            resolved_from_history=args.resolved_from_history)
+        if args.decision_out:
+            with open(args.decision_out, "w", encoding="utf-8") as fh:
+                json.dump(decision, fh)
+        if args.handoff_out:
+            with open(args.handoff_out, "w", encoding="utf-8") as fh:
+                fh.write(render_handoff(decision) + "\n")
+        _write_outputs(args.github_output, [
+            ("stop", "true" if decision["stop"] else "false"),
+            ("reason", decision["reason"] or ""),
+            ("tripped", ",".join(decision["tripped"])),
+            ("recurrences", str(len(decision["recurrences"])))])
+        print(json.dumps({k: decision[k] for k in ("stop", "reason", "tripped", "recurrences")}))
+        return 0
+
+    rounds = _load_json(args.history)
+    ledger = _load_json(args.ledger) if args.ledger else None
     history = compute_history(args.base, rounds, ledger, os.getcwd())
     decision = decide(history)
     decision["open_findings"] = history[-1]["findings"] if history else []
+    decision["recurrences"] = history[-1]["recurrences"] if history else []
     if args.json:
         print(json.dumps(decision, indent=2))
     else:

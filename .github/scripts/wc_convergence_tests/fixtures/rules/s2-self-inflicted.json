@@ -1,0 +1,6 @@
+{"note": "Acceptance 2: at round 3 at least half the attributable findings sit on loop-written lines.",
+ "history": [
+  {"round": 1, "count": 6, "attributable": 6, "self_inflicted": 0, "churn": 0, "growth": 0.0, "recurrences": []},
+  {"round": 2, "count": 4, "attributable": 4, "self_inflicted": 1, "churn": 0, "growth": 0.1, "recurrences": []},
+  {"round": 3, "count": 2, "attributable": 2, "self_inflicted": 1, "churn": 0, "growth": 0.1, "recurrences": []}],
+ "expect": {"stop": true, "reason": "not-converging", "tripped": ["self-inflicted"]}}
