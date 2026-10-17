@@ -5880,10 +5880,10 @@ jobs:
           set -uo pipefail
           scripts="$RUNNER_TEMP/wc-pristine/scripts"
           stderr_file="$RUNNER_TEMP/board-merge-stderr.txt"
-          head="$HEAD_SHA"
+          pin_sha="$HEAD_SHA"
           attempt=1
           while :; do
-            if gh pr merge "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --squash --match-head-commit "$head" 2> "$stderr_file"; then
+            if gh pr merge "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --squash --match-head-commit "$pin_sha" 2> "$stderr_file"; then
               merge_sha="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json mergeCommit --jq '.mergeCommit.oid // empty')" || merge_sha=""
               { echo "outcome=merged"; echo "merge-sha=$merge_sha"; } >> "$GITHUB_OUTPUT"
               exit 0
@@ -5900,18 +5900,23 @@ jobs:
             fi
             attempt=2
             sleep 20
+            # Re-fetched beside the first snapshot and decision, replacing
+            # them only once both are whole: a failed re-fetch leaves the
+            # announcement reading the pair the first attempt used.
             fields="$(python3 -I "$scripts/board_merge.py" snapshot-fields)" \
-              && gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json "$fields" > "$RUNNER_TEMP/board-merge-snapshot.json" \
+              && gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json "$fields" > "$RUNNER_TEMP/board-merge-snapshot.retry.json" \
               && python3 -I "$scripts/board_merge.py" decide \
-                   --inputs "$RUNNER_TEMP/board-merge-inputs.json" --snapshot "$RUNNER_TEMP/board-merge-snapshot.json" \
-                   > "$RUNNER_TEMP/board-merge-decision.json" \
+                   --inputs "$RUNNER_TEMP/board-merge-inputs.json" --snapshot "$RUNNER_TEMP/board-merge-snapshot.retry.json" \
+                   > "$RUNNER_TEMP/board-merge-decision.retry.json" \
               || { { echo "outcome=transient"; echo "refusal-class=$refusal_class"; } >> "$GITHUB_OUTPUT"
                    echo "::warning::board-loop merge: could not re-derive the decision for the retry -- not retried."; exit 0; }
+            mv "$RUNNER_TEMP/board-merge-snapshot.retry.json" "$RUNNER_TEMP/board-merge-snapshot.json"
+            mv "$RUNNER_TEMP/board-merge-decision.retry.json" "$RUNNER_TEMP/board-merge-decision.json"
             if [ "$(jq -r '.may_merge' "$RUNNER_TEMP/board-merge-decision.json")" != "true" ]; then
               echo "outcome=not-merged" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            head="$(jq -r '.head_sha' "$RUNNER_TEMP/board-merge-decision.json")"
+            pin_sha="$(jq -r '.head_sha' "$RUNNER_TEMP/board-merge-decision.json")"
           done
 
       # FR-008/FR-009/FR-010: every outcome is announced on the PR and the
