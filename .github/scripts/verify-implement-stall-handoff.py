@@ -200,12 +200,91 @@ def check_prompts():
         fail("maintainer-only tasks.md must yield impl-unchecked-count=0")
 
 
+def parse_kv(text):
+    out = {}
+    for line in text.splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            out[k] = v
+    return out
+
+
+def check_blocker():
+    import json
+    tasks = read(os.path.join(FIXTURES, "validate-implement-blocker.tasks.md"))
+    cases = json.loads(read(os.path.join(FIXTURES, "validate-implement-blocker-cases.json")))
+    repo = git_repo_with({"tasks.md": tasks})
+    for case in cases:
+        name = f"validate-implement-blocker/{case['name']}"
+        path = os.path.join(repo, "..", f"blocker-{case['name']}.json")
+        path = os.path.abspath(path)
+        if os.path.exists(path):
+            os.remove(path)
+        if case["blocker"] is not None:
+            with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(case["blocker"].replace("@X301@", "x" * 301))
+        proc = run(["bash", os.path.join(SHARED, "validate-implement-blocker.sh"),
+                    path, "HEAD", "tasks.md"], cwd=repo)
+        global CASES
+        CASES += 1
+        if proc.returncode != 0:
+            fail(f"{name}: exited {proc.returncode}: {proc.stderr}")
+            continue
+        got = parse_kv(proc.stdout)
+        if (got.get("blocker-valid") == "true") != case["valid"]:
+            fail(f"{name}: blocker-valid={got.get('blocker-valid')}, expected {case['valid']}")
+        elif case["valid"] and got.get("blocker-text") != case["text"]:
+            fail(f"{name}: blocker-text={got.get('blocker-text')!r}, expected {case['text']!r}")
+        elif not case["valid"] and case["reason"] not in got.get("blocker-invalid-reason", ""):
+            fail(f"{name}: reason {got.get('blocker-invalid-reason')!r} lacks {case['reason']!r}")
+    # tasks.md unreadable at the ref is the one non-zero exit.
+    CASES += 1
+    proc = run(["bash", os.path.join(SHARED, "validate-implement-blocker.sh"),
+                os.path.join(repo, "none.json"), "HEAD", "absent.md"], cwd=repo)
+    if proc.returncode == 0:
+        fail("validate-implement-blocker.sh: unreadable tasks.md must exit non-zero")
+
+
+def check_decide():
+    import json
+    cases = json.loads(read(os.path.join(FIXTURES, "decide-implement-outcome-cases.json")))
+    for case in cases:
+        env = {"PATH": os.environ.get("PATH", "")}
+        env.update(case["env"])
+        proc = run(["bash", os.path.join(SHARED, "decide-implement-outcome.sh")], env=env)
+        global CASES
+        CASES += 1
+        name = f"decide-implement-outcome/{case['name']}"
+        if proc.returncode != 0:
+            fail(f"{name}: exited {proc.returncode}: {proc.stderr}")
+            continue
+        got = parse_kv(proc.stdout)
+        for key, want in case["expect"].items():
+            if got.get(key) != want:
+                fail(f"{name}: {key}={got.get(key)!r}, expected {want!r}")
+
+
+def check_implement_wiring():
+    global CASES
+    impl = read(os.path.join(ROOT, ".github", "workflows", "implement.yml"))
+    for needle in ("wing-commander-implement-outcome", "decide-script"):
+        CASES += 1
+        if impl.count(needle) < 2:
+            fail(f"implement.yml: both read-back arms must use {needle}")
+    CASES += 1
+    if "the cycle checked nothing new, so the loop is ending here" in impl:
+        fail("implement.yml still carries the inline zero-progress hand-off rule")
+
+
 def main():
+    check_blocker()
+    check_decide()
     check_classification()
     check_composite_outputs()
     check_render()
     check_finalize_wiring()
     check_prompts()
+    check_implement_wiring()
     if FAILURES:
         print(f"verify-implement-stall-handoff: {len(FAILURES)} failure(s) in {CASES} case(s)")
         return 1
