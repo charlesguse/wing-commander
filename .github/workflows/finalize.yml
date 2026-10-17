@@ -1180,9 +1180,17 @@ jobs:
           narrative_file="$RUNNER_TEMP/finalize-narrative.md"
           : > "$narrative_file"
           if [ "$CONVERGED" = "false" ]; then
+            # IMPL_COUNT counts implementation tasks only; when none are
+            # left (only maintainer or routed work remains, or the render
+            # step did not run) a "0 tasks remain" banner would be false.
             n="${IMPL_COUNT:-0}"
+            if [ "$n" -gt 0 ] 2>/dev/null; then
+              banner="⚠️ **Not fully converged — $n implementation task(s) remain**"
+            else
+              banner="⚠️ **Not fully converged — see the remaining work below**"
+            fi
             {
-              echo "⚠️ **Not fully converged — $n tasks remain**"
+              echo "$banner"
               echo ""
             } >> "$narrative_file"
           fi
