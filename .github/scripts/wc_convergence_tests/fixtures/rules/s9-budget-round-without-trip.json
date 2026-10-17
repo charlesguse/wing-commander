@@ -1,0 +1,9 @@
+{"note": "FR-009: the budget alone never makes decide() stop -- the loop's own budget check does that; nothing tripped means nothing relabelled.",
+ "budget": 5,
+ "history": [
+  {"round": 1, "count": 5, "attributable": 5, "self_inflicted": 0, "churn": 0, "growth": 0.0, "recurrences": []},
+  {"round": 2, "count": 4, "attributable": 4, "self_inflicted": 0, "churn": 0, "growth": 0.1, "recurrences": []},
+  {"round": 3, "count": 3, "attributable": 3, "self_inflicted": 0, "churn": 0, "growth": 0.1, "recurrences": []},
+  {"round": 4, "count": 2, "attributable": 2, "self_inflicted": 0, "churn": 0, "growth": 0.2, "recurrences": []},
+  {"round": 5, "count": 1, "attributable": 1, "self_inflicted": 0, "churn": 0, "growth": 0.2, "recurrences": []}],
+ "expect": {"stop": false, "reason": null, "tripped": []}}

@@ -18,6 +18,7 @@
         }
       },
       "in_scope": {"type": "boolean"},
+      "line": {"type": "integer", "minimum": 1},
       "fingerprint_basis": {
         "type": "object",
         "required": ["file_path", "gate_or_artifact"],

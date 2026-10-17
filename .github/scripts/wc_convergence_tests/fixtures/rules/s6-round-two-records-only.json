@@ -1,0 +1,5 @@
+{"note": "Acceptance 6: every rule holds at round 2, but round 2 only records the signals.",
+ "history": [
+  {"round": 1, "count": 2, "attributable": 2, "self_inflicted": 0, "churn": 0, "growth": 0.0, "recurrences": []},
+  {"round": 2, "count": 3, "attributable": 3, "self_inflicted": 3, "churn": 4, "growth": 2.0, "recurrences": ["fp-F"]}],
+ "expect": {"stop": false, "reason": null, "tripped": []}}

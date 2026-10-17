@@ -108,8 +108,11 @@ LIFECYCLE_WORKFLOW = os.path.join(".github", "workflows", "lifecycle-review-gate
 LIFECYCLE_EXTRACT_STEP = "Extract and validate the review findings"
 LIFECYCLE_PARTITION_STEP = "Partition, dedup, and render this round's findings"
 
+# wc_convergence.py/wc_review_finding_fingerprint.py: "Compose the review
+# body" appends the round record spec 116's convergence signals read back.
 SHARED_SCRIPTS = ("wc_fence_extract.py", "verify-board-review-finding-schema.py",
-                  "wc_schema_pattern.py", "board_spec_request_body.py")
+                  "wc_schema_pattern.py", "board_spec_request_body.py",
+                  "wc_convergence.py", "wc_review_finding_fingerprint.py")
 SHARED_SCHEMAS = ("board-review-finding.schema.json",)
 PRISTINE_DIR = "wc-pristine"
 # board_eligibility.py: board_item_marker.py imports STALLED_LABEL from it
@@ -1259,9 +1262,9 @@ def _lifecycle_partition_workdir(tmproot):
     runner_temp = tempfile.mkdtemp(dir=tmproot)
     scripts_dir = os.path.join(workdir, ".wc-pristine-repo", ".github", "scripts")
     os.makedirs(scripts_dir, exist_ok=True)
-    shutil.copyfile(
-        os.path.join(".github", "scripts", "wc_review_finding_fingerprint.py"),
-        os.path.join(scripts_dir, "wc_review_finding_fingerprint.py"))
+    for helper in ("wc_review_finding_fingerprint.py", "wc_convergence.py"):
+        shutil.copyfile(os.path.join(".github", "scripts", helper),
+                        os.path.join(scripts_dir, helper))
     return workdir, runner_temp
 
 
