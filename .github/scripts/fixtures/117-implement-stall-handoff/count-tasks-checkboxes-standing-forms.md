@@ -6,3 +6,4 @@
 - [ ] After each cycle, re-read the plan
 - [ ] T010 Run the gate suite and fix the fallout
 - [ ] T011 Run the full gate suite on `.github/scripts/x.py`
+- [ ] T012 Run the gate suite, then fix fallout

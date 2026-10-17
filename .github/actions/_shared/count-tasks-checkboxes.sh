@@ -74,9 +74,13 @@ counts="$(printf '%s\n' "$content" | awk '
     if (t ~ /^keep the gates green/) return 1
     if (t ~ /^after each cycle/) return 1
     if (t ~ /^run the (full )?gate suite/) {
-      # A deliverable noun after it makes it a real task, not a standing line.
-      if (t ~ /and fix/ || t ~ /`/ || t ~ /\//) return 0
-      return 1
+      # Ambiguity counts as implementation (spec edge case): only the bare
+      # instruction, optionally "locally" and/or "before pushing", is
+      # standing. Anything else after it ("and fix", ", then fix", a path)
+      # is a real task.
+      sub(/^run the (full )?gate suite/, "", t)
+      if (t ~ /^[ .]*(locally)?[ .]*(before (each )?(pushing|push|committing|commit))?[ .]*$/) return 1
+      return 0
     }
     return 0
   }
