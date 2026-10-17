@@ -7,9 +7,9 @@ header), not to `constitution.md` -- see CLAUDE.md.
 
 <!--
 Sync Impact Report — 2026-10-17
-Version change: 2.5.0 → 2.6.0 (MINOR: Principle X gains the switch that governs the board loop's two existing merge classes. No class is added or widened; the conditions each class already requires are unchanged.)
+Version change: 2.5.0 → 2.6.0 (MINOR: Principle X gains the switch that governs the board loop's two existing merge classes. No class is added or widened; each class keeps the conditions it already required and gains three: the switch, re-deriving those conditions from a fresh snapshot of the exact head SHA, and the workflow-scope hand-off.)
 Modified principles:
-  X. Bounded Autonomy — The Pipeline Works Its Own Board: one passage added after the prove sentence. Both board-loop merge classes (the bounded fix-PR merge and the verified dependency-bump merge) run only while `WING_COMMANDER_BOARD_AUTO_MERGE` is `true`. It is one switch for both classes and defaults to off; while off, the loop fixes, reviews and reports but never merges. `WING_COMMANDER_BOARD_LOOP_PAUSED` is the kill switch. Every such merge re-derives its conditions from a fresh snapshot of the exact head SHA, and a workflow-scope refusal is handed to a maintainer, never routed around. This mirrors what the lifecycle pull request merge already says for `WING_COMMANDER_LIFECYCLE_AUTO_MERGE`.
+  X. Bounded Autonomy — The Pipeline Works Its Own Board: one passage added after the prove sentence. Both board-loop merge classes (the bounded fix-PR merge and the verified dependency-bump merge) run only while `WING_COMMANDER_BOARD_AUTO_MERGE` is `true`. It is one switch for both classes and defaults to off; while off, the loop fixes, reviews and reports but never merges. `WING_COMMANDER_BOARD_LOOP_PAUSED` is the kill switch. Every such merge re-derives its conditions from a fresh snapshot of the exact head SHA, and a workflow-scope refusal is handed to a maintainer, never routed around. This mirrors what the lifecycle pull request merge already says for `WING_COMMANDER_LIFECYCLE_AUTO_MERGE`. X's closing "What stays human" list adds the fix-PR and dependency-bump merges while `WING_COMMANDER_BOARD_AUTO_MERGE` is off.
 Modified sections: none
 Added sections: none
 Removed sections: none
