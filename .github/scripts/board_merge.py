@@ -119,15 +119,19 @@ def evaluate_fix(snapshot, review_converged, backstop_holds, paused, switch_on):
 
 def _bot_commit_author(author, bot_login):
     """`gh` reports an empty login for a commit whose git email maps to no
-    GitHub account. The App's own commits then still carry its noreply email
-    (`<id>+<slug>[bot]@users.noreply.github.com`), which only that App can
-    author; any other empty-login commit is not the bot's."""
+    GitHub account. The App's own commits then still carry its noreply email,
+    either `<slug>[bot]@users.noreply.github.com` (what the auto-update stage
+    configures) or `<id>+<slug>[bot]@users.noreply.github.com`, which only that
+    App can author; any other empty-login commit is not the bot's."""
     author = author or {}
     if (author.get("login") or "").strip():
         return _is_bot(author.get("login"), bot_login)
     email = (author.get("email") or "").strip().lower()
     slug = _slug(bot_login)
-    return bool(slug) and email.endswith("+{0}[bot]@users.noreply.github.com".format(slug))
+    if not slug:
+        return False
+    suffix = "{0}[bot]@users.noreply.github.com".format(slug)
+    return email == suffix or (email.endswith("+" + suffix) and email[:-len(suffix) - 1].isdigit())
 
 
 def _attributed_to_auto_update(snapshot, bot_login):

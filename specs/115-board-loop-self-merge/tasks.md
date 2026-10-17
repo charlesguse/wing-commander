@@ -272,7 +272,7 @@
 
 ## Review Gate Round 3 Findings
 
-- [ ] Review finding: Bot-author fallback expects an email shape the auto-update stage never produces
+- [x] Review finding: Bot-author fallback expects an email shape the auto-update stage never produces
 
   _bot_commit_author's empty-login fallback requires a '<id>+<slug>[bot]@users.noreply.github.com' email, but auto-update-spec-kit.yml commits as '<slug>[bot]@users.noreply.github.com', so a genuine bump PR fails attributed_to_auto_update and is never auto-merged; fixtures only use the id-prefixed form.
 
@@ -281,7 +281,7 @@
 
   Detail: Unverified by me. Reported by the code-review skill.
 
-- [ ] Review finding: Merge step records any post-failure MERGED state as a bot merge
+- [x] Review finding: Merge step records any post-failure MERGED state as a bot merge
 
   If gh pr merge fails (e.g. head modified) and the PR is MERGED by another actor, board-loop.yml records outcome=merged with that actor's merge_sha and announces the bot merged the evaluated head.
 
@@ -297,13 +297,13 @@
 
   Detail: Whether gh truncates these lists was not confirmed.
 
-- [ ] Review finding: verify-board-merge gh pr merge regex ignores backslash-continued lines
+- [x] Review finding: verify-board-merge gh pr merge regex ignores backslash-continued lines
 
   The pattern's [^\n]* consumes the trailing backslash so the continuation group matches zero times; flags on continuation lines (--rebase, --match-head-commit) are never checked.
 
   - .github/scripts/verify-board-merge.py
 
-- [ ] Review finding: Empty merge_sha possible right after gh pr merge
+- [x] Review finding: Empty merge_sha possible right after gh pr merge
 
   mergeCommit.oid is read immediately after merging with no re-read or fallback, so the announcement and step=merged marker may carry an empty SHA that the prove path needs.
 
@@ -315,7 +315,7 @@
 
   - .github/workflows/board-loop.yml
 
-- [ ] Review finding: job_block and job_span duplicate job-boundary logic in the gate
+- [x] Review finding: job_block and job_span duplicate job-boundary logic in the gate
 
   Both functions in verify-board-merge.py scan for a job header and stop at the next two-space key; job_block should be derived from job_span to keep one home.
 
