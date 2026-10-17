@@ -1733,6 +1733,11 @@ jobs:
       # wing-commander-implement-outcome.
       - name: Validate implement blocker (cycle)
         id: blocker-cycle
+        # Survivable: an unreadable tasks.md must not strand the read-back,
+        # dispatch and hand-off steps below. Empty outputs read as "no valid
+        # blocker", and "Read back cycle outcome" falls back when
+        # decide-script is empty.
+        continue-on-error: true
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-implement-outcome
         with:
@@ -1766,7 +1771,10 @@ jobs:
           CHECKED_BASE: ${{ steps.checkbox-base-cycle.outputs.checked-count }}
           CHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.checked-count }}
           UNCHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.unchecked-count }}
-          REMAINING_TIP: ${{ steps.checkbox-tip-cycle.outputs.unchecked-items }}
+          # The classified list (implementation tasks only), so the hand-off
+          # comment's list agrees with its "N implementation task(s)" count
+          # rather than also listing standing and [maintainer] lines.
+          REMAINING_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-unchecked-items }}
           IMPL_CHECKED_BASE: ${{ steps.checkbox-base-cycle.outputs.impl-checked-count }}
           IMPL_CHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-checked-count }}
           IMPL_UNCHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-unchecked-count }}
@@ -2644,6 +2652,8 @@ jobs:
       # blocker validation above -- see "Validate implement blocker (cycle)".
       - name: Validate implement blocker (retry)
         id: blocker-retry
+        # Survivable -- see "Validate implement blocker (cycle)".
+        continue-on-error: true
         if: steps.lifecycle-gate.outputs.is-open == 'true' && (steps.retry.outcome == 'success' || steps.retry.outcome == 'failure')
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-implement-outcome
         with:
@@ -2673,7 +2683,8 @@ jobs:
           CHECKED_BASE: ${{ steps.checkbox-base-retry.outputs.checked-count }}
           CHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.checked-count }}
           UNCHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.unchecked-count }}
-          REMAINING_TIP: ${{ steps.checkbox-tip-retry.outputs.unchecked-items }}
+          # Classified list -- see "Read back cycle outcome".
+          REMAINING_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-unchecked-items }}
           IMPL_CHECKED_BASE: ${{ steps.checkbox-base-retry.outputs.impl-checked-count }}
           IMPL_CHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-checked-count }}
           IMPL_UNCHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-unchecked-count }}
