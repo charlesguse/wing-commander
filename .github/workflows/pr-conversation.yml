@@ -3480,9 +3480,59 @@ jobs:
       # iteration off the tip and dispatches, but only on folded-json --
       # unaffected, since lifecycle-review-gate.yml never sets
       # round-folded-json/fold-queue-token.
+      # specs/116-review-convergence-analyze contracts/fold-analyze.md: the
+      # analyze check between the round's folds and the one dispatch below,
+      # the second caller of wing-commander-fold-analyze (the first is
+      # lifecycle-review-gate.yml). It reads tasks.md as the folds left it,
+      # so the spec branch's tip is fetched and checked out detached first;
+      # the pipeline checkout above is untracked and survives that.
+      - name: Fetch the spec branch tip for the fold analyze
+        id: analyze-tip
+        if: needs.fold-turn-dispatch.outputs.should-dispatch == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          BRANCH: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch --no-tags origin "$BRANCH"
+          git checkout --detach FETCH_HEAD
+          echo "tip=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Analyze the round's folds
+        id: analyze-fold
+        if: needs.fold-turn-dispatch.outputs.should-dispatch == 'true' && steps.analyze-tip.outcome == 'success'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-analyze
+        with:
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          fold-ref-before: ${{ needs.classify-and-announce.outputs.base-sha }}
+          fold-ref-after: ${{ steps.analyze-tip.outputs.tip }}
+          folded-json: ${{ needs.fold-turn-dispatch.outputs.round-folded-json || needs.fold-turn-dispatch.outputs.folded-json }}
+          claude-code-oauth-token: ${{ secrets.claude-code-oauth-token }}
+          anthropic-api-key: ${{ secrets.anthropic-api-key }}
+          github-token: ${{ github.token }}
+
+      - name: Post the fold-analyze outcome
+        if: steps.analyze-fold.outcome == 'success' && steps.analyze-fold.outputs.decision != 'skipped'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ needs.classify-and-announce.outputs.issue-number }}
+          DECISION: ${{ steps.analyze-fold.outputs.decision }}
+          REPORT: ${{ steps.analyze-fold.outputs.report-markdown }}
+          QUESTION: ${{ steps.analyze-fold.outputs.question-markdown }}
+          FOLD_ID: ${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          if [ "$DECISION" = "hold" ]; then
+            gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body "$(printf '%s\n\n<!-- wing-commander-fold-hold: fold=%s -->' "$QUESTION" "$FOLD_ID")"
+          else
+            gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body "$REPORT"
+          fi
+
       - name: Dispatch implement once for the whole review
         id: fold-dispatch
-        if: needs.fold-turn-dispatch.outputs.should-dispatch == 'true'
+        if: needs.fold-turn-dispatch.outputs.should-dispatch == 'true' && steps.analyze-fold.outputs.decision != 'hold'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-dispatch
         with:
           dispatch-token: ${{ github.token }}
