@@ -1,5 +1,5 @@
 [
-  {"name": "valid-neutralised", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"ping @owner see https://x.invalid #12 `rm`\"}", "valid": true, "text": "missing-tool: ping  owner see https x.invalid  12  rm  (T002)"},
+  {"name": "valid-neutralised", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"ping @owner see https://x.invalid #12 `rm`\"}", "valid": true, "text": "missing-tool: ping  owner see https:  x.invalid  12  rm  (T002)"},
   {"name": "valid","blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"jq is not installed\"}", "valid": true, "text": "missing-tool: jq is not installed (T002)"},
   {"name": "missing-file", "blocker": null, "valid": false, "reason": "no blocker file"},
   {"name": "malformed-json", "blocker": "{nope", "valid": false, "reason": "not valid JSON"},
@@ -9,6 +9,8 @@
   {"name": "non-string-value", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":5}", "valid": false, "reason": "must all be strings"},
   {"name": "kind-not-listed", "blocker": "{\"task\":\"T002\",\"kind\":\"tired\",\"detail\":\"x\"}", "valid": false, "reason": "kind is not one of"},
   {"name": "detail-empty", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"\"}", "valid": false, "reason": "detail is empty"},
+  {"name": "task-trailing-newline", "blocker": "{\"task\":\"T002\\n\",\"kind\":\"missing-tool\",\"detail\":\"x\"}", "valid": false, "reason": "task is not a task id"},
+  {"name": "detail-newline-only", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"\\n\"}", "valid": false, "reason": "single line"},
   {"name": "detail-multiline", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"a\\nb\"}", "valid": false, "reason": "single line"},
   {"name": "detail-301-chars", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"@X301@\"}", "valid": false, "reason": "longer than 300"},
   {"name": "task-bad-shape", "blocker": "{\"task\":\"task 2\",\"kind\":\"missing-tool\",\"detail\":\"x\"}", "valid": false, "reason": "not a task id"},

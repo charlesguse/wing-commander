@@ -37,25 +37,47 @@ fi
 
 # items <file>: the non-blank lines, each swapped for its routed rendering
 # when the lookup matched it.
+#   items <file> keep   -> only the lines the lookup did not route
+#   items <file> routed -> only the routed lines (rendered)
+# A routed item is out-of-boundary work the implement stage cannot do, so it
+# is reported with the owner's steps and never counts as stalled implementation.
 items() {
-  local line r
+  local line r hit
   [ -f "$1" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "${line//[[:space:]]/}" ] || continue
+    hit=0
     for r in "${routed[@]+"${routed[@]}"}"; do
       if [[ "$r" == "- $line — routed, see "* ]]; then
         # The routed text is "- <line> — routed...": the line already
         # carries its own bullet, so drop the lookup's to avoid "- - [ ]".
         line="${r#- }"
+        hit=1
         break
       fi
     done
-    printf '%s\n' "$line"
+    case "$2" in
+      all) printf '%s\n' "$line" ;;
+      keep) [ "$hit" -eq 1 ] || printf '%s\n' "$line" ;;
+      routed) [ "$hit" -ne 1 ] || printf '%s\n' "$line" ;;
+    esac
   done < "$1"
 }
 
-maint="$(items "$MAINT_FILE")"
-impl="$(items "$IMPL_FILE")"
+maint="$(items "$MAINT_FILE" all)"
+routed_impl="$(items "$IMPL_FILE" routed)"
+impl="$(items "$IMPL_FILE" keep)"
+if [ -n "$routed_impl" ]; then
+  maint="${maint:+$maint$'\n'}$routed_impl"
+fi
+# The number of genuinely unbuilt tasks: the one source the caller reads.
+if [ -n "${RENDER_IMPL_COUNT_FILE:-}" ]; then
+  if [ -n "$impl" ]; then
+    printf '%s\n' "$impl" | wc -l | tr -d ' ' > "$RENDER_IMPL_COUNT_FILE"
+  else
+    echo 0 > "$RENDER_IMPL_COUNT_FILE"
+  fi
+fi
 
 sep=""
 if [ -n "$maint" ]; then

@@ -69,11 +69,11 @@ esac
 detail_len="$(jq -r '.detail | length' "$BLOCKER")"
 [ "$detail_len" -ge 1 ] || invalid "detail is empty"
 [ "$detail_len" -le 300 ] || invalid "detail is longer than 300 characters"
-case "$detail" in
-  *$'\n'*|*$'\r'*) invalid "detail is not a single line" ;;
-esac
-
-[[ "$task" =~ ^T[0-9]+$ ]] || invalid "task is not a task id (T followed by digits)"
+# Checks run inside jq: $(jq -r ...) strips trailing newlines, so a bash-side
+# test would pass "T002\n" and a blank-but-for-newlines detail.
+[ "$(jq -r '.detail | test("[\\n\\r]")' "$BLOCKER")" = "false" ] || invalid "detail is not a single line"
+[ "$(jq -r '.detail | test("^\\s*$")' "$BLOCKER")" = "false" ] || invalid "detail is blank"
+[ "$(jq -r '.task | test("\\AT[0-9]+\\z")' "$BLOCKER")" = "true" ] || invalid "task is not a task id (T followed by digits)"
 
 impl_items="$(printf '%s\n' "$counts" | awk '
   /^impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF$/ { on = 1; next }
@@ -91,6 +91,9 @@ done <<<"$impl_items"
 
 # The detail is untrusted agent text that ends up in an issue comment:
 # neutralise mentions, links, HTML, code spans and issue references.
-detail="$(printf '%s' "$detail" | sed -e 's#://# #g' -e 's/[]@<>`#[|]/ /g')"
+# Allow-list: anything but letters, digits, space and plain punctuation
+# becomes a space (drops emphasis, quotes-as-markup, leading >, autolink
+# characters), and bare "www." hosts lose their dot.
+detail="$(printf '%s' "$detail" | sed -E -e 's#[Ww][Ww][Ww]\.# #g' -e "s/[^[:alnum:] .,:;'-]/ /g")"
 
 printf 'blocker-valid=true\nblocker-text=%s: %s (%s)\nblocker-invalid-reason=\n' "$kind" "$detail" "$task"

@@ -227,7 +227,7 @@
 
 ## Review Gate Round 2 Findings
 
-- [ ] Review finding: Routed out-of-boundary tasks are reported as stalled implementation
+- [x] Review finding: Routed out-of-boundary tasks are reported as stalled implementation
 
   A routed task is still counted as an implementation item, so finalize says the lifecycle stalled and needs another implement run, which cannot do that task.
 
@@ -235,7 +235,7 @@
 
   Detail: The routed rewrite only changes the line text. It neither moves the item to the maintainer section nor clears stalled=true.
 
-- [ ] Review finding: Decide-script failure fallback loses convergence and the stall report
+- [x] Review finding: Decide-script failure fallback loses convergence and the stall report
 
   If the decide script is empty, the fallback sets converged=false and handoff=false with no stall comment, even when every task is checked, so extra cycles run and FR-006 reporting is dropped at the cap.
 
@@ -244,7 +244,7 @@
 
   Detail: The outcome composite exits on a validator failure before writing decide-script. The step is continue-on-error, so DECIDE_SCRIPT is empty downstream.
 
-- [ ] Review finding: Blocker validator accepts values it should reject
+- [x] Review finding: Blocker validator accepts values it should reject
 
   task and detail are read through $(jq -r), which strips trailing newlines, so a task like T002\n or a whitespace-only detail passes validation.
 
@@ -252,7 +252,7 @@
 
   Detail: Do the regex and length checks inside jq instead of on the command-substitution result.
 
-- [ ] Review finding: Blocker detail sanitiser misses markdown and autolink vectors
+- [x] Review finding: Blocker detail sanitiser misses markdown and autolink vectors
 
   Bare www. hosts, emphasis characters, a leading > and similar sequences survive sanitising, so an agent-controlled link or formatting can land in the stall comment on the lifecycle issue.
 
@@ -260,13 +260,13 @@
 
   Detail: Only the :// pattern and a few characters are stripped.
 
-- [ ] Review finding: Maintainer token detection limited to the first 40 characters
+- [x] Review finding: Maintainer token detection limited to the first 40 characters
 
   A [maintainer] tag placed after a long ID or several tags is treated as an implementation task, so implement never converges and the stall report lists owner-only work as unfinished implementation.
 
   - .github/actions/_shared/count-tasks-checkboxes.sh
 
-- [ ] Review finding: Standing and maintainer classification also applies to checked lines
+- [x] Review finding: Standing and maintainer classification also applies to checked lines
 
   Checked standing or maintainer lines are dropped from impl-checked-count, so base and tip implementation counts can diverge and the progress test is unreliable.
 
@@ -278,7 +278,7 @@
 
   - .github/workflows/implement.yml
 
-- [ ] Review finding: Leading-zero numbers break the remaining-iterations arithmetic
+- [x] Review finding: Leading-zero numbers break the remaining-iterations arithmetic
 
   [[ 08 -gt 5 ]] raises a base error under set -e, even though the ^[0-9]+$ guard accepts the input, and the re-dispatch reply step fails.
 
@@ -286,7 +286,7 @@
 
   Detail: Normalise with 10#.
 
-- [ ] Review finding: impl-count is recomputed from raw input instead of the renderer
+- [x] Review finding: impl-count is recomputed from raw input instead of the renderer
 
   The count is a grep of the raw impl input, so the banner and summary can disagree with the items the report lists.
 
