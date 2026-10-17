@@ -15,9 +15,11 @@ branch -- and diffs the output against the `.expected` file beside it.
 Usage: python3 .github/scripts/verify-implement-stall-handoff.py
 Requires: bash, git, awk, jq.
 """
+import atexit
 import glob
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -56,9 +58,22 @@ def run(cmd, cwd=None, env=None):
                           text=True, encoding="utf-8")
 
 
+_TMPDIRS = []
+
+
+def _tmpdir(prefix):
+    """A temp dir removed when the gate exits, pass or fail."""
+    path = tempfile.mkdtemp(prefix=prefix)
+    _TMPDIRS.append(path)
+    return path
+
+
+atexit.register(lambda: [shutil.rmtree(p, ignore_errors=True) for p in _TMPDIRS])
+
+
 def git_repo_with(files):
     """A throwaway git repo committing {relpath: content}; returns its path."""
-    repo = tempfile.mkdtemp(prefix="wc-117-")
+    repo = _tmpdir("wc-117-")
     for args in (["init", "-q"], ["config", "user.email", "g@example.invalid"],
                  ["config", "user.name", "gate"]):
         run(["git"] + args, cwd=repo)
@@ -111,7 +126,7 @@ def check_composite_outputs():
 
 
 def render(maint_text, impl_text, routed_text=None):
-    tmp = tempfile.mkdtemp(prefix="wc-117-render-")
+    tmp = _tmpdir("wc-117-render-")
     paths = []
     for name, text in (("maint", maint_text), ("impl", impl_text),
                        ("routed", routed_text)):
@@ -216,10 +231,7 @@ def check_blocker():
     repo = git_repo_with({"tasks.md": tasks})
     for case in cases:
         name = f"validate-implement-blocker/{case['name']}"
-        path = os.path.join(repo, "..", f"blocker-{case['name']}.json")
-        path = os.path.abspath(path)
-        if os.path.exists(path):
-            os.remove(path)
+        path = os.path.join(repo, f"blocker-{case['name']}.json")
         if case["blocker"] is not None:
             with open(path, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(case["blocker"].replace("@X301@", "x" * 301))

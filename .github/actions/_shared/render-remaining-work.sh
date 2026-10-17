@@ -44,7 +44,9 @@ items() {
     [ -n "${line//[[:space:]]/}" ] || continue
     for r in "${routed[@]+"${routed[@]}"}"; do
       if [[ "$r" == "- $line — routed, see "* ]]; then
-        line="$r"
+        # The routed text is "- <line> — routed...": the line already
+        # carries its own bullet, so drop the lookup's to avoid "- - [ ]".
+        line="${r#- }"
         break
       fi
     done

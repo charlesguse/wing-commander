@@ -64,8 +64,11 @@ case "$kind" in
   *) invalid "kind is not one of missing-tool, missing-permission, contradictory-spec, external-dependency" ;;
 esac
 
-[ "${#detail}" -ge 1 ] || invalid "detail is empty"
-[ "${#detail}" -le 300 ] || invalid "detail is longer than 300 characters"
+# Length in codepoints via jq, not bash ${#detail}, which counts bytes in a
+# C locale and so would accept or reject non-ASCII text by image locale.
+detail_len="$(jq -r '.detail | length' "$BLOCKER")"
+[ "$detail_len" -ge 1 ] || invalid "detail is empty"
+[ "$detail_len" -le 300 ] || invalid "detail is longer than 300 characters"
 case "$detail" in
   *$'\n'*|*$'\r'*) invalid "detail is not a single line" ;;
 esac
@@ -85,5 +88,9 @@ while IFS= read -r line; do
   fi
 done <<<"$impl_items"
 [ "$found" = "true" ] || invalid "task $task is not an unchecked implementation task at the pushed tip"
+
+# The detail is untrusted agent text that ends up in an issue comment:
+# neutralise mentions, links, HTML, code spans and issue references.
+detail="$(printf '%s' "$detail" | sed -e 's#://# #g' -e 's/[]@<>`#[|]/ /g')"
 
 printf 'blocker-valid=true\nblocker-text=%s: %s (%s)\nblocker-invalid-reason=\n' "$kind" "$detail" "$task"

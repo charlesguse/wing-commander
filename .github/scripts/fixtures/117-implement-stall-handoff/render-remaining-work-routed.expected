@@ -2,5 +2,5 @@
 
 The lifecycle stalled with implementation outstanding: 2 task(s) were never built. They need another implement run, not a review.
 
-- - [ ] T011 Edit `.claude/x` — routed, see https://example.invalid/issues/1
+- [ ] T011 Edit `.claude/x` — routed, see https://example.invalid/issues/1
 - [ ] T012 Plain
