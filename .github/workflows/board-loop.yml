@@ -5987,7 +5987,9 @@ jobs:
           args=(--decision "$RUNNER_TEMP/board-merge-decision.json" --snapshot "$RUNNER_TEMP/board-merge-snapshot.json"
                 --outcome "$outcome" --bot-login "$BOT_LOGIN")
           case "$outcome" in
-            merged) args+=(--merge-sha "$MERGE_SHA") ;;
+            merged)
+              [ -n "$MERGE_SHA" ] || echo "::warning::board-loop merge: GitHub reported no merge commit for PR #$PR_NUMBER; the announcement and marker carry no merge_sha."
+              args+=(--merge-sha "$MERGE_SHA") ;;
             refused|transient) args+=(--refusal-class "$REFUSAL_CLASS" --stderr-file "$RUNNER_TEMP/board-merge-stderr.txt") ;;
           esac
           body="$(python3 -I "$scripts/board_merge.py" announce "${args[@]}")" \

@@ -331,7 +331,7 @@
 
   Detail: Around line 1991: the `retryable` check exits 1 for class `other`.
 
-- [ ] Review finding: Already-merged PR yields a garbled not-merged announcement
+- [x] Review finding: Already-merged PR yields a garbled not-merged announcement
 
   When the PR is already MERGED by someone else, the step emits outcome=not-merged while may_merge=true, so the announcement says unmet condition `None` and the outcome record stores reason None.
 
@@ -398,7 +398,7 @@
 
 ## Review Gate Round 5 Findings
 
-- [ ] Review finding: Merge step reports not-merged with may_merge=true when PR was merged by another actor
+- [x] Review finding: Merge step reports not-merged with may_merge=true when PR was merged by another actor
 
   In board-loop.yml the merge step emits outcome=not-merged while may_merge stays true and unmet_reason is null, so the announcement names 'unmet condition None' and the dedup marker has a null reason.
 
