@@ -272,7 +272,7 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None,
         payload_dict["nr_reason"] = nr_reason
     if merge_sha is not None:
         payload_dict["merge_sha"] = merge_sha
-    payload =json.dumps(payload_dict, sort_keys=True)
+    payload = json.dumps(payload_dict, sort_keys=True)
     marker = "<!-- wing-commander-board-item: {0} -->".format(payload)
 
     server_url = os.environ.get("GITHUB_SERVER_URL")

@@ -364,7 +364,18 @@ def check_board_loop():
     for problem in merge_job_shape_problems(merge_job):
         fail(problem)
 
-    condition = " ".join(line.strip() for line in merge_job[1:12])
+    # The `if:` expression runs from its key to the next job-level key (the
+    # `runs-on:` line), not a fixed number of lines.
+    if_lines = []
+    in_if = False
+    for line in merge_job[1:]:
+        if re.match(r"^    if:", line):
+            in_if = True
+        elif in_if and re.match(r"^    \S", line):
+            break
+        if in_if:
+            if_lines.append(line.strip())
+    condition = " ".join(if_lines)
     if "WING_COMMANDER_BOARD_AUTO_MERGE" not in condition or "WING_COMMANDER_BOARD_LOOP_PAUSED" not in condition:
         fail("the merge job's `if:` must carry both WING_COMMANDER_BOARD_AUTO_MERGE and "
              "WING_COMMANDER_BOARD_LOOP_PAUSED")
