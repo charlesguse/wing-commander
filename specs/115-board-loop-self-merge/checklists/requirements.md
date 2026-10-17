@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,6 +31,6 @@
 
 ## Notes
 
-- One [NEEDS CLARIFICATION] marker remains (FR-006: the merge switch's shape, name, and kill switch). It is the owner's call — every new repository variable is — and is posted to the lifecycle issue for the clarify stage.
+- The one clarification (FR-006: the merge switch's shape, name, and kill switch) was resolved by the owner on #903: one switch, `WING_COMMANDER_BOARD_AUTO_MERGE` (default off), for both classes, with `WING_COMMANDER_BOARD_LOOP_PAUSED` as its kill switch.
 - Repository-domain terms (head SHA, squash commit, `WING_COMMANDER_*` variables, gate suite) are the project's own vocabulary as used by constitution X, not implementation choices.
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`

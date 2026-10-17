@@ -6,7 +6,13 @@
 
 **Status**: Draft
 
-**Input**: User description: "Board loop merges its own fix-class PRs (#903). Roadmap goal (#890): auto-fix that finishes without the owner. Today the board loop opens a fix PR and stops at readiness ('Awaiting a human merge -- this loop never merges, approves, or enables auto-merge'). Constitution Principle X already authorizes the fix-PR merge class under conditions the loop checks fully or in part: green checks on the exact head SHA with the gate suite run on that SHA (a head with no checks is not green); an independent review with zero open findings; the size-and-path backstop holding on the final diff; a clear kill switch; a squash commit one human action reverts, proven after merge by re-driving one run when the fix only runs in Actions. Owner decision (2026-10-17): widen the scope to both bot merge classes constitution X authorizes — the bounded fix-PR merge and the verified dependency-bump merge (a Spec Kit upgrade the auto-update stage opened, merged after its assigned verification passed, with the gate suite green on the exact head and the kill switch clear). Settled by precedent: the merge re-derives every condition from a freshly fetched snapshot of the exact head SHA (where it runs is a plan detail); a workflow-touching PR GitHub refuses is handed to a maintainer with the reason stated, never routed around; the post-merge prove re-drive records its evidence on the PR. Open: the merge's own switch. Out of scope: spec, plan and lifecycle PRs, and constitution amendments."
+**Input**: User description: "Board loop merges its own fix-class PRs (#903). Roadmap goal (#890): auto-fix that finishes without the owner. Today the board loop opens a fix PR and stops at readiness ('Awaiting a human merge -- this loop never merges, approves, or enables auto-merge'). Constitution Principle X already authorizes the fix-PR merge class under conditions the loop checks fully or in part: green checks on the exact head SHA with the gate suite run on that SHA (a head with no checks is not green); an independent review with zero open findings; the size-and-path backstop holding on the final diff; a clear kill switch; a squash commit one human action reverts, proven after merge by re-driving one run when the fix only runs in Actions. Owner decision (2026-10-17): widen the scope to both bot merge classes constitution X authorizes — the bounded fix-PR merge and the verified dependency-bump merge (a Spec Kit upgrade the auto-update stage opened, merged after its assigned verification passed, with the gate suite green on the exact head and the kill switch clear). Settled by precedent: the merge re-derives every condition from a freshly fetched snapshot of the exact head SHA (where it runs is a plan detail); a workflow-touching PR GitHub refuses is handed to a maintainer with the reason stated, never routed around; the post-merge prove re-drive records its evidence on the PR. Open: the merge's own switch (resolved in Clarifications). Out of scope: spec, plan and lifecycle PRs, and constitution amendments."
+
+## Clarifications
+
+### Session 2026-10-17
+
+- Q: The merge switch's shape, name, and kill switch? → A: One switch, `WING_COMMANDER_BOARD_AUTO_MERGE` (default off), covering both the fix-PR and dependency-bump classes, with the existing `WING_COMMANDER_BOARD_LOOP_PAUSED` as its kill switch. Mirrors `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` (constitution X). (Owner, #903.)
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -77,7 +83,7 @@ When the merged change alters behaviour that only runs in Actions, the post-merg
 ### Edge Cases
 
 - The kill switch is set between the condition evaluation and the merge call: the merge does not happen (the kill switch is re-read immediately before the merge).
-- The merge switch is turned off between evaluation and merge: no merge.
+- The merge switch (`WING_COMMANDER_BOARD_AUTO_MERGE`) is turned off between evaluation and merge: no merge.
 - A human pushes a commit, requests changes, or merges the PR themselves after readiness: the loop does not merge over a new head; if the PR is already merged or closed it records that and stands down.
 - A head SHA with no checks reported at all: not green, no merge.
 - Required checks still pending: not green; the item is left for a later run, not merged and not failed.
@@ -96,8 +102,8 @@ When the merged change alters behaviour that only runs in Actions, the post-merg
 - **FR-003**: Every merge decision MUST be made by deterministic code re-deriving every condition from a fresh snapshot, never from an agent's judgment and never from state cached by an earlier run or job.
 - **FR-004**: The merge MUST be pinned to the evaluated head SHA, so that a PR whose head moved after evaluation is not merged.
 - **FR-005**: Every autonomous merge MUST be a squash commit on `main` that one human action reverts.
-- **FR-006**: The autonomous merge MUST be governed by its own repository-level switch in the `WING_COMMANDER_*` family, defaulting to off. While off, the loop MUST behave exactly as today (readiness report, human merge awaited, never merges, approves, or enables auto-merge). [NEEDS CLARIFICATION: the switch's shape — one variable covering both merge classes, or one per class; its name; and whether the board loop's existing `WING_COMMANDER_BOARD_LOOP_PAUSED` is the kill switch for both classes or the merge gets a separate `*_PAUSED` variable.]
-- **FR-007**: The kill switch MUST be re-read immediately before the merge call; a set kill switch MUST prevent the merge.
+- **FR-006**: The autonomous merge MUST be governed by one repository variable, `WING_COMMANDER_BOARD_AUTO_MERGE`, defaulting to off, covering both merge classes (fix PR and dependency bump) — mirroring `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` (constitution X). Its kill switch is the board loop's existing `WING_COMMANDER_BOARD_LOOP_PAUSED`, for both classes; no separate `*_PAUSED` variable is added. While the switch is off, the loop MUST behave exactly as today (readiness report, human merge awaited, never merges, approves, or enables auto-merge).
+- **FR-007**: The kill switch (`WING_COMMANDER_BOARD_LOOP_PAUSED`) MUST be re-read immediately before the merge call; a set kill switch MUST prevent the merge.
 - **FR-008**: Every autonomous merge MUST be announced on the PR and on the issue it resolves (for a fix PR) or the auto-update tracking issue (for a bump) with the merged head SHA, the merge class, and each condition's result.
 - **FR-009**: Any failed condition MUST be named on the issue, and the PR MUST NOT be merged past it.
 - **FR-010**: When GitHub refuses a merge — including for lack of the workflow scope a workflow-touching PR requires — the loop MUST hand the PR to a maintainer with the refusal reason stated on the PR and the issue, MUST NOT reach `main` by any other route, and MUST release the item so it is not re-attempted every run.
