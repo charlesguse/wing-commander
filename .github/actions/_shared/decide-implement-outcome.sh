@@ -32,6 +32,17 @@ max="${MAX_ITERATIONS:-0}"
 blocker_valid="${BLOCKER_VALID:-false}"
 blocker_text="${BLOCKER_TEXT:-}"
 
+# A non-numeric count would make `[ -gt ]` error to stderr and take the false
+# branch with exit 0, silently disabling the cap hand-off. Normalise to base-10
+# integers; an unusable unchecked count stays "unknown work remains" (1), the
+# safe side for the convergence test.
+num() { case "$1" in ''|*[!0-9]*) printf '%s' "$2" ;; *) printf '%d' "$((10#$1))" ;; esac; }
+base="$(num "$base" 0)"
+tip="$(num "$tip" 0)"
+unchecked="$(num "$unchecked" 1)"
+iteration="$(num "$iteration" 0)"
+max="$(num "$max" 0)"
+
 converged=""
 progressed=""
 handoff=false

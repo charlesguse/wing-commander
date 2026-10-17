@@ -3,3 +3,4 @@
 - [ ] Complete every remaining step in docs/guide.md
 - [x] Keep the gates green
 - [ ] Keep the gates green
+- [ ] Keep the gates green for the new parser
