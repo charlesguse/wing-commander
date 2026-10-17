@@ -4673,6 +4673,9 @@ jobs:
       - name: Gate 164 — spec-meta self-identity in a project and after graduation
         if: "!cancelled()"
         run: python3 .github/scripts/verify-spec-meta-self-identity.py
+      - name: Gate 165 — the review-convergence arithmetic has exactly one home
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-convergence-single-home.py
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

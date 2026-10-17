@@ -18,7 +18,7 @@ Repository is CI/CD tooling: scripts in `.github/scripts/`, composites in `.gith
 
 ## Phase 1: Setup
 
-- [ ] T001 Read `.claude/skills/review-until-clean/scripts/thrash_signals.py`, `.github/scripts/verify-metrics-summary-record-emission.py`, `.github/actions/wing-commander-fold-commit/action.yml`, `.github/actions/wing-commander-fold-dispatch/action.yml` and the gate registry used by `.github/scripts/run-local-gates.py`, and note the conventions to follow (no file changes)
+- [X] T001 Read `.claude/skills/review-until-clean/scripts/thrash_signals.py`, `.github/scripts/verify-metrics-summary-record-emission.py`, `.github/actions/wing-commander-fold-commit/action.yml`, `.github/actions/wing-commander-fold-dispatch/action.yml` and the gate registry used by `.github/scripts/run-local-gates.py`, and note the conventions to follow (no file changes)
 
 ---
 
@@ -73,8 +73,8 @@ Repository is CI/CD tooling: scripts in `.github/scripts/`, composites in `.gith
 
 **Independent Test**: Skill and loops give identical signals on one history; reintroducing a copy fails the gate.
 
-- [ ] T016 [P] [US4] Create `.github/scripts/verify-convergence-single-home.py` that fails when blame/churn/diff-size arithmetic or the threshold literals appear in a workflow, composite or skill outside `wc_convergence.py` (and the allowed thin callers), in the manner of `verify-metrics-summary-record-emission.py`
-- [ ] T017 [P] [US4] Add checked-in fixtures for every failure branch of the gate (copied arithmetic in a workflow, in a composite, in a skill script, a duplicate threshold literal) and a passing fixture in a `verify-convergence-single-home-fixtures/` directory beside the gate, following existing fixture layout
+- [X] T016 [P] [US4] Create `.github/scripts/verify-convergence-single-home.py` that fails when blame/churn/diff-size arithmetic or the threshold literals appear in a workflow, composite or skill outside `wc_convergence.py` (and the allowed thin callers), in the manner of `verify-metrics-summary-record-emission.py`
+- [X] T017 [P] [US4] Add checked-in fixtures for every failure branch of the gate (copied arithmetic in a workflow, in a composite, in a skill script, a duplicate threshold literal) and a passing fixture in a `verify-convergence-single-home-fixtures/` directory beside the gate, following existing fixture layout
 - [ ] T018 [US4] Add a parity test in `.github/scripts/wc_convergence_tests/` asserting the skill's `thrash_signals.py` and the module's CLI emit identical signals on the same history (SC-003)
 - [ ] T019 [US4] Register the gate in the gate registry and in `.github/workflows/lint-workflows.yml` so `run-local-gates.py` runs it; run the full suite
 

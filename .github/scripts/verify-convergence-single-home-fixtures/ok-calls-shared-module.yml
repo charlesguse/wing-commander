@@ -1,0 +1,8 @@
+name: synthetic loop
+on: workflow_call
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide whether the loop is converging
+        run: python3 .github/scripts/wc_convergence.py decide --history history.json --base origin/main --json
