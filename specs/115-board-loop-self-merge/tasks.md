@@ -144,3 +144,70 @@
 - [x] MF004 Fix `.github/scripts/auto-update-spec-kit-tests/run-tests.sh` scenario S5: the version-bump step must exit 0 and the PR must carry the `wc-bump-verification` record bound to its head.
 - [ ] MF005 Complete T028: extend `verify-constitution-merge-class-parity.py` so `WING_COMMANDER_BOARD_AUTO_MERGE` must appear in both the constitution and `board-loop.yml`.
 - [ ] MF006 Re-run `python .github/scripts/run-local-gates.py` until green (Gate 62 may be skipped without Docker). T033 (post-merge proof) remains a maintainer step.
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Not-merged dedup pipes gh api into grep -q under pipefail
+
+  SIGPIPE from grep -q makes the pipeline return 141, so the already-announced check fails and the same Not merged comment is reposted every hourly run.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: Around line 1300; dedup claimed per head and condition does not hold on issues with many comments.
+
+- [ ] Review finding: Refused bump-class merge writes no marker, so it is retried and re-announced every run
+
+  Only the fix class gets a handed-over marker. A refused bump PR (for example, the App lacks the Workflows permission) is picked again each run and gets a new refusal comment on the PR and the tracking issue.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: Around line 1317; the refused path has no dedup.
+
+- [ ] Review finding: pick_bump_candidate lets one stuck bump PR hide newer valid ones
+
+  It returns the oldest PR by author and branch shape only. If that PR fails attribution or verification or was refused, newer verified bump PRs are never evaluated.
+
+  - .github/scripts/board_merge.py
+
+  Detail: Around line 411.
+
+- [ ] Review finding: Transient merge refusals are classified as other and permanently handed over
+
+  A head-moved race with --match-head-commit, a 502 or mergeability still being computed all become class other. The workflow writes handed-over, which is treated like awaiting-merge, so a recoverable failure is never retried.
+
+  - .github/scripts/board_merge.py
+
+  Detail: Around line 342.
+
+- [ ] Review finding: verification_passed_at_head uses only the latest bot record
+
+  A later failed or re-run record voids an earlier valid one. createdAt has one-second resolution, so equal timestamps make the order arbitrary and the decision can flip between runs on the same SHA. Refusal-class patterns can also be fooled by bot-quoted text.
+
+  - .github/scripts/board_merge.py
+
+  Detail: Around line 335.
+
+- [ ] Review finding: Verification record posted after PR creation with no retry
+
+  If gh pr view or gh pr comment fails transiently after gh pr create, the PR has no wc-bump-verification record and can never merge until someone re-runs the workflow or pushes a new head.
+
+  - .github/workflows/auto-update-spec-kit.yml
+
+  Detail: Around line 3174.
+
+- [ ] Review finding: Merge job requests actions: write that it may not need
+
+  GITHUB_TOKEN is used only for the kill-switch composite's cancel-token, and every API call uses the App token. The extra permission is excess privilege on a privileged job, and verify-board-merge.py does not check the job's permissions.
+
+  - .github/workflows/board-loop.yml
+  - .github/scripts/verify-board-merge.py
+
+  Detail: Around line 1079.
+
+- [ ] Review finding: Single-merge-call check uses text membership, so a pasted identical line passes
+
+  `line not in merge_job` tests whether the line's text is in the merge job, so an identical gh pr merge line pasted into another job is exempted and the only-one-merge-call invariant does not fail.
+
+  - .github/scripts/verify-board-merge.py
+
+  Detail: Around line 859.
