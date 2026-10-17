@@ -4682,6 +4682,9 @@ jobs:
       - name: Gate 165 — the review-convergence arithmetic has exactly one home
         if: "!cancelled()"
         run: python3 .github/scripts/verify-convergence-single-home.py
+      - name: Gate 166 — fold-analyze sits between fold commit and dispatch, read-only and bounded
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-analyze-wiring.py
 
       # Gate 165 — specs/115-board-loop-self-merge (FR-013, FR-015): every
       # merge-blocking condition and every refusal branch of board_merge.py
