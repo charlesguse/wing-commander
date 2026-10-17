@@ -38,6 +38,7 @@ CLI:
   wc_fold_hold.py resolved-marker --fold-id ID --resolution R
   wc_fold_hold.py post-outcome --issue N --decision D --report-file F
                                --question-file F [state flags]
+  wc_fold_hold.py open-holds --comments FILE --bot-login L [--except-fold-id ID]
   wc_fold_hold.py drop-tasks --spec-dir D --fold-ref-before B --fold-ref-after A
   wc_fold_hold.py --self-test
 """
@@ -97,16 +98,34 @@ def _bot_markers(comments, bot_login, marker_re, open_re):
     return sorted(out, key=lambda pair: pair[0])
 
 
+def open_holds(comments, bot_login):
+    """Every hold the App posted that no later resolved marker closed,
+    oldest first: per fold, its newest state marker, open unless a
+    resolved marker for that fold is at least as new. An open hold blocks
+    every fold dispatch on its lifecycle until it is answered (the owner's
+    decision on finding 9 of #1062's review)."""
+    newest = {}
+    for stamp, state in _bot_markers(comments, bot_login, STATE_RE, STATE_OPEN_RE):
+        newest[state.get("fold_id")] = (stamp, state)
+    resolved = _bot_markers(comments, bot_login, RESOLVED_RE, RESOLVED_OPEN_RE)
+    out = []
+    for fold_id, (stamp, state) in newest.items():
+        if not any(r.get("fold_id") == fold_id and r_stamp >= stamp for r_stamp, r in resolved):
+            out.append((stamp, state))
+    return [state for _, state in sorted(out, key=lambda pair: pair[0])]
+
+
 def open_hold(comments, bot_login):
-    """The newest hold the App posted that no later resolved marker closed."""
-    states = _bot_markers(comments, bot_login, STATE_RE, STATE_OPEN_RE)
-    if not states:
-        return None
-    stamp, state = states[-1]
-    for r_stamp, resolved in _bot_markers(comments, bot_login, RESOLVED_RE, RESOLVED_OPEN_RE):
-        if resolved.get("fold_id") == state.get("fold_id") and r_stamp >= stamp:
-            return None
-    return state
+    """The newest open hold: the one a `/fold-hold` answer addresses."""
+    holds = open_holds(comments, bot_login)
+    return holds[-1] if holds else None
+
+
+def other_open_holds(comments, bot_login, fold_id):
+    """Fold ids of the open holds other than `fold_id`'s, oldest first:
+    while any is open, nothing dispatches a fold on this lifecycle."""
+    return [h.get("fold_id") or "" for h in open_holds(comments, bot_login)
+            if h.get("fold_id") != fold_id]
 
 
 def parse_answer(body):
@@ -133,7 +152,8 @@ def resolve(comments, bot_login, body, association):
                 "reason": "`{0}` is not an answer to a {1} hold; it accepts {2}".format(
                     answer, state.get("reason") or "(unknown)",
                     ", ".join("`/fold-hold {0}`".format(a) for a in accepted) or "nothing")}
-    return {"action": answer, "reason": "", "state": state}
+    return {"action": answer, "reason": "", "state": state,
+            "others": other_open_holds(comments, bot_login, state.get("fold_id"))}
 
 
 def outcome_body(decision, report, question, **state):
@@ -142,7 +162,7 @@ def outcome_body(decision, report, question, **state):
     is the analyze report. None for `skipped` (nothing was checked)."""
     if decision == "hold":
         return "{0}\n\n{1}\n".format(question.rstrip(), render_state(**state))
-    if decision == "dispatch":
+    if decision in ("dispatch", "blocked"):
         return report.rstrip() + "\n"
     return None
 
@@ -291,6 +311,23 @@ def self_test():
           and (open_hold([comment(closing, "2026-01-04T00:00:00Z")], bot) or {}).get("folded_json")
           == '[{"id":"f3","summary":"a --> b <!-- c"}]')
 
+    # Two open holds: an answer addresses the newer, and names the older
+    # as still blocking; answering the newer leaves the older answerable.
+    s_old = render_state(fold_id="fa", reason="constitution-conflict")
+    s_new = render_state(fold_id="fb", reason="constitution-conflict")
+    two = [comment(s_old, "2026-03-01T00:00:00Z"), comment(s_new, "2026-03-02T00:00:00Z")]
+    r = resolve(two, bot, "/fold-hold proceed", "OWNER")
+    check("an answer to a newer hold names the older open hold as blocking",
+          (r["state"] or {}).get("fold_id") == "fb" and r["others"] == ["fa"])
+    two_done = two + [comment(render_resolved("fb", "proceed"), "2026-03-03T00:00:00Z")]
+    r = resolve(two_done, bot, "/fold-hold proceed", "OWNER")
+    check("an older hold stays open after the newer one is answered",
+          (r["state"] or {}).get("fold_id") == "fa" and r["others"] == [])
+    check("open holds block a fold other than their own, not their own",
+          other_open_holds(two, bot, "fc") == ["fa", "fb"]
+          and other_open_holds(two, bot, "fa") == ["fb"])
+    check("a blocked decision posts its report", outcome_body("blocked", "r\n", "") == "r\n")
+
     body = outcome_body("hold", "", "<!-- wing-commander-fold-hold: fold=f1 -->\nq", fold_id="f1",
                         reason="constitution-conflict", spec_dir="specs/001-x")
     check("a hold body is the question followed by a state marker open_hold() reads back",
@@ -362,6 +399,10 @@ def main(argv=None):
         if field != "reason":
             po.add_argument("--" + field.replace("_", "-"), default="")
     po.add_argument("--hold-reason", default="")
+    oh = sub.add_parser("open-holds")
+    oh.add_argument("--comments", required=True)
+    oh.add_argument("--bot-login", required=True)
+    oh.add_argument("--except-fold-id", default="")
     dt = sub.add_parser("drop-tasks")
     dt.add_argument("--spec-dir", required=True)
     dt.add_argument("--fold-ref-before", required=True)
@@ -377,6 +418,9 @@ def main(argv=None):
         posted = post_outcome(a.issue, a.decision, a.report_file, a.question_file,
                               reason=a.hold_reason, **state)
         print("posted" if posted else "nothing-to-post")
+    elif a.cmd == "open-holds":
+        with open(a.comments, encoding="utf-8") as fh:
+            print(",".join(other_open_holds(json.load(fh), a.bot_login, a.except_fold_id)))
     elif a.cmd == "drop-tasks":
         changed = drop_tasks(a.spec_dir, a.fold_ref_before, a.fold_ref_after, os.getcwd())
         print("dropped" if changed else "nothing-to-drop")
@@ -388,7 +432,8 @@ def main(argv=None):
         result = resolve(comments, a.bot_login, body, a.association)
         state = result["state"] or {}
         _write_outputs(a.github_output, [("action", result["action"]),
-                                         ("reason", result["reason"])]
+                                         ("reason", result["reason"]),
+                                         ("other-open-holds", ",".join(result.get("others") or []))]
                        + [(f.replace("_", "-"), state.get(f, "")) for f in STATE_FIELDS])
         print(json.dumps({"action": result["action"], "reason": result["reason"]}))
     return 0

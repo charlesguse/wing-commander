@@ -10,7 +10,8 @@
 #   mode: decide  reads the agent's transcript and turns its fenced JSON
 #                 into dispatch / hold / skipped through decide.py -- never
 #                 the prompt. Only a constitution conflict, or a failed or
-#                 unparseable check, holds.
+#                 unparseable check, holds; a fold that would dispatch is
+#                 `blocked` while another hold is open on the lifecycle.
 #
 # The caller's agent step (verify-fold-analyze-wiring.py holds its shape):
 # model claude-sonnet-5-5, a --max-turns ceiling, tools Read,Grep,Glob only.
@@ -65,6 +66,15 @@ inputs:
     description: Path to the agent's claude-execution-output.json (mode decide).
     required: false
     default: ${{ runner.temp }}/claude-execution-output.json
+  open-holds:
+    description: >-
+      wing-commander-fold-open-holds's open-holds output for this fold (mode
+      decide): `none`, or the comma-separated fold ids of the other holds
+      open on the lifecycle, which turn a dispatch or skip into `blocked`.
+      Empty -- the read never ran or failed -- holds the fold as
+      analyze-failed rather than dispatch past a hold it could not see.
+    required: false
+    default: ""
 
 outputs:
   fold-id:
@@ -80,7 +90,7 @@ outputs:
     description: Path of the staged instructions the caller's agent prompt points at (mode stage).
     value: ${{ steps.scope.outputs.instructions-file }}
   decision:
-    description: dispatch | hold | skipped (mode decide)
+    description: dispatch | hold | skipped | blocked (another fold hold is open on the lifecycle) (mode decide)
     value: ${{ steps.decide.outputs.decision }}
   hold-reason:
     description: constitution-conflict | analyze-failed | empty (mode decide)
@@ -170,6 +180,7 @@ runs:
         AGENT_OUTCOME: ${{ inputs.agent-outcome }}
         AGENT_VERDICT: ${{ inputs.agent-verdict }}
         EXECUTION_OUTPUT: ${{ inputs.execution-output-path }}
+        OPEN_HOLDS: ${{ inputs.open-holds }}
       run: |
         set -euo pipefail
         failed=()
@@ -179,6 +190,7 @@ runs:
         out_dir="$RUNNER_TEMP/wc-fold-analyze"
         mkdir -p "$out_dir"
         python3 -I "$GITHUB_ACTION_PATH/decide.py" --fold-id "$FOLD_ID" --tasks "$TASKS" \
+          --open-holds "$OPEN_HOLDS" \
           --execution-output "$EXECUTION_OUTPUT" --out-dir "$out_dir" "${failed[@]}" > "$out_dir/decision.json"
         {
           echo "decision=$(jq -r '.decision' "$out_dir/decision.json")"

@@ -93,22 +93,20 @@ jobs:
           gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" \
             --body "$(printf 'The fold hold on `%s` is still open: %s.' "$FOLD_ID" "$REASON")"
 
-  release:
+  # The retry path: the same stage -> agent -> decide shape as the two
+  # fold callers, the agent in a read-only job of its own (`contents:
+  # read`, no write scope) -- see lifecycle-review-gate.yml's
+  # `fold-analyze`; Gate 166 holds it here too. `release` decides from its
+  # outputs and the transcript it uploads.
+  fold-analyze:
     needs: resolve
-    if: >-
-      needs.resolve.result == 'success' &&
-      contains(fromJSON('["proceed","drop","amend","retry"]'), needs.resolve.outputs.action)
+    if: needs.resolve.result == 'success' && needs.resolve.outputs.action == 'retry'
     runs-on: ubuntu-latest
-    # Gate 80/specs/013: `drop` pushes to the spec branch, so this job joins
-    # the per-spec group every spec-branch writer shares.
-    concurrency:
-      group: wing-commander-${{ needs.resolve.outputs.spec-dir }}
-      cancel-in-progress: false
     permissions:
-      contents: write
-      issues: write
-      # wing-commander-fold-dispatch's gh workflow run under github.token.
-      actions: write
+      contents: read
+    outputs:
+      tasks: ${{ steps.analyze-stage.outputs.tasks }}
+      agent-outcome: ${{ steps.analyze-agent.outcome }}
     steps:
       - name: Checkout the spec branch
         uses: actions/checkout@v5
@@ -136,84 +134,8 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
-      # `resolve` ran outside this job's concurrency group, so two answers
-      # posted close together can both find the hold open. Re-read it here,
-      # inside the group, where the first release's resolved marker is
-      # already posted: a hold no longer open (or now a different one)
-      # fails this step, every step below is skipped, and the dispatch's
-      # `if:` names this step so it never runs a second time for one fold.
-      - name: Re-check the hold is still open
-        id: recheck
-        env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          ISSUE: ${{ github.event.issue.number }}
-          BODY: ${{ github.event.comment.body }}
-          ASSOCIATION: ${{ github.event.comment.author_association }}
-          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
-          ACTION: ${{ needs.resolve.outputs.action }}
-          FOLD_ID: ${{ needs.resolve.outputs.fold-id }}
-        run: |
-          set -euo pipefail
-          printf '%s' "$BODY" > "$RUNNER_TEMP/fold-hold-answer.md"
-          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[]' \
-            | jq -s '.' > "$RUNNER_TEMP/fold-hold-comments.json"
-          : > "$RUNNER_TEMP/fold-hold-recheck.out"
-          python3 .wc-pristine-repo/.github/scripts/wc_fold_hold.py resolve \
-            --comments "$RUNNER_TEMP/fold-hold-comments.json" --bot-login "$BOT_LOGIN" \
-            --body-file "$RUNNER_TEMP/fold-hold-answer.md" --association "$ASSOCIATION" \
-            --github-output "$RUNNER_TEMP/fold-hold-recheck.out"
-          if ! grep -qxF "action=$ACTION" "$RUNNER_TEMP/fold-hold-recheck.out" \
-             || ! grep -qxF "fold-id=$FOLD_ID" "$RUNNER_TEMP/fold-hold-recheck.out"; then
-            echo "::error::the fold hold on \`$FOLD_ID\` was already released by an earlier answer; this \`/fold-hold $ACTION\` changes nothing."
-            exit 1
-          fi
-
-      - name: Authenticate the push remote
-        if: needs.resolve.outputs.action == 'drop'
-        uses: ./.wc-pristine-repo/.github/actions/wing-commander-refresh-remote
-        with:
-          token: ${{ steps.ctx.outputs.token }}
-
-      - name: Acknowledge an amend answer
-        if: needs.resolve.outputs.action == 'amend'
-        env:
-          GH_TOKEN: ${{ steps.ctx.outputs.token }}
-          ISSUE: ${{ github.event.issue.number }}
-          FOLD_ID: ${{ needs.resolve.outputs.fold-id }}
-        run: |
-          set -euo pipefail
-          gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" \
-            --body "$(printf 'Fold `%s` stays held while the spec is amended. Answer `/fold-hold proceed` once the amendment has landed on the spec branch, and implement is dispatched then.' "$FOLD_ID")"
-
-      - name: Drop the held fold's tasks
-        id: drop
-        if: needs.resolve.outputs.action == 'drop'
-        env:
-          SPEC_DIR: ${{ needs.resolve.outputs.spec-dir }}
-          SPEC_BRANCH: ${{ needs.resolve.outputs.spec-branch }}
-          FOLD_BEFORE: ${{ needs.resolve.outputs.fold-ref-before }}
-          FOLD_AFTER: ${{ needs.resolve.outputs.fold-ref-after }}
-          FOLD_ID: ${{ needs.resolve.outputs.fold-id }}
-          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
-        run: |
-          set -euo pipefail
-          result="$(python3 .wc-pristine-repo/.github/scripts/wc_fold_hold.py drop-tasks \
-            --spec-dir "$SPEC_DIR" --fold-ref-before "$FOLD_BEFORE" --fold-ref-after "$FOLD_AFTER")"
-          if [ "$result" = "dropped" ]; then
-            git config user.name "$BOT_LOGIN"
-            git config user.email "${BOT_LOGIN}@users.noreply.github.com"
-            git add "$SPEC_DIR/tasks.md"
-            git commit -m "fold-hold(${FOLD_ID}): drop the held fold's tasks"
-            git push origin "HEAD:$SPEC_BRANCH"
-          fi
-          echo "result=$result" >> "$GITHUB_OUTPUT"
-
-      # The retry path: the same stage -> agent -> decide shape as the two
-      # fold callers (see lifecycle-review-gate.yml's "Stage this round's
-      # fold for the analyze check"; Gate 166 holds it here too).
       - name: Stage the held fold for the analyze check
         id: analyze-stage
-        if: needs.resolve.outputs.action == 'retry'
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-fold-analyze
         with:
           mode: stage
@@ -321,16 +243,178 @@ jobs:
           echo "::error::fold-hold release fold analyze: agent step rejected -- verdict=$VERDICT: $REASON"
           exit 1
 
+  release:
+    needs: [resolve, fold-analyze]
+    if: >-
+      !cancelled() && needs.resolve.result == 'success' &&
+      contains(fromJSON('["proceed","drop","amend","retry"]'), needs.resolve.outputs.action)
+    runs-on: ubuntu-latest
+    # Gate 80/specs/013: `drop` pushes to the spec branch, so this job joins
+    # the per-spec group every spec-branch writer shares.
+    concurrency:
+      group: wing-commander-${{ needs.resolve.outputs.spec-dir }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      issues: write
+      # wing-commander-fold-dispatch's gh workflow run under github.token.
+      actions: write
+    steps:
+      - name: Checkout the spec branch
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.spec-branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The workspace root is the spec branch; every composite and script
+      # below resolves from this trusted copy of the default branch instead
+      # (lifecycle-review-gate.yml's ".wc-pristine-repo" idiom).
+      - name: Checkout this job's own trusted copy (composites)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .wc-pristine-repo
+          persist-credentials: false
+      - name: Write-protect this job's own trusted copy (composites)
+        run: chmod -R a-w .wc-pristine-repo
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+          private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
+
+      # `resolve` ran outside this job's concurrency group, so two answers
+      # posted close together can both find the hold open. Re-read it here,
+      # inside the group, where the first release's resolved marker is
+      # already posted: a hold no longer open (or now a different one)
+      # fails this step, every step below is skipped, and the dispatch's
+      # `if:` names this step so it never runs a second time for one fold.
+      # It also names the other holds still open on the issue: while any
+      # is, nothing dispatches (the owner's decision on finding 9 of
+      # #1062's review).
+      - name: Re-check the hold is still open
+        id: recheck
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          BODY: ${{ github.event.comment.body }}
+          ASSOCIATION: ${{ github.event.comment.author_association }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+          ACTION: ${{ needs.resolve.outputs.action }}
+          FOLD_ID: ${{ needs.resolve.outputs.fold-id }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$BODY" > "$RUNNER_TEMP/fold-hold-answer.md"
+          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[]' \
+            | jq -s '.' > "$RUNNER_TEMP/fold-hold-comments.json"
+          : > "$RUNNER_TEMP/fold-hold-recheck.out"
+          python3 .wc-pristine-repo/.github/scripts/wc_fold_hold.py resolve \
+            --comments "$RUNNER_TEMP/fold-hold-comments.json" --bot-login "$BOT_LOGIN" \
+            --body-file "$RUNNER_TEMP/fold-hold-answer.md" --association "$ASSOCIATION" \
+            --github-output "$RUNNER_TEMP/fold-hold-recheck.out"
+          if ! grep -qxF "action=$ACTION" "$RUNNER_TEMP/fold-hold-recheck.out" \
+             || ! grep -qxF "fold-id=$FOLD_ID" "$RUNNER_TEMP/fold-hold-recheck.out"; then
+            echo "::error::the fold hold on \`$FOLD_ID\` was already released by an earlier answer; this \`/fold-hold $ACTION\` changes nothing."
+            exit 1
+          fi
+          # Another open hold blocks the dispatch: this answer releases its
+          # own hold, and implement waits for the others' answers.
+          echo "other-open=$(sed -n 's/^other-open-holds=//p' "$RUNNER_TEMP/fold-hold-recheck.out")" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate the push remote
+        if: needs.resolve.outputs.action == 'drop'
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+
+      - name: Acknowledge an amend answer
+        if: needs.resolve.outputs.action == 'amend'
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          FOLD_ID: ${{ needs.resolve.outputs.fold-id }}
+        run: |
+          set -euo pipefail
+          gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" \
+            --body "$(printf 'Fold `%s` stays held while the spec is amended. Answer `/fold-hold proceed` once the amendment has landed on the spec branch, and implement is dispatched then.' "$FOLD_ID")"
+
+      - name: Drop the held fold's tasks
+        id: drop
+        if: needs.resolve.outputs.action == 'drop'
+        env:
+          SPEC_DIR: ${{ needs.resolve.outputs.spec-dir }}
+          SPEC_BRANCH: ${{ needs.resolve.outputs.spec-branch }}
+          FOLD_BEFORE: ${{ needs.resolve.outputs.fold-ref-before }}
+          FOLD_AFTER: ${{ needs.resolve.outputs.fold-ref-after }}
+          FOLD_ID: ${{ needs.resolve.outputs.fold-id }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+        run: |
+          set -euo pipefail
+          result="$(python3 .wc-pristine-repo/.github/scripts/wc_fold_hold.py drop-tasks \
+            --spec-dir "$SPEC_DIR" --fold-ref-before "$FOLD_BEFORE" --fold-ref-after "$FOLD_AFTER")"
+          if [ "$result" = "dropped" ]; then
+            git config user.name "$BOT_LOGIN"
+            git config user.email "${BOT_LOGIN}@users.noreply.github.com"
+            git add "$SPEC_DIR/tasks.md"
+            git commit -m "fold-hold(${FOLD_ID}): drop the held fold's tasks"
+            git push origin "HEAD:$SPEC_BRANCH"
+          fi
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+
+      # A missing transcript leaves decide.py nothing to read:
+      # analyze-failed, never a pass.
+      - name: Download the analyze agent's transcript
+        id: analyze-transcript
+        if: >-
+          needs.resolve.outputs.action == 'retry'
+          && needs.fold-analyze.outputs.agent-outcome != '' && needs.fold-analyze.outputs.agent-outcome != 'skipped'
+        continue-on-error: true
+        uses: actions/download-artifact@v6
+        with:
+          name: claude-execution-output-fold-analyze
+          path: ${{ runner.temp }}/fold-analyze
+
+      # The verdict is re-derived here from the transcript itself, so no
+      # value read from the agent's output crosses a job boundary (Gate 49).
+      # No transcript, no verdict: the decide step holds as analyze-failed.
+      - name: Compute agent run verdict (fold analyze transcript)
+        id: analyze-transcript-verdict
+        if: "!cancelled() && steps.analyze-transcript.outcome == 'success'"
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-agent-verdict
+        with:
+          transcript-path: ${{ runner.temp }}/fold-analyze/claude-execution-output.json
+          intended-turns: 12
+          run-label: fold-analyze
+
+      # An open fold hold on the lifecycle blocks this fold's dispatch
+      # (decision `blocked`); a read that fails leaves open-holds empty, and
+      # the decide step holds the fold as analyze-failed.
+      - name: Read the open fold holds
+        id: open-holds
+        if: needs.resolve.outputs.action == 'retry'
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-fold-open-holds
+        with:
+          issue: ${{ github.event.issue.number }}
+          github-token: ${{ steps.ctx.outputs.token }}
+          bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
+          except-fold-id: ${{ needs.resolve.outputs.fold-id }}
+
       - name: Decide hold or dispatch for the held fold
         id: analyze-fold
-        if: "!cancelled() && steps.analyze-stage.outcome == 'success'"
+        if: "!cancelled() && steps.recheck.outcome == 'success' && needs.resolve.outputs.action == 'retry'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-fold-analyze
         with:
           mode: decide
-          fold-id: ${{ steps.analyze-stage.outputs.fold-id }}
-          tasks: ${{ steps.analyze-stage.outputs.tasks }}
-          agent-outcome: ${{ steps.analyze-agent.outcome }}
-          agent-verdict: ${{ steps.analyze-verdict.outputs.verdict }}
+          fold-id: ${{ needs.resolve.outputs.fold-id }}
+          tasks: ${{ needs.fold-analyze.outputs.tasks || '1' }}
+          agent-outcome: ${{ needs.fold-analyze.outputs.agent-outcome }}
+          agent-verdict: ${{ steps.analyze-transcript-verdict.outputs.verdict }}
+          execution-output-path: ${{ runner.temp }}/fold-analyze/claude-execution-output.json
+          open-holds: ${{ steps.open-holds.outputs.open-holds }}
 
       - name: Post the retried fold-analyze outcome on the lifecycle issue
         if: "!cancelled() && steps.analyze-fold.outcome == 'success' && steps.analyze-fold.outputs.decision != 'skipped'"
@@ -361,7 +445,7 @@ jobs:
       - name: Dispatch implement for the released fold
         id: fold-dispatch
         if: >-
-          !cancelled() && steps.recheck.outcome == 'success' && (
+          !cancelled() && steps.recheck.outcome == 'success' && steps.recheck.outputs.other-open == '' && (
             needs.resolve.outputs.action == 'proceed'
             || (needs.resolve.outputs.action == 'drop' && steps.drop.outcome == 'success')
             || (needs.resolve.outputs.action == 'retry'
@@ -385,11 +469,22 @@ jobs:
       # !cancelled(): a dispatched release is recorded even when a step
       # above failed (the retry's outcome post), or a second answer would
       # dispatch the same fold again.
+      #
+      # A release another open hold blocks dispatched nothing, but its own
+      # hold is answered: it is recorded too, naming the holds implement
+      # now waits for (the release that answers the last of them
+      # dispatches).
       - name: Record the release on the lifecycle issue
         if: >-
-          !cancelled() && steps.fold-dispatch.outcome == 'success'
-          && (needs.resolve.outputs.action == 'proceed' || needs.resolve.outputs.action == 'drop'
-              || needs.resolve.outputs.action == 'retry')
+          !cancelled() && steps.recheck.outcome == 'success' && (
+            (steps.fold-dispatch.outcome == 'success'
+             && (needs.resolve.outputs.action == 'proceed' || needs.resolve.outputs.action == 'drop'
+                 || needs.resolve.outputs.action == 'retry'))
+            || (steps.fold-dispatch.outcome == 'skipped' && (
+                  (steps.recheck.outputs.other-open != ''
+                   && (needs.resolve.outputs.action == 'proceed'
+                       || (needs.resolve.outputs.action == 'drop' && steps.drop.outcome == 'success')))
+                  || (needs.resolve.outputs.action == 'retry' && steps.analyze-fold.outputs.decision == 'blocked'))))
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ github.event.issue.number }}
@@ -398,11 +493,16 @@ jobs:
           DROPPED: ${{ steps.drop.outputs.result }}
           DISPATCHED: ${{ steps.fold-dispatch.outputs.dispatched }}
           RUN_URL: ${{ steps.fold-dispatch.outputs.run-url }}
+          DISPATCH_OUTCOME: ${{ steps.fold-dispatch.outcome }}
+          OTHER_OPEN: ${{ steps.recheck.outputs.other-open }}
         run: |
           set -euo pipefail
           marker="$(python3 .wc-pristine-repo/.github/scripts/wc_fold_hold.py resolved-marker --fold-id "$FOLD_ID" --resolution "$ACTION")"
           what="implement dispatched${RUN_URL:+ ($RUN_URL)}"
           [ "$DISPATCHED" = "true" ] || what="nothing dispatched (no implement workflow is configured)"
+          if [ "$DISPATCH_OUTCOME" = "skipped" ]; then
+            what="nothing dispatched: implement waits for the other fold hold(s) open on this issue${OTHER_OPEN:+ (\`$(printf '%s' "$OTHER_OPEN" | sed 's/,/`, `/g')\`)}"
+          fi
           [ "$ACTION" != "drop" ] || what="the fold section's tasks were ${DROPPED:-not} removed from tasks.md; $what"
           gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" \
             --body "$(printf 'Fold `%s` hold released (`%s`): %s.\n\n%s' "$FOLD_ID" "$ACTION" "$what" "$marker")"

@@ -345,16 +345,13 @@ NO_REMOTE_REFRESH_JOBS = {
     # env.WC_BOT_TOKEN directly), so no step after its agent uses origin's
     # persisted credential either.
     (".github/workflows/lifecycle-review-gate.yml", "review"),
-    # specs/116 (contracts/fold-analyze.md): the fold-time analyze agent is
-    # read-only and runs after each of these jobs' last push. disposition
-    # pushes its fold commit before the agent and only dispatches (gh API,
-    # github.token) and posts (env.WC_BOT_TOKEN) after it; dispatch-once
-    # reaches the fold-queue ledger only through explicit token-bearing
-    # URLs (fold-queue-ledger.sh); the fold-hold release job's one push,
-    # `drop`, never runs in the same job run as its `retry` agent.
-    (".github/workflows/lifecycle-review-gate.yml", "disposition"),
-    (".github/workflows/pr-conversation.yml", "dispatch-once"),
-    (".github/workflows/wing-commander-fold-hold.yml", "release"),
+    # specs/116 (contracts/fold-analyze.md): the fold-time analyze agent
+    # runs in a read-only job of its own (contents: read, no write scope;
+    # Gate 166), whose checkouts persist no credential and which never
+    # pushes: nothing after its agent uses origin at all.
+    (".github/workflows/lifecycle-review-gate.yml", "fold-analyze"),
+    (".github/workflows/pr-conversation.yml", "fold-analyze"),
+    (".github/workflows/wing-commander-fold-hold.yml", "fold-analyze"),
 }
 
 # Third maintainer review of PR #407, Gate 68 hole (a): nothing previously

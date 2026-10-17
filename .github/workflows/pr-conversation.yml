@@ -3181,6 +3181,9 @@ jobs:
       folded-json: ${{ steps.fold-evidence.outputs.folded-json }}
       round-folded-json: ${{ steps.round-folded.outputs.json }}
       implement-token: ${{ steps.claim.outputs.implement-token }}
+      # specs/116: fold-analyze checks out the same pipeline commit without
+      # an OIDC grant of its own (it runs read-only).
+      pipeline-ref: ${{ steps.pipeline-ref.outputs.ref }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -3347,41 +3350,20 @@ jobs:
           outcome: error
           best-effort: "true"
 
-  # research.md D1/D2/D3/contracts/fold-dispatch-once.md: the ONLY job in
-  # this workflow that calls `gh workflow run` for implement.yml, and it
-  # does so at most once per review — after the WHOLE `act` matrix has
-  # finished (fail-fast: false, so every leg runs to completion or
-  # termination regardless of a sibling's outcome). `if: always()` so a
-  # died/cancelled leg cannot suppress this job (FR-005a/FR-006); joining
-  # `wing-commander-<spec-dir>` only via `needs: act` (never concurrently
-  # with it) removes the exact contention that cancelled a leg and an
-  # implementation cycle against each other on PR #240 (research.md D2),
-  # without touching FR-004a's own wait, which lives entirely in `act`'s
-  # unchanged group membership.
-  #
-  # specs/074-serialized-fold-dispatch: fold-turn-dispatch's ticket gates
-  # entry into that same group ahead of a second overlapping run's own
-  # dispatch-once/implement -- see fold-queue-ledger.sh. Checking its
-  # result explicitly (not just needs:) is load-bearing for the same
-  # reason as `act`'s own fold-turn-act check: without it, a ticket-
-  # admission timeout would not stop this job from dispatching unticketed.
-  dispatch-once:
-    needs: [verify-image-prerequisites, classify-and-announce, act, fold-turn-dispatch]
-    # T054: fold-turn-dispatch itself skips for a stop-only run; that skip
-    # is accepted here only when classify-and-announce agrees this run is
-    # stop-only (see fold-turn-act/act's matching comments above). A
-    # stop-only `dispatch-once` run below falls straight through every
-    # should-dispatch-gated step (needs.fold-turn-dispatch.outputs.* are
-    # all empty) to the standalone/no-op path, posting no reply -- it has
-    # no folds to dispatch for.
+  # specs/116 contracts/fold-analyze.md: the fold-time analyze check on
+  # this review's folds, between fold-turn-dispatch's claim and
+  # dispatch-once's one dispatch -- the second caller of
+  # wing-commander-fold-analyze (the first is lifecycle-review-gate.yml).
+  # The agent runs in this job of its own, read-only (`contents: read`, no
+  # write scope), as lifecycle-review-gate.yml's reviewer does -- see its
+  # `fold-analyze` job. dispatch-once decides from this job's outputs and
+  # the transcript it uploads.
+  fold-analyze:
+    needs: [verify-image-prerequisites, classify-and-announce, fold-turn-dispatch]
     if: >-
-      always() &&
-      needs.verify-image-prerequisites.result != 'failure' &&
-      needs.classify-and-announce.outputs.qualifies == 'true' &&
-      needs.classify-and-announce.outputs.legs != '' &&
-      needs.classify-and-announce.outputs.legs != '[]' &&
-      (needs.fold-turn-dispatch.result == 'success' ||
-       (needs.fold-turn-dispatch.result == 'skipped' && needs.classify-and-announce.outputs.stop-only == 'true'))
+      !cancelled() && needs.verify-image-prerequisites.result != 'failure'
+      && needs.fold-turn-dispatch.result == 'success'
+      && needs.fold-turn-dispatch.outputs.should-dispatch == 'true'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -3399,63 +3381,24 @@ jobs:
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}
-    # contents: write (not read) -- every wing-commander-fold-queue-* call
-    # in this job (release, and now claim-dispatch/record-implement-run)
-    # pushes to the wing-commander-fold-queue branch under github.token,
-    # whose effective permissions are this job's own block; contents: read
-    # would 403 on that push. Matches `act`'s own job, which already
-    # carries contents: write for the identical reason.
     permissions:
-      contents: write
-      pull-requests: write
-      actions: write
-      id-token: write
-    # T072/FR-024/SC-009: the SAME group `act` joined, not a hardcoded
-    # reconstruction of the canonical one — a stop-only run's `act` joins
-    # the review's own per-PR stop group instead (classify-and-announce's
-    # output, above), and dispatch-once must follow it there. Hardcoding
-    # the canonical group here would put a stop-only dispatch-once back
-    # into wing-commander-<spec-dir> — the group its own review is trying
-    # to cancel — where it could cancel another pending job in that group
-    # while waiting, defeating the FR-024/SC-009 carve-out (PR #253 review).
-    #
-    # Why fold-turn-dispatch gates entry into this group ahead of a second
-    # overlapping run's own act/dispatch-once/implement -- see
-    # fold-queue-ledger.sh.
-    concurrency:
-      group: ${{ needs.classify-and-announce.outputs.concurrency-group }}
-      cancel-in-progress: false
+      contents: read
+    outputs:
+      fold-id: ${{ steps.analyze-stage.outputs.fold-id }}
+      tip: ${{ steps.analyze-tip.outputs.tip }}
+      tasks: ${{ steps.analyze-stage.outputs.tasks }}
+      agent-outcome: ${{ steps.analyze-agent.outcome }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
         with:
           persist-credentials: false
 
-      - name: Resolve pipeline ref
-        id: pipeline-ref
-        env:
-          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
-          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
-        run: |
-          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
-          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" \
-              | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
-            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
-            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
-          fi
-          if [ -z "$ref" ]; then
-            echo "::error::wing-commander pr-conversation stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
-            exit 1
-          fi
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-
       - name: Checkout pipeline repository (shared composite actions)
         uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
-          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          ref: ${{ needs.fold-turn-dispatch.outputs.pipeline-ref }}
           token: ${{ secrets.pipeline-repo-token || github.token }}
           path: .wing-commander-pipeline
           persist-credentials: false
@@ -3467,19 +3410,6 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
-      # research.md D1/D3/D4 (contracts/run-scoped-fold-evidence.md): the
-      # single dispatch point for the whole review, now gated on the
-      # round's atomic claim above rather than on this run's own tip-moved
-      # check -- only the run whose claim resolved should-dispatch: true
-      # calls this composite, with the round's WHOLE attributed fold list
-      # (round-folded-json) and this run's own dispatch-queue implement
-      # ticket (fold-queue-token) threaded through to implement.yml.
-      #
-      # The fold/dispatch primitive's second call site
-      # (specs/062-lifecycle-review-gate T034/T036): the composite reads
-      # iteration off the tip and dispatches, but only on folded-json --
-      # unaffected, since lifecycle-review-gate.yml never sets
-      # round-folded-json/fold-queue-token.
       # specs/116-review-convergence-analyze contracts/fold-analyze.md: the
       # analyze check between the round's folds and the one dispatch below,
       # the second caller of wing-commander-fold-analyze (the first is
@@ -3632,16 +3562,191 @@ jobs:
           echo "::error::wing-commander pr-conversation stage fold analyze: agent step rejected -- verdict=$VERDICT: $REASON"
           exit 1
 
+  # research.md D1/D2/D3/contracts/fold-dispatch-once.md: the ONLY job in
+  # this workflow that calls `gh workflow run` for implement.yml, and it
+  # does so at most once per review — after the WHOLE `act` matrix has
+  # finished (fail-fast: false, so every leg runs to completion or
+  # termination regardless of a sibling's outcome). `if: always()` so a
+  # died/cancelled leg cannot suppress this job (FR-005a/FR-006); joining
+  # `wing-commander-<spec-dir>` only via `needs: act` (never concurrently
+  # with it) removes the exact contention that cancelled a leg and an
+  # implementation cycle against each other on PR #240 (research.md D2),
+  # without touching FR-004a's own wait, which lives entirely in `act`'s
+  # unchanged group membership.
+  #
+  # specs/074-serialized-fold-dispatch: fold-turn-dispatch's ticket gates
+  # entry into that same group ahead of a second overlapping run's own
+  # dispatch-once/implement -- see fold-queue-ledger.sh. Checking its
+  # result explicitly (not just needs:) is load-bearing for the same
+  # reason as `act`'s own fold-turn-act check: without it, a ticket-
+  # admission timeout would not stop this job from dispatching unticketed.
+  dispatch-once:
+    needs: [verify-image-prerequisites, classify-and-announce, act, fold-turn-dispatch, fold-analyze]
+    # T054: fold-turn-dispatch itself skips for a stop-only run; that skip
+    # is accepted here only when classify-and-announce agrees this run is
+    # stop-only (see fold-turn-act/act's matching comments above). A
+    # stop-only `dispatch-once` run below falls straight through every
+    # should-dispatch-gated step (needs.fold-turn-dispatch.outputs.* are
+    # all empty) to the standalone/no-op path, posting no reply -- it has
+    # no folds to dispatch for.
+    if: >-
+      always() &&
+      needs.verify-image-prerequisites.result != 'failure' &&
+      needs.classify-and-announce.outputs.qualifies == 'true' &&
+      needs.classify-and-announce.outputs.legs != '' &&
+      needs.classify-and-announce.outputs.legs != '[]' &&
+      (needs.fold-turn-dispatch.result == 'success' ||
+       (needs.fold-turn-dispatch.result == 'skipped' && needs.classify-and-announce.outputs.stop-only == 'true'))
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    # contents: write (not read) -- every wing-commander-fold-queue-* call
+    # in this job (release, and now claim-dispatch/record-implement-run)
+    # pushes to the wing-commander-fold-queue branch under github.token,
+    # whose effective permissions are this job's own block; contents: read
+    # would 403 on that push. Matches `act`'s own job, which already
+    # carries contents: write for the identical reason.
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+      id-token: write
+    # T072/FR-024/SC-009: the SAME group `act` joined, not a hardcoded
+    # reconstruction of the canonical one — a stop-only run's `act` joins
+    # the review's own per-PR stop group instead (classify-and-announce's
+    # output, above), and dispatch-once must follow it there. Hardcoding
+    # the canonical group here would put a stop-only dispatch-once back
+    # into wing-commander-<spec-dir> — the group its own review is trying
+    # to cancel — where it could cancel another pending job in that group
+    # while waiting, defeating the FR-024/SC-009 carve-out (PR #253 review).
+    #
+    # Why fold-turn-dispatch gates entry into this group ahead of a second
+    # overlapping run's own act/dispatch-once/implement -- see
+    # fold-queue-ledger.sh.
+    concurrency:
+      group: ${{ needs.classify-and-announce.outputs.concurrency-group }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout consumer repository (bootstrap, default token)
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve pipeline ref
+        id: pipeline-ref
+        env:
+          JOB_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+          PIPELINE_REF_INPUT: ${{ inputs.pipeline-ref }}
+        run: |
+          ref="${PIPELINE_REF_INPUT:-$JOB_WORKFLOW_SHA}"
+          if [ -z "$ref" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            payload=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=wing-commander-pipeline-ref" \
+              | jq -r '.value' | cut -d. -f2 | tr '_-' '/+')
+            while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="$payload="; done
+            ref=$(printf '%s' "$payload" | base64 -d 2>/dev/null | jq -r '.job_workflow_sha // empty' || true)
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::wing-commander pr-conversation stage: cannot determine the pipeline commit to check out — github.job_workflow_sha is empty and no OIDC token is available. Grant the calling job id-token: write, or set the pipeline-ref input to the same ref as your uses: pin."
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Wing Commander context
+        id: ctx
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      # research.md D1/D3/D4 (contracts/run-scoped-fold-evidence.md): the
+      # single dispatch point for the whole review, now gated on the
+      # round's atomic claim above rather than on this run's own tip-moved
+      # check -- only the run whose claim resolved should-dispatch: true
+      # calls this composite, with the round's WHOLE attributed fold list
+      # (round-folded-json) and this run's own dispatch-queue implement
+      # ticket (fold-queue-token) threaded through to implement.yml.
+      #
+      # The fold/dispatch primitive's second call site
+      # (specs/062-lifecycle-review-gate T034/T036): the composite reads
+      # iteration off the tip and dispatches, but only on folded-json --
+      # unaffected, since lifecycle-review-gate.yml never sets
+      # round-folded-json/fold-queue-token.
+      # A missing transcript (the agent never ran, or its upload failed)
+      # leaves decide.py nothing to read: analyze-failed, never a pass.
+      - name: Download the analyze agent's transcript
+        id: analyze-transcript
+        if: needs.fold-analyze.outputs.agent-outcome != '' && needs.fold-analyze.outputs.agent-outcome != 'skipped'
+        continue-on-error: true
+        uses: actions/download-artifact@v6
+        with:
+          name: claude-execution-output-fold-analyze
+          path: ${{ runner.temp }}/fold-analyze
+
+      # The verdict is re-derived here from the transcript itself, so no
+      # value read from the agent's output crosses a job boundary (Gate 49).
+      # No transcript, no verdict: the decide step holds as analyze-failed.
+      - name: Compute agent run verdict (fold analyze transcript)
+        id: analyze-transcript-verdict
+        if: "!cancelled() && steps.analyze-transcript.outcome == 'success'"
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-agent-verdict
+        with:
+          transcript-path: ${{ runner.temp }}/fold-analyze/claude-execution-output.json
+          intended-turns: 12
+          run-label: fold-analyze
+
+      # An open fold hold on the lifecycle blocks this fold's dispatch
+      # (decision `blocked`); a read that fails leaves open-holds empty, and
+      # the decide step holds the fold as analyze-failed.
+      - name: Read the open fold holds
+        id: open-holds
+        if: needs.fold-turn-dispatch.outputs.should-dispatch == 'true'
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-open-holds
+        with:
+          issue: ${{ needs.classify-and-announce.outputs.issue-number }}
+          github-token: ${{ steps.ctx.outputs.token }}
+          bot-login: ${{ steps.ctx.outputs.bot-slug }}[bot]
+          except-fold-id: ${{ needs.fold-analyze.outputs.fold-id || format('pr-conversation-run-{0}', github.run_id) }}
+
+      # Whatever became of fold-analyze: a job that never reported its tasks
+      # or its agent holds the fold as analyze-failed (FR-013) -- see
+      # lifecycle-review-gate.yml's `fold-decide`.
       - name: Decide hold or dispatch for the round's folds
         id: analyze-fold
-        if: "!cancelled() && steps.analyze-stage.outcome == 'success'"
+        if: "!cancelled() && needs.fold-turn-dispatch.outputs.should-dispatch == 'true'"
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-analyze
         with:
           mode: decide
-          fold-id: ${{ steps.analyze-stage.outputs.fold-id }}
-          tasks: ${{ steps.analyze-stage.outputs.tasks }}
-          agent-outcome: ${{ steps.analyze-agent.outcome }}
-          agent-verdict: ${{ steps.analyze-verdict.outputs.verdict }}
+          fold-id: ${{ needs.fold-analyze.outputs.fold-id || format('pr-conversation-run-{0}', github.run_id) }}
+          tasks: ${{ needs.fold-analyze.outputs.tasks || '1' }}
+          agent-outcome: ${{ needs.fold-analyze.outputs.agent-outcome }}
+          agent-verdict: ${{ steps.analyze-transcript-verdict.outputs.verdict }}
+          execution-output-path: ${{ runner.temp }}/fold-analyze/claude-execution-output.json
+          open-holds: ${{ steps.open-holds.outputs.open-holds }}
 
       # FR-014/FR-015 -- see lifecycle-review-gate.yml's "Post the
       # fold-analyze outcome on the lifecycle issue".
@@ -3655,11 +3760,11 @@ jobs:
           HOLD_REASON: ${{ steps.analyze-fold.outputs.hold-reason }}
           REPORT_FILE: ${{ steps.analyze-fold.outputs.report-file }}
           QUESTION_FILE: ${{ steps.analyze-fold.outputs.question-file }}
-          FOLD_ID: ${{ steps.analyze-stage.outputs.fold-id }}
+          FOLD_ID: ${{ needs.fold-analyze.outputs.fold-id || format('pr-conversation-run-{0}', github.run_id) }}
           SPEC_DIR: ${{ needs.classify-and-announce.outputs.spec-dir }}
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
           BASE_SHA: ${{ needs.classify-and-announce.outputs.base-sha }}
-          FOLD_AFTER: ${{ steps.analyze-tip.outputs.tip }}
+          FOLD_AFTER: ${{ needs.fold-analyze.outputs.tip || needs.fold-turn-dispatch.outputs.tip-sha }}
           FOLDED_JSON: ${{ needs.fold-turn-dispatch.outputs.folded-json }}
           ROUND_FOLDED_JSON: ${{ needs.fold-turn-dispatch.outputs.round-folded-json }}
           IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
@@ -3692,22 +3797,27 @@ jobs:
           round-folded-json: ${{ needs.fold-turn-dispatch.outputs.round-folded-json }}
           fold-queue-token: ${{ needs.fold-turn-dispatch.outputs.implement-token }}
 
-      # specs/116 FR-014: the analyze check held this review's fold(s), so
-      # no cycle was dispatched. Say so on the PR, so the reviewer whose
+      # specs/116 FR-014: the analyze check held this review's fold(s), or
+      # an open hold blocked them, so no cycle was dispatched. Say so on the PR, so the reviewer whose
       # review folded is not left without a reply; the owner question
       # itself is on the lifecycle issue.
       - name: Reply that this review's fold(s) are held
         shell: bash
-        if: "!cancelled() && needs.fold-turn-dispatch.outputs.should-dispatch == 'true' && steps.analyze-fold.outputs.decision == 'hold'"
+        if: >-
+          !cancelled() && needs.fold-turn-dispatch.outputs.should-dispatch == 'true'
+          && (steps.analyze-fold.outputs.decision == 'hold' || steps.analyze-fold.outputs.decision == 'blocked')
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           PR_NUMBER: ${{ inputs.pr-number }}
           ISSUE: ${{ needs.classify-and-announce.outputs.issue-number }}
+          DECISION: ${{ steps.analyze-fold.outputs.decision }}
           HOLD_REASON: ${{ steps.analyze-fold.outputs.hold-reason }}
         run: |
           set -euo pipefail
           body_file="$RUNNER_TEMP/dispatch-once-held-reply.md"
-          echo "This review's fold(s) are committed, but no implement cycle was dispatched: the fold-time analyze check held them (\`$HOLD_REASON\`). The owner question is on #$ISSUE; implement is dispatched once a maintainer answers it there." > "$body_file"
+          why="the fold-time analyze check held them (\`$HOLD_REASON\`)"
+          [ "$DECISION" != "blocked" ] || why="a fold hold is already open on the lifecycle, and every fold dispatch waits for its answer"
+          echo "This review's fold(s) are committed, but no implement cycle was dispatched: $why. The owner question is on #$ISSUE; implement is dispatched once a maintainer answers it there." > "$body_file"
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
 
       # spec 075 FR-014/FR-015, reconciled 2026-09-29: this run's own claim

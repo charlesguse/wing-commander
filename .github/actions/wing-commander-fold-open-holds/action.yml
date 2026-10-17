@@ -1,0 +1,57 @@
+# The open fold holds on a lifecycle issue (specs/116-review-convergence-analyze,
+# contracts/fold-analyze.md "Hold protocol"). An open hold blocks every fold
+# dispatch on its lifecycle until it is answered (the owner's decision on
+# finding 9 of #1062's review), so every job that decides a fold reads them
+# here first and hands the result to wing-commander-fold-analyze's decide
+# mode as its open-holds input. wc_fold_hold.py is the one home of the hold
+# markers; this composite only fetches the issue's comments for it.
+#
+# A read that fails fails this step, and its output stays empty: the decide
+# mode then holds the fold as analyze-failed, never dispatches past a hold
+# it could not see.
+name: wing-commander-fold-open-holds
+description: >
+  Reads the fold holds still open on a lifecycle issue, other than one
+  fold's own, for wing-commander-fold-analyze's decide mode.
+
+inputs:
+  issue:
+    description: The lifecycle issue number.
+    required: true
+  github-token:
+    description: A token that can read the issue's comments (the App token).
+    required: true
+  bot-login:
+    description: The App's bot login, `<slug>[bot]`, whose hold markers count.
+    required: true
+  except-fold-id:
+    description: The fold being decided; its own hold never blocks it (a retry re-deciding it).
+    required: false
+    default: ""
+
+outputs:
+  open-holds:
+    description: "`none`, or the comma-separated fold ids of the other open holds, oldest first; empty when the read failed."
+    value: ${{ steps.read.outputs.open-holds }}
+
+runs:
+  using: composite
+  steps:
+    # #826: REST, never `--json comments` -- the hold markers are read off
+    # the App's own bot-authored comments (user.type == "Bot").
+    - name: Read the open fold holds
+      id: read
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        ISSUE: ${{ inputs.issue }}
+        BOT_LOGIN: ${{ inputs.bot-login }}
+        EXCEPT_FOLD_ID: ${{ inputs.except-fold-id }}
+      run: |
+        set -euo pipefail
+        comments="$RUNNER_TEMP/wc-fold-open-holds-comments.json"
+        gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[]' \
+          | jq -s '.' > "$comments"
+        holds="$(python3 -I "$GITHUB_ACTION_PATH/../../scripts/wc_fold_hold.py" open-holds \
+          --comments "$comments" --bot-login "$BOT_LOGIN" --except-fold-id "$EXCEPT_FOLD_ID")"
+        echo "open-holds=${holds:-none}" >> "$GITHUB_OUTPUT"

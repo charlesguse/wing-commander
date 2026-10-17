@@ -8,13 +8,18 @@ object {decision, hold-reason, report-markdown, question-markdown}. With
 --out-dir the two markdown bodies are also written there as report.md and
 question.md (empty when not applicable).
 
-    decide.py --fold-id ID [--tasks N]
+    decide.py --fold-id ID [--tasks N] [--open-holds none|IDS]
               [--execution-output FILE | --input FILE | --failed] [--out-dir DIR]
     decide.py --section < tasks.md.diff   (the fold's added lines, ticks left out)
 
 `hold` iff a finding has category == constitution-conflict, or the check
 failed or its output does not match the schema. Otherwise `dispatch`.
-`skipped` when the fold section has no tasks (--tasks 0).
+`skipped` when the fold section has no tasks (--tasks 0). A dispatch or a
+skip becomes `blocked` while another fold hold is open on the lifecycle
+(--open-holds `none` or fold ids, from wing-commander-fold-open-holds):
+nothing dispatches until it is answered, and the release that answers it
+dispatches implement then. An empty --open-holds (the read never ran or
+failed) holds as analyze-failed.
 """
 import argparse
 import json
@@ -162,6 +167,22 @@ def decide(fold_id, tasks, text, failed):
     }
 
 
+def block(result, open_holds, fold_id=""):
+    """`dispatch`/`skipped` -> `blocked` while other holds are open.
+    open_holds None (the open-hold read never ran or failed) holds the
+    fold as analyze-failed: nothing vouches that no hold is open."""
+    if open_holds is None and result["decision"] != "hold":
+        return decide(fold_id, 1, "", True)
+    if not open_holds or result["decision"] not in ("dispatch", "skipped"):
+        return result
+    note = ("Not dispatched: fold hold(s) {0} are open on this lifecycle, and "
+            "every fold dispatch waits until they are answered.").format(
+                ", ".join("`{0}`".format(inert(h)) for h in open_holds))
+    report_md = result["report-markdown"]
+    return dict(result, decision="blocked",
+                **{"report-markdown": (report_md + "\n\n" + note) if report_md else note})
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv == ["--section"]:
@@ -176,6 +197,9 @@ def main(argv=None):
     ap.add_argument("--execution-output", default="")
     ap.add_argument("--failed", action="store_true")
     ap.add_argument("--out-dir", default="")
+    ap.add_argument("--open-holds", default="",
+                    help="`none`, or comma-separated fold ids of the other open holds; "
+                         "empty means the read never ran (analyze-failed)")
     a = ap.parse_args(argv)
     text = None
     if not a.failed:
@@ -188,7 +212,9 @@ def main(argv=None):
             except OSError:
                 text = None
     failed = a.failed or text is None
-    result = decide(a.fold_id, a.tasks, text or "", failed)
+    holds = None if not a.open_holds else (
+        [] if a.open_holds == "none" else [h for h in a.open_holds.split(",") if h])
+    result = block(decide(a.fold_id, a.tasks, text or "", failed), holds, a.fold_id)
     if a.out_dir:
         for name, key in (("report.md", "report-markdown"), ("question.md", "question-markdown")):
             with open(os.path.join(a.out_dir, name), "w", encoding="utf-8") as fh:

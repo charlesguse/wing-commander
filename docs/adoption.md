@@ -905,7 +905,7 @@ things to know before you bind one:
   | `cleanup` | `select` → one outcome job | 2 |
   | `rebase` | `discover` → one matrix leg per branch | 1 + N |
   | `watchdog` | `collect`, `diagnose`, `report-unhandled-failure` + one `triage` and one `act` leg per finding | 3 + 2N |
-  | `pr-conversation` | `classify-and-announce` (bound by `environment`) + one `act` leg per classification (bound by `confirm-categories`, **not** by `environment` — see the exception above) + `dispatch-once` and `report-fold-outcomes` (both bound by `environment`, each running once per call, after the whole `act` matrix) | 1, plus one per confirm-gated `act` leg, plus 2 |
+  | `pr-conversation` | `classify-and-announce` (bound by `environment`) + one `act` leg per classification (bound by `confirm-categories`, **not** by `environment` — see the exception above) + `dispatch-once` and `report-fold-outcomes` (both bound by `environment`, each running once per call, after the whole `act` matrix) + `fold-analyze` (bound by `environment`, once per call that dispatches a fold) | 1, plus one per confirm-gated `act` leg, plus 2, plus 1 when a fold is dispatched |
   | `auto-update-spec-kit` (scheduled) | `health-check` → `detect` → `settle` → `evaluate-path` → `prepare` → `verify` → `act` | 7, sequentially |
 
   So the cheapest possible gate is a one-job stage (`intake`, `clarify`,
@@ -1509,9 +1509,12 @@ Before that dispatch, a fold that added tasks gets a **fold-time analyze
 check** (spec 116): one extra read-only agent run on `claude-sonnet-5-5`
 (Read/Grep/Glob only, a 12-turn ceiling, billed like any other stage run)
 checks the new tasks against your spec, plan, earlier folds and
-constitution. It needs no new input or secret. A constitution conflict, or
-a check that fails, holds the dispatch and posts an owner question on the
-lifecycle issue; anything else dispatches as before, with the analyze
+constitution. It needs no new input or secret. It runs in its own
+`fold-analyze` job, which has `contents: read` only and is bound by
+`environment` like `dispatch-once`. A constitution conflict, or a check
+that fails, holds the dispatch and posts an owner question on the
+lifecycle issue. While a hold is open, no later fold on that lifecycle
+dispatches either. Anything else dispatches as before, with the analyze
 report linked there. This repository releases a hold with
 `wing-commander-fold-hold.yml` (a `/fold-hold proceed|drop|amend|retry`
 comment); without such a wrapper of your own, dispatch a held fold by hand

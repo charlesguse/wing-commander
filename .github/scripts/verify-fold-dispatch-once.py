@@ -799,8 +799,10 @@ def test_structural():
     # on its own fold-queue admission-ticket prerequisite job now (needed
     # before this job may even be scheduled, research.md D1) -- see
     # fold-queue-ledger.sh.
-    EXTRA_NEEDS = {"dispatch-once": "fold-turn-dispatch",
-                   "report-fold-outcomes": "fold-turn-act"}
+    # dispatch-once also needs fold-analyze (specs/116): the read-only job
+    # whose agent checks the round's folds before the one dispatch.
+    EXTRA_NEEDS = {"dispatch-once": ("fold-turn-dispatch", "fold-analyze"),
+                   "report-fold-outcomes": ("fold-turn-act",)}
 
     # specs/074-serialized-fold-dispatch T045 (maintainer review of #821):
     # dispatch-once's own copy of the post-fold tip read / fold-evidence
@@ -827,12 +829,12 @@ def test_structural():
         needs = job.get("needs")
         needs_set = set(needs) if isinstance(needs, list) else {needs}
         expected_needs = {"verify-image-prerequisites", "classify-and-announce",
-                          "act", EXTRA_NEEDS[job_id]}
+                          "act", *EXTRA_NEEDS[job_id]}
         if needs_set != expected_needs:
             failures.append(f"structural: {job_id!r}.needs is {needs!r}, "
                             f"expected exactly [verify-image-prerequisites, "
                             f"classify-and-announce, act, "
-                            f"{EXTRA_NEEDS[job_id]}] (Gate 23 requires "
+                            f"{', '.join(EXTRA_NEEDS[job_id])}] (Gate 23 requires "
                             f"every always()-guarded job to depend on "
                             f"verify-image-prerequisites directly — PR #253 "
                             f"review).")

@@ -219,7 +219,8 @@ class CompositeShellTests(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(transcript(text), fh)
         return run_step("decide", {"FOLD_ID": "f", "TASKS": tasks, "AGENT_OUTCOME": outcome,
-                                   "AGENT_VERDICT": verdict, "EXECUTION_OUTPUT": path},
+                                   "AGENT_VERDICT": verdict, "EXECUTION_OUTPUT": path,
+                                   "OPEN_HOLDS": "none"},
                         self.repo)
 
     def test_decide_step_dispatches_a_clean_check(self):
@@ -236,6 +237,69 @@ class CompositeShellTests(unittest.TestCase):
         _, out = self.decide_step(
             "failure", "healthy", "```wing-commander-fold-analyze\n{\"findings\": []}\n```")
         self.assertEqual(out["hold-reason"], "analyze-failed")
+
+    def open_holds_step(self, comments, fold_id="f"):
+        """wing-commander-fold-open-holds's own run block, with a fake `gh`
+        serving the lifecycle issue's comments."""
+        bindir = os.path.join(self.repo, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        served = os.path.join(self.repo, "served.json")
+        with open(served, "w", encoding="utf-8") as fh:
+            json.dump(comments, fh)
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8") as fh:
+            fh.write("#!/bin/sh\njq -c '.[]' '{0}'\n".format(served))
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        action = os.path.join(HERE, "..", "..", "actions", "wing-commander-fold-open-holds")
+        with open(os.path.join(action, "action.yml"), encoding="utf-8") as fh:
+            run_text = yaml.safe_load(fh)["runs"]["steps"][0]["run"]
+        with tempfile.NamedTemporaryFile("r", delete=False) as out:
+            out_path = out.name
+        env = dict(os.environ, GITHUB_OUTPUT=out_path, GITHUB_ACTION_PATH=os.path.normpath(action),
+                   RUNNER_TEMP=self.repo, GH_TOKEN="t", ISSUE="7", BOT_LOGIN="wc[bot]",
+                   EXCEPT_FOLD_ID=fold_id, GITHUB_REPOSITORY="o/r",
+                   PATH=bindir + os.pathsep + os.environ["PATH"])
+        proc = subprocess.run(["bash", "-e", "-c", run_text], cwd=self.repo, env=env,
+                              capture_output=True, text=True)
+        with open(out_path, encoding="utf-8") as fh:
+            outputs = dict(line.split("=", 1) for line in fh.read().splitlines() if "=" in line)
+        os.unlink(out_path)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return outputs["open-holds"]
+
+    def decide_holds(self, open_holds, tasks="1"):
+        path = os.path.join(self.repo, "claude-execution-output.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(transcript("```wing-commander-fold-analyze\n{\"findings\": []}\n```"), fh)
+        return run_step("decide", {"FOLD_ID": "f", "TASKS": tasks, "AGENT_OUTCOME": "success",
+                                   "AGENT_VERDICT": "healthy", "EXECUTION_OUTPUT": path,
+                                   "OPEN_HOLDS": open_holds}, self.repo)
+
+    def test_open_holds_read_names_the_other_open_holds(self):
+        sys.path.insert(0, os.path.normpath(os.path.join(HERE, "..")))
+        import wc_fold_hold
+        bot = {"login": "wc[bot]", "type": "Bot"}
+        held = [{"body": "q\n\n" + wc_fold_hold.render_state(fold_id="older", reason="constitution-conflict"),
+                 "created_at": "2026-01-01T00:00:00Z", "user": bot}]
+        self.assertEqual(self.open_holds_step(held), "older")
+        # Its own hold (a retry re-deciding it) never blocks it; a resolved one never does.
+        self.assertEqual(self.open_holds_step(held, fold_id="older"), "none")
+        released = held + [{"body": wc_fold_hold.render_resolved("older", "proceed"),
+                            "created_at": "2026-01-02T00:00:00Z", "user": bot}]
+        self.assertEqual(self.open_holds_step(released), "none")
+
+    def test_decide_step_blocks_while_another_hold_is_open(self):
+        proc, out = self.decide_holds("older")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(out["decision"], "blocked")
+        with open(out["report-file"], encoding="utf-8") as fh:
+            self.assertIn("`older`", fh.read())
+        self.assertEqual(self.decide_holds("older", tasks="0")[1]["decision"], "blocked")
+        self.assertEqual(self.decide_holds("none")[1]["decision"], "dispatch")
+
+    def test_decide_step_holds_when_the_open_holds_were_never_read(self):
+        for tasks in ("1", "0"):
+            out = self.decide_holds("", tasks=tasks)[1]
+            self.assertEqual((out["decision"], out["hold-reason"]), ("hold", "analyze-failed"))
 
     def test_decide_step_skips_when_nothing_was_staged(self):
         _, out = self.decide_step("", "", "", tasks="0")
