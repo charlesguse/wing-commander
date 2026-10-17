@@ -2,10 +2,8 @@
   "issue": 903,
   "spec_dir": "specs/115-board-loop-self-merge",
   "feature_num": "115",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 4,
   "spec_branch": "spec/115-board-loop-self-merge",
-  "pending_re_review_from": [
-    "charlesguse"
-  ]
+  "pending_re_review_from": []
 }
