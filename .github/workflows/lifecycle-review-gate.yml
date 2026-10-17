@@ -1120,6 +1120,7 @@ jobs:
           # review's own .github/scripts).
           sys.path.insert(0, ".wc-pristine-repo/.github/scripts")
           from wc_review_finding_fingerprint import fingerprint
+          from wc_convergence import classify_recurrence
 
           runner_temp = os.environ["RUNNER_TEMP"]
           issue = os.environ["ISSUE"]
@@ -1152,15 +1153,24 @@ jobs:
           for f in findings:
               basis = f.get("fingerprint_basis") or {}
               fp = fingerprint(issue, f.get("title", ""), basis.get("file_path", ""))
-              if fp in folded_fps or fp in filed_fps:
+              if fp in filed_fps:
                   continue
               if f.get("in_scope") is True:
                   in_scope_survivors.append((f, fp))
-              elif f.get("in_scope") is False:
+              elif f.get("in_scope") is False and fp not in folded_fps:
                   out_of_scope_survivors.append((f, fp))
 
-          def render(f):
-              lines = ["", "- [ ] Review finding: {0}".format(f.get("title", "(untitled)")),
+          # Spec 116 FR-002: an in-scope finding already folded in an earlier
+          # round is a recurrence -- it keeps this round non-clean and is
+          # folded again, named as such, never dropped as "already handled".
+          _, recurring = classify_recurrence(
+              [{"fingerprint": fp} for _, fp in in_scope_survivors],
+              {"resolved": dict((fp, 0) for fp in folded_fps)})
+          recurring_fps = set(r["fingerprint"] for r in recurring)
+
+          def render(f, recurrence=False):
+              prefix = "Recurring review finding" if recurrence else "Review finding"
+              lines = ["", "- [ ] {0}: {1}".format(prefix, f.get("title", "(untitled)")),
                        "", "  {0}".format(f.get("what", ""))]
               paths = (f.get("evidence") or {}).get("file_paths") or []
               if paths:
@@ -1176,7 +1186,7 @@ jobs:
           if in_scope_survivors:
               section_lines.append("## Review Gate Round {0} Findings".format(round_))
               for f, fp in in_scope_survivors:
-                  section_lines.extend(render(f))
+                  section_lines.extend(render(f, fp in recurring_fps))
                   new_folded.append(fp)
 
           section_path = os.path.join(runner_temp, "lifecycle-review-fold-section.md")
@@ -1220,7 +1230,11 @@ jobs:
           outputs.append(("folded-fingerprints", ",".join(sorted(folded_fps | set(new_folded)))))
           outputs.append(("filed-fingerprints", ",".join(sorted(filed_fps | set(new_filed)))))
           if new_folded:
-              outputs.append(("fold-summary", "round {0}: {1} finding(s) folded".format(round_, len(new_folded))))
+              summary = "round {0}: {1} finding(s) folded".format(round_, len(new_folded))
+              if recurring_fps:
+                  summary += " ({0} recurring)".format(len(recurring_fps))
+              outputs.append(("fold-summary", summary))
+          outputs.append(("recurrences", ",".join(sorted(recurring_fps))))
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               for k, v in outputs:
                   fh.write("{0}={1}\n".format(k, v))
