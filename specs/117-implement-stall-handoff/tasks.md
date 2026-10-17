@@ -132,3 +132,12 @@
 ## Phase 8: Convergence
 
 - [x] T031 Make the Maintainer Feedback re-entry dispatch comment in `.github/workflows/pr-conversation.yml` (the "Implementation cycle N dispatched" reply, which is where that start comment actually lives, not `implement.yml`) state how many cycles remain (`max-iterations - iteration`, floor 0), taking the cap and recorded iteration from existing inputs or spec-meta without writing any state; then extend `verify-implement-stall-handoff.py` with the T024 remaining-count cases (iteration 4 of 5 → 1; 5 of 5 → 0) per FR-011 (missing)
+
+## Maintainer Feedback
+
+- [ ] T027a Fix `verify-gate-24.py`: in implement.yml's "Read back retry outcome" step (~:2654), stop hard-exiting on `steps.retry` (its failure is declared survivable by a `continue-on-error` step above); degrade gracefully so steps below still run (per the `review-step-gating` skill)
+- [ ] T027b Fix `verify-fold-dispatch-once.py`: give the "Dispatch implement once for the whole review" step a default for `MAX_ITERATIONS` (or pass it in the env block the gate harness reproduces) so scenarios 1, 5 and 6 bind it
+- [ ] T027c Fix `verify-project-single-home.py`: route implement.yml's 2 inline kv-helper hits through `_shared/project-name.sh` / `wing-commander-project` (0 allowed)
+- [ ] T027d Fix `verify-intake-routing.py`: record pr-conversation.yml's new `max-iterations` input in `interface.json` additions
+- [ ] T027e Give the implement.yml and finalize.yml edits a `review-step-gating` skill pass and fix findings
+- [ ] T027f Re-run `python .github/scripts/run-local-gates.py` until green (gate 62 may be skipped without Docker); T029 and T030 remain maintainer steps
