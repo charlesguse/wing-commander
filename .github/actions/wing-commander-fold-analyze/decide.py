@@ -10,6 +10,7 @@ question.md (empty when not applicable).
 
     decide.py --fold-id ID [--tasks N]
               [--execution-output FILE | --input FILE | --failed] [--out-dir DIR]
+    decide.py --section < tasks.md.diff   (the fold's added lines, ticks left out)
 
 `hold` iff a finding has category == constitution-conflict, or the check
 failed or its output does not match the schema. Otherwise `dispatch`.
@@ -25,6 +26,37 @@ CATEGORIES = {"constitution-conflict", "inconsistency", "duplication", "other"}
 KEYS = ("severity", "category", "fold_task", "location", "principle", "detail")
 FENCE = "wing-commander-fold-analyze"
 FENCE_RE = re.compile(r"```" + re.escape(FENCE) + r"[ \t]*\n(.*?)\n```", re.DOTALL)
+
+
+CHECKBOX_RE = re.compile(r"^(\s*- )\[[ xX]\]")
+
+
+def untick(line):
+    return CHECKBOX_RE.sub(r"\1[ ]", line)
+
+
+def fold_section(patch):
+    """The lines a fold added, from a `git diff -U0` of tasks.md: every
+    added line but a tick -- one whose only change is its checkbox, an
+    implement cycle's push in the same window, never the fold's own."""
+    out, minus, plus = [], [], []
+
+    def flush():
+        gone = set(untick(line) for line in minus)
+        out.extend(line for line in plus if untick(line) not in gone)
+        del minus[:], plus[:]
+
+    in_hunk = False
+    for line in patch.splitlines():
+        if line.startswith("@@"):
+            flush()
+            in_hunk = True
+        elif in_hunk and line.startswith("-"):
+            minus.append(line[1:])
+        elif in_hunk and line.startswith("+"):
+            plus.append(line[1:])
+    flush()
+    return out
 
 
 def from_transcript(path):
@@ -62,7 +94,17 @@ def parse(text):
                 f[k] = ""
             elif not isinstance(f[k], str):
                 return None
+            else:
+                f[k] = inert(f[k])
     return data["findings"]
+
+
+def inert(text):
+    """Agent text as one line with `<`/`>` as entities: the report and the
+    question are posted under the App's identity, so a `<!-- ... -->` the
+    agent echoes (from a fold section's reviewer text) must not read back
+    as a hold-state or resolved marker (wc_fold_hold.py)."""
+    return " ".join(text.split()).replace("<", "&lt;").replace(">", "&gt;")
 
 
 def report(findings):
@@ -121,6 +163,12 @@ def decide(fold_id, tasks, text, failed):
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv == ["--section"]:
+        # The stage step's scoping: a `git diff -U0` on stdin.
+        for line in fold_section(sys.stdin.read()):
+            print(line)
+        return 0
     ap = argparse.ArgumentParser()
     ap.add_argument("--fold-id", required=True)
     ap.add_argument("--tasks", type=int, default=1)

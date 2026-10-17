@@ -136,6 +136,38 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
+      # `resolve` ran outside this job's concurrency group, so two answers
+      # posted close together can both find the hold open. Re-read it here,
+      # inside the group, where the first release's resolved marker is
+      # already posted: a hold no longer open (or now a different one)
+      # fails this step, every step below is skipped, and the dispatch's
+      # `if:` names this step so it never runs a second time for one fold.
+      - name: Re-check the hold is still open
+        id: recheck
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          BODY: ${{ github.event.comment.body }}
+          ASSOCIATION: ${{ github.event.comment.author_association }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+          ACTION: ${{ needs.resolve.outputs.action }}
+          FOLD_ID: ${{ needs.resolve.outputs.fold-id }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$BODY" > "$RUNNER_TEMP/fold-hold-answer.md"
+          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[]' \
+            | jq -s '.' > "$RUNNER_TEMP/fold-hold-comments.json"
+          : > "$RUNNER_TEMP/fold-hold-recheck.out"
+          python3 .wc-pristine-repo/.github/scripts/wc_fold_hold.py resolve \
+            --comments "$RUNNER_TEMP/fold-hold-comments.json" --bot-login "$BOT_LOGIN" \
+            --body-file "$RUNNER_TEMP/fold-hold-answer.md" --association "$ASSOCIATION" \
+            --github-output "$RUNNER_TEMP/fold-hold-recheck.out"
+          if ! grep -qxF "action=$ACTION" "$RUNNER_TEMP/fold-hold-recheck.out" \
+             || ! grep -qxF "fold-id=$FOLD_ID" "$RUNNER_TEMP/fold-hold-recheck.out"; then
+            echo "::error::the fold hold on \`$FOLD_ID\` was already released by an earlier answer; this \`/fold-hold $ACTION\` changes nothing."
+            exit 1
+          fi
+
       - name: Authenticate the push remote
         if: needs.resolve.outputs.action == 'drop'
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-refresh-remote
@@ -329,7 +361,7 @@ jobs:
       - name: Dispatch implement for the released fold
         id: fold-dispatch
         if: >-
-          !cancelled() && (
+          !cancelled() && steps.recheck.outcome == 'success' && (
             needs.resolve.outputs.action == 'proceed'
             || (needs.resolve.outputs.action == 'drop' && steps.drop.outcome == 'success')
             || (needs.resolve.outputs.action == 'retry'

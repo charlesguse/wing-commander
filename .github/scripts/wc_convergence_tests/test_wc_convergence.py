@@ -290,6 +290,13 @@ class RoundRecords(unittest.TestCase):
         self.assertEqual(len(rec["findings"]), wc.MAX_RECORDED_FINDINGS)
         self.assertEqual(rec["count"], wc.MAX_RECORDED_FINDINGS + 30)
 
+    def test_a_reviewer_path_carrying_a_comment_close_round_trips(self):
+        entries = [{"fingerprint": "fp", "file": "a} -->", "line": None}]
+        body = "review\n\n" + wc.round_record_marker(1, "h", entries)
+        records = wc.read_round_records([self.review(body, "2026-01-01T00:00:00Z")], self.BOT)
+        self.assertEqual([r["findings"][0]["file"] for r in records], ["a} -->"])
+        self.assertEqual(body.count("-->"), 1)
+
     def test_only_the_apps_last_marker_counts(self):
         real = wc.round_record_marker(1, "real", [])
         forged = wc.round_record_marker(1, "forged", [])
@@ -324,6 +331,15 @@ class EvaluateInGit(GitBacked):
                         self.repo, resolved=["fp-F"])
         self.assertEqual(d["recurrences"], ["fp-F"])
         self.assertFalse(d["stop"])  # round 2: recorded, never an early stop
+
+    def test_a_folded_finding_recurs_only_after_the_round_that_raised_it(self):
+        base, h0, h1, h2 = self.build()
+        fp = {"fingerprint": "fp-F", "file": "f.py", "line": 4}
+        records = [{"round": 1, "head_sha": h0, "findings": [fp]},
+                   {"round": 2, "head_sha": h1, "findings": []}]
+        current = {"round": 3, "head_sha": h2, "findings": [dict(fp, line=6)]}
+        d = wc.evaluate(records, current, base, self.repo, resolved=["fp-F"])
+        self.assertEqual([s["recurrences"] for s in d["signals"]], [[], [], ["fp-F"]])
 
     def test_a_falling_count_past_the_entry_cap_is_falling(self):
         base, h0, h1, h2 = self.build()

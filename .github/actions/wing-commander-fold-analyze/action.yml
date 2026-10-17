@@ -113,8 +113,8 @@ runs:
         : > "$section"
         tasks=0
         if [ -n "$fold_id" ] && [ -n "$BEFORE" ] && [ -n "$AFTER" ] && [ "$BEFORE" != "$AFTER" ]; then
-          git diff --no-color "$BEFORE" "$AFTER" -- "$SPEC_DIR/tasks.md" \
-            | sed -n 's/^+\([^+]\)/\1/p; s/^+$//p' > "$section"
+          git diff --no-color -U0 "$BEFORE" "$AFTER" -- "$SPEC_DIR/tasks.md" \
+            | python3 -I "$GITHUB_ACTION_PATH/decide.py" --section > "$section"
           tasks="$(grep -cE '^- \[[ xX]\] ' "$section" || true)"
         fi
         # The one home of the analyze agent's instructions: both callers'

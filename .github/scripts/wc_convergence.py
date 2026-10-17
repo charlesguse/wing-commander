@@ -408,7 +408,11 @@ def round_record_marker(round_, head_sha, entries):
                "findings": [{"fingerprint": e["fingerprint"], "file": e["file"],
                              "line": e["line"]}
                             for e in entries[:MAX_RECORDED_FINDINGS]]}
-    return "<!-- {0}: {1} -->".format(ROUND_MARKER, json.dumps(payload, sort_keys=True))
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from board_item_marker import marker_json
+    # The file path is the reviewer's: marker_json keeps a `-->` in it
+    # from ending the marker early.
+    return "<!-- {0}: {1} -->".format(ROUND_MARKER, marker_json(payload))
 
 
 def read_round_records(comments, bot_login):
@@ -454,7 +458,15 @@ def evaluate(records, current, base, cwd, resolved=None, budget=None,
     fixes each round's in-scope findings before the next review).
     """
     rounds = [r for r in records if r["round"] < current["round"]] + [current]
-    ledger = {"resolved": dict((fp, 0) for fp in (resolved or [])), "dismissed": []}
+    # A folded fingerprint was resolved in the first round that raised it,
+    # so that round's own row never counts it as a recurrence; one no
+    # earlier record carries resolves before round 1.
+    first_raised = {}
+    for r in rounds[:-1]:
+        for f in r.get("findings", []):
+            first_raised.setdefault(f.get("fingerprint"), r["round"])
+    ledger = {"resolved": dict((fp, first_raised.get(fp, 0)) for fp in (resolved or [])),
+              "dismissed": []}
     if resolved_from_history:
         for r in rounds[:-1]:
             for f in r.get("findings", []):

@@ -50,7 +50,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from board_item_marker import is_loop_marker_author, last_marker_match, marker_regexes  # noqa: E402
+from board_item_marker import is_loop_marker_author, last_marker_match, marker_json, marker_regexes  # noqa: E402
 
 STATE_MARKER = "wing-commander-fold-hold-state"
 RESOLVED_MARKER = "wing-commander-fold-hold-resolved"
@@ -69,12 +69,14 @@ MAINTAINER_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
 
 def render_state(**fields):
     payload = {k: fields.get(k) or "" for k in STATE_FIELDS}
-    return "<!-- {0}: {1} -->".format(STATE_MARKER, json.dumps(payload, sort_keys=True))
+    # folded_json carries finding summaries: marker_json keeps a `-->`
+    # in one from ending the marker early.
+    return "<!-- {0}: {1} -->".format(STATE_MARKER, marker_json(payload))
 
 
 def render_resolved(fold_id, resolution):
-    return "<!-- {0}: {1} -->".format(RESOLVED_MARKER, json.dumps(
-        {"fold_id": fold_id, "resolution": resolution}, sort_keys=True))
+    return "<!-- {0}: {1} -->".format(RESOLVED_MARKER, marker_json(
+        {"fold_id": fold_id, "resolution": resolution}))
 
 
 def _bot_markers(comments, bot_login, marker_re, open_re):
@@ -175,14 +177,37 @@ def git(args, cwd):
     return out.stdout
 
 
+def _ticks(patch):
+    """(before, after) for each line of a `git diff -U0` whose only change
+    is its checkbox: an implement cycle's tick, never the fold's own."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "..", "actions", "wing-commander-fold-analyze"))
+    from decide import untick  # the one home of the tick rule
+    pairs, minus, plus, in_hunk = [], [], [], False
+    for line in patch.splitlines() + ["@@"]:
+        if line.startswith("@@"):
+            for new in plus:
+                old = next((m for m in minus if m != new and untick(m) == untick(new)), None)
+                if old is not None:
+                    pairs.append((old, new))
+            minus, plus, in_hunk = [], [], True
+        elif in_hunk and line.startswith("-"):
+            minus.append(line[1:])
+        elif in_hunk and line.startswith("+"):
+            plus.append(line[1:])
+    return pairs
+
+
 def drop_tasks(spec_dir, before, after, cwd):
     """Reverse the fold's own change to tasks.md in the working tree (the
     `drop` answer). Fails, changing nothing, when tasks.md has since moved
-    in a way the reversal no longer applies to."""
+    in a way the reversal no longer applies to. A tick in the same range
+    (pr-conversation scopes it from classify's base SHA) is kept."""
     path = "{0}/tasks.md".format(spec_dir.rstrip("/"))
     patch = git(["diff", "--no-color", before, after, "--", path], cwd)
     if not patch.strip():
         return False
+    ticks = _ticks(git(["diff", "--no-color", "-U0", before, after, "--", path], cwd))
     with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as fh:
         fh.write(patch)
         patch_path = fh.name
@@ -191,6 +216,15 @@ def drop_tasks(spec_dir, before, after, cwd):
         git(["apply", "--reverse", patch_path], cwd)
     finally:
         os.unlink(patch_path)
+    if ticks:
+        full = os.path.join(cwd, path)
+        with open(full, encoding="utf-8") as fh:
+            lines = fh.read().split("\n")
+        for old, new in ticks:
+            if old in lines:
+                lines[lines.index(old)] = new
+        with open(full, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines))
     return True
 
 
@@ -250,6 +284,13 @@ def self_test():
     check("an analyze-failed hold rejects drop",
           resolve(rehold, bot, "/fold-hold drop", "OWNER")["action"] == "reject")
 
+    closing = render_state(fold_id="f3", reason="constitution-conflict",
+                           folded_json='[{"id":"f3","summary":"a --> b <!-- c"}]')
+    check("a summary carrying a comment close or opener stays inside the state marker",
+          closing.count("-->") == 1 and closing.count("<!--") == 1
+          and (open_hold([comment(closing, "2026-01-04T00:00:00Z")], bot) or {}).get("folded_json")
+          == '[{"id":"f3","summary":"a --> b <!-- c"}]')
+
     body = outcome_body("hold", "", "<!-- wing-commander-fold-hold: fold=f1 -->\nq", fold_id="f1",
                         reason="constitution-conflict", spec_dir="specs/001-x")
     check("a hold body is the question followed by a state marker open_hold() reads back",
@@ -282,6 +323,12 @@ def self_test():
               and open(tasks, encoding="utf-8").read() == "# Tasks\n\n- [X] T001\n")
         check("drop-tasks with no fold change reports nothing to drop",
               drop_tasks("specs/001-x", after, after, repo) is False)
+        g("checkout", "-q", "--", ".")
+        ticked = commit("# Tasks\n\n- [ ] T001\n- [ ] T002\n")
+        folded = commit("# Tasks\n\n- [X] T001\n- [X] T002\n\n## Round 4\n\n- [ ] Review finding: y\n")
+        check("drop-tasks keeps an implement tick made in the same range",
+              drop_tasks("specs/001-x", ticked, folded, repo)
+              and open(tasks, encoding="utf-8").read() == "# Tasks\n\n- [X] T001\n- [X] T002\n")
 
     print("{0} failure(s).".format(len(failures)))
     return 1 if failures else 0

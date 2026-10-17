@@ -34,8 +34,10 @@ upload between the decision and the dispatch cannot strand a fold the check
 let through; a step that writes a hold's resolved marker runs after the
 dispatch, never before it, so a release that never dispatched leaves the
 hold open to answer again, and the step after it that records a
-dispatched release carries `!cancelled()` so it is never skipped; and
-pr-conversation (the published caller)
+dispatched release carries `!cancelled()` so it is never skipped; a
+release's dispatch names a step in its own job that re-reads the hold
+(`wc_fold_hold.py resolve`), so two answers close together dispatch once;
+and pr-conversation (the published caller)
 replies on the PR when its fold is held, as it does when one dispatches.
 
 The fold-analyze steps' rationale comments live once, in
@@ -193,6 +195,14 @@ def check_caller(path, steps, preceding):
             failures.append(f"{path}: {unrecorded} records a dispatched release without "
                             f"!cancelled() -- a failed step above skips it, the hold "
                             f"stays open, and a second answer dispatches again.")
+        releases = any("resolved-marker" in str(s.get("run") or "") for s in steps[dispatch + 1:])
+        rechecks = [s.get("id") for s in steps[:dispatch]
+                    if "wc_fold_hold.py resolve" in str(s.get("run") or "") and s.get("id")]
+        if releases and not any(f"steps.{r}.outcome == 'success'" in cond for r in rechecks):
+            failures.append(f"{path}: the {DISPATCH} step's if: does not name a step in "
+                            f"its own job that re-reads the hold with `wc_fold_hold.py "
+                            f"resolve` -- two answers close together both find it open "
+                            f"and the fold dispatches twice.")
     if path == PUBLISHED_CALLER and not any(
             "decision == 'hold'" in str(s.get("if") or "")
             and "gh pr comment" in str(s.get("run") or "") for s in steps):
@@ -397,6 +407,12 @@ def self_test():
     implicit[rec]["if"] = implicit[rec]["if"].replace("!cancelled() && ", "")
     case("a release record without !cancelled() is caught",
          any("second answer" in f for f in check_caller(rel_path, implicit, rel_pre)))
+
+    unchecked = copy.deepcopy(rel)
+    unchecked[idx(unchecked, is_dispatch)]["if"] = (
+        unchecked[idx(unchecked, is_dispatch)]["if"].replace("steps.recheck.outcome == 'success' && ", ""))
+    case("a release dispatch that does not re-read the hold in its own job is caught",
+         any("dispatches twice" in f for f in check_caller(rel_path, unchecked, rel_pre)))
 
     texts = _caller_texts()
     pasted = dict(texts)
