@@ -17,10 +17,11 @@ Templates requiring updates:
   ✅ .specify/templates/plan-template.md — no change needed (Constitution Check is generic)
   ✅ .specify/templates/spec-template.md — no change needed (no principle references)
   ✅ .specify/templates/tasks-template.md — no change needed (no principle references)
+  ⚠ docs/architecture.md, docs/setup.md — the merge-class bullet and the repository-variable table still describe the board loop's merges with no switch. Documenting `WING_COMMANDER_BOARD_AUTO_MERGE` there belongs with the PR that ships it (spec 115's lifecycle PR, #1059), not with this amendment, which is human-merged on its own and carries only `.specify/memory/` edits.
   ✅ .specify/extensions.yml — absent, so no before/after_constitution hooks apply
 Motivation: spec 115 (`specs/115-board-loop-self-merge`, lifecycle #903) builds the board loop's merge for the two classes Principle X already authorizes. The owner's clarify answer (#903 Q1, option A) chose one default-off switch for both classes, with the loop's existing pause switch as the kill switch.
 Worked example: spec 115's lifecycle PR (#1059) carries the merge job, `board_merge.py` and `verify-board-merge.py`. Its `verify-constitution-merge-class-parity.py` checks the switch in both directions, and it waives the constitution half in `EXEMPT_UNDOCUMENTED_SWITCHES` until this amendment lands (tracker #889). Delete that entry once both have merged.
-Follow-up TODOs: remove the `EXEMPT_UNDOCUMENTED_SWITCHES` entry after #1059 and this amendment are both on main.
+Follow-up TODOs: remove the `EXEMPT_UNDOCUMENTED_SWITCHES` entry after #1059 and this amendment are both on main; document the switch in docs/architecture.md and docs/setup.md.
 -->
 <!--
 Sync Impact Report — 2026-10-14
