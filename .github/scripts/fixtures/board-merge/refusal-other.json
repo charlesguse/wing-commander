@@ -1,1 +1,1 @@
-{"stderr": "HTTP 502: Bad Gateway", "expect_class": "other"}
+{"stderr": "GraphQL: Resource not accessible by integration (mergePullRequest)", "expect_class": "other"}
