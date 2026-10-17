@@ -9,6 +9,8 @@ merge:
   needs: [select, readiness]
   if: >-
     !cancelled()
+    && github.event_name != 'pull_request'
+    && inputs.directed-stage == ''
     && vars.WING_COMMANDER_BOARD_AUTO_MERGE == 'true'
     && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'
   concurrency:
@@ -22,8 +24,8 @@ The job never exists on the switch-off path. The readiness report and marker sta
 
 1. Trusted checkout and a pristine snapshot of `.github/scripts`, as the other jobs do.
 2. Resolve the candidate (fix PR from readiness, or one D4-attributed bump PR).
-3. Fetch the snapshot fresh, then recompute the backstop (fix class).
-4. Re-check the kill switch (`wing-commander-board-stop-check`) and re-read the switch variable.
+3. Re-check the kill switch (`wing-commander-board-stop-check`); the switch variable is the job-start `vars` value (no token can re-read a variable).
+4. Fetch the snapshot fresh. The fix class's backstop is the one `readiness` measured, trusted only while the snapshot's head equals the head readiness measured it on (`readiness_head_sha`); a moved head fails `backstop_holds`.
 5. `board_merge.py` evaluates and writes a decision JSON.
 6. If `may_merge`, run `gh pr merge --squash <pr> --match-head-commit <head_sha>`, capturing stderr.
 7. Announce on the PR and the issue.

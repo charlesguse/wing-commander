@@ -40,7 +40,7 @@ The spec has no `[NEEDS CLARIFICATION]` markers; the switch question was settled
 
 ## D7: Switch and kill switch
 
-- **Decision**: `merge` is gated by `vars.WING_COMMANDER_BOARD_AUTO_MERGE == 'true' && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'`. The existing `wing-commander-board-stop-check` composite is re-run immediately before the merge step, and every durable step carries `steps.killswitch-recheck.outputs.paused == 'false'` (Gate 97's pattern). The switch variable is also re-read through the API in the same step, because a `vars` context is fixed at job start.
+- **Decision**: `merge` is gated by `vars.WING_COMMANDER_BOARD_AUTO_MERGE == 'true' && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'`. The existing `wing-commander-board-stop-check` composite is re-run immediately before the merge step, and every durable step carries `steps.killswitch-recheck.outputs.paused == 'false'` (Gate 97's pattern). The switch variable is read from the `vars` context at job start: re-reading it through the API is not possible, since the App has no Variables permission and `github.token` can never hold one (Gate 12). The stop-check re-run is what catches a mid-run stop.
 - **Rationale**: This satisfies FR-006/FR-007 and the edge case for switching off mid-run.
 
 ## D8: Prove after an autonomous merge

@@ -12,8 +12,8 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Read `.github/scripts/board_readiness.py` (`evaluate_from_snapshot`, `_checks_green`), `.github/scripts/board_item_marker.py`, the `readiness` job in `.github/workflows/board-loop.yml`, and the lifecycle `merge` job in `.github/workflows/lifecycle-review-gate.yml`, so the new code mirrors their patterns (no file edits)
-- [ ] T002 [P] Create the empty fixture directory `.github/scripts/fixtures/board-merge/` with a `README` line in the gate (T006) describing the naming scheme `<class>-<condition>.json` and `refusal-<class>.json`
+- [x] T001 Read `.github/scripts/board_readiness.py` (`evaluate_from_snapshot`, `_checks_green`), `.github/scripts/board_item_marker.py`, the `readiness` job in `.github/workflows/board-loop.yml`, and the lifecycle `merge` job in `.github/workflows/lifecycle-review-gate.yml`, so the new code mirrors their patterns (no file edits)
+- [x] T002 [P] Create the empty fixture directory `.github/scripts/fixtures/board-merge/` with a `README` line in the gate (T006) describing the naming scheme `<class>-<condition>.json` and `refusal-<class>.json`
 
 ---
 
@@ -21,9 +21,9 @@
 
 **Purpose**: The single home for decision logic. Nothing else may carry a copy (CLAUDE.md "Shared logic has exactly one home").
 
-- [ ] T003 Create `.github/scripts/board_merge.py` (stdlib only, runnable as `python3 -I`) with the `MergeDecision` shape from data-model.md `{head_sha, class, may_merge, unmet_reason|null, conditions}`, the tuples `CONDITIONS_FIX = (switch_on, kill_switch_clear, eligible_class, checks_green, gate_suite_green, review_converged, backstop_holds)`, `CONDITIONS_BUMP = (switch_on, kill_switch_clear, attributed_to_auto_update, checks_green, gate_suite_green, verification_passed_at_head)`, `REFUSAL_CLASSES = (workflow-scope, conflict, protection, other)`, and a CLI that reads a snapshot JSON and writes a decision JSON. `unmet_reason` is the first failing condition's name
-- [ ] T004 Add the `eligible_class` exclusion in `.github/scripts/board_merge.py`: never a candidate if a spec PR, plan PR, lifecycle (final implementation) PR, or a PR touching `.specify/memory/constitution.md` (FR-012)
-- [ ] T005 [P] Add the new marker steps `merged` (carrying `merge_sha`) and `handed-over` to `.github/scripts/board_item_marker.py`, and make select treat `handed-over` like `awaiting-merge` so a refused item is released and not retried every run (research D6, data-model state transitions)
+- [x] T003 Create `.github/scripts/board_merge.py` (stdlib only, runnable as `python3 -I`) with the `MergeDecision` shape from data-model.md `{head_sha, class, may_merge, unmet_reason|null, conditions}`, the tuples `CONDITIONS_FIX = (switch_on, kill_switch_clear, eligible_class, checks_green, gate_suite_green, review_converged, backstop_holds)`, `CONDITIONS_BUMP = (switch_on, kill_switch_clear, attributed_to_auto_update, checks_green, gate_suite_green, verification_passed_at_head)`, `REFUSAL_CLASSES = (workflow-scope, conflict, protection, other)`, and a CLI that reads a snapshot JSON and writes a decision JSON. `unmet_reason` is the first failing condition's name
+- [x] T004 Add the `eligible_class` exclusion in `.github/scripts/board_merge.py`: never a candidate if a spec PR, plan PR, lifecycle (final implementation) PR, or a PR touching `.specify/memory/constitution.md` (FR-012)
+- [x] T005 [P] Add the new marker steps `merged` (carrying `merge_sha`) and `handed-over` to `.github/scripts/board_item_marker.py`, and make select treat `handed-over` like `awaiting-merge` so a refused item is released and not retried every run (research D6, data-model state transitions)
 
 **Checkpoint**: decision module and marker steps exist; no workflow wiring yet.
 
@@ -37,20 +37,20 @@
 
 ### Tests for User Story 1
 
-- [ ] T006 [US1] Create `.github/scripts/verify-board-merge.py` with: fixture loading from `fixtures/board-merge/`; for each name in `board_merge.CONDITIONS_FIX` and `CONDITIONS_BUMP` require a fixture and assert `may_merge` is false with that `unmet_reason`; fail if any condition name lacks a fixture; one all-pass fixture per class asserting `may_merge` true
-- [ ] T007 [P] [US1] Add fix-class fixtures in `.github/scripts/fixtures/board-merge/`: `fix-pass.json`, `fix-switch_on.json`, `fix-kill_switch_clear.json`, `fix-eligible_class.json`, `fix-checks_green.json` (red), `fix-checks_pending.json`, `fix-checks_none.json` (empty rollup is not green), `fix-gate_suite_green.json` (gate suite not run on H), `fix-review_converged.json`, `fix-backstop_holds.json`
-- [ ] T008 [US1] Add static workflow assertions to `.github/scripts/verify-board-merge.py`: `board-loop.yml` contains `--match-head-commit`, contains no `--admin`, no `--auto`, no `gh pr review --approve`, no second merge method, and the `merge` job `if:` carries both `WING_COMMANDER_BOARD_AUTO_MERGE` and `WING_COMMANDER_BOARD_LOOP_PAUSED`
-- [ ] T009 [US1] Register `verify-board-merge.py` wherever gates are enumerated so `python .github/scripts/run-local-gates.py` and `lint-workflows.yml` both run it (locate the existing registration pattern via Grep for a sibling gate such as `verify-board-readiness.py`)
+- [x] T006 [US1] Create `.github/scripts/verify-board-merge.py` with: fixture loading from `fixtures/board-merge/`; for each name in `board_merge.CONDITIONS_FIX` and `CONDITIONS_BUMP` require a fixture and assert `may_merge` is false with that `unmet_reason`; fail if any condition name lacks a fixture; one all-pass fixture per class asserting `may_merge` true
+- [x] T007 [P] [US1] Add fix-class fixtures in `.github/scripts/fixtures/board-merge/`: `fix-pass.json`, `fix-switch_on.json`, `fix-kill_switch_clear.json`, `fix-eligible_class.json`, `fix-checks_green.json` (red), `fix-checks_pending.json`, `fix-checks_none.json` (empty rollup is not green), `fix-gate_suite_green.json` (gate suite not run on H), `fix-review_converged.json`, `fix-backstop_holds.json`
+- [x] T008 [US1] Add static workflow assertions to `.github/scripts/verify-board-merge.py`: `board-loop.yml` contains `--match-head-commit`, contains no `--admin`, no `--auto`, no `gh pr review --approve`, no second merge method, and the `merge` job `if:` carries both `WING_COMMANDER_BOARD_AUTO_MERGE` and `WING_COMMANDER_BOARD_LOOP_PAUSED`
+- [x] T009 [US1] Register `verify-board-merge.py` wherever gates are enumerated so `python .github/scripts/run-local-gates.py` and `lint-workflows.yml` both run it (locate the existing registration pattern via Grep for a sibling gate such as `verify-board-readiness.py`)
 
 ### Implementation for User Story 1
 
-- [ ] T010 [US1] Implement `evaluate_fix(snapshot, review_converged, backstop_holds, paused, switch_on)` in `.github/scripts/board_merge.py`, reusing `board_readiness.evaluate_from_snapshot` / `_checks_green` for `checks_green` and `gate_suite_green` (no reimplementation; an empty rollup is not green, Principle VIII)
-- [ ] T011 [US1] In `.github/workflows/board-loop.yml`, expose from the `readiness` job the outputs the merge job needs (fix PR number, issue number, review-converged flag) without altering its switch-off report text or marker (SC-006; keep `verify-board-readiness.py` passing)
-- [ ] T012 [US1] Add the `merge` job to `.github/workflows/board-loop.yml` per contracts/board-merge.md: `needs: [select, readiness]`, `if: !cancelled() && vars.WING_COMMANDER_BOARD_AUTO_MERGE == 'true' && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'`, concurrency group `wing-commander-board-loop` with `cancel-in-progress: false`, trusted checkout and pristine `.github/scripts` snapshot like the other jobs, `shell: bash` on every `run:` step
-- [ ] T013 [US1] In the `merge` job, add steps: fresh `gh pr view --json headRefOid,statusCheckRollup,author,headRefName,commits,files,comments`; recompute the backstop on the final diff; rerun `wing-commander-board-stop-check` as `killswitch-recheck` and re-read `WING_COMMANDER_BOARD_AUTO_MERGE` through the API (research D7); call `board_merge.py` to write the decision JSON. Gate every durable step on `steps.killswitch-recheck.outputs.paused == 'false'` (Gate 97 pattern). Run the `review-step-gating` skill over the result
-- [ ] T014 [US1] In the `merge` job, add the merge step: only if `may_merge`, `gh pr merge --squash <pr> --match-head-commit <head_sha>` capturing stderr; plus the announcement step posting head SHA, class, every condition result and prove disposition on the PR and the issue; and the "Not merged" post naming the failed condition on the issue (FR-008, FR-009). A head that moved yields a refusal, nothing reaches `main`
-- [ ] T015 [US1] Write the issue marker `step=merged` with `merge_sha` after a successful merge, via `board_item_marker.py` (single home; no pasted marker logic)
-- [ ] T016 [US1] Add the merge-switch-off case to `.github/scripts/verify-board-merge.py`: with `vars.WING_COMMANDER_BOARD_AUTO_MERGE` not `'true'` the `merge` job is skipped and the readiness text still reads "Awaiting a human merge"
+- [x] T010 [US1] Implement `evaluate_fix(snapshot, review_converged, backstop_holds, paused, switch_on)` in `.github/scripts/board_merge.py`, reusing `board_readiness.evaluate_from_snapshot` / `_checks_green` for `checks_green` and `gate_suite_green` (no reimplementation; an empty rollup is not green, Principle VIII)
+- [x] T011 [US1] In `.github/workflows/board-loop.yml`, expose from the `readiness` job the outputs the merge job needs (fix PR number, issue number, review-converged flag) without altering its switch-off report text or marker (SC-006; keep `verify-board-readiness.py` passing)
+- [x] T012 [US1] Add the `merge` job to `.github/workflows/board-loop.yml` per contracts/board-merge.md: `needs: [select, readiness]`, `if: !cancelled() && vars.WING_COMMANDER_BOARD_AUTO_MERGE == 'true' && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true'`, concurrency group `wing-commander-board-loop` with `cancel-in-progress: false`, trusted checkout and pristine `.github/scripts` snapshot like the other jobs, `shell: bash` on every `run:` step
+- [x] T013 [US1] In the `merge` job, add steps: fresh `gh pr view --json headRefOid,statusCheckRollup,author,headRefName,commits,files,comments`; recompute the backstop on the final diff; rerun `wing-commander-board-stop-check` as `killswitch-recheck` and re-read `WING_COMMANDER_BOARD_AUTO_MERGE` through the API (research D7); call `board_merge.py` to write the decision JSON. Gate every durable step on `steps.killswitch-recheck.outputs.paused == 'false'` (Gate 97 pattern). Run the `review-step-gating` skill over the result
+- [x] T014 [US1] In the `merge` job, add the merge step: only if `may_merge`, `gh pr merge --squash <pr> --match-head-commit <head_sha>` capturing stderr; plus the announcement step posting head SHA, class, every condition result and prove disposition on the PR and the issue; and the "Not merged" post naming the failed condition on the issue (FR-008, FR-009). A head that moved yields a refusal, nothing reaches `main`
+- [x] T015 [US1] Write the issue marker `step=merged` with `merge_sha` after a successful merge, via `board_item_marker.py` (single home; no pasted marker logic)
+- [x] T016 [US1] Add the merge-switch-off case to `.github/scripts/verify-board-merge.py`: with `vars.WING_COMMANDER_BOARD_AUTO_MERGE` not `'true'` the `merge` job is skipped and the readiness text still reads "Awaiting a human merge"
 
 **Checkpoint**: Fix PRs merge end to end; switch-off behaviour unchanged. This is the MVP.
 
@@ -64,14 +64,14 @@
 
 ### Tests for User Story 2
 
-- [ ] T017 [P] [US2] Add bump fixtures in `.github/scripts/fixtures/board-merge/`: `bump-pass.json` (including a diff far over the fix backstop, which must still merge, scenario 3), `bump-switch_on.json`, `bump-kill_switch_clear.json`, `bump-attributed_to_auto_update.json` (wrong author, wrong branch, human commit on top, missing body marker as separate variants), `bump-checks_green.json`, `bump-gate_suite_green.json`, `bump-verification_passed_at_head.json` (failed, running, stale SHA, record by non-bot login variants)
+- [x] T017 [P] [US2] Add bump fixtures in `.github/scripts/fixtures/board-merge/`: `bump-pass.json` (including a diff far over the fix backstop, which must still merge, scenario 3), `bump-switch_on.json`, `bump-kill_switch_clear.json`, `bump-attributed_to_auto_update.json` (wrong author, wrong branch, human commit on top, missing body marker as separate variants), `bump-checks_green.json`, `bump-gate_suite_green.json`, `bump-verification_passed_at_head.json` (failed, running, stale SHA, record by non-bot login variants)
 
 ### Implementation for User Story 2
 
-- [ ] T018 [US2] Implement `evaluate_bump(snapshot, records, bot_login, paused, switch_on)` in `.github/scripts/board_merge.py`: attribution requires bot author, head ref `auto-update-spec-kit/v<semver>`, the `auto-update:tracking` body marker, and every commit bot-authored (research D4); the latest `wc-bump-verification` record by the bot login wins and counts only if `result == passed` and `head_sha` equals the fresh head (research D3); no backstop
-- [ ] T019 [US2] In `.github/workflows/auto-update-spec-kit.yml` act job, post one `wc-bump-verification` hidden-marker comment per verification on the upgrade PR with `head_sha`, `tier`, `result`, `run_id`. Keep the stage never merging its own PR (FR-013). Put the marker formatting in `board_item_marker.py` or `.github/actions/_shared/` rather than inline shell
-- [ ] T020 [US2] In the `merge` job of `.github/workflows/board-loop.yml`, add candidate discovery: the readiness-ready fix PR of this run, else at most one open PR matching the D4 attribution (research D5); fetch the bump's records and announce on the PR and the `auto-update:tracking` issue with the verification evidence
-- [ ] T021 [US2] Extend `.github/scripts/verify-board-merge.py` to fail if the auto-update workflow contains any `gh pr merge` (FR-013) and to assert the act job emits the `wc-bump-verification` marker
+- [x] T018 [US2] Implement `evaluate_bump(snapshot, records, bot_login, paused, switch_on)` in `.github/scripts/board_merge.py`: attribution requires bot author, head ref `auto-update-spec-kit/v<semver>`, the `auto-update:tracking` body marker, and every commit bot-authored (research D4); the latest `wc-bump-verification` record by the bot login wins and counts only if `result == passed` and `head_sha` equals the fresh head (research D3); no backstop
+- [x] T019 [US2] In `.github/workflows/auto-update-spec-kit.yml` act job, post one `wc-bump-verification` hidden-marker comment per verification on the upgrade PR with `head_sha`, `tier`, `result`, `run_id`. Keep the stage never merging its own PR (FR-013). Put the marker formatting in `board_item_marker.py` or `.github/actions/_shared/` rather than inline shell
+- [x] T020 [US2] In the `merge` job of `.github/workflows/board-loop.yml`, add candidate discovery: the readiness-ready fix PR of this run, else at most one open PR matching the D4 attribution (research D5); fetch the bump's records and announce on the PR and the `auto-update:tracking` issue with the verification evidence
+- [x] T021 [US2] Extend `.github/scripts/verify-board-merge.py` to fail if the auto-update workflow contains any `gh pr merge` (FR-013) and to assert the act job emits the `wc-bump-verification` marker
 
 **Checkpoint**: Both classes merge; US1 unaffected.
 
@@ -85,12 +85,12 @@
 
 ### Tests for User Story 3
 
-- [ ] T022 [P] [US3] Add refusal fixtures `refusal-workflow-scope.json`, `refusal-conflict.json`, `refusal-protection.json`, `refusal-other.json` (stderr text plus expected class) in `.github/scripts/fixtures/board-merge/`; extend the gate to require one per name in `REFUSAL_CLASSES`
+- [x] T022 [P] [US3] Add refusal fixtures `refusal-workflow-scope.json`, `refusal-conflict.json`, `refusal-protection.json`, `refusal-other.json` (stderr text plus expected class) in `.github/scripts/fixtures/board-merge/`; extend the gate to require one per name in `REFUSAL_CLASSES`
 
 ### Implementation for User Story 3
 
-- [ ] T023 [US3] Implement `classify_refusal(stderr)` in `.github/scripts/board_merge.py` returning one of `workflow-scope`, `conflict`, `protection`, `other`
-- [ ] T024 [US3] In the `merge` job, on a failed merge classify the stderr, post the handover (head SHA, `refusal_class`, stderr quoted, the sentence "handed to a maintainer") on the PR and the issue, write `step=handed-over`, leave the PR open, and take no other route to `main` (FR-010)
+- [x] T023 [US3] Implement `classify_refusal(stderr)` in `.github/scripts/board_merge.py` returning one of `workflow-scope`, `conflict`, `protection`, `other`
+- [x] T024 [US3] In the `merge` job, on a failed merge classify the stderr, post the handover (head SHA, `refusal_class`, stderr quoted, the sentence "handed to a maintainer") on the PR and the issue, write `step=handed-over`, leave the PR open, and take no other route to `main` (FR-010)
 
 **Checkpoint**: Refusals are visible and not retried.
 
@@ -102,19 +102,19 @@
 
 **Independent Test**: quickstart.md prove scenario.
 
-- [ ] T025 [US4] Make the existing `prove-gate`/`prove` jobs in `.github/workflows/board-loop.yml` (spec 096) pick up an item whose marker is `step=merged`, relying on prove-gate's own eligibility classifier and adding no second classifier (research D8)
-- [ ] T026 [US4] Have the merge announcement state the prove disposition (re-drive pending, or why none is needed for gate-only or doc changes), taken from prove-gate's decision rather than recomputed
-- [ ] T027 [US4] Add an assertion to `.github/scripts/verify-board-merge.py` that the `merged` marker path reaches prove-gate and that the merge job contains no direct `gh workflow run` dispatch
+- [x] T025 [US4] Make the existing `prove-gate`/`prove` jobs in `.github/workflows/board-loop.yml` (spec 096) pick up an item whose marker is `step=merged`, relying on prove-gate's own eligibility classifier and adding no second classifier (research D8)
+- [x] T026 [US4] Have the merge announcement state the prove disposition (re-drive pending, or why none is needed for gate-only or doc changes), taken from prove-gate's decision rather than recomputed
+- [x] T027 [US4] Add an assertion to `.github/scripts/verify-board-merge.py` that the `merged` marker path reaches prove-gate and that the merge job contains no direct `gh workflow run` dispatch
 
 ---
 
 ## Phase 7: Polish & Cross-Cutting
 
 - [ ] T028 [P] Extend `.github/scripts/verify-constitution-merge-class-parity.py` so `WING_COMMANDER_BOARD_AUTO_MERGE` must appear in both the constitution and `board-loop.yml`
-- [ ] T029 [P] Add the "single home" check to `verify-board-merge.py`: decision logic (condition names, refusal regexes) appears only in `board_merge.py`, not in any workflow `run:` block
-- [ ] T030 If any workflow comment was added, ensure repeated prose points at one canonical comment (Gate 47) and run the `container-shell-safety` skill if a `container:` block or `run:` inside one was touched
+- [x] T029 [P] Add the "single home" check to `verify-board-merge.py`: decision logic (condition names, refusal regexes) appears only in `board_merge.py`, not in any workflow `run:` block
+- [x] T030 If any workflow comment was added, ensure repeated prose points at one canonical comment (Gate 47) and run the `container-shell-safety` skill if a `container:` block or `run:` inside one was touched
 - [ ] T031 Run `python .github/scripts/run-local-gates.py` and fix every failure
-- [ ] T032 Walk through `specs/115-board-loop-self-merge/quickstart.md` against the changes and fix any drift between the quickstart and the code
+- [x] T032 Walk through `specs/115-board-loop-self-merge/quickstart.md` against the changes and fix any drift between the quickstart and the code
 - [ ] T033 Post-merge proof reminder: after the implementation PR merges, use the `prove-after-merge` skill to re-drive one board-loop run and record the evidence on the PR
 
 ---

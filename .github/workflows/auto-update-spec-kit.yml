@@ -3163,6 +3163,16 @@ jobs:
           url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$DB" \
             --head "$BRANCH" --title "chore: bump Spec Kit to v$CANDIDATE" --body-file "$RUNNER_TEMP/pr-body.md")"
           gh issue comment "$ISSUE" --body "Opened $url — awaiting review and merge (this feature never merges its own PR)."
+          # specs/115-board-loop-self-merge FR-013: the verification that just
+          # passed is recorded on the PR as a hidden-marker comment bound to
+          # its head SHA; board-loop's merge job reads it back (bot-authored
+          # comments only) as the gate for merging this PR. This stage still
+          # never merges it.
+          pr_number="${url##*/}"
+          head_sha="$(gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
+          record="$(python3 -I .wing-commander-pipeline/.github/scripts/board_item_marker.py \
+            --bump-verification "$head_sha" "$TIER" passed "$GITHUB_RUN_ID")"
+          gh pr comment "$pr_number" --repo "$GITHUB_REPOSITORY" --body "$record"
           echo "act: opened $url for v$CANDIDATE." >> "$GITHUB_STEP_SUMMARY"
 
       # T017: verification failed — .specify/init-options.json is left

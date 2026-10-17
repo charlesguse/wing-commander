@@ -158,6 +158,8 @@ def pr_json(pr, fields):
             out[f] = pr.get("head")
         elif f == "state":
             out[f] = "OPEN"
+        elif f == "headRefOid":
+            out[f] = pr.get("headRefOid") or "0123456789abcdef0123456789abcdef01234567"
         else:
             out[f] = pr.get(f)
     return out
@@ -323,6 +325,11 @@ def main():
             fields = (opt(argv, "--json") or "body").split(",")
             emit(pr_json(pr, fields), argv)
             return 0
+        if sub == "comment":
+            if not pr:
+                sys.stderr.write("gh: pr not found\n"); return 1
+            pr.setdefault("comments", []).append({"body": body_of(argv)})
+            save(s); return 0
 
     # ---- gh label create ------------------------------------------------
     if cmd == "label" and argv[1] == "create":

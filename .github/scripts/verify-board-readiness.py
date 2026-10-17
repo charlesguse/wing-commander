@@ -70,13 +70,29 @@ FORBIDDEN_PATTERNS = [
 ]
 
 
+# specs/115-board-loop-self-merge: the `merge` job is the one place a merge
+# call may live, and only the merge call and its strategy flag. Everything
+# else stays forbidden even there (--auto, approvals), and
+# verify-board-merge.py pins that job's own shape (head-pinned, one method,
+# both switches).
+MERGE_JOB_HEADER = "  merge:"
+MERGE_JOB_ALLOWED_LABELS = ("a `gh pr merge` call", "a merge-strategy flag")
+_JOB_HEADER_RE = re.compile(r"  [A-Za-z0-9_-]+:")
+
+
 def check_no_merge_invariant(lines, path=BOARD_LOOP_FILE):
     """FR-068/SC-004 (T066): fails if any forbidden merge/approve shape
-    appears anywhere in `lines`. Returns a list of ::error lines, empty on
-    a clean file."""
+    appears anywhere in `lines`, except a merge call and its strategy flag
+    inside the `merge` job (spec 115). Returns a list of ::error lines,
+    empty on a clean file."""
     errors = []
+    in_merge_job = False
     for i, line in enumerate(lines):
+        if _JOB_HEADER_RE.fullmatch(line):
+            in_merge_job = line == MERGE_JOB_HEADER
         for pattern, label in FORBIDDEN_PATTERNS:
+            if in_merge_job and label in MERGE_JOB_ALLOWED_LABELS:
+                continue
             if pattern.search(line):
                 errors.append(
                     "{0}:{1}:{2}".format(path, i + 1, line))
@@ -206,6 +222,17 @@ def self_test():
           len(all_errors) == 2 * len(_DIRTY_SINGLE_MATCH_LINES),
           "got {0} error line(s) for {1} dirty line(s)".format(
               len(all_errors), len(_DIRTY_SINGLE_MATCH_LINES)))
+
+    in_job = [MERGE_JOB_HEADER, '        run: gh pr merge --squash "$PR" --match-head-commit "$SHA"']
+    check("a merge call inside the merge job is allowed",
+          not check_no_merge_invariant(in_job, path="fixture.yml"))
+    check("the same call under another job is caught",
+          len(check_no_merge_invariant(["  readiness:", in_job[1]], path="fixture.yml")) == 4)
+    check("the allowance ends with the merge job",
+          len(check_no_merge_invariant(in_job + ["  prove:", in_job[1]], path="fixture.yml")) == 4)
+    check("--auto stays forbidden inside the merge job",
+          len(check_no_merge_invariant([MERGE_JOB_HEADER, "        run: gh pr merge --auto"],
+                                       path="fixture.yml")) == 2)
 
     print("{0} failure(s).".format(failures))
     return 1 if failures else 0

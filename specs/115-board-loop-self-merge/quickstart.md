@@ -28,7 +28,7 @@ Bring a ready PR that touches a workflow file to the merge step. Expect no chang
 
 ## 5. Bump class (US2)
 
-Let the auto-update stage open an upgrade PR whose verification passes, with a `wc-bump-verification` marker at the head SHA. Expect a squash merge with the verification quoted in the announcement. A PR from another author, or one with a human commit on top, is not merged.
+Let the auto-update stage open an upgrade PR whose verification passes, with a `wc-bump-verification` marker at the head SHA. Expect a squash merge whose announcement, on the PR and the tracking issue, lists every condition including `verification_passed_at_head`. A PR from another author, or one with a human commit on top, is not merged.
 
 ## 6. Kill switch and prove (US4)
 

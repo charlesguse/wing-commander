@@ -64,6 +64,10 @@ build() { # build -> echoes work repo path; history 0.11.0 -> 0.12.4 -> 0.13.0
     cd .wing-commander-pipeline
     git config user.email t@t; git config user.name t
     echo 'name: ctx' > action.yml
+    # The version-bump step records its verification with the pipeline's own
+    # board_item_marker.py (specs/115-board-loop-self-merge FR-013).
+    mkdir -p .github/scripts
+    cp "$REPO/.github/scripts/board_item_marker.py" .github/scripts/
     git add -A; git commit -qm "pipeline checkout"
   )
   cd - >/dev/null
@@ -202,6 +206,9 @@ check_contains "S5 PR body records what was verified" "$PRBODY" "lightweight+end
 check_contains "S5/SC-012 PR body names the scratch repository" "$PRBODY" "wing-commander-e2e-42"
 check "S5 PR is NOT merged by the workflow" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(list(s['prs'].values())[0]['mergedAt'])")" "None"
 check "S5 no merge call was ever made" "$(grep -c 'pr merge' "$GH_CALLS")" "0"
+check_contains "S5/115 the PR carries a wc-bump-verification record bound to its head" \
+  "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(list(s['prs'].values())[0]['comments'][0]['body'])")" \
+  'wc-bump-verification: {"head_sha": "0123456789abcdef0123456789abcdef01234567", "result": "passed"'
 check "S5 issue got a comment linking the PR" "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(len(s['issues']['42']['comments']))")" "1"
 check "S5 branch pushed, via the authenticated URL" "$(remote_refs 'refs/heads/auto-update-spec-kit/v0.15.1')" "1"
 check "S5 default branch pin untouched (PR not merged)" "$(git show main:.specify/init-options.json | jq -r .speckit_version)" "0.13.0"

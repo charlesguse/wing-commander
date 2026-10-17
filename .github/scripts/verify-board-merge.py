@@ -160,14 +160,23 @@ def check_board_loop():
         fail("the merge job dispatches a run itself; proof comes only from prove-gate (research D8)")
     else:
         ok("merge job dispatches no run")
+    # A merged item reaches prove-gate through the PR's closed event, which
+    # only an App-token merge starts (a GITHUB_TOKEN one starts no workflow).
+    merge_step = next((block for block in re.split(r"\n      - name: ", "\n".join(merge_job))
+                       if "gh pr merge" in block), "")
+    if "GH_TOKEN: ${{ env.WC_BOT_TOKEN }}" not in merge_step:
+        fail("the merge step must run with the App token (env.WC_BOT_TOKEN) so the closed event "
+             "reaches prove-gate")
     prove_gate = job_block(lines, "prove-gate")
-    if prove_gate is None or "merged" not in "\n".join(prove_gate):
-        fail("prove-gate does not read the `merged` marker step")
+    if prove_gate is None or "github.event_name == 'pull_request'" not in "\n".join(prove_gate):
+        fail("prove-gate no longer runs on the pull_request closed event a merge produces")
     else:
-        ok("prove-gate reads the merged marker step")
+        ok("merge runs as the App and prove-gate takes its closed event")
 
-    # The decision logic has one home: board_merge.py (CLAUDE.md).
-    names = (set(board_merge.CONDITIONS_FIX) | set(board_merge.CONDITIONS_BUMP)) - set(READINESS_CONDITIONS)
+    # The decision logic has one home: board_merge.py (CLAUDE.md). `switch_on`
+    # and `review_converged` also name payload keys the job passes in.
+    names = ((set(board_merge.CONDITIONS_FIX) | set(board_merge.CONDITIONS_BUMP))
+             - set(READINESS_CONDITIONS) - {"switch_on", "review_converged"})
     for path in sorted(glob.glob(os.path.join(WORKFLOWS_DIR, "*.yml"))):
         with open(path, encoding="utf-8") as fh:
             body = _run_blocks_text(fh.read().splitlines())

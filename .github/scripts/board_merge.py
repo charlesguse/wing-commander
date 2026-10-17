@@ -27,6 +27,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from board_item_marker import BUMP_VERIFICATION_MARKER, last_marker_match, marker_regexes  # noqa: E402
+from board_prove import actions_only  # noqa: E402
 from board_readiness import _checks_green, _gate_suite_green  # noqa: E402
 
 CONDITIONS_FIX = ("switch_on", "kill_switch_clear", "eligible_class", "checks_green",
@@ -37,7 +38,11 @@ REFUSAL_CLASSES = ("workflow-scope", "conflict", "protection", "other")
 
 CONSTITUTION_PATH = ".specify/memory/constitution.md"
 BUMP_BRANCH_RE = re.compile(r"auto-update-spec-kit/v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?")
-BUMP_BODY_MARKER = "auto-update:tracking"
+# The body the auto-update act job writes (auto-update-spec-kit.yml "Open
+# version-bump PR"): its hidden marker and the `Closes #N` that links the
+# `auto-update:tracking` lifecycle issue the announcement is also posted on.
+BUMP_BODY_MARKER = "<!-- wing-commander-auto-update-spec-kit: version-bump -->"
+BUMP_ISSUE_RE = re.compile(r"^Closes #(\d+)\s*$", re.MULTILINE)
 FIX_BRANCH_RE = re.compile(r"fix/\d+-[a-z0-9-]{1,40}")
 # A spec, plan or lifecycle (final implementation) PR is never a candidate
 # (FR-012); the fix-branch shape already excludes them, this names the reason.
@@ -103,7 +108,8 @@ def _attributed_to_auto_update(snapshot, bot_login):
         return False
     if BUMP_BRANCH_RE.fullmatch(snapshot.get("headRefName") or "") is None:
         return False
-    if BUMP_BODY_MARKER not in (snapshot.get("body") or ""):
+    body = snapshot.get("body") or ""
+    if BUMP_BODY_MARKER not in body or BUMP_ISSUE_RE.search(body) is None:
         return False
     commits = snapshot.get("commits") or []
     if not commits:
@@ -189,6 +195,41 @@ def decide(payload):
                          bool(payload["paused"]), bool(payload["switch_on"]))
 
 
+def prove_disposition(snapshot):
+    """What follows a merge, in the words of the announcement. The classifier
+    is board_prove.actions_only() -- the one prove-gate/prove use -- never a
+    second rule here (research D8)."""
+    paths = [(f or {}).get("path") for f in snapshot.get("files") or [] if (f or {}).get("path")]
+    only, reason = actions_only(paths)
+    if only:
+        return "a proof re-drive follows the merge ({0})".format(reason)
+    return "no proof re-drive is needed ({0})".format(reason)
+
+
+def render_announcement(decision, outcome, snapshot=None, merge_sha=None, refusal_class=None, stderr=None):
+    """The PR/issue comment for a MergeOutcome (contracts/board-merge.md
+    "Announcement"): merged, refused or not-merged."""
+    head = decision.get("head_sha")
+    klass = decision.get("class")
+    results = ", ".join("{0}={1}".format(name, "pass" if ok else "FAIL")
+                        for name, ok in (decision.get("conditions") or {}).items())
+    if outcome == "merged":
+        return ("Merged ({0} class) at head_sha {1}; squash commit {2}.\n\nConditions: {3}.\n\n"
+                "Proof: {4}.".format(klass, head, merge_sha, results, prove_disposition(snapshot or {})))
+    if outcome == "refused":
+        return ("GitHub refused the merge of head_sha {0} ({1} class), refusal_class {2}:\n\n```\n{3}\n```\n\n"
+                "Nothing reached main by another route; handed to a maintainer.".format(
+                    head, klass, refusal_class, (stderr or "").strip()))
+    return ("Not merged ({0} class) at head_sha {1}: unmet condition `{2}`.\n\nConditions: {3}.".format(
+        klass, head, decision.get("unmet_reason"), results))
+
+
+def bump_tracking_issue(body):
+    """The `auto-update:tracking` issue number a bump PR's body closes, or ''."""
+    match = BUMP_ISSUE_RE.search(body or "")
+    return match.group(1) if match else ""
+
+
 def pick_bump_candidate(prs, bot_login):
     """Research D5: at most one open PR with the auto-update shape (bot author
     and branch); the oldest wins. `prs` is `gh pr list --json
@@ -207,6 +248,27 @@ def main():
     decide_cmd.set_defaults(func=lambda _a: print(json.dumps(decide(json.load(sys.stdin)))))
     refusal_cmd = sub.add_parser("classify-refusal", help="stderr on stdin -> refusal class")
     refusal_cmd.set_defaults(func=lambda _a: print(classify_refusal(sys.stdin.read())))
+    issue_cmd = sub.add_parser("tracking-issue", help="gh pr view JSON on stdin -> the bump's tracking issue")
+    issue_cmd.set_defaults(func=lambda _a: print(bump_tracking_issue(json.load(sys.stdin).get("body"))))
+    announce_cmd = sub.add_parser("announce", help="render the comment for a merge outcome")
+    announce_cmd.add_argument("--decision", required=True, help="decision JSON file")
+    announce_cmd.add_argument("--snapshot", required=True, help="gh pr view JSON file")
+    announce_cmd.add_argument("--outcome", required=True, choices=("merged", "refused", "not-merged"))
+    announce_cmd.add_argument("--merge-sha", default=None)
+    announce_cmd.add_argument("--refusal-class", default=None)
+    announce_cmd.add_argument("--stderr-file", default=None)
+
+    def _announce(a):
+        with open(a.decision, encoding="utf-8") as fh:
+            decision = json.load(fh)
+        with open(a.snapshot, encoding="utf-8") as fh:
+            snapshot = json.load(fh)
+        err = None
+        if a.stderr_file:
+            with open(a.stderr_file, encoding="utf-8") as fh:
+                err = fh.read()
+        print(render_announcement(decision, a.outcome, snapshot, a.merge_sha, a.refusal_class, err))
+    announce_cmd.set_defaults(func=_announce)
     bump_cmd = sub.add_parser("pick-bump", help="gh pr list JSON on stdin -> PR number or empty")
     bump_cmd.add_argument("--bot-login", required=True)
     bump_cmd.set_defaults(func=lambda a: print(pick_bump_candidate(json.load(sys.stdin), a.bot_login) or ""))
