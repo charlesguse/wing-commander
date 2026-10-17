@@ -4674,6 +4674,19 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-spec-meta-self-identity.py
 
+      # Gate 165 — specs/115-board-loop-self-merge (FR-013, FR-015): every
+      # merge-blocking condition and every refusal branch of board_merge.py
+      # has a checked-in fixture under .github/scripts/fixtures/board-merge/
+      # that must block (or classify), and board-loop.yml's `merge` job is
+      # the only merge call, pinned to the evaluated head SHA with one
+      # method, no --admin/--auto/approval, both switches in its `if:`, the
+      # App token (so prove-gate sees the closed event), and no decision
+      # logic of its own. The auto-update stage posts the verification record
+      # and never merges.
+      - name: Gate 165 — board loop self-merge decision, refusal classes and merge-job shape
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-merge.py
+
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and
       # verify-denied-tool-collector.sh has already shown what happens when
