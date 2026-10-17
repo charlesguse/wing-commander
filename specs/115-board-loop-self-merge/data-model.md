@@ -17,7 +17,7 @@ The `gh pr view --json headRefOid,statusCheckRollup,author,headRefName,commits,f
 
 ## BumpVerificationRecord
 
-A hidden-marker comment authored by the App.
+A hidden-marker comment authored by the App. The record is the whole comment body, exactly what `board_item_marker.render_bump_verification()` writes (a one-line summary, then the marker); a marker anywhere else, such as quoted inside another App comment that carries untrusted text, is not a record.
 
 | Field | Notes |
 |-------|-------|

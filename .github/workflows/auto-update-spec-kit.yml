@@ -3172,7 +3172,11 @@ jobs:
           # only route to merging, so a transient failure to post it is
           # retried before anything else is said, and a lasting one fails
           # this step loudly and says on the issue that the PR is a human
-          # merge (a re-run would decline the candidate as already proposed).
+          # merge (contracts/board-merge.md "Auto-update stage change"). The
+          # PR is left open: the next run's guard declines the candidate as
+          # already open, so a lasting cause (a missing permission) is
+          # reported once instead of reopening, failing and closing a PR
+          # every run.
           pr_number="${url##*/}"
           head_sha="$(git rev-parse "refs/heads/$BRANCH")"
           record="$(python3 -I .wing-commander-pipeline/.github/scripts/board_item_marker.py \
@@ -3187,16 +3191,7 @@ jobs:
           done
           if [ "$posted" != true ]; then
             echo "::error::act: opened $url but could not post its wc-bump-verification record after 3 attempts -- the board loop will not merge it; it awaits a human merge."
-            # A PR without its record can never merge on the board loop's
-            # path, and a re-run would decline the candidate as already
-            # proposed. Closing it and deleting its branch makes the re-run
-            # propose it afresh, with a new chance to post the record.
-            if gh pr close "$pr_number" --repo "$GITHUB_REPOSITORY" --delete-branch \
-                 --comment "Closing: its verification record could not be posted, so it could never be merged on the board loop's path. The next run proposes this version again."; then
-              gh issue comment "$ISSUE" --body "Opened $url, but its verification record could not be posted, so it was closed and its branch deleted; the next auto-update run proposes it again." || true
-            else
-              gh issue comment "$ISSUE" --body "Opened $url, but its verification record could not be posted and the PR could not be closed, so the board loop will not merge it — awaiting a human review and merge (this feature never merges its own PR)." || true
-            fi
+            gh issue comment "$ISSUE" --body "Opened $url, but its verification record could not be posted, so the board loop will not merge it — awaiting a human review and merge (this feature never merges its own PR)." || true
             exit 1
           fi
           gh issue comment "$ISSUE" --body "Opened $url — awaiting review and merge (this feature never merges its own PR)."

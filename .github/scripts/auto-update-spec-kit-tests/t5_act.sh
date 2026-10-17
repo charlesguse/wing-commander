@@ -232,6 +232,31 @@ check "S5b the PR still carries exactly one wc-bump-verification record" \
 cd - >/dev/null
 
 echo
+echo "=== Scenario 5c (115): a lasting failure posting the record leaves the PR open, so the next run does not repeat it ==="
+# contracts/board-merge.md "Auto-update stage change": a lasting failure fails
+# the step and says the PR awaits a human merge. Closing the PR and deleting
+# its branch instead made every scheduled run re-propose the candidate and hit
+# the same lasting cause (a missing permission) again: open, fail, close.
+R4C="$(build)"; new_step_env; cd "$R4C"
+git checkout -q -B auto-update-spec-kit/v0.15.1 main
+mkopts 0.15.1; git add -A; git commit -qm "chore: bump Spec Kit to v0.15.1"
+git checkout -q main
+printf '{"issues":{"42":{"number":42,"state":"open","body":"watching","labels":[],"comments":[]}},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"
+GHA_SUBST=("steps.ctx.outputs.token=stub")
+export GH_TOKEN=stub BRANCH="auto-update-spec-kit/v0.15.1" CANDIDATE=0.15.1 ISSUE=42 TIER="lightweight" DB=main DETAIL=""
+GH_STUB_FAIL="pr comment" run_step 'auto-update-spec-kit__act__*version-bump-pr*.sh' >"$WORK/act4c.log" 2>&1
+check "S5c version-bump step fails loudly when the record never posts" "$?" "1"
+check "S5c the PR is not closed" "$(grep -c 'pr close' "$GH_CALLS")" "0"
+check "S5c the PR's branch is not deleted" "$(remote_refs 'refs/heads/auto-update-spec-kit/v0.15.1')" "1"
+check_contains "S5c the issue says the PR awaits a human merge" \
+  "$("$PY" -c "import json,os;s=json.load(open(os.environ['GH_STATE']));print(s['issues']['42']['comments'][-1]['body'])")" \
+  "awaiting a human review and merge"
+: > "$GITHUB_OUTPUT"
+run_step 'auto-update-spec-kit__*guard-against-an-already-open-version-bump-pr*.sh' >/dev/null 2>&1
+check "S5c the next run's guard declines the candidate as already open" "$(out reason)" "already-open"
+cd - >/dev/null
+
+echo
 echo "=== Scenarios 6/10: verification failed -> no PR, flagged issue stays open ==="
 R5="$(build)"; new_step_env; cd "$R5"
 printf '{"issues":{"42":{"number":42,"state":"open","body":"watching","labels":[],"comments":[]}},"prs":{},"labels":[],"next_issue":50,"next_pr":70,"default_branch":"main"}' > "$GH_STATE"

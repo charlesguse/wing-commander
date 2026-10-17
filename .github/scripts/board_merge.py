@@ -26,7 +26,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from board_item_marker import BUMP_VERIFICATION_MARKER, last_marker_match, marker_regexes  # noqa: E402
+from board_item_marker import (BUMP_VERIFICATION_MARKER, last_marker_match, marker_regexes,  # noqa: E402
+                               render_bump_verification)
 from board_prove import actions_only  # noqa: E402
 from board_readiness import _checks_green, _gate_suite_green  # noqa: E402
 
@@ -163,32 +164,46 @@ def _comment_order(comment):
     return ((comment or {}).get("createdAt") or "", int(match.group(1)) if match else 0)
 
 
-def _bot_marker_records(comments, bot_login, name):
+def _bot_marker_records(comments, bot_login, name, whole_body=None):
     """(order, record) for each `name` marker in a bot-authored comment. A
     marker in any other login's comment is ignored (a record is a trust
-    surface: only the App's own counts)."""
+    surface: only the App's own counts). With `whole_body`, a record counts
+    only when the comment is exactly `whole_body(record)` and nothing else."""
     marker_re, open_re = marker_regexes(name)
     found = []
     for comment in comments or []:
         if not _is_bot(((comment or {}).get("author") or {}).get("login"), bot_login):
             continue
-        match = last_marker_match(comment.get("body") or "", marker_re, open_re)
+        body = comment.get("body") or ""
+        match = last_marker_match(body, marker_re, open_re)
         if not match:
             continue
         try:
             record = json.loads(match.group(1))
         except ValueError:
             continue
-        if isinstance(record, dict):
-            found.append((_comment_order(comment), record))
+        if not isinstance(record, dict):
+            continue
+        if whole_body is not None and body.replace("\r\n", "\n").strip() != whole_body(record):
+            continue
+        found.append((_comment_order(comment), record))
     found.sort(key=lambda pair: pair[0])
     return found
 
 
+def _rendered_bump_verification(record):
+    return render_bump_verification(record.get("head_sha"), record.get("tier"), record.get("result"),
+                                    record.get("run_id"))
+
+
 def bump_records(comments, bot_login):
-    """The `wc-bump-verification` markers in bot-authored PR comments, oldest
-    first."""
-    return [record for _order, record in _bot_marker_records(comments, bot_login, BUMP_VERIFICATION_MARKER)]
+    """The `wc-bump-verification` records in bot-authored PR comments, oldest
+    first. A record counts only as the whole comment the auto-update stage
+    posts, byte for byte what render_bump_verification() writes. Other App
+    comments quote untrusted text (issue bodies, stderr), and a marker quoted
+    inside one would otherwise read as a pass the stage never recorded."""
+    return [record for _order, record in _bot_marker_records(comments, bot_login, BUMP_VERIFICATION_MARKER,
+                                                             _rendered_bump_verification)]
 
 
 def verification_passed_at_head(records, head_sha):
