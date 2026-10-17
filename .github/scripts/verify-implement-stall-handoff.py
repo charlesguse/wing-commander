@@ -110,9 +110,68 @@ def check_composite_outputs():
             fail(f"wing-commander-tasks-checkbox-count does not expose output '{out}'")
 
 
+def render(maint_text, impl_text, routed_text=None):
+    tmp = tempfile.mkdtemp(prefix="wc-117-render-")
+    paths = []
+    for name, text in (("maint", maint_text), ("impl", impl_text),
+                       ("routed", routed_text)):
+        if text is None:
+            continue
+        path = os.path.join(tmp, name)
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        paths.append(path)
+    return run(["bash", os.path.join(SHARED, "render-remaining-work.sh")] + paths)
+
+
+def check_render():
+    for exp in sorted(glob.glob(os.path.join(FIXTURES, "render-remaining-work-*.expected"))):
+        base = exp[:-len(".expected")]
+        routed = base + ".routed"
+        proc = render(read(base + ".maintainer"), read(base + ".impl"),
+                      read(routed) if os.path.exists(routed) else None)
+        name = os.path.basename(base)
+        if proc.returncode != 0:
+            fail(f"{name}: render-remaining-work.sh exited {proc.returncode}: {proc.stderr}")
+            continue
+        check_equal(name, proc.stdout, read(exp))
+    # Replays of the real-world shapes: tasks.md -> classify -> render.
+    for exp in sorted(glob.glob(os.path.join(FIXTURES, "pipeline-*.expected"))):
+        base = exp[:-len(".expected")]
+        proc = count_script(read(base + ".md"))
+        if proc.returncode != 0:
+            fail(f"{os.path.basename(base)}: classification failed: {proc.stderr}")
+            continue
+        lists = {}
+        for key, delim in (("maintainer-items", "WING_COMMANDER_MAINTAINER_ITEMS_EOF"),
+                           ("impl-unchecked-items", "WING_COMMANDER_IMPL_ITEMS_EOF")):
+            m = re.search(rf"^{key}<<{delim}\n(.*?)^{delim}\n", proc.stdout, re.M | re.S)
+            lists[key] = m.group(1) if m else ""
+        out = render(lists["maintainer-items"], lists["impl-unchecked-items"])
+        check_equal(os.path.basename(base), out.stdout, read(exp))
+
+
+def check_finalize_wiring():
+    global CASES
+    text = read(os.path.join(ROOT, ".github", "workflows", "finalize.yml"))
+    CASES += 1
+    if "wing-commander-remaining-work" not in text:
+        fail("finalize.yml does not render the remaining work through wing-commander-remaining-work")
+    CASES += 1
+    if "every tasks.md item that is still unchecked" in text:
+        fail("finalize.yml still instructs the agent to copy unchecked task lines")
+    action = read(os.path.join(ROOT, ".github", "actions",
+                               "wing-commander-remaining-work", "action.yml"))
+    CASES += 1
+    if "_shared/render-remaining-work.sh" not in action:
+        fail("wing-commander-remaining-work does not call _shared/render-remaining-work.sh")
+
+
 def main():
     check_classification()
     check_composite_outputs()
+    check_render()
+    check_finalize_wiring()
     if FAILURES:
         print(f"verify-implement-stall-handoff: {len(FAILURES)} failure(s) in {CASES} case(s)")
         return 1
