@@ -585,12 +585,23 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
    cycle's pushed tip (`specs/059-converged-means-tasks-done`): zero
    unchecked task-list boxes ⇒ converged, regardless of whether a
    `converge:`-prefixed commit landed this cycle; any remain ⇒ not
-   converged. A checked-task-count comparison against the cycle's own base
-   (reusing the same comparison the truncated-cycle classification below
-   already performs) tells "a later cycle will finish this" apart from "no
-   cycle ever will": progress made ⇒ another cycle is dispatched; no
-   progress and no `converge:` commit ⇒ the loop hands off to finalize
-   early (item 3) rather than grinding to the cap. Before this feature the
+   converged. Only *implementation* tasks count
+   (`specs/117-implement-stall-handoff`): a standing instruction ("keep the
+   gates green") never counts, and a task carrying the literal `[maintainer]`
+   token (owner-only work, placed by the tasks stage in a final "Maintainer
+   follow-up" phase) is skipped by the loop; both are classified in the one
+   shared `count-tasks-checkboxes.sh`. The stop rule is one shared script
+   (`decide-implement-outcome.sh`): progress made, or a `converge:` commit
+   ⇒ another cycle is dispatched; a cycle that checked nothing new no
+   longer ends the loop by itself. The loop hands off to finalize early
+   (item 3) only when the agent wrote a **validated blocker**
+   (`implement-blocker.json` in the runner temp directory with exactly
+   `task`, `kind` — `missing-tool`, `missing-permission`,
+   `contradictory-spec` or `external-dependency` — and a one-line `detail` of
+   up to 300 characters, naming a still-unchecked implementation task;
+   anything malformed is ignored) or when the iteration cap is reached. A
+   stop with implementation outstanding is always reported on the lifecycle
+   issue with the outstanding count and the reason. Before this feature the
    signal was instead the commit-range walk alone (a `converge:`-prefixed
    commit touching tasks.md landed this cycle ⇒ not converged; none ⇒
    converged) — dropped because a cycle that stopped healthy with real
@@ -600,7 +611,7 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
    avoiding a raw working-tree diff — implement's own checkbox edits make
    that ambiguous across the job boundary — still holds; only the signal
    built on top of it changed).
-3. On hitting the iteration cap, or on the FR-010 early hand-off above: post
+3. On hitting the iteration cap, or on the blocker hand-off above: post
    the remaining tasks + final convergence-pass report to the lifecycle
    issue and dispatch finalize with `converged=false`.
 4. Post a brief progress comment (`claude-haiku-5-5` summary) each iteration.
@@ -621,7 +632,15 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
    manual items from tasks.md (structured output via `--json-schema`).
 2. Plain `gh pr create`: `spec/NNN-slug → main`, body = what changed, how to see
    it (diff link, key files), remaining manual tasks, lifecycle issue link.
-3. Comment the same manual-task list on the lifecycle issue; label `stage:review`.
+3. Comment the same remaining-work report on the lifecycle issue; label `stage:review`.
+   The report is rendered by code (`render-remaining-work.sh`), not copied by
+   the summarising agent: `## Maintainer steps` lists unchecked `[maintainer]`
+   tasks, `## Unfinished implementation` lists unchecked implementation tasks
+   with a stall statement ("the lifecycle stalled with implementation
+   outstanding"), and standing instructions are omitted. A lifecycle already
+   in `review` ignores a re-dispatched implement run with an explanatory
+   comment; the only way back is a maintainer comment on the implementation
+   PR, which the PR-conversation stage folds into a Maintainer Feedback cycle.
 
 ## Stage 6 — Cleanup (`cleanup.yml`, wrapper `wing-commander-7-cleanup.yml` — see `specs/007-cleanup-stage/`)
 

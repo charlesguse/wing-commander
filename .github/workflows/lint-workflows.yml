@@ -4673,6 +4673,9 @@ jobs:
       - name: Gate 164 — spec-meta self-identity in a project and after graduation
         if: "!cancelled()"
         run: python3 .github/scripts/verify-spec-meta-self-identity.py
+      - name: Gate 165 — implement stall hand-off (task classification, blocker, stop rule, remaining-work report)
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-implement-stall-handoff.py
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

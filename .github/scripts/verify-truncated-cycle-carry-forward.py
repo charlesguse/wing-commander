@@ -307,6 +307,19 @@ git push -q -f origin '{branch}'
     return work, repo, base_sha, branch
 
 
+def decide_env(checked_base, checked_tip, unchecked_tip):
+    """The env the read-back steps now take from the blocker composite and the
+    classified counts (specs/117): these fixtures carry no [maintainer] or
+    standing lines, so the implementation counts equal the raw ones, and no
+    blocker was written."""
+    return {"IMPL_CHECKED_BASE": checked_base, "IMPL_CHECKED_TIP": checked_tip,
+            "IMPL_UNCHECKED_TIP": unchecked_tip, "MAX_ITERATIONS": "5",
+            "BLOCKER_VALID": "false", "BLOCKER_TEXT": "",
+            "DECIDE_SCRIPT": os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "..", "actions",
+                "_shared", "decide-implement-outcome.sh")}
+
+
 def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
                     iteration=ITERATION):
     runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
@@ -320,6 +333,7 @@ def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
            "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
            "UNCHECKED_TIP": unchecked_tip}
     env.update(read_spec_meta_env(repo))
+    env.update(decide_env(checked_base, checked_tip, unchecked_tip))
     return run_step(BASH, steps[CYCLE_STEP], repo, env, runner_temp)
 
 
@@ -337,6 +351,7 @@ def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
            "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
            "UNCHECKED_TIP": unchecked_tip}
     env.update(read_spec_meta_env(repo))
+    env.update(decide_env(checked_base, checked_tip, unchecked_tip))
     return run_step(BASH, steps[RETRY_STEP], repo, env, runner_temp)
 
 
@@ -1394,9 +1409,11 @@ def check_reporting_persist_failure(root):
 def _mut_remove_forced_false(steps):
     """Let the converge-commit scan run unconditionally instead of forcing
     converged=false on the truncated path (research.md D4's rejected shape)."""
+    # The truncated-path rule now lives in decide-implement-outcome.sh; the
+    # step hands it TRUNCATED, so withholding that is the same regression.
     steps[CYCLE_STEP] = steps[CYCLE_STEP].replace(
-        'if [ "$ok" = "true" ] && [ "$truncated" = "true" ]; then',
-        'if false; then', 1)
+        'decision="$(OK="$ok" TRUNCATED="$truncated"',
+        'decision="$(OK="$ok" TRUNCATED=false', 1)
 
 
 def _mut_remove_no_progress_guard(steps):

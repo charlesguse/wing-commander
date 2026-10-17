@@ -1,0 +1,101 @@
+# wing-commander-remaining-work — render the remaining-work report.
+#
+# The stage workflows' front door to `_shared/render-remaining-work.sh`, the
+# one home of that rendering (specs/117 research D7), the way
+# wing-commander-tasks-checkbox-count fronts count-tasks-checkboxes.sh. A
+# published stage may not resolve `_shared/` itself (Gate 60), so finalize
+# reaches the script through here.
+#
+# Constitution VII: part of the published surface; adding it is a
+# minor-version change at the next release.
+name: wing-commander-remaining-work
+description: >-
+  Renders finalize's remaining-work report deterministically from the
+  classified unchecked-task lists: "Maintainer steps" for owner-only tasks,
+  "Unfinished implementation" (with a stall statement) for unbuilt code, and
+  nothing for standing instructions. Writes the report to a file and reports
+  whether any work remains and whether implementation is outstanding.
+inputs:
+  maintainer-items:
+    description: "The literal text of each unchecked [maintainer] task (wing-commander-tasks-checkbox-count's maintainer-items output)."
+    required: false
+    default: ""
+  impl-items:
+    description: "The literal text of each unchecked implementation task (wing-commander-tasks-checkbox-count's impl-unchecked-items output)."
+    required: false
+    default: ""
+  routed-items:
+    description: "The write-boundary lookup's rendered text; an item matching one of its lines is written as that routed line."
+    required: false
+    default: ""
+  output-path:
+    description: "File the rendered markdown is written to (created empty when nothing remains; absent when the renderer fails)."
+    required: true
+outputs:
+  has-remaining:
+    description: "true when the report is non-empty, else false."
+    value: ${{ steps.render.outputs.has-remaining }}
+  stalled:
+    description: "true when implementation tasks are still unchecked, else false."
+    value: ${{ steps.render.outputs.stalled }}
+  impl-count:
+    description: "Number of unchecked implementation tasks listed."
+    value: ${{ steps.render.outputs.impl-count }}
+runs:
+  using: composite
+  steps:
+    - name: Render remaining work
+      id: render
+      shell: bash
+      env:
+        MAINTAINER_ITEMS: ${{ inputs.maintainer-items }}
+        IMPL_ITEMS: ${{ inputs.impl-items }}
+        ROUTED_ITEMS: ${{ inputs.routed-items }}
+        OUTPUT_PATH: ${{ inputs.output-path }}
+      run: |
+        set -uo pipefail
+        printf '%s\n' "$MAINTAINER_ITEMS" > "$RUNNER_TEMP/wc-remaining-maintainer.txt"
+        printf '%s\n' "$IMPL_ITEMS" > "$RUNNER_TEMP/wc-remaining-impl.txt"
+        printf '%s\n' "$ROUTED_ITEMS" > "$RUNNER_TEMP/wc-remaining-routed.txt"
+        rm -f "$RUNNER_TEMP/wc-remaining-impl-count.txt"
+        if ! RENDER_IMPL_COUNT_FILE="$RUNNER_TEMP/wc-remaining-impl-count.txt" \
+          bash "$GITHUB_ACTION_PATH/../_shared/render-remaining-work.sh" \
+            "$RUNNER_TEMP/wc-remaining-maintainer.txt" \
+            "$RUNNER_TEMP/wc-remaining-impl.txt" \
+            "$RUNNER_TEMP/wc-remaining-routed.txt" > "$OUTPUT_PATH"; then
+          # A partial or empty report would read as "no manual work
+          # remains". Remove it so finalize's "Verify agent output" fails on
+          # the absent file and its failure callout fires; exiting 0 here
+          # keeps that step reachable (review-step-gating).
+          echo "::error::render-remaining-work.sh failed; no remaining-work report was written"
+          rm -f "$OUTPUT_PATH"
+          printf 'has-remaining=false\nimpl-count=\nstalled=\n' >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [ -n "$(tr -d '[:space:]' < "$OUTPUT_PATH")" ]; then
+          echo "has-remaining=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "has-remaining=false" >> "$GITHUB_OUTPUT"
+        fi
+        # The renderer is the one source of the count (routed items excluded).
+        impl_count="$(cat "$RUNNER_TEMP/wc-remaining-impl-count.txt" 2>/dev/null)" || impl_count=""
+        case "$impl_count" in
+          ''|*[!0-9]*)
+            # Count file missing or garbage: never report 0 while the report
+            # body may still carry an Unfinished implementation section.
+            # Fall back to the report's own heading, and leave impl-count
+            # empty so no reader mistakes the gap for zero.
+            impl_count=""
+            if grep -q '^## Unfinished implementation' "$OUTPUT_PATH"; then impl_stalled=true; else impl_stalled=false; fi
+            echo "::warning::render-remaining-work.sh wrote no usable implementation count; deriving stalled=$impl_stalled from the report heading"
+            ;;
+          *)
+            if [ "$impl_count" -gt 0 ]; then impl_stalled=true; else impl_stalled=false; fi
+            ;;
+        esac
+        echo "impl-count=$impl_count" >> "$GITHUB_OUTPUT"
+        if [ "$impl_stalled" = "true" ]; then
+          echo "stalled=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "stalled=false" >> "$GITHUB_OUTPUT"
+        fi

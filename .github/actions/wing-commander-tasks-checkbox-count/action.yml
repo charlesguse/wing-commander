@@ -47,6 +47,21 @@ outputs:
   unchecked-items:
     description: "The literal text of each counted unchecked line, in file order."
     value: ${{ steps.read.outputs.unchecked-items }}
+  impl-checked-count:
+    description: "Count of checked implementation tasks (standing instructions and [maintainer] tasks excluded)."
+    value: ${{ steps.read.outputs.impl-checked-count }}
+  impl-unchecked-count:
+    description: "Count of unchecked implementation tasks (standing instructions and [maintainer] tasks excluded)."
+    value: ${{ steps.read.outputs.impl-unchecked-count }}
+  impl-unchecked-items:
+    description: "The literal text of each unchecked implementation task, in file order."
+    value: ${{ steps.read.outputs.impl-unchecked-items }}
+  maintainer-items:
+    description: "The literal text of each unchecked [maintainer] task, in file order."
+    value: ${{ steps.read.outputs.maintainer-items }}
+  standing-count:
+    description: "Count of standing-instruction checkbox lines (never counted or reported)."
+    value: ${{ steps.read.outputs.standing-count }}
 runs:
   using: composite
   steps:
