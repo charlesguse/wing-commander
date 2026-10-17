@@ -1,0 +1,5 @@
+{
+  "note": "Round 2 folds finding F; round 3 raises only F again (#833).",
+  "ledger": {"resolved": {"fp-F": 2}, "dismissed": []},
+  "round3_findings": [{"fingerprint": "fp-F", "file": "a.yml", "line": 12}]
+}

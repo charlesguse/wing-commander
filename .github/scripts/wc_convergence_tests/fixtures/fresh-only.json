@@ -1,0 +1,6 @@
+{
+  "findings": [
+    {"fingerprint": "fp-G", "file": "a.yml", "line": 3},
+    {"fingerprint": "fp-H", "file": "b.yml", "line": 8}
+  ]
+}
