@@ -1271,8 +1271,41 @@ jobs:
       # own implement-workflow input) -- this workflow is repository-only
       # (no workflow_call), so it has no adopter-configurable equivalent to
       # thread through.
-      - name: Dispatch implement for this round's fold
+      - name: Analyze this round's fold
+        id: analyze-fold
         if: steps.commit-fold.outcome == 'success' && steps.commit-fold.outputs.folded == 'true'
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-fold-analyze
+        with:
+          spec-dir: ${{ needs.select.outputs.spec-dir }}
+          fold-ref-before: ${{ steps.commit-fold.outputs.ref-before }}
+          fold-ref-after: ${{ steps.commit-fold.outputs.ref-after }}
+          folded-json: ${{ steps.commit-fold.outputs.folded-json }}
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github-token: ${{ github.token }}
+
+      # specs/116 contracts/fold-analyze.md: a hold posts the question on
+      # the lifecycle issue and dispatches nothing; any other decision
+      # links the analyze report there.
+      - name: Post the fold-analyze outcome on the lifecycle issue
+        if: steps.analyze-fold.outcome == 'success' && steps.analyze-fold.outputs.decision != 'skipped'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ needs.select.outputs.issue }}
+          DECISION: ${{ steps.analyze-fold.outputs.decision }}
+          REPORT: ${{ steps.analyze-fold.outputs.report-markdown }}
+          QUESTION: ${{ steps.analyze-fold.outputs.question-markdown }}
+          FOLD_ID: review-gate-round-${{ steps.partition.outputs.round }}
+        run: |
+          set -uo pipefail
+          if [ "$DECISION" = "hold" ]; then
+            gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body "$(printf '%s\n\n<!-- wing-commander-fold-hold: fold=%s -->' "$QUESTION" "$FOLD_ID")"
+          else
+            gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body "$REPORT"
+          fi
+
+      - name: Dispatch implement for this round's fold
+        if: steps.commit-fold.outcome == 'success' && steps.commit-fold.outputs.folded == 'true' && steps.analyze-fold.outputs.decision != 'hold'
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-fold-dispatch
         with:
           dispatch-token: ${{ github.token }}
