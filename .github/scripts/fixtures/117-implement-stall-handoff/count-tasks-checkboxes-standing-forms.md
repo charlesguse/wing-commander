@@ -1,0 +1,8 @@
+- [ ] Complete every remaining unchecked task
+- [ ] M001 Complete every remaining unchecked task
+- [ ] Keep the gates green
+- [ ] Run the gate suite
+- [ ] Run the full gate suite
+- [ ] After each cycle, re-read the plan
+- [ ] T010 Run the gate suite and fix the fallout
+- [ ] T011 Run the full gate suite on `.github/scripts/x.py`

@@ -64,6 +64,28 @@ if [ "$rc" -ne 0 ]; then
 fi
 
 counts="$(printf '%s\n' "$content" | awk '
+  # Line classes, first match wins (specs/117 data-model.md): standing
+  # instruction, then maintainer task, then implementation task.
+  function is_standing(line,    t) {
+    t = tolower(line)
+    sub(/^[ \t]*- \[[ xX]\][ \t]*/, "", t)
+    sub(/^[tm][0-9]+[ \t]*/, "", t)
+    if (t ~ /^complete every remaining/) return 1
+    if (t ~ /^keep the gates green/) return 1
+    if (t ~ /^after each cycle/) return 1
+    if (t ~ /^run the (full )?gate suite/) {
+      # A deliverable noun after it makes it a real task, not a standing line.
+      if (t ~ /and fix/ || t ~ /`/ || t ~ /\//) return 0
+      return 1
+    }
+    return 0
+  }
+  function is_maintainer(line,    t) {
+    t = line
+    sub(/^[ \t]*- \[[ xX]\]/, "", t)
+    t = substr(t, 1, 40)
+    return index(t, " [maintainer] ") > 0
+  }
   {
     stripped = $0
     sub(/^[ \t]+/, "", stripped)
@@ -72,22 +94,39 @@ counts="$(printf '%s\n' "$content" | awk '
       next
     }
     if (in_fence) next
-    if ($0 ~ /^[ \t]*- \[[xX]\]/) {
-      checked++
-    } else if ($0 ~ /^[ \t]*- \[ \]/) {
-      unchecked++
-      items = items $0 "\n"
+    if ($0 ~ /^[ \t]*- \[[xX ]\]/) {
+      is_checked = ($0 ~ /^[ \t]*- \[[xX]\]/)
+      if (is_checked) checked++; else { unchecked++; items = items $0 "\n" }
+      if (is_standing($0)) {
+        standing++
+      } else if (is_maintainer($0)) {
+        if (!is_checked) maint = maint $0 "\n"
+      } else if (is_checked) {
+        impl_checked++
+      } else {
+        impl_unchecked++
+        impl_items = impl_items $0 "\n"
+      }
     }
   }
   END {
-    printf "%d\x1f%d\x1f%s", checked+0, unchecked+0, items
+    printf "%d\x1f%d\x1f%d\x1f%d\x1f%d\x1f%s\x1f%s\x1f%s", checked+0, unchecked+0, impl_checked+0, impl_unchecked+0, standing+0, items, impl_items, maint
   }
 ')"
 
-checked_count="${counts%%$'\x1f'*}"
-rest="${counts#*$'\x1f'}"
-unchecked_count="${rest%%$'\x1f'*}"
-unchecked_items="${rest#*$'\x1f'}"
+checked_count="${counts%%$'\x1f'*}";         counts="${counts#*$'\x1f'}"
+unchecked_count="${counts%%$'\x1f'*}";       counts="${counts#*$'\x1f'}"
+impl_checked_count="${counts%%$'\x1f'*}";    counts="${counts#*$'\x1f'}"
+impl_unchecked_count="${counts%%$'\x1f'*}";  counts="${counts#*$'\x1f'}"
+standing_count="${counts%%$'\x1f'*}";        counts="${counts#*$'\x1f'}"
+unchecked_items="${counts%%$'\x1f'*}";       counts="${counts#*$'\x1f'}"
+impl_items="${counts%%$'\x1f'*}";            maint_items="${counts#*$'\x1f'}"
+# Mid-record items keep their trailing newline (only the last field's is
+# stripped by the command substitution); drop it so each heredoc below ends
+# with exactly one.
+unchecked_items="${unchecked_items%$'\n'}"
+impl_items="${impl_items%$'\n'}"
+maint_items="${maint_items%$'\n'}"
 
 printf 'checked-count=%s\n' "$checked_count"
 printf 'unchecked-count=%s\n' "$unchecked_count"
@@ -99,3 +138,14 @@ printf 'unchecked-items<<WING_COMMANDER_UNCHECKED_ITEMS_EOF\n'
 # unchecked task.
 [ -z "$unchecked_items" ] || printf '%s\n' "$unchecked_items"
 printf 'WING_COMMANDER_UNCHECKED_ITEMS_EOF\n'
+# Classified view (specs/117 data-model.md): standing instructions are in
+# neither impl-* count; [maintainer] tasks are listed but never counted.
+printf 'impl-checked-count=%s\n' "$impl_checked_count"
+printf 'impl-unchecked-count=%s\n' "$impl_unchecked_count"
+printf 'standing-count=%s\n' "$standing_count"
+printf 'impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF\n'
+[ -z "$impl_items" ] || printf '%s\n' "$impl_items"
+printf 'WING_COMMANDER_IMPL_ITEMS_EOF\n'
+printf 'maintainer-items<<WING_COMMANDER_MAINTAINER_ITEMS_EOF\n'
+[ -z "$maint_items" ] || printf '%s\n' "$maint_items"
+printf 'WING_COMMANDER_MAINTAINER_ITEMS_EOF\n'

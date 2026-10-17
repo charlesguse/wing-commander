@@ -1,0 +1,3 @@
+- [x] T001 Built it
+- [ ] T002 [maintainer] Re-drive one finalize run
+- [ ] T003 [maintainer] Note the release
