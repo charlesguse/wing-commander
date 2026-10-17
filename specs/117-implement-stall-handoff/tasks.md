@@ -458,3 +458,79 @@
   - .github/actions/_shared/decide-implement-outcome.sh
 
   Detail: Around line 161.
+
+## Review Gate Round 5 Findings
+
+- [ ] Review finding: No early stop when a cycle makes no progress and writes no valid blocker
+
+  A cycle that checks nothing new and has no valid blocker leaves handoff false, so identical cycles repeat until the iteration cap.
+
+  - .github/actions/_shared/decide-implement-outcome.sh
+
+  Detail: progressed=false, converge_sha empty and blocker_valid=false give handoff=false, so the next cycle dispatches with identical inputs. Up to 5 agent runs are spent before the cap hand-off.
+
+- [ ] Review finding: Decide invocation, fallback and pick() helper pasted into both read-back arms
+
+  The decide call, its failure fallback and pick() are duplicated in the cycle and retry arms of implement.yml, and the prompt paragraphs are duplicated in implement.yml and tasks.yml. This violates the single-home rule, and Gate 165 only requires a needle to appear at least twice.
+
+  - .github/workflows/implement.yml
+  - .github/workflows/tasks.yml
+
+  Detail: A fix to the fallback in one arm leaves the other copy diverged, and the gate does not catch it.
+
+- [ ] Review finding: STALL_COMMENT overwrites the more specific routed reason
+
+  STALL_COMMENT unconditionally replaces reason_line, so a routed (write-boundary) reason is replaced by the iteration-cap text when both apply.
+
+  - .github/workflows/implement.yml
+
+  Detail: At the cap with ok=true, converged=false, unchecked>0 and routed=true, the hand-off comment shows the cap text instead of the write-boundary reason. On the truncated-at-cap path decide sets a stall-comment that nothing consumes.
+
+- [ ] Review finding: Decide-failure fallback drops the required stall report
+
+  When decide cannot run, the fallback emits progressed=false, no stall-reason or stall-comment, and an empty converged, so the FR-006 stall report is lost.
+
+  - .github/workflows/implement.yml
+
+  Detail: If DECIDE_SCRIPT is empty because blocker-cycle failed, the cap branch posts only the generic message with no outstanding-task count.
+
+- [ ] Review finding: Blocker task id regex rejects suffixed task ids
+
+  The blocker validator requires T[0-9]+ exactly, but the task-line format and is_maintainer allow ids such as T012a, so a real blocker on such a task is dropped as invalid.
+
+  - .github/actions/_shared/validate-implement-blocker.sh
+
+  Detail: The jq test '\AT[0-9]+\z' rejects 'T012a'. The loop then runs to the cap instead of handing off.
+
+- [ ] Review finding: Closed filler allow-list misclassifies standing lines as implementation
+
+  is_standing uses a closed word list, so a standing instruction containing any unlisted word is counted as implementation work that can never be completed.
+
+  - .github/actions/_shared/count-tasks-checkboxes.sh
+
+  Detail: Lines such as '- [ ] Keep the gates green (run-local-gates)' become permanent impl-unchecked. converged never becomes true and finalize reports unfinished implementation.
+
+- [ ] Review finding: Agent can reclassify its own task as maintainer to fake convergence
+
+  The impl-unchecked count depends on agent-editable text, so adding [maintainer] to an unchecked implementation line reduces the count to 0 and decide reports converged=true without the work being built.
+
+  - .github/workflows/implement.yml
+  - .github/actions/_shared/count-tasks-checkboxes.sh
+
+  Detail: Nothing compares task identity between the base and tip classifications.
+
+- [ ] Review finding: Renderer failure reported as has-remaining=false
+
+  On renderer failure the remaining-work action sets has-remaining=false and only the other outputs are empty, so a consumer that reads has-remaining alone treats a failed render as no remaining work.
+
+  - .github/actions/wing-commander-remaining-work/action.yml
+
+  Detail: finalize infers failure from the empty stalled output, but other readers of the documented has-remaining output see false.
+
+- [ ] Review finding: Not-converged banner can contradict the report body
+
+  When IMPL_COUNT is empty or zero and the render step is skipped or failed, the banner says 'see the remaining work below' and the PR body can read 'No manual work remains.' under a 'Not fully converged' banner.
+
+  - .github/workflows/finalize.yml
+
+  Detail: Occurs when converged=false and the count is missing, with the report file also empty.
