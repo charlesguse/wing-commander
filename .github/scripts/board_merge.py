@@ -421,17 +421,16 @@ def pick_bump_candidate(snapshots, bot_login, stalled_issues=()):
     no tracking issue to announce on, or whose tracking issue is in
     `stalled_issues` (it carries `board:stalled`, as a maintainer `/stop`
     there leaves it; removing the label releases it, as for a fix item) is
-    skipped; of the rest the oldest
-    that may merge wins, else the oldest (its unmet condition is announced
-    once). So one stuck PR never hides a newer verified one. The switches
+    skipped; of the rest the oldest that may merge wins, else the oldest
+    (its unmet condition is announced once). So one stuck PR never hides a newer verified one. The switches
     are the same for every candidate, so they are taken as on here; decide()
     re-derives everything from the merge job's own fresh fetch."""
-    stalled = {str(n) for n in stalled_issues or ()}
+    # '' (no tracking issue) is skipped like a stalled one.
+    skipped_issues = {""} | {str(n) for n in stalled_issues or ()}
     usable = [snap for snap in snapshots or []
               if _is_bot((snap.get("author") or {}).get("login"), bot_login)
               and BUMP_BRANCH_RE.fullmatch(snap.get("headRefName") or "")
-              and bump_tracking_issue(snap.get("body"))
-              and bump_tracking_issue(snap.get("body")) not in stalled
+              and bump_tracking_issue(snap.get("body")) not in skipped_issues
               and not handed_over_at_head(snap, bot_login)]
     usable.sort(key=lambda snap: snap.get("createdAt") or "")
     if not usable:
