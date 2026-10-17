@@ -89,8 +89,8 @@
 **Independent Test**: the idempotency guard posts the required comment for stage `review`; the Maintainer Feedback cycle start comment contains the remaining count.
 
 - [x] T022 [US4] In `.github/workflows/implement.yml`'s idempotency-guard step, when spec-meta stage is `review` and the dispatch is manual, post a lifecycle-issue comment through the existing comment composite stating nothing ran, why, and that a comment on the implementation PR (folded into a Maintainer Feedback cycle by pr-conversation) is the only re-entry; keep the skip behaviour. If a new input such as `is-manual-dispatch` is needed, declare it typed, optional and additive (Principle VII) and note it for the release notes
-- [ ] T023 [US4] Make the Maintainer Feedback cycle's start comment in `.github/workflows/implement.yml` include `max-iterations - iteration` cycles remaining (floor 0) from spec-meta; do not write any state or reset the cap (data-model.md Re-entry)
-- [ ] T024 [US4] Add to `verify-implement-stall-handoff.py` assertions that the guard step posts the review-stage explanation comment (text names the PR-comment route), that the re-entry start comment computes remaining cycles with a floor of 0, and a fixture case for the remaining-count arithmetic (iteration 4 of 5 → 1; iteration 5 of 5 → 0); verify any added input is declared in the published `implement.yml` contract
+- [x] T023 [US4] Make the Maintainer Feedback cycle's start comment in `.github/workflows/implement.yml` include `max-iterations - iteration` cycles remaining (floor 0) from spec-meta; do not write any state or reset the cap (data-model.md Re-entry)
+- [x] T024 [US4] Add to `verify-implement-stall-handoff.py` assertions that the guard step posts the review-stage explanation comment (text names the PR-comment route), that the re-entry start comment computes remaining cycles with a floor of 0, and a fixture case for the remaining-count arithmetic (iteration 4 of 5 → 1; iteration 5 of 5 → 0); verify any added input is declared in the published `implement.yml` contract
 
 **Checkpoint**: all four stories independently verifiable.
 
@@ -131,4 +131,4 @@
 
 ## Phase 8: Convergence
 
-- [ ] T031 Make the Maintainer Feedback re-entry dispatch comment in `.github/workflows/pr-conversation.yml` (the "Implementation cycle N dispatched" reply, which is where that start comment actually lives, not `implement.yml`) state how many cycles remain (`max-iterations - iteration`, floor 0), taking the cap and recorded iteration from existing inputs or spec-meta without writing any state; then extend `verify-implement-stall-handoff.py` with the T024 remaining-count cases (iteration 4 of 5 → 1; 5 of 5 → 0) per FR-011 (missing)
+- [x] T031 Make the Maintainer Feedback re-entry dispatch comment in `.github/workflows/pr-conversation.yml` (the "Implementation cycle N dispatched" reply, which is where that start comment actually lives, not `implement.yml`) state how many cycles remain (`max-iterations - iteration`, floor 0), taking the cap and recorded iteration from existing inputs or spec-meta without writing any state; then extend `verify-implement-stall-handoff.py` with the T024 remaining-count cases (iteration 4 of 5 → 1; 5 of 5 → 0) per FR-011 (missing)
