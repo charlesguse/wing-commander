@@ -34,7 +34,23 @@ CONDITIONS_FIX = ("switch_on", "kill_switch_clear", "eligible_class", "checks_gr
                   "gate_suite_green", "review_converged", "backstop_holds")
 CONDITIONS_BUMP = ("switch_on", "kill_switch_clear", "attributed_to_auto_update", "checks_green",
                    "gate_suite_green", "verification_passed_at_head")
-REFUSAL_CLASSES = ("workflow-scope", "conflict", "protection", "other")
+REFUSAL_CLASSES = ("workflow-scope", "transient", "conflict", "protection", "other")
+# A `transient` failure (the head or base moved under --match-head-commit, a
+# 5xx, mergeability still being computed) is not a refusal of this PR: the
+# merge job re-derives the decision from a fresh snapshot and tries once more,
+# and a second transient failure is announced without a handover, so the item
+# is never released as refused for a failure that clears itself.
+RETRYABLE_REFUSAL_CLASSES = ("transient",)
+OUTCOMES = ("merged", "refused", "transient", "not-merged")
+
+# The `gh pr view --json` fields every snapshot carries: one list for the
+# candidate scan and the fresh fetch, so both hold the same shape.
+SNAPSHOT_FIELDS = ("number,createdAt,headRefOid,statusCheckRollup,author,headRefName,"
+                   "commits,files,comments,body")
+# Appended to every merge announcement on the PR: which head, which outcome,
+# which reason. It is what keeps a repeated outcome from being re-announced
+# every hourly run, and what releases a refused bump PR until its head moves.
+MERGE_OUTCOME_MARKER = "wc-board-merge-outcome"
 
 CONSTITUTION_PATH = ".specify/memory/constitution.md"
 BUMP_BRANCH_RE = re.compile(r"auto-update-spec-kit/v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?")
@@ -121,12 +137,21 @@ def _attributed_to_auto_update(snapshot, bot_login):
     return not _touches_constitution(snapshot)
 
 
-def bump_records(comments, bot_login):
-    """The `wc-bump-verification` markers in bot-authored PR comments, oldest
-    first. A marker in any other login's comment is ignored (a record is a
-    trust surface: only the App's own counts)."""
-    marker_re, open_re = marker_regexes(BUMP_VERIFICATION_MARKER)
-    dated = []
+def _comment_order(comment):
+    """(createdAt, comment id): createdAt has one-second resolution, so two
+    records posted in the same second are ordered by the numeric id GitHub
+    assigns (the `issuecomment-<id>` in the comment's url), never by list
+    position."""
+    match = re.search(r"issuecomment-(\d+)", (comment or {}).get("url") or "")
+    return ((comment or {}).get("createdAt") or "", int(match.group(1)) if match else 0)
+
+
+def _bot_marker_records(comments, bot_login, name):
+    """(order, record) for each `name` marker in a bot-authored comment. A
+    marker in any other login's comment is ignored (a record is a trust
+    surface: only the App's own counts)."""
+    marker_re, open_re = marker_regexes(name)
+    found = []
     for comment in comments or []:
         if not _is_bot(((comment or {}).get("author") or {}).get("login"), bot_login):
             continue
@@ -138,33 +163,53 @@ def bump_records(comments, bot_login):
         except ValueError:
             continue
         if isinstance(record, dict):
-            dated.append((comment.get("createdAt") or "", record))
-    dated.sort(key=lambda pair: pair[0])
-    return [record for _created, record in dated]
+            found.append((_comment_order(comment), record))
+    found.sort(key=lambda pair: pair[0])
+    return found
+
+
+def bump_records(comments, bot_login):
+    """The `wc-bump-verification` markers in bot-authored PR comments, oldest
+    first."""
+    return [record for _order, record in _bot_marker_records(comments, bot_login, BUMP_VERIFICATION_MARKER)]
+
+
+def verification_passed_at_head(records, head_sha):
+    """The latest of the records bound to `head_sha` passed. A record for any
+    other head says nothing about this one, so a late record for an old head
+    never voids a valid one for this head; among this head's own records the
+    latest wins, so a failed re-run does void an earlier pass."""
+    at_head = [record for record in records or [] if head_sha and record.get("head_sha") == head_sha]
+    return bool(at_head) and at_head[-1].get("result") == "passed"
 
 
 def evaluate_bump(snapshot, records, bot_login, paused, switch_on):
     """No size backstop: the verification gates the merge (Principle X)."""
     rollup = snapshot.get("statusCheckRollup") or []
     checks_green = _checks_green(rollup)
-    latest = records[-1] if records else {}
     results = {
         "switch_on": switch_on,
         "kill_switch_clear": not paused,
         "attributed_to_auto_update": _attributed_to_auto_update(snapshot, bot_login),
         "checks_green": checks_green,
         "gate_suite_green": checks_green and _gate_suite_green(rollup),
-        "verification_passed_at_head": (latest.get("result") == "passed"
-                                        and bool(snapshot.get("headRefOid"))
-                                        and latest.get("head_sha") == snapshot.get("headRefOid")),
+        "verification_passed_at_head": verification_passed_at_head(records, snapshot.get("headRefOid")),
     }
     return _decision(snapshot, "bump", CONDITIONS_BUMP, results)
 
 
+# Checked in this order: a missing scope is never mistaken for a transient
+# failure, and a transient one is checked before `not mergeable`, which
+# GitHub also says while mergeability is still being computed.
 _REFUSAL_PATTERNS = (
     ("workflow-scope", re.compile(r"workflows?`?\s+(permission|scope)|without\s+`?workflows?`?|"
                                   r"workflow\s+scope", re.IGNORECASE)),
-    ("conflict", re.compile(r"not mergeable|merge conflict|conflicts? with", re.IGNORECASE)),
+    ("transient", re.compile(r"(head|base) branch was modified|try the merge again|"
+                             r"HTTP 5\d\d|bad gateway|service unavailable|gateway time-?out|"
+                             r"timed out|connection reset|mergeab\w+ (state )?(is )?(still )?"
+                             r"(unknown|being computed)|merge already in progress", re.IGNORECASE)),
+    ("conflict", re.compile(r"not mergeable|merge conflict|conflicts? with|cannot be cleanly created",
+                            re.IGNORECASE)),
     ("protection", re.compile(r"protected branch|required status|required review|review is required|"
                               r"approving review|branch protection|base branch policy|"
                               r"repository rule", re.IGNORECASE)),
@@ -195,6 +240,40 @@ def decide(payload):
                          bool(payload["paused"]), bool(payload["switch_on"]))
 
 
+def outcome_record(decision, outcome, refusal_class=None):
+    """The MERGE_OUTCOME_MARKER payload for one announcement."""
+    reason = refusal_class if outcome in ("refused", "transient") else (
+        decision.get("unmet_reason") if outcome == "not-merged" else None)
+    return {"head_sha": decision.get("head_sha"), "class": decision.get("class"),
+            "outcome": outcome, "reason": reason}
+
+
+def _outcome_records(snapshot, bot_login):
+    return [record for _order, record in
+            _bot_marker_records((snapshot or {}).get("comments"), bot_login, MERGE_OUTCOME_MARKER)]
+
+
+def already_announced(snapshot, bot_login, record):
+    """The App already posted this exact outcome (head, outcome, reason) on
+    the PR, so posting it again would only repeat it every hourly run."""
+    return any(previous == record for previous in _outcome_records(snapshot, bot_login))
+
+
+def handed_over_at_head(snapshot, bot_login):
+    """GitHub refused this PR at its current head and the App handed it to a
+    maintainer. It is released until its head moves (FR-010): a new push is a
+    new candidate, the same head is never re-attempted."""
+    head = (snapshot or {}).get("headRefOid")
+    return bool(head) and any(record.get("outcome") == "refused" and record.get("head_sha") == head
+                              for record in _outcome_records(snapshot, bot_login))
+
+
+def _defang(text):
+    """Quoted text (GitHub's stderr, a path) can never carry a marker into
+    the App's own comment, where a reader would trust it."""
+    return (text or "").replace("<!--", "<\u200b!--")
+
+
 def prove_disposition(snapshot):
     """What follows a merge, in the words of the announcement. The classifier
     is board_prove.actions_only() -- the one prove-gate/prove use -- never a
@@ -208,20 +287,31 @@ def prove_disposition(snapshot):
 
 def render_announcement(decision, outcome, snapshot=None, merge_sha=None, refusal_class=None, stderr=None):
     """The PR/issue comment for a MergeOutcome (contracts/board-merge.md
-    "Announcement"): merged, refused or not-merged."""
+    "Announcement"): merged, refused, transient or not-merged, ending with
+    its MERGE_OUTCOME_MARKER."""
     head = decision.get("head_sha")
     klass = decision.get("class")
     results = ", ".join("{0}={1}".format(name, "pass" if ok else "FAIL")
                         for name, ok in (decision.get("conditions") or {}).items())
+    quoted = (stderr or "").strip()
     if outcome == "merged":
-        return ("Merged ({0} class) at head_sha {1}; squash commit {2}.\n\nConditions: {3}.\n\n"
+        text = ("Merged ({0} class) at head_sha {1}; squash commit {2}.\n\nConditions: {3}.\n\n"
                 "Proof: {4}.".format(klass, head, merge_sha, results, prove_disposition(snapshot or {})))
-    if outcome == "refused":
-        return ("GitHub refused the merge of head_sha {0} ({1} class), refusal_class {2}:\n\n```\n{3}\n```\n\n"
+    elif outcome == "refused":
+        text = ("GitHub refused the merge of head_sha {0} ({1} class), refusal_class {2}:\n\n```\n{3}\n```\n\n"
                 "Nothing reached main by another route; handed to a maintainer.".format(
-                    head, klass, refusal_class, (stderr or "").strip()))
-    return ("Not merged ({0} class) at head_sha {1}: unmet condition `{2}`.\n\nConditions: {3}.".format(
-        klass, head, decision.get("unmet_reason"), results))
+                    head, klass, refusal_class, quoted))
+    elif outcome == "transient":
+        after = ("the readiness report's hand-off stands, so a maintainer may merge it"
+                 if klass == "fix" else "the next board-loop run re-evaluates it from a fresh snapshot")
+        text = ("The merge of head_sha {0} ({1} class) failed transiently twice, refusal_class {2}:\n\n"
+                "```\n{3}\n```\n\nNothing reached main. Not handed over as refused: {4}.".format(
+                    head, klass, refusal_class, quoted, after))
+    else:
+        text = ("Not merged ({0} class) at head_sha {1}: unmet condition `{2}`.\n\nConditions: {3}.".format(
+            klass, head, decision.get("unmet_reason"), results))
+    record = json.dumps(outcome_record(decision, outcome, refusal_class), sort_keys=True)
+    return "{0}\n\n<!-- {1}: {2} -->".format(_defang(text), MERGE_OUTCOME_MARKER, record)
 
 
 def bump_tracking_issue(body):
@@ -230,30 +320,67 @@ def bump_tracking_issue(body):
     return match.group(1) if match else ""
 
 
-def pick_bump_candidate(prs, bot_login):
-    """Research D5: at most one open PR with the auto-update shape (bot author
-    and branch); the oldest wins. `prs` is `gh pr list --json
-    number,author,headRefName,createdAt`. Full attribution is decide()'s."""
+def bump_shaped(prs, bot_login):
+    """The open PRs with the auto-update shape (bot author and branch, research
+    D5), oldest first. `prs` is `gh pr list --json
+    number,author,headRefName,createdAt`."""
     matching = [pr for pr in prs or []
                 if _is_bot((pr.get("author") or {}).get("login"), bot_login)
                 and BUMP_BRANCH_RE.fullmatch(pr.get("headRefName") or "")]
     matching.sort(key=lambda pr: pr.get("createdAt") or "")
-    return matching[0]["number"] if matching else None
+    return [pr["number"] for pr in matching]
+
+
+def pick_bump_candidate(snapshots, bot_login):
+    """Research D5: the one bump PR this run evaluates, from a snapshot of
+    every auto-update-shaped PR. A PR handed over at its current head, or
+    with no tracking issue to announce on, is skipped; of the rest the oldest
+    that may merge wins, else the oldest (its unmet condition is announced
+    once). So one stuck PR never hides a newer verified one. The switches
+    are the same for every candidate, so they are taken as on here; decide()
+    re-derives everything from the merge job's own fresh fetch."""
+    usable = [snap for snap in snapshots or []
+              if _is_bot((snap.get("author") or {}).get("login"), bot_login)
+              and BUMP_BRANCH_RE.fullmatch(snap.get("headRefName") or "")
+              and bump_tracking_issue(snap.get("body"))
+              and not handed_over_at_head(snap, bot_login)]
+    usable.sort(key=lambda snap: snap.get("createdAt") or "")
+    if not usable:
+        return None
+    mergeable = [snap for snap in usable
+                 if decide({"class": "bump", "snapshot": snap, "bot_login": bot_login,
+                            "paused": False, "switch_on": True})["may_merge"]]
+    chosen = (mergeable or usable)[0]
+    return {"pr": chosen.get("number"), "issue": bump_tracking_issue(chosen.get("body"))}
 
 
 def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
-    decide_cmd = sub.add_parser("decide", help="payload JSON on stdin -> MergeDecision JSON on stdout")
-    decide_cmd.set_defaults(func=lambda _a: print(json.dumps(decide(json.load(sys.stdin)))))
+    decide_cmd = sub.add_parser("decide", help="inputs JSON + snapshot JSON -> MergeDecision JSON on stdout")
+    decide_cmd.add_argument("--inputs", required=True, help="the payload without its snapshot (JSON file)")
+    decide_cmd.add_argument("--snapshot", required=True, help="gh pr view JSON file")
+
+    def _decide(a):
+        with open(a.inputs, encoding="utf-8") as fh:
+            payload = json.load(fh)
+        with open(a.snapshot, encoding="utf-8") as fh:
+            payload["snapshot"] = json.load(fh)
+        print(json.dumps(decide(payload)))
+    decide_cmd.set_defaults(func=_decide)
+    fields_cmd = sub.add_parser("snapshot-fields", help="the gh pr view --json field list")
+    fields_cmd.set_defaults(func=lambda _a: print(SNAPSHOT_FIELDS))
     refusal_cmd = sub.add_parser("classify-refusal", help="stderr on stdin -> refusal class")
     refusal_cmd.set_defaults(func=lambda _a: print(classify_refusal(sys.stdin.read())))
-    issue_cmd = sub.add_parser("tracking-issue", help="gh pr view JSON on stdin -> the bump's tracking issue")
-    issue_cmd.set_defaults(func=lambda _a: print(bump_tracking_issue(json.load(sys.stdin).get("body"))))
-    announce_cmd = sub.add_parser("announce", help="render the comment for a merge outcome")
+    retry_cmd = sub.add_parser("retryable", help="exit 0 when the refusal class is retried once")
+    retry_cmd.add_argument("refusal_class")
+    retry_cmd.set_defaults(func=lambda a: sys.exit(0 if a.refusal_class in RETRYABLE_REFUSAL_CLASSES else 1))
+    announce_cmd = sub.add_parser("announce", help="render the comment for a merge outcome; "
+                                                   "prints nothing when the PR already carries it")
     announce_cmd.add_argument("--decision", required=True, help="decision JSON file")
     announce_cmd.add_argument("--snapshot", required=True, help="gh pr view JSON file")
-    announce_cmd.add_argument("--outcome", required=True, choices=("merged", "refused", "not-merged"))
+    announce_cmd.add_argument("--outcome", required=True, choices=OUTCOMES)
+    announce_cmd.add_argument("--bot-login", required=True)
     announce_cmd.add_argument("--merge-sha", default=None)
     announce_cmd.add_argument("--refusal-class", default=None)
     announce_cmd.add_argument("--stderr-file", default=None)
@@ -263,15 +390,27 @@ def main():
             decision = json.load(fh)
         with open(a.snapshot, encoding="utf-8") as fh:
             snapshot = json.load(fh)
+        if already_announced(snapshot, a.bot_login, outcome_record(decision, a.outcome, a.refusal_class)):
+            return
         err = None
         if a.stderr_file:
             with open(a.stderr_file, encoding="utf-8") as fh:
                 err = fh.read()
         print(render_announcement(decision, a.outcome, snapshot, a.merge_sha, a.refusal_class, err))
     announce_cmd.set_defaults(func=_announce)
-    bump_cmd = sub.add_parser("pick-bump", help="gh pr list JSON on stdin -> PR number or empty")
+    shaped_cmd = sub.add_parser("bump-shaped", help="gh pr list JSON on stdin -> auto-update-shaped PR numbers")
+    shaped_cmd.add_argument("--bot-login", required=True)
+    shaped_cmd.set_defaults(func=lambda a: print(" ".join(str(n) for n in bump_shaped(json.load(sys.stdin),
+                                                                                       a.bot_login))))
+    bump_cmd = sub.add_parser("pick-bump", help="JSON array of snapshots on stdin -> "
+                                                "{pr, issue} JSON or nothing")
     bump_cmd.add_argument("--bot-login", required=True)
-    bump_cmd.set_defaults(func=lambda a: print(pick_bump_candidate(json.load(sys.stdin), a.bot_login) or ""))
+
+    def _pick(a):
+        picked = pick_bump_candidate(json.load(sys.stdin), a.bot_login)
+        if picked:
+            print(json.dumps(picked))
+    bump_cmd.set_defaults(func=_pick)
     args = parser.parse_args()
     args.func(args)
 

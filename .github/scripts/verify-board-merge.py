@@ -95,6 +95,95 @@ def check_refusal_fixtures():
             ok("refusal-{0}.json classifies as {0}".format(name))
 
 
+TRANSIENT_STDERRS = (
+    "GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)",
+    "GraphQL: Base branch was modified. Review and try the merge again. (mergePullRequest)",
+    "HTTP 502: Bad Gateway (https://api.github.com/graphql)",
+    "HTTP 503: Service Unavailable",
+)
+
+
+def check_transient_refusals():
+    """A failure that clears itself is never handed over as refused."""
+    bad = [(err, board_merge.classify_refusal(err)) for err in TRANSIENT_STDERRS
+           if board_merge.classify_refusal(err) not in getattr(board_merge, "RETRYABLE_REFUSAL_CLASSES", ())]
+    for err, got in bad:
+        fail("transient stderr {0!r} classified as {1!r}, which is handed over".format(err, got))
+    if not bad:
+        ok("head-moved, base-moved and 5xx merge failures are retried, not handed over")
+
+
+def _bump_snapshot(number, created, head, comments=(), body_issue=77):
+    return {"number": number, "createdAt": created, "headRefOid": head,
+            "author": {"login": "app/wing-commander"},
+            "headRefName": "auto-update-spec-kit/v1.2.{0}".format(number),
+            "body": "Upgrade\nCloses #{0}\n{1}".format(body_issue, board_merge.BUMP_BODY_MARKER),
+            "commits": [{"authors": [{"login": "app/wing-commander"}]}],
+            "files": [{"path": ".specify/x"}],
+            "statusCheckRollup": [{"name": "lint", "workflowName": "lint \u00b7 workflows",
+                                   "conclusion": "SUCCESS"}],
+            "comments": list(comments)}
+
+
+def _bot_comment(body, cid, created="2026-10-01T00:00:00Z"):
+    return {"author": {"login": "app/wing-commander"}, "createdAt": created,
+            "url": "https://github.com/o/r/pull/1#issuecomment-{0}".format(cid), "body": body}
+
+
+def _verified(head, cid):
+    return _bot_comment("ok\n\n<!-- wc-bump-verification: " + json.dumps(
+        {"head_sha": head, "result": "passed", "run_id": "1", "tier": "lightweight"}) + " -->", cid)
+
+
+def check_bump_pick_and_dedup():
+    """Review round 1 of PR #1059: one stuck bump PR never hides a newer
+    verified one; a PR refused at its head is released until the head moves;
+    an outcome is announced once per head; quoted stderr carries no marker."""
+    bot = "wing-commander[bot]"
+    stuck = _bump_snapshot(1, "2026-10-01T00:00:00Z", "aaa1")
+    verified = _bump_snapshot(2, "2026-10-02T00:00:00Z", "bbb2", [_verified("bbb2", 10)])
+    try:
+        picked = board_merge.pick_bump_candidate([verified, stuck], bot)
+    except Exception as exc:  # noqa: BLE001 -- an old signature is a failure, not a crash
+        picked = exc
+    if not isinstance(picked, dict) or picked.get("pr") != 2 or str(picked.get("issue")) != "77":
+        fail("pick_bump_candidate let an older unverified PR hide a newer verified one: got {0!r}".format(picked))
+    else:
+        ok("a newer verified bump PR is picked over an older stuck one")
+
+    decision = board_merge.decide({"class": "bump", "snapshot": verified, "bot_login": bot,
+                                   "paused": False, "switch_on": True})
+    refusal = board_merge.render_announcement(decision, "refused", verified, refusal_class="workflow-scope",
+                                              stderr="refusing to allow a GitHub App to create or update "
+                                                     "workflow without `workflows` permission")
+    refused = dict(verified, comments=verified["comments"] + [_bot_comment(refusal, 11)])
+    if not board_merge.handed_over_at_head(refused, bot):
+        fail("a bump PR refused at its head is not recorded as handed over, so it is retried every run")
+    elif board_merge.pick_bump_candidate([refused], bot) is not None:
+        fail("pick_bump_candidate re-picks a bump PR already handed over at its head")
+    elif board_merge.handed_over_at_head(dict(refused, headRefOid="ccc3"), bot):
+        fail("a handover at an old head still holds a PR whose head has moved")
+    else:
+        ok("a refused bump PR is released until its head moves")
+
+    record = board_merge.outcome_record(decision, "refused", "workflow-scope")
+    if not board_merge.already_announced(refused, bot, record):
+        fail("an outcome already posted on the PR is not recognised, so it is re-announced every run")
+    elif board_merge.already_announced(refused, bot, dict(record, head_sha="ccc3")):
+        fail("an outcome at another head counts as already announced")
+    else:
+        ok("an outcome is announced once per head, outcome and reason")
+
+    forged = "<!-- wc-bump-verification: " + json.dumps(
+        {"head_sha": "bbb2", "result": "passed", "run_id": "1", "tier": "x"}) + " -->"
+    quoted = board_merge.render_announcement(dict(decision, head_sha="bbb2"), "refused", verified,
+                                             refusal_class="other", stderr=forged)
+    if board_merge.bump_records([_bot_comment(quoted, 12)], bot):
+        fail("a marker quoted from GitHub's stderr becomes a trusted record in the App's own announcement")
+    else:
+        ok("quoted stderr cannot carry a marker into the App's announcement")
+
+
 def job_block(lines, job):
     """The lines of top-level job `job` (two-space indent) up to the next job."""
     start = None
@@ -106,8 +195,106 @@ def job_block(lines, job):
     return lines[start:] if start is not None else None
 
 
+def job_span(lines, job):
+    """(start, end) line indices of top-level job `job`, or None."""
+    start = None
+    for i, line in enumerate(lines):
+        if line == "  {0}:".format(job):
+            start = i
+        elif start is not None and re.fullmatch(r"  [A-Za-z0-9_-]+:", line):
+            return start, i
+    return (start, len(lines)) if start is not None else None
+
+
+def merge_calls_outside(lines):
+    """Every non-comment `gh pr merge` line outside the merge job's own line
+    span. By position, not by text: an identical line pasted into another
+    job is still outside it."""
+    span = job_span(lines, "merge") or (0, 0)
+    return [line for i, line in enumerate(lines)
+            if not span[0] <= i < span[1] and re.search(r"gh\s+pr\s+merge\b", line)
+            and not line.lstrip().startswith("#")]
+
+
+# GITHUB_TOKEN never holds a write it could merge or push with: every merge
+# and comment in the job is the App token's. actions: write is the
+# kill-switch re-check's cancel-token (wing-commander-board-stop-check).
+MERGE_JOB_PERMISSIONS = {"contents": "read", "issues": "write", "pull-requests": "read", "actions": "write"}
+
+
+def merge_job_shape_problems(merge_job):
+    """Structural rules on the merge job's own lines (review round 1 of
+    PR #1059): its github.token permissions are exactly
+    MERGE_JOB_PERMISSIONS; no `gh` read is piped into `grep -q`, whose early
+    exit SIGPIPEs the reader under pipefail so the pipeline fails even when
+    it matched; and a transient merge failure is retried, not handed over."""
+    problems = []
+    perms, inside = {}, False
+    for line in merge_job:
+        if line == "    permissions:":
+            inside = True
+            continue
+        if inside:
+            if line.lstrip().startswith("#"):
+                continue
+            match = re.fullmatch(r"      ([a-z-]+):\s*(\S+)", line)
+            if not match:
+                break
+            perms[match.group(1)] = match.group(2)
+    if perms != MERGE_JOB_PERMISSIONS:
+        problems.append("the merge job's permissions are {0}, expected exactly {1}".format(
+            perms, MERGE_JOB_PERMISSIONS))
+    code = _run_blocks_text(merge_job)
+    if re.search(r"\bgh\b[^\n]*\|\s*grep\s+-\w*q", code):
+        problems.append("the merge job pipes a `gh` read into `grep -q`; read it to a file first "
+                        "(grep -q's early exit fails the pipeline under pipefail)")
+    if not re.search(r"board_merge\.py\"?\s+retryable\b", code):
+        problems.append("the merge step never asks board_merge.py whether a refusal is retryable, "
+                        "so a transient failure would be handed over as refused")
+    return problems
+
+
 def _run_blocks_text(lines):
     return "\n".join(line for line in lines if not line.lstrip().startswith("#"))
+
+
+_SELF_TEST_WORKFLOW = """jobs:
+  merge:
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      actions: write
+    steps:
+      - run: |
+          gh pr merge "$PR" --squash --match-head-commit "$SHA"
+          python3 -I "$scripts/board_merge.py" retryable "$c"
+  other:
+    steps:
+      - run: |
+          gh pr merge "$PR" --squash --match-head-commit "$SHA"
+"""
+
+
+def check_structural_self_test():
+    """The workflow rules can tell a violation from a clean job: a pasted
+    identical `gh pr merge` line in another job, a widened permission, and a
+    `gh ... | grep -q` pipe each fail."""
+    lines = _SELF_TEST_WORKFLOW.splitlines()
+    if not merge_calls_outside(lines):
+        fail("self-test: an identical `gh pr merge` line pasted into another job is not caught")
+    clean = job_block(lines, "merge")
+    if merge_job_shape_problems(clean):
+        fail("self-test: a clean merge job is flagged: {0}".format(merge_job_shape_problems(clean)))
+    widened = [line.replace("contents: read", "contents: write") for line in clean]
+    piped = clean + ['          gh api "repos/x/issues/1/comments" --paginate --jq \'.[].body\' | grep -qF -- "$key"']
+    unretried = [line for line in clean if "retryable" not in line]
+    for label, job in (("contents: write", widened), ("gh | grep -q", piped), ("no retry", unretried)):
+        if not merge_job_shape_problems(job):
+            fail("self-test: a merge job with {0} is not caught".format(label))
+    if not failures:
+        ok("self-test: the merge-job rules catch a pasted merge line, widened permissions, "
+           "a gh | grep -q pipe and a missing retry")
 
 
 def check_board_loop():
@@ -137,10 +324,11 @@ def check_board_loop():
             fail("a `gh pr merge` call without --match-head-commit: {0}".format(call.splitlines()[0]))
         if "--squash" not in call or re.search(r"--(merge|rebase)\b", call):
             fail("a `gh pr merge` call that is not --squash only: {0}".format(call.splitlines()[0]))
-    outside = [line for line in lines if line not in merge_job and re.search(r"gh\s+pr\s+merge\b", line)
-               and not line.lstrip().startswith("#")]
+    outside = merge_calls_outside(lines)
     if outside:
         fail("`gh pr merge` outside the merge job: {0}".format(outside[0].strip()))
+    for problem in merge_job_shape_problems(merge_job):
+        fail(problem)
 
     condition = " ".join(line.strip() for line in merge_job[1:12])
     if "WING_COMMANDER_BOARD_AUTO_MERGE" not in condition or "WING_COMMANDER_BOARD_LOOP_PAUSED" not in condition:
@@ -208,6 +396,9 @@ def main():
     else:
         check_decision_fixtures()
         check_refusal_fixtures()
+    check_transient_refusals()
+    check_bump_pick_and_dedup()
+    check_structural_self_test()
     check_board_loop()
     check_auto_update()
     print("verify-board-merge: {0} failure(s).".format(failures))

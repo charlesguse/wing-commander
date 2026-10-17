@@ -28,13 +28,13 @@ The spec has no `[NEEDS CLARIFICATION]` markers; the switch question was settled
 
 ## D5: Candidate discovery for bumps
 
-- **Decision**: The `merge` job takes a candidate from two sources: the readiness-ready fix PR of this run, or, when select picked no fix, one open PR matching D4. The job picks at most one per run.
+- **Decision**: The `merge` job takes a candidate from two sources: the readiness-ready fix PR of this run, or, when select picked no fix, one open PR matching D4. The job picks at most one per run: of the auto-update-shaped PRs not handed over at their current head, the oldest that may merge, else the oldest (review round 1 of PR #1059: one stuck PR must not hide a newer verified one).
 - **Rationale**: The loop works one item at a time. The bump PR is not a board item, so select never hands it over.
 - **Alternatives**: A separate scheduled poller (a second trigger surface and a concurrency conflict).
 
 ## D6: Refusal handling and release
 
-- **Decision**: The merge's stderr is classified in `board_merge.classify_refusal` into `workflow-scope`, `conflict`, `protection` or `other`; the quoted text is always posted. On refusal the handover is posted on the PR and the issue, and the issue marker is written `step=handed-over`. Select treats that step like `awaiting-merge`, so the item is not re-attempted. Nothing else is tried.
+- **Decision**: The merge's stderr is classified in `board_merge.classify_refusal` into `workflow-scope`, `conflict`, `protection` or `other`; the quoted text is always posted. On refusal the handover is posted on the PR and the issue, and the issue marker is written `step=handed-over`. Select treats that step like `awaiting-merge`, so the item is not re-attempted. A bump PR is released by the `refused` outcome marker on the PR until its head moves. Nothing else is tried. A `transient` failure (head or base moved, a 5xx, mergeability being computed) is not a refusal: it is retried once after the decision is re-derived from a re-fetched snapshot, and a second transient failure is announced without a handover (review round 1 of PR #1059).
 - **Rationale**: This mirrors the lifecycle merge job's refusal branch and meets FR-010.
 - **Alternatives**: Pre-checking the diff for `.github/workflows/` paths (a refusal still has to be handled, and the App's scope could change).
 

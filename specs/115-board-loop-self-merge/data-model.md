@@ -26,7 +26,7 @@ A hidden-marker comment authored by the App.
 | result | `passed` or `failed` |
 | run_id | The act job's run |
 
-The latest record by the bot wins. It counts only if `head_sha` equals the fresh head.
+Only records whose `head_sha` equals the fresh head count; a record for another head says nothing about this one. Among those, the latest by the bot wins, ordered by `createdAt` and then the comment's numeric id (createdAt has one-second resolution).
 
 ## MergeDecision
 
@@ -41,8 +41,8 @@ The latest record by the bot wins. It counts only if `head_sha` equals the fresh
 
 ## MergeOutcome
 
-`merged` (with the merge commit SHA), `refused` (with `refusal_class` and the quoted reason), or `not-merged` (an unmet condition). Each is announced on the PR and the issue (FR-008, FR-009, FR-010).
+`merged` (with the merge commit SHA), `refused` (with `refusal_class` and the quoted reason), `transient` (a self-clearing failure that persisted through one re-derived retry; not a handover), or `not-merged` (an unmet condition). Each is announced on the PR and the issue (FR-008, FR-009, FR-010), once per head, outcome and reason, with a `wc-board-merge-outcome` marker on the PR.
 
 ## State transitions (issue marker `step`)
 
-`awaiting-merge` is the existing switch-off terminal. With the switch on, readiness-ready leads to `merged` (stand down, prove follows) or `handed-over` (a refusal; released like `awaiting-merge`). An unmet self-clearing condition leaves the step unchanged for a later run.
+`awaiting-merge` is the existing switch-off terminal. With the switch on, readiness-ready leads to `merged` (stand down, prove follows) or `handed-over` (a refusal; released like `awaiting-merge`). An unmet condition or a `transient` outcome leaves the step unchanged (readiness's `awaiting-merge` hand-off stands). A bump PR is not a board item: a `refused` outcome marker at its head releases it until the head moves, and any other outcome leaves it for the next run.
