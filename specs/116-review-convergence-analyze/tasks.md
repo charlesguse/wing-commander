@@ -207,3 +207,69 @@ Repository is CI/CD tooling: scripts in `.github/scripts/`, composites in `.gith
   - .github/scripts/wc_fold_hold.py
 
   Detail: A fix to one parser will not reach the other. This conflicts with the repo rule that shared logic has one home, and the generic module name risks a collision.
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: Current round findings omit pending re-raised findings that earlier rounds include
+
+  In lifecycle-review-gate.yml the current round's findings drop re-raised findings still pending in tasks.md (pending_fps), while earlier rounds' records include them, so the count-not-falling signal can fail to trip and the loop can run past non-convergence.
+
+  - .github/workflows/lifecycle-review-gate.yml
+
+  Detail: Around line 1245: current['findings'] excludes pending_fps, but the comment claims it matches earlier records.
+
+- [ ] Review finding: thrash_signals --history cannot supply a ledger so recurrence is always empty
+
+  thrash_signals.py --history calls compute_history with a None ledger and has no --ledger flag, so the skill's view reports 'converging' on histories where the loop trips recurrence, defeating the single-home comparison (SC-003).
+
+  - .claude/skills/review-until-clean/scripts/thrash_signals.py
+
+  Detail: Around line 262.
+
+- [ ] Review finding: Churn-streak rule cannot trip at min_round 3
+
+  Round 2 churn is always 0 because no commit in H0..H1 can carry a passN label, so the two-consecutive-round churn streak effectively starts at round 4, not round 3 as the thresholds imply.
+
+  - .github/scripts/wc_convergence.py
+
+  Detail: Around line 375.
+
+- [ ] Review finding: Hold resolution uses >= on one-second timestamps
+
+  A resolved marker and a newer state marker for the same fold id in the same second make the new hold read as already resolved, so open-holds reports none and a fold dispatches past a real hold.
+
+  - .github/scripts/wc_fold_hold.py
+
+  Detail: Around line 115: r_stamp >= stamp; order by comment id or use a strict compare with a tiebreak.
+
+- [ ] Review finding: other_open_holds drops holds with an empty fold_id when except id is empty
+
+  With the default empty except-fold-id, a state marker with an empty fold_id is filtered as the caller's own hold, so open-holds returns none and a dispatch goes past an unanswered hold.
+
+  - .github/scripts/wc_fold_hold.py
+
+  Detail: Around line 132.
+
+- [ ] Review finding: drop_tasks restores ticks on the first matching line, not the original position
+
+  When tasks.md has identical task lines in different sections, restoring a tick replaces the first equal line anywhere in the file, so the wrong task is re-ticked and work is redone or skipped.
+
+  - .github/scripts/wc_fold_hold.py
+
+  Detail: Around line 259.
+
+- [ ] Review finding: inert() escapes only angle brackets so agent text keeps live mentions and commands
+
+  Agent-written detail posted under the App identity can still ping teams via @mentions and include /fold-hold lines, which makes the owner question hard to tell from the real instruction line.
+
+  - .github/actions/wing-commander-fold-analyze/decide.py
+
+  Detail: Around line 116; ANSWER_RE is line-anchored but quoted detail is not neutralised.
+
+- [ ] Review finding: compute_history spawns many redundant git subprocesses per round
+
+  git show, git blame and diff_size run per finding and per round and are recomputed on every evaluate, including diff_size(base, heads[0]) for i=0, adding latency; caching per (head, path) would cut it.
+
+  - .github/scripts/wc_convergence.py
+
+  Detail: Around line 300; roughly 250 show and 250 blame calls at 50 findings over 5 rounds.
