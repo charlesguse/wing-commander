@@ -493,6 +493,34 @@ def check_reentry_remaining():
             fail(f"remaining-count iteration {nxt} of {cap}: got {res.stdout.strip()!r}, want {want!r}")
 
 
+def check_reentry_lifecycle_notice():
+    """FR-011 names the lifecycle issue: the shipped reply step must post
+    the remaining-cycle count there, not only on the PR."""
+    global CASES
+    import yaml
+    doc = yaml.safe_load(read(os.path.join(ROOT, ".github", "workflows", "pr-conversation.yml")))
+    script = next(st["run"] for job in doc["jobs"].values()
+                  for st in job.get("steps", []) if st.get("name") == "Reply to this review's fold(s)")
+    tmp = _tmpdir("wc-117-reentry-")
+    calls = os.path.join(tmp, "calls")
+    with open(os.path.join(tmp, "gh"), "w", encoding="utf-8") as fh:
+        fh.write('#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$GH_CALLS"\n')
+    os.chmod(os.path.join(tmp, "gh"), 0o755)
+    env = {**os.environ, "PATH": tmp + os.pathsep + os.environ["PATH"],
+           "GH_CALLS": calls, "RUNNER_TEMP": tmp,
+           "GITHUB_STEP_SUMMARY": os.path.join(tmp, "summary"),
+           "FOLDED": "true", "PR_NUMBER": "7", "SPEC_DIR": "specs/117-x",
+           "ISSUE": "42", "DISPATCHED": "true", "NEXT_ITERATION": "4",
+           "FOLDED_SUMMARY": "- a fold", "RUN_URL": "", "MAX_ITERATIONS": "5"}
+    proc = run(["bash", "-c", script], env=env)
+    got = read(calls) if os.path.exists(calls) else ""
+    CASES += 1
+    if proc.returncode != 0 or not re.search(
+            r"^issue comment 42 .*Cycles remaining under the iteration cap after this one: 1\.", got, re.M):
+        fail(f"pr-conversation.yml: a re-dispatch must tell lifecycle issue #42 the cycles "
+             f"remaining (FR-011); rc={proc.returncode} gh calls={got!r} stderr={proc.stderr}")
+
+
 def check_single_home():
     """No copy of the classification, stop rule or remaining-work rendering
     in a workflow run: block outside the _shared scripts (CLAUDE.md "Shared
@@ -535,6 +563,7 @@ def main():
     check_implement_wiring()
     check_dispatch_stall_reporting()
     check_prompt_parity()
+    check_reentry_lifecycle_notice()
     if FAILURES:
         print(f"verify-implement-stall-handoff: {len(FAILURES)} failure(s) in {CASES} case(s)")
         return 1

@@ -3598,6 +3598,13 @@ jobs:
             printf '%s\n' "$FOLDED_SUMMARY"
           } > "$body_file"
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
+          # specs/117 FR-011: the lifecycle issue itself, not only the PR,
+          # is told how many cycles remain when the re-entry starts. The PR
+          # reply above already landed, so a failure here only warns.
+          if [ -n "$ISSUE" ]; then
+            gh issue comment "$ISSUE" --body "Re-entry into implement from review: cycle $NEXT_ITERATION dispatched for this review's fold(s) on PR #$PR_NUMBER. Cycles remaining under the iteration cap after this one: $remaining." \
+              || echo "::warning::could not post the remaining-cycle count on lifecycle issue #$ISSUE"
+          fi
 
       # data-model.md's implement_run_id field: correlates the dispatched
       # run's OWN id (GitHub's run URL always ends in it), distinct from
