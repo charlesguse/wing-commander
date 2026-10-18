@@ -8,6 +8,8 @@ WING_COMMANDER_UNCHECKED_ITEMS_EOF
 impl-checked-count=1
 impl-unchecked-count=2
 standing-count=0
+impl-ids=T001 T002 T004
+impl-unchecked-ids=T001 T002
 impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF
 - [ ] T001 Document the maintainer role
 - [ ] T002 A long description padding past forty chars [maintainer] late token

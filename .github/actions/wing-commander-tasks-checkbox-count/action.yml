@@ -62,6 +62,12 @@ outputs:
   standing-count:
     description: "Count of standing-instruction checkbox lines (never counted or reported)."
     value: ${{ steps.read.outputs.standing-count }}
+  impl-ids:
+    description: "Space-separated task ids of every implementation line, checked or not (lines without an id are absent)."
+    value: ${{ steps.read.outputs.impl-ids }}
+  impl-unchecked-ids:
+    description: "Space-separated task ids of the unchecked implementation lines."
+    value: ${{ steps.read.outputs.impl-unchecked-ids }}
 runs:
   using: composite
   steps:

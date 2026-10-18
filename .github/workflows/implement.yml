@@ -1799,6 +1799,8 @@ jobs:
           IMPL_CHECKED_BASE: ${{ steps.checkbox-base-cycle.outputs.impl-checked-count }}
           IMPL_CHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-checked-count }}
           IMPL_UNCHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-unchecked-count }}
+          IMPL_UNCHECKED_IDS_BASE: ${{ steps.checkbox-base-cycle.outputs.impl-unchecked-ids }}
+          IMPL_IDS_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-ids }}
           MAX_ITERATIONS: ${{ steps.cap.outputs.max }}
           BLOCKER_VALID: ${{ steps.blocker-cycle.outputs.blocker-valid }}
           BLOCKER_TEXT: ${{ steps.blocker-cycle.outputs.blocker-text }}
@@ -2709,6 +2711,8 @@ jobs:
           IMPL_CHECKED_BASE: ${{ steps.checkbox-base-retry.outputs.impl-checked-count }}
           IMPL_CHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-checked-count }}
           IMPL_UNCHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-unchecked-count }}
+          IMPL_UNCHECKED_IDS_BASE: ${{ steps.checkbox-base-retry.outputs.impl-unchecked-ids }}
+          IMPL_IDS_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-ids }}
           MAX_ITERATIONS: ${{ steps.cap.outputs.max }}
           BLOCKER_VALID: ${{ steps.blocker-retry.outputs.blocker-valid }}
           BLOCKER_TEXT: ${{ steps.blocker-retry.outputs.blocker-text }}

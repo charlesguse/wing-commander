@@ -8,7 +8,9 @@ Principle VII) plus one additive widening of the published
 
 Existing outputs unchanged. New `$GITHUB_OUTPUT`-shaped lines:
 `impl-checked-count=<n>`, `impl-unchecked-count=<n>`, `standing-count=<n>`,
-and heredocs `impl-unchecked-items` (delimiter
+`impl-ids=<ids>` (space-separated T###/M### ids of every implementation
+line, checked or not), `impl-unchecked-ids=<ids>` (the unchecked ones; lines
+without an id appear in neither), and heredocs `impl-unchecked-items` (delimiter
 `WING_COMMANDER_IMPL_ITEMS_EOF`) and `maintainer-items` (delimiter
 `WING_COMMANDER_MAINTAINER_ITEMS_EOF`). Still exits non-zero with no stdout
 when `ref:path` is unreadable. A file with no markers classifies every
@@ -23,9 +25,16 @@ when tasks.md is unreadable.
 
 ## decide-implement-outcome.sh (env or flags per data-model.md)
 
+Inputs include `IMPL_UNCHECKED_IDS_BASE` (the base ref's
+`impl-unchecked-ids`) and `IMPL_IDS_TIP` (the tip's `impl-ids`). Every base id
+missing from the tip's set (retagged `[maintainer]`, reworded as a standing
+instruction, or deleted) is added to the outstanding count, so `converged`
+stays false (owner decision A on #992). Ids converge adds are unaffected.
+
 Prints `converged`, `progressed`, `handoff`, `stall-reason`,
 `stall-comment` (empty unless handoff or cap with implementation
-outstanding; includes the outstanding count and reason, FR-006).
+outstanding; includes the outstanding count and reason, FR-006, and names
+any dropped ids) and `dropped-ids` (space-separated, else empty).
 
 ## render-remaining-work.sh `<maintainer-items-file> <impl-items-file>`
 
@@ -38,4 +47,4 @@ the lifecycle announcement body.
 
 `wing-commander-tasks-checkbox-count` gains outputs `impl-checked-count`,
 `impl-unchecked-count`, `impl-unchecked-items`, `maintainer-items`,
-`standing-count`. Additive; no existing output renamed or removed.
+`standing-count`, `impl-ids`, `impl-unchecked-ids`. Additive; no existing output renamed or removed.

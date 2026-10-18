@@ -19,6 +19,8 @@ WING_COMMANDER_UNCHECKED_ITEMS_EOF
 impl-checked-count=0
 impl-unchecked-count=3
 standing-count=11
+impl-ids=T010 T011 T012
+impl-unchecked-ids=T010 T011 T012
 impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF
 - [ ] T010 Run the gate suite and fix the fallout
 - [ ] T011 Run the full gate suite on `.github/scripts/x.py`

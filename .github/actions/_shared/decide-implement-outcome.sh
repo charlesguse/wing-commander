@@ -14,8 +14,15 @@
 # only, as count-tasks-checkboxes.sh classifies them):
 #   OK TRUNCATED IMPL_CHECKED_BASE IMPL_CHECKED_TIP IMPL_UNCHECKED_TIP
 #   CONVERGE_SHA ITERATION MAX_ITERATIONS BLOCKER_VALID BLOCKER_TEXT
+#   IMPL_UNCHECKED_IDS_BASE IMPL_IDS_TIP (space-separated task ids)
+# Task identity (owner decision on #992, option (a)): an id that was
+# unchecked implementation work at base but is not implementation at the tip
+# (retagged [maintainer], reworded as a standing instruction, or deleted)
+# still counts as outstanding, so editing tasks.md cannot reach converged.
+# Lines without an id cannot be tracked; ids converge adds are unaffected.
 # Prints single-line `key=value` lines shaped as $GITHUB_OUTPUT entries:
 #   converged=  progressed=  handoff=  stall-reason=  stall-comment=
+#   dropped-ids=  (the ids above, space-separated)
 # For a cycle that is not healthy, or was truncated, the stop rule does not
 # apply: converged is false for a truncated cycle and empty for an unhealthy
 # one, progressed is empty, handoff is false.
@@ -40,6 +47,16 @@ num() { case "$1" in ''|*[!0-9]*) printf '%s' "$2" ;; *) printf '%d' "$((10#$1))
 base="$(num "$base" 0)"
 tip="$(num "$tip" 0)"
 unchecked="$(num "$unchecked" 1)"
+
+dropped=""
+dropped_count=0
+for id in ${IMPL_UNCHECKED_IDS_BASE:-}; do
+  case " ${IMPL_IDS_TIP:-} " in *" $id "*) continue ;; esac
+  case " $dropped " in *" $id "*) continue ;; esac
+  dropped="${dropped:+$dropped }$id"
+  dropped_count=$((dropped_count + 1))
+done
+unchecked=$((unchecked + dropped_count))
 iteration="$(num "$iteration" 0)"
 max="$(num "$max" 0)"
 
@@ -69,17 +86,22 @@ elif [ "$ok" = "true" ]; then
   fi
 fi
 
+dropped_note=""
+if [ -n "$dropped" ]; then
+  dropped_note=" ($dropped_count of them reclassified or removed from tasks.md during the cycle: ${dropped// /, })"
+fi
+
 # FR-006: a stop with implementation outstanding is always reported, whether
 # it came from a hand-off or from the loop running out of iterations.
 if [ "$ok" = "true" ] && [ "$converged" != "true" ] && [ "$unchecked" -gt 0 ]; then
   if [ "$handoff" = "true" ]; then
-    stall_comment="Implement stopped with $unchecked implementation task(s) still unchecked: $stall_reason."
+    stall_comment="Implement stopped with $unchecked implementation task(s) still unchecked$dropped_note: $stall_reason."
   elif [ "$max" -gt 0 ] && [ "$iteration" -ge "$max" ]; then
     stall_reason="the iteration cap ($max) was reached"
     if [ "$blocker_valid" = "true" ]; then
       stall_reason="$stall_reason; the agent also reported a blocker: $blocker_text"
     fi
-    stall_comment="Implement stopped with $unchecked implementation task(s) still unchecked: $stall_reason."
+    stall_comment="Implement stopped with $unchecked implementation task(s) still unchecked$dropped_note: $stall_reason."
   fi
 fi
 
@@ -88,3 +110,4 @@ printf 'progressed=%s\n' "$progressed"
 printf 'handoff=%s\n' "$handoff"
 printf 'stall-reason=%s\n' "$stall_reason"
 printf 'stall-comment=%s\n' "$stall_comment"
+printf 'dropped-ids=%s\n' "$dropped"

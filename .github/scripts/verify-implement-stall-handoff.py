@@ -117,7 +117,8 @@ def check_classification():
 def check_composite_outputs():
     text = read(COMPOSITE)
     for out in ("impl-checked-count", "impl-unchecked-count",
-                "impl-unchecked-items", "maintainer-items", "standing-count"):
+                "impl-unchecked-items", "maintainer-items", "standing-count",
+                "impl-ids", "impl-unchecked-ids"):
         global CASES
         CASES += 1
         if not re.search(rf"^  {re.escape(out)}:\n(?:    .*\n)*?    value: \$\{{\{{ steps\.read\.outputs\.{re.escape(out)} \}}\}}",
@@ -394,6 +395,49 @@ def check_decide():
                 fail(f"{name}: {key}={got.get(key)!r}, expected {want!r}")
 
 
+def check_task_identity():
+    """Owner decision A on #992: an id that was unchecked implementation work
+    at the cycle base and is retagged [maintainer], reworded as a standing
+    instruction or deleted at the tip stays outstanding. Both refs go through
+    the shipped count script, then the shipped stop rule."""
+    global CASES
+    base = ("- [x] T001 Done in `a.sh`\n- [ ] T002 Write `b.sh`\n"
+            "- [ ] T003 Write `c.sh`\n- [ ] T004 Write `d.sh`\n- [ ] T005 Write `e.sh`\n")
+    tip = ("- [x] T001 Done in `a.sh`\n- [ ] T002 [maintainer] Write `b.sh`\n"
+           "- [ ] T003 Keep the gates green\n- [x] T005 Write `e.sh`\n- [ ] T009 [maintainer] Re-drive a run\n")
+    repo = git_repo_with({"tasks.md": base})
+    with open(os.path.join(repo, "tasks.md"), "w", encoding="utf-8") as fh:
+        fh.write(tip)
+    run(["git", "commit", "-qam", "tip"], cwd=repo)
+    counts = {}
+    for ref in ("HEAD~1", "HEAD"):
+        proc = run(["bash", os.path.join(SHARED, "count-tasks-checkboxes.sh"), ref, "tasks.md"], cwd=repo)
+        counts[ref] = parse_kv(proc.stdout)
+    env = {"PATH": os.environ.get("PATH", ""), "OK": "true", "TRUNCATED": "false",
+           "IMPL_CHECKED_BASE": counts["HEAD~1"].get("impl-checked-count", ""),
+           "IMPL_CHECKED_TIP": counts["HEAD"].get("impl-checked-count", ""),
+           "IMPL_UNCHECKED_TIP": counts["HEAD"].get("impl-unchecked-count", ""),
+           "IMPL_UNCHECKED_IDS_BASE": counts["HEAD~1"].get("impl-unchecked-ids", ""),
+           "IMPL_IDS_TIP": counts["HEAD"].get("impl-ids", ""),
+           "ITERATION": "5", "MAX_ITERATIONS": "5"}
+    got = parse_kv(run(["bash", os.path.join(SHARED, "decide-implement-outcome.sh")], env=env).stdout)
+    CASES += 1
+    if got.get("converged") != "false" or got.get("dropped-ids") != "T002 T003 T004":
+        fail(f"task identity: retagged/reworded/deleted ids must stay outstanding; "
+             f"converged={got.get('converged')!r} dropped-ids={got.get('dropped-ids')!r}")
+    CASES += 1
+    if "T002, T003, T004" not in got.get("stall-comment", ""):
+        fail(f"task identity: the stall comment must name the ids; got {got.get('stall-comment')!r}")
+    impl = read(os.path.join(ROOT, ".github", "workflows", "implement.yml"))
+    for needle in ("IMPL_UNCHECKED_IDS_BASE: ${{ steps.checkbox-base-cycle.outputs.impl-unchecked-ids }}",
+                   "IMPL_IDS_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-ids }}",
+                   "IMPL_UNCHECKED_IDS_BASE: ${{ steps.checkbox-base-retry.outputs.impl-unchecked-ids }}",
+                   "IMPL_IDS_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-ids }}"):
+        CASES += 1
+        if needle not in impl:
+            fail(f"implement.yml: a read-back arm does not pass {needle!r} to the stop rule")
+
+
 def check_implement_wiring():
     global CASES
     impl = read(os.path.join(ROOT, ".github", "workflows", "implement.yml"))
@@ -604,6 +648,7 @@ def main():
     check_single_home()
     check_blocker()
     check_decide()
+    check_task_identity()
     check_classification()
     check_composite_outputs()
     check_render()

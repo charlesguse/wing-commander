@@ -107,6 +107,19 @@ counts="$(printf '%s\n' "$content" | awk '
     }
     return 0
   }
+  # The T###/M### id of the line (suffix letter kept), or "" when it has none.
+  # decide-implement-outcome.sh tracks implementation work by this id across
+  # the cycle, so a retag or rewording cannot make a task disappear.
+  function lead_id(line,    t) {
+    t = line
+    sub(/^[ \t]*- \[[ xX]\][ \t]*/, "", t)
+    if (match(t, /^[TMtm][0-9]+[a-z]?([ \t]|$)/)) {
+      t = substr(t, 1, RLENGTH)
+      sub(/[ \t]+$/, "", t)
+      return t
+    }
+    return ""
+  }
   function is_maintainer(line,    t, lead) {
     # The token sits in the leading tag run (strip_lead), so a long id or
     # several tags cannot push it out of range. Prose later in the line
@@ -138,16 +151,27 @@ counts="$(printf '%s\n' "$content" | awk '
         if (!is_checked) standing++
       } else if (is_maintainer($0)) {
         if (!is_checked) maint = maint $0 "\n"
-      } else if (is_checked) {
-        impl_checked++
       } else {
-        impl_unchecked++
-        impl_items = impl_items $0 "\n"
+        id = lead_id($0)
+        if (id != "" && !(id in seen_id)) {
+          seen_id[id] = 1
+          impl_ids = impl_ids (impl_ids == "" ? "" : " ") id
+        }
+        if (is_checked) {
+          impl_checked++
+        } else {
+          impl_unchecked++
+          impl_items = impl_items $0 "\n"
+          if (id != "" && !(id in seen_uid)) {
+            seen_uid[id] = 1
+            impl_uids = impl_uids (impl_uids == "" ? "" : " ") id
+          }
+        }
       }
     }
   }
   END {
-    printf "%d\x1f%d\x1f%d\x1f%d\x1f%d\x1f%s\x1f%s\x1f%s", checked+0, unchecked+0, impl_checked+0, impl_unchecked+0, standing+0, items, impl_items, maint
+    printf "%d\x1f%d\x1f%d\x1f%d\x1f%d\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s", checked+0, unchecked+0, impl_checked+0, impl_unchecked+0, standing+0, impl_ids, impl_uids, items, impl_items, maint
   }
 ')"
 
@@ -156,6 +180,8 @@ unchecked_count="${counts%%$'\x1f'*}";       counts="${counts#*$'\x1f'}"
 impl_checked_count="${counts%%$'\x1f'*}";    counts="${counts#*$'\x1f'}"
 impl_unchecked_count="${counts%%$'\x1f'*}";  counts="${counts#*$'\x1f'}"
 standing_count="${counts%%$'\x1f'*}";        counts="${counts#*$'\x1f'}"
+impl_ids="${counts%%$'\x1f'*}";              counts="${counts#*$'\x1f'}"
+impl_unchecked_ids="${counts%%$'\x1f'*}";    counts="${counts#*$'\x1f'}"
 unchecked_items="${counts%%$'\x1f'*}";       counts="${counts#*$'\x1f'}"
 impl_items="${counts%%$'\x1f'*}";            maint_items="${counts#*$'\x1f'}"
 # Mid-record items keep their trailing newline (only the last field's is
@@ -180,6 +206,10 @@ printf 'WING_COMMANDER_UNCHECKED_ITEMS_EOF\n'
 printf 'impl-checked-count=%s\n' "$impl_checked_count"
 printf 'impl-unchecked-count=%s\n' "$impl_unchecked_count"
 printf 'standing-count=%s\n' "$standing_count"
+# Space-separated ids of the implementation lines at this ref: every one
+# (checked or not), and the unchecked ones. Lines without an id are absent.
+printf 'impl-ids=%s\n' "$impl_ids"
+printf 'impl-unchecked-ids=%s\n' "$impl_unchecked_ids"
 printf 'impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF\n'
 [ -z "$impl_items" ] || printf '%s\n' "$impl_items"
 printf 'WING_COMMANDER_IMPL_ITEMS_EOF\n'
