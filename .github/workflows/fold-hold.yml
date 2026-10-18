@@ -528,12 +528,79 @@ jobs:
           echo "::error::wing-commander fold-hold stage fold analyze: agent step rejected -- verdict=$VERDICT: $REASON"
           exit 1
 
-  release:
+  # The per-lifecycle fold lock -- see lifecycle-review-gate.yml's "Take
+  # the lifecycle's fold-queue ticket". `release` re-reads the hold, and on
+  # a retry the other open holds, then posts a hold or dispatches, so it
+  # holds the spec's fold-queue ticket throughout. The ticket is taken
+  # here, in a job with no concurrency group, never inside `release`'s:
+  # a job waiting for a ticket inside the group would block the ticket
+  # holder's own next job from entering it (fold-queue-ledger.sh).
+  # `release` releases the ticket as its last step.
+  release-turn:
     needs: [verify-image-prerequisites, resolve, fold-analyze]
     if: >-
       !cancelled() && needs.verify-image-prerequisites.result != 'failure'
       && needs.resolve.result == 'success' &&
       contains(fromJSON('["proceed","drop","amend","retry"]'), needs.resolve.outputs.action)
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    permissions:
+      # The ledger branch is written under github.token; the admit's
+      # stale-ticket check reads the holding run.
+      contents: write
+      actions: read
+    outputs:
+      token: ${{ steps.admit.outputs.token }}
+      round: ${{ steps.admit.outputs.round }}
+    steps:
+      - name: Checkout pipeline repository (shared composite actions)
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ needs.resolve.outputs.pipeline-ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      - name: Take the lifecycle's fold-queue ticket
+        id: admit
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-admit
+        with:
+          spec-dir: ${{ needs.resolve.outputs.spec-dir }}
+          kind: dispatch
+
+      - name: Abandon this answer's fold-queue ticket if this job failed or was cancelled
+        if: failure() || cancelled()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
+        with:
+          spec-dir: ${{ needs.resolve.outputs.spec-dir }}
+          token: run-${{ github.run_id }}-dispatch
+          round: ${{ steps.admit.outputs.round }}
+          outcome: error
+          best-effort: "true"
+
+  release:
+    needs: [verify-image-prerequisites, resolve, fold-analyze, release-turn]
+    if: >-
+      !cancelled() && needs.verify-image-prerequisites.result != 'failure'
+      && needs.resolve.result == 'success' &&
+      contains(fromJSON('["proceed","drop","amend","retry"]'), needs.resolve.outputs.action)
+      && needs.release-turn.result == 'success'
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -879,16 +946,31 @@ jobs:
           gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" \
             --body "$(printf 'Fold `%s` hold released (`%s`): %s.\n\n%s' "$FOLD_ID" "$ACTION" "$what" "$marker")"
 
+      # contracts/wing-commander-fold-queue-release.md's step placement:
+      # always(), last.
+      - name: Release this answer's fold-queue ticket
+        if: always()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
+        with:
+          spec-dir: ${{ needs.resolve.outputs.spec-dir }}
+          token: ${{ needs.release-turn.outputs.token }}
+          round: ${{ needs.release-turn.outputs.round }}
+          outcome: not-folded
+
   # GitHub cancels a pending job in a concurrency group when a newer one
   # queues, whatever cancel-in-progress says, so an answer whose release
   # waited behind the spec's other writers can be dropped before it ran.
   # Its hold is still open (only `release` writes the resolved marker), so
   # the owner is told to answer again rather than left with a cancelled run.
+  # The same holds when `release-turn` could not take the fold-queue ticket:
+  # the answer is not applied blind, and the owner answers again.
   release-cancelled:
-    needs: [verify-image-prerequisites, resolve, release]
+    needs: [verify-image-prerequisites, resolve, release-turn, release]
     if: >-
       always() && needs.verify-image-prerequisites.result != 'failure'
-      && needs.resolve.result == 'success' && needs.release.result == 'cancelled'
+      && needs.resolve.result == 'success'
+      && (needs.release.result == 'cancelled'
+          || needs.release-turn.result == 'failure' || needs.release-turn.result == 'cancelled')
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -908,6 +990,8 @@ jobs:
       deployment: ${{ inputs.environment-deployment }}
     permissions:
       issues: write
+      # Abandoning the ticket a cancelled `release` never released.
+      contents: write
     steps:
       - name: Say the cancelled release left the hold open
         env:
@@ -915,9 +999,38 @@ jobs:
           ISSUE: ${{ inputs.issue }}
           ACTION: ${{ needs.resolve.outputs.action }}
           FOLD_ID: ${{ needs.resolve.outputs.fold-id }}
+          TURN: ${{ needs.release-turn.result }}
         run: |
           set -euo pipefail
           body="$RUNNER_TEMP/fold-hold-cancelled.md"
-          printf 'The release for this `/fold-hold %s` on `%s` was cancelled before it recorded the hold as released, so the hold is still open. Answer again if it still needs an answer.' \
-            "$ACTION" "$FOLD_ID" > "$body"
+          if [ "$TURN" = "success" ]; then
+            printf 'The release for this `/fold-hold %s` on `%s` was cancelled before it recorded the hold as released, so the hold is still open. Answer again if it still needs an answer.' \
+              "$ACTION" "$FOLD_ID" > "$body"
+          else
+            printf 'This `/fold-hold %s` on `%s` was not applied: the release could not take the lifecycle'"'"'s fold-queue ticket, so it neither re-read the holds nor dispatched. The hold is still open; answer again.' \
+              "$ACTION" "$FOLD_ID" > "$body"
+          fi
           gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body-file "$body"
+
+      - name: Checkout pipeline repository (shared composite actions)
+        if: needs.release.result == 'cancelled'
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ needs.resolve.outputs.pipeline-ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      # A `release` cancelled while pending never ran its own release step,
+      # so the ticket `release-turn` took would sit granted at the queue
+      # head until the stale-ticket reclaim: abandon it here.
+      - name: Abandon the cancelled release's fold-queue ticket
+        if: needs.release.result == 'cancelled'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
+        with:
+          spec-dir: ${{ needs.resolve.outputs.spec-dir }}
+          token: ${{ needs.release-turn.outputs.token }}
+          round: ${{ needs.release-turn.outputs.round }}
+          outcome: error
+          best-effort: "true"

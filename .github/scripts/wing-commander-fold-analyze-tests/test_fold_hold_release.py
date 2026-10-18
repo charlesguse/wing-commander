@@ -16,6 +16,7 @@ ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
 WORKFLOW = os.path.join(ROOT, ".github", "workflows", "fold-hold.yml")
 sys.path.insert(0, os.path.join(ROOT, ".github", "scripts"))
 import wc_fold_hold  # noqa: E402
+from wc_gha_expr import evaluate_if  # noqa: E402
 
 BOT = {"login": "wc[bot]", "type": "Bot"}
 
@@ -60,6 +61,52 @@ class FoldHoldModule(unittest.TestCase):
                     resolved("fk", "drop", "2026-01-03T00:00:00Z", {"login": "x", "type": "User"})]
         self.assertEqual(wc_fold_hold.dropped_fingerprints(comments, BOT["login"]), ["aa", "bb"])
         self.assertEqual(wc_fold_hold.dropped_fingerprints(comments[:2], BOT["login"]), [])
+
+
+class FoldLock(unittest.TestCase):
+    """The per-lifecycle fold lock (the owner's decision on C5 of #1062's
+    pass-8 review): a caller reads the open holds, and posts or dispatches,
+    only while it holds the spec's fold-queue ticket."""
+
+    def gate_job(self):
+        with open(os.path.join(ROOT, ".github", "workflows", "lifecycle-review-gate.yml"),
+                  encoding="utf-8") as fh:
+            return yaml.safe_load(fh)["jobs"]["fold-decide"]
+
+    def test_the_lifecycle_gate_reads_the_holds_only_under_its_ticket(self):
+        steps = self.gate_job()["steps"]
+        ids = [s.get("id") for s in steps]
+        admit = steps[ids.index("fold-lock")]
+        self.assertIn("wing-commander-fold-queue-admit", admit["uses"])
+        self.assertLess(ids.index("fold-lock"), ids.index("open-holds"))
+        read_if = steps[ids.index("open-holds")]["if"]
+        for outcome, runs in (("success", True), ("failure", False), ("cancelled", False)):
+            self.assertEqual(evaluate_if(read_if, {"steps.fold-lock.outcome": outcome}), runs)
+        # An unread holds list reaches the decide step empty: it holds the
+        # fold (test_decide.py's test_decide_step_holds_when_the_open_holds_were_never_read).
+        decide = steps[ids.index("analyze-fold")]
+        self.assertEqual(decide["with"]["open-holds"], "${{ steps.open-holds.outputs.open-holds }}")
+        release = steps[-1]
+        self.assertIn("wing-commander-fold-queue-release", release["uses"])
+        self.assertEqual(release["if"], "always()")
+        self.assertIn("steps.fold-lock.outputs.token", release["with"]["token"])
+        self.assertNotIn("concurrency", self.gate_job())
+
+    def test_the_hold_release_runs_only_under_its_ticket(self):
+        rel = job("release")
+        self.assertIn("release-turn", rel["needs"])
+        ctx = {"cancelled()": False, "needs.verify-image-prerequisites.result": "success",
+               "needs.resolve.result": "success", "needs.resolve.outputs.action": "proceed",
+               "needs.release-turn.result": "failure"}
+        self.assertFalse(evaluate_if(rel["if"], ctx))
+        ctx["needs.release-turn.result"] = "success"
+        self.assertTrue(evaluate_if(rel["if"], ctx))
+        turn = job("release-turn")
+        self.assertNotIn("concurrency", turn)
+        self.assertTrue(any("wing-commander-fold-queue-admit" in str(s.get("uses")) for s in turn["steps"]))
+        last = rel["steps"][-1]
+        self.assertIn("wing-commander-fold-queue-release", last["uses"])
+        self.assertEqual(last["if"], "always()")
 
 
 class ReleaseSteps(unittest.TestCase):
@@ -115,6 +162,20 @@ class ReleaseSteps(unittest.TestCase):
         return self.run_step("Explain an answer the release did not apply",
                              {"ACTION": "drop" if drop_outcome else "proceed", "FOLD_ID": "fa",
                               "DROP_OUTCOME": drop_outcome})
+
+    def test_a_ticket_the_release_could_not_take_is_explained_and_the_hold_stays_open(self):
+        cancelled = job("release-cancelled")
+        ctx = {"always()": True, "needs.verify-image-prerequisites.result": "success",
+               "needs.resolve.result": "success", "needs.release-turn.result": "failure",
+               "needs.release.result": "skipped"}
+        self.assertTrue(evaluate_if(cancelled["if"], ctx))
+        proc = self.run_step("Say the cancelled release left the hold open",
+                             {"ACTION": "proceed", "FOLD_ID": "fa", "TURN": "failure"},
+                             job_name="release-cancelled")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        text = self.posted_text()
+        self.assertIn("could not take the lifecycle's fold-queue ticket", text)
+        self.assertIn("The hold is still open", text)
 
     def test_the_answered_hold_still_open_passes_the_recheck(self):
         proc, text = self.recheck([hold("fa", "2026-01-01T00:00:00Z")])
@@ -180,7 +241,8 @@ class ReleaseSteps(unittest.TestCase):
         self.assertIn("needs.release.result == 'cancelled'", cond)
         self.assertTrue(cond.startswith("always()"), cond)
         proc = self.run_step("Say the cancelled release left the hold open",
-                             {"ACTION": "proceed", "FOLD_ID": "fa"}, job_name="release-cancelled")
+                             {"ACTION": "proceed", "FOLD_ID": "fa", "TURN": "success"},
+                             job_name="release-cancelled")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("`fa`", self.posted_text())
         self.assertIn("still open", self.posted_text())

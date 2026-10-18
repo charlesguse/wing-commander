@@ -22,6 +22,14 @@ A composite never invokes the agent (`verify-actions-layer-invariants.py`), so t
 
 The deciding job reads the open holds first with `wing-commander-fold-open-holds`, which takes `issue`, `github-token` (the App token) and `bot-login`, and outputs `open-holds`. While any fold hold other than this fold's own is open, a `dispatch` or `skipped` becomes `blocked`. An empty `open-holds` means the read never ran or failed. It holds the fold as `analyze-failed`, never dispatches past a hold it could not see. Every caller wires the read into the decide step in the same job (Gate 166).
 
+**The per-lifecycle fold lock.** Each deciding job reads the open holds, and posts a hold or dispatches, while it holds the spec's fold-queue ticket (spec 074's ledger, `wing-commander-fold-queue-admit`, kind `dispatch`). The ledger grants one ticket per spec at a time, so lifecycle-review-gate's `fold-decide`, pr-conversation's `dispatch-once` and the hold release never read the holds while another of them is posting a hold or dispatching.
+- pr-conversation already holds its dispatch ticket from `fold-turn-dispatch` through `dispatch-once`.
+- `fold-decide` takes its own ticket before the read. It still has no concurrency group, so the wait cannot cancel a committed fold's dispatch the way a group's pending slot would.
+- `fold-hold.yml` takes its ticket in `release-turn`, a job with no concurrency group, before `release` enters the per-spec group. A ticket waited for inside that group could deadlock against the ticket holder's own grouped job.
+- Each deciding job releases its ticket last with `if: always()`. `release-cancelled` abandons the ticket of a `release` GitHub cancelled while it was pending.
+- A ticket that cannot be taken (the admit's wait timed out) never dispatches blind. In `fold-decide` the holds stay unread, so the fold holds as `analyze-failed`. In the release, `release` does not run, and `release-cancelled` tells the owner the answer was not applied and the hold is still open.
+- Gate 166 holds the lock in every caller, and Gate 128 holds every ticket job free of a concurrency group.
+
 `wing-commander-fold-analyze` itself takes no credential input: it runs no agent and reads no issue.
 
 ## Outputs

@@ -1631,14 +1631,19 @@ jobs:
   fold-decide:
     needs: [select, disposition, fold-analyze]
     if: "!cancelled() && needs.disposition.result == 'success' && needs.disposition.outputs.folded == 'true'"
-    # No job-level concurrency group: this job pushes nothing (Gate 80
-    # holds pushers only), and GitHub cancels an older pending run of a
-    # group when newer ones queue even with cancel-in-progress false, which
-    # would drop a committed fold's dispatch. The workflow-level group
-    # above already serializes this workflow's runs.
+    # No job-level concurrency group: this job pushes nothing to the spec
+    # branch (Gate 80 holds pushers only), and GitHub cancels an older
+    # pending run of a group when newer ones queue even with
+    # cancel-in-progress false, which would drop a committed fold's
+    # dispatch. The workflow-level group above already serializes this
+    # workflow's runs. Against pr-conversation's dispatch-once and the hold
+    # release, it serializes through the fold-queue ticket it takes below
+    # instead, which waits rather than cancels.
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # The fold-queue ticket: wing-commander-fold-queue-admit/-release
+      # write the ledger branch under github.token.
+      contents: write
       # Gate 12: wing-commander-fold-dispatch's `gh workflow run`/`gh run
       # list` calls (T038) run under github.token (dispatch-token) -- the
       # App installation carries no Actions permission at all (docs/setup.md,
@@ -1702,11 +1707,29 @@ jobs:
           intended-turns: 12
           run-label: fold-analyze
 
+      # The per-lifecycle fold lock (the owner's decision on C5 of #1062's
+      # pass-8 review): every job that reads the open fold holds and then
+      # posts a hold or dispatches holds the spec's fold-queue ticket while
+      # it does (spec 074's ledger -- see fold-queue-ledger.sh), so neither
+      # this job, pr-conversation's dispatch-once nor the hold release can
+      # dispatch while another is posting a hold. The ticket waits, it never
+      # cancels. A ticket this job cannot take leaves the holds unread
+      # below, and the decide step holds the fold rather than dispatch
+      # blind.
+      - name: Take the lifecycle's fold-queue ticket
+        id: fold-lock
+        continue-on-error: true
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-fold-queue-admit
+        with:
+          spec-dir: ${{ needs.select.outputs.spec-dir }}
+          kind: dispatch
+
       # An open fold hold on the lifecycle blocks this fold's dispatch
       # (decision `blocked`); a read that fails leaves open-holds empty, and
       # the decide step holds the fold as analyze-failed.
       - name: Read the open fold holds
         id: open-holds
+        if: steps.fold-lock.outcome == 'success'
         continue-on-error: true
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-fold-open-holds
         with:
@@ -1785,6 +1808,20 @@ jobs:
           spec-branch: ${{ needs.disposition.outputs.spec-branch }}
           implement-workflow: wing-commander-5-implement.yml
           folded-json: ${{ needs.disposition.outputs.folded-json }}
+
+      # contracts/wing-commander-fold-queue-release.md's step placement:
+      # always(), last. A ticket the admit step never had granted (it timed
+      # out, or the job was cancelled mid-wait) is abandoned wherever it
+      # sits rather than released from the head.
+      - name: Release the lifecycle's fold-queue ticket
+        if: always()
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-fold-queue-release
+        with:
+          spec-dir: ${{ needs.select.outputs.spec-dir }}
+          token: ${{ steps.fold-lock.outputs.token || format('run-{0}-dispatch', github.run_id) }}
+          round: ${{ steps.fold-lock.outputs.round }}
+          outcome: not-folded
+          best-effort: ${{ steps.fold-lock.outcome != 'success' }}
 
   # contracts/lifecycle-review-gate-workflow.md job 6/T025: posts the
   # round's outcome to the lifecycle issue -- round number, head SHA,

@@ -54,6 +54,15 @@ and pr-conversation (the published caller)
 replies on the PR when its fold is held or blocked, as it does when one
 dispatches.
 
+Every deciding job reads the open holds, and a release re-reads its hold,
+while it holds the spec's fold-queue ticket (the owner's decision on C5 of
+#1062's pass-8 review), so no caller dispatches while another is posting a
+hold. The ticket is taken either in the job itself, which then has no
+concurrency group and gates each read on the admit step's success, or in a
+job it `needs:` and whose success its `if:` requires; the deciding job
+releases it last with `always()`. A ticket that cannot be taken leaves the
+holds unread, which holds the fold, or skips the release.
+
 The hold release (fold-hold.yml) is a workflow_call-only reusable
 workflow, and its wrapper only delegates to it: only the release's
 resolved marker closes a hold, so an adopter without it would never close
@@ -112,6 +121,8 @@ ANALYZE = "wing-commander-fold-analyze"
 DISPATCH = "wing-commander-fold-dispatch"
 OPEN_HOLDS = "wing-commander-fold-open-holds"
 REFRESH = "wing-commander-refresh-remote"
+ADMIT = "wing-commander-fold-queue-admit"
+TICKET_RELEASE = "wing-commander-fold-queue-release"
 AGENT = "claude-code-action"
 MODEL = "claude-sonnet-5-5"
 READ_ONLY_TOOLS = {"Read", "Grep", "Glob"}
@@ -292,6 +303,59 @@ def check_caller(path, jobs, preceding):
     return failures
 
 
+def check_fold_lock(path, doc):
+    """The deciding job reads the open holds (and a release re-reads its
+    hold) only under the spec's fold-queue ticket, and releases it last."""
+    jobs = doc.get("jobs") or {}
+    name = next((n for n, j in jobs.items()
+                 if any(ANALYZE in _uses(s) and _mode(s) == "decide" for s in (j or {}).get("steps") or [])),
+                None)
+    if name is None:
+        return []
+    job = jobs[name]
+    steps = job.get("steps") or []
+    reads = [(i, s) for i, s in enumerate(steps)
+             if OPEN_HOLDS in _uses(s) or "wc_fold_hold.py resolve" in str(s.get("run") or "")]
+    failures = []
+    admits = [(i, s) for i, s in enumerate(steps) if ADMIT in _uses(s) and s.get("id")]
+    job_if = " ".join(str(job.get("if") or "").split())
+    needs = job.get("needs") or []
+    needs = [needs] if isinstance(needs, str) else list(needs)
+    turns = [n for n in needs
+             if any(ADMIT in _uses(s) and not s.get("continue-on-error")
+                    for s in (jobs.get(n) or {}).get("steps") or [])
+             and f"needs.{n}.result == 'success'" in job_if]
+    ticket_refs = [f"needs.{n}.outputs.token" for n in turns]
+    if admits:
+        if job.get("concurrency") is not None:
+            failures.append(f"{path}: {name!r} waits for the fold-queue ticket inside its own "
+                            f"concurrency group -- the ticket's holder can never enter the "
+                            f"group to release it.")
+        for i, s in reads:
+            gated = any(a < i and f"steps.{a_step['id']}.outcome == 'success'" in str(s.get("if") or "")
+                        for a, a_step in admits)
+            if not gated:
+                failures.append(f"{path}: {name!r} step {s.get('name')!r} reads the open fold "
+                                f"holds without requiring the fold-queue ticket step's success -- "
+                                f"it would decide past a hold another caller is posting.")
+        ticket_refs += [f"steps.{a['id']}.outputs.token" for _i, a in admits]
+    elif not turns:
+        failures.append(f"{path}: {name!r} reads the open fold holds holding no fold-queue "
+                        f"ticket (no {ADMIT} step in it, and no job it needs, and requires the "
+                        f"success of, takes one) -- it can dispatch while another caller is "
+                        f"posting a hold.")
+    last_read = max((i for i, _s in reads), default=-1)
+    released = any(TICKET_RELEASE in _uses(s) and i > last_read
+                   and str(s.get("if") or "").strip() == "always()"
+                   and any(r in str((s.get("with") or {}).get("token") or "") for r in ticket_refs)
+                   for i, s in enumerate(steps))
+    if (admits or turns) and not released:
+        failures.append(f"{path}: {name!r} does not release its fold-queue ticket with an "
+                        f"`if: always()` {TICKET_RELEASE} step after it reads the holds -- "
+                        f"the ticket would wedge every later fold on the spec.")
+    return failures
+
+
 def check_agent_job(path, name, job):
     """The analyze agent's job is read-only: `contents: read` and no write
     scope (the owner's decision on finding 15 of #1062's review), so the
@@ -387,6 +451,7 @@ def check_all():
             failures.append(f"{path}: no steps found for job(s) {missing!r}.")
             continue
         failures += check_caller(path, jobs, preceding)
+        failures += check_fold_lock(path, _load(path))
     failures += check_comment_homes(_caller_texts())
     failures += check_release_published(_load(RELEASE), _load(RELEASE_WRAPPER))
     return failures
@@ -631,6 +696,45 @@ def self_test():
             fn(step(unauth, lambda st: REFRESH in _uses(st)))
         case(f"a release that authenticates its remote {label} is caught",
              rel_caught(unauth, "private repository"))
+
+    # The fold lock (C5 of #1062's pass-8 review), mutated in each shape.
+    def lock_caught(path, fn, word):
+        doc = copy.deepcopy(_load(path))
+        fn(doc["jobs"])
+        return any(word in f for f in check_fold_lock(path, doc))
+
+    gate_path, pub_path_, rel_path_ = (c[0] for c in CALLERS)
+
+    def unlock_reader(jobs):
+        for st in jobs["fold-decide"]["steps"]:
+            if OPEN_HOLDS in _uses(st):
+                st.pop("if", None)
+    case("a holds read not gated on the ticket's success is caught",
+         lock_caught(gate_path, unlock_reader, "without requiring"))
+
+    def no_admit(jobs):
+        jobs["fold-decide"]["steps"] = [st for st in jobs["fold-decide"]["steps"] if ADMIT not in _uses(st)]
+    case("a deciding job that takes no ticket is caught", lock_caught(gate_path, no_admit, "no fold-queue"))
+
+    def grouped(jobs):
+        jobs["fold-decide"]["concurrency"] = {"group": "wing-commander-x"}
+    case("a ticket taken inside a concurrency group is caught", lock_caught(gate_path, grouped, "own"))
+
+    def unreleased(jobs):
+        for st in jobs["fold-decide"]["steps"]:
+            if TICKET_RELEASE in _uses(st):
+                st["if"] = "success()"
+    case("a ticket not released with always() is caught", lock_caught(gate_path, unreleased, "wedge"))
+
+    def ungated_release(jobs):
+        jobs["release"]["if"] = jobs["release"]["if"].replace("needs.release-turn.result == 'success'", "true")
+    case("a release that does not require its ticket job's success is caught",
+         lock_caught(rel_path_, ungated_release, "no fold-queue"))
+
+    def unticketed_dispatch(jobs):
+        jobs["dispatch-once"]["needs"] = [n for n in jobs["dispatch-once"]["needs"] if n != "fold-turn-dispatch"]
+    case("pr-conversation's dispatch-once without its ticket job is caught",
+         lock_caught(pub_path_, unticketed_dispatch, "no fold-queue"))
 
     texts = _caller_texts()
     pasted = dict(texts)
