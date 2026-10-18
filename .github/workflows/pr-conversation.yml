@@ -3184,6 +3184,10 @@ jobs:
       # specs/116: fold-analyze checks out the same pipeline commit without
       # an OIDC grant of its own (it runs read-only).
       pipeline-ref: ${{ steps.pipeline-ref.outputs.ref }}
+      # The per-lifecycle fold lock -- see the step that takes it below.
+      holds-lock: ${{ steps.holds-lock.outcome }}
+      holds-token: ${{ steps.holds-lock.outputs.token }}
+      holds-round: ${{ steps.holds-lock.outputs.round }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -3340,6 +3344,25 @@ jobs:
       # dispatch-kind ticket this job enqueued/requeued. Same deterministic-
       # token + best-effort/abandon approach as fold-turn-act's matching
       # step above (the ticket may be mid-requeue, not at the queue head).
+      # The per-lifecycle fold lock -- see lifecycle-review-gate.yml's "Take
+      # the lifecycle's fold-holds ticket". A winning claim's dispatch-once
+      # reads the open fold holds, then posts a hold or dispatches, so this
+      # run holds the spec's `fold-holds` ticket from here until
+      # dispatch-once's last step releases it. It is taken in this job,
+      # which has no concurrency group, after the spec's own dispatch
+      # ticket: every holder of both takes them in that order. A ticket this
+      # job cannot take leaves dispatch-once's holds read skipped, and its
+      # decide step holds the fold.
+      - name: Take the lifecycle's fold-holds ticket
+        id: holds-lock
+        if: steps.claim.outputs.should-dispatch == 'true'
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-admit
+        with:
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          queue: fold-holds
+          kind: dispatch
+
       - name: Abandon this run's dispatch-kind ticket if this job failed or was cancelled
         if: failure() || cancelled()
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
@@ -3347,6 +3370,17 @@ jobs:
           spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
           token: run-${{ github.run_id }}-dispatch
           round: ${{ steps.admit.outputs.round }}
+          outcome: error
+          best-effort: "true"
+
+      - name: Abandon this run's fold-holds ticket if this job failed or was cancelled
+        if: failure() || cancelled()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
+        with:
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          queue: fold-holds
+          token: run-${{ github.run_id }}-dispatch
+          round: ${{ steps.holds-lock.outputs.round }}
           outcome: error
           best-effort: "true"
 
@@ -3729,7 +3763,7 @@ jobs:
       # lifecycle-review-gate.yml's "Read the open fold holds".
       - name: Read the open fold holds
         id: open-holds
-        if: needs.fold-turn-dispatch.outputs.should-dispatch == 'true'
+        if: needs.fold-turn-dispatch.outputs.should-dispatch == 'true' && needs.fold-turn-dispatch.outputs.holds-lock == 'success'
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-open-holds
         with:
@@ -4047,6 +4081,19 @@ jobs:
           token: ${{ needs.fold-turn-dispatch.outputs.implement-token }}
           round: ${{ needs.fold-turn-dispatch.outputs.round }}
           outcome: error
+
+      # The fold-holds ticket fold-turn-dispatch took for this job's holds
+      # read and the post or dispatch after it: always(), last. Empty when
+      # it was never taken (no winning claim, or the admit gave up).
+      - name: Release this run's fold-holds ticket
+        if: always()
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
+        with:
+          spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
+          queue: fold-holds
+          token: ${{ needs.fold-turn-dispatch.outputs.holds-token }}
+          round: ${{ needs.fold-turn-dispatch.outputs.holds-round }}
+          outcome: not-folded
 
   # research.md D6/contracts/fold-dispatch-once.md: cross-references this
   # run's own GitHub-set job `conclusion`s against git-history fold

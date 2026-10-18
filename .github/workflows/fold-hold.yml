@@ -529,9 +529,9 @@ jobs:
           exit 1
 
   # The per-lifecycle fold lock -- see lifecycle-review-gate.yml's "Take
-  # the lifecycle's fold-queue ticket". `release` re-reads the hold, and on
+  # the lifecycle's fold-holds ticket". `release` re-reads the hold, and on
   # a retry the other open holds, then posts a hold or dispatches, so it
-  # holds the spec's fold-queue ticket throughout. The ticket is taken
+  # holds the spec's fold-holds ticket throughout. The ticket is taken
   # here, in a job with no concurrency group, never inside `release`'s:
   # a job waiting for a ticket inside the group would block the ticket
   # holder's own next job from entering it (fold-queue-ledger.sh).
@@ -577,18 +577,20 @@ jobs:
           path: .wing-commander-pipeline
           persist-credentials: false
 
-      - name: Take the lifecycle's fold-queue ticket
+      - name: Take the lifecycle's fold-holds ticket
         id: admit
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-admit
         with:
           spec-dir: ${{ needs.resolve.outputs.spec-dir }}
+          queue: fold-holds
           kind: dispatch
 
-      - name: Abandon this answer's fold-queue ticket if this job failed or was cancelled
+      - name: Abandon this answer's fold-holds ticket if this job failed or was cancelled
         if: failure() || cancelled()
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
         with:
           spec-dir: ${{ needs.resolve.outputs.spec-dir }}
+          queue: fold-holds
           token: run-${{ github.run_id }}-dispatch
           round: ${{ steps.admit.outputs.round }}
           outcome: error
@@ -948,11 +950,12 @@ jobs:
 
       # contracts/wing-commander-fold-queue-release.md's step placement:
       # always(), last.
-      - name: Release this answer's fold-queue ticket
+      - name: Release this answer's fold-holds ticket
         if: always()
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
         with:
           spec-dir: ${{ needs.resolve.outputs.spec-dir }}
+          queue: fold-holds
           token: ${{ needs.release-turn.outputs.token }}
           round: ${{ needs.release-turn.outputs.round }}
           outcome: not-folded
@@ -962,7 +965,7 @@ jobs:
   # waited behind the spec's other writers can be dropped before it ran.
   # Its hold is still open (only `release` writes the resolved marker), so
   # the owner is told to answer again rather than left with a cancelled run.
-  # The same holds when `release-turn` could not take the fold-queue ticket:
+  # The same holds when `release-turn` could not take the fold-holds ticket:
   # the answer is not applied blind, and the owner answers again.
   release-cancelled:
     needs: [verify-image-prerequisites, resolve, release-turn, release]
@@ -993,7 +996,34 @@ jobs:
       # Abandoning the ticket a cancelled `release` never released.
       contents: write
     steps:
+      - name: Checkout pipeline repository (shared composite actions)
+        if: needs.release.result == 'cancelled'
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ needs.resolve.outputs.pipeline-ref }}
+          token: ${{ secrets.pipeline-repo-token || github.token }}
+          path: .wing-commander-pipeline
+          persist-credentials: false
+
+      # A `release` cancelled while pending never ran its own release step,
+      # so the ticket `release-turn` took would sit granted at the queue
+      # head until the stale-ticket reclaim: abandon it here, before the
+      # comment below, so a failed comment cannot skip it.
+      - name: Abandon the cancelled release's fold-holds ticket
+        if: needs.release.result == 'cancelled'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
+        with:
+          spec-dir: ${{ needs.resolve.outputs.spec-dir }}
+          queue: fold-holds
+          token: ${{ needs.release-turn.outputs.token }}
+          round: ${{ needs.release-turn.outputs.round }}
+          outcome: error
+          best-effort: "true"
+
+      # !cancelled(): a failed abandon above still tells the owner.
       - name: Say the cancelled release left the hold open
+        if: "!cancelled()"
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ inputs.issue }}
@@ -1007,30 +1037,7 @@ jobs:
             printf 'The release for this `/fold-hold %s` on `%s` was cancelled before it recorded the hold as released, so the hold is still open. Answer again if it still needs an answer.' \
               "$ACTION" "$FOLD_ID" > "$body"
           else
-            printf 'This `/fold-hold %s` on `%s` was not applied: the release could not take the lifecycle'"'"'s fold-queue ticket, so it neither re-read the holds nor dispatched. The hold is still open; answer again.' \
+            printf 'This `/fold-hold %s` on `%s` was not applied: the release could not take the lifecycle'"'"'s fold-holds ticket, so it neither re-read the holds nor dispatched. The hold is still open; answer again.' \
               "$ACTION" "$FOLD_ID" > "$body"
           fi
           gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body-file "$body"
-
-      - name: Checkout pipeline repository (shared composite actions)
-        if: needs.release.result == 'cancelled'
-        uses: actions/checkout@v5
-        with:
-          repository: ${{ inputs.pipeline-repo }}
-          ref: ${{ needs.resolve.outputs.pipeline-ref }}
-          token: ${{ secrets.pipeline-repo-token || github.token }}
-          path: .wing-commander-pipeline
-          persist-credentials: false
-
-      # A `release` cancelled while pending never ran its own release step,
-      # so the ticket `release-turn` took would sit granted at the queue
-      # head until the stale-ticket reclaim: abandon it here.
-      - name: Abandon the cancelled release's fold-queue ticket
-        if: needs.release.result == 'cancelled'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release
-        with:
-          spec-dir: ${{ needs.resolve.outputs.spec-dir }}
-          token: ${{ needs.release-turn.outputs.token }}
-          round: ${{ needs.release-turn.outputs.round }}
-          outcome: error
-          best-effort: "true"

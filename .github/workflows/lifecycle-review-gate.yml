@@ -1637,11 +1637,11 @@ jobs:
     # cancel-in-progress false, which would drop a committed fold's
     # dispatch. The workflow-level group above already serializes this
     # workflow's runs. Against pr-conversation's dispatch-once and the hold
-    # release, it serializes through the fold-queue ticket it takes below
+    # release, it serializes through the fold-holds ticket it takes below
     # instead, which waits rather than cancels.
     runs-on: ubuntu-latest
     permissions:
-      # The fold-queue ticket: wing-commander-fold-queue-admit/-release
+      # The fold-holds ticket: wing-commander-fold-queue-admit/-release
       # write the ledger branch under github.token.
       contents: write
       # Gate 12: wing-commander-fold-dispatch's `gh workflow run`/`gh run
@@ -1709,19 +1709,22 @@ jobs:
 
       # The per-lifecycle fold lock (the owner's decision on C5 of #1062's
       # pass-8 review): every job that reads the open fold holds and then
-      # posts a hold or dispatches holds the spec's fold-queue ticket while
-      # it does (spec 074's ledger -- see fold-queue-ledger.sh), so neither
-      # this job, pr-conversation's dispatch-once nor the hold release can
-      # dispatch while another is posting a hold. The ticket waits, it never
-      # cancels. A ticket this job cannot take leaves the holds unread
-      # below, and the decide step holds the fold rather than dispatch
-      # blind.
-      - name: Take the lifecycle's fold-queue ticket
+      # posts a hold or dispatches holds a ticket on the spec's `fold-holds`
+      # side queue while it does (spec 074's ledger -- see
+      # fold-queue-ledger.sh's LEDGER_QUEUE), so neither this job,
+      # pr-conversation's dispatch-once nor the hold release can dispatch
+      # while another is posting a hold. The side queue never waits behind
+      # an implement cycle or changes how the spec's rounds open, and the
+      # ticket waits, it never cancels. A ticket this job cannot take
+      # leaves the holds unread below, and the decide step holds the fold
+      # rather than dispatch blind.
+      - name: Take the lifecycle's fold-holds ticket
         id: fold-lock
         continue-on-error: true
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-fold-queue-admit
         with:
           spec-dir: ${{ needs.select.outputs.spec-dir }}
+          queue: fold-holds
           kind: dispatch
 
       # An open fold hold on the lifecycle blocks this fold's dispatch
@@ -1813,11 +1816,12 @@ jobs:
       # always(), last. A ticket the admit step never had granted (it timed
       # out, or the job was cancelled mid-wait) is abandoned wherever it
       # sits rather than released from the head.
-      - name: Release the lifecycle's fold-queue ticket
+      - name: Release the lifecycle's fold-holds ticket
         if: always()
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-fold-queue-release
         with:
           spec-dir: ${{ needs.select.outputs.spec-dir }}
+          queue: fold-holds
           token: ${{ steps.fold-lock.outputs.token || format('run-{0}-dispatch', github.run_id) }}
           round: ${{ steps.fold-lock.outputs.round }}
           outcome: not-folded

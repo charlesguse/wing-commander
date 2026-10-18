@@ -109,6 +109,65 @@ class FoldLock(unittest.TestCase):
         self.assertEqual(last["if"], "always()")
 
 
+class FoldLockLedger(unittest.TestCase):
+    """The fold lock's tickets live on the spec's `fold-holds` side queue
+    (fold-queue-ledger.sh's LEDGER_QUEUE), run here against a throwaway
+    bare remote: they neither wait behind the spec's implement-kind ticket
+    nor stop a new act-kind ticket from opening a round."""
+    LEDGER = os.path.join(ROOT, ".github", "actions", "_shared", "fold-queue-ledger.sh")
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.remote = os.path.join(self.tmp, "remote.git")
+        subprocess.run(["git", "init", "-q", "--bare", self.remote], check=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def ledger(self, transform, **env):
+        full = dict(os.environ, LEDGER_REMOTE_URL=self.remote, GH_TOKEN="x", GITHUB_REPOSITORY="x/x",
+                    RUNNER_TEMP=self.tmp, SPEC_DIR="specs/001-x", GIT_AUTHOR_NAME="t",
+                    GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t", **env)
+        proc = subprocess.run(["bash", self.LEDGER, transform], env=full, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
+
+    def test_a_lock_ticket_is_granted_past_a_held_implement_ticket(self):
+        # pr-conversation's implement cycle holds the spec's queue head.
+        self.assertEqual(self.ledger("enqueue", KIND="implement", RUN_ID="1")["granted"], "true")
+        lock = self.ledger("enqueue", KIND="dispatch", RUN_ID="2", LEDGER_QUEUE="fold-holds")
+        self.assertEqual(lock["granted"], "true")
+
+    def test_a_held_lock_ticket_leaves_the_next_act_ticket_a_fresh_round(self):
+        first = self.ledger("enqueue", KIND="act", RUN_ID="1")
+        self.ledger("release", TOKEN=first["token"], RUN_ID="1", OUTCOME="not-folded")
+        self.ledger("enqueue", KIND="dispatch", RUN_ID="2", LEDGER_QUEUE="fold-holds")
+        second = self.ledger("enqueue", KIND="act", RUN_ID="3")
+        self.assertEqual((second["round"], second["granted"]), (str(int(first["round"]) + 1), "true"))
+
+    def test_a_second_lock_ticket_waits_for_the_first(self):
+        self.ledger("enqueue", KIND="dispatch", RUN_ID="2", LEDGER_QUEUE="fold-holds")
+        waiting = self.ledger("enqueue", KIND="dispatch", RUN_ID="3", LEDGER_QUEUE="fold-holds")
+        self.assertEqual(waiting["granted"], "false")
+        self.ledger("release", TOKEN="run-2-dispatch", RUN_ID="2", OUTCOME="not-folded",
+                    LEDGER_QUEUE="fold-holds")
+        peek = self.ledger("peek", PEEK_TOKEN="run-3-dispatch", LEDGER_QUEUE="fold-holds")
+        self.assertEqual(peek["granted"], "true")
+
+    def test_every_lock_call_names_the_fold_holds_queue(self):
+        for wf, jobs in (("lifecycle-review-gate.yml", ("fold-decide",)),
+                         ("fold-hold.yml", ("release-turn", "release", "release-cancelled")),
+                         ("pr-conversation.yml", ("fold-turn-dispatch", "dispatch-once"))):
+            with open(os.path.join(ROOT, ".github", "workflows", wf), encoding="utf-8") as fh:
+                doc = yaml.safe_load(fh)
+            for name in jobs:
+                locks = [st for st in doc["jobs"][name]["steps"]
+                         if "fold-holds ticket" in str(st.get("name", ""))]
+                self.assertTrue(locks, (wf, name))
+                for st in locks:
+                    self.assertEqual(st["with"]["queue"], "fold-holds", (wf, name, st["name"]))
+
+
 class ReleaseSteps(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -174,8 +233,16 @@ class ReleaseSteps(unittest.TestCase):
                              job_name="release-cancelled")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         text = self.posted_text()
-        self.assertIn("could not take the lifecycle's fold-queue ticket", text)
+        self.assertIn("could not take the lifecycle's fold-holds ticket", text)
         self.assertIn("The hold is still open", text)
+
+    def test_a_failed_comment_cannot_skip_abandoning_a_cancelled_releases_ticket(self):
+        steps = job("release-cancelled")["steps"]
+        names = [st["name"] for st in steps]
+        abandon = names.index("Abandon the cancelled release's fold-holds ticket")
+        say = names.index("Say the cancelled release left the hold open")
+        self.assertLess(abandon, say)
+        self.assertIn("!cancelled()", steps[say]["if"])
 
     def test_the_answered_hold_still_open_passes_the_recheck(self):
         proc, text = self.recheck([hold("fa", "2026-01-01T00:00:00Z")])
