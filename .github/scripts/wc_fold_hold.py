@@ -41,6 +41,7 @@ CLI:
                                [state flags]
   wc_fold_hold.py open-holds --comments FILE --bot-login L [--except-fold-id ID]
   wc_fold_hold.py drop-tasks --spec-dir D --fold-ref-before B --fold-ref-after A
+                             [--folded-json J]
   wc_fold_hold.py --self-test
 """
 import argparse
@@ -282,39 +283,78 @@ def _load_decide():
     return module
 
 
-def drop_tasks(spec_dir, before, after, cwd):
+def _fold_patches(spec_dir, before, after, folded_json, cwd):
+    """(patch, -U0 patch, tasks.md before it) for each change a `drop`
+    reverses, newest first: each fold commit's own tasks.md diff when the
+    folded-json names the fold commits (decide.fold_commits), so no other
+    tasks.md edit between them is reversed (the owner's decision on C6 of
+    #1062's pass-8 review); else the before..after range of a single fold."""
+    path = "{0}/tasks.md".format(spec_dir.rstrip("/"))
+    try:
+        commits = _load_decide().fold_commits(folded_json)
+    except ValueError as exc:
+        raise SystemExit("wc_fold_hold: {0}".format(exc))
+    if commits:
+        # Newest first, so each reversal applies to the file as the later
+        # folds left it. No context: a fold commit's own context lines are
+        # what the edits made after it (a tick, a hand edit) change.
+        ranges = [("{0}^".format(sha), sha) for sha in
+                  git(["rev-list", "--no-walk"] + commits, cwd).split()]
+        context = ["-U0"]
+    else:
+        ranges = [(before, after)]
+        context = []
+    out = []
+    for old, new in ranges:
+        patch = git(["diff", "--no-color"] + context + [old, new, "--", path], cwd)
+        if patch.strip():
+            out.append((patch, git(["diff", "--no-color", "-U0", old, new, "--", path], cwd),
+                        git(["show", "{0}:{1}".format(old, path)], cwd).split("\n")))
+    return path, out
+
+
+def drop_tasks(spec_dir, before, after, cwd, folded_json=""):
     """Reverse the fold's own change to tasks.md in the working tree (the
     `drop` answer). Fails, changing nothing, when tasks.md has since moved
-    in a way the reversal no longer applies to. A tick in the same range
-    (pr-conversation scopes it from classify's base SHA) is kept."""
-    path = "{0}/tasks.md".format(spec_dir.rstrip("/"))
-    patch = git(["diff", "--no-color", before, after, "--", path], cwd)
-    if not patch.strip():
+    in a way the reversal no longer applies to. A tick in the reversed
+    change (a range can carry an implement cycle's) is kept."""
+    path, patches = _fold_patches(spec_dir, before, after, folded_json, cwd)
+    if not patches:
         return False
-    ticks = _ticks(git(["diff", "--no-color", "-U0", before, after, "--", path], cwd),
-                   git(["show", "{0}:{1}".format(before, path)], cwd).split("\n"))
-    with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as fh:
-        fh.write(patch)
-        patch_path = fh.name
-    # --unidiff-zero: without it git anchors a hunk with no context on one
-    # side to that end of the file, so the fold section stops reversing as
-    # soon as a later fold (one this hold blocked) is appended after it. The
-    # context lines the patch does carry are still matched.
+    full = os.path.join(cwd, path)
+    with open(full, encoding="utf-8") as fh:
+        original = fh.read()
     try:
-        git(["apply", "--reverse", "--unidiff-zero", "--check", patch_path], cwd)
-        git(["apply", "--reverse", "--unidiff-zero", patch_path], cwd)
-    finally:
-        os.unlink(patch_path)
-    if ticks:
-        full = os.path.join(cwd, path)
-        with open(full, encoding="utf-8") as fh:
-            lines = fh.read().split("\n")
-        for old, new, n in ticks:
-            found = [i for i, line in enumerate(lines) if line == old]
-            if len(found) > n:
-                lines[found[n]] = new
+        for patch, zero, before_lines in patches:
+            ticks = _ticks(zero, before_lines)
+            with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as fh:
+                fh.write(patch)
+                patch_path = fh.name
+            # --unidiff-zero: without it git anchors a hunk with no context
+            # on one side to that end of the file, so the fold section stops
+            # reversing as soon as a later fold (one this hold blocked) is
+            # appended after it. The context lines the patch does carry are
+            # still matched.
+            try:
+                git(["apply", "--reverse", "--unidiff-zero", "--check", patch_path], cwd)
+                git(["apply", "--reverse", "--unidiff-zero", patch_path], cwd)
+            finally:
+                os.unlink(patch_path)
+            if ticks:
+                with open(full, encoding="utf-8") as fh:
+                    lines = fh.read().split("\n")
+                for old, new, n in ticks:
+                    found = [i for i, line in enumerate(lines) if line == old]
+                    if len(found) > n:
+                        lines[found[n]] = new
+                with open(full, "w", encoding="utf-8") as fh:
+                    fh.write("\n".join(lines))
+    except SystemExit:
+        # One fold's reversal no longer applies: leave tasks.md as it was,
+        # not half-dropped.
         with open(full, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines))
+            fh.write(original)
+        raise
     return True
 
 
@@ -547,6 +587,8 @@ def main(argv=None):
     dt.add_argument("--spec-dir", required=True)
     dt.add_argument("--fold-ref-before", required=True)
     dt.add_argument("--fold-ref-after", required=True)
+    dt.add_argument("--folded-json", default="",
+                    help="the hold state's folded_json: its commit_sha entries scope the drop")
     a = ap.parse_args(argv)
 
     if a.cmd == "state":
@@ -568,7 +610,8 @@ def main(argv=None):
         with open(a.comments, encoding="utf-8") as fh:
             print(",".join(other_open_holds(json.load(fh), a.bot_login, a.except_fold_id)))
     elif a.cmd == "drop-tasks":
-        changed = drop_tasks(a.spec_dir, a.fold_ref_before, a.fold_ref_after, os.getcwd())
+        changed = drop_tasks(a.spec_dir, a.fold_ref_before, a.fold_ref_after, os.getcwd(),
+                             a.folded_json)
         print("dropped" if changed else "nothing-to-drop")
     else:
         with open(a.comments, encoding="utf-8") as fh:

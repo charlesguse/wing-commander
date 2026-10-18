@@ -220,43 +220,60 @@ class ReleaseSteps(unittest.TestCase):
         self.git("commit", "-q", "-m", name)
         return self.git("rev-parse", "HEAD")
 
-    def earliest_base(self, base, commits):
-        with open(os.path.join(ROOT, ".github", "workflows", "pr-conversation.yml"), encoding="utf-8") as fh:
-            steps = yaml.safe_load(fh)["jobs"]["fold-analyze"]["steps"]
-        run = next(s for s in steps if s.get("id") == "analyze-base")["run"]
-        out = os.path.join(self.tmp, "github-output")
-        open(out, "w").close()
-        env = dict(os.environ, GITHUB_OUTPUT=out, BASE_SHA=base, ROUND_FOLDED_JSON=json.dumps(
-            [{"id": "r/{0}".format(i), "summary": "s", "commit_sha": c} for i, c in enumerate(commits)]))
-        proc = subprocess.run(["bash", "-e", "-c", run], cwd=self.tmp, env=env,
-                              capture_output=True, text=True)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        with open(out, encoding="utf-8") as fh:
-            return fh.read().strip().split("=", 1)[1]
+    def tasks_commit(self, text):
+        os.makedirs(os.path.join(self.tmp, "specs", "001-x"), exist_ok=True)
+        with open(os.path.join(self.tmp, "specs", "001-x", "tasks.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "c")
+        return self.git("rev-parse", "HEAD")
 
-    def test_the_analyzed_range_starts_before_the_rounds_earliest_fold(self):
-        self.git("init", "-q")
-        root = self.commit("root")
-        fold_a = self.commit("fold-a")
-        base_b = self.commit("unrelated")
-        fold_b = self.commit("fold-b")
-        # Run B's classify read base_b, after run A's fold landed: A's fold
-        # is analyzed too, from its parent.
-        self.assertEqual(self.earliest_base(base_b, [fold_a, fold_b]), root)
-        # Folds all after base-sha leave it alone.
-        self.assertEqual(self.earliest_base(base_b, [fold_b]), base_b)
-        # A commit the fetch cannot see leaves base-sha.
-        self.assertEqual(self.earliest_base(base_b, ["0" * 40, ""]), base_b)
+    def test_a_drop_reverses_only_the_fold_commits_own_diffs(self):
+        # The owner's decision on C6 of #1062's pass-8 review: a hand edit
+        # (T002) and an implement tick (T001) between two fold commits stay.
+        self.git("init", "-q", "-b", "main")
+        base = self.tasks_commit("# Tasks\n\n- [ ] T001\n")
+        fold_a = self.tasks_commit("# Tasks\n\n- [ ] T001\n\n## Fold A\n\n- [ ] Review finding: a\n")
+        self.tasks_commit("# Tasks\n\n- [X] T001\n- [ ] T002 hand edit\n\n## Fold A\n\n"
+                          "- [ ] Review finding: a\n")
+        fold_b = self.tasks_commit("# Tasks\n\n- [X] T001\n- [ ] T002 hand edit\n\n## Fold A\n\n"
+                                   "- [ ] Review finding: a\n\n## Fold B\n\n- [ ] Review finding: b\n")
+        folded = json.dumps([{"id": "r/1", "summary": "s", "commit_sha": fold_a},
+                             {"id": "r/2", "summary": "s", "commit_sha": fold_b}])
+        self.assertTrue(wc_fold_hold.drop_tasks("specs/001-x", base, fold_b, self.tmp, folded))
+        with open(os.path.join(self.tmp, "specs", "001-x", "tasks.md"), encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "# Tasks\n\n- [X] T001\n- [ ] T002 hand edit\n")
 
-    def test_the_stage_and_the_hold_state_use_that_range(self):
+    def test_a_drop_that_no_longer_applies_leaves_tasks_md_as_it_was(self):
+        self.git("init", "-q", "-b", "main")
+        self.tasks_commit("# Tasks\n")
+        fold_a = self.tasks_commit("# Tasks\n\n## Fold A\n\n- [ ] a\n")
+        fold_b = self.tasks_commit("# Tasks\n\n## Fold A\n\n- [ ] a\n\n## Fold B\n\n- [ ] b\n")
+        edited = "# Tasks\n\n## Fold A\n\n- [ ] a, since reworded\n\n## Fold B\n\n- [ ] b\n"
+        self.tasks_commit(edited)
+        folded = json.dumps([{"id": "r/1", "summary": "s", "commit_sha": fold_a},
+                             {"id": "r/2", "summary": "s", "commit_sha": fold_b}])
+        with self.assertRaises(SystemExit):
+            wc_fold_hold.drop_tasks("specs/001-x", "", "", self.tmp, folded)
+        with open(os.path.join(self.tmp, "specs", "001-x", "tasks.md"), encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), edited)
+
+    def test_the_drop_step_passes_the_hold_states_fold_commits(self):
+        drop = release_step("Drop the held fold's tasks")
+        self.assertIn("needs.resolve.outputs.folded-json", drop["env"]["FOLDED_JSON"])
+        self.assertIn('--folded-json "$FOLDED_JSON"', drop["run"])
+
+    def test_the_stage_and_the_hold_state_carry_the_rounds_fold_commits(self):
         with open(os.path.join(ROOT, ".github", "workflows", "pr-conversation.yml"), encoding="utf-8") as fh:
             jobs = yaml.safe_load(fh)["jobs"]
         stage = next(s for s in jobs["fold-analyze"]["steps"] if s.get("id") == "analyze-stage")
-        self.assertIn("steps.analyze-base.outputs.before", stage["with"]["fold-ref-before"])
+        self.assertIn("round-folded-json", stage["with"]["folded-json"])
+        self.assertIn("round-folded-json", jobs["fold-turn-dispatch"]["outputs"]["round-folded-json"].replace(
+            "steps.round-folded.outputs.json", "round-folded-json"))
+        mapped = next(s for s in jobs["fold-turn-dispatch"]["steps"] if s.get("id") == "round-folded")
+        self.assertIn("commit_sha", mapped["run"])
         post = next(s for s in jobs["dispatch-once"]["steps"] if s.get("id") == "analyze-post")
-        self.assertIn("needs.fold-analyze.outputs.fold-ref-before", post["env"]["FOLD_BEFORE"])
-        self.assertIn('--fold-ref-before "$FOLD_BEFORE"', post["run"])
-
+        self.assertIn('--folded-json "${ROUND_FOLDED_JSON:-$FOLDED_JSON}"', post["run"])
 
 if __name__ == "__main__":
     unittest.main()

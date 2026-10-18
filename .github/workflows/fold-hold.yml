@@ -664,12 +664,16 @@ jobs:
           SPEC_BRANCH: ${{ needs.resolve.outputs.spec-branch }}
           FOLD_BEFORE: ${{ needs.resolve.outputs.fold-ref-before }}
           FOLD_AFTER: ${{ needs.resolve.outputs.fold-ref-after }}
+          FOLDED_JSON: ${{ needs.resolve.outputs.folded-json }}
           FOLD_ID: ${{ needs.resolve.outputs.fold-id }}
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -euo pipefail
+          # The fold commits' own tasks.md diffs when the hold state names
+          # them, never another tasks.md edit in the range (wc_fold_hold.py).
           result="$(python3 .wing-commander-pipeline/.github/scripts/wc_fold_hold.py drop-tasks \
-            --spec-dir "$SPEC_DIR" --fold-ref-before "$FOLD_BEFORE" --fold-ref-after "$FOLD_AFTER")"
+            --spec-dir "$SPEC_DIR" --fold-ref-before "$FOLD_BEFORE" --fold-ref-after "$FOLD_AFTER" \
+            --folded-json "$FOLDED_JSON")"
           if [ "$result" = "dropped" ]; then
             git config user.name "$BOT_LOGIN"
             git config user.email "${BOT_LOGIN}@users.noreply.github.com"

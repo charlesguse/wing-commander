@@ -35,7 +35,7 @@ inputs:
     required: false
     default: ""
   fold-ref-before:
-    description: Tip before the fold commit; scopes the fold section (mode stage).
+    description: Tip before the fold commit; scopes the fold section when no folded-json entry carries a commit_sha (mode stage).
     required: false
     default: ""
   fold-ref-after:
@@ -43,7 +43,7 @@ inputs:
     required: false
     default: ""
   folded-json:
-    description: "[{id, summary}] from fold-commit or fold-evidence (mode stage)."
+    description: "[{id, summary, commit_sha?}] from fold-commit, fold-evidence or the round's folded items (mode stage). Entries with a commit_sha are scoped to that commit's own tasks.md diff."
     required: false
     default: "[]"
   fold-id:
@@ -122,7 +122,20 @@ runs:
         section=/tmp/wing-commander/fold-analyze-section.md
         : > "$section"
         tasks=0
-        if [ -n "$fold_id" ] && [ -n "$BEFORE" ] && [ -n "$AFTER" ] && [ "$BEFORE" != "$AFTER" ]; then
+        # Each fold commit's own tasks.md diff when folded-json names them
+        # (decide.py fold_commits): any other tasks.md edit between the
+        # folds is neither analyzed nor, on a `drop`, reversed. A fold
+        # commit this checkout cannot read fails the step, and the decide
+        # mode then holds the fold as analyze-failed.
+        commits="$(python3 -I "$GITHUB_ACTION_PATH/decide.py" --fold-commits <<<"$FOLDED_JSON")"
+        if [ -n "$fold_id" ] && [ -n "$commits" ]; then
+          while IFS= read -r sha; do
+            git cat-file -e "${sha}^{commit}"
+            git show --no-color -U0 --format= "$sha" -- "$SPEC_DIR/tasks.md" \
+              | python3 -I "$GITHUB_ACTION_PATH/decide.py" --section >> "$section"
+          done <<<"$commits"
+          tasks="$(grep -cE '^- \[[ xX]\] ' "$section" || true)"
+        elif [ -n "$fold_id" ] && [ -n "$BEFORE" ] && [ -n "$AFTER" ] && [ "$BEFORE" != "$AFTER" ]; then
           git diff --no-color -U0 "$BEFORE" "$AFTER" -- "$SPEC_DIR/tasks.md" \
             | python3 -I "$GITHUB_ACTION_PATH/decide.py" --section > "$section"
           tasks="$(grep -cE '^- \[[ xX]\] ' "$section" || true)"

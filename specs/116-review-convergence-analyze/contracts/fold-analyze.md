@@ -11,9 +11,9 @@ A composite never invokes the agent (`verify-actions-layer-invariants.py`), so t
 | mode | both | yes | `stage` \| `decide` |
 | spec-dir | stage | yes | e.g. `specs/116-review-convergence-analyze` |
 | project | stage | no | the lifecycle's project folder (spec 114); empty for the root |
-| fold-ref-before | stage | yes | tip before the fold commit (scopes the fold section); for a round of several runs' folds, the parent of its earliest fold commit |
+| fold-ref-before | stage | yes | tip before the fold commit; scopes the fold section only when no folded-json entry carries a `commit_sha` (a single fold commit) |
 | fold-ref-after | stage | yes | tip after the fold commit |
-| folded-json | stage | yes | `[{id, summary}]` from fold-commit/fold-evidence |
+| folded-json | stage | yes | `[{id, summary, commit_sha?}]` from fold-commit/fold-evidence, or the round's folded items (pr-conversation, each with its fold's `commit_sha`). When entries carry a `commit_sha`, the section is each of those commits' own tasks.md diff (`git show <sha> -- tasks.md`), so no other tasks.md edit between them is analyzed; a commit the checkout cannot read fails the stage, which holds as `analyze-failed` |
 | fold-id, tasks | decide | yes | the stage mode's outputs |
 | agent-outcome | decide | yes | the caller's agent step `outcome` |
 | agent-verdict | decide | yes | `wing-commander-agent-verdict`'s verdict for that step |
@@ -54,6 +54,8 @@ The question opens with `<!-- wing-commander-fold-hold: fold=<id> -->`; the call
 | analyze-failed | `proceed`, `retry` (re-run the check; it posts a fresh outcome) |
 
 The hold-release stage `fold-hold.yml` (`on: workflow_call` only; this repository's wrapper `wing-commander-fold-hold.yml` owns the `issue_comment` trigger and passes `issue`, `body` and `actor-association`) resolves the answer through `wc_fold_hold.py resolve` and records a released hold with a `wing-commander-fold-hold-resolved` marker, so a hold is released once. An answer addresses the newest open hold. Its release re-reads the holds inside the per-spec concurrency group. While another hold is still open, the release records its own hold as resolved and dispatches nothing; the release that answers the last open hold dispatches implement.
+
+A `drop` reverses only what the fold added: each fold commit's own tasks.md diff when the hold state's `folded_json` names them, else the `fold_ref_before..fold_ref_after` range of a single fold commit. A tasks.md edit made between the fold commits is never reversed, and an implement tick inside a reversed range is kept. If one reversal no longer applies, tasks.md is left as it was and the hold stays open. The hold state's `fold_ref_before` is pr-conversation's classify base SHA.
 
 A `drop` answer also dismisses the fold's findings. The lifecycle gate's hold state carries them as `fingerprints` on each `folded_json` entry (`post-outcome --fold-fingerprints`), and its later rounds read every App-authored `drop` resolved marker into the convergence ledger's dismissed list (contracts/convergence-signals.md): the reviewer raising one again is neither a recurrence nor re-folded. Any other answer dismisses nothing.
 

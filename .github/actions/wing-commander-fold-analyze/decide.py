@@ -11,6 +11,7 @@ question.md (empty when not applicable).
     decide.py --fold-id ID [--tasks N] [--open-holds none|IDS]
               [--execution-output FILE | --input FILE | --failed] [--out-dir DIR]
     decide.py --section < tasks.md.diff   (the fold's added lines, ticks left out)
+    decide.py --fold-commits < folded.json  (the fold commits' SHAs, one per line)
 
 `hold` iff a finding has category == constitution-conflict, or the check
 failed or its output does not match the schema. Otherwise `dispatch`.
@@ -71,6 +72,33 @@ def fold_section(patch):
     for minus, plus in hunks(patch):
         gone = set(untick(line) for line in minus)
         out.extend(line for line in plus if untick(line) not in gone)
+    return out
+
+
+SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def fold_commits(folded_json):
+    """The fold commits a folded-json names (each entry's `commit_sha`), in
+    order, once each. The analyze check and a `drop` read each one's own
+    tasks.md diff (`git show <sha>`), never a range: a range also carries
+    any other tasks.md edit made between the folds (the owner's decision on
+    C6 of #1062's pass-8 review). [] when no entry carries one (a
+    single-commit fold, scoped by its refs). A malformed SHA raises: the
+    entries are the App's own, so it means the input is not what it seems."""
+    try:
+        entries = json.loads(folded_json or "[]")
+    except ValueError:
+        raise ValueError("folded-json is not JSON")
+    out = []
+    for entry in entries if isinstance(entries, list) else []:
+        sha = entry.get("commit_sha") if isinstance(entry, dict) else None
+        if not sha:
+            continue
+        if not isinstance(sha, str) or not SHA_RE.match(sha):
+            raise ValueError("folded-json carries a malformed commit_sha")
+        if sha not in out:
+            out.append(sha)
     return out
 
 
@@ -203,6 +231,15 @@ def main(argv=None):
         # The stage step's scoping: a `git diff -U0` on stdin.
         for line in fold_section(sys.stdin.read()):
             print(line)
+        return 0
+    if argv == ["--fold-commits"]:
+        try:
+            shas = fold_commits(sys.stdin.read())
+        except ValueError as exc:
+            print("decide.py: {0}".format(exc), file=sys.stderr)
+            return 1
+        for sha in shas:
+            print(sha)
         return 0
     ap = argparse.ArgumentParser()
     ap.add_argument("--fold-id", required=True)

@@ -206,6 +206,41 @@ class CompositeShellTests(unittest.TestCase):
         self.assertNotIn("T00", section)
         self.assertIn("+ quoted diff line", section)
 
+    def test_stage_reads_only_the_fold_commits_own_diffs(self):
+        # The owner's decision on C6 of #1062's pass-8 review: a hand edit
+        # to tasks.md between two of the round's fold commits (T002) is not
+        # part of the staged section, and another run's fold committed
+        # before base-sha still is.
+        self.git("init", "-q", "-b", "main")
+        before = self.commit_tasks("# Tasks\n\n- [ ] T001\n")
+        fold_a = self.commit_tasks("# Tasks\n\n- [ ] T001\n\n## Fold A\n\n- [ ] Review finding: a\n")
+        base_sha = self.commit_tasks("# Tasks\n\n- [X] T001\n- [ ] T002 hand edit\n\n## Fold A\n\n"
+                                     "- [ ] Review finding: a\n")
+        fold_b = self.commit_tasks("# Tasks\n\n- [X] T001\n- [ ] T002 hand edit\n\n## Fold A\n\n"
+                                   "- [ ] Review finding: a\n\n## Fold B\n\n- [ ] Review finding: b\n")
+        folded = json.dumps([{"id": "r/1", "summary": "s", "commit_sha": fold_a},
+                             {"id": "r/2", "summary": "s", "commit_sha": fold_b}])
+        proc, out = self.stage(before, fold_b, folded)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        with open(out["section-file"], encoding="utf-8") as fh:
+            section = fh.read()
+        self.assertEqual(out["tasks"], "2", section)
+        self.assertIn("Review finding: a", section)
+        self.assertIn("Review finding: b", section)
+        self.assertNotIn("T002", section)
+        # base-sha alone as the lower ref still reaches fold A by its commit.
+        self.assertEqual(self.stage(base_sha, fold_b, folded)[1]["tasks"], "2")
+
+    def test_stage_fails_on_a_fold_commit_it_cannot_read(self):
+        self.git("init", "-q", "-b", "main")
+        before = self.commit_tasks("# Tasks\n")
+        after = self.commit_tasks("# Tasks\n\n## Fold\n\n- [ ] a\n")
+        for sha in ("0" * 40, "--output=x"):
+            proc, out = self.stage(before, after, json.dumps([{"id": "r/1", "summary": "s",
+                                                                "commit_sha": sha}]))
+            self.assertNotEqual(proc.returncode, 0, sha)
+            self.assertNotIn("tasks", out)
+
     def test_stage_with_no_new_tasks_is_zero(self):
         self.git("init", "-q", "-b", "main")
         before = self.commit_tasks("# Tasks\n")
