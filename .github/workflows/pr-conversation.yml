@@ -3328,7 +3328,7 @@ jobs:
           FOLDED_ITEMS: ${{ steps.claim.outputs.folded-items }}
         run: |
           set -euo pipefail
-          json="$(printf '%s' "$FOLDED_ITEMS" | jq -c '[.[] | {id: (.run_id + "/" + .leg_id), summary: .summary}]')"
+          json="$(printf '%s' "$FOLDED_ITEMS" | jq -c '[.[] | {id: (.run_id + "/" + .leg_id), summary: .summary, commit_sha: (.commit_sha // "")}]')"
           echo "json=$json" >> "$GITHUB_OUTPUT"
 
       # specs/074-serialized-fold-dispatch T064 (maintainer review of #821,
@@ -3390,6 +3390,7 @@ jobs:
     outputs:
       fold-id: ${{ steps.analyze-stage.outputs.fold-id }}
       tip: ${{ steps.analyze-tip.outputs.tip }}
+      fold-ref-before: ${{ steps.analyze-base.outputs.before }}
       tasks: ${{ steps.analyze-stage.outputs.tasks }}
       agent-outcome: ${{ steps.analyze-agent.outcome }}
     steps:
@@ -3434,6 +3435,30 @@ jobs:
           git checkout --detach FETCH_HEAD
           echo "tip=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      # The round's folds can include another run's, committed before this
+      # run's classify read base-sha (its dispatch job started late, and
+      # this run won the claim). The analyzed range starts at the parent
+      # of the round's earliest fold commit, so none of them goes
+      # unchecked; a commit the fetch cannot see leaves base-sha.
+      - name: Find the round's earliest fold base
+        id: analyze-base
+        if: steps.analyze-tip.outcome == 'success'
+        shell: bash
+        env:
+          BASE_SHA: ${{ needs.classify-and-announce.outputs.base-sha }}
+          ROUND_FOLDED_JSON: ${{ needs.fold-turn-dispatch.outputs.round-folded-json }}
+        run: |
+          set -euo pipefail
+          before="$BASE_SHA"
+          while IFS= read -r sha; do
+            parent="$(git rev-parse --verify --quiet "${sha}^" 2>/dev/null || true)"
+            if [ -n "$parent" ] && [ "$parent" != "$before" ] \
+               && git merge-base --is-ancestor "$parent" "$before" 2>/dev/null; then
+              before="$parent"
+            fi
+          done < <(printf '%s' "${ROUND_FOLDED_JSON:-[]}" | jq -r '.[]? | .commit_sha // empty')
+          echo "before=$before" >> "$GITHUB_OUTPUT"
+
       # The composite stages and decides; the read-only agent runs in this
       # job, since a composite never invokes the agent -- see
       # lifecycle-review-gate.yml's "Stage this round's fold for the analyze
@@ -3447,7 +3472,7 @@ jobs:
           mode: stage
           spec-dir: ${{ needs.classify-and-announce.outputs.spec-dir }}
           project: ${{ needs.classify-and-announce.outputs.project }}
-          fold-ref-before: ${{ needs.classify-and-announce.outputs.base-sha }}
+          fold-ref-before: ${{ steps.analyze-base.outputs.before || needs.classify-and-announce.outputs.base-sha }}
           fold-ref-after: ${{ steps.analyze-tip.outputs.tip }}
           folded-json: ${{ needs.fold-turn-dispatch.outputs.round-folded-json || needs.fold-turn-dispatch.outputs.folded-json }}
 
@@ -3768,6 +3793,7 @@ jobs:
           SPEC_DIR: ${{ needs.classify-and-announce.outputs.spec-dir }}
           SPEC_BRANCH: ${{ inputs.spec-prefix }}${{ needs.classify-and-announce.outputs.slug }}
           BASE_SHA: ${{ needs.classify-and-announce.outputs.base-sha }}
+          FOLD_BEFORE: ${{ needs.fold-analyze.outputs.fold-ref-before || needs.classify-and-announce.outputs.base-sha }}
           FOLD_AFTER: ${{ needs.fold-analyze.outputs.tip || needs.fold-turn-dispatch.outputs.tip-sha }}
           FOLDED_JSON: ${{ needs.fold-turn-dispatch.outputs.folded-json }}
           ROUND_FOLDED_JSON: ${{ needs.fold-turn-dispatch.outputs.round-folded-json }}
@@ -3779,7 +3805,7 @@ jobs:
             --decision "$DECISION" --hold-reason "$HOLD_REASON" \
             --report-file "$REPORT_FILE" --question-file "$QUESTION_FILE" \
             --fold-id "$FOLD_ID" --spec-dir "$SPEC_DIR" --spec-branch "$SPEC_BRANCH" \
-            --base-sha "$BASE_SHA" --fold-ref-before "$BASE_SHA" --fold-ref-after "$FOLD_AFTER" \
+            --base-sha "$BASE_SHA" --fold-ref-before "$FOLD_BEFORE" --fold-ref-after "$FOLD_AFTER" \
             --folded-json "${ROUND_FOLDED_JSON:-$FOLDED_JSON}" --implement-workflow "$IMPLEMENT_WORKFLOW"
 
       # !cancelled(): a failed outcome post or log upload above must not

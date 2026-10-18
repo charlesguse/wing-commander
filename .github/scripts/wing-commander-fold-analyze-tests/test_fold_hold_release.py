@@ -159,5 +159,56 @@ class ReleaseSteps(unittest.TestCase):
         self.assertNotIn("The owner question is on #7", text)
 
 
+    def git(self, *args):
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t",
+                               "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"]
+                              + list(args), cwd=self.tmp, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def commit(self, name):
+        with open(os.path.join(self.tmp, name), "w", encoding="utf-8") as fh:
+            fh.write(name)
+        self.git("add", name)
+        self.git("commit", "-q", "-m", name)
+        return self.git("rev-parse", "HEAD")
+
+    def earliest_base(self, base, commits):
+        with open(os.path.join(ROOT, ".github", "workflows", "pr-conversation.yml"), encoding="utf-8") as fh:
+            steps = yaml.safe_load(fh)["jobs"]["fold-analyze"]["steps"]
+        run = next(s for s in steps if s.get("id") == "analyze-base")["run"]
+        out = os.path.join(self.tmp, "github-output")
+        open(out, "w").close()
+        env = dict(os.environ, GITHUB_OUTPUT=out, BASE_SHA=base, ROUND_FOLDED_JSON=json.dumps(
+            [{"id": "r/{0}".format(i), "summary": "s", "commit_sha": c} for i, c in enumerate(commits)]))
+        proc = subprocess.run(["bash", "-e", "-c", run], cwd=self.tmp, env=env,
+                              capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        with open(out, encoding="utf-8") as fh:
+            return fh.read().strip().split("=", 1)[1]
+
+    def test_the_analyzed_range_starts_before_the_rounds_earliest_fold(self):
+        self.git("init", "-q")
+        root = self.commit("root")
+        fold_a = self.commit("fold-a")
+        base_b = self.commit("unrelated")
+        fold_b = self.commit("fold-b")
+        # Run B's classify read base_b, after run A's fold landed: A's fold
+        # is analyzed too, from its parent.
+        self.assertEqual(self.earliest_base(base_b, [fold_a, fold_b]), root)
+        # Folds all after base-sha leave it alone.
+        self.assertEqual(self.earliest_base(base_b, [fold_b]), base_b)
+        # A commit the fetch cannot see leaves base-sha.
+        self.assertEqual(self.earliest_base(base_b, ["0" * 40, ""]), base_b)
+
+    def test_the_stage_and_the_hold_state_use_that_range(self):
+        with open(os.path.join(ROOT, ".github", "workflows", "pr-conversation.yml"), encoding="utf-8") as fh:
+            jobs = yaml.safe_load(fh)["jobs"]
+        stage = next(s for s in jobs["fold-analyze"]["steps"] if s.get("id") == "analyze-stage")
+        self.assertIn("steps.analyze-base.outputs.before", stage["with"]["fold-ref-before"])
+        post = next(s for s in jobs["dispatch-once"]["steps"] if s.get("id") == "analyze-post")
+        self.assertIn("needs.fold-analyze.outputs.fold-ref-before", post["env"]["FOLD_BEFORE"])
+        self.assertIn('--fold-ref-before "$FOLD_BEFORE"', post["run"])
+
+
 if __name__ == "__main__":
     unittest.main()

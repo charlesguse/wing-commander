@@ -11,7 +11,7 @@ A composite never invokes the agent (`verify-actions-layer-invariants.py`), so t
 | mode | both | yes | `stage` \| `decide` |
 | spec-dir | stage | yes | e.g. `specs/116-review-convergence-analyze` |
 | project | stage | no | the lifecycle's project folder (spec 114); empty for the root |
-| fold-ref-before | stage | yes | tip before the fold commit (scopes the fold section) |
+| fold-ref-before | stage | yes | tip before the fold commit (scopes the fold section); for a round of several runs' folds, the parent of its earliest fold commit |
 | fold-ref-after | stage | yes | tip after the fold commit |
 | folded-json | stage | yes | `[{id, summary}]` from fold-commit/fold-evidence |
 | fold-id, tasks | decide | yes | the stage mode's outputs |
