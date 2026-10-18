@@ -7,3 +7,8 @@
 - [ ] T010 Run the gate suite and fix the fallout
 - [ ] T011 Run the full gate suite on `.github/scripts/x.py`
 - [ ] T012 Run the gate suite, then fix fallout
+- [ ] Complete every remaining unchecked task in tasks.md
+- [ ] M002 Complete every remaining unchecked task in this spec's `tasks.md`
+- [ ] T013 [P] Keep the gates green
+- [ ] T014a Keep the gates green
+- [ ] T015 [P] [US1] Run the gate suite locally

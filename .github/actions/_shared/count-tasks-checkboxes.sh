@@ -66,10 +66,22 @@ fi
 counts="$(printf '%s\n' "$content" | awk '
   # Line classes, first match wins (specs/117 data-model.md): standing
   # instruction, then maintainer task, then implementation task.
-  function is_standing(line,    t) {
-    t = tolower(line)
+  # The leading tag run both classes skip: the checkbox, an optional
+  # T###/M### id (suffix letter allowed, T012a), then bracket tags ([P],
+  # [US1], [maintainer], ...). One home, so the two classes can never
+  # disagree about where the text of a line starts.
+  function strip_lead(line,    t) {
+    t = line
     sub(/^[ \t]*- \[[ xX]\][ \t]*/, "", t)
-    sub(/^[tm][0-9]+[ \t]*/, "", t)
+    sub(/^[TMtm][0-9]+[a-z]?([ \t]+|$)/, "", t)
+    while (match(t, /^\[[^]]*\]([ \t]+|$)/)) t = substr(t, RLENGTH + 1)
+    return t
+  }
+  function is_standing(line,    t) {
+    t = tolower(strip_lead(line))
+    # A reference to the task list itself ("in tasks.md", "in the
+    # `tasks.md`") names the list being worked, not a deliverable.
+    gsub(/(this spec'"'"'s |the )?`?tasks\.md`?/, "tasks", t)
     # Ambiguity counts as implementation for every prefix: a line that names a
     # deliverable (a backtick span, a path, or a "fix"/"add"/"create" verb
     # clause) is a real task even when it starts like a standing instruction.
@@ -95,13 +107,14 @@ counts="$(printf '%s\n' "$content" | awk '
     }
     return 0
   }
-  function is_maintainer(line,    t) {
-    # The token sits in the leading tag run: optional T###/M### id, then
-    # bracket tags ([P], [US1], ...), so a long id or several tags cannot
-    # push it out of range. Prose later in the line never matches.
+  function is_maintainer(line,    t, lead) {
+    # The token sits in the leading tag run (strip_lead), so a long id or
+    # several tags cannot push it out of range. Prose later in the line
+    # never matches.
     t = line
     sub(/^[ \t]*- \[[ xX]\][ \t]*/, "", t)
-    return (t ~ /^([TM][0-9]+[a-z]?[ \t]+)?(\[[^]]*\][ \t]+)*\[maintainer\]([ \t]|$)/)
+    lead = substr(t, 1, length(t) - length(strip_lead(line)))
+    return (lead ~ /\[maintainer\]([ \t]|$)/)
   }
   BEGIN {
     nf = split("complete every remaining unchecked task tasks item items in this the file list keep gates green after each cycle phase push pushing commit committing before locally throughout run full gate suite and ci on at all times still until done re read plan tasks", fw, " ")

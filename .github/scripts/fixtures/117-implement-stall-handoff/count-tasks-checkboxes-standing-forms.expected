@@ -1,5 +1,5 @@
 checked-count=0
-unchecked-count=9
+unchecked-count=14
 unchecked-items<<WING_COMMANDER_UNCHECKED_ITEMS_EOF
 - [ ] Complete every remaining unchecked task
 - [ ] M001 Complete every remaining unchecked task
@@ -10,10 +10,15 @@ unchecked-items<<WING_COMMANDER_UNCHECKED_ITEMS_EOF
 - [ ] T010 Run the gate suite and fix the fallout
 - [ ] T011 Run the full gate suite on `.github/scripts/x.py`
 - [ ] T012 Run the gate suite, then fix fallout
+- [ ] Complete every remaining unchecked task in tasks.md
+- [ ] M002 Complete every remaining unchecked task in this spec's `tasks.md`
+- [ ] T013 [P] Keep the gates green
+- [ ] T014a Keep the gates green
+- [ ] T015 [P] [US1] Run the gate suite locally
 WING_COMMANDER_UNCHECKED_ITEMS_EOF
 impl-checked-count=0
 impl-unchecked-count=3
-standing-count=6
+standing-count=11
 impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF
 - [ ] T010 Run the gate suite and fix the fallout
 - [ ] T011 Run the full gate suite on `.github/scripts/x.py`

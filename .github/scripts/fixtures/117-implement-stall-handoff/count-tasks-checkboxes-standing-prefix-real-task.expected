@@ -1,20 +1,24 @@
 checked-count=1
-unchecked-count=5
+unchecked-count=7
 unchecked-items<<WING_COMMANDER_UNCHECKED_ITEMS_EOF
 - [ ] Keep the gates green by fixing `verify-x.py`
 - [ ] After each cycle, update `.github/scripts/y.sh`
 - [ ] Complete every remaining step in docs/guide.md
 - [ ] Keep the gates green
 - [ ] Keep the gates green for the new parser
+- [ ] Complete every remaining step in docs/tasks.md
+- [ ] T016 [P] Keep the gates green for the new parser
 WING_COMMANDER_UNCHECKED_ITEMS_EOF
 impl-checked-count=0
-impl-unchecked-count=4
+impl-unchecked-count=6
 standing-count=1
 impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF
 - [ ] Keep the gates green by fixing `verify-x.py`
 - [ ] After each cycle, update `.github/scripts/y.sh`
 - [ ] Complete every remaining step in docs/guide.md
 - [ ] Keep the gates green for the new parser
+- [ ] Complete every remaining step in docs/tasks.md
+- [ ] T016 [P] Keep the gates green for the new parser
 WING_COMMANDER_IMPL_ITEMS_EOF
 maintainer-items<<WING_COMMANDER_MAINTAINER_ITEMS_EOF
 WING_COMMANDER_MAINTAINER_ITEMS_EOF

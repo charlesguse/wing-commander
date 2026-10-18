@@ -4,3 +4,5 @@
 - [x] Keep the gates green
 - [ ] Keep the gates green
 - [ ] Keep the gates green for the new parser
+- [ ] Complete every remaining step in docs/tasks.md
+- [ ] T016 [P] Keep the gates green for the new parser
