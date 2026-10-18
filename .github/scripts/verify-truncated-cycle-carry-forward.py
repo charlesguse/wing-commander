@@ -193,6 +193,15 @@ def checkbox_count_env(repo, ref):
     return checked, unchecked
 
 
+def impl_count_env(repo, ref):
+    """(impl-checked-count, impl-unchecked-count) from the same REAL shared
+    script, as the read-backs' IMPL_* env takes them (specs/117)."""
+    script = os.path.abspath(COUNT_TASKS_CHECKBOXES).replace("\\", "/")
+    proc = sh(f"cd '{repo}' && bash '{script}' '{ref}' '{SPEC_DIR}/tasks.md'", repo)
+    kv = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
+    return kv.get("impl-checked-count", "0"), kv.get("impl-unchecked-count", "0")
+
+
 def read_spec_meta_env(repo):
     """Stand in for the `Read spec-meta.json from the spec branch` composite
     step that precedes each read-back (#340): run the REAL shared script
@@ -257,7 +266,7 @@ def build_scenario(root, *, tick_task=False, outside_file=False, advance=True,
                     converge=False, iteration=ITERATION, base_checked=0,
                     base_unchecked=3, prior_iteration=PRIOR_ITERATION,
                     outside_author=None, outside_revert=False,
-                    import_main_commit=False):
+                    import_main_commit=False, tick_standing=False):
     """One synthetic cycle's history on top of a fresh base commit."""
     work, repo, base_sha, branch = make_workspace(
         root, base_checked, base_unchecked, prior_iteration)
@@ -267,6 +276,12 @@ def build_scenario(root, *, tick_task=False, outside_file=False, advance=True,
         unchecked = max(unchecked - 1, 0)
         write_file(repo, f"{SPEC_DIR}/tasks.md", _tasks_md(checked, unchecked))
         git_commit(repo, "implement: tick a task")
+    if tick_standing:
+        # A checked standing instruction: the raw checked count rises, the
+        # implementation count does not (specs/117 FR-003).
+        write_file(repo, f"{SPEC_DIR}/tasks.md",
+                   _tasks_md(checked, unchecked) + "- [x] Keep the gates green\n")
+        git_commit(repo, "implement: tick a standing instruction")
     if outside_file:
         write_file(repo, "src/feature.py", "feature\n")
         git_commit(repo, "implement: add feature file", author=outside_author)
@@ -309,8 +324,7 @@ git push -q -f origin '{branch}'
 
 def decide_env(checked_base, checked_tip, unchecked_tip):
     """The env the read-back steps now take from the blocker composite and the
-    classified counts (specs/117): these fixtures carry no [maintainer] or
-    standing lines, so the implementation counts equal the raw ones, and no
+    classified counts (specs/117), the counts from impl_count_env. No
     blocker was written."""
     return {"IMPL_CHECKED_BASE": checked_base, "IMPL_CHECKED_TIP": checked_tip,
             "IMPL_UNCHECKED_TIP": unchecked_tip, "MAX_ITERATIONS": "5",
@@ -333,7 +347,8 @@ def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
            "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
            "UNCHECKED_TIP": unchecked_tip}
     env.update(read_spec_meta_env(repo))
-    env.update(decide_env(checked_base, checked_tip, unchecked_tip))
+    env.update(decide_env(*impl_count_env(repo, base_sha)[:1],
+                          *impl_count_env(repo, f"origin/{SPEC_PREFIX}{SLUG}")))
     return run_step(BASH, steps[CYCLE_STEP], repo, env, runner_temp)
 
 
@@ -351,7 +366,8 @@ def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
            "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
            "UNCHECKED_TIP": unchecked_tip}
     env.update(read_spec_meta_env(repo))
-    env.update(decide_env(checked_base, checked_tip, unchecked_tip))
+    env.update(decide_env(*impl_count_env(repo, base_sha)[:1],
+                          *impl_count_env(repo, f"origin/{SPEC_PREFIX}{SLUG}")))
     return run_step(BASH, steps[RETRY_STEP], repo, env, runner_temp)
 
 
@@ -542,6 +558,11 @@ CYCLE_SCENARIOS = [
          tick_task=False, outside_file=False, advance=True, converge=False,
          verdict="exhausted", cycle_result="failure",
          expect=dict(ok="false", truncated="false", converged="")),
+    dict(name="2b: exhausted, only a standing instruction was ticked "
+              "(specs/117 FR-003: not progress)",
+         tick_task=False, tick_standing=True, outside_file=False, advance=True,
+         converge=False, verdict="exhausted", cycle_result="failure",
+         expect=dict(ok="false", truncated="false", converged="")),
     dict(name="3: exhausted, Arm-A-only progress",
          tick_task=True, outside_file=False, advance=True, converge=False,
          verdict="exhausted", cycle_result="failure",
@@ -608,6 +629,7 @@ def run_cycle_scenario(steps, scenario, root):
         outside_author=scenario.get("outside_author"),
         outside_revert=scenario.get("outside_revert", False),
         import_main_commit=scenario.get("import_main_commit", False),
+        tick_standing=scenario.get("tick_standing", False),
         advance=scenario["advance"], converge=scenario["converge"],
         base_checked=scenario.get("base_checked", 0),
         base_unchecked=scenario.get("base_unchecked", 3))

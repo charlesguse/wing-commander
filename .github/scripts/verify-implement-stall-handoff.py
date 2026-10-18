@@ -474,6 +474,12 @@ def check_implement_wiring():
         CASES += 1
         if impl.count(needle) < 2:
             fail(f"implement.yml: both read-back arms must use {needle}")
+    # FR-003: the truncated-cycle progress test (Arm A) counts
+    # implementation tasks only, in both arms.
+    CASES += 1
+    if (impl.count('"${IMPL_CHECKED_TIP:-0}" -gt "${IMPL_CHECKED_BASE:-0}"') < 2
+            or '"${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}"' in impl):
+        fail("implement.yml: Arm A must compare implementation checked counts in both arms")
     CASES += 1
     if "the cycle checked nothing new, so the loop is ending here" in impl:
         fail("implement.yml still carries the inline zero-progress hand-off rule")

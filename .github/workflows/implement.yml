@@ -1858,7 +1858,9 @@ jobs:
           if [ "$VERDICT" = "exhausted" ]; then
             if [ "$advanced" = "true" ]; then
               arm_a=false
-              if [ "${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}" ]; then
+              # Implementation tasks only (specs/117 FR-003): ticking a
+              # standing or [maintainer] line is not progress.
+              if [ "${IMPL_CHECKED_TIP:-0}" -gt "${IMPL_CHECKED_BASE:-0}" ]; then
                 arm_a=true
               fi
               arm_b=false
@@ -2765,7 +2767,9 @@ jobs:
           if [ "$VERDICT" = "exhausted" ]; then
             if [ "$advanced" = "true" ]; then
               arm_a=false
-              if [ "${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}" ]; then
+              # Implementation tasks only (specs/117 FR-003): ticking a
+              # standing or [maintainer] line is not progress.
+              if [ "${IMPL_CHECKED_TIP:-0}" -gt "${IMPL_CHECKED_BASE:-0}" ]; then
                 arm_a=true
               fi
               arm_b=false
