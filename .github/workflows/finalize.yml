@@ -1184,11 +1184,15 @@ jobs:
             # IMPL_COUNT counts implementation tasks only; when none are
             # left (only maintainer or routed work remains, or the render
             # step did not run) a "0 tasks remain" banner would be false.
+            # An empty report renders as "No manual work remains." below, so
+            # the banner must not point at remaining work that is not there.
             n="${IMPL_COUNT:-0}"
             if [ "$n" -gt 0 ] 2>/dev/null; then
               banner="⚠️ **Not fully converged — $n implementation task(s) remain**"
-            else
+            elif [ -n "$(tr -d '[:space:]' < "$remaining_file" 2>/dev/null)" ]; then
               banner="⚠️ **Not fully converged — see the remaining work below**"
+            else
+              banner="⚠️ **Not fully converged — implement handed off before confirming convergence, though tasks.md lists no remaining work**"
             fi
             {
               echo "$banner"
