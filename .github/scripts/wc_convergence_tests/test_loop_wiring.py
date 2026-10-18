@@ -150,7 +150,12 @@ class LifecyclePartition(LoopRepo):
         out = self.partition(2, self.h2, [f], [review(1, self.h1, [entry("F", "f.py", 4)], "t1")],
                              folded=[fingerprint(ISSUE, "F", "f.py")],
                              env={"SPEC_DIR": "specs/001-x"})
-        self.assertEqual((out["outcome"], out["recurrences"]), ("clean", ""))
+        # FR-003 (the owner's decision on C4 of #1062's pass-8 review): the
+        # fold's task is undone, so the round is not clean and posts no
+        # success status, yet nothing is folded again.
+        self.assertEqual((out["outcome"], out["recurrences"], out["fold-fingerprints"]),
+                         ("findings", "", ""))
+        self.assertEqual((out["findings-open"], out["pending-open"]), ("1", "1"))
         self.assertEqual(self.section(), "")
 
     def test_a_waiting_fold_re_raised_in_other_case_is_still_pending(self):
@@ -163,7 +168,38 @@ class LifecyclePartition(LoopRepo):
         out = self.partition(2, self.h2, [f], [review(1, self.h1, [entry("F", "f.py", 4)], "t1")],
                              folded=[fingerprint(ISSUE, "Fix the Parser.", "f.py")],
                              env={"SPEC_DIR": "specs/001-x"})
-        self.assertEqual((out["outcome"], out["recurrences"]), ("clean", ""))
+        self.assertEqual((out["outcome"], out["recurrences"], out["pending-open"]), ("findings", "", "1"))
+        self.assertEqual(self.section(), "")
+
+    def test_a_pending_fold_beside_a_fresh_finding_folds_only_the_fresh_one(self):
+        os.makedirs(os.path.join(self.repo, "specs", "001-x"))
+        with open(os.path.join(self.repo, "specs", "001-x", "tasks.md"), "w", encoding="utf-8") as fh:
+            fh.write("- [ ] Review finding: F\n")
+        out = self.partition(2, self.h2, [finding("F", "f.py", 4), finding("G", "f.py", 5)],
+                             [review(1, self.h1, [entry("F", "f.py", 4)], "t1")],
+                             folded=[fingerprint(ISSUE, "F", "f.py")],
+                             env={"SPEC_DIR": "specs/001-x"})
+        self.assertEqual((out["outcome"], out["findings-open"], out["pending-open"]), ("findings", "2", "1"))
+        self.assertEqual(out["fold-fingerprints"], fingerprint(ISSUE, "G", "f.py"))
+        self.assertNotIn("Review finding: F", self.section())
+
+    def test_a_pending_only_rounds_fold_and_success_status_steps_do_not_run(self):
+        # The empty section reaches fold-commit, whose empty path commits
+        # nothing (folded=false), so fold-analyze/fold-decide never run; the
+        # partition path's success status keys on `clean` only.
+        import yaml
+        with open(LIFECYCLE, encoding="utf-8") as fh:
+            jobs = yaml.safe_load(fh)["jobs"]
+        steps = {st.get("name"): st for st in jobs["disposition"]["steps"]}
+        self.assertIn("outputs.outcome == 'clean'",
+                      steps["Report a passing status on the reviewed head SHA (partition path)"]["if"])
+        for name in ("fold-analyze", "fold-decide"):
+            self.assertIn("needs.disposition.outputs.folded == 'true'", jobs[name]["if"])
+        commit = os.path.join(os.path.dirname(LIFECYCLE), "..", "actions", "wing-commander-fold-commit", "action.yml")
+        with open(commit, encoding="utf-8") as fh:
+            run = next(st for st in yaml.safe_load(fh)["runs"]["steps"] if st.get("id") == "fold")["run"]
+        self.assertIn('if [ ! -s "$SECTION_FILE" ]; then', run)
+        self.assertIn("folded=false", run.split('if [ ! -s "$SECTION_FILE" ]; then', 1)[1].split("fi", 1)[0])
 
     def test_a_dropped_folds_finding_raised_again_is_dismissed(self):
         # The owner answered `/fold-hold drop` on round 1's fold: F raised
@@ -233,7 +269,7 @@ class LifecyclePartition(LoopRepo):
 class LifecycleReport(LoopRepo):
     STEP = "Compose and post the round's outcome"
 
-    def post(self, analyze_decision, fold_decide_result="success"):
+    def post(self, analyze_decision, fold_decide_result="success", folded="true", pending_open="0"):
         bindir = os.path.join(self.tmp.name, "bin")
         os.makedirs(bindir, exist_ok=True)
         sent = os.path.join(self.tmp.name, "sent.txt")
@@ -248,7 +284,7 @@ class LifecycleReport(LoopRepo):
             "DISPOSITION_RESULT": "success", "DISPOSITION_OUTCOME": "findings",
             "FINDINGS_OPEN": "1", "FOLDED_FINGERPRINTS": "", "FILED_FINGERPRINTS": "",
             "CONVERGENCE_B64": "", "RECURRENCES": "", "ANALYZE_DECISION": analyze_decision,
-            "FOLD_DECIDE_RESULT": fold_decide_result,
+            "FOLD_DECIDE_RESULT": fold_decide_result, "FOLDED": folded, "PENDING_OPEN": pending_open,
             "COST_LINE": "", "PATH": bindir + os.pathsep + os.environ["PATH"]},
             path_prepend=bindir)
         with open(sent, encoding="utf-8") as fh:
@@ -265,6 +301,15 @@ class LifecycleReport(LoopRepo):
         self.assertNotIn("re-dispatched implement", body)
         self.assertIn("was not re-dispatched", body)
         self.assertNotIn("re-dispatched implement", self.post("", fold_decide_result="failure"))
+
+
+    def test_a_pending_only_round_says_nothing_was_folded_or_dispatched(self):
+        # FR-003 (C4 of #1062's pass-8 review): no fold, no dispatch, and
+        # the round stays open.
+        body = self.post("", fold_decide_result="skipped", folded="", pending_open="1")
+        self.assertNotIn("re-dispatched implement", body)
+        self.assertIn("still unchecked in tasks.md", body)
+        self.assertIn("nothing was folded again", body)
 
 
 class BoardRound(LoopRepo):
