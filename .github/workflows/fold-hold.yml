@@ -621,7 +621,13 @@ jobs:
             --github-output "$RUNNER_TEMP/fold-hold-recheck.out"
           if ! grep -qxF "action=$ACTION" "$RUNNER_TEMP/fold-hold-recheck.out" \
              || ! grep -qxF "fold-id=$FOLD_ID" "$RUNNER_TEMP/fold-hold-recheck.out"; then
-            echo "::error::the fold hold on \`$FOLD_ID\` was already released by an earlier answer; this \`/fold-hold $ACTION\` changes nothing."
+            # An earlier answer released it, or a newer hold was posted
+            # first and is now the one an answer addresses.
+            now="$(sed -n 's/^fold-id=//p' "$RUNNER_TEMP/fold-hold-recheck.out" | head -n 1)"
+            printf 'This `/fold-hold %s` was not applied: by the time it ran, the open hold it answered (`%s`) was %s. An answer addresses the newest open hold.' \
+              "$ACTION" "$FOLD_ID" "${now:+no longer the newest -- \`$now\` is}${now:-already released}" \
+              > "$RUNNER_TEMP/fold-hold-not-applied.md"
+            echo "::error::the fold hold on \`$FOLD_ID\` is no longer the open hold this answer addresses${now:+ (now \`$now\`)}; this \`/fold-hold $ACTION\` changes nothing."
             exit 1
           fi
           # Another open hold blocks the dispatch: this answer releases its
@@ -669,6 +675,29 @@ jobs:
             git push origin "HEAD:$SPEC_BRANCH"
           fi
           echo "result=$result" >> "$GITHUB_OUTPUT"
+
+      # A release that stopped before applying the answer says so on the
+      # issue: the hold is still open, and the owner would otherwise see
+      # only a red run.
+      - name: Explain an answer the release did not apply
+        if: "!cancelled() && (steps.recheck.outcome == 'failure' || steps.drop.outcome == 'failure')"
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ inputs.issue }}
+          ACTION: ${{ needs.resolve.outputs.action }}
+          FOLD_ID: ${{ needs.resolve.outputs.fold-id }}
+          DROP_OUTCOME: ${{ steps.drop.outcome }}
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/fold-hold-not-applied.md"
+          if [ "$DROP_OUTCOME" = "failure" ]; then
+            printf 'This `/fold-hold drop` was not applied: the fold section of `%s` could not be removed from tasks.md and pushed (tasks.md changed under it since the hold, or the push failed). The hold is still open: remove the tasks by hand and answer `/fold-hold proceed`, or answer again.' \
+              "$FOLD_ID" > "$body"
+          elif [ ! -s "$body" ]; then
+            printf 'This `/fold-hold %s` was not applied: the release could not re-read the hold on `%s`. The hold is still open; answer again.' \
+              "$ACTION" "$FOLD_ID" > "$body"
+          fi
+          gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body-file "$body"
 
       # A missing transcript leaves decide.py nothing to read:
       # analyze-failed, never a pass.

@@ -9,3 +9,4 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 python3 -I "$HERE/test_decide.py"
+python3 -I "$HERE/test_fold_hold_release.py"
