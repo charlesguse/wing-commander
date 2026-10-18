@@ -93,11 +93,13 @@ done <<<"$impl_items"
 # neutralise mentions, links, HTML, code spans and issue references.
 # Allow-list: anything but letters, digits, space and plain punctuation
 # becomes a space (drops emphasis, quotes-as-markup, leading >, autolink
-# characters), and bare "www." hosts lose their dot.
+# characters), bare "www." hosts lose their dot, and a GitHub "GH-123"
+# issue autolink loses its hyphen (after the allow-list, so a character it
+# blanks cannot open a new word boundary in front of one).
 # Done in jq with explicit ASCII ranges (not [:alnum:]) so the result does not
 # depend on the image locale, and the usable-text test runs on the sanitised
 # text that is actually emitted.
-detail="$(jq -r '.detail | gsub("[Ww][Ww][Ww]\\."; " ") | gsub("[^A-Za-z0-9 .,:;'"'"'-]"; " ") | . + "x"' "$BLOCKER")"
+detail="$(jq -r '.detail | gsub("[Ww][Ww][Ww]\\."; " ") | gsub("[^A-Za-z0-9 .,:;'"'"'-]"; " ") | gsub("\\b(?<g>[Gg][Hh])-(?=[0-9])"; "\(.g) ") | . + "x"' "$BLOCKER")"
 detail="${detail%x}"
 [[ "$detail" =~ [A-Za-z0-9] ]] || invalid "detail has no usable text after sanitising"
 
