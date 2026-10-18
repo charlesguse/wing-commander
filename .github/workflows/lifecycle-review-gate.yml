@@ -1345,7 +1345,7 @@ jobs:
           findings_open = len(new_folded) + len(pending_open)
           outcome = "findings" if new_folded or pending_open else "clean"
           if stop:
-              findings_open = len(in_scope_survivors)
+              findings_open = len(in_scope_survivors) + len(pending_open)
               outcome = "not-converging"
 
           outputs.append(("outcome", outcome))
@@ -1667,6 +1667,9 @@ jobs:
       # specs/116 FR-014: a held or blocked fold dispatched nothing, so
       # `report` must not say implement was re-dispatched.
       analyze-decision: ${{ steps.analyze-fold.outputs.decision }}
+      # A step after the dispatch can still fail the job, so `report` reads
+      # whether implement was dispatched from here, not from the result.
+      dispatched: ${{ steps.fold-dispatch.outputs.dispatched }}
     steps:
       - name: Checkout (trusted, default branch)
         uses: actions/checkout@v5
@@ -1813,6 +1816,7 @@ jobs:
       # (no workflow_call), so it has no adopter-configurable equivalent to
       # thread through.
       - name: Dispatch implement for this round's fold
+        id: fold-dispatch
         if: >-
           !cancelled()
           && (steps.analyze-fold.outputs.decision == 'dispatch' || steps.analyze-fold.outputs.decision == 'skipped')
@@ -1926,6 +1930,7 @@ jobs:
           RECURRENCES: ${{ needs.disposition.outputs.recurrences }}
           ANALYZE_DECISION: ${{ needs.fold-decide.outputs.analyze-decision }}
           FOLD_DECIDE_RESULT: ${{ needs.fold-decide.result }}
+          FOLD_DISPATCHED: ${{ needs.fold-decide.outputs.dispatched }}
           FOLDED: ${{ needs.disposition.outputs.folded }}
           PENDING_OPEN: ${{ needs.disposition.outputs.pending-open }}
           COST_LINE: ${{ needs.review.outputs.cost-line }}
@@ -1973,9 +1978,19 @@ jobs:
             [ "${ANALYZE_DECISION:-}" != "hold" ] || redispatch="but implement is held for the owner by the fold-time analyze check (see the \`/fold-hold\` question on this issue)"
             [ "${ANALYZE_DECISION:-}" != "blocked" ] || redispatch="but implement waits on a fold hold already open on this issue (see its \`/fold-hold\` question)"
             # fold-decide owns the dispatch: a failed one dispatched nothing
-            # (or never finished deciding), whatever its decision says.
+            # (or never finished deciding), whatever its decision says --
+            # unless its dispatch step did dispatch before a later step
+            # failed. A held fold is never one to dispatch by hand.
             case "${FOLD_DECIDE_RESULT:-}" in
-              failure|cancelled) redispatch="but the fold-decide job did not complete, so implement was not re-dispatched (dispatch it by hand once the run's failure is understood)" ;;
+              failure|cancelled)
+                if [ "${FOLD_DISPATCHED:-}" = "true" ]; then
+                  redispatch="and re-dispatched implement"
+                elif [ "${ANALYZE_DECISION:-}" = "hold" ] || [ "${ANALYZE_DECISION:-}" = "blocked" ]; then
+                  redispatch="but the fold-time analyze check held it and the fold-decide job did not complete, so implement was not re-dispatched and its \`/fold-hold\` question may be missing from this issue (do not dispatch it by hand without the owner's answer)"
+                else
+                  redispatch="but the fold-decide job did not complete, so implement was not re-dispatched (dispatch it by hand once the run's failure is understood)"
+                fi
+                ;;
             esac
             detail="${IN_SCOPE_COUNT:-0} in-scope and ${OUT_OF_SCOPE_COUNT:-0} out-of-scope finding(s) were posted on PR #$PR_NUMBER. In-scope survivors (after dedup) were folded into tasks.md $redispatch; out-of-scope survivors were filed as their own issue(s). ${FINDINGS_OPEN:-0} in-scope finding(s) from this round remain open."
             # specs/116 FR-003: a round whose only in-scope findings wait on

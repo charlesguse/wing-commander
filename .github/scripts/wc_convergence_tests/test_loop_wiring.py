@@ -244,6 +244,19 @@ class LifecyclePartition(LoopRepo):
         self.assertTrue(decision["stop"])
         self.assertIn("count-not-falling", decision["tripped"])
 
+    def test_a_not_converging_stop_still_counts_the_pending_findings_open(self):
+        # A pending fold's task is undone, so its finding stays open on the
+        # hand-off too (FR-003, C4 of #1062's pass-8 review).
+        os.makedirs(os.path.join(self.repo, "specs", "001-x"))
+        with open(os.path.join(self.repo, "specs", "001-x", "tasks.md"), "w", encoding="utf-8") as fh:
+            fh.write("- [ ] Review finding: P\n")
+        out = self.partition(3, self.h3, [finding("H", "f.py", 5), finding("P", "f.py", 6)], [
+            review(1, self.h1, [entry("A", "f.py", 4), entry("B", "f.py", 5)], "t1"),
+            review(2, self.h2, [entry("C", "f.py", 6), entry("P", "f.py", 7)], "t2")],
+            folded=[fingerprint(ISSUE, "P", "f.py")], env={"SPEC_DIR": "specs/001-x"})
+        self.assertEqual((out["outcome"], out["findings-open"], out["pending-open"]),
+                         ("not-converging", "2", "1"))
+
     def test_round_three_counts_filed_in_scope_findings_as_its_record_does(self):
         # The review job's round record counts every in-scope finding,
         # filed or not; this round's count must too, or the trend compares
@@ -269,7 +282,8 @@ class LifecyclePartition(LoopRepo):
 class LifecycleReport(LoopRepo):
     STEP = "Compose and post the round's outcome"
 
-    def post(self, analyze_decision, fold_decide_result="success", folded="true", pending_open="0"):
+    def post(self, analyze_decision, fold_decide_result="success", folded="true", pending_open="0",
+             dispatched=""):
         bindir = os.path.join(self.tmp.name, "bin")
         os.makedirs(bindir, exist_ok=True)
         sent = os.path.join(self.tmp.name, "sent.txt")
@@ -285,6 +299,7 @@ class LifecycleReport(LoopRepo):
             "FINDINGS_OPEN": "1", "FOLDED_FINGERPRINTS": "", "FILED_FINGERPRINTS": "",
             "CONVERGENCE_B64": "", "RECURRENCES": "", "ANALYZE_DECISION": analyze_decision,
             "FOLD_DECIDE_RESULT": fold_decide_result, "FOLDED": folded, "PENDING_OPEN": pending_open,
+            "FOLD_DISPATCHED": dispatched,
             "COST_LINE": "", "PATH": bindir + os.pathsep + os.environ["PATH"]},
             path_prepend=bindir)
         with open(sent, encoding="utf-8") as fh:
@@ -301,6 +316,20 @@ class LifecycleReport(LoopRepo):
         self.assertNotIn("re-dispatched implement", body)
         self.assertIn("was not re-dispatched", body)
         self.assertNotIn("re-dispatched implement", self.post("", fold_decide_result="failure"))
+
+    def test_a_fold_decide_failing_after_its_dispatch_reports_the_dispatch(self):
+        # A step after the dispatch (the outcome post, the ticket release)
+        # can fail the job: telling the owner to dispatch by hand would run
+        # a second implement cycle on the same fold.
+        body = self.post("dispatch", fold_decide_result="failure", dispatched="true")
+        self.assertIn("re-dispatched implement", body)
+        self.assertNotIn("dispatch it by hand", body)
+
+    def test_a_failed_fold_decide_on_a_held_fold_never_says_dispatch_by_hand(self):
+        body = self.post("hold", fold_decide_result="failure")
+        self.assertNotIn("re-dispatched implement", body)
+        self.assertNotIn("dispatch it by hand once", body)
+        self.assertIn("without the owner's answer", body)
 
 
     def test_a_pending_only_round_says_nothing_was_folded_or_dispatched(self):
