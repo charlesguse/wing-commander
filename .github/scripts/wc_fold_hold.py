@@ -84,7 +84,7 @@ def render_resolved(fold_id, resolution):
 def _bot_markers(comments, bot_login, marker_re, open_re):
     """(created_at, payload) for every App-authored marker of one shape."""
     out = []
-    for c in comments or []:
+    for idx, c in enumerate(comments or []):
         if not isinstance(c, dict) or not is_loop_marker_author(c, bot_login):
             continue
         match = last_marker_match(c.get("body") or "", marker_re, open_re)
@@ -95,14 +95,16 @@ def _bot_markers(comments, bot_login, marker_re, open_re):
         except ValueError:
             continue
         if isinstance(payload, dict):
-            out.append((c.get("created_at") or "", payload))
+            # created_at has one-second resolution: the comment's position
+            # in the (id-ordered) list breaks a tie within a second.
+            out.append(((c.get("created_at") or "", idx), payload))
     return sorted(out, key=lambda pair: pair[0])
 
 
 def open_holds(comments, bot_login):
     """Every hold the App posted that no later resolved marker closed,
     oldest first: per fold, its newest state marker, open unless a
-    resolved marker for that fold is at least as new. An open hold blocks
+    resolved marker for that fold is strictly newer. An open hold blocks
     every fold dispatch on its lifecycle until it is answered (the owner's
     decision on finding 9 of #1062's review)."""
     newest = {}
@@ -111,7 +113,7 @@ def open_holds(comments, bot_login):
     resolved = _bot_markers(comments, bot_login, RESOLVED_RE, RESOLVED_OPEN_RE)
     out = []
     for fold_id, (stamp, state) in newest.items():
-        if not any(r.get("fold_id") == fold_id and r_stamp >= stamp for r_stamp, r in resolved):
+        if not any(r.get("fold_id") == fold_id and r_stamp > stamp for r_stamp, r in resolved):
             out.append((stamp, state))
     return [state for _, state in sorted(out, key=lambda pair: pair[0])]
 
@@ -122,15 +124,19 @@ def open_hold(comments, bot_login):
     return holds[-1] if holds else None
 
 
-def other_open_holds(comments, bot_login, fold_id):
-    """Fold ids of the open holds other than `fold_id`'s, oldest first:
-    while any is open, nothing dispatches a fold on this lifecycle."""
+def _hold_name(hold):
     # An id the state lacks is named `(unknown)`, never empty (an empty id
     # would join to nothing and read as no open hold); a comma in one would
     # split it, so it becomes `;`.
-    return [str(h.get("fold_id") or "(unknown)").replace(",", ";")
-            for h in open_holds(comments, bot_login)
-            if h.get("fold_id") != fold_id]
+    return str(hold.get("fold_id") or "(unknown)").replace(",", ";")
+
+
+def other_open_holds(comments, bot_login, fold_id):
+    """Fold ids of the open holds other than `fold_id`'s, oldest first:
+    while any is open, nothing dispatches a fold on this lifecycle. An empty
+    `fold_id` excludes nothing: a hold with no id is never the caller's own."""
+    return [_hold_name(h) for h in open_holds(comments, bot_login)
+            if not fold_id or h.get("fold_id") != fold_id]
 
 
 def parse_answer(body):
@@ -148,7 +154,8 @@ def resolve(comments, bot_login, body, association):
         return {"action": "ignore", "reason": "no /fold-hold answer line", "state": None}
     if association not in MAINTAINER_ASSOCIATIONS:
         return {"action": "ignore", "reason": "the commenter is not a maintainer", "state": None}
-    state = open_hold(comments, bot_login)
+    holds = open_holds(comments, bot_login)
+    state = holds[-1] if holds else None
     if state is None:
         return {"action": "ignore", "reason": "no open fold hold on this issue", "state": None}
     accepted = ANSWERS.get(state.get("reason"), ())
@@ -158,7 +165,7 @@ def resolve(comments, bot_login, body, association):
                     answer, state.get("reason") or "(unknown)",
                     ", ".join("`/fold-hold {0}`".format(a) for a in accepted) or "nothing")}
     return {"action": answer, "reason": "", "state": state,
-            "others": other_open_holds(comments, bot_login, state.get("fold_id"))}
+            "others": [_hold_name(h) for h in holds if h is not state]}
 
 
 def outcome_body(decision, report, question, **state):
@@ -202,17 +209,21 @@ def git(args, cwd):
     return out.stdout
 
 
-def _ticks(patch):
-    """(before, after) for each line of a `git diff -U0` whose only change
-    is its checkbox: an implement cycle's tick, never the fold's own."""
+def _ticks(patch, before_lines):
+    """(before, after, n) for each line of a `git diff -U0` whose only change
+    is its checkbox: an implement cycle's tick, never the fold's own. `n` is
+    how many lines equal to `before` precede it in the old file, so a tick
+    is restored on its own line when tasks.md repeats a task line."""
     decide = _load_decide()  # the one home of the tick rule and hunk parsing
     pairs = []
-    for minus, plus in decide.hunks(patch):
+    for minus, plus, start in decide.hunks(patch, with_start=True):
         for new in plus:
-            old = next((m for m in minus if m != new
+            pos = next((i for i, m in enumerate(minus) if m != new
                         and decide.untick(m) == decide.untick(new)), None)
-            if old is not None:
-                pairs.append((old, new))
+            if pos is not None:
+                old = minus[pos]
+                idx = start - 1 + pos
+                pairs.append((old, new, before_lines[:idx].count(old)))
     return pairs
 
 
@@ -237,7 +248,8 @@ def drop_tasks(spec_dir, before, after, cwd):
     patch = git(["diff", "--no-color", before, after, "--", path], cwd)
     if not patch.strip():
         return False
-    ticks = _ticks(git(["diff", "--no-color", "-U0", before, after, "--", path], cwd))
+    ticks = _ticks(git(["diff", "--no-color", "-U0", before, after, "--", path], cwd),
+                   git(["show", "{0}:{1}".format(before, path)], cwd).split("\n"))
     with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as fh:
         fh.write(patch)
         patch_path = fh.name
@@ -254,9 +266,10 @@ def drop_tasks(spec_dir, before, after, cwd):
         full = os.path.join(cwd, path)
         with open(full, encoding="utf-8") as fh:
             lines = fh.read().split("\n")
-        for old, new in ticks:
-            if old in lines:
-                lines[lines.index(old)] = new
+        for old, new, n in ticks:
+            found = [i for i, line in enumerate(lines) if line == old]
+            if len(found) > n:
+                lines[found[n]] = new
         with open(full, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines))
     return True
@@ -348,6 +361,16 @@ def self_test():
     nameless = [comment(render_state(reason="constitution-conflict"), "2026-04-01T00:00:00Z")]
     check("an open hold with no fold id is still named as blocking",
           other_open_holds(nameless, bot, "fc") == ["(unknown)"])
+    check("an empty excluded fold id keeps a nameless hold blocking",
+          other_open_holds(nameless, bot, "") == ["(unknown)"])
+    check("an answer to a nameless hold does not list it as another hold",
+          resolve(nameless, bot, "/fold-hold proceed", "OWNER")["others"] == [])
+    same_sec = [comment(render_resolved("fa", "proceed"), "2026-05-01T00:00:00Z"),
+                comment(s_old, "2026-05-01T00:00:00Z")]
+    check("a hold posted after a resolved marker in the same second stays open",
+          other_open_holds(same_sec, bot, "fc") == ["fa"])
+    check("a resolved marker posted after the hold in the same second closes it",
+          other_open_holds(same_sec[::-1], bot, "fc") == [])
     with tempfile.TemporaryDirectory() as out_dir:
         out_path = os.path.join(out_dir, "out")
         _write_outputs(out_path, [("a", "x\nWC_EOF\naction=proceed"), ("b", "y")])
@@ -403,6 +426,13 @@ def self_test():
         check("drop-tasks keeps an implement tick made in the same range",
               drop_tasks("specs/001-x", ticked, folded, repo)
               and open(tasks, encoding="utf-8").read() == "# Tasks\n\n- [X] T001\n- [X] T002\n")
+        g("checkout", "-q", "--", ".")
+        dup0 = commit("# Tasks\n\n## A\n\n- [ ] Same\n\n## B\n\n- [ ] Same\n")
+        dup1 = commit("# Tasks\n\n## A\n\n- [ ] Same\n\n## B\n\n- [X] Same\n\n## Round 4\n\n- [ ] y\n")
+        check("drop-tasks re-ticks the duplicate task line that was ticked",
+              drop_tasks("specs/001-x", dup0, dup1, repo)
+              and open(tasks, encoding="utf-8").read()
+              == "# Tasks\n\n## A\n\n- [ ] Same\n\n## B\n\n- [X] Same\n")
 
     print("{0} failure(s).".format(len(failures)))
     return 1 if failures else 0

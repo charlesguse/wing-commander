@@ -107,6 +107,16 @@ def blame_commits(ref, path, start, count, cwd):
     return commits
 
 
+def blame_file(ref, path, cwd):
+    """The commit that last wrote each line of path at ref (index 0 = line
+    1); empty when git cannot blame it. One call per (ref, path) answers
+    every finding on that file."""
+    out = git(["blame", "-l", "-s", ref, "--", path], cwd, check=False)
+    if out.returncode != 0:
+        return []
+    return [line.split(" ", 1)[0].lstrip("^") for line in out.stdout.splitlines()]
+
+
 def removed_ranges(old, new, cwd):
     """(path, start, count) for every old-side range a diff rewrites or deletes."""
     out = git(["-c", "core.quotePath=false", "diff", "-U0", "--no-renames",
@@ -286,12 +296,23 @@ def compute_history(base, rounds, ledger, cwd):
     if git_ok:
         base, heads = resolved_heads
         origins = Origins(base, heads, cwd)
-        first_size = diff_size(base, heads[0], cwd)["lines"] if heads else 0
+        first_size = 0
     # Growth and the first churn are measured from round 1's head. When the
     # earliest surviving record is a later round, they are unknowable: n/a,
     # never read against a baseline that is not round 1's.
     baseline_missing = bool(rounds) and rounds[0]["round"] != 1
     resolved = dict((ledger or {}).get("resolved") or {})
+    # One blame per (head, path) and one numstat per head, however many
+    # findings or rounds read them.
+    blames, sizes = {}, {}
+
+    def size_of(head):
+        if head not in sizes:
+            sizes[head] = diff_size(base, head, cwd)["lines"]
+        return sizes[head]
+
+    if git_ok and heads:
+        first_size = size_of(heads[0])
     out = []
     for i, rnd in enumerate(rounds):
         attributable = self_inflicted = unattributable = 0
@@ -300,7 +321,10 @@ def compute_history(base, rounds, ledger, cwd):
                 unattributable += 1
                 continue
             attributable += 1
-            commits = blame_commits(heads[i], f["file"], f["line"], 1, cwd)
+            key = (heads[i], f["file"])
+            if key not in blames:
+                blames[key] = blame_file(heads[i], f["file"], cwd)
+            commits = blames[key][f["line"] - 1:f["line"]]
             if commits and origins.of(commits[0]).startswith("pass"):
                 self_inflicted += 1
         # Only fingerprints resolved in an earlier round can recur.
@@ -309,7 +333,7 @@ def compute_history(base, rounds, ledger, cwd):
             "resolved": earlier, "dismissed": (ledger or {}).get("dismissed")})
         growth = churn = None
         if git_ok:
-            size = diff_size(base, heads[i], cwd)["lines"]
+            size = size_of(heads[i])
             growth = (float(size) / first_size - 1) if first_size and not baseline_missing else None
             if i:
                 churn = _churn(origins, heads, i, cwd)["total"]
@@ -370,6 +394,9 @@ def decide(history, thresholds=THRESHOLDS, budget=None):
             tripped.append("self-inflicted")
         if signals[-1]["recurrences"]:
             tripped.append("recurrence")
+        # Round 2's churn is 0 by construction (pass 1 cannot rewrite an
+        # earlier pass's lines), so with two consecutive rounds required the
+        # streak can first trip at round 4, whatever min_round says.
         n = thresholds["consecutive_churn_rounds"]
         recent = signals[-n:]
         if len(recent) == n and all((s["churn"] or 0) > 0 for s in recent):
@@ -473,7 +500,7 @@ def read_round_records(comments, bot_login):
 
 
 def evaluate(records, current, base, cwd, resolved=None, budget=None,
-             resolved_from_history=False):
+             resolved_from_history=False, pending=None):
     """One loop round's convergence decision (FR-004..FR-009).
 
     records: earlier rounds' records (read_round_records); only those
@@ -481,7 +508,10 @@ def evaluate(records, current, base, cwd, resolved=None, budget=None,
     its entries (round_findings). resolved: fingerprints already folded
     (lifecycle gate's marker); resolved_from_history also counts every
     earlier round's findings as fixed (the board loop, whose review-fixup
-    fixes each round's in-scope findings before the next review).
+    fixes each round's in-scope findings before the next review). pending:
+    folded fingerprints whose fold task is still open in tasks.md -- a
+    finding the loop already knows is waiting is counted like any other but
+    is not a recurrence.
     """
     rounds = [r for r in records if r["round"] < current["round"]] + [current]
     # A folded fingerprint was resolved in the first round that raised it,
@@ -491,7 +521,9 @@ def evaluate(records, current, base, cwd, resolved=None, budget=None,
     for r in rounds[:-1]:
         for f in r.get("findings", []):
             first_raised.setdefault(f.get("fingerprint"), r["round"])
-    ledger = {"resolved": dict((fp, first_raised.get(fp, 0)) for fp in (resolved or [])),
+    pending = set(pending or [])
+    ledger = {"resolved": dict((fp, first_raised.get(fp, 0)) for fp in (resolved or [])
+                               if fp not in pending),
               "dismissed": []}
     if resolved_from_history:
         for r in rounds[:-1]:

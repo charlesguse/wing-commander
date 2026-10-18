@@ -40,15 +40,22 @@ def untick(line):
     return CHECKBOX_RE.sub(r"\1[ ]", line)
 
 
-def hunks(patch):
-    """(removed lines, added lines) for each hunk of a `git diff -U0`.
-    The one home of the hunk parsing: wc_fold_hold.py reads ticks with it."""
-    out, minus, plus, in_hunk = [], [], [], False
+HUNK_RE = re.compile(r"^@@ -(\d+)")
+
+
+def hunks(patch, with_start=False):
+    """(removed lines, added lines) for each hunk of a `git diff -U0`; with
+    `with_start`, a third item: the 1-based line of the first removed line
+    in the old file. The one home of the hunk parsing: wc_fold_hold.py
+    reads ticks with it."""
+    out, minus, plus, in_hunk, start = [], [], [], False, 0
     for line in patch.splitlines() + ["@@"]:
         if line.startswith("@@"):
             if in_hunk:
-                out.append((minus, plus))
+                out.append((minus, plus, start) if with_start else (minus, plus))
             minus, plus, in_hunk = [], [], True
+            m = HUNK_RE.match(line)
+            start = int(m.group(1)) if m else 0
         elif in_hunk and line.startswith("-"):
             minus.append(line[1:])
         elif in_hunk and line.startswith("+"):
@@ -111,8 +118,12 @@ def inert(text):
     """Agent text as one line with `<`/`>` as entities: the report and the
     question are posted under the App's identity, so a `<!-- ... -->` the
     agent echoes (from a fold section's reviewer text) must not read back
-    as a hold-state or resolved marker (wc_fold_hold.py)."""
-    return " ".join(text.split()).replace("<", "&lt;").replace(">", "&gt;")
+    as a hold-state or resolved marker (wc_fold_hold.py). `@` and a
+    `/fold-hold` command are defanged too: agent text must not ping a team
+    or pass for the real answer instruction."""
+    text = " ".join(text.split()).replace("<", "&lt;").replace(">", "&gt;")
+    text = text.replace("@", "@​")
+    return re.sub(r"/(fold-hold)", "/​\\1", text, flags=re.IGNORECASE)
 
 
 def report(findings):

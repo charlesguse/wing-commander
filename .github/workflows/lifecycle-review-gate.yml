@@ -1248,9 +1248,9 @@ jobs:
               # review job's round record carries, so this round's count
               # and the earlier rounds' read back compare like with like.
               current = {"round": round_, "head_sha": os.environ["HEAD_SHA"],
-                         "findings": [e for e in round_findings(findings, issue)
-                                      if e["fingerprint"] not in pending_fps]}
-              decision = evaluate(records, current, "origin/main", ".", resolved=sorted(folded_fps))
+                         "findings": round_findings(findings, issue)}
+              decision = evaluate(records, current, "origin/main", ".", resolved=sorted(folded_fps),
+                                  pending=sorted(pending_fps))
               recurring_fps = set(decision["recurrences"])
           stop = bool(decision and decision["stop"])
 
