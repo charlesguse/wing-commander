@@ -287,6 +287,10 @@ def compute_history(base, rounds, ledger, cwd):
         base, heads = resolved_heads
         origins = Origins(base, heads, cwd)
         first_size = diff_size(base, heads[0], cwd)["lines"] if heads else 0
+    # Growth and the first churn are measured from round 1's head. When the
+    # earliest surviving record is a later round, they are unknowable: n/a,
+    # never read against a baseline that is not round 1's.
+    baseline_missing = bool(rounds) and rounds[0]["round"] != 1
     resolved = dict((ledger or {}).get("resolved") or {})
     out = []
     for i, rnd in enumerate(rounds):
@@ -306,8 +310,11 @@ def compute_history(base, rounds, ledger, cwd):
         growth = churn = None
         if git_ok:
             size = diff_size(base, heads[i], cwd)["lines"]
-            growth = (float(size) / first_size - 1) if first_size else None
-            churn = _churn(origins, heads, i, cwd)["total"] if i else 0
+            growth = (float(size) / first_size - 1) if first_size and not baseline_missing else None
+            if i:
+                churn = _churn(origins, heads, i, cwd)["total"]
+            else:
+                churn = None if baseline_missing else 0
         recorded = rnd.get("count")
         out.append({
             "round": rnd["round"],
@@ -321,6 +328,7 @@ def compute_history(base, rounds, ledger, cwd):
             "recurrences": [f.get("fingerprint") for f in recurrences],
             "findings": rnd.get("findings", []),
             "git_ok": git_ok,
+            "baseline_missing": baseline_missing,
         })
     return out
 
@@ -449,9 +457,14 @@ def read_round_records(comments, bot_login):
             rec = json.loads(match.group(1))
         except ValueError:
             continue
-        if not isinstance(rec, dict) or not isinstance(rec.get("round"), int) \
+        # A record that fails any check is skipped whole: compute_history
+        # reads round as a number and each finding as a mapping, so one
+        # malformed record would otherwise fail every later run.
+        if not isinstance(rec, dict) or isinstance(rec.get("round"), bool) \
+                or not isinstance(rec.get("round"), int) or rec["round"] < 1 \
                 or not isinstance(rec.get("head_sha"), str) \
-                or not isinstance(rec.get("findings"), list):
+                or not isinstance(rec.get("findings"), list) \
+                or not all(isinstance(f, dict) for f in rec["findings"]):
             continue
         stamp = c.get("submitted_at") or c.get("created_at") or ""
         if rec["round"] not in by_round or stamp >= by_round[rec["round"]][0]:
@@ -488,6 +501,7 @@ def evaluate(records, current, base, cwd, resolved=None, budget=None,
     decision = decide(history, budget=budget)
     decision["recurrences"] = history[-1]["recurrences"] if history else []
     decision["git_ok"] = bool(history and history[-1].get("git_ok"))
+    decision["baseline_missing"] = bool(history and history[-1].get("baseline_missing"))
     # Identifiers only: the decision crosses job outputs, and the
     # reviewer's free-text title is never part of it.
     decision["open_findings"] = [
@@ -529,6 +543,10 @@ def render_handoff(decision):
         lines.append("An earlier round's head is unreachable from this "
                      "checkout, so self-inflicted share, churn and growth "
                      "could not be computed.")
+    if decision.get("baseline_missing"):
+        lines.append("")
+        lines.append("Round 1's record is missing, so growth and the first "
+                     "round's churn could not be computed.")
     lines.append("")
     lines.append("| Round | Findings | Self-inflicted share | Churn | Growth | Recurrences |")
     lines.append("|---|---|---|---|---|---|")

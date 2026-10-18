@@ -325,6 +325,18 @@ class RoundRecords(unittest.TestCase):
         self.assertEqual([r["findings"][0]["file"] for r in records], ["a} -->"])
         self.assertEqual(body.count("-->"), 1)
 
+    def test_a_malformed_record_is_skipped_not_fatal(self):
+        def marker(payload):
+            return "<!-- {0}: {1} -->".format(wc.ROUND_MARKER, json.dumps(payload))
+        good = wc.round_record_marker(2, "ok", [])
+        bodies = [marker({"round": True, "head_sha": "h", "findings": ["a"]}),
+                  marker({"round": 0, "head_sha": "h", "findings": []}),
+                  marker({"round": 1, "head_sha": "h", "findings": ["a"]}), good]
+        records = wc.read_round_records(
+            [self.review(b, "2026-01-0{0}T00:00:00Z".format(i + 1)) for i, b in enumerate(bodies)],
+            self.BOT)
+        self.assertEqual([r["head_sha"] for r in records], ["ok"])
+
     def test_only_the_apps_last_marker_counts(self):
         real = wc.round_record_marker(1, "real", [])
         forged = wc.round_record_marker(1, "forged", [])
@@ -399,6 +411,19 @@ class EvaluateInGit(GitBacked):
         self.assertFalse(d["git_ok"])
         self.assertEqual([s["round"] for s in d["signals"]], [1, 2])
         self.assertIsNone(d["signals"][-1]["growth"])
+
+    def test_a_missing_round_one_record_leaves_growth_and_first_churn_unknown(self):
+        base, h0, h1, h2 = self.build()
+        records = [{"round": 3, "head_sha": h1, "findings": []}]
+        current = {"round": 4, "head_sha": h2, "findings": []}
+        d = wc.evaluate(records, current, base, self.repo)
+        self.assertTrue(d["baseline_missing"])
+        self.assertEqual([s["growth"] for s in d["signals"][1:]], [None])
+        self.assertIsNone(d["signals"][0]["churn"])
+        self.assertIn("Round 1's record is missing", wc.render_handoff(d))
+        d = wc.evaluate([{"round": 1, "head_sha": h0, "findings": []}],
+                        {"round": 2, "head_sha": h1, "findings": []}, base, self.repo)
+        self.assertFalse(d["baseline_missing"])
 
     def test_cli_evaluate_writes_outputs_and_handoff(self):
         base, h0, h1, h2 = self.build()

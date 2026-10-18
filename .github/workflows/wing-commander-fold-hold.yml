@@ -47,6 +47,7 @@ jobs:
       fold-ref-after: ${{ steps.resolve.outputs.fold-ref-after }}
       folded-json: ${{ steps.resolve.outputs.folded-json }}
       implement-workflow: ${{ steps.resolve.outputs.implement-workflow }}
+      project: ${{ steps.resolve.outputs.project }}
     steps:
       # issue_comment runs on the default branch: this checkout is trusted
       # code, never a branch the hold is about.
@@ -140,6 +141,7 @@ jobs:
         with:
           mode: stage
           spec-dir: ${{ needs.resolve.outputs.spec-dir }}
+          project: ${{ needs.resolve.outputs.project }}
           fold-ref-before: ${{ needs.resolve.outputs.fold-ref-before }}
           fold-ref-after: ${{ needs.resolve.outputs.fold-ref-after }}
           folded-json: ${{ needs.resolve.outputs.folded-json }}
@@ -432,9 +434,10 @@ jobs:
           FOLD_AFTER: ${{ needs.resolve.outputs.fold-ref-after }}
           FOLDED_JSON: ${{ needs.resolve.outputs.folded-json }}
           IMPLEMENT_WORKFLOW: ${{ needs.resolve.outputs.implement-workflow }}
+          PROJECT: ${{ needs.resolve.outputs.project }}
         run: |
           set -euo pipefail
-          python3 .wc-pristine-repo/.github/scripts/wc_fold_hold.py post-outcome --issue "$ISSUE" \
+          python3 .wc-pristine-repo/.github/scripts/wc_fold_hold.py post-outcome --issue "$ISSUE" --project "$PROJECT" \
             --decision "$DECISION" --hold-reason "$HOLD_REASON" \
             --report-file "$REPORT_FILE" --question-file "$QUESTION_FILE" \
             --fold-id "$FOLD_ID" --spec-dir "$SPEC_DIR" --spec-branch "$SPEC_BRANCH" \

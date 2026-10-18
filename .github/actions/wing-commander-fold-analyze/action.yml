@@ -191,7 +191,7 @@ runs:
         mkdir -p "$out_dir"
         python3 -I "$GITHUB_ACTION_PATH/decide.py" --fold-id "$FOLD_ID" --tasks "$TASKS" \
           --open-holds "$OPEN_HOLDS" \
-          --execution-output "$EXECUTION_OUTPUT" --out-dir "$out_dir" "${failed[@]}" > "$out_dir/decision.json"
+          --execution-output "$EXECUTION_OUTPUT" --out-dir "$out_dir" ${failed[@]+"${failed[@]}"} > "$out_dir/decision.json"
         {
           echo "decision=$(jq -r '.decision' "$out_dir/decision.json")"
           echo "hold-reason=$(jq -r '."hold-reason"' "$out_dir/decision.json")"

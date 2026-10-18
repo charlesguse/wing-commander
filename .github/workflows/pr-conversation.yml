@@ -3771,9 +3771,10 @@ jobs:
           FOLDED_JSON: ${{ needs.fold-turn-dispatch.outputs.folded-json }}
           ROUND_FOLDED_JSON: ${{ needs.fold-turn-dispatch.outputs.round-folded-json }}
           IMPLEMENT_WORKFLOW: ${{ inputs.implement-workflow }}
+          PROJECT: ${{ needs.classify-and-announce.outputs.project }}
         run: |
           set -euo pipefail
-          python3 .wing-commander-pipeline/.github/scripts/wc_fold_hold.py post-outcome --issue "$ISSUE" \
+          python3 .wing-commander-pipeline/.github/scripts/wc_fold_hold.py post-outcome --issue "$ISSUE" --project "$PROJECT" \
             --decision "$DECISION" --hold-reason "$HOLD_REASON" \
             --report-file "$REPORT_FILE" --question-file "$QUESTION_FILE" \
             --fold-id "$FOLD_ID" --spec-dir "$SPEC_DIR" --spec-branch "$SPEC_BRANCH" \

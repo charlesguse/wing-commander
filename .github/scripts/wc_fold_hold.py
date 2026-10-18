@@ -11,7 +11,7 @@ later release needs to dispatch the fold without re-deriving anything:
   <!-- wing-commander-fold-hold-state: {"fold_id": ..., "reason": ...,
        "spec_dir": ..., "spec_branch": ..., "base_sha": ...,
        "fold_ref_before": ..., "fold_ref_after": ...,
-       "folded_json": ..., "implement_workflow": ...} -->
+       "folded_json": ..., "implement_workflow": ..., "project": ...} -->
 
 A maintainer releases it with an ordinary comment on the issue (constitution
 III): a line reading `/fold-hold <answer>`. Which answers a hold accepts
@@ -46,6 +46,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -59,7 +60,7 @@ STATE_RE, STATE_OPEN_RE = marker_regexes(STATE_MARKER)
 RESOLVED_RE, RESOLVED_OPEN_RE = marker_regexes(RESOLVED_MARKER)
 STATE_FIELDS = ("fold_id", "reason", "spec_dir", "spec_branch", "base_sha",
                 "fold_ref_before", "fold_ref_after", "folded_json",
-                "implement_workflow")
+                "implement_workflow", "project")
 ANSWERS = {
     "constitution-conflict": ("proceed", "drop", "amend"),
     "analyze-failed": ("proceed", "retry"),
@@ -124,7 +125,11 @@ def open_hold(comments, bot_login):
 def other_open_holds(comments, bot_login, fold_id):
     """Fold ids of the open holds other than `fold_id`'s, oldest first:
     while any is open, nothing dispatches a fold on this lifecycle."""
-    return [h.get("fold_id") or "" for h in open_holds(comments, bot_login)
+    # An id the state lacks is named `(unknown)`, never empty (an empty id
+    # would join to nothing and read as no open hold); a comma in one would
+    # split it, so it becomes `;`.
+    return [str(h.get("fold_id") or "(unknown)").replace(",", ";")
+            for h in open_holds(comments, bot_login)
             if h.get("fold_id") != fold_id]
 
 
@@ -200,22 +205,27 @@ def git(args, cwd):
 def _ticks(patch):
     """(before, after) for each line of a `git diff -U0` whose only change
     is its checkbox: an implement cycle's tick, never the fold's own."""
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                    "..", "actions", "wing-commander-fold-analyze"))
-    from decide import untick  # the one home of the tick rule
-    pairs, minus, plus, in_hunk = [], [], [], False
-    for line in patch.splitlines() + ["@@"]:
-        if line.startswith("@@"):
-            for new in plus:
-                old = next((m for m in minus if m != new and untick(m) == untick(new)), None)
-                if old is not None:
-                    pairs.append((old, new))
-            minus, plus, in_hunk = [], [], True
-        elif in_hunk and line.startswith("-"):
-            minus.append(line[1:])
-        elif in_hunk and line.startswith("+"):
-            plus.append(line[1:])
+    decide = _load_decide()  # the one home of the tick rule and hunk parsing
+    pairs = []
+    for minus, plus in decide.hunks(patch):
+        for new in plus:
+            old = next((m for m in minus if m != new
+                        and decide.untick(m) == decide.untick(new)), None)
+            if old is not None:
+                pairs.append((old, new))
     return pairs
+
+
+def _load_decide():
+    """fold-analyze's decide.py under a private module name, so the generic
+    `decide` never enters sys.modules or sys.path."""
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "..", "actions", "wing-commander-fold-analyze", "decide.py")
+    spec = importlib.util.spec_from_file_location("wc_fold_analyze_decide", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def drop_tasks(spec_dir, before, after, cwd):
@@ -259,7 +269,12 @@ def _write_outputs(path, pairs):
         for k, v in pairs:
             v = str(v)
             if "\n" in v:
-                fh.write("{0}<<WC_EOF\n{1}\nWC_EOF\n".format(k, v))
+                # Values come from issue-comment markers: a delimiter the
+                # value cannot contain, or it could close the block early.
+                delim = "WC_EOF_" + secrets.token_hex(16)
+                while delim in v:
+                    delim = "WC_EOF_" + secrets.token_hex(16)
+                fh.write("{0}<<{2}\n{1}\n{2}\n".format(k, v, delim))
             else:
                 fh.write("{0}={1}\n".format(k, v))
 
@@ -330,6 +345,16 @@ def self_test():
     check("open holds block a fold other than their own, not their own",
           other_open_holds(two, bot, "fc") == ["fa", "fb"]
           and other_open_holds(two, bot, "fa") == ["fb"])
+    nameless = [comment(render_state(reason="constitution-conflict"), "2026-04-01T00:00:00Z")]
+    check("an open hold with no fold id is still named as blocking",
+          other_open_holds(nameless, bot, "fc") == ["(unknown)"])
+    with tempfile.TemporaryDirectory() as out_dir:
+        out_path = os.path.join(out_dir, "out")
+        _write_outputs(out_path, [("a", "x\nWC_EOF\naction=proceed"), ("b", "y")])
+        text = open(out_path, encoding="utf-8").read()
+        delim = text.split("<<", 1)[1].split("\n", 1)[0]
+        check("a multi-line output cannot close its own block early",
+              delim != "WC_EOF" and text.count(delim) == 2 and text.endswith("b=y\n"))
     check("a blocked decision posts its report", outcome_body("blocked", "r\n", "") == "r\n")
 
     body = outcome_body("hold", "", "<!-- wing-commander-fold-hold: fold=f1 -->\nq", fold_id="f1",

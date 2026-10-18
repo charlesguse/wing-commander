@@ -100,16 +100,18 @@ class LoopRepo(unittest.TestCase):
 class LifecyclePartition(LoopRepo):
     STEP = "Partition, dedup, and render this round's findings"
 
-    def partition(self, round_, head, findings, reviews, folded=(), filed=()):
+    def partition(self, round_, head, findings, reviews, folded=(), filed=(), env=None):
         self.write_temp("lifecycle-review-findings-artifact/lifecycle-review-findings.json", findings)
         self.write_temp("lifecycle-pr-reviews.json", reviews)
         self.git("checkout", "-q", head)
         gate = {"round": round_ - 1, "head_sha": "prev", "outcome": "findings",
                 "findings_open": 1, "folded_fingerprints": list(folded),
                 "filed_fingerprints": list(filed), "updated_at": None}
-        return self.run_shipped(LIFECYCLE, self.STEP, {
+        step_env = {
             "ISSUE": ISSUE, "PR_NUMBER": "7", "HEAD_SHA": head, "BOT_LOGIN": BOT,
-            "ROUND_BUDGET": "5", "REVIEW_GATE_JSON": json.dumps(gate)})
+            "ROUND_BUDGET": "5", "REVIEW_GATE_JSON": json.dumps(gate)}
+        step_env.update(env or {})
+        return self.run_shipped(LIFECYCLE, self.STEP, step_env)
 
     def section(self):
         with open(os.path.join(self.runner_temp, "lifecycle-review-fold-section.md"),
@@ -125,6 +127,19 @@ class LifecyclePartition(LoopRepo):
         self.assertEqual(out["outcome"], "findings")
         self.assertEqual(out["recurrences"], fingerprint(ISSUE, "F", "f.py"))
         self.assertIn("Recurring review finding: F", self.section())
+
+    def test_a_fold_still_waiting_in_tasks_md_is_not_a_recurrence(self):
+        # A held or blocked fold leaves its task unchecked; the finding
+        # re-raised is that fold pending, not a fixed finding coming back.
+        os.makedirs(os.path.join(self.repo, "specs", "001-x"))
+        with open(os.path.join(self.repo, "specs", "001-x", "tasks.md"), "w", encoding="utf-8") as fh:
+            fh.write("- [ ] Review finding: F\n")
+        f = finding("F", "f.py", 4)
+        out = self.partition(2, self.h2, [f], [review(1, self.h1, [entry("F", "f.py", 4)], "t1")],
+                             folded=[fingerprint(ISSUE, "F", "f.py")],
+                             env={"SPEC_DIR": "specs/001-x"})
+        self.assertEqual((out["outcome"], out["recurrences"]), ("clean", ""))
+        self.assertEqual(self.section(), "")
 
     def test_fresh_findings_are_unchanged(self):
         out = self.partition(2, self.h2, [finding("G", "f.py", 5)],

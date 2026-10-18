@@ -40,27 +40,30 @@ def untick(line):
     return CHECKBOX_RE.sub(r"\1[ ]", line)
 
 
-def fold_section(patch):
-    """The lines a fold added, from a `git diff -U0` of tasks.md: every
-    added line but a tick -- one whose only change is its checkbox, an
-    implement cycle's push in the same window, never the fold's own."""
-    out, minus, plus = [], [], []
-
-    def flush():
-        gone = set(untick(line) for line in minus)
-        out.extend(line for line in plus if untick(line) not in gone)
-        del minus[:], plus[:]
-
-    in_hunk = False
-    for line in patch.splitlines():
+def hunks(patch):
+    """(removed lines, added lines) for each hunk of a `git diff -U0`.
+    The one home of the hunk parsing: wc_fold_hold.py reads ticks with it."""
+    out, minus, plus, in_hunk = [], [], [], False
+    for line in patch.splitlines() + ["@@"]:
         if line.startswith("@@"):
-            flush()
-            in_hunk = True
+            if in_hunk:
+                out.append((minus, plus))
+            minus, plus, in_hunk = [], [], True
         elif in_hunk and line.startswith("-"):
             minus.append(line[1:])
         elif in_hunk and line.startswith("+"):
             plus.append(line[1:])
-    flush()
+    return out
+
+
+def fold_section(patch):
+    """The lines a fold added, from a `git diff -U0` of tasks.md: every
+    added line but a tick -- one whose only change is its checkbox, an
+    implement cycle's push in the same window, never the fold's own."""
+    out = []
+    for minus, plus in hunks(patch):
+        gone = set(untick(line) for line in minus)
+        out.extend(line for line in plus if untick(line) not in gone)
     return out
 
 

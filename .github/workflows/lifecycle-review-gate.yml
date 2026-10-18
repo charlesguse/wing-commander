@@ -1156,6 +1156,7 @@ jobs:
           ISSUE: ${{ needs.select.outputs.issue }}
           PR_NUMBER: ${{ needs.select.outputs.pr-number }}
           HEAD_SHA: ${{ needs.select.outputs.head-sha }}
+          SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
           ROUND_BUDGET: ${{ env.LIFECYCLE_REVIEW_ROUND_BUDGET }}
           REVIEW_GATE_JSON: ${{ steps.review-gate.outputs.json }}
@@ -1200,12 +1201,30 @@ jobs:
           with open(findings_path, encoding="utf-8") as fh:
               findings = json.load(fh)
 
+          # A fold the pipeline has not implemented yet -- held, blocked, or
+          # still queued -- leaves its task unchecked in tasks.md. Its
+          # finding re-raised is that fold still waiting, not a recurrence
+          # of a fixed one, so it is not counted against the loop.
+          pending_titles = set()
+          try:
+              with open(os.path.join(os.environ.get("SPEC_DIR", ""), "tasks.md"), encoding="utf-8") as fh:
+                  for line in fh:
+                      for lead in ("- [ ] Review finding: ", "- [ ] Recurring review finding: "):
+                          if line.startswith(lead):
+                              pending_titles.add(line[len(lead):].strip())
+          except OSError:
+              pass
+
+          pending_fps = set()
           in_scope_survivors = []
           out_of_scope_survivors = []
           for f in findings:
               basis = f.get("fingerprint_basis") or {}
               fp = fingerprint(issue, f.get("title", ""), basis.get("file_path", ""))
               if fp in filed_fps:
+                  continue
+              if fp in folded_fps and str(f.get("title", "")).strip() in pending_titles:
+                  pending_fps.add(fp)
                   continue
               if f.get("in_scope") is True:
                   in_scope_survivors.append((f, fp))
@@ -1229,7 +1248,8 @@ jobs:
               # review job's round record carries, so this round's count
               # and the earlier rounds' read back compare like with like.
               current = {"round": round_, "head_sha": os.environ["HEAD_SHA"],
-                         "findings": round_findings(findings, issue)}
+                         "findings": [e for e in round_findings(findings, issue)
+                                      if e["fingerprint"] not in pending_fps]}
               decision = evaluate(records, current, "origin/main", ".", resolved=sorted(folded_fps))
               recurring_fps = set(decision["recurrences"])
           stop = bool(decision and decision["stop"])
@@ -1587,11 +1607,11 @@ jobs:
   fold-decide:
     needs: [select, disposition, fold-analyze]
     if: "!cancelled() && needs.disposition.result == 'success' && needs.disposition.outputs.folded == 'true'"
-    # Gate 80/specs/013: the dispatch reads the spec branch's tip, so this
-    # job joins the per-spec group disposition holds.
-    concurrency:
-      group: wing-commander-${{ needs.select.outputs.spec-dir }}
-      cancel-in-progress: false
+    # No job-level concurrency group: this job pushes nothing (Gate 80
+    # holds pushers only), and GitHub cancels an older pending run of a
+    # group when newer ones queue even with cancel-in-progress false, which
+    # would drop a committed fold's dispatch. The workflow-level group
+    # above already serializes this workflow's runs.
     runs-on: ubuntu-latest
     permissions:
       contents: read
