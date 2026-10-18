@@ -551,23 +551,42 @@ def check_reentry_remaining():
 
 
 def check_review_explained_lookup():
-    """The review-stage dedupe must count only bot-authored explanations: a
-    public commenter quoting the summary must not silence FR-010. The
-    shipped lookup runs against a `gh` stub that applies its --jq to a
-    fixture comment list."""
+    """The review-stage dedupe is keyed on (recorded iteration, dispatched
+    iteration) (owner decision B on #992) and counts only bot-authored
+    explanations: a re-delivered notification stays quiet, a new review trip
+    or a different manual dispatch posts again, and a public commenter
+    quoting the marker silences nothing. The shipped lookup runs against a
+    `gh` stub that applies its --jq to a fixture comment list, and the
+    marker is taken from the shipped explanation body."""
     global CASES
     import json
     import yaml
     doc = yaml.safe_load(read(os.path.join(ROOT, ".github", "workflows", "implement.yml")))
-    script = next(st["run"] for job in doc["jobs"].values()
-                  for st in job.get("steps", [])
+    steps = [st for job in doc["jobs"].values() for st in job.get("steps", [])]
+    script = next(st["run"] for st in steps
                   if st.get("name") == "Check for an earlier review-stage explanation")
-    needle = "Implement did nothing: this lifecycle is already in review"
-    for who, want in (("User", "false"), ("Bot", "true")):
+    body = next(st["with"]["body"] for st in steps
+                if st.get("name") == "Explain skipped dispatch at review stage")
+    m = re.search(r"<!-- wing-commander-review-explained: .*? -->", body)
+    CASES += 1
+    if not m:
+        fail("implement.yml: the review-stage explanation carries no dedupe marker")
+        return
+    posted = (m.group(0).replace("${{ steps.meta.outputs.recorded-iteration }}", "4")
+              .replace("${{ inputs.iteration }}", "5"))
+    summary = "> Implement did nothing: this lifecycle is already in review"
+    cases = (
+        ("re-delivered notification", "Bot", posted, "4", "5", "true"),
+        ("a different manual dispatch", "Bot", posted, "4", "7", "false"),
+        ("a new review trip", "Bot", posted, "9", "5", "false"),
+        ("a human quoting the marker", "User", posted, "4", "5", "false"),
+        ("a legacy explanation with no marker", "Bot", summary, "4", "5", "false"),
+    )
+    for label, who, text, recorded, dispatched, want in cases:
         tmp = _tmpdir("wc-117-explained-")
         comments = os.path.join(tmp, "comments.json")
         with open(comments, "w", encoding="utf-8") as fh:
-            json.dump([{"user": {"type": who}, "body": f"> {needle}"}], fh)
+            json.dump([{"user": {"type": who}, "body": f"{summary}\n> body {text}"}], fh)
         with open(os.path.join(tmp, "gh"), "w", encoding="utf-8") as fh:
             # `gh api .../comments` serves the REST array; `gh issue view
             # --json comments` would serve {"comments": [...]}.
@@ -578,13 +597,14 @@ def check_review_explained_lookup():
         out = os.path.join(tmp, "out")
         env = {**os.environ, "PATH": tmp + os.pathsep + os.environ["PATH"],
                "COMMENTS": comments, "GITHUB_OUTPUT": out,
-               "GH_REPO": "o/r", "ISSUE_NUMBER": "1"}
+               "GH_REPO": "o/r", "ISSUE_NUMBER": "1",
+               "RECORDED": recorded, "ITERATION": dispatched}
         proc = run(["bash", "-e", "-c", script], env=env)
         got = parse_kv(read(out)).get("explained") if os.path.exists(out) else None
         CASES += 1
         if got != want:
-            fail(f"review-stage dedupe: a {who}-authored comment quoting the summary gave "
-                 f"explained={got!r}, want {want!r}; stderr={proc.stderr}")
+            fail(f"review-stage dedupe ({label}): explained={got!r}, want {want!r}; "
+                 f"stderr={proc.stderr}")
 
 
 def check_reentry_lifecycle_notice():

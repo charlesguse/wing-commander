@@ -1042,9 +1042,13 @@ jobs:
       # only re-entry. Not limited to a hand-run dispatch: a re-delivered
       # notification at stage review gets the same one-line explanation, and
       # no input is added to tell the two apart (Principle VII).
-      # Posted once per lifecycle: a re-delivered or duplicate notification
-      # finds the earlier explanation and stays silent. A failed lookup
-      # degrades to posting (a repeated line beats a silent skip).
+      # Posted once per (recorded iteration, dispatched iteration) pair
+      # (owner decision B on #992): a re-delivered notification finds the
+      # earlier explanation for the same pair and stays silent, while a new
+      # review trip (a higher recorded iteration) or a manual dispatch at a
+      # different iteration posts again (SC-005). The pair rides in the
+      # explanation's hidden marker. A failed lookup degrades to posting (a
+      # repeated line beats a silent skip).
       - name: Check for an earlier review-stage explanation
         id: review-explained
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip == 'true' && steps.meta.outputs.stage == 'review'
@@ -1053,11 +1057,13 @@ jobs:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
+          RECORDED: ${{ steps.meta.outputs.recorded-iteration }}
+          ITERATION: ${{ inputs.iteration }}
         run: |
           # Bot-authored comments only: the repository is public, so a
-          # human comment quoting the summary must not silence the
+          # human comment quoting the marker must not silence the
           # explanation. --paginate reads the whole history.
-          if gh api --paginate "repos/$GH_REPO/issues/$ISSUE_NUMBER/comments" --jq '.[] | select(.user.type == "Bot") | .body' 2>/dev/null | grep -qF 'Implement did nothing: this lifecycle is already in review'; then
+          if gh api --paginate "repos/$GH_REPO/issues/$ISSUE_NUMBER/comments" --jq '.[] | select(.user.type == "Bot") | .body' 2>/dev/null | grep -qF "<!-- wing-commander-review-explained: recorded=$RECORDED dispatched=$ITERATION -->"; then
             echo "explained=true" >> "$GITHUB_OUTPUT"
           else
             echo "explained=false" >> "$GITHUB_OUTPUT"
@@ -1071,7 +1077,7 @@ jobs:
           issue-number: ${{ inputs.issue-number }}
           kind: info
           summary: "Implement did nothing: this lifecycle is already in review"
-          body: "A dispatch at iteration ${{ inputs.iteration }} was skipped because spec-meta.json records stage `review` (iteration ${{ steps.meta.outputs.recorded-iteration }}). No cycle ran. To send work back to implement, comment on the implementation PR: the PR-conversation stage folds a maintainer comment into a Maintainer Feedback cycle, which is the only re-entry from review."
+          body: "A dispatch at iteration ${{ inputs.iteration }} was skipped because spec-meta.json records stage `review` (iteration ${{ steps.meta.outputs.recorded-iteration }}). No cycle ran. To send work back to implement, comment on the implementation PR: the PR-conversation stage folds a maintainer comment into a Maintainer Feedback cycle, which is the only re-entry from review. <!-- wing-commander-review-explained: recorded=${{ steps.meta.outputs.recorded-iteration }} dispatched=${{ inputs.iteration }} -->"
 
       # The iteration cap, from the max-iterations input (research.md D5).
       - name: Resolve iteration cap
