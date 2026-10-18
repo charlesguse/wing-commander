@@ -123,3 +123,87 @@ Repository is CI/CD tooling: scripts in `.github/scripts/`, composites in `.gith
 - **MVP**: Phase 1 + 2 + US1 (T001–T009): removes the false green.
 - Next: US2 (observed thrash), then US4 (gate), then US3 (analyze).
 - Out of scope: US5 / part 3 (FR-020).
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Re-fold of an unimplemented fold counts as recurrence
+
+  A finding folded earlier is re-folded and counted as a recurrence even when its fold was held, blocked or dropped, so the loop can stop as not-converging against a stalled pipeline.
+
+  - .github/workflows/lifecycle-review-gate.yml
+
+  Detail: The partition step no longer skips in-scope findings whose fingerprint is in folded_fps. If the fold is held or dropped and the next round re-raises the finding, the recurrence and count-not-falling rules trip.
+
+- [ ] Review finding: Fixed WC_EOF heredoc delimiter allows output injection
+
+  _write_outputs frames multi-line values with a fixed WC_EOF delimiter and no escaping, so a value from an issue comment marker can inject extra step outputs.
+
+  - .github/scripts/wc_fold_hold.py
+
+  Detail: State fields such as folded_json, spec_dir and spec_branch come from an issue comment marker. A newline followed by WC_EOF closes the heredoc early and the rest parses as new outputs such as action=proceed. Use a random delimiter.
+
+- [ ] Review finding: Open hold with empty fold_id is invisible
+
+  An open hold whose state has an empty or missing fold_id renders as an empty string, the joined list collapses to none, and dispatch proceeds past an open hold.
+
+  - .github/actions/wing-commander-fold-open-holds/action.yml
+  - .github/scripts/wc_fold_hold.py
+
+  Detail: other_open_holds returns h.get('fold_id') or ''. The composite then writes open-holds=none, and decide.py sees no open holds. Ids joined with ',' also cannot carry a comma.
+
+- [ ] Review finding: Stage mode omits project, so analyze reads wrong paths
+
+  The stage mode is called without project, so for a project lifecycle the analyze instructions point at root-level skill and constitution paths and the read-only agent finds nothing.
+
+  - .github/workflows/lifecycle-review-gate.yml
+  - .github/workflows/wing-commander-fold-hold.yml
+
+  Detail: With the prefix empty, the agent looks for .claude/skills/... and .specify/memory/constitution.md at the repository root. It returns no constitution-conflict findings, so a conflicting fold dispatches instead of holding. The retry stage in wing-commander-fold-hold.yml has the same omission. The pr-conversation caller does pass project.
+
+- [ ] Review finding: fold-decide can be dropped by concurrency queueing
+
+  fold-decide joins the per-spec concurrency group with cancel-in-progress false, but GitHub still cancels an older pending run when newer ones queue, so a committed fold may never be dispatched.
+
+  - .github/workflows/lifecycle-review-gate.yml
+
+  Detail: If two or more runs queue behind a running job, the oldest pending fold-decide is cancelled. The report job then only says the fold-decide job did not complete.
+
+- [ ] Review finding: Malformed round record crashes compute_history
+
+  read_round_records checks only that findings is a list, not that its entries are dicts, and it accepts a bool as round, so a malformed record makes evaluate raise.
+
+  - .github/scripts/wc_convergence.py
+
+  Detail: A record like {"round": true, "findings": ["a"]} passes validation, then compute_history calls f.get on a string. The same bad record is re-read every run, so the loop is stuck until the review is removed.
+
+- [ ] Review finding: Invalid optional line drops the whole finding
+
+  The schema rejects the finding outright when the optional line is 0, negative or non-integer, so a real in-scope finding is lost and the round is marked not clean.
+
+  - .github/schemas/board-review-finding.schema.json
+
+  Detail: The fixtures valid-line-zero-dropped.json and valid-line-not-integer-dropped.json lock this in. validate_line already treats a bad line as unattributable, so the finding could be kept with line set to null.
+
+- [ ] Review finding: Empty array expansion under set -u on old bash
+
+  "${failed[@]}" on an empty array under set -u is an unbound-variable error on bash older than 4.4, and decide mode runs in a caller-supplied container.
+
+  - .github/actions/wing-commander-fold-analyze/action.yml
+
+  Detail: On an image with bash 4.2 or 4.3, failed=() is empty when the agent succeeded, and the decide step aborts. Use ${failed[@]+"${failed[@]}"} or a string flag.
+
+- [ ] Review finding: Recurrence baseline assumes the first record is round 1
+
+  Growth, churn and share are computed from the earliest loaded record even when it is not round 1, so rule evaluation depends on which reviews survive.
+
+  - .github/scripts/wc_convergence.py
+
+  Detail: If the first record is round 3, first_size comes from round 3's head and growth reads 0.0. growth and churn-streak underreport, and no missing-rounds warning is surfaced.
+
+- [ ] Review finding: Tick-pairing logic duplicated with cross-directory import
+
+  _ticks in wc_fold_hold.py re-implements the git diff -U0 hunk parsing that decide.fold_section already does, and the module imports the generic name decide from an actions directory via sys.path.
+
+  - .github/scripts/wc_fold_hold.py
+
+  Detail: A fix to one parser will not reach the other. This conflicts with the repo rule that shared logic has one home, and the generic module name risks a collision.
