@@ -638,6 +638,7 @@ jobs:
       # fetches the spec branch's tip, which on a private repository fails
       # without a credential and reads as nothing folded.
       - name: Authenticate the spec-branch remote
+        id: auth-remote
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -795,6 +796,28 @@ jobs:
           spec-branch: ${{ needs.resolve.outputs.spec-branch }}
           implement-workflow: ${{ needs.resolve.outputs.implement-workflow }}
           folded-json: ${{ needs.resolve.outputs.folded-json }}
+
+      # The release stopped after the re-check (the remote never
+      # authenticated, or the dispatch failed): "Record the release" below
+      # is skipped, so the hold is still open -- the issue says so, as for
+      # "Explain an answer the release did not apply" above.
+      - name: Explain a release that dispatched nothing
+        if: "!cancelled() && (steps.auth-remote.outcome == 'failure' || steps.fold-dispatch.outcome == 'failure')"
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          ISSUE: ${{ inputs.issue }}
+          ACTION: ${{ needs.resolve.outputs.action }}
+          FOLD_ID: ${{ needs.resolve.outputs.fold-id }}
+          DROPPED: ${{ steps.drop.outputs.result }}
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/fold-hold-not-dispatched.md"
+          printf 'This `/fold-hold %s` was not applied: implement could not be dispatched for `%s`. The hold is still open; answer again.' \
+            "$ACTION" "$FOLD_ID" > "$body"
+          if [ "$DROPPED" = "dropped" ]; then
+            printf ' The fold section was already removed from tasks.md, so answering `/fold-hold drop` again only dispatches.' >> "$body"
+          fi
+          gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body-file "$body"
 
       # A hold is released once, and only after the dispatch above ran, so
       # a failed release -- a retry whose re-check never decided or posted

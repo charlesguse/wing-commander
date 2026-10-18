@@ -66,7 +66,8 @@ ANSWERS = {
     "constitution-conflict": ("proceed", "drop", "amend"),
     "analyze-failed": ("proceed", "retry"),
 }
-ANSWER_RE = re.compile(r"^[ \t]*/fold-hold[ \t]+([a-z]+)[ \t]*$", re.MULTILINE | re.IGNORECASE)
+# `\r`: a comment typed in the web UI ends its lines with CRLF.
+ANSWER_RE = re.compile(r"^[ \t]*/fold-hold[ \t]+([a-z]+)[ \t\r]*$", re.MULTILINE | re.IGNORECASE)
 MAINTAINER_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
 
 
@@ -363,6 +364,8 @@ def self_test():
           resolve(held, bot, "/fold-hold proceed", "NONE")["action"] == "ignore")
     check("a comment with no answer line is ignored",
           resolve(held, bot, "please proceed", "OWNER")["action"] == "ignore")
+    check("an answer line ending in CRLF is read",
+          resolve(held, bot, "/fold-hold proceed\r\nThanks", "OWNER")["action"] == "proceed")
     check("the answer must be on its own line",
           resolve(held, bot, "do not /fold-hold proceed yet", "OWNER")["action"] == "ignore")
     forged = [comment("question\n\n" + state, "2026-01-01T00:00:00Z", login="someone", kind="User")]

@@ -407,7 +407,10 @@ def decide(history, thresholds=THRESHOLDS, budget=None):
         # streak can first trip at round 4, whatever min_round says.
         n = thresholds["consecutive_churn_rounds"]
         recent = signals[-n:]
-        if len(recent) == n and all((s["churn"] or 0) > 0 for s in recent):
+        # In a row: a round with no record (a parse-failed round) breaks
+        # the streak, as it does count-not-falling's comparison.
+        if (len(recent) == n and all(s["round"] == recent[0]["round"] + j for j, s in enumerate(recent))
+                and all((s["churn"] or 0) > 0 for s in recent)):
             tripped.append("churn-streak")
         growth = signals[-1]["growth"]
         if growth is not None and growth > thresholds["growth_ratio"]:
@@ -469,6 +472,14 @@ def round_record_marker(round_, head_sha, entries):
     # The file path is the reviewer's: marker_json keeps a `-->` in it
     # from ending the marker early.
     return "<!-- {0}: {1} -->".format(ROUND_MARKER, marker_json(payload))
+
+
+def void_round_record_marker():
+    """The marker a loop appends, LAST, in place of a round record when its
+    round has none (a parse-failed round): read_round_records skips it, and
+    as the body's last opener it keeps a record forged in the reviewer text
+    shown above it from being read as this App's own."""
+    return "<!-- {0}: {{}} -->".format(ROUND_MARKER)
 
 
 def read_round_records(comments, bot_login):

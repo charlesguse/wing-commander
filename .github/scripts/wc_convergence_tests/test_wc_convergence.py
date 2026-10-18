@@ -71,6 +71,11 @@ class DecideRules(unittest.TestCase):
                          ["churn-streak"])
         self.assertFalse(wc.decide([rnd(1, 4), rnd(2, 3), rnd(3, 2, churn=2)])["stop"])
 
+    def test_churn_streak_needs_adjacent_rounds(self):
+        # Round 4 left no record: rounds 3 and 5 are not two in a row.
+        self.assertFalse(wc.decide([rnd(1, 9), rnd(2, 8), rnd(3, 7, churn=1),
+                                    rnd(5, 2, churn=2)])["stop"])
+
     def test_growth_over_half(self):
         self.assertEqual(wc.decide([rnd(1, 4), rnd(2, 3), rnd(3, 2, growth=0.51)])["tripped"],
                          ["growth"])

@@ -34,6 +34,34 @@ def hold(fold_id, stamp):
             "created_at": stamp, "user": BOT}
 
 
+class FoldHoldModule(unittest.TestCase):
+    def test_an_answer_line_ending_in_crlf_is_read(self):
+        # The web UI sends CRLF: an answer followed by another line.
+        comments = [hold("f1", "2026-01-01T00:00:00Z")]
+        r = wc_fold_hold.resolve(comments, BOT["login"], "/fold-hold proceed\r\nThanks", "OWNER")
+        self.assertEqual(r["action"], "proceed")
+
+    def test_a_dropped_folds_fingerprints_are_dismissed(self):
+        # The owner's decision on F2 of #1062's pass-6 review.
+        def state(fold_id, fps, stamp):
+            folded = wc_fold_hold.with_fingerprints('[{{"id":"{0}","summary":"s"}}]'.format(fold_id), fps)
+            return {"body": "q\n\n" + wc_fold_hold.render_state(
+                fold_id=fold_id, reason="constitution-conflict", folded_json=folded),
+                "created_at": stamp, "user": BOT}
+
+        def resolved(fold_id, resolution, stamp, user=BOT):
+            return {"body": wc_fold_hold.render_resolved(fold_id, resolution),
+                    "created_at": stamp, "user": user}
+
+        comments = [state("fd", "aa,bb", "2026-01-01T00:00:00Z"),
+                    state("fk", "cc", "2026-01-01T00:00:01Z"),
+                    resolved("fd", "drop", "2026-01-02T00:00:00Z"),
+                    resolved("fk", "proceed", "2026-01-02T00:00:01Z"),
+                    resolved("fk", "drop", "2026-01-03T00:00:00Z", {"login": "x", "type": "User"})]
+        self.assertEqual(wc_fold_hold.dropped_fingerprints(comments, BOT["login"]), ["aa", "bb"])
+        self.assertEqual(wc_fold_hold.dropped_fingerprints(comments[:2], BOT["login"]), [])
+
+
 class ReleaseSteps(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -126,6 +154,17 @@ class ReleaseSteps(unittest.TestCase):
                        "!cancelled()"):
             self.assertIn(needle, cond)
 
+
+    def test_a_failed_dispatch_is_explained_on_the_issue(self):
+        cond = release_step("Explain a release that dispatched nothing")["if"]
+        for needle in ("steps.fold-dispatch.outcome == 'failure'",
+                       "steps.auth-remote.outcome == 'failure'", "!cancelled()"):
+            self.assertIn(needle, cond)
+        proc = self.run_step("Explain a release that dispatched nothing",
+                             {"ACTION": "drop", "FOLD_ID": "fa", "DROPPED": "dropped"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("`/fold-hold drop` was not applied", self.posted_text())
+        self.assertIn("still open", self.posted_text())
 
     def test_a_cancelled_release_says_the_hold_is_still_open(self):
         cond = " ".join(job("release-cancelled")["if"].split())
