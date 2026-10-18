@@ -532,9 +532,15 @@ def evaluate(records, current, base, cwd, resolved=None, budget=None,
     finding the loop already knows is waiting is counted like any other but
     is not a recurrence. dismissed: fingerprints of folds the owner
     answered `/fold-hold drop` (wc_fold_hold.dropped_fingerprints) -- the
-    ledger's dismissed list, never a recurrence.
+    ledger's dismissed list, never a recurrence, and subtracted from every
+    round's count and left out of the open findings, so count-not-falling
+    and the hand-off read only findings the loop still owes. Pending
+    findings stay counted: the loop still owes their fold.
     """
-    rounds = [r for r in records if r["round"] < current["round"]] + [current]
+    dismissed = set(dismissed or [])
+    rounds = [_without_dismissed(r, dismissed)
+              for r in records if r["round"] < current["round"]]
+    rounds.append(_without_dismissed(current, dismissed))
     # A folded fingerprint was resolved in the first round that raised it,
     # so that round's own row never counts it as a recurrence; one no
     # earlier record carries resolves before round 1.
@@ -545,7 +551,7 @@ def evaluate(records, current, base, cwd, resolved=None, budget=None,
     pending = set(pending or [])
     ledger = {"resolved": dict((fp, first_raised.get(fp, 0)) for fp in (resolved or [])
                                if fp not in pending),
-              "dismissed": sorted(set(dismissed or []))}
+              "dismissed": sorted(dismissed)}
     if resolved_from_history:
         for r in rounds[:-1]:
             for f in r.get("findings", []):
@@ -559,8 +565,22 @@ def evaluate(records, current, base, cwd, resolved=None, budget=None,
     # reviewer's free-text title is never part of it.
     decision["open_findings"] = [
         {"fingerprint": f.get("fingerprint"), "file": f.get("file"), "line": f.get("line")}
-        for f in current.get("findings", [])]
+        for f in current.get("findings", []) if f.get("fingerprint") not in dismissed]
     return decision
+
+
+def _without_dismissed(rnd, dismissed):
+    """rnd with its count less the dismissed entries (count - |dismissed
+    and entries|). A record past MAX_RECORDED_FINDINGS keeps its whole
+    count, so a dismissed finding beyond the kept entries stays counted.
+    The entries themselves stay: attribution and recurrence read them, and
+    the ledger's dismissed list already keeps them out of recurrences."""
+    findings = rnd.get("findings", [])
+    recorded = rnd.get("count")
+    if not isinstance(recorded, int) or isinstance(recorded, bool):
+        recorded = len(findings)
+    hits = sum(1 for f in findings if f.get("fingerprint") in dismissed)
+    return dict(rnd, count=max(recorded - hits, 0))
 
 
 def _inert(text):

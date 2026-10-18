@@ -389,6 +389,33 @@ class EvaluateInGit(GitBacked):
         self.assertEqual(d["recurrences"], [])
         self.assertNotIn("recurrence", d["tripped"])
 
+    def test_dismissed_findings_leave_every_rounds_count_and_the_handoff(self):
+        # Owner decision on pass 7's R8 (b): a dropped fold's findings are
+        # subtracted from every round's count, current and recorded alike,
+        # and are not open findings; re-raised with one new finding they
+        # must not trip count-not-falling.
+        base, h0, h1, h2 = self.build()
+        fp = {"fingerprint": "fp-F", "file": "f.py", "line": 4}
+        reviews = [{"body": wc.round_record_marker(r, h, es), "submitted_at": "t{0}".format(r),
+                    "user": {"login": "bot[bot]", "type": "Bot"}}
+                   for r, h, es in ((1, h0, [fp, dict(fp, fingerprint="fp-D")]),
+                                    (2, h1, [dict(fp, fingerprint="fp-G"),
+                                             dict(fp, fingerprint="fp-H")]))]
+        records = wc.read_round_records(reviews, "bot[bot]")
+        current = {"round": 3, "head_sha": h2,
+                   "findings": [fp, dict(fp, fingerprint="fp-D"), dict(fp, fingerprint="fp-N")]}
+        d = wc.evaluate(records, current, base, self.repo, resolved=["fp-F", "fp-D"],
+                        dismissed=["fp-F", "fp-D"])
+        self.assertEqual([s["count"] for s in d["signals"]], [0, 2, 1])
+        self.assertNotIn("count-not-falling", d["tripped"])
+        self.assertEqual([f["fingerprint"] for f in d["open_findings"]], ["fp-N"])
+        self.assertNotIn("fp-F", wc.render_handoff(d))
+        # Pending findings stay counted.
+        d = wc.evaluate(records, current, base, self.repo, resolved=["fp-F", "fp-D"],
+                        pending=["fp-F", "fp-D"])
+        self.assertEqual([s["count"] for s in d["signals"]], [2, 2, 3])
+        self.assertIn("count-not-falling", d["tripped"])
+
     def test_a_folded_finding_recurs_only_after_the_round_that_raised_it(self):
         base, h0, h1, h2 = self.build()
         fp = {"fingerprint": "fp-F", "file": "f.py", "line": 4}
