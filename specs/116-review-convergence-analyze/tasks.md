@@ -273,3 +273,68 @@ Repository is CI/CD tooling: scripts in `.github/scripts/`, composites in `.gith
   - .github/scripts/wc_convergence.py
 
   Detail: Around line 300; roughly 250 show and 250 blame calls at 50 findings over 5 rounds.
+
+## Review Gate Round 3 Findings
+
+- [ ] Review finding: compute_history lets a git merge-base failure abort the whole evaluation
+
+  diff_size() runs outside a try, so a missing merge-base (shallow fetch or unrelated history) raises SystemExit instead of degrading to git_ok=False.
+
+  - .github/scripts/wc_convergence.py
+
+  Detail: _resolve_heads only checks that head_sha resolves; merge-base failure kills the partition and board-loop convergence steps every run.
+
+- [ ] Review finding: fold-analyze block() turns a skipped decision into an analyze-failed hold
+
+  When the open-holds read is empty, block(result, None) re-decides a tasks==0 'skipped' fold as a hold and asks the owner a spurious question.
+
+  - .github/actions/wing-commander-fold-analyze/decide.py
+
+  Detail: The guard should leave 'skipped' untouched.
+
+- [ ] Review finding: Pending-fold check silently ignores a missing tasks.md
+
+  The pending-title check swallows OSError on a relative SPEC_DIR/tasks.md, so re-raised findings with a pending fold are counted as recurrences and can falsely stop the loop as not-converging.
+
+  - .github/workflows/lifecycle-review-gate.yml
+
+- [ ] Review finding: Fold-hold release blocked by another hold can strand the earlier fold
+
+  A proceed/drop answered for a newer hold B while older hold A is open is recorded as resolved but dispatches nothing. If A is later dropped or amended, B's fold has no dispatch path.
+
+  - .github/workflows/wing-commander-fold-hold.yml
+
+- [ ] Review finding: Empty fold id or ref is reported as tasks=0 and dispatched unchecked
+
+  The analyze stage outputs tasks=0 when fold_id or the BEFORE/AFTER refs are empty, so fold-decide returns 'skipped' and dispatches implement with no analysis, contradicting the failed-check-holds rule.
+
+  - .github/workflows/pr-conversation.yml
+  - .github/actions/wing-commander-fold-analyze/action.yml
+
+- [ ] Review finding: Inconsistent project-prefix handling for SPEC_DIR in fold-analyze instructions
+
+  Skill and constitution paths get the project prefix but $SPEC_DIR and the git diff pathspec do not. In a project-scoped lifecycle the diff can come back empty and the fold is skipped.
+
+  - .github/actions/wing-commander-fold-analyze/action.yml
+
+- [ ] Review finding: fold-analyze job body is pasted into three workflows
+
+  About 90 lines of run/agent steps are duplicated across lifecycle-review-gate, wing-commander-fold-hold and pr-conversation, against the CLAUDE.md 'one home' rule.
+
+  - .github/workflows/lifecycle-review-gate.yml
+  - .github/workflows/wing-commander-fold-hold.yml
+  - .github/workflows/pr-conversation.yml
+
+- [ ] Review finding: thrash_signals reports 'none tripped' when self-inflicted share was never evaluated
+
+  history_from_report gives only the latest round a self-inflicted share. With no --finding at the right head the share is None and the output reads as converging.
+
+  - .claude/skills/review-until-clean/scripts/thrash_signals.py
+
+- [ ] Review finding: count-not-falling trips on 0>=0 and on non-adjacent rounds
+
+  latest.count >= prev.count treats two zero-finding rounds as not falling, and compares against history[-2] even when a round record is missing.
+
+  - .github/scripts/wc_convergence.py
+
+  Detail: Require adjacency (prev.round == latest.round-1) and a non-zero count.
