@@ -794,8 +794,8 @@ question on the lifecycle issue. While any hold is open, every fold
 dispatch on that lifecycle is `blocked`. Anything else dispatches with the
 report linked there. A maintainer releases a hold with a `/fold-hold proceed`,
 `drop`, `amend` or (for a failed check) `retry` comment on the lifecycle
-issue, handled by `wing-commander-fold-hold.yml` through
-`wc_fold_hold.py`.
+issue, handled by the published `fold-hold.yml` stage (wrapper
+`wing-commander-fold-hold.yml`) through `wc_fold_hold.py`.
 
 **Where gate state lives**: `review_gate` (round, reviewed head SHA,
 outcome, open finding count, the folded/filed fingerprint sets FR-021's

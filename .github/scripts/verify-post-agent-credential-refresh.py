@@ -351,7 +351,7 @@ NO_REMOTE_REFRESH_JOBS = {
     # pushes: nothing after its agent uses origin at all.
     (".github/workflows/lifecycle-review-gate.yml", "fold-analyze"),
     (".github/workflows/pr-conversation.yml", "fold-analyze"),
-    (".github/workflows/wing-commander-fold-hold.yml", "fold-analyze"),
+    (".github/workflows/fold-hold.yml", "fold-analyze"),
 }
 
 # Third maintainer review of PR #407, Gate 68 hole (a): nothing previously

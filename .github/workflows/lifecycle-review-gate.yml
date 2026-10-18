@@ -1713,7 +1713,7 @@ jobs:
       # FR-014/FR-015: a hold posts the owner question on the lifecycle
       # issue and dispatches nothing; a dispatch links the analyze report
       # there. The hold-state marker carries what the hold-release job
-      # (wing-commander-fold-hold.yml) needs to dispatch the fold later.
+      # (fold-hold.yml) needs to dispatch the fold later.
       - name: Post the fold-analyze outcome on the lifecycle issue
         if: "!cancelled() && steps.analyze-fold.outcome == 'success' && steps.analyze-fold.outputs.decision != 'skipped'"
         env:

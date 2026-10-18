@@ -20,7 +20,7 @@ depends on why it held (FR-013, FR-014):
   constitution-conflict   proceed | drop | amend
   analyze-failed          proceed | retry
 
-The release job (wing-commander-fold-hold.yml) resolves the answer through
+The release job (fold-hold.yml) resolves the answer through
 `resolve` -- deterministic code, never an agent (constitution IX) -- and
 records the outcome with a resolved marker so a hold is released once:
 
@@ -355,6 +355,9 @@ def self_test():
     r = resolve(two_done, bot, "/fold-hold proceed", "OWNER")
     check("an older hold stays open after the newer one is answered",
           (r["state"] or {}).get("fold_id") == "fa" and r["others"] == [])
+    check("open-hold reads the hold an answer addresses, without the answer",
+          open_hold(two, bot) == resolve(two, bot, "/fold-hold proceed", "OWNER")["state"]
+          and open_hold(two_done, bot) == r["state"])
     check("open holds block a fold other than their own, not their own",
           other_open_holds(two, bot, "fc") == ["fa", "fb"]
           and other_open_holds(two, bot, "fa") == ["fb"])
@@ -466,6 +469,13 @@ def main(argv=None):
         if field != "reason":
             po.add_argument("--" + field.replace("_", "-"), default="")
     po.add_argument("--hold-reason", default="")
+    # The newest open hold's state, which every answer addresses: read
+    # without the comment body, so the release's job outputs carry nothing
+    # a person typed (Gate 49).
+    nh = sub.add_parser("open-hold")
+    nh.add_argument("--comments", required=True)
+    nh.add_argument("--bot-login", required=True)
+    nh.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT", ""))
     oh = sub.add_parser("open-holds")
     oh.add_argument("--comments", required=True)
     oh.add_argument("--bot-login", required=True)
@@ -485,6 +495,11 @@ def main(argv=None):
         posted = post_outcome(a.issue, a.decision, a.report_file, a.question_file,
                               reason=a.hold_reason, **state)
         print("posted" if posted else "nothing-to-post")
+    elif a.cmd == "open-hold":
+        with open(a.comments, encoding="utf-8") as fh:
+            state = open_hold(json.load(fh), a.bot_login) or {}
+        _write_outputs(a.github_output, [(f.replace("_", "-"), state.get(f, "")) for f in STATE_FIELDS])
+        print("open" if state else "none")
     elif a.cmd == "open-holds":
         with open(a.comments, encoding="utf-8") as fh:
             print(",".join(other_open_holds(json.load(fh), a.bot_login, a.except_fold_id)))

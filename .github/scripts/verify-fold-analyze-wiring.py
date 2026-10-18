@@ -52,6 +52,11 @@ and pr-conversation (the published caller)
 replies on the PR when its fold is held or blocked, as it does when one
 dispatches.
 
+The hold release (fold-hold.yml) is a workflow_call-only reusable
+workflow, and its wrapper only delegates to it: only the release's
+resolved marker closes a hold, so an adopter without it would never close
+one (FR-014; the owner's decision A on #994).
+
 The fold-analyze steps' rationale comments live once, in
 lifecycle-review-gate.yml; the other callers point at it (CLAUDE.md's
 "Shared logic has exactly one home").
@@ -81,8 +86,14 @@ CALLERS = (
     (".github/workflows/lifecycle-review-gate.yml",
      ("disposition", "fold-analyze", "fold-decide"), "wing-commander-fold-commit"),
     (".github/workflows/pr-conversation.yml", ("fold-analyze", "dispatch-once"), None),
-    (".github/workflows/wing-commander-fold-hold.yml", ("fold-analyze", "release"), None),
+    (".github/workflows/fold-hold.yml", ("fold-analyze", "release"), None),
 )
+# The hold release is published (the owner's decision A on #994): only its
+# resolved marker closes a hold, so an adopter without it could never close
+# one, and every later fold on that lifecycle would stay blocked (FR-014).
+# This repository's wrapper only delegates to it.
+RELEASE = ".github/workflows/fold-hold.yml"
+RELEASE_WRAPPER = ".github/workflows/wing-commander-fold-hold.yml"
 # The published caller: a held fold is answered on the PR, as a dispatched
 # one is (constitution VII: nothing beyond one extra read-only agent run).
 PUBLISHED_CALLER = ".github/workflows/pr-conversation.yml"
@@ -105,6 +116,9 @@ MUST_DISALLOW = {"Write", "Edit", "Bash"}
 
 
 def _load(path):
+    # A missing file parses as empty, so its checks report it by name.
+    if not os.path.isfile(path):
+        return {}
     with open(path, encoding="utf-8") as fh:
         return yaml.safe_load(fh) or {}
 
@@ -303,9 +317,29 @@ def check_comment_homes(texts):
 def _caller_texts():
     texts = {}
     for path, _jobs, _pre in CALLERS:
-        with open(path, encoding="utf-8") as fh:
-            texts[path] = fh.read()
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as fh:
+                texts[path] = fh.read()
     return texts
+
+
+def check_release_published(release, wrapper):
+    """release/wrapper: the parsed hold-release workflow and its wrapper."""
+    failures = []
+    on = release.get(True, release.get("on"))
+    if not (isinstance(on, dict) and list(on) == ["workflow_call"]):
+        failures.append(f"{RELEASE}: is not a workflow_call-only reusable workflow "
+                        f"(on: {on!r}) -- an adopter cannot call the release, so its "
+                        f"first fold hold never closes (FR-014).")
+    jobs = wrapper.get("jobs") or {}
+    if not jobs:
+        failures.append(f"{RELEASE_WRAPPER}: has no job calling ./{RELEASE}.")
+    for name, job in jobs.items():
+        if (job or {}).get("steps") or (job or {}).get("uses") != "./" + RELEASE:
+            failures.append(f"{RELEASE_WRAPPER}: job {name!r} does not only delegate to "
+                            f"./{RELEASE} -- release logic in the wrapper is logic an "
+                            f"adopter never gets.")
+    return failures
 
 
 def check_composite(doc):
@@ -344,6 +378,7 @@ def check_all():
             continue
         failures += check_caller(path, jobs, preceding)
     failures += check_comment_homes(_caller_texts())
+    failures += check_release_published(_load(RELEASE), _load(RELEASE_WRAPPER))
     return failures
 
 
@@ -557,6 +592,25 @@ def self_test():
     d["if"] = d["if"].replace(" && steps.recheck.outputs.other-open == ''", "")
     case("a release dispatch that ignores the other open holds is caught",
          rel_caught(past_others, "dispatch past another"))
+
+    rel_doc, wrap_doc = _load(RELEASE), _load(RELEASE_WRAPPER)
+    for label, on in (("an issue_comment trigger beside workflow_call", {"workflow_call": None, "issue_comment": None}),
+                      ("issue_comment only (no workflow_call)", {"issue_comment": None})):
+        mutated = copy.deepcopy(rel_doc)
+        mutated.pop("on", None)
+        mutated[True] = on
+        case(f"a hold release with {label} is caught",
+             any("workflow_call-only" in f for f in check_release_published(mutated, wrap_doc)))
+    inlined = copy.deepcopy(wrap_doc)
+    job = next(iter(inlined["jobs"].values()))
+    job.pop("uses")
+    job["steps"] = [{"run": "python3 .github/scripts/wc_fold_hold.py resolve"}]
+    case("a wrapper that runs the release itself is caught",
+         any("only delegate" in f for f in check_release_published(rel_doc, inlined)))
+    elsewhere = copy.deepcopy(wrap_doc)
+    next(iter(elsewhere["jobs"].values()))["uses"] = "./.github/workflows/other.yml"
+    case("a wrapper that calls another workflow is caught",
+         any("only delegate" in f for f in check_release_published(rel_doc, elsewhere)))
 
     texts = _caller_texts()
     pasted = dict(texts)
