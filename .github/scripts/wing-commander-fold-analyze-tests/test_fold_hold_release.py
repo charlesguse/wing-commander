@@ -138,5 +138,26 @@ class ReleaseSteps(unittest.TestCase):
         self.assertIn("still open", self.posted_text())
 
 
+    def held_reply(self, decision, post_outcome):
+        with open(os.path.join(ROOT, ".github", "workflows", "pr-conversation.yml"), encoding="utf-8") as fh:
+            steps = yaml.safe_load(fh)["jobs"]["dispatch-once"]["steps"]
+        run = next(s for s in steps if s.get("name") == "Reply that this review's fold(s) are held")["run"]
+        env = dict(os.environ, RUNNER_TEMP=self.tmp, GH_TOKEN="t", PR_NUMBER="3", ISSUE="7",
+                   DECISION=decision, HOLD_REASON="constitution-conflict", POST_OUTCOME=post_outcome,
+                   PATH=self.bindir + os.pathsep + os.environ["PATH"])
+        proc = subprocess.run(["bash", "-e", "-c", run], cwd=self.tmp, env=env,
+                              capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return self.posted_text()
+
+    def test_a_held_reply_points_at_a_question_that_was_posted(self):
+        self.assertIn("The owner question is on #7", self.held_reply("hold", "success"))
+
+    def test_a_held_reply_whose_question_never_posted_says_so(self):
+        text = self.held_reply("hold", "failure")
+        self.assertIn("could not be posted", text)
+        self.assertNotIn("The owner question is on #7", text)
+
+
 if __name__ == "__main__":
     unittest.main()

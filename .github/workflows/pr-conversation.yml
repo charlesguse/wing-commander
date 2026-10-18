@@ -3754,6 +3754,7 @@ jobs:
       # FR-014/FR-015 -- see lifecycle-review-gate.yml's "Post the
       # fold-analyze outcome on the lifecycle issue".
       - name: Post the fold-analyze outcome
+        id: analyze-post
         if: "!cancelled() && steps.analyze-fold.outcome == 'success' && steps.analyze-fold.outputs.decision != 'skipped'"
         shell: bash
         env:
@@ -3816,12 +3817,19 @@ jobs:
           ISSUE: ${{ needs.classify-and-announce.outputs.issue-number }}
           DECISION: ${{ steps.analyze-fold.outputs.decision }}
           HOLD_REASON: ${{ steps.analyze-fold.outputs.hold-reason }}
+          POST_OUTCOME: ${{ steps.analyze-post.outcome }}
         run: |
           set -euo pipefail
           body_file="$RUNNER_TEMP/dispatch-once-held-reply.md"
           why="the fold-time analyze check held them (\`$HOLD_REASON\`)"
           [ "$DECISION" != "blocked" ] || why="a fold hold is already open on the lifecycle, and every fold dispatch waits for its answer"
-          echo "This review's fold(s) are committed, but no implement cycle was dispatched: $why. The owner question is on #$ISSUE; implement is dispatched once a maintainer answers it there." > "$body_file"
+          next="The owner question is on #$ISSUE; implement is dispatched once a maintainer answers it there."
+          # A hold whose question never posted has no state marker, so no
+          # /fold-hold answer can release it: say so, and how to go on.
+          if [ "$DECISION" = "hold" ] && [ "$POST_OUTCOME" != "success" ]; then
+            next="Its owner question could not be posted on #$ISSUE, so no \`/fold-hold\` answer can release it: settle the question, then dispatch implement by hand."
+          fi
+          echo "This review's fold(s) are committed, but no implement cycle was dispatched: $why. $next" > "$body_file"
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
 
       # spec 075 FR-014/FR-015, reconciled 2026-09-29: this run's own claim
