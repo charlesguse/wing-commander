@@ -125,7 +125,7 @@ class ReleaseSteps(unittest.TestCase):
         proc, text = self.recheck([hold("fa", "2026-01-01T00:00:00Z"),
                                    hold("fb", "2026-01-02T00:00:00Z")])
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("`fb` is", text)
+        self.assertIn("was no longer the newest -- `fb` is. ", text)
         self.assertNotIn("already released", text)
 
     def test_an_already_released_hold_says_so(self):
@@ -165,6 +165,15 @@ class ReleaseSteps(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("`/fold-hold drop` was not applied", self.posted_text())
         self.assertIn("still open", self.posted_text())
+
+    def test_a_failed_remote_auth_neither_dispatches_nor_records_the_release(self):
+        # The dispatch's fetch fails silently without the credential and
+        # exits clean as nothing folded: the release must not be recorded
+        # while "Explain a release that dispatched nothing" says it is open.
+        for name in ("Dispatch implement for the released fold",
+                     "Record the release on the lifecycle issue"):
+            cond = " ".join(release_step(name)["if"].split())
+            self.assertIn("steps.auth-remote.outcome == 'success'", cond, name)
 
     def test_a_cancelled_release_says_the_hold_is_still_open(self):
         cond = " ".join(job("release-cancelled")["if"].split())

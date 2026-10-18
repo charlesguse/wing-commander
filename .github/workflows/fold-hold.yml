@@ -624,8 +624,10 @@ jobs:
             # An earlier answer released it, or a newer hold was posted
             # first and is now the one an answer addresses.
             now="$(sed -n 's/^fold-id=//p' "$RUNNER_TEMP/fold-hold-recheck.out" | head -n 1)"
+            state="already released"
+            [ -z "$now" ] || state="no longer the newest -- \`$now\` is"
             printf 'This `/fold-hold %s` was not applied: by the time it ran, the open hold it answered (`%s`) was %s. An answer addresses the newest open hold.' \
-              "$ACTION" "$FOLD_ID" "${now:+no longer the newest -- \`$now\` is}${now:-already released}" \
+              "$ACTION" "$FOLD_ID" "$state" \
               > "$RUNNER_TEMP/fold-hold-not-applied.md"
             echo "::error::the fold hold on \`$FOLD_ID\` is no longer the open hold this answer addresses${now:+ (now \`$now\`)}; this \`/fold-hold $ACTION\` changes nothing."
             exit 1
@@ -778,10 +780,14 @@ jobs:
             --base-sha "$BASE_SHA" --fold-ref-before "$FOLD_BEFORE" --fold-ref-after "$FOLD_AFTER" \
             --folded-json "$FOLDED_JSON" --implement-workflow "$IMPLEMENT_WORKFLOW"
 
+      # Not after a failed auth-remote: the dispatch's fetch would read no
+      # tip and exit clean as nothing folded, and the release would be
+      # recorded while the explanation below says the hold is still open.
       - name: Dispatch implement for the released fold
         id: fold-dispatch
         if: >-
-          !cancelled() && steps.recheck.outcome == 'success' && steps.recheck.outputs.other-open == '' && (
+          !cancelled() && steps.recheck.outcome == 'success' && steps.auth-remote.outcome == 'success'
+          && steps.recheck.outputs.other-open == '' && (
             needs.resolve.outputs.action == 'proceed'
             || (needs.resolve.outputs.action == 'drop' && steps.drop.outcome == 'success')
             || (needs.resolve.outputs.action == 'retry'
@@ -834,7 +840,7 @@ jobs:
       # dispatches).
       - name: Record the release on the lifecycle issue
         if: >-
-          !cancelled() && steps.recheck.outcome == 'success' && (
+          !cancelled() && steps.recheck.outcome == 'success' && steps.auth-remote.outcome == 'success' && (
             (steps.fold-dispatch.outcome == 'success'
              && (needs.resolve.outputs.action == 'proceed' || needs.resolve.outputs.action == 'drop'
                  || needs.resolve.outputs.action == 'retry'))

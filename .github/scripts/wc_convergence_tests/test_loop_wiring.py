@@ -153,6 +153,18 @@ class LifecyclePartition(LoopRepo):
         self.assertEqual((out["outcome"], out["recurrences"]), ("clean", ""))
         self.assertEqual(self.section(), "")
 
+    def test_a_waiting_fold_re_raised_in_other_case_is_still_pending(self):
+        # The fingerprint normalizes the title; the pending match must too,
+        # or the re-raise reads as a recurrence and trips the stop.
+        os.makedirs(os.path.join(self.repo, "specs", "001-x"))
+        with open(os.path.join(self.repo, "specs", "001-x", "tasks.md"), "w", encoding="utf-8") as fh:
+            fh.write("- [ ] Review finding: Fix the Parser.\n")
+        f = finding("fix the parser", "f.py", 4)
+        out = self.partition(2, self.h2, [f], [review(1, self.h1, [entry("F", "f.py", 4)], "t1")],
+                             folded=[fingerprint(ISSUE, "Fix the Parser.", "f.py")],
+                             env={"SPEC_DIR": "specs/001-x"})
+        self.assertEqual((out["outcome"], out["recurrences"]), ("clean", ""))
+
     def test_a_dropped_folds_finding_raised_again_is_dismissed(self):
         # The owner answered `/fold-hold drop` on round 1's fold: F raised
         # again is neither a recurrence nor folded again (F2, pass 6).

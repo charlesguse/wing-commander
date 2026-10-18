@@ -1181,7 +1181,7 @@ jobs:
           # import from the trusted copy instead (never the branch under
           # review's own .github/scripts).
           sys.path.insert(0, ".wc-pristine-repo/.github/scripts")
-          from wc_review_finding_fingerprint import fingerprint
+          from wc_review_finding_fingerprint import fingerprint, norm
           from wc_convergence import evaluate, read_round_records, round_findings
 
           runner_temp = os.environ["RUNNER_TEMP"]
@@ -1220,7 +1220,7 @@ jobs:
                   for line in fh:
                       for lead in ("- [ ] Review finding: ", "- [ ] Recurring review finding: "):
                           if line.startswith(lead):
-                              pending_titles.add(line[len(lead):].strip())
+                              pending_titles.add(norm(line[len(lead):]))
           except OSError as exc:
               # Nothing pending, not everything: reading every folded finding
               # as still waiting would let a recurrence resolve clean and post
@@ -1242,7 +1242,9 @@ jobs:
               fp = fingerprint(issue, f.get("title", ""), basis.get("file_path", ""))
               if fp in filed_fps or fp in dismissed_fps:
                   continue
-              if fp in folded_fps and str(f.get("title", "")).strip() in pending_titles:
+              # norm: the title the fingerprint matched on, so a re-raise
+              # differing only in case or punctuation is still that fold.
+              if fp in folded_fps and norm(f.get("title", "")) in pending_titles:
                   pending_fps.add(fp)
                   continue
               if f.get("in_scope") is True:
