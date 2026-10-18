@@ -20,10 +20,13 @@ import wc_fold_hold  # noqa: E402
 BOT = {"login": "wc[bot]", "type": "Bot"}
 
 
-def release_step(name):
+def job(name):
     with open(WORKFLOW, encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh)
-    return next(s for s in doc["jobs"]["release"]["steps"] if s.get("name") == name)
+        return yaml.safe_load(fh)["jobs"][name]
+
+
+def release_step(name, job_name="release"):
+    return next(s for s in job(job_name)["steps"] if s.get("name") == name)
 
 
 def hold(fold_id, stamp):
@@ -51,7 +54,7 @@ class ReleaseSteps(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp)
 
-    def run_step(self, name, env, comments=()):
+    def run_step(self, name, env, comments=(), job_name="release"):
         with open(self.served, "w", encoding="utf-8") as fh:
             json.dump(list(comments), fh)
         out = os.path.join(self.tmp, "github-output")
@@ -59,7 +62,7 @@ class ReleaseSteps(unittest.TestCase):
         full = dict(os.environ, GITHUB_OUTPUT=out, RUNNER_TEMP=self.tmp, GH_TOKEN="t",
                     GITHUB_REPOSITORY="o/r", ISSUE="7", BOT_LOGIN="wc[bot]",
                     PATH=self.bindir + os.pathsep + os.environ["PATH"], **env)
-        proc = subprocess.run(["bash", "-e", "-c", release_step(name)["run"]], cwd=self.tmp,
+        proc = subprocess.run(["bash", "-e", "-c", release_step(name, job_name)["run"]], cwd=self.tmp,
                               env=full, capture_output=True, text=True)
         return proc
 
@@ -122,6 +125,17 @@ class ReleaseSteps(unittest.TestCase):
         for needle in ("steps.recheck.outcome == 'failure'", "steps.drop.outcome == 'failure'",
                        "!cancelled()"):
             self.assertIn(needle, cond)
+
+
+    def test_a_cancelled_release_says_the_hold_is_still_open(self):
+        cond = " ".join(job("release-cancelled")["if"].split())
+        self.assertIn("needs.release.result == 'cancelled'", cond)
+        self.assertTrue(cond.startswith("always()"), cond)
+        proc = self.run_step("Say the cancelled release left the hold open",
+                             {"ACTION": "proceed", "FOLD_ID": "fa"}, job_name="release-cancelled")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("`fa`", self.posted_text())
+        self.assertIn("still open", self.posted_text())
 
 
 if __name__ == "__main__":

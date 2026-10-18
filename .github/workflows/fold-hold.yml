@@ -845,3 +845,46 @@ jobs:
           fi
           gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" \
             --body "$(printf 'Fold `%s` hold released (`%s`): %s.\n\n%s' "$FOLD_ID" "$ACTION" "$what" "$marker")"
+
+  # GitHub cancels a pending job in a concurrency group when a newer one
+  # queues, whatever cancel-in-progress says, so an answer whose release
+  # waited behind the spec's other writers can be dropped before it ran.
+  # Its hold is still open (only `release` writes the resolved marker), so
+  # the owner is told to answer again rather than left with a cancelled run.
+  release-cancelled:
+    needs: [verify-image-prerequisites, resolve, release]
+    if: >-
+      always() && needs.verify-image-prerequisites.result != 'failure'
+      && needs.resolve.result == 'success' && needs.release.result == 'cancelled'
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    permissions:
+      issues: write
+    steps:
+      - name: Say the cancelled release left the hold open
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ inputs.issue }}
+          ACTION: ${{ needs.resolve.outputs.action }}
+          FOLD_ID: ${{ needs.resolve.outputs.fold-id }}
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/fold-hold-cancelled.md"
+          printf 'The release for this `/fold-hold %s` on `%s` was cancelled before it recorded the hold as released, so the hold is still open. Answer again if it still needs an answer.' \
+            "$ACTION" "$FOLD_ID" > "$body"
+          gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" --body-file "$body"
