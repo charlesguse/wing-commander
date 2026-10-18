@@ -228,7 +228,7 @@ def check_remaining_work_composite():
     for what, ok in (("exits 0 (keeps Verify agent output reachable)", proc.returncode == 0),
                      ("leaves no report file", report is None),
                      ("does not claim stalled=false", outputs.get("stalled") != "false"),
-                     ("reports has-remaining=false", outputs.get("has-remaining") == "false")):
+                     ("reports has-remaining=unknown, never false", outputs.get("has-remaining") == "unknown")):
         CASES += 1
         if not ok:
             fail(f"wing-commander-remaining-work (renderer fails): expected it {what}; "

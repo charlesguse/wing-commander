@@ -33,7 +33,7 @@ inputs:
     required: true
 outputs:
   has-remaining:
-    description: "true when the report is non-empty, else false."
+    description: "true when the report is non-empty, false when it is empty, unknown when the renderer failed (no report was written)."
     value: ${{ steps.render.outputs.has-remaining }}
   stalled:
     description: "true when implementation tasks are still unchecked, else false."
@@ -69,7 +69,7 @@ runs:
           # keeps that step reachable (review-step-gating).
           echo "::error::render-remaining-work.sh failed; no remaining-work report was written"
           rm -f "$OUTPUT_PATH"
-          printf 'has-remaining=false\nimpl-count=\nstalled=\n' >> "$GITHUB_OUTPUT"
+          printf 'has-remaining=unknown\nimpl-count=\nstalled=\n' >> "$GITHUB_OUTPUT"
           exit 0
         fi
         if [ -n "$(tr -d '[:space:]' < "$OUTPUT_PATH")" ]; then
