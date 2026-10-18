@@ -92,6 +92,8 @@ CANONICAL_COMMENTS_HOME = ".github/workflows/lifecycle-review-gate.yml"
 CANONICAL_COMMENTS = (
     "the decide step below is this check's own fallback",
     "The transcript is the only record of what the analyze agent did",
+    "is re-derived here from the transcript itself",
+    "a read that fails leaves open-holds empty",
 )
 ANALYZE = "wing-commander-fold-analyze"
 DISPATCH = "wing-commander-fold-dispatch"

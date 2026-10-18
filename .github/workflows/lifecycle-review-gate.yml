@@ -1825,6 +1825,7 @@ jobs:
           CONVERGENCE_B64: ${{ needs.disposition.outputs.convergence-b64 }}
           RECURRENCES: ${{ needs.disposition.outputs.recurrences }}
           ANALYZE_DECISION: ${{ needs.fold-decide.outputs.analyze-decision }}
+          FOLD_DECIDE_RESULT: ${{ needs.fold-decide.result }}
           COST_LINE: ${{ needs.review.outputs.cost-line }}
         run: |
           set -uo pipefail
@@ -1869,6 +1870,11 @@ jobs:
             # specs/116 FR-014: the fold-time analyze check held the fold.
             [ "${ANALYZE_DECISION:-}" != "hold" ] || redispatch="but implement is held for the owner by the fold-time analyze check (see the \`/fold-hold\` question on this issue)"
             [ "${ANALYZE_DECISION:-}" != "blocked" ] || redispatch="but implement waits on a fold hold already open on this issue (see its \`/fold-hold\` question)"
+            # fold-decide owns the dispatch: a failed one dispatched nothing
+            # (or never finished deciding), whatever its decision says.
+            case "${FOLD_DECIDE_RESULT:-}" in
+              failure|cancelled) redispatch="but the fold-decide job did not complete, so implement was not re-dispatched (dispatch it by hand once the run's failure is understood)" ;;
+            esac
             detail="${IN_SCOPE_COUNT:-0} in-scope and ${OUT_OF_SCOPE_COUNT:-0} out-of-scope finding(s) were posted on PR #$PR_NUMBER. In-scope survivors (after dedup) were folded into tasks.md $redispatch; out-of-scope survivors were filed as their own issue(s). ${FINDINGS_OPEN:-0} in-scope finding(s) from this round remain open."
             # specs/116 FR-003: a recurrence is named, never dropped.
             if [ -n "${RECURRENCES:-}" ]; then

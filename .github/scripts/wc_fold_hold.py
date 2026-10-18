@@ -231,9 +231,13 @@ def drop_tasks(spec_dir, before, after, cwd):
     with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as fh:
         fh.write(patch)
         patch_path = fh.name
+    # --unidiff-zero: without it git anchors a hunk with no context on one
+    # side to that end of the file, so the fold section stops reversing as
+    # soon as a later fold (one this hold blocked) is appended after it. The
+    # context lines the patch does carry are still matched.
     try:
-        git(["apply", "--reverse", "--check", patch_path], cwd)
-        git(["apply", "--reverse", patch_path], cwd)
+        git(["apply", "--reverse", "--unidiff-zero", "--check", patch_path], cwd)
+        git(["apply", "--reverse", "--unidiff-zero", patch_path], cwd)
     finally:
         os.unlink(patch_path)
     if ticks:
@@ -360,6 +364,14 @@ def self_test():
               and open(tasks, encoding="utf-8").read() == "# Tasks\n\n- [X] T001\n")
         check("drop-tasks with no fold change reports nothing to drop",
               drop_tasks("specs/001-x", after, after, repo) is False)
+        g("checkout", "-q", "--", ".")
+        with open(tasks, "a", encoding="utf-8") as fh:
+            fh.write("\n## Review Gate Round 4 Findings\n\n- [ ] Review finding: z\n")
+        g("commit", "-q", "-am", "a later fold the hold blocked")
+        check("drop-tasks reverses the fold section after a later fold was appended",
+              drop_tasks("specs/001-x", before, after, repo)
+              and open(tasks, encoding="utf-8").read()
+              == "# Tasks\n\n- [X] T001\n\n## Review Gate Round 4 Findings\n\n- [ ] Review finding: z\n")
         g("checkout", "-q", "--", ".")
         ticked = commit("# Tasks\n\n- [ ] T001\n- [ ] T002\n")
         folded = commit("# Tasks\n\n- [X] T001\n- [X] T002\n\n## Round 4\n\n- [ ] Review finding: y\n")

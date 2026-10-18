@@ -382,6 +382,11 @@ ROUND_MARKER_RE = re.compile(
     r"<!--\s*" + re.escape(ROUND_MARKER) + r":\s*(\{.*?\})\s*-->", re.DOTALL)
 ROUND_MARKER_OPEN_RE = re.compile(r"<!--\s*" + re.escape(ROUND_MARKER) + r":")
 MAX_RECORDED_FINDINGS = 50
+# The reviewer's file_path has no schema bound (its title has 120): the
+# record keeps at most this many characters of it, so the round record --
+# reserved out of the review body's 57000-unit budget -- stays bounded. A
+# real repository path is far shorter; a longer one only loses attribution.
+MAX_RECORDED_PATH = 256
 
 
 def round_findings(findings, issue):
@@ -399,7 +404,7 @@ def round_findings(findings, issue):
         path = str((f.get("fingerprint_basis") or {}).get("file_path") or "")
         line = f.get("line")
         out.append({"fingerprint": fingerprint(issue, f.get("title", ""), path),
-                    "file": path,
+                    "file": path[:MAX_RECORDED_PATH],
                     "line": line if isinstance(line, int) and not isinstance(line, bool) else None,
                     "title": str(f.get("title", ""))})
     return out

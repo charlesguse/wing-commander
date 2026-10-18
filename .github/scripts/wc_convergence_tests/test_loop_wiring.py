@@ -169,7 +169,7 @@ class LifecyclePartition(LoopRepo):
 class LifecycleReport(LoopRepo):
     STEP = "Compose and post the round's outcome"
 
-    def post(self, analyze_decision):
+    def post(self, analyze_decision, fold_decide_result="success"):
         bindir = os.path.join(self.tmp.name, "bin")
         os.makedirs(bindir, exist_ok=True)
         sent = os.path.join(self.tmp.name, "sent.txt")
@@ -184,6 +184,7 @@ class LifecycleReport(LoopRepo):
             "DISPOSITION_RESULT": "success", "DISPOSITION_OUTCOME": "findings",
             "FINDINGS_OPEN": "1", "FOLDED_FINGERPRINTS": "", "FILED_FINGERPRINTS": "",
             "CONVERGENCE_B64": "", "RECURRENCES": "", "ANALYZE_DECISION": analyze_decision,
+            "FOLD_DECIDE_RESULT": fold_decide_result,
             "COST_LINE": "", "PATH": bindir + os.pathsep + os.environ["PATH"]},
             path_prepend=bindir)
         with open(sent, encoding="utf-8") as fh:
@@ -194,6 +195,12 @@ class LifecycleReport(LoopRepo):
         self.assertNotIn("re-dispatched implement", body)
         self.assertIn("held for the owner", body)
         self.assertIn("re-dispatched implement", self.post("dispatch"))
+
+    def test_a_failed_fold_decide_is_not_reported_as_re_dispatched(self):
+        body = self.post("dispatch", fold_decide_result="failure")
+        self.assertNotIn("re-dispatched implement", body)
+        self.assertIn("was not re-dispatched", body)
+        self.assertNotIn("re-dispatched implement", self.post("", fold_decide_result="failure"))
 
 
 class BoardRound(LoopRepo):

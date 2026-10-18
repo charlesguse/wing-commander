@@ -377,9 +377,9 @@ jobs:
           name: claude-execution-output-fold-analyze
           path: ${{ runner.temp }}/fold-analyze
 
-      # The verdict is re-derived here from the transcript itself, so no
-      # value read from the agent's output crosses a job boundary (Gate 49).
-      # No transcript, no verdict: the decide step holds as analyze-failed.
+      # Why the verdict is computed again from the transcript -- see
+      # lifecycle-review-gate.yml's "Compute agent run verdict (fold analyze
+      # transcript)".
       - name: Compute agent run verdict (fold analyze transcript)
         id: analyze-transcript-verdict
         if: "!cancelled() && steps.analyze-transcript.outcome == 'success'"
@@ -389,9 +389,8 @@ jobs:
           intended-turns: 12
           run-label: fold-analyze
 
-      # An open fold hold on the lifecycle blocks this fold's dispatch
-      # (decision `blocked`); a read that fails leaves open-holds empty, and
-      # the decide step holds the fold as analyze-failed.
+      # What an open hold, or a failed read, does to this fold -- see
+      # lifecycle-review-gate.yml's "Read the open fold holds".
       - name: Read the open fold holds
         id: open-holds
         if: needs.resolve.outputs.action == 'retry'
@@ -503,6 +502,10 @@ jobs:
           if [ "$DISPATCH_OUTCOME" = "skipped" ]; then
             what="nothing dispatched: implement waits for the other fold hold(s) open on this issue${OTHER_OPEN:+ (\`$(printf '%s' "$OTHER_OPEN" | sed 's/,/`, `/g')\`)}"
           fi
-          [ "$ACTION" != "drop" ] || what="the fold section's tasks were ${DROPPED:-not} removed from tasks.md; $what"
+          if [ "$ACTION" = "drop" ]; then
+            removed="the fold section's tasks were removed from tasks.md"
+            [ "$DROPPED" = "dropped" ] || removed="tasks.md had no fold section left to remove"
+            what="$removed; $what"
+          fi
           gh issue comment "$ISSUE" -R "$GITHUB_REPOSITORY" \
             --body "$(printf 'Fold `%s` hold released (`%s`): %s.\n\n%s' "$FOLD_ID" "$ACTION" "$what" "$marker")"

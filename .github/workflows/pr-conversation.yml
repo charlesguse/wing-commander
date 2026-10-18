@@ -3710,9 +3710,9 @@ jobs:
           name: claude-execution-output-fold-analyze
           path: ${{ runner.temp }}/fold-analyze
 
-      # The verdict is re-derived here from the transcript itself, so no
-      # value read from the agent's output crosses a job boundary (Gate 49).
-      # No transcript, no verdict: the decide step holds as analyze-failed.
+      # Why the verdict is computed again from the transcript -- see
+      # lifecycle-review-gate.yml's "Compute agent run verdict (fold analyze
+      # transcript)".
       - name: Compute agent run verdict (fold analyze transcript)
         id: analyze-transcript-verdict
         if: "!cancelled() && steps.analyze-transcript.outcome == 'success'"
@@ -3722,9 +3722,8 @@ jobs:
           intended-turns: 12
           run-label: fold-analyze
 
-      # An open fold hold on the lifecycle blocks this fold's dispatch
-      # (decision `blocked`); a read that fails leaves open-holds empty, and
-      # the decide step holds the fold as analyze-failed.
+      # What an open hold, or a failed read, does to this fold -- see
+      # lifecycle-review-gate.yml's "Read the open fold holds".
       - name: Read the open fold holds
         id: open-holds
         if: needs.fold-turn-dispatch.outputs.should-dispatch == 'true'

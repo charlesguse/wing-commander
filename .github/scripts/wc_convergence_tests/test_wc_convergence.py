@@ -291,6 +291,14 @@ class RoundRecords(unittest.TestCase):
         self.assertEqual(entries[0]["fingerprint"],
                          wc.round_findings([self.finding("a", "x.py")], "42")[0]["fingerprint"])
 
+    def test_a_full_record_of_overlong_paths_stays_bounded(self):
+        # The review body reserves the record out of a 57000-unit budget: a
+        # reviewer path with no schema bound must not grow it past that.
+        entries = wc.round_findings([self.finding("t%d" % i, "p/" * 1500, 1)
+                                     for i in range(wc.MAX_RECORDED_FINDINGS)], "42")
+        self.assertTrue(all(len(e["file"]) <= wc.MAX_RECORDED_PATH for e in entries))
+        self.assertLess(len(wc.round_record_marker(5, "a" * 40, entries)), 20000)
+
     def test_marker_round_trip_newest_per_round(self):
         r1 = wc.round_record_marker(1, "aaa", wc.round_findings([self.finding("a", "x.py", 3)], "42"))
         r1b = wc.round_record_marker(1, "bbb", [])
