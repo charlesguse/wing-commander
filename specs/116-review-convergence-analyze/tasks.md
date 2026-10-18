@@ -292,11 +292,15 @@ Repository is CI/CD tooling: scripts in `.github/scripts/`, composites in `.gith
 
   Detail: The guard should leave 'skipped' untouched.
 
+  Reverted in review-until-clean pass 6: already refuted in passes 2–4 (an unread open-holds list holds a `skipped` fold too, since nothing vouches no hold is open); the change broke test_decide_step_holds_when_the_open_holds_were_never_read.
+
 - [X] Review finding: Pending-fold check silently ignores a missing tasks.md
 
   The pending-title check swallows OSError on a relative SPEC_DIR/tasks.md, so re-raised findings with a pending fold are counted as recurrences and can falsely stop the loop as not-converging.
 
   - .github/workflows/lifecycle-review-gate.yml
+
+  Reverted to fail closed in review-until-clean pass 6: reading every folded finding as pending let #833's recurrence resolve clean (FR-003, SC-001); the unreadable file now only warns.
 
 - [ ] Review finding: Fold-hold release blocked by another hold can strand the earlier fold
 

@@ -128,6 +128,16 @@ class LifecyclePartition(LoopRepo):
         self.assertEqual(out["recurrences"], fingerprint(ISSUE, "F", "f.py"))
         self.assertIn("Recurring review finding: F", self.section())
 
+    def test_an_unreadable_tasks_md_still_reports_the_recurrence(self):
+        # Reading every folded finding as pending when tasks.md cannot be
+        # read would resolve #833's case clean (FR-003, SC-001).
+        f = finding("F", "f.py", 4)
+        out = self.partition(2, self.h2, [f], [review(1, self.h1, [entry("F", "f.py", 4)], "t1")],
+                             folded=[fingerprint(ISSUE, "F", "f.py")],
+                             env={"SPEC_DIR": "specs/missing"})
+        self.assertEqual((out["outcome"], out["recurrences"]),
+                         ("findings", fingerprint(ISSUE, "F", "f.py")))
+
     def test_a_fold_still_waiting_in_tasks_md_is_not_a_recurrence(self):
         # A held or blocked fold leaves its task unchecked; the finding
         # re-raised is that fold pending, not a fixed finding coming back.
