@@ -341,6 +341,64 @@ def check_implement_wiring():
         fail("implement.yml still carries the inline zero-progress hand-off rule")
 
 
+def run_dispatch_step(env_over):
+    """Run implement.yml's shipped "Dispatch next step" body with a logging
+    `gh` stub; return (proc, gh-calls, step-summary)."""
+    import yaml
+    doc = yaml.safe_load(read(os.path.join(ROOT, ".github", "workflows", "implement.yml")))
+    script = next(st["run"] for job in doc["jobs"].values()
+                  for st in job.get("steps", []) if st.get("name") == "Dispatch next step")
+    tmp = _tmpdir("wc-117-dispatch-")
+    calls = os.path.join(tmp, "calls")
+    summary = os.path.join(tmp, "summary")
+    with open(os.path.join(tmp, "gh"), "w", encoding="utf-8") as fh:
+        fh.write('#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$GH_CALLS"\n')
+    os.chmod(os.path.join(tmp, "gh"), 0o755)
+    env = {**os.environ, "PATH": tmp + os.pathsep + os.environ["PATH"],
+           "GH_CALLS": calls, "GITHUB_STEP_SUMMARY": summary,
+           "APP_TOKEN": "a", "DISPATCH_TOKEN": "d", "SPEC_DIR": "specs/117-x",
+           "ISSUE": "1", "ITERATION": "5", "MAX": "5", "CONVERGED": "false",
+           "TRUNCATED": "false", "TRUNCATED_COUNT": "1", "HANDOFF": "false",
+           "ROUTED": "false", "REASON": "", "STALL_COMMENT": "", "TIER": "t",
+           "REMAINING": "- [ ] T002 x", "SELF_WORKFLOW": "self.yml",
+           "NEXT_WORKFLOW": "next.yml", "COST_LINE": "",
+           "GITHUB_SERVER_URL": "https://github.example",
+           "GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "1"}
+    env.update(env_over)
+    proc = run(["bash", "-e", "-c", script], env=env)
+    return (proc, read(calls) if os.path.exists(calls) else "",
+            read(summary) if os.path.exists(summary) else "")
+
+
+def check_dispatch_stall_reporting():
+    """FR-006 on the dispatch step's terminal branches: a routed hand-off at
+    the cap keeps its write-boundary reason AND the stall comment; a
+    truncated cycle at the cap still names the count; a blocker hand-off's
+    step summary does not blame the iteration cap."""
+    global CASES
+    stall = "Implement stopped with 1 implementation task(s) still unchecked: the iteration cap (5) was reached."
+    wb = "the only remaining work is outside the implement stage's write boundary: T002"
+    cases = (
+        ("routed at the cap", {"HANDOFF": "true", "ROUTED": "true", "REASON": wb,
+                               "STALL_COMMENT": stall}, (wb, stall)),
+        ("truncated at the cap", {"TRUNCATED": "true", "STALL_COMMENT": stall}, (stall,)),
+    )
+    for name, over, want in cases:
+        proc, calls, _ = run_dispatch_step(over)
+        for needle in want:
+            CASES += 1
+            if proc.returncode != 0 or needle not in calls:
+                fail(f"dispatch step ({name}): the issue comment lacks {needle!r}; "
+                     f"rc={proc.returncode} calls={calls!r} stderr={proc.stderr}")
+    blocker = "Implement stopped with 2 implementation task(s) still unchecked: the agent reported a blocker: missing-tool: no jq (T007)."
+    proc, calls, summary = run_dispatch_step({"ITERATION": "1", "HANDOFF": "true",
+                                              "STALL_COMMENT": blocker})
+    CASES += 1
+    if proc.returncode != 0 or "iteration cap" in summary or blocker not in summary:
+        fail(f"dispatch step (blocker hand-off at cycle 1 of 5): the step summary must "
+             f"quote the stop reason, not the iteration cap; summary={summary!r}")
+
+
 def check_review_stage_comment():
     global CASES
     impl = read(os.path.join(ROOT, ".github", "workflows", "implement.yml"))
@@ -423,6 +481,7 @@ def main():
     check_remaining_work_composite()
     check_prompts()
     check_implement_wiring()
+    check_dispatch_stall_reporting()
     if FAILURES:
         print(f"verify-implement-stall-handoff: {len(FAILURES)} failure(s) in {CASES} case(s)")
         return 1

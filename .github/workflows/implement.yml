@@ -3757,8 +3757,16 @@ jobs:
             # implementation outstanding says how many tasks and why, from
             # decide-implement-outcome.sh's own stall-comment.
             # It already states the reason, so it replaces the **Why:** line
-            # rather than repeating it.
-            [ -n "$STALL_COMMENT" ] && reason_line="$STALL_COMMENT"
+            # rather than repeating it -- except on a routed hand-off, whose
+            # **Why:** names the out-of-boundary tasks (a reason the
+            # stall-comment does not carry), so both lines are kept.
+            if [ -n "$STALL_COMMENT" ]; then
+              if [ "$ROUTED" = "true" ] && [ -n "$reason_line" ]; then
+                reason_line=$(printf '%s\n\n%s' "$reason_line" "$STALL_COMMENT")
+              else
+                reason_line="$STALL_COMMENT"
+              fi
+            fi
             body=$(printf '%s\n' \
               "$1" \
               "" \
@@ -3824,6 +3832,8 @@ jobs:
             body=$(printf '%s\n' \
               "⚠️ **Iteration cap reached** — the last cycle ($ITERATION of $MAX) ran out of turns before it could assess what remained." \
               "" \
+              "$STALL_COMMENT" \
+              "" \
               "Handing off to finalization flagged **converged=false**." \
               "" \
               "_[Final cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_" \
@@ -3860,7 +3870,7 @@ jobs:
             else
               post_handoff_remaining_work \
                 "⚠️ **Implementation is stalled** — the loop is ending here after cycle $ITERATION rather than dispatching another cycle. Remaining work identified by the last convergence pass:" \
-                "Cycle $ITERATION stopped the loop with implementation outstanding — handing off (iteration cap $MAX)"
+                "Cycle $ITERATION stopped the loop with implementation outstanding — handing off: $STALL_COMMENT"
             fi
           elif [ "$ITERATION" -lt "$MAX" ]; then
             if [ -n "$SELF_WORKFLOW" ]; then
