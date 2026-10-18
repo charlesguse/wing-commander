@@ -17,6 +17,7 @@ Requires: bash, git, awk, jq.
 """
 import atexit
 import glob
+import json
 import os
 import re
 import shutil
@@ -438,6 +439,152 @@ def check_task_identity():
             fail(f"implement.yml: a read-back arm does not pass {needle!r} to the stop rule")
 
 
+def _workflow_step(name):
+    import yaml
+    doc = yaml.safe_load(read(os.path.join(ROOT, ".github", "workflows", "implement.yml")))
+    return next(st for job in doc["jobs"].values()
+                for st in job.get("steps", []) if st.get("name") == name)
+
+
+def _run_block(script, cwd, env_over):
+    """Run a run: block with a fresh GITHUB_OUTPUT; return (proc, outputs)."""
+    tmp = _tmpdir("wc-117-step-")
+    out_file = os.path.join(tmp, "github-output")
+    env = {**os.environ, "GITHUB_OUTPUT": out_file, "RUNNER_TEMP": tmp,
+           "GITHUB_STEP_SUMMARY": os.path.join(tmp, "summary"), **env_over}
+    proc = run(["bash", "-e", "-c", script], cwd=cwd, env=env)
+    return proc, parse_kv(read(out_file) if os.path.exists(out_file) else "")
+
+
+def check_task_identity_across_cycles():
+    """Owner decision C on #992: a retag in cycle 1 must not let cycle 2
+    converge. Cycle 1's dropped-ids go through the shipped "Record
+    truncated-cycle count" step into spec-meta.json's dropped_task_ids;
+    cycle 2's shipped wing-commander-implement-outcome reads them at its
+    base and the shipped stop rule keeps them outstanding. A maintainer
+    removing the id from dropped_task_ids, or the id coming back as
+    implementation work, releases it."""
+    global CASES
+    import yaml
+    spec_dir, slug, prefix = "specs/117-x", "117-x", "spec/"
+    tasks = f"{spec_dir}/tasks.md"
+    meta = f"{spec_dir}/spec-meta.json"
+    repo = git_repo_with({
+        tasks: "- [x] T001 Done in `a.sh`\n- [ ] T002 Write `b.sh`\n- [ ] T003 Write `c.sh`\n",
+        meta: json.dumps({"stage": "implement", "iteration": 1}) + "\n"})
+    origin = _tmpdir("wc-117-origin-")
+    run(["git", "init", "-q", "--bare", origin])
+    for args in (["branch", "-M", prefix + slug], ["remote", "add", "origin", origin],
+                 ["push", "-q", "origin", prefix + slug]):
+        run(["git"] + args, cwd=repo)
+
+    def commit(files, msg):
+        for rel, content in files.items():
+            with open(os.path.join(repo, rel), "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(content)
+        run(["git", "commit", "-qam", msg], cwd=repo)
+        run(["git", "push", "-q", "origin", prefix + slug], cwd=repo)
+        return run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+    action = yaml.safe_load(read(os.path.join(
+        ROOT, ".github", "actions", "wing-commander-implement-outcome", "action.yml")))
+    outcome_script = next(st["run"] for st in action["runs"]["steps"] if st.get("id") == "validate")
+    record_script = _workflow_step("Record truncated-cycle count")["run"]
+
+    def cycle(base, tip, iteration="2"):
+        _, comp = _run_block(outcome_script, repo, {
+            "GITHUB_ACTION_PATH": os.path.join(ROOT, ".github", "actions",
+                                               "wing-commander-implement-outcome"),
+            "BLOCKER_PATH": os.path.join(_tmpdir("wc-117-b-"), "none.json"),
+            "REF": tip, "TASKS_PATH": tasks, "META_REF": base})
+        counts = {}
+        for ref in (base, tip):
+            proc = run(["bash", os.path.join(SHARED, "count-tasks-checkboxes.sh"), ref, tasks], cwd=repo)
+            counts[ref] = parse_kv(proc.stdout)
+        env = {"PATH": os.environ.get("PATH", ""), "OK": "true", "TRUNCATED": "false",
+               "IMPL_CHECKED_BASE": counts[base].get("impl-checked-count", ""),
+               "IMPL_CHECKED_TIP": counts[tip].get("impl-checked-count", ""),
+               "IMPL_UNCHECKED_TIP": counts[tip].get("impl-unchecked-count", ""),
+               "IMPL_UNCHECKED_IDS_BASE": counts[base].get("impl-unchecked-ids", ""),
+               "IMPL_IDS_TIP": counts[tip].get("impl-ids", ""),
+               "CARRIED_DROPPED_IDS": comp.get("carried-dropped-ids", ""),
+               "ITERATION": iteration, "MAX_ITERATIONS": "5"}
+        got = parse_kv(run(["bash", comp.get("decide-script") or os.path.join(
+            SHARED, "decide-implement-outcome.sh")], env=env).stdout)
+        proc, rec = _run_block(record_script, repo, {
+            "SLUG": slug, "SPEC_DIR": spec_dir, "SPEC_PREFIX": prefix,
+            "TRUNCATED": "false", "TIER": "", "BOT_SLUG": "gate",
+            "DROPPED_IDS": got.get("dropped-ids", ""), "DROPPED_KNOWN": "true"})
+        if rec.get("push") == "true":
+            run(["git", "push", "-q", "origin", "HEAD:" + prefix + slug], cwd=repo)
+        recorded = json.loads(read(os.path.join(repo, meta))).get("dropped_task_ids")
+        head = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        return got, recorded, head, proc
+
+    def meta_with(**fields):
+        m = json.loads(read(os.path.join(repo, meta)))
+        m.update(fields)
+        return {meta: json.dumps({k: v for k, v in m.items() if v is not None}) + "\n"}
+
+    retagged = ("- [x] T001 Done in `a.sh`\n- [ ] T002 [maintainer] Write `b.sh`\n"
+                "- [x] T003 Write `c.sh`\n")
+    c0 = run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+    c1 = commit({tasks: retagged}, "cycle 1: retag T002")
+    got, recorded, c2, proc = cycle(c0, c1)
+    CASES += 1
+    if got.get("converged") != "false" or recorded != ["T002"]:
+        fail(f"across cycles: cycle 1's retag must be persisted; converged={got.get('converged')!r} "
+             f"dropped_task_ids={recorded!r} stderr={proc.stderr}")
+    c3 = commit(meta_with(iteration=5), "cycle 2: nothing new")
+    got, recorded, _, _ = cycle(c2, c3, iteration="5")
+    CASES += 1
+    if got.get("converged") != "false" or got.get("dropped-ids") != "T002" or recorded != ["T002"]:
+        fail(f"across cycles: a retag in cycle 1 let cycle 2 converge; converged={got.get('converged')!r} "
+             f"dropped-ids={got.get('dropped-ids')!r} dropped_task_ids={recorded!r}")
+    CASES += 1
+    if "T002" not in got.get("stall-comment", "") or "dropped_task_ids" not in got.get("stall-comment", ""):
+        fail(f"across cycles: the cap's stall comment must name the carried id and how to "
+             f"accept it; got {got.get('stall-comment')!r}")
+    # A maintainer accepting the retag removes the id from dropped_task_ids.
+    c5 = commit(meta_with(dropped_task_ids=None), "maintainer: accept the T002 retag")
+    got, recorded, _, _ = cycle(c5, c5)
+    CASES += 1
+    if got.get("converged") != "true" or recorded is not None:
+        fail(f"across cycles: a maintainer removing the id from dropped_task_ids must release it; "
+             f"converged={got.get('converged')!r} dropped_task_ids={recorded!r}")
+    # An id back as implementation work leaves the set.
+    c7 = commit(meta_with(dropped_task_ids=["T002"]), "carry T002 again")
+    c8 = commit({tasks: "- [x] T001 Done in `a.sh`\n- [x] T002 Write `b.sh`\n- [x] T003 Write `c.sh`\n"},
+                "cycle 3: T002 done")
+    got, recorded, _, _ = cycle(c7, c8)
+    CASES += 1
+    if got.get("converged") != "true" or recorded is not None:
+        fail(f"across cycles: an id back as implementation work must leave the set; "
+             f"converged={got.get('converged')!r} dropped_task_ids={recorded!r}")
+    impl = read(os.path.join(ROOT, ".github", "workflows", "implement.yml"))
+    for needle in ("CARRIED_DROPPED_IDS: ${{ steps.blocker-cycle.outputs.carried-dropped-ids }}\n",
+                   "CARRIED_DROPPED_IDS: ${{ steps.blocker-retry.outputs.carried-dropped-ids }} "
+                   "${{ steps.outcome.outputs.dropped-ids }}\n",
+                   "PRIMARY_DROPPED_IDS: ${{ steps.outcome.outputs.dropped-ids }}",
+                   "RETRY_DROPPED_IDS: ${{ steps.retry-outcome.outputs.dropped-ids }}",
+                   "DROPPED_IDS: ${{ steps.final.outputs.dropped-ids }}",
+                   "DROPPED_KNOWN: ${{ steps.final.outputs.dropped-known }}"):
+        CASES += 1
+        if needle not in impl:
+            fail(f"implement.yml: the dropped-id carry is not wired: missing {needle!r}")
+    doc = yaml.safe_load(impl)
+    steps = {st.get("id"): st for job in doc["jobs"].values() for st in job.get("steps", [])}
+    for sid in ("blocker-cycle", "blocker-retry"):
+        CASES += 1
+        if ((steps.get(sid) or {}).get("with") or {}).get("meta-ref") != "${{ steps.base.outputs.base-sha }}":
+            fail(f"implement.yml: {sid} must read dropped_task_ids at the cycle base")
+    for sid in ("outcome", "retry-outcome"):
+        CASES += 1
+        body = (steps.get(sid) or {}).get("run", "")
+        if 'echo "dropped-ids=$dropped_ids"' not in body or 'echo "dropped-known=$dropped_known"' not in body:
+            fail(f"implement.yml: {sid} must output dropped-ids and dropped-known")
+
+
 def check_write_boundary_input():
     """The write-boundary classifier must see implementation tasks only: an
     unchecked [maintainer] or standing line names no out-of-boundary path,
@@ -704,6 +851,7 @@ def main():
     check_blocker()
     check_decide()
     check_task_identity()
+    check_task_identity_across_cycles()
     check_write_boundary_input()
     check_classification()
     check_composite_outputs()

@@ -14,13 +14,17 @@
 # only, as count-tasks-checkboxes.sh classifies them):
 #   OK TRUNCATED IMPL_CHECKED_BASE IMPL_CHECKED_TIP IMPL_UNCHECKED_TIP
 #   CONVERGE_SHA ITERATION MAX_ITERATIONS BLOCKER_VALID BLOCKER_TEXT
-#   IMPL_UNCHECKED_IDS_BASE IMPL_IDS_TIP (space-separated task ids)
-# Task identity (owner decision on #992, option (a)): an id that was
-# unchecked implementation work at base but is not implementation at the tip
-# (retagged [maintainer], reworded as a standing instruction, or deleted)
-# still counts as outstanding, so editing tasks.md cannot reach converged in
-# the cycle that made the edit. The comparison is per cycle: the next
-# cycle's base already carries the edit. Lines without an id cannot be
+#   IMPL_UNCHECKED_IDS_BASE IMPL_IDS_TIP CARRIED_DROPPED_IDS (space-separated
+#   task ids)
+# Task identity (owner decisions A and C on #992, option (a)): an id that was
+# unchecked implementation work at base, or that an earlier cycle dropped
+# (CARRIED_DROPPED_IDS, spec-meta.json's dropped_task_ids at the cycle base),
+# but is not implementation at the tip (retagged [maintainer], reworded as a
+# standing instruction, or deleted) still counts as outstanding. The caller
+# persists dropped-ids as the next cycle's carried set, so an id leaves it
+# only by showing up as implementation work again (or a maintainer removing
+# it from dropped_task_ids), and a tasks.md edit cannot reach converged in
+# the cycle that made it or any later one. Lines without an id cannot be
 # tracked; ids converge adds are unaffected.
 # Prints single-line `key=value` lines shaped as $GITHUB_OUTPUT entries:
 #   converged=  progressed=  handoff=  stall-reason=  stall-comment=
@@ -52,7 +56,7 @@ unchecked="$(num "$unchecked" 1)"
 
 dropped=""
 dropped_count=0
-for id in ${IMPL_UNCHECKED_IDS_BASE:-}; do
+for id in ${IMPL_UNCHECKED_IDS_BASE:-} ${CARRIED_DROPPED_IDS:-}; do
   case " ${IMPL_IDS_TIP:-} " in *" $id "*) continue ;; esac
   case " $dropped " in *" $id "*) continue ;; esac
   dropped="${dropped:+$dropped }$id"
@@ -90,7 +94,7 @@ fi
 
 dropped_note=""
 if [ -n "$dropped" ]; then
-  dropped_note=" ($dropped_count of them reclassified or removed from tasks.md during the cycle: ${dropped// /, })"
+  dropped_note=" ($dropped_count of them reclassified or removed from tasks.md while unfinished: ${dropped// /, }; a maintainer accepts such a change by removing the id from dropped_task_ids in spec-meta.json)"
 fi
 
 # FR-006: a stop with implementation outstanding is always reported, whether

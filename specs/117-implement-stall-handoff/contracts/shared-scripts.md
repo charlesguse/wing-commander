@@ -31,6 +31,17 @@ missing from the tip's set (retagged `[maintainer]`, reworded as a standing
 instruction, or deleted) is added to the outstanding count, so `converged`
 stays false (owner decision A on #992). Ids converge adds are unaffected.
 
+`CARRIED_DROPPED_IDS` (owner decision C on #992) holds the ids earlier cycles
+dropped and is unioned into `IMPL_UNCHECKED_IDS_BASE`. implement.yml persists
+each cycle's `dropped-ids` as `spec-meta.json`'s `dropped_task_ids` (absent
+when empty) in the "Record truncated-cycle count" commit, and the next cycle's
+`wing-commander-implement-outcome` reads it at the cycle base. The persisted
+set is always the last decision's `dropped-ids`, so an id leaves it only when
+it is implementation work at a tip again, or when a maintainer removes it from
+`dropped_task_ids` on the branch between cycles (how a human retag, including
+one made through a review fold, is accepted). The retry arm also carries the
+primary attempt's `dropped-ids`.
+
 Prints `converged`, `progressed`, `handoff`, `stall-reason`,
 `stall-comment` (empty unless handoff or cap with implementation
 outstanding; includes the outstanding count and reason, FR-006, and names
@@ -44,6 +55,10 @@ empty output when both are empty. Used for both `finalize-remaining.md` and
 the lifecycle announcement body.
 
 ## Composite surface
+
+`wing-commander-implement-outcome` gains input `meta-ref` (optional, default
+empty) and output `carried-dropped-ids`: the id-shaped strings in
+`dropped_task_ids` of the `spec-meta.json` beside `path`, read at `meta-ref`.
 
 `wing-commander-tasks-checkbox-count` gains outputs `impl-checked-count`,
 `impl-unchecked-count`, `impl-unchecked-items`, `maintainer-items`,

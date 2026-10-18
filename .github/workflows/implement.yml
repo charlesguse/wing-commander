@@ -1773,6 +1773,7 @@ jobs:
           blocker-path: ${{ steps.ctx.outputs.runner-temp }}/implement-blocker.json
           ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+          meta-ref: ${{ steps.base.outputs.base-sha }}
 
       # FR-008 (spec 052): the WC_BOT_TOKEN relay above keeps every step
       # after each agent step credentialed. The agent step's OWN push
@@ -1809,6 +1810,9 @@ jobs:
           IMPL_UNCHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-unchecked-count }}
           IMPL_UNCHECKED_IDS_BASE: ${{ steps.checkbox-base-cycle.outputs.impl-unchecked-ids }}
           IMPL_IDS_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-ids }}
+          # Ids earlier cycles dropped (spec-meta.json's dropped_task_ids at
+          # the cycle base) -- see wing-commander-implement-outcome.
+          CARRIED_DROPPED_IDS: ${{ steps.blocker-cycle.outputs.carried-dropped-ids }}
           MAX_ITERATIONS: ${{ steps.cap.outputs.max }}
           BLOCKER_VALID: ${{ steps.blocker-cycle.outputs.blocker-valid }}
           BLOCKER_TEXT: ${{ steps.blocker-cycle.outputs.blocker-text }}
@@ -1919,6 +1923,11 @@ jobs:
           handoff="$(pick handoff)"
           stall_reason="$(pick stall-reason)"
           stall_comment="$(pick stall-comment)"
+          dropped_ids="$(pick dropped-ids)"
+          # Only a decision the script made says which ids to persist; the
+          # fallback above leaves dropped_task_ids as it stands.
+          dropped_known=false
+          if printf '%s\n' "$decision" | grep -q '^dropped-ids='; then dropped_known=true; fi
           # specs/090-stage-write-boundary (FR-007/FR-011, research.md D5;
           # PR #836 review, item 2): routed = ok && !truncated &&
           # all-unchecked-out-of-boundary -- deliberately NOT gated on spec
@@ -1977,6 +1986,8 @@ jobs:
           echo "progressed=$progressed" >> "$GITHUB_OUTPUT"
           echo "handoff=$handoff" >> "$GITHUB_OUTPUT"
           echo "stall-comment=$stall_comment" >> "$GITHUB_OUTPUT"
+          echo "dropped-ids=$dropped_ids" >> "$GITHUB_OUTPUT"
+          echo "dropped-known=$dropped_known" >> "$GITHUB_OUTPUT"
           echo "routed=$routed" >> "$GITHUB_OUTPUT"
           echo "write-boundary-findings-json=$WRITE_BOUNDARY_FINDINGS_JSON" >> "$GITHUB_OUTPUT"
           echo "Cycle: tasks.md unchecked-count at tip = ${UNCHECKED_TIP:-0}, progressed=${progressed:-n/a}." >> "$GITHUB_STEP_SUMMARY"
@@ -2693,6 +2704,7 @@ jobs:
           blocker-path: ${{ steps.ctx.outputs.runner-temp }}/implement-blocker.json
           ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+          meta-ref: ${{ steps.base.outputs.base-sha }}
 
       - name: Read back retry outcome
         id: retry-outcome
@@ -2723,6 +2735,9 @@ jobs:
           IMPL_UNCHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-unchecked-count }}
           IMPL_UNCHECKED_IDS_BASE: ${{ steps.checkbox-base-retry.outputs.impl-unchecked-ids }}
           IMPL_IDS_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-ids }}
+          # The retry's base already carries the primary attempt's tasks.md
+          # edits, so the ids the primary dropped are carried too.
+          CARRIED_DROPPED_IDS: ${{ steps.blocker-retry.outputs.carried-dropped-ids }} ${{ steps.outcome.outputs.dropped-ids }}
           MAX_ITERATIONS: ${{ steps.cap.outputs.max }}
           BLOCKER_VALID: ${{ steps.blocker-retry.outputs.blocker-valid }}
           BLOCKER_TEXT: ${{ steps.blocker-retry.outputs.blocker-text }}
@@ -2822,6 +2837,11 @@ jobs:
           handoff="$(pick handoff)"
           stall_reason="$(pick stall-reason)"
           stall_comment="$(pick stall-comment)"
+          dropped_ids="$(pick dropped-ids)"
+          # Only a decision the script made says which ids to persist; the
+          # fallback above leaves dropped_task_ids as it stands.
+          dropped_known=false
+          if printf '%s\n' "$decision" | grep -q '^dropped-ids='; then dropped_known=true; fi
           # specs/090-stage-write-boundary (FR-007/FR-011, research.md D5;
           # PR #836 review, item 2): mirrors the cycle arm's identical
           # routed computation above -- NOT gated on handoff.
@@ -2863,6 +2883,8 @@ jobs:
           echo "progressed=$progressed" >> "$GITHUB_OUTPUT"
           echo "handoff=$handoff" >> "$GITHUB_OUTPUT"
           echo "stall-comment=$stall_comment" >> "$GITHUB_OUTPUT"
+          echo "dropped-ids=$dropped_ids" >> "$GITHUB_OUTPUT"
+          echo "dropped-known=$dropped_known" >> "$GITHUB_OUTPUT"
           echo "routed=$routed" >> "$GITHUB_OUTPUT"
           echo "write-boundary-findings-json=$WRITE_BOUNDARY_FINDINGS_JSON" >> "$GITHUB_OUTPUT"
           echo "Retry: tasks.md unchecked-count at tip = ${UNCHECKED_TIP:-0}, progressed=${progressed:-n/a}." >> "$GITHUB_STEP_SUMMARY"
@@ -2971,13 +2993,17 @@ jobs:
           RETRY_REASON: ${{ steps.retry-outcome.outputs.reason }}
           PRIMARY_STALL_COMMENT: ${{ steps.outcome.outputs.stall-comment }}
           RETRY_STALL_COMMENT: ${{ steps.retry-outcome.outputs.stall-comment }}
+          PRIMARY_DROPPED_IDS: ${{ steps.outcome.outputs.dropped-ids }}
+          PRIMARY_DROPPED_KNOWN: ${{ steps.outcome.outputs.dropped-known }}
+          RETRY_DROPPED_IDS: ${{ steps.retry-outcome.outputs.dropped-ids }}
+          RETRY_DROPPED_KNOWN: ${{ steps.retry-outcome.outputs.dropped-known }}
           ESCALATION_MODEL: ${{ inputs.escalation-model }}
           RETRY_NORMALISED: ${{ steps.retry-verdict.outputs.normalised-transcript }}
         run: |
           if [ "$RETRY_RAN" = "true" ]; then
-            ok="$RETRY_OK"; truncated="$RETRY_TRUNCATED"; converged="$RETRY_CONVERGED"; progressed="$RETRY_PROGRESSED"; handoff="$RETRY_HANDOFF"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"; routed="$RETRY_ROUTED"; write_boundary_findings_json="$RETRY_WRITE_BOUNDARY_FINDINGS_JSON"; stall_comment="$RETRY_STALL_COMMENT"
+            ok="$RETRY_OK"; truncated="$RETRY_TRUNCATED"; converged="$RETRY_CONVERGED"; progressed="$RETRY_PROGRESSED"; handoff="$RETRY_HANDOFF"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"; routed="$RETRY_ROUTED"; write_boundary_findings_json="$RETRY_WRITE_BOUNDARY_FINDINGS_JSON"; stall_comment="$RETRY_STALL_COMMENT"; dropped_ids="$RETRY_DROPPED_IDS"; dropped_known="$RETRY_DROPPED_KNOWN"
           else
-            ok="$PRIMARY_OK"; truncated="$PRIMARY_TRUNCATED"; converged="$PRIMARY_CONVERGED"; progressed="$PRIMARY_PROGRESSED"; handoff="$PRIMARY_HANDOFF"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"; routed="$PRIMARY_ROUTED"; write_boundary_findings_json="$PRIMARY_WRITE_BOUNDARY_FINDINGS_JSON"; stall_comment="$PRIMARY_STALL_COMMENT"
+            ok="$PRIMARY_OK"; truncated="$PRIMARY_TRUNCATED"; converged="$PRIMARY_CONVERGED"; progressed="$PRIMARY_PROGRESSED"; handoff="$PRIMARY_HANDOFF"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"; routed="$PRIMARY_ROUTED"; write_boundary_findings_json="$PRIMARY_WRITE_BOUNDARY_FINDINGS_JSON"; stall_comment="$PRIMARY_STALL_COMMENT"; dropped_ids="$PRIMARY_DROPPED_IDS"; dropped_known="$PRIMARY_DROPPED_KNOWN"
           fi
           # A retry the API refused before its first model response — e.g. a
           # spend/rate-limit kill, observed live on issue #231's stall notice —
@@ -3026,6 +3052,8 @@ jobs:
             echo "progressed=$progressed"
             echo "handoff=$handoff"
             echo "stall-comment=$stall_comment"
+            echo "dropped-ids=$dropped_ids"
+            echo "dropped-known=$dropped_known"
             echo "tier=$tier"
             echo "reason=$reason"
             echo "routed=$routed"
@@ -3545,6 +3573,14 @@ jobs:
       # or failed cycle (including one that goes on to `stalled`, so a
       # stall-then-manual-restart boundary resets the count too). Committed
       # only when the value actually changes.
+      # The same commit persists the stop rule's dropped-ids as
+      # dropped_task_ids (owner decision C on #992): the next cycle's
+      # wing-commander-implement-outcome reads it at its base and carries
+      # those ids as outstanding until one is implementation work again,
+      # when the stop rule stops returning it and it leaves the set. A
+      # maintainer accepts a retag by removing the id from dropped_task_ids
+      # in spec-meta.json on the branch between cycles. Left as it stands
+      # when no stop-rule decision ran (DROPPED_KNOWN != true).
       - name: Record truncated-cycle count
         id: record-truncation-commit
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
@@ -3554,6 +3590,8 @@ jobs:
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           TRUNCATED: ${{ steps.final.outputs.truncated }}
           TIER: ${{ steps.final.outputs.tier }}
+          DROPPED_IDS: ${{ steps.final.outputs.dropped-ids }}
+          DROPPED_KNOWN: ${{ steps.final.outputs.dropped-known }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         continue-on-error: true
         run: |
@@ -3573,13 +3611,19 @@ jobs:
             new_count=0
             new_tier=""
           fi
-          if [ "$new_count" = "$current" ] && [ "$new_tier" = "$current_tier" ]; then
+          current_dropped=$(jq -c '[.dropped_task_ids // [] | .[]?]' "$SPEC_DIR/spec-meta.json")
+          new_dropped="$current_dropped"
+          if [ "${DROPPED_KNOWN:-}" = "true" ]; then
+            new_dropped=$(jq -cn --arg ids "${DROPPED_IDS:-}" '$ids | split(" ") | map(select(. != ""))')
+          fi
+          if [ "$new_count" = "$current" ] && [ "$new_tier" = "$current_tier" ] && [ "$new_dropped" = "$current_dropped" ]; then
             # Nothing to persist — the value already on the branch is
             # current, so the count reported here is trustworthy as-is.
             echo "count=$new_count" >> "$GITHUB_OUTPUT"
           else
-            jq --argjson n "$new_count" --arg tier "$new_tier" \
-              '.truncated_count = $n | .truncated_tier = (if $tier == "" then null else $tier end)' \
+            jq --argjson n "$new_count" --arg tier "$new_tier" --argjson dropped "$new_dropped" \
+              '.truncated_count = $n | .truncated_tier = (if $tier == "" then null else $tier end)
+               | if ($dropped | length) == 0 then del(.dropped_task_ids) else .dropped_task_ids = $dropped end' \
               "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/meta.json"
             mv "$RUNNER_TEMP/meta.json" "$SPEC_DIR/spec-meta.json"
             git config user.name  "${BOT_SLUG}[bot]"
@@ -3587,8 +3631,10 @@ jobs:
             git add "$SPEC_DIR/spec-meta.json"
             if [ "$TRUNCATED" = "true" ]; then
               git commit -q -m "implement: record truncated cycle (consecutive count=$new_count, tier=$new_tier)"
-            else
+            elif [ "$new_count" != "$current" ] || [ "$new_tier" != "$current_tier" ]; then
               git commit -q -m "implement: reset truncated-cycle count"
+            else
+              git commit -q -m "implement: record dropped task ids ($(printf '%s' "$new_dropped" | jq -r 'join(" ")'))"
             fi
             # The count is reported ONLY once the push below actually lands
             # (see "Report the truncated-cycle count").

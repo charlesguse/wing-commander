@@ -26,7 +26,16 @@
   {"name": "retagged-id-still-outstanding", "env": {"OK": "true", "TRUNCATED": "false", "IMPL_CHECKED_BASE": "3", "IMPL_CHECKED_TIP": "3", "IMPL_UNCHECKED_TIP": "0", "ITERATION": "2", "MAX_ITERATIONS": "5", "IMPL_UNCHECKED_IDS_BASE": "T002", "IMPL_IDS_TIP": "T001 T003"},
    "expect": {"converged": "false", "progressed": "false", "handoff": "false", "stall-comment": "", "dropped-ids": "T002"}},
   {"name": "dropped-ids-named-at-cap", "env": {"OK": "true", "TRUNCATED": "false", "IMPL_CHECKED_BASE": "3", "IMPL_CHECKED_TIP": "3", "IMPL_UNCHECKED_TIP": "1", "ITERATION": "5", "MAX_ITERATIONS": "5", "IMPL_UNCHECKED_IDS_BASE": "T002 T004 T005a", "IMPL_IDS_TIP": "T004"},
-   "expect": {"converged": "false", "handoff": "true", "dropped-ids": "T002 T005a", "stall-comment": "Implement stopped with 3 implementation task(s) still unchecked (2 of them reclassified or removed from tasks.md during the cycle: T002, T005a): the iteration cap (5) was reached."}},
+   "expect": {"converged": "false", "handoff": "true", "dropped-ids": "T002 T005a", "stall-comment": "Implement stopped with 3 implementation task(s) still unchecked (2 of them reclassified or removed from tasks.md while unfinished: T002, T005a; a maintainer accepts such a change by removing the id from dropped_task_ids in spec-meta.json): the iteration cap (5) was reached."}},
   {"name": "ticked-and-converge-added-ids-not-dropped", "env": {"OK": "true", "TRUNCATED": "false", "IMPL_CHECKED_BASE": "3", "IMPL_CHECKED_TIP": "4", "IMPL_UNCHECKED_TIP": "0", "ITERATION": "2", "MAX_ITERATIONS": "5", "IMPL_UNCHECKED_IDS_BASE": "T002", "IMPL_IDS_TIP": "T001 T002 T009"},
-   "expect": {"converged": "true", "progressed": "true", "handoff": "false", "stall-comment": "", "dropped-ids": ""}}
+   "expect": {"converged": "true", "progressed": "true", "handoff": "false", "stall-comment": "", "dropped-ids": ""}},
+  {"name": "carried-id-still-dropped-blocks-convergence",
+   "env": {"OK": "true", "TRUNCATED": "false", "IMPL_CHECKED_BASE": "3", "IMPL_CHECKED_TIP": "3", "IMPL_UNCHECKED_TIP": "0", "ITERATION": "3", "MAX_ITERATIONS": "5", "IMPL_UNCHECKED_IDS_BASE": "", "IMPL_IDS_TIP": "T001 T003", "CARRIED_DROPPED_IDS": "T002"},
+   "expect": {"converged": "false", "progressed": "false", "handoff": "false", "stall-comment": "", "dropped-ids": "T002"}},
+  {"name": "carried-id-back-as-implementation-leaves-the-set",
+   "env": {"OK": "true", "TRUNCATED": "false", "IMPL_CHECKED_BASE": "3", "IMPL_CHECKED_TIP": "4", "IMPL_UNCHECKED_TIP": "0", "ITERATION": "3", "MAX_ITERATIONS": "5", "IMPL_UNCHECKED_IDS_BASE": "", "IMPL_IDS_TIP": "T001 T002 T003", "CARRIED_DROPPED_IDS": "T002"},
+   "expect": {"converged": "true", "progressed": "true", "handoff": "false", "stall-comment": "", "dropped-ids": ""}},
+  {"name": "carried-and-base-ids-deduplicated",
+   "env": {"OK": "true", "TRUNCATED": "false", "IMPL_CHECKED_BASE": "3", "IMPL_CHECKED_TIP": "3", "IMPL_UNCHECKED_TIP": "0", "ITERATION": "3", "MAX_ITERATIONS": "5", "IMPL_UNCHECKED_IDS_BASE": "T002", "IMPL_IDS_TIP": "T001", "CARRIED_DROPPED_IDS": "T002 T004"},
+   "expect": {"converged": "false", "dropped-ids": "T002 T004"}}
 ]
