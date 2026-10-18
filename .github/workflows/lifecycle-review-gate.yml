@@ -1206,14 +1206,18 @@ jobs:
           # finding re-raised is that fold still waiting, not a recurrence
           # of a fixed one, so it is not counted against the loop.
           pending_titles = set()
+          tasks_unreadable = False
           try:
               with open(os.path.join(os.environ.get("SPEC_DIR", ""), "tasks.md"), encoding="utf-8") as fh:
                   for line in fh:
                       for lead in ("- [ ] Review finding: ", "- [ ] Recurring review finding: "):
                           if line.startswith(lead):
                               pending_titles.add(line[len(lead):].strip())
-          except OSError:
-              pass
+          except OSError as exc:
+              # Unknowable, not "nothing pending": every folded finding is
+              # read as still waiting so a missing file cannot stop the loop.
+              tasks_unreadable = True
+              print("::warning::tasks.md unreadable ({0}); folded findings read as pending".format(exc))
 
           pending_fps = set()
           in_scope_survivors = []
@@ -1223,7 +1227,8 @@ jobs:
               fp = fingerprint(issue, f.get("title", ""), basis.get("file_path", ""))
               if fp in filed_fps:
                   continue
-              if fp in folded_fps and str(f.get("title", "")).strip() in pending_titles:
+              if fp in folded_fps and (tasks_unreadable
+                                       or str(f.get("title", "")).strip() in pending_titles):
                   pending_fps.add(fp)
                   continue
               if f.get("in_scope") is True:

@@ -312,7 +312,14 @@ def compute_history(base, rounds, ledger, cwd):
         return sizes[head]
 
     if git_ok and heads:
-        first_size = size_of(heads[0])
+        # A missing merge-base (shallow fetch, unrelated history) makes the
+        # git-derived signals unknowable, same as an unreachable head.
+        try:
+            first_size = size_of(heads[0])
+            for head in heads:
+                size_of(head)
+        except SystemExit:
+            git_ok = False
     out = []
     for i, rnd in enumerate(rounds):
         attributable = self_inflicted = unattributable = 0
@@ -387,7 +394,8 @@ def decide(history, thresholds=THRESHOLDS, budget=None):
     tripped = []
     if latest["round"] >= thresholds["min_round"]:
         prev = history[-2] if len(history) > 1 else None
-        if prev is not None and latest["count"] >= prev["count"]:
+        if (prev is not None and prev["round"] == latest["round"] - 1
+                and latest["count"] > 0 and latest["count"] >= prev["count"]):
             tripped.append("count-not-falling")
         share = signals[-1]["self_inflicted_share"]
         if share is not None and share >= thresholds["self_inflicted_share"]:

@@ -185,7 +185,7 @@ def block(result, open_holds, fold_id=""):
     """`dispatch`/`skipped` -> `blocked` while other holds are open.
     open_holds None (the open-hold read never ran or failed) holds the
     fold as analyze-failed: nothing vouches that no hold is open."""
-    if open_holds is None and result["decision"] != "hold":
+    if open_holds is None and result["decision"] not in ("hold", "skipped"):
         return decide(fold_id, 1, "", True)
     if not open_holds or result["decision"] not in ("dispatch", "skipped"):
         return result
