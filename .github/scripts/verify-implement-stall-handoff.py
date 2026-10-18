@@ -493,6 +493,43 @@ def check_reentry_remaining():
             fail(f"remaining-count iteration {nxt} of {cap}: got {res.stdout.strip()!r}, want {want!r}")
 
 
+def check_review_explained_lookup():
+    """The review-stage dedupe must count only bot-authored explanations: a
+    public commenter quoting the summary must not silence FR-010. The
+    shipped lookup runs against a `gh` stub that applies its --jq to a
+    fixture comment list."""
+    global CASES
+    import json
+    import yaml
+    doc = yaml.safe_load(read(os.path.join(ROOT, ".github", "workflows", "implement.yml")))
+    script = next(st["run"] for job in doc["jobs"].values()
+                  for st in job.get("steps", [])
+                  if st.get("name") == "Check for an earlier review-stage explanation")
+    needle = "Implement did nothing: this lifecycle is already in review"
+    for who, want in (("User", "false"), ("Bot", "true")):
+        tmp = _tmpdir("wc-117-explained-")
+        comments = os.path.join(tmp, "comments.json")
+        with open(comments, "w", encoding="utf-8") as fh:
+            json.dump([{"user": {"type": who}, "body": f"> {needle}"}], fh)
+        with open(os.path.join(tmp, "gh"), "w", encoding="utf-8") as fh:
+            # `gh api .../comments` serves the REST array; `gh issue view
+            # --json comments` would serve {"comments": [...]}.
+            fh.write('#!/bin/sh\nshape=.\n[ "$1" = issue ] && shape=\'{comments: .}\'\n'
+                     'while [ $# -gt 0 ]; do [ "$1" = --jq ] && q="$2"; shift; done\n'
+                     'jq "$shape" "$COMMENTS" | jq -r "${q:-.}"\n')
+        os.chmod(os.path.join(tmp, "gh"), 0o755)
+        out = os.path.join(tmp, "out")
+        env = {**os.environ, "PATH": tmp + os.pathsep + os.environ["PATH"],
+               "COMMENTS": comments, "GITHUB_OUTPUT": out,
+               "GH_REPO": "o/r", "ISSUE_NUMBER": "1"}
+        proc = run(["bash", "-e", "-c", script], env=env)
+        got = parse_kv(read(out)).get("explained") if os.path.exists(out) else None
+        CASES += 1
+        if got != want:
+            fail(f"review-stage dedupe: a {who}-authored comment quoting the summary gave "
+                 f"explained={got!r}, want {want!r}; stderr={proc.stderr}")
+
+
 def check_reentry_lifecycle_notice():
     """FR-011 names the lifecycle issue: the shipped reply step must post
     the remaining-cycle count there, not only on the PR."""
@@ -564,6 +601,7 @@ def main():
     check_dispatch_stall_reporting()
     check_prompt_parity()
     check_reentry_lifecycle_notice()
+    check_review_explained_lookup()
     if FAILURES:
         print(f"verify-implement-stall-handoff: {len(FAILURES)} failure(s) in {CASES} case(s)")
         return 1

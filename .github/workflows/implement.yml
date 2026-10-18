@@ -1054,7 +1054,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
         run: |
-          if gh issue view "$ISSUE_NUMBER" --json comments --jq '.comments[].body' 2>/dev/null | grep -qF 'Implement did nothing: this lifecycle is already in review'; then
+          # Bot-authored comments only: the repository is public, so a
+          # human comment quoting the summary must not silence the
+          # explanation. --paginate reads the whole history.
+          if gh api --paginate "repos/$GH_REPO/issues/$ISSUE_NUMBER/comments" --jq '.[] | select(.user.type == "Bot") | .body' 2>/dev/null | grep -qF 'Implement did nothing: this lifecycle is already in review'; then
             echo "explained=true" >> "$GITHUB_OUTPUT"
           else
             echo "explained=false" >> "$GITHUB_OUTPUT"
