@@ -268,6 +268,58 @@ def check_prompts():
         fail("maintainer-only tasks.md must yield impl-unchecked-count=0")
 
 
+def _paragraphs(text, start, end):
+    """Every prompt paragraph from a line starting `start` to the line ending
+    `end`, with indentation stripped (the arms differ only in indent)."""
+    pat = rf"^[ \t]*{re.escape(start)}.*?{re.escape(end)}$"
+    return [re.sub(r"\n[ \t]+", "\n", m.group(0).strip())
+            for m in re.finditer(pat, text, re.M | re.S)]
+
+
+def prompt_parity_failures(impl, tasks, kinds):
+    """The [maintainer]/blocker prose is necessarily repeated in each agent
+    prompt (a prompt cannot point at another), so the copies are held
+    byte-identical here and the blocker kinds are held to the validator's
+    closed list -- the drift CLAUDE.md's single-home rule guards against."""
+    out = []
+    for name, text, start, end in (
+            ("implement.yml blocker paragraph", impl,
+             "Tasks marked `[maintainer]` are for the repository owner", "the next cycle runs."),
+            ("tasks.yml maintainer paragraph", tasks,
+             "Maintainer tasks: a task only the repository owner", "guidance in prose.")):
+        paras = _paragraphs(text, start, end)
+        if len(paras) != 2:
+            out.append(f"{name}: expected one copy in each of the 2 prompts, found {len(paras)}")
+        elif paras[0] != paras[1]:
+            out.append(f"{name}: the two prompt copies differ")
+        if name.startswith("implement") and paras:
+            for kind in kinds:
+                if kind not in paras[0]:
+                    out.append(f"{name}: does not list blocker kind {kind!r} the validator accepts")
+    return out
+
+
+def check_prompt_parity():
+    global CASES
+    impl = read(os.path.join(ROOT, ".github", "workflows", "implement.yml"))
+    tasks = read(os.path.join(ROOT, ".github", "workflows", "tasks.yml"))
+    validator = read(os.path.join(SHARED, "validate-implement-blocker.sh"))
+    m = re.search(r"^  ([a-z-]+(?:\|[a-z-]+)+)\) ;;$", validator, re.M)
+    kinds = m.group(1).split("|") if m else []
+    CASES += 1
+    if not kinds:
+        fail("validate-implement-blocker.sh: could not read its closed kind list")
+    CASES += 1
+    for msg in prompt_parity_failures(impl, tasks, kinds):
+        fail(msg)
+    # The check must catch a drifted copy (self-test on mutated text).
+    first = impl.index("missing-tool, missing-permission")
+    drifted = impl[:first] + impl[first:].replace("missing-tool, missing-permission", "missing-tool, missing-secret", 1)
+    CASES += 1
+    if not prompt_parity_failures(drifted, tasks, kinds):
+        fail("prompt parity check did not catch a drifted blocker paragraph")
+
+
 def parse_kv(text):
     out = {}
     for line in text.splitlines():
@@ -482,6 +534,7 @@ def main():
     check_prompts()
     check_implement_wiring()
     check_dispatch_stall_reporting()
+    check_prompt_parity()
     if FAILURES:
         print(f"verify-implement-stall-handoff: {len(FAILURES)} failure(s) in {CASES} case(s)")
         return 1
