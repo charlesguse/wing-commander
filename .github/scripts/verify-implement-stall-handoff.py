@@ -585,6 +585,24 @@ def check_task_identity_across_cycles():
             fail(f"implement.yml: {sid} must output dropped-ids and dropped-known")
 
 
+def check_spec059_contract_pointers():
+    """Contracts are live (CLAUDE.md): spec 059's convergence-signal contract
+    must point at this spec where this spec replaced its hand-off rule and
+    its agent-authored finalize report."""
+    global CASES
+    text = read(os.path.join(ROOT, "specs", "059-converged-means-tasks-done",
+                             "contracts", "convergence-signal.md"))
+    row = next((l for l in text.splitlines() if l.startswith("| `handoff` |")), "")
+    bullet = text[text.find('"Remaining manual work" agent-authored summary'):]
+    bullet = bullet[:bullet.find("\n- ")]
+    for where, chunk in (("the handoff output row", row),
+                         ("the finalize report bullet", bullet)):
+        CASES += 1
+        if "Superseded by `specs/117-implement-stall-handoff`" not in chunk:
+            fail(f"specs/059 contracts/convergence-signal.md: {where} does not point at "
+                 "specs/117-implement-stall-handoff, which replaced it")
+
+
 def check_write_boundary_input():
     """The write-boundary classifier must see implementation tasks only: an
     unchecked [maintainer] or standing line names no out-of-boundary path,
@@ -852,6 +870,7 @@ def main():
     check_decide()
     check_task_identity()
     check_task_identity_across_cycles()
+    check_spec059_contract_pointers()
     check_write_boundary_input()
     check_classification()
     check_composite_outputs()
