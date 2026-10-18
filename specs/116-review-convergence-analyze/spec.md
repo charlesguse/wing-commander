@@ -18,6 +18,10 @@
 - Q: Which model tier should the fold-time consistency check run on? → A: Sonnet — `claude-sonnet-5-5`, the tier plan and tasks use (constitution II) (FR-016).
 - Q: Is part 3 (one shared file for the reviewer's judgement procedure) in scope? → A: (a) Out of scope for now, revisited once parts 1 and 2 land; the published contract (constitution VII) is untouched (FR-020, Story 5).
 
+### Session 2026-10-18
+
+- Q: When the owner answers `/fold-hold drop`, what happens if the reviewer raises one of that fold's findings again? → A: (a) The fold's findings are dismissed: raised again, one is neither a recurrence (FR-002) nor folded again. The lifecycle gate reads the App-authored `drop` resolved markers and the hold state's `folded_json` into the convergence ledger's dismissed list (contracts/convergence-signals.md, contracts/fold-analyze.md).
+
 ## Context
 
 The pipeline runs two automated review loops:
@@ -142,7 +146,7 @@ As a maintainer, I want the procedure for verifying a finding, refuting it again
 **Recurrence (lifecycle review gate — consuming instrument; board loop — consuming instrument)**
 
 - **FR-001**: Each automated review loop MUST keep, per PR, a record of every in-scope finding it has folded (lifecycle gate) or fixed (board loop), keyed by the finding's fingerprint and the round that resolved it.
-- **FR-002**: A round's partition step MUST classify an in-scope finding whose fingerprint matches an earlier folded or fixed finding as a **recurrence**, and MUST NOT drop it.
+- **FR-002**: A round's partition step MUST classify an in-scope finding whose fingerprint matches an earlier folded or fixed finding as a **recurrence**, and MUST NOT drop it, unless the owner dismissed it (Clarifications 2026-10-18).
 - **FR-003**: A round containing a recurrence MUST NOT resolve `clean` and MUST NOT post a `success` review status; the recurrence MUST be named on the lifecycle issue (lifecycle gate) or the PR (board loop).
 
 **Convergence signals (both loops — consuming instrument)**
