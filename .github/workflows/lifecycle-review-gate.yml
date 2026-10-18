@@ -972,6 +972,7 @@ jobs:
       fold-ref-before: ${{ steps.commit-fold.outputs.ref-before }}
       fold-ref-after: ${{ steps.commit-fold.outputs.ref-after }}
       folded-json: ${{ steps.commit-fold.outputs.folded-json }}
+      fold-fingerprints: ${{ steps.partition.outputs.fold-fingerprints }}
       spec-branch: ${{ steps.pr.outputs.branch }}
     steps:
       - name: Resolve the PR's head ref
@@ -1137,16 +1138,21 @@ jobs:
       # origin/main freshly fetched so a merge of main is never counted as
       # the loop's own lines (research.md D2). A failed read fails the
       # round rather than evaluate it against a history it never saw.
+      # The lifecycle issue's comments carry the fold holds: a fold the
+      # owner answered `/fold-hold drop` has its findings dismissed below.
       - name: Fetch this PR's round records and the base
         id: round-records
         if: steps.download-findings.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.select.outputs.pr-number }}
+          ISSUE: ${{ needs.select.outputs.issue }}
         run: |
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" --paginate --jq '.[]' \
             | jq -s '.' > "$RUNNER_TEMP/lifecycle-pr-reviews.json"
+          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" --paginate --jq '.[]' \
+            | jq -s '.' > "$RUNNER_TEMP/lifecycle-issue-comments.json"
           git fetch --no-tags --quiet origin main
 
       - name: Partition, dedup, and render this round's findings
@@ -1174,6 +1180,7 @@ jobs:
           sys.path.insert(0, ".wc-pristine-repo/.github/scripts")
           from wc_review_finding_fingerprint import fingerprint
           from wc_convergence import evaluate, read_round_records, round_findings
+          from wc_fold_hold import dropped_fingerprints
 
           runner_temp = os.environ["RUNNER_TEMP"]
           issue = os.environ["ISSUE"]
@@ -1218,13 +1225,19 @@ jobs:
               # success (FR-003, SC-001). Counted, it stops the loop visibly.
               print("::warning::tasks.md unreadable ({0}); folded findings read as recurrences".format(exc))
 
+          # A fold the owner answered `/fold-hold drop` dismissed its
+          # findings: raised again, one is neither a recurrence nor folded
+          # again (the owner's decision on F2 of #1062's pass-6 review).
+          with open(os.path.join(runner_temp, "lifecycle-issue-comments.json"), encoding="utf-8") as fh:
+              dismissed_fps = set(dropped_fingerprints(json.load(fh), os.environ["BOT_LOGIN"]))
+
           pending_fps = set()
           in_scope_survivors = []
           out_of_scope_survivors = []
           for f in findings:
               basis = f.get("fingerprint_basis") or {}
               fp = fingerprint(issue, f.get("title", ""), basis.get("file_path", ""))
-              if fp in filed_fps:
+              if fp in filed_fps or fp in dismissed_fps:
                   continue
               if fp in folded_fps and str(f.get("title", "")).strip() in pending_titles:
                   pending_fps.add(fp)
@@ -1253,7 +1266,7 @@ jobs:
               current = {"round": round_, "head_sha": os.environ["HEAD_SHA"],
                          "findings": round_findings(findings, issue)}
               decision = evaluate(records, current, "origin/main", ".", resolved=sorted(folded_fps),
-                                  pending=sorted(pending_fps))
+                                  pending=sorted(pending_fps), dismissed=sorted(dismissed_fps))
               recurring_fps = set(decision["recurrences"])
           stop = bool(decision and decision["stop"])
 
@@ -1321,6 +1334,9 @@ jobs:
           outputs.append(("findings-open", str(findings_open)))
           outputs.append(("folded-fingerprints", ",".join(sorted(folded_fps | set(new_folded)))))
           outputs.append(("filed-fingerprints", ",".join(sorted(filed_fps | set(new_filed)))))
+          # This round's fold alone: its hold state carries them, so a
+          # `/fold-hold drop` answer can dismiss them.
+          outputs.append(("fold-fingerprints", ",".join(new_folded)))
           if new_folded:
               summary = "round {0}: {1} finding(s) folded".format(round_, len(new_folded))
               if recurring_fps:
@@ -1730,10 +1746,11 @@ jobs:
           FOLD_BEFORE: ${{ needs.disposition.outputs.fold-ref-before }}
           FOLD_AFTER: ${{ needs.disposition.outputs.fold-ref-after }}
           FOLDED_JSON: ${{ needs.disposition.outputs.folded-json }}
+          FOLD_FINGERPRINTS: ${{ needs.disposition.outputs.fold-fingerprints }}
         run: |
           set -euo pipefail
           python3 .wc-pristine-repo/.github/scripts/wc_fold_hold.py post-outcome --issue "$ISSUE" \
-            --decision "$DECISION" --hold-reason "$HOLD_REASON" \
+            --decision "$DECISION" --hold-reason "$HOLD_REASON" --fold-fingerprints "$FOLD_FINGERPRINTS" \
             --report-file "$REPORT_FILE" --question-file "$QUESTION_FILE" \
             --fold-id "$FOLD_ID" --spec-dir "$SPEC_DIR" --spec-branch "$SPEC_BRANCH" \
             --base-sha "$BASE_SHA" --fold-ref-before "$FOLD_BEFORE" --fold-ref-after "$FOLD_AFTER" \

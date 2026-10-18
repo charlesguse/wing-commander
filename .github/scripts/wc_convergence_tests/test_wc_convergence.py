@@ -372,6 +372,18 @@ class EvaluateInGit(GitBacked):
         self.assertEqual(d["recurrences"], ["fp-F"])
         self.assertFalse(d["stop"])  # round 2: recorded, never an early stop
 
+    def test_a_dropped_folds_finding_raised_again_is_not_a_recurrence(self):
+        # The owner answered `/fold-hold drop` on the fold carrying fp-F:
+        # its findings are dismissed (F2 of #1062's pass-6 review).
+        base, h0, h1, h2 = self.build()
+        fp = {"fingerprint": "fp-F", "file": "f.py", "line": 4}
+        records = [{"round": 1, "head_sha": h0, "findings": [fp]},
+                   {"round": 2, "head_sha": h1, "findings": [dict(fp, fingerprint="fp-G")]}]
+        current = {"round": 3, "head_sha": h2, "findings": [dict(fp, line=6)]}
+        d = wc.evaluate(records, current, base, self.repo, resolved=["fp-F"], dismissed=["fp-F"])
+        self.assertEqual(d["recurrences"], [])
+        self.assertNotIn("recurrence", d["tripped"])
+
     def test_a_folded_finding_recurs_only_after_the_round_that_raised_it(self):
         base, h0, h1, h2 = self.build()
         fp = {"fingerprint": "fp-F", "file": "f.py", "line": 4}

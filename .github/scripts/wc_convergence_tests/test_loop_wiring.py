@@ -25,7 +25,7 @@ from wc_shell_harness import find_step, resolve_bash, run_step  # noqa: E402
 LIFECYCLE = os.path.join(ROOT, ".github", "workflows", "lifecycle-review-gate.yml")
 BOARD = os.path.join(ROOT, ".github", "workflows", "board-loop.yml")
 HELPERS = ("wc_convergence.py", "wc_review_finding_fingerprint.py", "board_item_marker.py",
-           "board_spec_request_body.py", "wc_lifecycle_review_marker.py")
+           "board_spec_request_body.py", "wc_lifecycle_review_marker.py", "wc_fold_hold.py")
 BOT = "wing-commander-bot[bot]"
 ISSUE = "42"
 BASH = resolve_bash()
@@ -100,9 +100,11 @@ class LoopRepo(unittest.TestCase):
 class LifecyclePartition(LoopRepo):
     STEP = "Partition, dedup, and render this round's findings"
 
-    def partition(self, round_, head, findings, reviews, folded=(), filed=(), env=None):
+    def partition(self, round_, head, findings, reviews, folded=(), filed=(), env=None,
+                  issue_comments=()):
         self.write_temp("lifecycle-review-findings-artifact/lifecycle-review-findings.json", findings)
         self.write_temp("lifecycle-pr-reviews.json", reviews)
+        self.write_temp("lifecycle-issue-comments.json", list(issue_comments))
         self.git("checkout", "-q", head)
         gate = {"round": round_ - 1, "head_sha": "prev", "outcome": "findings",
                 "findings_open": 1, "folded_fingerprints": list(folded),
@@ -150,6 +152,31 @@ class LifecyclePartition(LoopRepo):
                              env={"SPEC_DIR": "specs/001-x"})
         self.assertEqual((out["outcome"], out["recurrences"]), ("clean", ""))
         self.assertEqual(self.section(), "")
+
+    def test_a_dropped_folds_finding_raised_again_is_dismissed(self):
+        # The owner answered `/fold-hold drop` on round 1's fold: F raised
+        # again is neither a recurrence nor folded again (F2, pass 6).
+        import wc_fold_hold as fh
+        fp = fingerprint(ISSUE, "F", "f.py")
+        state = fh.render_state(fold_id="review-gate-round-1", reason="constitution-conflict",
+                                folded_json=fh.with_fingerprints(
+                                    '[{"id":"review-gate-round-1","summary":"s"}]', fp))
+        comments = [{"body": "q\n\n" + state, "created_at": "2026-01-01T00:00:00Z",
+                     "user": {"login": BOT, "type": "Bot"}},
+                    {"body": fh.render_resolved("review-gate-round-1", "drop"),
+                     "created_at": "2026-01-02T00:00:00Z", "user": {"login": BOT, "type": "Bot"}}]
+        out = self.partition(2, self.h2, [finding("F", "f.py", 4)],
+                             [review(1, self.h1, [entry("F", "f.py", 4)], "t1")],
+                             folded=[fp], issue_comments=comments)
+        self.assertEqual((out["outcome"], out["recurrences"], out["fold-fingerprints"]),
+                         ("clean", "", ""))
+        self.assertEqual(self.section(), "")
+        # A proceeded fold dismisses nothing: F recurs.
+        comments[1]["body"] = fh.render_resolved("review-gate-round-1", "proceed")
+        out = self.partition(2, self.h2, [finding("F", "f.py", 4)],
+                             [review(1, self.h1, [entry("F", "f.py", 4)], "t1")],
+                             folded=[fp], issue_comments=comments)
+        self.assertEqual((out["outcome"], out["recurrences"]), ("findings", fp))
 
     def test_fresh_findings_are_unchanged(self):
         out = self.partition(2, self.h2, [finding("G", "f.py", 5)],

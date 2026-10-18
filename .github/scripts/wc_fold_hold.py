@@ -37,7 +37,8 @@ CLI:
                           --association A [--github-output PATH]
   wc_fold_hold.py resolved-marker --fold-id ID --resolution R
   wc_fold_hold.py post-outcome --issue N --decision D --report-file F
-                               --question-file F [state flags]
+                               --question-file F [--fold-fingerprints fp,...]
+                               [state flags]
   wc_fold_hold.py open-holds --comments FILE --bot-login L [--except-fold-id ID]
   wc_fold_hold.py drop-tasks --spec-dir D --fold-ref-before B --fold-ref-after A
   wc_fold_hold.py --self-test
@@ -137,6 +138,47 @@ def other_open_holds(comments, bot_login, fold_id):
     `fold_id` excludes nothing: a hold with no id is never the caller's own."""
     return [_hold_name(h) for h in open_holds(comments, bot_login)
             if not fold_id or h.get("fold_id") != fold_id]
+
+
+def dropped_fingerprints(comments, bot_login):
+    """Review-finding fingerprints of every fold the owner answered
+    `/fold-hold drop`: the convergence ledger's dismissed list (the owner's
+    decision on F2 of #1062's pass-6 review). Each App-authored `drop`
+    resolved marker names a fold; the newest App-authored state marker for
+    that fold posted before it carries the fold's findings as the
+    `fingerprints` of its folded_json entries (post_outcome adds them). A
+    hold answered any other way dismisses nothing."""
+    states = _bot_markers(comments, bot_login, STATE_RE, STATE_OPEN_RE)
+    out = set()
+    for r_stamp, r in _bot_markers(comments, bot_login, RESOLVED_RE, RESOLVED_OPEN_RE):
+        if r.get("resolution") != "drop":
+            continue
+        before = [s for stamp, s in states if s.get("fold_id") == r.get("fold_id") and stamp < r_stamp]
+        if not before:
+            continue
+        try:
+            folded = json.loads(before[-1].get("folded_json") or "[]")
+        except (TypeError, ValueError):
+            continue
+        for entry in folded if isinstance(folded, list) else []:
+            fps = entry.get("fingerprints") if isinstance(entry, dict) else None
+            out.update(fp for fp in fps or [] if isinstance(fp, str) and fp)
+    return sorted(out)
+
+
+def with_fingerprints(folded_json, fingerprints):
+    """folded_json with the fold's review-finding fingerprints (comma-
+    separated) on each entry, so a `drop` answer can dismiss them later.
+    Unchanged when there are none or folded_json is not a list."""
+    fps = [fp for fp in (fingerprints or "").split(",") if fp]
+    try:
+        folded = json.loads(folded_json or "")
+    except ValueError:
+        return folded_json
+    if not fps or not isinstance(folded, list):
+        return folded_json
+    return json.dumps([dict(e, fingerprints=fps) if isinstance(e, dict) else e for e in folded],
+                      separators=(",", ":"))
 
 
 def parse_answer(body):
@@ -374,6 +416,22 @@ def self_test():
           other_open_holds(same_sec, bot, "fc") == ["fa"])
     check("a resolved marker posted after the hold in the same second closes it",
           other_open_holds(same_sec[::-1], bot, "fc") == [])
+    fps_json = with_fingerprints('[{"id":"fd","summary":"s"}]', "aa,bb")
+    s_drop = render_state(fold_id="fd", reason="constitution-conflict", folded_json=fps_json)
+    s_keep = render_state(fold_id="fk", reason="constitution-conflict",
+                          folded_json=with_fingerprints('[{"id":"fk","summary":"s"}]', "cc"))
+    answered = [comment(s_drop, "2026-06-01T00:00:00Z"), comment(s_keep, "2026-06-01T00:00:01Z"),
+                comment(render_resolved("fd", "drop"), "2026-06-02T00:00:00Z"),
+                comment(render_resolved("fk", "proceed"), "2026-06-02T00:00:01Z")]
+    check("a dropped fold's fingerprints are dismissed, a proceeded fold's are not",
+          dropped_fingerprints(answered, bot) == ["aa", "bb"])
+    check("an open hold dismisses nothing", dropped_fingerprints(answered[:2], bot) == [])
+    forged_drop = answered[:2] + [comment(render_resolved("fk", "drop"), "2026-06-03T00:00:00Z",
+                                          login="someone", kind="User")]
+    check("a drop marker a human posted dismisses nothing",
+          dropped_fingerprints(forged_drop, bot) == [])
+    check("folded_json without fingerprints is left as it is",
+          with_fingerprints('[{"id":"x"}]', "") == '[{"id":"x"}]')
     with tempfile.TemporaryDirectory() as out_dir:
         out_path = os.path.join(out_dir, "out")
         _write_outputs(out_path, [("a", "x\nWC_EOF\naction=proceed"), ("b", "y")])
@@ -469,6 +527,8 @@ def main(argv=None):
         if field != "reason":
             po.add_argument("--" + field.replace("_", "-"), default="")
     po.add_argument("--hold-reason", default="")
+    po.add_argument("--fold-fingerprints", default="",
+                    help="comma-separated review-finding fingerprints the fold carries")
     # The newest open hold's state, which every answer addresses: read
     # without the comment body, so the release's job outputs carry nothing
     # a person typed (Gate 49).
@@ -492,6 +552,7 @@ def main(argv=None):
         print(render_resolved(a.fold_id, a.resolution))
     elif a.cmd == "post-outcome":
         state = dict((f, getattr(a, f)) for f in STATE_FIELDS if f != "reason")
+        state["folded_json"] = with_fingerprints(state["folded_json"], a.fold_fingerprints)
         posted = post_outcome(a.issue, a.decision, a.report_file, a.question_file,
                               reason=a.hold_reason, **state)
         print("posted" if posted else "nothing-to-post")

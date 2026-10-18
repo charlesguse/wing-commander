@@ -12,7 +12,8 @@ round_findings(findings, issue) -> [{fingerprint, file, line, title}]   # in-sco
 round_record_marker(round, head_sha, entries) -> "<!-- wing-commander-convergence-round: {...} -->"
 read_round_records(reviews, bot_login) -> [record]                     # newest per round
 evaluate(records, current, base, cwd, resolved=None, budget=None,
-         resolved_from_history=False) -> decision + {recurrences, git_ok, open_findings}
+         resolved_from_history=False, pending=None, dismissed=None)
+    -> decision + {recurrences, git_ok, open_findings}
 render_handoff(decision) -> markdown
 ```
 `THRESHOLDS = {min_round: 3, self_inflicted_share: 0.5, consecutive_churn_rounds: 2, growth_ratio: 0.5}` — the only place these numbers live.
@@ -20,7 +21,7 @@ render_handoff(decision) -> markdown
 `budget` is the loop's own budget-stop round: a trip on that round names the budget (`reason: budget-spent`) and still lists the tripped signals; the budget alone never makes `decide` stop (the loop's own check does, FR-009).
 
 ## Round records
-Each loop appends one record per parsed round, last, to the review it posts on the PR: `{round, head_sha, findings: [{fingerprint, file, line}]}`. Only the App's own bot-authored reviews count, and only the last marker opener in a body. The lifecycle gate's ledger is its marker's `folded_fingerprints`; the board loop's is every earlier round's findings (`--resolved-from-history`), since review-fixup fixed them. Board-loop rounds are 0-based, so it passes `round + 1` and `BOARD_LOOP_ROUND_BUDGET + 1`.
+Each loop appends one record per parsed round, last, to the review it posts on the PR: `{round, head_sha, findings: [{fingerprint, file, line}]}`. Only the App's own bot-authored reviews count, and only the last marker opener in a body. The lifecycle gate's ledger is its marker's `folded_fingerprints`, and its dismissed list is every fold the owner answered `/fold-hold drop`: `wc_fold_hold.dropped_fingerprints` reads the App-authored `wing-commander-fold-hold-resolved` markers whose resolution is `drop` and, for each, the `fingerprints` of the `folded_json` entries in that fold's newest App-authored hold state before it. A dismissed finding raised again is neither a recurrence nor folded again; the board loop's is every earlier round's findings (`--resolved-from-history`), since review-fixup fixed them. Board-loop rounds are 0-based, so it passes `round + 1` and `BOARD_LOOP_ROUND_BUDGET + 1`.
 
 ## CLI
 `python .github/scripts/wc_convergence.py decide --history <json> --base <ref> [--json]`, plus `record`, `evaluate` (what both loops call; writes `stop`, `reason`, `tripped`, `recurrences` to `$GITHUB_OUTPUT`) and `render-handoff`. `thrash_signals.py` retains its flags, gains `--recurring` and `--history`, and delegates.

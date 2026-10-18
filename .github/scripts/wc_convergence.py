@@ -508,7 +508,7 @@ def read_round_records(comments, bot_login):
 
 
 def evaluate(records, current, base, cwd, resolved=None, budget=None,
-             resolved_from_history=False, pending=None):
+             resolved_from_history=False, pending=None, dismissed=None):
     """One loop round's convergence decision (FR-004..FR-009).
 
     records: earlier rounds' records (read_round_records); only those
@@ -519,7 +519,9 @@ def evaluate(records, current, base, cwd, resolved=None, budget=None,
     fixes each round's in-scope findings before the next review). pending:
     folded fingerprints whose fold task is still open in tasks.md -- a
     finding the loop already knows is waiting is counted like any other but
-    is not a recurrence.
+    is not a recurrence. dismissed: fingerprints of folds the owner
+    answered `/fold-hold drop` (wc_fold_hold.dropped_fingerprints) -- the
+    ledger's dismissed list, never a recurrence.
     """
     rounds = [r for r in records if r["round"] < current["round"]] + [current]
     # A folded fingerprint was resolved in the first round that raised it,
@@ -532,7 +534,7 @@ def evaluate(records, current, base, cwd, resolved=None, budget=None,
     pending = set(pending or [])
     ledger = {"resolved": dict((fp, first_raised.get(fp, 0)) for fp in (resolved or [])
                                if fp not in pending),
-              "dismissed": []}
+              "dismissed": sorted(set(dismissed or []))}
     if resolved_from_history:
         for r in rounds[:-1]:
             for f in r.get("findings", []):
