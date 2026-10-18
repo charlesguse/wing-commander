@@ -57,4 +57,4 @@ Stages and their gates: intake (`/speckit-specify`, human gate = maintainer labe
 
 This constitution supersedes ad-hoc practice in this repository. Every spec, plan, and implementation PR is checked against it during review; violations must be fixed or the constitution amended first. Amendments arrive as ordinary PRs that modify this file, state the motivation, and bump the version below (semver: breaking principle changes = MAJOR, new principles/sections = MINOR, clarifications = PATCH).
 
-**Version**: 2.6.0 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-10-17
+**Version**: 2.6.0 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-10-18
