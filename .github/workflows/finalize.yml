@@ -789,25 +789,6 @@ jobs:
           tasks-path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
           label-prefix: ${{ inputs.write-boundary-label-prefix }}
 
-      # specs/117-implement-stall-handoff (FR-007, FR-008, FR-009): the
-      # remaining-work report is rendered by code from the classified task
-      # lists, never copied by the summarising agent below -- a standing
-      # instruction is omitted, an owner-only task lands under "Maintainer
-      # steps", and an unbuilt code task under "Unfinished implementation"
-      # with a stall statement. Not continue-on-error: a missing count would
-      # otherwise render as "no manual work remains", so "Verify agent
-      # output" fails the job on the absent finalize-remaining.md instead.
-      # The composite removes that file when the renderer itself fails.
-      - name: Render remaining work
-        id: remaining-work
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && steps.checkbox-tip-finalize.outcome == 'success'
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-remaining-work
-        with:
-          maintainer-items: ${{ steps.checkbox-tip-finalize.outputs.maintainer-items }}
-          impl-items: ${{ steps.checkbox-tip-finalize.outputs.impl-unchecked-items }}
-          routed-items: ${{ steps.write-boundary-lookup.outputs.rendered }}
-          output-path: ${{ runner.temp }}/finalize-remaining.md
-
       # The containment guard's base (spec 114, FR-021): a subfolder
       # lifecycle only. The root records nothing new.
       - name: Record pre-agent SHA (project)
@@ -1076,6 +1057,28 @@ jobs:
             finished successfully — the runaway ceiling
             (${{ steps.summarize-ceiling.outputs.ceiling }}) is the only hard
             stop; this is an observability note, not a failure.
+
+      # specs/117-implement-stall-handoff (FR-007, FR-008, FR-009): the
+      # remaining-work report is rendered by code from the classified task
+      # lists, never copied by the summarising agent below -- a standing
+      # instruction is omitted, an owner-only task lands under "Maintainer
+      # steps", and an unbuilt code task under "Unfinished implementation"
+      # with a stall statement. Not continue-on-error: a missing count would
+      # otherwise render as "no manual work remains", so "Verify agent
+      # output" fails the job on the absent finalize-remaining.md instead.
+      # The composite removes that file when the renderer itself fails.
+      # Rendered after the agent step (and its post-agent re-checkout of the
+      # pipeline), so nothing the agent writes to runner temp can stand in
+      # for the deterministic report.
+      - name: Render remaining work
+        id: remaining-work
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && steps.checkbox-tip-finalize.outcome == 'success'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-remaining-work
+        with:
+          maintainer-items: ${{ steps.checkbox-tip-finalize.outputs.maintainer-items }}
+          impl-items: ${{ steps.checkbox-tip-finalize.outputs.impl-unchecked-items }}
+          routed-items: ${{ steps.write-boundary-lookup.outputs.rendered }}
+          output-path: ${{ runner.temp }}/finalize-remaining.md
 
       # Fail loudly rather than opening a PR with incomplete content. Skipped
       # for a rate-limited verdict (FR-015a, specs/047-rate-limited-verdict):
@@ -1639,6 +1642,7 @@ jobs:
               {"name": "Upload Claude execution log", "conclusion": "${{ steps.upload-execution-log.conclusion }}"},
               {"name": "Upload metrics record", "conclusion": "${{ steps.upload-metrics-record.conclusion }}"},
               {"name": "Compute cost line", "conclusion": "${{ steps.cost-line.conclusion }}"},
+              {"name": "Render remaining work", "conclusion": "${{ steps.remaining-work.conclusion }}"},
               {"name": "Verify agent output", "conclusion": "${{ steps.verify-agent-output.conclusion }}"},
               {"name": "Assemble PR body", "conclusion": "${{ steps.body.conclusion }}"},
               {"name": "Determine feature title", "conclusion": "${{ steps.title.conclusion }}"},

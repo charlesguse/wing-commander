@@ -175,6 +175,19 @@ def check_finalize_wiring():
     CASES += 1
     if "every tasks.md item that is still unchecked" in text:
         fail("finalize.yml still instructs the agent to copy unchecked task lines")
+    # FR-007: the report is rendered after the summarising agent has run,
+    # so an agent-written finalize-remaining.md can never be the report.
+    import yaml
+    doc = yaml.safe_load(text)
+    names = [st.get("name") for st in doc["jobs"]["finalize"]["steps"]]
+    CASES += 1
+    try:
+        if names.index("Render remaining work") < names.index(
+                "Summarize change and extract remaining manual work"):
+            fail("finalize.yml renders the remaining work before the summarising agent "
+                 "runs, so the agent can overwrite finalize-remaining.md")
+    except ValueError as exc:
+        fail(f"finalize.yml: step not found ({exc})")
     action = read(os.path.join(ROOT, ".github", "actions",
                                "wing-commander-remaining-work", "action.yml"))
     CASES += 1
