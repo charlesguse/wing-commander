@@ -1946,6 +1946,10 @@ jobs:
           if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$WRITE_BOUNDARY_ALL_OOB" = "true" ]; then
             routed=true
           fi
+          # specs/117 (owner decisions A and C on #992): a dropped id is
+          # implementation work the tip no longer lists, so the classified
+          # remainder is not all of it and the loop must not end on routing.
+          [ -z "$dropped_ids" ] || routed=false
           # FR-013 (spec 059): the non-convergence reason narrative, gained
           # here as the healthy-cycle counterpart of the failed/truncated
           # reasons already set above (data-model.md's "Non-convergence
@@ -2849,6 +2853,10 @@ jobs:
           if [ "$ok" = "true" ] && [ "$truncated" = "false" ] && [ "$WRITE_BOUNDARY_ALL_OOB" = "true" ]; then
             routed=true
           fi
+          # specs/117 (owner decisions A and C on #992): a dropped id is
+          # implementation work the tip no longer lists, so the classified
+          # remainder is not all of it and the loop must not end on routing.
+          [ -z "$dropped_ids" ] || routed=false
           # FR-013 (spec 059): the non-convergence reason narrative, mirroring
           # the cycle arm's identical block above (data-model.md's
           # "Non-convergence reason"). Left untouched when the retry failed
