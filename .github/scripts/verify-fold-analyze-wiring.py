@@ -47,7 +47,9 @@ hold open to answer again, and the step after it that records a
 dispatched release carries `!cancelled()` so it is never skipped; a
 release's dispatch names a step in its own job that re-reads the hold
 (`wc_fold_hold.py resolve`), so two answers close together dispatch once,
-and requires that step to find no other hold open;
+and requires that step to find no other hold open, after an
+unconditional wing-commander-refresh-remote (the dispatch fetches the spec
+branch, which a private repository refuses without a credential);
 and pr-conversation (the published caller)
 replies on the PR when its fold is held or blocked, as it does when one
 dispatches.
@@ -109,6 +111,7 @@ CANONICAL_COMMENTS = (
 ANALYZE = "wing-commander-fold-analyze"
 DISPATCH = "wing-commander-fold-dispatch"
 OPEN_HOLDS = "wing-commander-fold-open-holds"
+REFRESH = "wing-commander-refresh-remote"
 AGENT = "claude-code-action"
 MODEL = "claude-sonnet-5-5"
 READ_ONLY_TOOLS = {"Read", "Grep", "Glob"}
@@ -269,6 +272,13 @@ def check_caller(path, jobs, preceding):
                             f"its own job that re-reads the hold with `wc_fold_hold.py "
                             f"resolve` -- two answers close together both find it open "
                             f"and the fold dispatches twice.")
+        if releases and not any(
+                REFRESH in _uses(s) and not s.get("if")
+                for i, s in enumerate(steps[:dispatch]) if owner[i] == owner[dispatch]):
+            failures.append(f"{path}: no unconditional {REFRESH} step precedes {DISPATCH} "
+                            f"in its job -- on a private repository its fetch of the spec "
+                            f"branch fails, reads as nothing folded, and the release closes "
+                            f"the hold with nothing dispatched.")
         if releases and not any(f"steps.{r}.outputs.other-open == ''" in cond for r in rechecks):
             failures.append(f"{path}: the {DISPATCH} step's if: does not require that no "
                             f"other fold hold is open (`steps.<recheck>.outputs.other-open "
@@ -611,6 +621,16 @@ def self_test():
     next(iter(elsewhere["jobs"].values()))["uses"] = "./.github/workflows/other.yml"
     case("a wrapper that calls another workflow is caught",
          any("only delegate" in f for f in check_release_published(rel_doc, elsewhere)))
+
+    for label, fn in (("only on a drop", lambda st: st.__setitem__("if", "needs.resolve.outputs.action == 'drop'")),
+                      ("not at all", None)):
+        unauth = rel_fresh()
+        if fn is None:
+            unauth = drop(unauth, lambda st: REFRESH in _uses(st))
+        else:
+            fn(step(unauth, lambda st: REFRESH in _uses(st)))
+        case(f"a release that authenticates its remote {label} is caught",
+             rel_caught(unauth, "private repository"))
 
     texts = _caller_texts()
     pasted = dict(texts)

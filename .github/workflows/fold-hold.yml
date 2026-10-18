@@ -628,8 +628,10 @@ jobs:
           # own hold, and implement waits for the others' answers.
           echo "other-open=$(sed -n 's/^other-open-holds=//p' "$RUNNER_TEMP/fold-hold-recheck.out")" >> "$GITHUB_OUTPUT"
 
-      - name: Authenticate the push remote
-        if: needs.resolve.outputs.action == 'drop'
+      # Every answer: `drop` pushes, and wing-commander-fold-dispatch
+      # fetches the spec branch's tip, which on a private repository fails
+      # without a credential and reads as nothing folded.
+      - name: Authenticate the spec-branch remote
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
         with:
           token: ${{ steps.ctx.outputs.token }}
