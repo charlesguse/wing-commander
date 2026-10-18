@@ -18,8 +18,10 @@
 # Task identity (owner decision on #992, option (a)): an id that was
 # unchecked implementation work at base but is not implementation at the tip
 # (retagged [maintainer], reworded as a standing instruction, or deleted)
-# still counts as outstanding, so editing tasks.md cannot reach converged.
-# Lines without an id cannot be tracked; ids converge adds are unaffected.
+# still counts as outstanding, so editing tasks.md cannot reach converged in
+# the cycle that made the edit. The comparison is per cycle: the next
+# cycle's base already carries the edit. Lines without an id cannot be
+# tracked; ids converge adds are unaffected.
 # Prints single-line `key=value` lines shaped as $GITHUB_OUTPUT entries:
 #   converged=  progressed=  handoff=  stall-reason=  stall-comment=
 #   dropped-ids=  (the ids above, space-separated)

@@ -1733,9 +1733,11 @@ jobs:
 
       # specs/090-stage-write-boundary (FR-006): classifies the tip's own
       # unchecked items (checkbox-tip-cycle's own text, never a second read
-      # of tasks.md) against the write boundary, so "Read back cycle
-      # outcome" below can tell "the only remaining work is out of reach"
-      # apart from ordinary outstanding work.
+      # of tasks.md; implementation tasks only per specs/117, so a standing
+      # or [maintainer] line cannot keep routed false) against the write
+      # boundary, so "Read back cycle outcome" below can tell "the only
+      # remaining work is out of reach" apart from ordinary outstanding
+      # work.
       - name: Classify write-boundary tasks (cycle)
         id: write-boundary-cycle
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
@@ -1748,7 +1750,7 @@ jobs:
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-write-boundary
         with:
-          unchecked-items: ${{ steps.checkbox-tip-cycle.outputs.unchecked-items }}
+          unchecked-items: ${{ steps.checkbox-tip-cycle.outputs.impl-unchecked-items }}
           no-write-paths: ${{ inputs.no-write-paths }}
           spec-dir: ${{ steps.spec.outputs.spec-dir }}
           tasks-path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
@@ -2672,7 +2674,7 @@ jobs:
         continue-on-error: true
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-write-boundary
         with:
-          unchecked-items: ${{ steps.checkbox-tip-retry.outputs.unchecked-items }}
+          unchecked-items: ${{ steps.checkbox-tip-retry.outputs.impl-unchecked-items }}
           no-write-paths: ${{ inputs.no-write-paths }}
           spec-dir: ${{ steps.spec.outputs.spec-dir }}
           tasks-path: ${{ steps.spec.outputs.spec-dir }}/tasks.md

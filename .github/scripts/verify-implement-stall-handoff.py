@@ -438,6 +438,35 @@ def check_task_identity():
             fail(f"implement.yml: a read-back arm does not pass {needle!r} to the stop rule")
 
 
+def check_write_boundary_input():
+    """The write-boundary classifier must see implementation tasks only: an
+    unchecked [maintainer] or standing line names no out-of-boundary path,
+    so on the raw list it keeps all-unchecked-out-of-boundary false and a
+    lifecycle whose only implementation work is out of reach grinds to the
+    cap instead of routing. Both arms' wiring, then the shipped classifier
+    on the shipped count's output."""
+    global CASES
+    import yaml
+    doc = yaml.safe_load(read(os.path.join(ROOT, ".github", "workflows", "implement.yml")))
+    steps = {st.get("id"): st for job in doc["jobs"].values() for st in job.get("steps", [])}
+    for arm in ("cycle", "retry"):
+        got = ((steps.get(f"write-boundary-{arm}") or {}).get("with") or {}).get("unchecked-items")
+        CASES += 1
+        if got != f"${{{{ steps.checkbox-tip-{arm}.outputs.impl-unchecked-items }}}}":
+            fail(f"implement.yml: write-boundary-{arm} classifies {got!r}, not the tip's "
+                 "implementation-only impl-unchecked-items")
+    proc = count_script("- [ ] T001 Edit `.claude/settings.json`\n"
+                        "- [ ] T002 [maintainer] Merge the PR\n- [ ] Keep the gates green\n")
+    m = re.search(r"^impl-unchecked-items<<(\S+)\n(.*?)^\1$", proc.stdout, re.M | re.S)
+    items = m.group(2) if m else ""
+    res = run(["bash", os.path.join(SHARED, "classify-out-of-boundary-tasks.sh"),
+               items, ".claude/", "specs/117-x/tasks.md", "specs/117-x"], cwd=ROOT)
+    CASES += 1
+    if "all-unchecked-out-of-boundary=true" not in res.stdout:
+        fail(f"write boundary: only out-of-reach implementation work must route; "
+             f"items={items!r} stdout={res.stdout!r} stderr={res.stderr}")
+
+
 def check_implement_wiring():
     global CASES
     impl = read(os.path.join(ROOT, ".github", "workflows", "implement.yml"))
@@ -669,6 +698,7 @@ def main():
     check_blocker()
     check_decide()
     check_task_identity()
+    check_write_boundary_input()
     check_classification()
     check_composite_outputs()
     check_render()
