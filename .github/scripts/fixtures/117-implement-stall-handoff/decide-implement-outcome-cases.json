@@ -37,5 +37,15 @@
    "expect": {"converged": "true", "progressed": "true", "handoff": "false", "stall-comment": "", "dropped-ids": ""}},
   {"name": "carried-and-base-ids-deduplicated",
    "env": {"OK": "true", "TRUNCATED": "false", "IMPL_CHECKED_BASE": "3", "IMPL_CHECKED_TIP": "3", "IMPL_UNCHECKED_TIP": "0", "ITERATION": "3", "MAX_ITERATIONS": "5", "IMPL_UNCHECKED_IDS_BASE": "T002", "IMPL_IDS_TIP": "T001", "CARRIED_DROPPED_IDS": "T002 T004"},
-   "expect": {"converged": "false", "dropped-ids": "T002 T004"}}
+   "expect": {"converged": "false", "dropped-ids": "T002 T004"}},
+  {"name": "routed-below-cap-reported-as-stall", "env": {"OK": "true", "TRUNCATED": "false", "IMPL_CHECKED_BASE": "3", "IMPL_CHECKED_TIP": "3", "IMPL_UNCHECKED_TIP": "2", "ITERATION": "2", "MAX_ITERATIONS": "5", "WRITE_BOUNDARY_ALL_OOB": "true"},
+   "expect": {"converged": "false", "progressed": "false", "handoff": "false", "stall-comment": "Implement stopped with 2 implementation task(s) still unchecked: the remaining implementation work is outside the implement stage's write boundary and was routed."}},
+  {"name": "routed-after-progress-reported-as-stall", "env": {"OK": "true", "TRUNCATED": "false", "IMPL_CHECKED_BASE": "3", "IMPL_CHECKED_TIP": "4", "IMPL_UNCHECKED_TIP": "1", "CONVERGE_SHA": "abc123", "ITERATION": "2", "MAX_ITERATIONS": "5", "WRITE_BOUNDARY_ALL_OOB": "true"},
+   "expect": {"converged": "false", "progressed": "true", "handoff": "false", "stall-comment": "Implement stopped with 1 implementation task(s) still unchecked: the remaining implementation work is outside the implement stage's write boundary and was routed."}},
+  {"name": "routed-at-cap-keeps-cap-reason", "env": {"OK": "true", "TRUNCATED": "false", "IMPL_CHECKED_BASE": "3", "IMPL_CHECKED_TIP": "3", "IMPL_UNCHECKED_TIP": "2", "ITERATION": "5", "MAX_ITERATIONS": "5", "WRITE_BOUNDARY_ALL_OOB": "true"},
+   "expect": {"converged": "false", "progressed": "false", "handoff": "true", "stall-comment": "Implement stopped with 2 implementation task(s) still unchecked: the iteration cap (5) was reached."}},
+  {"name": "oob-with-dropped-id-is-not-routed", "env": {"OK": "true", "TRUNCATED": "false", "IMPL_CHECKED_BASE": "3", "IMPL_CHECKED_TIP": "3", "IMPL_UNCHECKED_TIP": "1", "IMPL_UNCHECKED_IDS_BASE": "T002 T004", "IMPL_IDS_TIP": "T001 T004", "ITERATION": "2", "MAX_ITERATIONS": "5", "WRITE_BOUNDARY_ALL_OOB": "true"},
+   "expect": {"converged": "false", "progressed": "false", "handoff": "false", "stall-comment": "", "dropped-ids": "T002"}},
+  {"name": "oob-on-truncated-cycle-is-not-routed", "env": {"OK": "true", "TRUNCATED": "true", "IMPL_CHECKED_BASE": "3", "IMPL_CHECKED_TIP": "3", "IMPL_UNCHECKED_TIP": "2", "ITERATION": "2", "MAX_ITERATIONS": "5", "WRITE_BOUNDARY_ALL_OOB": "true"},
+   "expect": {"converged": "false", "handoff": "false", "stall-comment": ""}}
 ]

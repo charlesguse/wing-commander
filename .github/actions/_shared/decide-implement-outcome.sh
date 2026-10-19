@@ -15,7 +15,8 @@
 #   OK TRUNCATED IMPL_CHECKED_BASE IMPL_CHECKED_TIP IMPL_UNCHECKED_TIP
 #   CONVERGE_SHA ITERATION MAX_ITERATIONS BLOCKER_VALID BLOCKER_TEXT
 #   IMPL_UNCHECKED_IDS_BASE IMPL_IDS_TIP CARRIED_DROPPED_IDS (space-separated
-#   task ids)
+#   task ids) WRITE_BOUNDARY_ALL_OOB (the write-boundary classifier's
+#   all-unchecked-out-of-boundary, already in both read-back arms' env)
 # Task identity (owner decisions A and C on #992, option (a)): an id that was
 # unchecked implementation work at base, or that an earlier cycle dropped
 # (CARRIED_DROPPED_IDS, spec-meta.json's dropped_task_ids at the cycle base),
@@ -44,6 +45,7 @@ iteration="${ITERATION:-0}"
 max="${MAX_ITERATIONS:-0}"
 blocker_valid="${BLOCKER_VALID:-false}"
 blocker_text="${BLOCKER_TEXT:-}"
+all_oob="${WRITE_BOUNDARY_ALL_OOB:-false}"
 
 # A non-numeric count would make `[ -gt ]` error to stderr and take the false
 # branch with exit 0, silently disabling the cap hand-off. Normalise to base-10
@@ -98,7 +100,9 @@ if [ -n "$dropped" ]; then
 fi
 
 # FR-006: a stop with implementation outstanding is always reported, whether
-# it came from a hand-off or from the loop running out of iterations.
+# it came from a hand-off, from the loop running out of iterations, or from a
+# routed remainder (specs/090: the read-back ends the loop when every
+# unchecked line is outside the write boundary and no id was dropped).
 if [ "$ok" = "true" ] && [ "$converged" != "true" ] && [ "$unchecked" -gt 0 ]; then
   if [ "$handoff" = "true" ]; then
     stall_comment="Implement stopped with $unchecked implementation task(s) still unchecked$dropped_note: $stall_reason."
@@ -108,6 +112,9 @@ if [ "$ok" = "true" ] && [ "$converged" != "true" ] && [ "$unchecked" -gt 0 ]; t
       stall_reason="$stall_reason; the agent also reported a blocker: $blocker_text"
     fi
     stall_comment="Implement stopped with $unchecked implementation task(s) still unchecked$dropped_note: $stall_reason."
+  elif [ "$truncated" = "false" ] && [ "$all_oob" = "true" ] && [ -z "$dropped" ]; then
+    stall_reason="the remaining implementation work is outside the implement stage's write boundary and was routed"
+    stall_comment="Implement stopped with $unchecked implementation task(s) still unchecked: $stall_reason."
   fi
 fi
 

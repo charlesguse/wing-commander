@@ -43,9 +43,10 @@ one made through a review fold, is accepted). The retry arm also carries the
 primary attempt's `dropped-ids`.
 
 Prints `converged`, `progressed`, `handoff`, `stall-reason`,
-`stall-comment` (empty unless handoff or cap with implementation
-outstanding; includes the outstanding count and reason, FR-006, and names
-any dropped ids) and `dropped-ids` (space-separated, else empty).
+`stall-comment` (empty unless handoff, cap, or a routed remainder
+(`WRITE_BOUNDARY_ALL_OOB=true` on a healthy, untruncated cycle with no
+dropped ids) with implementation outstanding; includes the outstanding count
+and reason, FR-006, and names any dropped ids) and `dropped-ids` (space-separated, else empty).
 
 ## render-remaining-work.sh `<maintainer-items-file> <impl-items-file>`
 
