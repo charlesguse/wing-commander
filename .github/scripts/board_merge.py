@@ -26,8 +26,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from board_item_marker import (BUMP_VERIFICATION_MARKER, last_marker_match, marker_regexes,  # noqa: E402
-                               render_bump_verification)
+from board_item_marker import (BUMP_VERIFICATION_MARKER, last_converged_review_head,  # noqa: E402
+                               last_marker_match, marker_regexes, render_bump_verification)
 from board_prove import actions_only  # noqa: E402
 from board_readiness import _checks_green, _gate_suite_green  # noqa: E402
 
@@ -285,14 +285,20 @@ def classify_refusal(stderr):
 def decide(payload):
     """payload: {"class": "fix"|"bump", "snapshot": gh pr view JSON,
     "switch_on", "paused", and for fix "review_converged", "backstop_holds",
-    "readiness_head_sha"; "bot_login" for both}. A fix backstop measured on a
-    head other than the snapshot's is not a backstop that holds."""
+    "readiness_head_sha", "issue_comments"; "bot_login" for both}. A fix
+    backstop measured on a head other than the snapshot's is not a backstop
+    that holds. Nor is readiness's "ready" a converged review unless the
+    issue's newest review verdict, read fresh by the merge job, converged on
+    the snapshot's head (FR-003): readiness resumed from an earlier run's
+    marker never re-checks that the review saw this head."""
     snapshot = payload["snapshot"]
     bot_login = payload.get("bot_login") or ""
     if payload["class"] == "fix":
-        backstop = bool(payload.get("backstop_holds")) and (
-            payload.get("readiness_head_sha") == snapshot.get("headRefOid"))
-        return evaluate_fix(snapshot, bool(payload.get("review_converged")), backstop,
+        head = snapshot.get("headRefOid")
+        backstop = bool(payload.get("backstop_holds")) and payload.get("readiness_head_sha") == head
+        review = bool(payload.get("review_converged")) and bool(head) and last_converged_review_head(
+            snapshot.get("number"), payload.get("issue_comments"), bot_login) == head
+        return evaluate_fix(snapshot, review, backstop,
                             bool(payload["paused"]), bool(payload["switch_on"]), bot_login)
     return evaluate_bump(snapshot, bump_records(snapshot.get("comments"), bot_login), bot_login,
                          bool(payload["paused"]), bool(payload["switch_on"]))
@@ -448,12 +454,17 @@ def main():
     decide_cmd = sub.add_parser("decide", help="inputs JSON + snapshot JSON -> MergeDecision JSON on stdout")
     decide_cmd.add_argument("--inputs", required=True, help="the payload without its snapshot (JSON file)")
     decide_cmd.add_argument("--snapshot", required=True, help="gh pr view JSON file")
+    decide_cmd.add_argument("--issue-comments", default=None,
+                            help="the fix issue's REST comments array (JSON file)")
 
     def _decide(a):
         with open(a.inputs, encoding="utf-8") as fh:
             payload = json.load(fh)
         with open(a.snapshot, encoding="utf-8") as fh:
             payload["snapshot"] = json.load(fh)
+        if a.issue_comments:
+            with open(a.issue_comments, encoding="utf-8") as fh:
+                payload["issue_comments"] = json.load(fh)
         print(json.dumps(decide(payload)))
     decide_cmd.set_defaults(func=_decide)
     fields_cmd = sub.add_parser("snapshot-fields", help="the gh pr view --json field list")

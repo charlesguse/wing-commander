@@ -333,6 +333,31 @@ def _converged_review_head(body, pr_number):
     return None
 
 
+def last_converged_review_head(pr_number, comments, bot_login):
+    """The head SHA the loop's own newest review-round verdict comment for
+    `pr_number` recorded as *converged*, or None when the newest verdict is
+    not a converged one or there is none (see _converged_review_head()).
+    `comments` is the REST per-issue comments array. The pure half of
+    head_moved_since_last_review(), shared with board_merge.decide(),
+    which binds review convergence to the head it merges."""
+    newest_body = None
+    latest_created_at = None
+    for comment in comments or []:
+        if not is_loop_marker_author(comment, bot_login):
+            continue
+        body = comment.get("body") or ""
+        verdict = _REVIEW_VERDICT_RE.search(body)
+        if verdict is None or verdict.group(1) != str(pr_number):
+            continue
+        created_at = comment.get("created_at") or ""
+        if latest_created_at is None or created_at > latest_created_at:
+            latest_created_at = created_at
+            newest_body = body
+    # Only the newest review verdict for this PR counts: a converged round
+    # followed by a budget-spent or inconclusive one is not reviewed clean.
+    return _converged_review_head(newest_body, pr_number)
+
+
 def head_moved_since_last_review(pr_number, comments, bot_login, run=None):
     """FR-006/FR-006b, contracts/resume-recovery.md clause 2b: whether
     `pr_number`'s live head commit differs from the SHA the loop's own
@@ -357,22 +382,7 @@ def head_moved_since_last_review(pr_number, comments, bot_login, run=None):
     has exactly one home") -- spec 093's own FR-007, when it reaches its
     plan stage, calls this function rather than deriving a second one."""
     run = run or subprocess.run
-    newest_body = None
-    latest_created_at = None
-    for comment in comments or []:
-        if not is_loop_marker_author(comment, bot_login):
-            continue
-        body = comment.get("body") or ""
-        verdict = _REVIEW_VERDICT_RE.search(body)
-        if verdict is None or verdict.group(1) != str(pr_number):
-            continue
-        created_at = comment.get("created_at") or ""
-        if latest_created_at is None or created_at > latest_created_at:
-            latest_created_at = created_at
-            newest_body = body
-    # Only the newest review verdict for this PR counts: a converged round
-    # followed by a budget-spent or inconclusive one is not reviewed clean.
-    reviewed_sha = _converged_review_head(newest_body, pr_number)
+    reviewed_sha = last_converged_review_head(pr_number, comments, bot_login)
     if reviewed_sha is None:
         return True
     repository = os.environ.get("GITHUB_REPOSITORY")

@@ -38,7 +38,7 @@ Add one new job, `merge`, to `.github/workflows/board-loop.yml`, downstream of `
 | VII (published contract) | Pass. This adds a repo variable and workflow job and widens no consumer-facing contract. Gate parity checks are extended. |
 | VIII (head with no checks is not green) | Pass. The evaluator reuses `_checks_green`, which treats an empty rollup as not green. |
 | IX (durable action behind deterministic code) | Pass. `board_merge.py` decides; no agent judgment gates the merge. |
-| X (bounded autonomy) | Pass. Both classes are authorized as worded at 2.5.0, with squash commits, a kill switch, a pinned SHA and prove after merge. |
+| X (bounded autonomy) | Pass. Both classes are authorized as worded at 2.5.0, with squash commits, a kill switch, a pinned SHA and prove after merge. The switch itself is not named there: amendment 2.6.0 (PR #1064) adds it to Principle X, and the parity gate waives it until then. |
 
 No violations. Complexity Tracking is empty. Post-design re-check: still passes. The one new trust surface, the verification record, is bot-authored and SHA-bound, and `board_merge.py` reads it only from the bot's own login.
 

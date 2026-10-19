@@ -13,7 +13,7 @@ Never a candidate: a spec PR, a plan PR, a lifecycle PR, or a PR touching `.spec
 
 ## MergeSnapshot
 
-The `gh pr view --json headRefOid,statusCheckRollup,author,headRefName,commits,files,comments` result at one head SHA, plus the values of `WING_COMMANDER_BOARD_AUTO_MERGE` and `WING_COMMANDER_BOARD_LOOP_PAUSED`. The fix class adds `backstop_holds` and `review_converged`, computed in the same job.
+The `gh pr view --json headRefOid,statusCheckRollup,author,headRefName,commits,files,comments` result at one head SHA, plus the values of `WING_COMMANDER_BOARD_AUTO_MERGE` and `WING_COMMANDER_BOARD_LOOP_PAUSED`. The fix class adds `backstop_holds` and `review_converged`. Both come from the same run's `readiness` job, bound to the head it measured (`readiness_head_sha`); `review_converged` also needs the issue's newest review verdict, fetched by the merge job, to have converged on the snapshot's head.
 
 ## BumpVerificationRecord
 

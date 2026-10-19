@@ -10,9 +10,9 @@ The spec has no `[NEEDS CLARIFICATION]` markers; the switch question was settled
 
 ## D2: Fix-class condition sources
 
-- **Decision**: Reuse `board_readiness.evaluate_from_snapshot` for checks, gate suite, backstop and kill switch. Readiness's own "ready" decision (zero open findings by convergence) is consumed as the `readiness` job output. The merge job re-fetches the snapshot, re-runs the backstop on the final diff and re-reads the kill switch and the switch variable immediately before the call.
-- **Rationale**: This follows the spec's assumption that existing evaluations are reused. FR-003 forbids carrying cached state, so the snapshot and the backstop are recomputed in the merge job rather than read from `readiness` outputs. Only "review converged" is carried, and the existing code already trusts it.
-- **Alternatives**: Trusting `readiness` outputs for the SHA (it violates FR-003).
+- **Decision**: Reuse `board_readiness`'s `_checks_green`/`_gate_suite_green` for checks and gate suite. Readiness's own "ready" decision and the backstop it measured are consumed as `readiness` job outputs, bound to the head readiness measured (`readiness_head_sha`). The merge job re-fetches the snapshot and re-reads the kill switch immediately before the call; the switch variable is the job-start value (no token can re-read it). It also re-reads the issue's review verdicts and requires the newest to have converged on the snapshot's head.
+- **Rationale**: This follows the spec's assumption that existing evaluations are reused. The backstop is a function of the head's final diff, so the value readiness measured in the same run is as fresh as a re-measurement while the snapshot's head equals the one it measured; a moved head fails it. Readiness's "ready" is not enough alone: readiness resumed from an earlier run's `step=readiness` marker never re-checks that the review saw the current head, so the merge job binds review convergence to the head itself (FR-003).
+- **Alternatives**: Re-running the backstop in the merge job (a second checkout of the PR branch for the same answer). Trusting `readiness` outputs without a head binding (it violates FR-003).
 
 ## D3: The bump class's verification record
 

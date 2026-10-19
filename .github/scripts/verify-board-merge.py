@@ -511,6 +511,33 @@ def check_readiness_head_binding():
         ok("readiness's head-sha output is the head its backstop measured, or empty")
 
 
+def check_review_head_binding():
+    """Follow-up review of PR #1059 (FR-003): readiness's "ready" can come
+    from an earlier run's step=readiness marker that never re-checks the
+    head the review converged on, so decide() also needs the issue's newest
+    review verdict to have converged on the snapshot's head
+    (fixtures/board-merge/fix-review_converged-stale-head.json). The merge
+    job must read those verdicts fresh and hand them to every decide call,
+    the retry's included, or the fixture's guard never runs live."""
+    with open(BOARD_LOOP, encoding="utf-8") as fh:
+        merge_job = job_block(fh.read().splitlines(), "merge") or []
+    code = _run_blocks_text(merge_job)
+    decides = re.findall(r"board_merge\.py\" decide\b(?:[^\n]*\\\n)*[^\n]*", code)
+    problems = []
+    if not re.search(r'gh api "repos/\$GITHUB_REPOSITORY/issues/\$ISSUE_NUMBER/comments" --paginate', code):
+        problems.append("the merge job does not fetch the fix issue's comments")
+    if len(decides) < 2:
+        problems.append("expected the decision and the retry's re-decision, found {0} decide call(s)".format(
+            len(decides)))
+    for call in decides:
+        if '--issue-comments "$RUNNER_TEMP/board-merge-issue-comments.json"' not in call:
+            problems.append("a decide call does not pass the freshly read issue comments")
+    for problem in problems:
+        fail("review head binding: {0}".format(problem))
+    if not problems:
+        ok("the merge job re-reads the review verdicts and every decide call binds them to its head")
+
+
 def check_pass2_findings():
     """Pass 2 of review-until-clean on PR #1059: whether the App merged a PR
     is decided by board_merge.merged_by_us(), never by a second copy of the
@@ -615,6 +642,7 @@ def main():
     check_gh_blocked_reasons()
     check_board_loop()
     check_readiness_head_binding()
+    check_review_head_binding()
     check_pass2_findings()
     check_stalled_tracking_issue()
     check_auto_update()

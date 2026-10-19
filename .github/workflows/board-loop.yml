@@ -5843,6 +5843,8 @@ jobs:
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           PR_NUMBER: ${{ steps.candidate.outputs.pr }}
+          CLASS: ${{ steps.candidate.outputs.class }}
+          ISSUE_NUMBER: ${{ steps.candidate.outputs.issue }}
         run: |
           set -uo pipefail
           fields="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_merge.py" snapshot-fields)" \
@@ -5850,6 +5852,15 @@ jobs:
           gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json "$fields" \
             > "$RUNNER_TEMP/board-merge-snapshot.json" \
             || { echo "::error::board-loop merge: could not fetch PR #$PR_NUMBER's snapshot -- nothing is merged."; exit 1; }
+          # FR-003: the fix class's review convergence is re-read here, from
+          # the issue's own review verdicts, never taken from readiness alone.
+          echo '[]' > "$RUNNER_TEMP/board-merge-issue-comments.json"
+          if [ "$CLASS" = "fix" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER/comments" --paginate \
+              --jq '.[] | {created_at, body, user: {login: .user.login, type: .user.type}}' \
+              | jq -s '.' > "$RUNNER_TEMP/board-merge-issue-comments.json" \
+              || { echo "::error::board-loop merge: could not fetch issue #$ISSUE_NUMBER's comments -- nothing is merged."; exit 1; }
+          fi
 
       # The decision's inputs other than the snapshot are written once, so
       # the merge step's one retry re-decides on a re-fetched snapshot with
@@ -5880,6 +5891,7 @@ jobs:
             || { echo "::error::board-loop merge: could not write the decision inputs -- nothing is merged."; exit 1; }
           python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_merge.py" decide \
             --inputs "$RUNNER_TEMP/board-merge-inputs.json" --snapshot "$RUNNER_TEMP/board-merge-snapshot.json" \
+            --issue-comments "$RUNNER_TEMP/board-merge-issue-comments.json" \
             > "$RUNNER_TEMP/board-merge-decision.json" \
             || { echo "::error::board-loop merge: board_merge.py could not decide -- nothing is merged."; exit 1; }
           {
@@ -5964,6 +5976,7 @@ jobs:
               && gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json "$fields" > "$RUNNER_TEMP/board-merge-snapshot.retry.json" \
               && python3 -I "$scripts/board_merge.py" decide \
                    --inputs "$RUNNER_TEMP/board-merge-inputs.json" --snapshot "$RUNNER_TEMP/board-merge-snapshot.retry.json" \
+                   --issue-comments "$RUNNER_TEMP/board-merge-issue-comments.json" \
                    > "$RUNNER_TEMP/board-merge-decision.retry.json" \
               || { { echo "outcome=transient"; echo "refusal-class=$refusal_class"; } >> "$GITHUB_OUTPUT"
                    echo "::warning::board-loop merge: could not re-derive the decision for the retry -- not retried."; exit 0; }
