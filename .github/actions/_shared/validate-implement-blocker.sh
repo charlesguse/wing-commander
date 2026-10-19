@@ -73,7 +73,9 @@ detail_len="$(jq -r '.detail | length' "$BLOCKER")"
 # test would pass "T002\n" and a blank-but-for-newlines detail.
 [ "$(jq -r '.detail | test("[\\n\\r]")' "$BLOCKER")" = "false" ] || invalid "detail is not a single line"
 [ "$(jq -r '.detail | test("^\\s*$")' "$BLOCKER")" = "false" ] || invalid "detail is blank"
-[ "$(jq -r '.task | test("\\AT[0-9]+[a-z]?\\z")' "$BLOCKER")" = "true" ] || invalid "task is not a task id (T followed by digits, optional lowercase suffix)"
+# T### or M###: count-tasks-checkboxes.sh tracks both as implementation ids,
+# and Maintainer Feedback cycles append untagged M### work.
+[ "$(jq -r '.task | test("\\A[TM][0-9]+[a-z]?\\z")' "$BLOCKER")" = "true" ] || invalid "task is not a task id (T or M followed by digits, optional lowercase suffix)"
 
 impl_items="$(printf '%s\n' "$counts" | awk '
   /^impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF$/ { on = 1; next }

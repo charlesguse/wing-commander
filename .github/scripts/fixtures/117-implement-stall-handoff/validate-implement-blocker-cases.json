@@ -17,6 +17,7 @@
   {"name": "detail-multiline", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"a\\nb\"}", "valid": false, "reason": "single line"},
   {"name": "detail-301-chars", "blocker": "{\"task\":\"T002\",\"kind\":\"missing-tool\",\"detail\":\"@X301@\"}", "valid": false, "reason": "longer than 300"},
   {"name": "task-bad-shape", "blocker": "{\"task\":\"task 2\",\"kind\":\"missing-tool\",\"detail\":\"x\"}", "valid": false, "reason": "not a task id"},
+  {"name": "valid-m-id", "blocker": "{\"task\":\"M004\",\"kind\":\"missing-permission\",\"detail\":\"no workflow scope\"}", "valid": true, "text": "missing-permission: no workflow scope (M004)"},
   {"name": "task-absent", "blocker": "{\"task\":\"T099\",\"kind\":\"missing-tool\",\"detail\":\"x\"}", "valid": false, "reason": "not an unchecked implementation task"},
   {"name": "task-already-checked", "blocker": "{\"task\":\"T001\",\"kind\":\"missing-tool\",\"detail\":\"x\"}", "valid": false, "reason": "not an unchecked implementation task"},
   {"name": "task-is-maintainer", "blocker": "{\"task\":\"T003\",\"kind\":\"missing-tool\",\"detail\":\"x\"}", "valid": false, "reason": "not an unchecked implementation task"}
