@@ -763,7 +763,9 @@ def _tail_round_findings(n):
     return [{"title": "T{0:02d} ".format(i) + "t" * 115, "what": "w" * 5000, "in_scope": True,
              "line": 100 + i,
              "evidence": {"file_paths": ["x.py"], "detail": "d" * 5000},
-             "fingerprint_basis": {"file_path": "src/a/deeply/nested/module/path/file_{0:02d}.py".format(i),
+             # The longest record round_record_marker writes: every path
+             # character escaped (`<` is \u003c in the marker).
+             "fingerprint_basis": {"file_path": "{0:02d}".format(i) + "<" * 300,
                                    "gate_or_artifact": "g"}}
             for i in range(n)]
 
@@ -819,7 +821,7 @@ def check_review_body_cap_with_tail(compose_scripts, tmproot):
 
 def check_review_body_cap_with_tail_mutation(compose_scripts, tmproot):
     """Budgeting the findings without the tail (the pass-4 head) must fail
-    check_review_body_cap_with_tail() on the board loop."""
+    check_review_body_cap_with_tail() on every compose step."""
     failures = []
     for label, script, stem, env in compose_scripts:
         if script.count(TAIL_BUDGET) != 1:
@@ -832,10 +834,13 @@ def check_review_body_cap_with_tail_mutation(compose_scripts, tmproot):
     import io
     with contextlib.redirect_stdout(io.StringIO()):
         caught = check_review_body_cap_with_tail(mutated, tmproot)
-    if any(c.startswith("board-loop") for c in caught):
+    missed = [label for label, _script, _stem, _env in compose_scripts
+              if not any(c.startswith(label + ":") for c in caught)]
+    if not missed:
         print("note: mutation caught (spec 116 round record outside the review body cap).")
         return []
-    return ["mutation 'spec 116 round record outside the review body cap' was NOT caught"]
+    return ["mutation 'spec 116 round record outside the review body cap' was NOT caught on {0}".format(
+        ", ".join(missed))]
 
 
 # --- #583: agent text cannot set step outputs or suppress a filing --------

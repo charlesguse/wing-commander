@@ -219,7 +219,9 @@ Repository is CI/CD tooling: scripts in `.github/scripts/`, composites in `.gith
 
   Detail: Around line 1245: current['findings'] excludes pending_fps, but the comment claims it matches earlier records.
 
-- [ ] Review finding: thrash_signals --history cannot supply a ledger so recurrence is always empty
+- [X] Review finding: thrash_signals --history cannot supply a ledger so recurrence is always empty
+
+  Dismissed (review pass 1 #16): `--history` exists for parity only; the skill's recurrence check is `--recurring`.
 
   thrash_signals.py --history calls compute_history with a None ledger and has no --ledger flag, so the skill's view reports 'converging' on histories where the loop trips recurrence, defeating the single-home comparison (SC-003).
 
@@ -330,7 +332,9 @@ Repository is CI/CD tooling: scripts in `.github/scripts/`, composites in `.gith
   - .github/workflows/wing-commander-fold-hold.yml
   - .github/workflows/pr-conversation.yml
 
-- [ ] Review finding: thrash_signals reports 'none tripped' when self-inflicted share was never evaluated
+- [X] Review finding: thrash_signals reports 'none tripped' when self-inflicted share was never evaluated
+
+  Dismissed (refuted in review pass 6): the skill always passes `--finding` for every real finding, so the share is evaluated.
 
   history_from_report gives only the latest round a self-inflicted share. With no --finding at the right head the share is None and the output reads as converging.
 

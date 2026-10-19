@@ -433,6 +433,14 @@ MAX_RECORDED_FINDINGS = 50
 # reserved out of the review body's 57000-unit budget -- stays bounded. A
 # real repository path is far shorter; a longer one only loses attribution.
 MAX_RECORDED_PATH = 256
+# The bound that holds: marker_json escapes every non-ASCII character and
+# every `<`/`>` (up to 12 characters each), so MAX_RECORDED_PATH alone
+# leaves the record unbounded. The marker is ASCII, so this many characters
+# is this many UTF-16 units; entries past it are dropped, never the count.
+MAX_RECORD_CHARS = 20000
+# The hand-off is pasted into an issue comment beside other text, under
+# GitHub's 65536-character limit; it lists at most this many open findings.
+MAX_HANDOFF_FINDINGS = 25
 
 
 def round_findings(findings, issue):
@@ -471,7 +479,11 @@ def round_record_marker(round_, head_sha, entries):
     from board_item_marker import marker_json
     # The file path is the reviewer's: marker_json keeps a `-->` in it
     # from ending the marker early.
-    return "<!-- {0}: {1} -->".format(ROUND_MARKER, marker_json(payload))
+    marker = "<!-- {0}: {1} -->".format(ROUND_MARKER, marker_json(payload))
+    while len(marker) > MAX_RECORD_CHARS and payload["findings"]:
+        payload["findings"].pop()
+        marker = "<!-- {0}: {1} -->".format(ROUND_MARKER, marker_json(payload))
+    return marker
 
 
 def void_round_record_marker():
@@ -635,13 +647,16 @@ def render_handoff(decision):
         lines.append("")
         lines.append("Open in-scope findings:")
         recurring = set(decision.get("recurrences") or [])
-        for f in open_findings:
+        for f in open_findings[:MAX_HANDOFF_FINDINGS]:
             # The path is the reviewer's, and the hand-off is posted under
             # the App's identity: `<`/`>` as entities, so a path carrying
             # `<!-- ... -->` never reads back as an App-authored marker.
             lines.append("- `{0}:{1}` {2}{3}".format(
                 _inert(f.get("file")), f.get("line") or "?", _inert(f.get("fingerprint", "")),
                 " (recurring)" if f.get("fingerprint") in recurring else ""))
+        if len(open_findings) > MAX_HANDOFF_FINDINGS:
+            lines.append("- {0} more open in-scope finding(s) not listed.".format(
+                len(open_findings) - MAX_HANDOFF_FINDINGS))
     return "\n".join(lines)
 
 

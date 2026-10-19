@@ -109,6 +109,15 @@ class RuleFixtures(unittest.TestCase):
             got = {"stop": d["stop"], "reason": d["reason"], "tripped": d["tripped"]}
             self.assertEqual(got, data["expect"], name)
 
+    def test_handoff_lists_a_bounded_number_of_open_findings(self):
+        # It is pasted into a comment under GitHub's 65536-character limit.
+        d = wc.decide([rnd(1, 3), rnd(2, 3), rnd(3, 300)])
+        d["open_findings"] = [{"file": "<" * wc.MAX_RECORDED_PATH, "line": i,
+                               "fingerprint": "f" * 64} for i in range(1, 301)]
+        text = wc.render_handoff(d)
+        self.assertLess(len(text), 32000)
+        self.assertIn("275 more open in-scope finding(s) not listed.", text)
+
     def test_handoff_names_the_budget_and_still_lists_signals(self):
         with open(os.path.join(HERE, "fixtures", "rules", "s8-budget-round-names-budget.json"),
                   encoding="utf-8") as fh:
@@ -303,6 +312,19 @@ class RoundRecords(unittest.TestCase):
                                      for i in range(wc.MAX_RECORDED_FINDINGS)], "42")
         self.assertTrue(all(len(e["file"]) <= wc.MAX_RECORDED_PATH for e in entries))
         self.assertLess(len(wc.round_record_marker(5, "a" * 40, entries)), 20000)
+
+    def test_a_full_record_of_escaped_paths_stays_bounded(self):
+        # marker_json writes `<` and non-ASCII as \uXXXX: a path within
+        # MAX_RECORDED_PATH can still be 12x longer once encoded.
+        for char in ("<", "\U0001F600"):
+            entries = wc.round_findings([self.finding("t%d" % i, char * 300, 1)
+                                         for i in range(wc.MAX_RECORDED_FINDINGS)], "42")
+            marker = wc.round_record_marker(5, "a" * 40, entries)
+            self.assertLessEqual(len(marker), wc.MAX_RECORD_CHARS)
+            self.assertEqual(len(marker.encode("utf-16-le")) // 2, len(marker))
+            rec = wc.read_round_records([self.review(marker, "t1")], self.BOT)[0]
+            self.assertEqual(rec["count"], wc.MAX_RECORDED_FINDINGS)
+            self.assertTrue(rec["findings"])
 
     def test_marker_round_trip_newest_per_round(self):
         r1 = wc.round_record_marker(1, "aaa", wc.round_findings([self.finding("a", "x.py", 3)], "42"))
