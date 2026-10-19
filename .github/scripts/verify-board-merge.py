@@ -511,31 +511,69 @@ def check_readiness_head_binding():
         ok("readiness's head-sha output is the head its backstop measured, or empty")
 
 
-def check_review_head_binding():
+SNAPSHOT_STEP = "Fetch the PR snapshot at its current head"
+ISSUE_COMMENTS_FETCH = 'issues/$ISSUE_NUMBER/comments" --paginate'
+
+
+def step_block(job_lines, name):
+    """The lines of the step named `name` in a job, up to the job's next step."""
+    start = None
+    for i, line in enumerate(job_lines):
+        if re.fullmatch(r"      - name: (.*)", line):
+            if start is not None:
+                return job_lines[start:i]
+            if line == "      - name: {0}".format(name):
+                start = i
+    return job_lines[start:] if start is not None else []
+
+
+def review_head_binding_problems(merge_job):
     """Follow-up review of PR #1059 (FR-003): readiness's "ready" can come
     from an earlier run's step=readiness marker that never re-checks the
     head the review converged on, so decide() also needs the issue's newest
     review verdict to have converged on the snapshot's head
     (fixtures/board-merge/fix-review_converged-stale-head.json). The merge
     job must read those verdicts fresh and hand them to every decide call,
-    the retry's included, or the fixture's guard never runs live."""
-    with open(BOARD_LOOP, encoding="utf-8") as fh:
-        merge_job = job_block(fh.read().splitlines(), "merge") or []
+    the retry's included, or the fixture's guard never runs live. The fetch
+    is looked for in the snapshot step itself (pass 6 of review-until-clean):
+    the Announce step's own fetch of the same comments, for the marker's
+    round, runs after the decision and feeds none of it."""
     code = _run_blocks_text(merge_job)
     decides = re.findall(r"board_merge\.py\" decide\b(?:[^\n]*\\\n)*[^\n]*", code)
     problems = []
-    if 'issues/$ISSUE_NUMBER/comments" --paginate' not in code:
-        problems.append("the merge job does not fetch the fix issue's comments")
+    if ISSUE_COMMENTS_FETCH not in _run_blocks_text(step_block(merge_job, SNAPSHOT_STEP)):
+        problems.append("the merge job's '{0}' step does not fetch the fix issue's comments".format(SNAPSHOT_STEP))
     if len(decides) < 2:
         problems.append("expected the decision and the retry's re-decision, found {0} decide call(s)".format(
             len(decides)))
     for call in decides:
         if '--issue-comments "$RUNNER_TEMP/board-merge-issue-comments.json"' not in call:
             problems.append("a decide call does not pass the freshly read issue comments")
+    return problems
+
+
+def check_review_head_binding():
+    with open(BOARD_LOOP, encoding="utf-8") as fh:
+        merge_job = job_block(fh.read().splitlines(), "merge") or []
+    problems = review_head_binding_problems(merge_job)
     for problem in problems:
         fail("review head binding: {0}".format(problem))
     if not problems:
         ok("the merge job re-reads the review verdicts and every decide call binds them to its head")
+    # Self-test: the merge job with the snapshot step's fetch removed, the
+    # Announce step's fetch left in place, is caught.
+    snapshot = step_block(merge_job, SNAPSHOT_STEP)
+    if not snapshot:
+        fail("review head binding self-test: the merge job has no '{0}' step".format(SNAPSHOT_STEP))
+        return
+    start = merge_job.index(snapshot[0])
+    mutated = (merge_job[:start] + [line for line in snapshot if ISSUE_COMMENTS_FETCH not in line]
+               + merge_job[start + len(snapshot):])
+    if not review_head_binding_problems(mutated):
+        fail("review head binding self-test: a snapshot step without the issue-comments fetch is not caught "
+             "(another step's fetch of the same comments feeds no decision)")
+    else:
+        ok("review head binding self-test: a snapshot step without the issue-comments fetch is caught")
 
 
 def check_pass2_findings():
