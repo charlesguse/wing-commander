@@ -20,7 +20,7 @@ outside fenced blocks.
 
 | Field | Type | Validation |
 |---|---|---|
-| `task` | string `T\d+` | names an unchecked implementation task at the pushed tip |
+| `task` | string `[TM]\d+[a-z]?` | names an unchecked implementation task at the pushed tip |
 | `kind` | enum | `missing-tool`, `missing-permission`, `contradictory-spec`, `external-dependency` |
 | `detail` | string | 1-300 chars, single line |
 
