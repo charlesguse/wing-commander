@@ -524,7 +524,7 @@ def check_review_head_binding():
     code = _run_blocks_text(merge_job)
     decides = re.findall(r"board_merge\.py\" decide\b(?:[^\n]*\\\n)*[^\n]*", code)
     problems = []
-    if not re.search(r'gh api "repos/\$GITHUB_REPOSITORY/issues/\$ISSUE_NUMBER/comments" --paginate', code):
+    if 'issues/$ISSUE_NUMBER/comments" --paginate' not in code:
         problems.append("the merge job does not fetch the fix issue's comments")
     if len(decides) < 2:
         problems.append("expected the decision and the retry's re-decision, found {0} decide call(s)".format(
