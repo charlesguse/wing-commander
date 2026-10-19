@@ -1,6 +1,6 @@
 # Data Model: 116 Review Convergence and Fold-Time Analyze
 
-Layer: consuming instrument, except **Analyze finding** and **Fold hold**, which cross the published contract (fold composites).
+Layer: consuming instrument. (**Analyze finding** and **Fold hold**, the published-contract entities, moved to #1066 with Story 3.)
 
 ## Review round record (per PR, per round)
 | Field | Type | Notes |
@@ -36,8 +36,5 @@ Decision: `stop = round ≥ 3 and tripped ≠ ∅`; budget stop applies independ
 ## Stall reason
 Enum extended with `not-converging` (beside clean and budget-spent). Carries the signals table.
 
-## Analyze finding
-`{severity, category ∈ {constitution-conflict, inconsistency, duplication, other}, fold_task, location, principle?, detail}`. Hold iff any `category == constitution-conflict`.
-
-## Fold hold
-`{fold_id, reason ∈ {constitution-conflict, analyze-failed}, question_comment_id, options[], resolution ∈ {pending, proceed, drop, amend, retry}}`. State: `pending → released(proceed|drop|amend) | pending(retry)`.
+## Analyze finding, Fold hold
+Moved to #1066 (Story 3).

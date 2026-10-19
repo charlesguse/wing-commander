@@ -2,9 +2,11 @@
 
 **Input**: Design documents from `specs/116-review-convergence-analyze/`
 
-**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/convergence-signals.md, contracts/fold-analyze.md, quickstart.md
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/convergence-signals.md, quickstart.md
 
-**Tests**: Required. Constitution VIII and FR-019/SC-007 demand a checked-in fixture for every gate failure branch; SC-001..SC-004 demand replay fixtures.
+**Scope split (owner decision 2026-10-19, recorded on #994)**: User Story 3 (Phase 6, T020–T027) moved to proposal #1066. Its tasks are marked "moved to #1066" without a checkbox: they are neither done here nor pending here. Review-gate findings that cite only Story 3 code are marked the same way; findings on Story 3 code that were fixed before the split stay ticked as the record of what was done then, and that code left this PR with Story 3.
+
+**Tests**: Required. Constitution VIII and FR-019/SC-007 demand a checked-in fixture for every gate failure branch; SC-001..SC-003 demand replay fixtures.
 
 **Organization**: Grouped by user story. US5 is out of scope (FR-020) and has no tasks.
 
@@ -80,20 +82,20 @@ Repository is CI/CD tooling: scripts in `.github/scripts/`, composites in `.gith
 
 ---
 
-## Phase 6: User Story 3 - A folded task that contradicts the spec reaches the owner before implement (P2)
+## Phase 6: User Story 3 - A folded task that contradicts the spec reaches the owner before implement (P2) — moved to #1066
 
 **Goal**: Analyze runs between fold-commit and fold-dispatch on both paths; only a constitution conflict or a failed check holds.
 
 **Independent Test**: Constitution-conflicting fold task is held with a question naming task and principle; FR-contradicting task without a constitution conflict is dispatched with the report linked.
 
-- [X] T020 [P] [US3] Create the deterministic decision script (in `.github/actions/wing-commander-fold-analyze/` or `.github/actions/_shared/` if reused) that validates the agent JSON schema `{"findings":[{severity,category,fold_task,location,principle,detail}]}`, decides `hold` iff any finding has `category == constitution-conflict` or the step failed/mismatched schema, else `dispatch`, and renders `report-markdown` and `question-markdown` (names the task and, for constitution conflicts, the principle; options: amend the spec / drop the fold task / proceed anyway, or proceed anyway / retry the check for `analyze-failed`)
-- [X] T021 [P] [US3] Add fixture tests beside the composite in the style of `wing-commander-fold-queue-*-tests/run-tests.sh`: constitution conflict → hold (SC-004), FR contradiction only → dispatch with report (SC-005), inconsistency/duplication → dispatch, no findings → dispatch, malformed JSON → hold analyze-failed, empty fold section → skipped
-- [X] T022 [US3] Create `.github/actions/wing-commander-fold-analyze/action.yml` per contracts/fold-analyze.md: inputs spec-dir, fold-ref-before, fold-ref-after, folded-json, credentials, optional max-turns (bounded default 12); skip when fold section has no tasks; run `anthropics/claude-code-action` with model `claude-sonnet-5-5`, `--max-turns`, tools restricted to Read/Grep/Glob, prompt invoking `/speckit-analyze` scoped to the new fold section with spec text framed as data; outputs decision, hold-reason, report-markdown, question-markdown; any `run:` step sets `shell: bash` (apply `container-shell-safety`)
-- [X] T023 [US3] Add optional additive outputs to `.github/actions/wing-commander-fold-commit/action.yml` (fold-section range / before and after refs) needed by the analyze composite; no rename or removal
-- [X] T024 [US3] Wire the composite between `wing-commander-fold-commit` and `wing-commander-fold-dispatch` in `.github/workflows/lifecycle-review-gate.yml` (`disposition`) and `.github/workflows/pr-conversation.yml` (`act` path); call `fold-dispatch` only when `decision != hold`; link the report on the lifecycle issue when dispatching; on hold post the question with marker `<!-- wing-commander-fold-hold: fold=<id> -->` on the lifecycle issue
-- [X] T025 [US3] Implement hold release: a maintainer-authorized answer comment (reuse pr-conversation's existing authorization) handled as *proceed* → dispatch, *drop* → deterministic commit removing the fold section's tasks then dispatch, *amend* → wait for the spec amendment then dispatch on next lifecycle trigger, *retry* → rerun the check; place the handler in `.github/workflows/pr-conversation.yml` or a small dedicated wrapper job (research D9)
-- [X] T026 [P] [US3] Create `.github/scripts/verify-fold-analyze-wiring.py` asserting the composite sits between fold-commit and fold-dispatch in both callers, declares model `claude-sonnet-5-5`, a `--max-turns`, a read-only tool list, and `shell: bash` in container jobs; add a checked-in fixture per failure branch
-- [X] T027 [US3] Register `verify-fold-analyze-wiring.py` in the gate registry and `.github/workflows/lint-workflows.yml`; update existing `verify-fold-*.py` gates and fixtures for the new step; run `python .github/scripts/run-local-gates.py`
+- Moved to #1066 (Story 3), not done here: T020 [P] [US3] Create the deterministic decision script (in `.github/actions/wing-commander-fold-analyze/` or `.github/actions/_shared/` if reused) that validates the agent JSON schema `{"findings":[{severity,category,fold_task,location,principle,detail}]}`, decides `hold` iff any finding has `category == constitution-conflict` or the step failed/mismatched schema, else `dispatch`, and renders `report-markdown` and `question-markdown` (names the task and, for constitution conflicts, the principle; options: amend the spec / drop the fold task / proceed anyway, or proceed anyway / retry the check for `analyze-failed`)
+- Moved to #1066 (Story 3), not done here: T021 [P] [US3] Add fixture tests beside the composite in the style of `wing-commander-fold-queue-*-tests/run-tests.sh`: constitution conflict → hold (SC-004), FR contradiction only → dispatch with report (SC-005), inconsistency/duplication → dispatch, no findings → dispatch, malformed JSON → hold analyze-failed, empty fold section → skipped
+- Moved to #1066 (Story 3), not done here: T022 [US3] Create `.github/actions/wing-commander-fold-analyze/action.yml` per contracts/fold-analyze.md: inputs spec-dir, fold-ref-before, fold-ref-after, folded-json, credentials, optional max-turns (bounded default 12); skip when fold section has no tasks; run `anthropics/claude-code-action` with model `claude-sonnet-5-5`, `--max-turns`, tools restricted to Read/Grep/Glob, prompt invoking `/speckit-analyze` scoped to the new fold section with spec text framed as data; outputs decision, hold-reason, report-markdown, question-markdown; any `run:` step sets `shell: bash` (apply `container-shell-safety`)
+- Moved to #1066 (Story 3), not done here: T023 [US3] Add optional additive outputs to `.github/actions/wing-commander-fold-commit/action.yml` (fold-section range / before and after refs) needed by the analyze composite; no rename or removal
+- Moved to #1066 (Story 3), not done here: T024 [US3] Wire the composite between `wing-commander-fold-commit` and `wing-commander-fold-dispatch` in `.github/workflows/lifecycle-review-gate.yml` (`disposition`) and `.github/workflows/pr-conversation.yml` (`act` path); call `fold-dispatch` only when `decision != hold`; link the report on the lifecycle issue when dispatching; on hold post the question with marker `<!-- wing-commander-fold-hold: fold=<id> -->` on the lifecycle issue
+- Moved to #1066 (Story 3), not done here: T025 [US3] Implement hold release: a maintainer-authorized answer comment (reuse pr-conversation's existing authorization) handled as *proceed* → dispatch, *drop* → deterministic commit removing the fold section's tasks then dispatch, *amend* → wait for the spec amendment then dispatch on next lifecycle trigger, *retry* → rerun the check; place the handler in `.github/workflows/pr-conversation.yml` or a small dedicated wrapper job (research D9)
+- Moved to #1066 (Story 3), not done here: T026 [P] [US3] Create `.github/scripts/verify-fold-analyze-wiring.py` asserting the composite sits between fold-commit and fold-dispatch in both callers, declares model `claude-sonnet-5-5`, a `--max-turns`, a read-only tool list, and `shell: bash` in container jobs; add a checked-in fixture per failure branch
+- Moved to #1066 (Story 3), not done here: T027 [US3] Register `verify-fold-analyze-wiring.py` in the gate registry and `.github/workflows/lint-workflows.yml`; update existing `verify-fold-*.py` gates and fixtures for the new step; run `python .github/scripts/run-local-gates.py`
 
 ---
 
@@ -110,18 +112,17 @@ Repository is CI/CD tooling: scripts in `.github/scripts/`, composites in `.gith
 - Phase 2 blocks all stories (T002 → T003 → T004/T005).
 - US1 (Phase 3) needs T003. US2 needs T003 and shares the two workflows with US1, so do US1 first (T007/T008 before T012/T013).
 - US4 needs T002–T005; independent of US1/US2 otherwise.
-- US3 needs only Setup; it touches `lifecycle-review-gate.yml` and `pr-conversation.yml`, so sequence T024 after T012 to avoid conflicts.
+- US3 moved to #1066.
 - Polish last.
 
 ## Parallel Opportunities
 
-- T004 with T005; T006 with T010 with T011; T016 with T017; T020, T021, T026 are independent files.
-- US3 can proceed in parallel with US1/US2 apart from the shared-workflow tasks.
+- T004 with T005; T006 with T010 with T011; T016 with T017.
 
 ## Implementation Strategy
 
 - **MVP**: Phase 1 + 2 + US1 (T001–T009): removes the false green.
-- Next: US2 (observed thrash), then US4 (gate), then US3 (analyze).
+- Next: US2 (observed thrash), then US4 (gate). US3 (analyze) moved to #1066.
 - Out of scope: US5 / part 3 (FR-020).
 
 ## Review Gate Round 1 Findings
@@ -302,26 +303,26 @@ Repository is CI/CD tooling: scripts in `.github/scripts/`, composites in `.gith
 
   Reverted to fail closed in review-until-clean pass 6: reading every folded finding as pending let #833's recurrence resolve clean (FR-003, SC-001); the unreadable file now only warns.
 
-- [ ] Review finding: Fold-hold release blocked by another hold can strand the earlier fold
+- Moved to #1066 (Story 3), not done here: Review finding: Fold-hold release blocked by another hold can strand the earlier fold
 
   A proceed/drop answered for a newer hold B while older hold A is open is recorded as resolved but dispatches nothing. If A is later dropped or amended, B's fold has no dispatch path.
 
   - .github/workflows/wing-commander-fold-hold.yml
 
-- [ ] Review finding: Empty fold id or ref is reported as tasks=0 and dispatched unchecked
+- Moved to #1066 (Story 3), not done here: Review finding: Empty fold id or ref is reported as tasks=0 and dispatched unchecked
 
   The analyze stage outputs tasks=0 when fold_id or the BEFORE/AFTER refs are empty, so fold-decide returns 'skipped' and dispatches implement with no analysis, contradicting the failed-check-holds rule.
 
   - .github/workflows/pr-conversation.yml
   - .github/actions/wing-commander-fold-analyze/action.yml
 
-- [ ] Review finding: Inconsistent project-prefix handling for SPEC_DIR in fold-analyze instructions
+- Moved to #1066 (Story 3), not done here: Review finding: Inconsistent project-prefix handling for SPEC_DIR in fold-analyze instructions
 
   Skill and constitution paths get the project prefix but $SPEC_DIR and the git diff pathspec do not. In a project-scoped lifecycle the diff can come back empty and the fold is skipped.
 
   - .github/actions/wing-commander-fold-analyze/action.yml
 
-- [ ] Review finding: fold-analyze job body is pasted into three workflows
+- Moved to #1066 (Story 3), not done here: Review finding: fold-analyze job body is pasted into three workflows
 
   About 90 lines of run/agent steps are duplicated across lifecycle-review-gate, wing-commander-fold-hold and pr-conversation, against the CLAUDE.md 'one home' rule.
 

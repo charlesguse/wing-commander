@@ -1,6 +1,6 @@
 # Research: 116 Review Convergence and Fold-Time Analyze
 
-No `[NEEDS CLARIFICATION]` markers remain in spec.md (the three clarify answers are recorded there). The decisions below fill planning-level gaps; those made without an owner answer are marked **(plan decision)**.
+No `[NEEDS CLARIFICATION]` markers remain in spec.md (the three clarify answers are recorded there). The decisions below fill planning-level gaps; those made without an owner answer are marked **(plan decision)**. D8 and D9 (the fold-time analyze check and its holds) moved to #1066 with Story 3 (owner decision 2026-10-19).
 
 ## D1 — One module for the arithmetic
 **Decision**: `.github/scripts/wc_convergence.py` holds attribution, churn, growth, recurrence, the thresholds table and `decide()`. `thrash_signals.py` keeps its CLI and `--self-test` but delegates to it.
@@ -33,20 +33,16 @@ No `[NEEDS CLARIFICATION]` markers remain in spec.md (the three clarify answers 
 **Decision**: On `not-converging` at round ≥3, the loop takes the existing budget-exhaustion hand-off path, with stall reason text `not-converging` and the signal table. If budget exhausts the same round, the stop reason is the budget and tripped signals are still listed (spec edge case). Round 2: record only.
 **Rationale**: FR-006..009; reuses the existing labelling and re-eligibility rule.
 
-## D8 — Analyze step design **(plan decision)**
-**Decision**: New composite `wing-commander-fold-analyze`, run after `fold-commit`, before `fold-dispatch`. Steps: (1) skip when fold section has no tasks; (2) run `anthropics/claude-code-action` with model `claude-sonnet-5-5`, `--max-turns` bounded (initial value 12, tunable constant), tools restricted to Read/Grep/Glob (no Bash, Edit, Write, web), prompt invoking `/speckit-analyze` with arguments scoping to the new fold section, spec content framed as data; (3) agent returns JSON per a schema (severity, category in {constitution-conflict, inconsistency, duplication, other}, fold task id, conflicting location, principle name when constitution); (4) a deterministic script validates the JSON and decides `hold` iff any finding has category `constitution-conflict`, or the step failed/mismatched schema; (5) outputs `decision`, `report-markdown`, `held-question`.
-**Rationale**: FR-011..017, IX. Read-only tools satisfy FR-017 structurally. The vendored skill is used unmodified; its report is requested as the structured JSON through the arguments/output schema. If the vendored skill's own output cannot be forced to the schema, the agent is asked to restate its findings in the schema, and anything unparseable is treated as a step failure (FR-013).
-**Alternatives**: running analyze after dispatch (rejected: builds one side first); a second wrapper per caller (rejected: duplicate).
+## D8 — Analyze step design
+Moved to #1066 (Story 3).
 
-## D9 — Hold protocol and release **(plan decision)**
-**Decision**: On hold, the caller posts the owner question (marker `<!-- wing-commander-fold-hold: fold=<id> -->`) with three options (amend spec / drop task / proceed anyway; analyze-failure variant: proceed anyway / retry the check) and does not call `fold-dispatch`. The owner answers by comment; a maintainer-verified comment handler (reusing pr-conversation's existing authorization) resolves: *proceed* → dispatch; *drop* → a deterministic commit removes the fold section's task then dispatch; *amend* → wait for the spec PR amendment, then dispatch on the next lifecycle trigger; *retry* → rerun the check. Dispatch uses `fold-dispatch` unchanged except for an additive `skip-reason` pass-through is NOT needed — the caller simply withholds the call.
-**Rationale**: FR-013/014, Constitution III/IV. Lowest new surface.
-**Open implementation risk**: the exact comment-handler job placement is settled in tasks; if reusing `pr-conversation.yml` proves heavy, a small dedicated wrapper job is acceptable.
+## D9 — Hold protocol and release
+Moved to #1066 (Story 3).
 
 ## D10 — Skill edit under `.claude/`
 **Decision**: The `review-until-clean` edits (SKILL.md, `thrash_signals.py`) are in scope as repository changes made by the implement stage's normal PR flow; if the stage agent is denied writes under `.claude/` (Constitution V), the task is flagged for a human maintainer rather than worked around.
 **Rationale**: Constitution V denies agent `Edit`/`Write` under `.claude/`.
 
 ## D11 — Gates
-**Decision**: `verify-convergence-single-home.py` (flags re-implemented blame/churn/diff-size arithmetic or threshold literals outside the module; fixture per failure branch) and `verify-fold-analyze-wiring.py` (composite ordering in both callers, declared model, `--max-turns`, read-only tool list, `shell: bash` where in a container). Both registered in the gate registry and in `lint-workflows.yml` so `run-local-gates.py` runs them.
+**Decision**: `verify-convergence-single-home.py` (flags re-implemented blame/churn/diff-size arithmetic or threshold literals outside the module; fixture per failure branch), registered in `lint-workflows.yml` so `run-local-gates.py` runs it. The analyze-wiring gate moved to #1066 with Story 3.
 **Rationale**: Constitution VIII, FR-019, SC-007.
