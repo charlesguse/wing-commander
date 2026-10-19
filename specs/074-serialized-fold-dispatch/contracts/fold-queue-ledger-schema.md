@@ -11,7 +11,6 @@ VII's `_shared/` carve-out).
 - Branch: `wing-commander-fold-queue` (created on first write via the
   existing `orphan-branch-reset`-style idiom if it does not yet exist).
 - File: `fold-queue.json` at the branch root, shape per data-model.md.
-- Side queues: with `LEDGER_QUEUE=fold-holds`, every transform reads and writes the key `<spec-dir>#fold-holds` instead of `<spec-dir>`. This is the per-lifecycle fold lock (specs/116 contracts/fold-analyze.md). Its tickets never share the spec's own queue, so they neither wait behind an implement-kind ticket nor stop an act-kind ticket from opening a fresh round. Any other non-empty value is an error.
 
 ## Write contract (every mutation: enqueue, release, claim, reclaim)
 

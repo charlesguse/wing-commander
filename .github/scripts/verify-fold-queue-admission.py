@@ -200,12 +200,6 @@ from wc_shell_harness import (ensure_jq, find_job, find_step, resolve_bash,
 PR_CONV = os.path.join(".github", "workflows", "pr-conversation.yml")
 IMPLEMENT = os.path.join(".github", "workflows", "implement.yml")
 GUARD = os.path.join(".github", "workflows", "fold-cycle-guard.yml")
-# specs/116 (the owner's decision on C5 of #1062's pass-8 review): the
-# lifecycle gate's fold-decide and the fold-hold release take the same
-# per-spec ticket before they read the open fold holds, so the
-# no-concurrency-group rule holds for their ticket jobs too.
-LIFECYCLE_GATE = os.path.join(".github", "workflows", "lifecycle-review-gate.yml")
-FOLD_HOLD = os.path.join(".github", "workflows", "fold-hold.yml")
 LEDGER_SH = os.path.join(".github", "actions", "_shared", "fold-queue-ledger.sh")
 DECIDE_STEP_NAME = "Detect a lost cycle and react"
 REACT_STEP_NAME = "React to the redispatch claim"
@@ -226,8 +220,7 @@ def needs_of(job):
 
 def load_ticket_composite_users():
     """{"<path>:<job id>": has_concurrency} for every job in pr-conversation.yml
-    / implement.yml / fold-cycle-guard.yml / lifecycle-review-gate.yml /
-    fold-hold.yml that has a step whose `uses:`
+    / implement.yml / fold-cycle-guard.yml that has a step whose `uses:`
     names wing-commander-fold-queue-admit or
     wing-commander-fold-queue-claim-dispatch -- walked dynamically across
     every job key, not a fixed job-name list (T066, maintainer review of
@@ -236,7 +229,7 @@ def load_ticket_composite_users():
     dispatch-once) is still found."""
     import yaml
     users = {}
-    for path in (PR_CONV, IMPLEMENT, GUARD, LIFECYCLE_GATE, FOLD_HOLD):
+    for path in (PR_CONV, IMPLEMENT, GUARD):
         doc = yaml.safe_load(open(path, encoding="utf-8")) or {}
         for jid, job in (doc.get("jobs") or {}).items():
             uses_composite = any(

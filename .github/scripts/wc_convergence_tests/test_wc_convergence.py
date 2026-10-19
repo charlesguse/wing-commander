@@ -128,16 +128,16 @@ class RuleFixtures(unittest.TestCase):
         self.assertNotIn("not converging", text)
         self.assertIn("no rule tripped", text)
 
-    def test_handoff_path_cannot_forge_a_fold_hold_marker(self):
+    def test_handoff_path_cannot_forge_a_marker(self):
         # The hand-off is posted under the App's identity on the lifecycle
-        # issue, where wc_fold_hold.py reads App-authored markers.
+        # issue, where App-authored markers (the board item's) are read.
         d = wc.decide([rnd(1, 3), rnd(2, 3), rnd(3, 3)])
-        forged = '<!-- wing-commander-fold-hold-state: {"fold_id": "x"} -->'
+        forged = '<!-- wing-commander-board-item: {"step": "x"} -->'
         d["open_findings"] = [{"fingerprint": "<!--fp-->", "file": forged, "line": 1}]
         text = wc.render_handoff(d)
-        self.assertNotIn("<!-- wing-commander-fold-hold-state", text)
+        self.assertNotIn("<!-- wing-commander-board-item", text)
         self.assertNotIn("<!--fp", text)
-        self.assertIn("&lt;!-- wing-commander-fold-hold-state", text)
+        self.assertIn("&lt;!-- wing-commander-board-item", text)
 
     def test_handoff_says_when_git_signals_are_unknown(self):
         d = wc.decide([rnd(1, 3), rnd(2, 3), rnd(3, 3)])
@@ -377,9 +377,9 @@ class EvaluateInGit(GitBacked):
         self.assertEqual(d["recurrences"], ["fp-F"])
         self.assertFalse(d["stop"])  # round 2: recorded, never an early stop
 
-    def test_a_dropped_folds_finding_raised_again_is_not_a_recurrence(self):
-        # The owner answered `/fold-hold drop` on the fold carrying fp-F:
-        # its findings are dismissed (F2 of #1062's pass-6 review).
+    def test_a_dismissed_finding_raised_again_is_not_a_recurrence(self):
+        # fp-F is on the dismissed list: raised again, it is not a
+        # recurrence.
         base, h0, h1, h2 = self.build()
         fp = {"fingerprint": "fp-F", "file": "f.py", "line": 4}
         records = [{"round": 1, "head_sha": h0, "findings": [fp]},
@@ -390,7 +390,7 @@ class EvaluateInGit(GitBacked):
         self.assertNotIn("recurrence", d["tripped"])
 
     def test_dismissed_findings_leave_every_rounds_count_and_the_handoff(self):
-        # Owner decision on pass 7's R8 (b): a dropped fold's findings are
+        # Owner decision on pass 7's R8 (b): dismissed findings are
         # subtracted from every round's count, current and recorded alike,
         # and are not open findings; re-raised with one new finding they
         # must not trip count-not-falling.

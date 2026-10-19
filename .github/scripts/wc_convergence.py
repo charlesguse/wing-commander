@@ -530,9 +530,8 @@ def evaluate(records, current, base, cwd, resolved=None, budget=None,
     fixes each round's in-scope findings before the next review). pending:
     folded fingerprints whose fold task is still open in tasks.md -- a
     finding the loop already knows is waiting is counted like any other but
-    is not a recurrence. dismissed: fingerprints of folds the owner
-    answered `/fold-hold drop` (wc_fold_hold.dropped_fingerprints) -- the
-    ledger's dismissed list, never a recurrence, and subtracted from every
+    is not a recurrence. dismissed: fingerprints a maintainer dismissed --
+    the ledger's dismissed list, never a recurrence, and subtracted from every
     round's count and left out of the open findings, so count-not-falling
     and the hand-off read only findings the loop still owes. Pending
     findings stay counted: the loop still owes their fold.
@@ -639,7 +638,7 @@ def render_handoff(decision):
         for f in open_findings:
             # The path is the reviewer's, and the hand-off is posted under
             # the App's identity: `<`/`>` as entities, so a path carrying
-            # `<!-- ... -->` never reads back as a fold-hold marker.
+            # `<!-- ... -->` never reads back as an App-authored marker.
             lines.append("- `{0}:{1}` {2}{3}".format(
                 _inert(f.get("file")), f.get("line") or "?", _inert(f.get("fingerprint", "")),
                 " (recurring)" if f.get("fingerprint") in recurring else ""))

@@ -9,13 +9,6 @@ description: >
 inputs:
   spec-dir:
     required: true
-  queue:
-    description: >
-      Empty for the spec's own fold queue; `fold-holds` for the
-      per-lifecycle fold lock, a side queue of the same spec (specs/116 --
-      see fold-queue-ledger.sh's LEDGER_QUEUE).
-    required: false
-    default: ""
   token:
     description: "The token wing-commander-fold-queue-admit returned."
     required: true
@@ -83,7 +76,6 @@ runs:
         GH_TOKEN: ${{ github.token }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         SPEC_DIR: ${{ inputs.spec-dir }}
-        LEDGER_QUEUE: ${{ inputs.queue }}
         TOKEN: ${{ inputs.token }}
         RUN_ID: ${{ inputs.run-id }}
         OUTCOME: ${{ inputs.outcome }}

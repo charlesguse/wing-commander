@@ -16,7 +16,6 @@ downstream job (which still carries the unchanged
 | Name | Required | Default | Description |
 |---|---|---|---|
 | `spec-dir` | yes | — | `specs/NNN-slug`, identifies which ledger entry to use. |
-| `queue` | no | `''` | Empty for the spec's own queue. `fold-holds` selects the per-lifecycle fold lock, a side queue of the same spec under its own ledger key (specs/116 contracts/fold-analyze.md, `fold-queue-ledger.sh`'s `LEDGER_QUEUE`). |
 | `kind` | yes | — | One of `act`, `dispatch`, `implement`. |
 | `run-id` | no | `${{ github.run_id }}` | Overridable only for fixture/test use. |
 | `existing-token` | no | `''` | When set (implement.yml's case, research.md D5), skip `enqueue` and only `await` this token — it was already written by another run's `claim-dispatch` call. |

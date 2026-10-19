@@ -14,7 +14,6 @@ replacing the base..tip git-log range scan `report-fold-outcomes` and
 | Name | Required | Default | Description |
 |---|---|---|---|
 | `spec-dir` | yes | — | |
-| `queue` | no | `''` | Empty for the spec's own queue. `fold-holds` selects the per-lifecycle fold lock, a side queue of the same spec under its own ledger key (specs/116 contracts/fold-analyze.md, `fold-queue-ledger.sh`'s `LEDGER_QUEUE`). |
 | `token` | yes | — | The token `wing-commander-fold-queue-admit` returned. |
 | `round` | yes | — | The round the ticket was filed under. |
 | `leg-id` | no | `''` | Required (non-empty) when `kind` was `act` and this call reports one leg's outcome; the calling job invokes this composite once per leg it ran (`act`'s own within-run `max-parallel: 1` sequencing is unchanged, so these calls are already serial). |

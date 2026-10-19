@@ -240,23 +240,6 @@ if [ -z "${LEDGER_REMOTE_URL:-}" ]; then
 fi
 : "${SPEC_DIR:?fold-queue-ledger.sh: SPEC_DIR is required}"
 
-# LEDGER_QUEUE names a side queue of the same spec, kept under its own key
-# so its tickets never share the spec's round-tracking queue: they neither
-# wait behind an implement-kind ticket held for a whole cycle nor stop an
-# act-kind ticket reaching an empty queue from opening a fresh round.
-# `fold-holds` is the per-lifecycle fold lock (specs/116, the owner's
-# decision on C5 of #1062's pass-8 review): every job that reads the open
-# fold holds and then posts a hold or dispatches holds its ticket. Unset is
-# the spec's own queue, as before.
-case "${LEDGER_QUEUE:-}" in
-  "") ;;
-  fold-holds) SPEC_DIR="${SPEC_DIR}#fold-holds" ;;
-  *)
-    echo "::error::fold-queue-ledger.sh: unknown LEDGER_QUEUE '$LEDGER_QUEUE' (expected empty or fold-holds)" >&2
-    exit 1
-    ;;
-esac
-
 LEDGER_BRANCH="${LEDGER_BRANCH:-wing-commander-fold-queue}"
 LEDGER_PATH="${LEDGER_PATH:-fold-queue.json}"
 

@@ -345,13 +345,6 @@ NO_REMOTE_REFRESH_JOBS = {
     # env.WC_BOT_TOKEN directly), so no step after its agent uses origin's
     # persisted credential either.
     (".github/workflows/lifecycle-review-gate.yml", "review"),
-    # specs/116 (contracts/fold-analyze.md): the fold-time analyze agent
-    # runs in a read-only job of its own (contents: read, no write scope;
-    # Gate 166), whose checkouts persist no credential and which never
-    # pushes: nothing after its agent uses origin at all.
-    (".github/workflows/lifecycle-review-gate.yml", "fold-analyze"),
-    (".github/workflows/pr-conversation.yml", "fold-analyze"),
-    (".github/workflows/fold-hold.yml", "fold-analyze"),
 }
 
 # Third maintainer review of PR #407, Gate 68 hole (a): nothing previously

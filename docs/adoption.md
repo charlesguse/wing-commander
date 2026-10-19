@@ -905,7 +905,7 @@ things to know before you bind one:
   | `cleanup` | `select` → one outcome job | 2 |
   | `rebase` | `discover` → one matrix leg per branch | 1 + N |
   | `watchdog` | `collect`, `diagnose`, `report-unhandled-failure` + one `triage` and one `act` leg per finding | 3 + 2N |
-  | `pr-conversation` | `classify-and-announce` (bound by `environment`) + one `act` leg per classification (bound by `confirm-categories`, **not** by `environment` — see the exception above) + `dispatch-once` and `report-fold-outcomes` (both bound by `environment`, each running once per call, after the whole `act` matrix) + `fold-analyze` (bound by `environment`, once per call that dispatches a fold) | 1, plus one per confirm-gated `act` leg, plus 2, plus 1 when a fold is dispatched |
+  | `pr-conversation` | `classify-and-announce` (bound by `environment`) + one `act` leg per classification (bound by `confirm-categories`, **not** by `environment` — see the exception above) + `dispatch-once` and `report-fold-outcomes` (both bound by `environment`, each running once per call, after the whole `act` matrix) | 1, plus one per confirm-gated `act` leg, plus 2 |
   | `auto-update-spec-kit` (scheduled) | `health-check` → `detect` → `settle` → `evaluate-path` → `prepare` → `verify` → `act` | 7, sequentially |
 
   So the cheapest possible gate is a one-job stage (`intake`, `clarify`,
@@ -1505,23 +1505,6 @@ in-scope fold-in is still committed and pushed to `spec/<slug>`; the PR
 reply then says no implement workflow is configured and gives you the
 `spec_dir`/`issue`/`iteration` payload to dispatch by hand.
 
-Before that dispatch, a fold that added tasks gets a **fold-time analyze
-check** (spec 116): one extra read-only agent run on `claude-sonnet-5-5`
-(Read/Grep/Glob only, a 12-turn ceiling, billed like any other stage run)
-checks the new tasks against your spec, plan, earlier folds and
-constitution. It needs no new input or secret. It runs in its own
-`fold-analyze` job, which has `contents: read` only and is bound by
-`environment` like `dispatch-once`. A constitution conflict, or a check
-that fails, holds the dispatch and posts an owner question on the
-lifecycle issue. While a hold is open, no later fold on that lifecycle
-dispatches either. Anything else dispatches as before, with the analyze
-report linked there. A maintainer releases a hold with a
-`/fold-hold proceed|drop|amend|retry` comment on the lifecycle issue, which
-the [`fold-hold`](#fold-hold) stage handles. Wire it in beside this one:
-only that stage closes a hold, so without it a hold never closes, and
-every later fold on that lifecycle stays blocked. Dispatching implement
-by hand does not close the hold either.
-
 Deliberately **no `workflow_dispatch`** — this is the only stage that is
 purely event-triggered, since its whole purpose is reacting to a review or
 comment. Authorization is **two layers**, and the split matters: the
@@ -1588,62 +1571,6 @@ jobs:
       # chaining input. Omit it and an in-scope fold-in is committed but
       # nothing is dispatched (the PR reply says so).
       implement-workflow: wing-commander-5-implement.yml
-    secrets:
-      claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      speckit-app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
-      speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
-```
-
-### fold-hold
-
-The release half of `pr-conversation`'s fold-time analyze check (spec 116,
-[contracts/fold-analyze.md](../specs/116-review-convergence-analyze/contracts/fold-analyze.md)).
-Wire it in whenever you wire in `pr-conversation`. It reads a maintainer's
-`/fold-hold <answer>` comment on a lifecycle issue against the open hold
-and releases it: `proceed` dispatches implement, `drop` commits the fold
-section's removal and then dispatches, `amend` keeps the hold open, and
-`retry` (only for a check that failed) runs the read-only analyze agent
-again. Which answers a hold accepts, and who may give them (OWNER, MEMBER
-or COLLABORATOR), is decided inside the stage. It replies on the issue
-when the open hold does not accept the answer, and ignores anyone else. The implement workflow it dispatches is the one the
-hold recorded, your `pr-conversation`'s `implement-workflow`.
-
-| | |
-|---|---|
-| Inputs | `issue` (number, required); `body` (string, required, untrusted); `actor-association` (string, required); `use-bedrock` (boolean, `false`) / `aws-role-arn` / `aws-region` (string, `""`) for the `retry` agent |
-| Preconditions | an open fold hold on `issue` and a maintainer's answer line; without either, nothing is posted |
-| Side effects | a resolved marker and a release comment on the lifecycle issue; on `drop`, one commit to the spec branch; at most one implement dispatch per hold, and none while another hold is open |
-| Outputs | none |
-
-The wrapper's `if:` excludes bots and pull-request comments only; the
-association check belongs to the stage, as with `pr-conversation`.
-
-```yaml
-name: "Wing Commander · fold hold release"
-
-on:
-  issue_comment:
-    types: [created]
-
-permissions: {}
-
-jobs:
-  fold-hold:
-    if: >-
-      !github.event.issue.pull_request &&
-      github.event.comment.user.type != 'Bot' &&
-      contains(github.event.comment.body, '/fold-hold')
-    permissions:
-      contents: write
-      issues: write
-      actions: write
-      id-token: write
-    uses: charlesguse/wing-commander/.github/workflows/fold-hold.yml@v2
-    with:
-      issue: ${{ github.event.issue.number }}
-      body: ${{ github.event.comment.body }}
-      actor-association: ${{ github.event.comment.author_association }}
     secrets:
       claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

@@ -25,7 +25,7 @@ from wc_shell_harness import find_step, resolve_bash, run_step  # noqa: E402
 LIFECYCLE = os.path.join(ROOT, ".github", "workflows", "lifecycle-review-gate.yml")
 BOARD = os.path.join(ROOT, ".github", "workflows", "board-loop.yml")
 HELPERS = ("wc_convergence.py", "wc_review_finding_fingerprint.py", "board_item_marker.py",
-           "board_spec_request_body.py", "wc_lifecycle_review_marker.py", "wc_fold_hold.py")
+           "board_spec_request_body.py", "wc_lifecycle_review_marker.py")
 BOT = "wing-commander-bot[bot]"
 ISSUE = "42"
 BASH = resolve_bash()
@@ -100,11 +100,9 @@ class LoopRepo(unittest.TestCase):
 class LifecyclePartition(LoopRepo):
     STEP = "Partition, dedup, and render this round's findings"
 
-    def partition(self, round_, head, findings, reviews, folded=(), filed=(), env=None,
-                  issue_comments=()):
+    def partition(self, round_, head, findings, reviews, folded=(), filed=(), env=None):
         self.write_temp("lifecycle-review-findings-artifact/lifecycle-review-findings.json", findings)
         self.write_temp("lifecycle-pr-reviews.json", reviews)
-        self.write_temp("lifecycle-issue-comments.json", list(issue_comments))
         self.git("checkout", "-q", head)
         gate = {"round": round_ - 1, "head_sha": "prev", "outcome": "findings",
                 "findings_open": 1, "folded_fingerprints": list(folded),
@@ -141,7 +139,7 @@ class LifecyclePartition(LoopRepo):
                          ("findings", fingerprint(ISSUE, "F", "f.py")))
 
     def test_a_fold_still_waiting_in_tasks_md_is_not_a_recurrence(self):
-        # A held or blocked fold leaves its task unchecked; the finding
+        # A fold not implemented yet leaves its task unchecked; the finding
         # re-raised is that fold pending, not a fixed finding coming back.
         os.makedirs(os.path.join(self.repo, "specs", "001-x"))
         with open(os.path.join(self.repo, "specs", "001-x", "tasks.md"), "w", encoding="utf-8") as fh:
@@ -153,9 +151,9 @@ class LifecyclePartition(LoopRepo):
         # FR-003 (the owner's decision on C4 of #1062's pass-8 review): the
         # fold's task is undone, so the round is not clean and posts no
         # success status, yet nothing is folded again.
-        self.assertEqual((out["outcome"], out["recurrences"], out["fold-fingerprints"]),
-                         ("findings", "", ""))
+        self.assertEqual((out["outcome"], out["recurrences"]), ("findings", ""))
         self.assertEqual((out["findings-open"], out["pending-open"]), ("1", "1"))
+        self.assertNotIn("fold-summary", out)
         self.assertEqual(self.section(), "")
 
     def test_a_waiting_fold_re_raised_in_other_case_is_still_pending(self):
@@ -180,12 +178,13 @@ class LifecyclePartition(LoopRepo):
                              folded=[fingerprint(ISSUE, "F", "f.py")],
                              env={"SPEC_DIR": "specs/001-x"})
         self.assertEqual((out["outcome"], out["findings-open"], out["pending-open"]), ("findings", "2", "1"))
-        self.assertEqual(out["fold-fingerprints"], fingerprint(ISSUE, "G", "f.py"))
+        self.assertEqual(out["fold-summary"], "round 2: 1 finding(s) folded")
+        self.assertIn("- [ ] Review finding: G", self.section())
         self.assertNotIn("Review finding: F", self.section())
 
     def test_a_pending_only_rounds_fold_and_success_status_steps_do_not_run(self):
         # The empty section reaches fold-commit, whose empty path commits
-        # nothing (folded=false), so fold-analyze/fold-decide never run; the
+        # nothing (folded=false), so the dispatch step never runs; the
         # partition path's success status keys on `clean` only.
         import yaml
         with open(LIFECYCLE, encoding="utf-8") as fh:
@@ -193,38 +192,13 @@ class LifecyclePartition(LoopRepo):
         steps = {st.get("name"): st for st in jobs["disposition"]["steps"]}
         self.assertIn("outputs.outcome == 'clean'",
                       steps["Report a passing status on the reviewed head SHA (partition path)"]["if"])
-        for name in ("fold-analyze", "fold-decide"):
-            self.assertIn("needs.disposition.outputs.folded == 'true'", jobs[name]["if"])
+        self.assertIn("steps.commit-fold.outputs.folded == 'true'",
+                      steps["Dispatch implement for this round's fold"]["if"])
         commit = os.path.join(os.path.dirname(LIFECYCLE), "..", "actions", "wing-commander-fold-commit", "action.yml")
         with open(commit, encoding="utf-8") as fh:
             run = next(st for st in yaml.safe_load(fh)["runs"]["steps"] if st.get("id") == "fold")["run"]
         self.assertIn('if [ ! -s "$SECTION_FILE" ]; then', run)
         self.assertIn("folded=false", run.split('if [ ! -s "$SECTION_FILE" ]; then', 1)[1].split("fi", 1)[0])
-
-    def test_a_dropped_folds_finding_raised_again_is_dismissed(self):
-        # The owner answered `/fold-hold drop` on round 1's fold: F raised
-        # again is neither a recurrence nor folded again (F2, pass 6).
-        import wc_fold_hold as fh
-        fp = fingerprint(ISSUE, "F", "f.py")
-        state = fh.render_state(fold_id="review-gate-round-1", reason="constitution-conflict",
-                                folded_json=fh.with_fingerprints(
-                                    '[{"id":"review-gate-round-1","summary":"s"}]', fp))
-        comments = [{"body": "q\n\n" + state, "created_at": "2026-01-01T00:00:00Z",
-                     "user": {"login": BOT, "type": "Bot"}},
-                    {"body": fh.render_resolved("review-gate-round-1", "drop"),
-                     "created_at": "2026-01-02T00:00:00Z", "user": {"login": BOT, "type": "Bot"}}]
-        out = self.partition(2, self.h2, [finding("F", "f.py", 4)],
-                             [review(1, self.h1, [entry("F", "f.py", 4)], "t1")],
-                             folded=[fp], issue_comments=comments)
-        self.assertEqual((out["outcome"], out["recurrences"], out["fold-fingerprints"]),
-                         ("clean", "", ""))
-        self.assertEqual(self.section(), "")
-        # A proceeded fold dismisses nothing: F recurs.
-        comments[1]["body"] = fh.render_resolved("review-gate-round-1", "proceed")
-        out = self.partition(2, self.h2, [finding("F", "f.py", 4)],
-                             [review(1, self.h1, [entry("F", "f.py", 4)], "t1")],
-                             folded=[fp], issue_comments=comments)
-        self.assertEqual((out["outcome"], out["recurrences"]), ("findings", fp))
 
     def test_fresh_findings_are_unchanged(self):
         out = self.partition(2, self.h2, [finding("G", "f.py", 5)],
@@ -282,8 +256,7 @@ class LifecyclePartition(LoopRepo):
 class LifecycleReport(LoopRepo):
     STEP = "Compose and post the round's outcome"
 
-    def post(self, analyze_decision, fold_decide_result="success", folded="true", pending_open="0",
-             dispatched=""):
+    def post(self, folded="true", pending_open="0", recurrences=""):
         bindir = os.path.join(self.tmp.name, "bin")
         os.makedirs(bindir, exist_ok=True)
         sent = os.path.join(self.tmp.name, "sent.txt")
@@ -297,45 +270,23 @@ class LifecycleReport(LoopRepo):
             "IN_SCOPE_COUNT": "1", "OUT_OF_SCOPE_COUNT": "0", "ROUND": "2",
             "DISPOSITION_RESULT": "success", "DISPOSITION_OUTCOME": "findings",
             "FINDINGS_OPEN": "1", "FOLDED_FINGERPRINTS": "", "FILED_FINGERPRINTS": "",
-            "CONVERGENCE_B64": "", "RECURRENCES": "", "ANALYZE_DECISION": analyze_decision,
-            "FOLD_DECIDE_RESULT": fold_decide_result, "FOLDED": folded, "PENDING_OPEN": pending_open,
-            "FOLD_DISPATCHED": dispatched,
+            "CONVERGENCE_B64": "", "RECURRENCES": recurrences, "FOLDED": folded,
+            "PENDING_OPEN": pending_open,
             "COST_LINE": "", "PATH": bindir + os.pathsep + os.environ["PATH"]},
             path_prepend=bindir)
         with open(sent, encoding="utf-8") as fh:
             return fh.read()
 
-    def test_a_held_fold_is_not_reported_as_re_dispatched(self):
-        body = self.post("hold")
-        self.assertNotIn("re-dispatched implement", body)
-        self.assertIn("held for the owner", body)
-        self.assertIn("re-dispatched implement", self.post("dispatch"))
-
-    def test_a_failed_fold_decide_is_not_reported_as_re_dispatched(self):
-        body = self.post("dispatch", fold_decide_result="failure")
-        self.assertNotIn("re-dispatched implement", body)
-        self.assertIn("was not re-dispatched", body)
-        self.assertNotIn("re-dispatched implement", self.post("", fold_decide_result="failure"))
-
-    def test_a_fold_decide_failing_after_its_dispatch_reports_the_dispatch(self):
-        # A step after the dispatch (the outcome post, the ticket release)
-        # can fail the job: telling the owner to dispatch by hand would run
-        # a second implement cycle on the same fold.
-        body = self.post("dispatch", fold_decide_result="failure", dispatched="true")
+    def test_a_folded_round_reports_the_dispatch_and_names_recurrences(self):
+        body = self.post(recurrences="fp-a,fp-b")
         self.assertIn("re-dispatched implement", body)
-        self.assertNotIn("dispatch it by hand", body)
-
-    def test_a_failed_fold_decide_on_a_held_fold_never_says_dispatch_by_hand(self):
-        body = self.post("hold", fold_decide_result="failure")
-        self.assertNotIn("re-dispatched implement", body)
-        self.assertNotIn("dispatch it by hand once", body)
-        self.assertIn("without the owner's answer", body)
-
+        self.assertIn("Recurring finding(s)", body)
+        self.assertIn("fp-a, fp-b", body)
 
     def test_a_pending_only_round_says_nothing_was_folded_or_dispatched(self):
         # FR-003 (C4 of #1062's pass-8 review): no fold, no dispatch, and
         # the round stays open.
-        body = self.post("", fold_decide_result="skipped", folded="", pending_open="1")
+        body = self.post(folded="", pending_open="1")
         self.assertNotIn("re-dispatched implement", body)
         self.assertIn("still unchecked in tasks.md", body)
         self.assertIn("nothing was folded again", body)

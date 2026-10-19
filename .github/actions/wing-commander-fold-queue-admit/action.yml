@@ -12,13 +12,6 @@ inputs:
   spec-dir:
     description: "Repository-relative [P/]specs/NNN-slug -- identifies which ledger entry to use (an opaque key; root values are unchanged)."
     required: true
-  queue:
-    description: >
-      Empty for the spec's own fold queue; `fold-holds` for the
-      per-lifecycle fold lock, a side queue of the same spec (specs/116 --
-      see fold-queue-ledger.sh's LEDGER_QUEUE).
-    required: false
-    default: ""
   kind:
     description: "One of act, dispatch, implement."
     required: true
@@ -73,7 +66,6 @@ runs:
         GH_TOKEN: ${{ github.token }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         SPEC_DIR: ${{ inputs.spec-dir }}
-        LEDGER_QUEUE: ${{ inputs.queue }}
         KIND: ${{ inputs.kind }}
         RUN_ID: ${{ inputs.run-id }}
         EXISTING_TOKEN: ${{ inputs.existing-token }}

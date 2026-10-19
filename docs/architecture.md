@@ -778,25 +778,6 @@ The arithmetic, the rules and their thresholds have one home,
 `.github/scripts/wc_convergence.py`, shared with the board loop and the
 local `review-until-clean` skill's `thrash_signals.py`.
 
-**Fold-time analyze check** (`specs/116-review-convergence-analyze/`,
-`contracts/fold-analyze.md`): between `wing-commander-fold-commit` and
-`wing-commander-fold-dispatch` (after this file's `disposition`, and
-before `pr-conversation.yml`'s `dispatch-once`), a read-only agent
-(`claude-sonnet-5-5`, Read/Grep/Glob, a 12-turn ceiling) applies the
-vendored `/speckit-analyze` to the new fold section against the spec, the
-plan, earlier folds and the constitution. It runs in a `fold-analyze` job
-of its own with `contents: read` and no write scope, as the reviewer does,
-and the deciding job reads its transcript. `wing-commander-fold-analyze`
-stages its input (mode `stage`) and decides from its fenced JSON (mode
-`decide`, `decide.py`): only a constitution conflict, or a check that
-failed or returned no valid result, holds the dispatch and posts an owner
-question on the lifecycle issue. While any hold is open, every fold
-dispatch on that lifecycle is `blocked`. Anything else dispatches with the
-report linked there. A maintainer releases a hold with a `/fold-hold proceed`,
-`drop`, `amend` or (for a failed check) `retry` comment on the lifecycle
-issue, handled by the published `fold-hold.yml` stage (wrapper
-`wing-commander-fold-hold.yml`) through `wc_fold_hold.py`.
-
 **Where gate state lives**: `review_gate` (round, reviewed head SHA,
 outcome, open finding count, the folded/filed fingerprint sets FR-021's
 dedup needs) is never a `spec-meta.json` field and never a commit to the
@@ -832,8 +813,7 @@ Gate 125 enforces this unconditionally, file-wide.
 fails if the merge code exists while the constitution does not name the
 third bot-mergeable class), 125 (trusted-copy composite/script
 provenance, above), 165 (the convergence arithmetic has one home, plus
-`wc_convergence_tests/`), 166 (the fold-time analyze check's order, agent
-shape and composite, plus `wing-commander-fold-analyze-tests/`).
+`wc_convergence_tests/`).
 
 ## Stage 9 — Watchdog (`watchdog.yml`, wrapper `wing-commander-8-watchdog.yml`)
 
