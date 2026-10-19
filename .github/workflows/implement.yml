@@ -7,12 +7,13 @@
 # tasks ⇒ converged ⇒ dispatch next-workflow (converged=true), regardless of
 # whether a "converge:" commit landed; tasks remain and the checked-task count
 # rose against this cycle's own base ⇒ not converged ⇒ re-dispatch
-# self-workflow with iteration+1; tasks remain, no "converge:" commit landed,
-# and the checked-task count did NOT rise ⇒ not converged, but no cycle would
-# finish this on its own either, so it hands off early to the same
-# max-iterations-cap path below rather than looping to the cap; at the
-# max-iterations cap (or that early hand-off) post the remaining work and
-# dispatch next-workflow (converged=false). An outright pass failure retries
+# self-workflow with iteration+1; tasks remain and nothing rose ⇒ another
+# cycle too, unless the agent named a validated blocker (spec 117's stop rule,
+# decide-implement-outcome.sh; counts are implementation tasks only), which
+# hands off early to the same max-iterations-cap path below; at the
+# max-iterations cap (or that blocker hand-off) post the remaining work, with
+# a stall comment giving the outstanding count and reason, and dispatch
+# next-workflow (converged=false). An outright pass failure retries
 # the same iteration once on claude-opus-5-5;
 # if the retry also fails (or the pass already ran on opus) the spec is
 # marked stalled. Empty chaining inputs ⇒ report to the issue and stop —
@@ -3921,12 +3922,13 @@ jobs:
               echo "Iteration cap ($MAX) reached on a truncated cycle — reported; no next-workflow configured, stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
             fi
           elif [ "$HANDOFF" = "true" ] || [ "$ROUTED" = "true" ]; then
-            # FR-010 (spec 059, User Story 4): a healthy cycle that checked
-            # no new task and landed no converge: commit is the loop's
-            # natural end — a spec whose only leftovers are human-only work
-            # must not grind to the iteration cap. Takes the SAME terminal
-            # path the cap-reached branch below takes, regardless of
-            # ITERATION vs MAX (research.md D4).
+            # specs/117-implement-stall-handoff (FR-005/FR-006, replacing
+            # spec 059's FR-010 zero-progress hand-off): HANDOFF is true only
+            # when a healthy cycle that checked no new implementation task
+            # and landed no converge: commit named a validated blocker, or
+            # reached the iteration cap (decide-implement-outcome.sh). Takes
+            # the SAME terminal path the cap-reached branch below takes,
+            # regardless of ITERATION vs MAX (spec 059 research.md D4).
             # specs/090-stage-write-boundary (FR-010, review-gate-round-1
             # item 1): ROUTED is deliberately checked alongside HANDOFF, not
             # folded into it -- "Consolidate final outcome" computes routed
