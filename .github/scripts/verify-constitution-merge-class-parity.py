@@ -28,11 +28,8 @@ board-loop.yml carries a `gh pr merge` gated on
 `WING_COMMANDER_BOARD_AUTO_MERGE`, that switch must be named both in
 board-loop.yml's merge-gating code and in Principle X. Both directions:
 a board-loop merge call with no switch, and a constitution that names the
-switch while board-loop.yml never gates on it, each fail. Until the
-amendment naming the switch is human-merged on its own (constitution V:
-the bot never merges an amendment, and a lifecycle PR carries no
-`.specify/memory/` edit), its constitution half is waived in
-EXEMPT_UNDOCUMENTED_SWITCHES, citing the tracker that retires it.
+switch while board-loop.yml never gates on it, each fail. Constitution
+2.6.0 (#1064) names the switch in Principle X.
 
 Only Principles V and X's own text counts. The Sync Impact Report comments
 stacked at the top of the file are amendment *history* (CLAUDE.md keeps
@@ -45,7 +42,6 @@ present-tense claim about what the principles say.
 import os
 import re
 import sys
-from collections import namedtuple
 
 WORKFLOW = ".github/workflows/lifecycle-review-gate.yml"
 CONSTITUTION = ".specify/memory/constitution.md"
@@ -55,19 +51,6 @@ KILL_SWITCH_VAR = "WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED"
 
 BOARD_WORKFLOW = ".github/workflows/board-loop.yml"
 BOARD_AUTO_MERGE_VAR = "WING_COMMANDER_BOARD_AUTO_MERGE"
-
-Exemption = namedtuple("Exemption", "reason issue permanent permanent_reason decided_by",
-                       defaults=(False, "", ()))
-
-# A switch whose constitution half is waived until its amendment lands. The
-# workflow half is never waived. Gate 124 keeps the tracker open.
-EXEMPT_UNDOCUMENTED_SWITCHES = {
-    BOARD_AUTO_MERGE_VAR: Exemption(
-        reason=("spec 115's switch ships default-off with the code; the amendment "
-                "naming it in Principle X is a separate human-merged PR"),
-        issue=(889,),
-        decided_by=(903,)),
-}
 
 # The merge capability's own code: a `gh pr merge` call in a workflow that
 # also gates on the auto-merge variable. Both halves are required — a
@@ -138,14 +121,13 @@ def check(workflow_text, constitution_text):
     return missing_documentation(constitution_text)
 
 
-def board_problems(board_text, constitution_text, exempt=None):
+def board_problems(board_text, constitution_text):
     """Spec 115 T028: the board loop's merge switch is named in both
-    board-loop.yml and Principle X. Returns (failures, waived)."""
-    exempt = EXEMPT_UNDOCUMENTED_SWITCHES if exempt is None else exempt
+    board-loop.yml and Principle X. Returns the failures."""
     merges = bool(GH_PR_MERGE_RE.search(board_text))
     gated = BOARD_AUTO_MERGE_VAR in board_text
     documented = BOARD_AUTO_MERGE_VAR in principle_text(constitution_text, {"X"})
-    failures, waived = [], []
+    failures = []
     if merges and not gated:
         failures.append("{0} calls `gh pr merge` without gating it on {1}".format(
             BOARD_WORKFLOW, BOARD_AUTO_MERGE_VAR))
@@ -153,10 +135,9 @@ def board_problems(board_text, constitution_text, exempt=None):
         failures.append("Principle X names {0} but {1} never gates on it".format(
             BOARD_AUTO_MERGE_VAR, BOARD_WORKFLOW))
     if merges and gated and not documented:
-        problem = ("{0} merges behind {1} but Principle X never names {1}".format(
+        failures.append("{0} merges behind {1} but Principle X never names {1}".format(
             BOARD_WORKFLOW, BOARD_AUTO_MERGE_VAR))
-        (waived if BOARD_AUTO_MERGE_VAR in exempt else failures).append(problem)
-    return failures, waived
+    return failures
 
 
 def _read(path):
@@ -176,18 +157,12 @@ def run_board():
                   "does not exist; this gate cannot check what it claims "
                   "to.".format(path))
             return 1
-    failures, waived = board_problems(_read(BOARD_WORKFLOW), _read(CONSTITUTION))
-    for problem in waived:
-        exemption = EXEMPT_UNDOCUMENTED_SWITCHES[BOARD_AUTO_MERGE_VAR]
-        print("::warning::verify-constitution-merge-class-parity: waived "
-              "until the amendment lands (tracker {0}): {1}".format(
-                  ", ".join("#{0}".format(n) for n in exemption.issue), problem))
+    failures = board_problems(_read(BOARD_WORKFLOW), _read(CONSTITUTION))
     for problem in failures:
         print("::error::verify-constitution-merge-class-parity: {0}".format(problem))
     if not failures:
-        print("[ok] {0}'s merge is gated on {1}, and Principle X {2}.".format(
-            BOARD_WORKFLOW, BOARD_AUTO_MERGE_VAR,
-            "has a waived amendment pending" if waived else "names it"))
+        print("[ok] {0}'s merge is gated on {1}, and Principle X names it.".format(
+            BOARD_WORKFLOW, BOARD_AUTO_MERGE_VAR))
     return 1 if failures else 0
 
 
@@ -341,20 +316,18 @@ def self_test():
         "only other class the bot may merge is a dependency-bump PR.",
         "only other class the bot may merge is a dependency-bump PR, both behind "
         "WING_COMMANDER_BOARD_AUTO_MERGE.")
-    for name, board, constitution, exempt, want_fail, want_waived in (
-            ("board-switch-in-both", board_merge, x_names, {}, False, False),
-            ("board-switch-undocumented", board_merge, _TWO_CLASS_CONSTITUTION, {}, True, False),
-            ("board-switch-undocumented-waived", board_merge, _TWO_CLASS_CONSTITUTION,
-             EXEMPT_UNDOCUMENTED_SWITCHES, False, True),
-            ("board-merge-ungated", '- run: gh pr merge --squash "$PR"\n', x_names, {}, True, False),
-            ("board-switch-documented-not-gated", _NO_MERGE_CODE, x_names, {}, True, False),
-            ("board-neither", _NO_MERGE_CODE, _TWO_CLASS_CONSTITUTION, {}, False, False)):
-        got_fail, got_waived = board_problems(board, constitution, exempt)
-        if bool(got_fail) == want_fail and bool(got_waived) == want_waived:
+    for name, board, constitution, want_fail in (
+            ("board-switch-in-both", board_merge, x_names, False),
+            ("board-switch-undocumented", board_merge, _TWO_CLASS_CONSTITUTION, True),
+            ("board-merge-ungated", '- run: gh pr merge --squash "$PR"\n', x_names, True),
+            ("board-switch-documented-not-gated", _NO_MERGE_CODE, x_names, True),
+            ("board-neither", _NO_MERGE_CODE, _TWO_CLASS_CONSTITUTION, False)):
+        got_fail = board_problems(board, constitution)
+        if bool(got_fail) == want_fail:
             print("PASS {0}".format(name))
         else:
             failures += 1
-            print("FAIL {0}: failures={1!r} waived={2!r}".format(name, got_fail, got_waived))
+            print("FAIL {0}: failures={1!r}".format(name, got_fail))
 
     print("{0} failure(s).".format(failures))
     return 1 if failures else 0
