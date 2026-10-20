@@ -421,7 +421,13 @@ change to the tiering above.
   amendment, and — while `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is off, its
   default — every final PR; the bot cannot approve those, and never merges a
   spec PR, a plan PR or an amendment. The bot merges three classes only
-  (constitution X): the bounded fix PR, behind a deterministic gate — checks
+  (constitution X). The board loop merges the first two (spec 115) only
+  while `WING_COMMANDER_BOARD_AUTO_MERGE` is on and
+  `WING_COMMANDER_BOARD_LOOP_PAUSED` is clear, re-derives every condition
+  from a fresh snapshot of the exact head SHA, and hands any merge GitHub
+  refuses to a maintainer
+  ([board-merge contract](../specs/115-board-loop-self-merge/contracts/board-merge.md)).
+  The classes: the bounded fix PR, behind a deterministic gate — checks
   green on the exact head SHA (no checks is not green, and the gate suite
   must have run on that SHA), zero open findings from an independent review,
   the size-and-path backstop on the final diff, and a clear
