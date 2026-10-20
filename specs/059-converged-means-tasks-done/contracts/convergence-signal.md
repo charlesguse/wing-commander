@@ -63,7 +63,7 @@ Step: `Read back cycle outcome` (id `outcome`) / `Read back retry outcome`
 | `converged` | `true`/`false`/empty | **rule replaced** — decision table in data-model.md, not "no converge commit" |
 | `remaining` | text | **source replaced** — tip's outstanding-item text (D6), not a converge-commit diff |
 | `progressed` | `true`/`false`/empty | **new** — FR-010a's progress test result |
-| `handoff` | `true`/`false`/empty | **new** — FR-010's hand-off condition, computed here so `Dispatch next step` does not need to re-derive it from the other four |
+| `handoff` | `true`/`false`/empty | **new** — FR-010's hand-off condition, computed here so `Dispatch next step` does not need to re-derive it from the other four. Superseded by `specs/117-implement-stall-handoff`: the condition is now a validated agent blocker or the iteration cap, never a zero-progress cycle alone, computed by `_shared/decide-implement-outcome.sh` (see that spec's contracts/shared-scripts.md) |
 
 `progressed` and `handoff` are step-local outputs consumed inside this job
 only; they are not `workflow_call` outputs of `implement.yml` (FR-017).
@@ -112,6 +112,10 @@ comment and dispatch the same workflow with the same payload
 existing cap-reached narrative), so a reader can tell the two apart without
 either being a structurally different dispatch.
 
+Superseded by `specs/117-implement-stall-handoff` for when `HANDOFF` is
+true (a validated blocker or the cap); the branch order above is unchanged,
+and a routed remainder takes the same terminal path (spec 090).
+
 ## 5. Lifecycle-issue comment (FR-012, FR-013, FR-014)
 
 When `CONVERGED=false`:
@@ -136,6 +140,9 @@ When `CONVERGED=false`:
   PR body, not touched by this feature (Out of Scope, and see research.md
   item 5 in the investigation this plan is built on: it is agent-driven by
   design, while this contract stays deterministic per FR-003).
+  Superseded by `specs/117-implement-stall-handoff` FR-007: finalize now
+  renders that report deterministically ("Maintainer steps" / "Unfinished
+  implementation", `_shared/render-remaining-work.sh`).
 - `max-iterations`, its default, and the cap-reached terminal path's own
   shape — FR-009; this contract only adds a new way to *reach* that same
   terminal path early.

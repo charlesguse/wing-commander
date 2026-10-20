@@ -1,0 +1,24 @@
+checked-count=3
+unchecked-count=6
+unchecked-items<<WING_COMMANDER_UNCHECKED_ITEMS_EOF
+- [ ] T002 Unchecked code in `b.sh`
+- [ ] T003 [maintainer] Re-drive one run
+- [ ] Keep the gates green
+- [ ] T005a [maintainer] Re-drive one suffixed run
+- [ ] T006 [P] [maintainer] Read the repository variable
+- [ ] T007 Merge it [maintainer] later
+WING_COMMANDER_UNCHECKED_ITEMS_EOF
+impl-checked-count=1
+impl-unchecked-count=2
+standing-count=1
+impl-ids=T001 T002 T007
+impl-unchecked-ids=T002 T007
+impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF
+- [ ] T002 Unchecked code in `b.sh`
+- [ ] T007 Merge it [maintainer] later
+WING_COMMANDER_IMPL_ITEMS_EOF
+maintainer-items<<WING_COMMANDER_MAINTAINER_ITEMS_EOF
+- [ ] T003 [maintainer] Re-drive one run
+- [ ] T005a [maintainer] Re-drive one suffixed run
+- [ ] T006 [P] [maintainer] Read the repository variable
+WING_COMMANDER_MAINTAINER_ITEMS_EOF

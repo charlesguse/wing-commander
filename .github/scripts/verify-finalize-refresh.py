@@ -401,9 +401,10 @@ def scenario_diff_propagation(steps, root):
 
 
 def _run_assemble_body(steps, repo, work, bindir, calls, runner_temp,
-                       pr_state, prior_body_file=None, reviews_json="[]"):
+                       pr_state, prior_body_file=None, reviews_json="[]",
+                       converged="true"):
     env = base_env(work, bindir, calls, runner_temp, {
-        "CONVERGED": "true", "COMPARE_LINK": "https://example.invalid/compare",
+        "CONVERGED": converged, "COMPARE_LINK": "https://example.invalid/compare",
         "CHANGED_FILES": "tasks.md", "PR_STATE": pr_state,
         "EXISTING_PR": PR_NUMBER, "GH_REVIEWS_JSON": reviews_json,
     })
@@ -443,6 +444,28 @@ def scenario_create_path_seeds_region(steps, root):
     fold_log_span = extract_between(body, FOLDLOG_BEGIN, FOLDLOG_END) or ""
     if fold_log_span.strip():
         failures.append(f"create-path fold log is not empty: {fold_log_span!r}")
+    return failures
+
+
+def scenario_unconverged_empty_report_banner(steps, root):
+    """specs/117 FR-008: converged=false with an empty remaining-work report
+    renders "No manual work remains."; the banner above it must not point
+    the reader at remaining work below."""
+    failures = []
+    repo, _ = make_repo(root, 1, 5, 5)
+    work = os.path.dirname(repo)
+    runner_temp = os.path.join(work, "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    bindir, calls = new_stub_dir(work)
+    rc, out, body = _run_assemble_body(steps, repo, work, bindir, calls,
+                                       runner_temp, "none", converged="false")
+    if rc != 0:
+        return [f"unconverged body assembly exited {rc}: {out.strip()}"]
+    if "No manual work remains." not in body:
+        failures.append(f"unconverged empty report: body lacks 'No manual work remains.': {body!r}")
+    if "see the remaining work below" in body:
+        failures.append("unconverged empty report: the banner points at remaining work "
+                        "the body says does not exist")
     return failures
 
 
@@ -907,6 +930,7 @@ SCENARIOS = [
     scenario_guard_tri_state,
     scenario_diff_propagation,
     scenario_create_path_seeds_region,
+    scenario_unconverged_empty_report_banner,
     scenario_refresh_preserves_and_appends,
     scenario_idempotent_repeat_refresh,
     scenario_foldlog_sha_extraction_ignores_prose_hex,

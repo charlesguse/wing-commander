@@ -261,6 +261,19 @@ def build_scenario(root, *, base_tasks_md, tip_tasks_md, converge=False,
     return work, repo, base_sha, branch
 
 
+def decide_env(checked_base, checked_tip, unchecked_tip):
+    """The env the read-back steps now take from the blocker composite and the
+    classified counts (specs/117): these fixtures carry no [maintainer] or
+    standing lines, so the implementation counts equal the raw ones, and no
+    blocker was written."""
+    return {"IMPL_CHECKED_BASE": checked_base, "IMPL_CHECKED_TIP": checked_tip,
+            "IMPL_UNCHECKED_TIP": unchecked_tip, "MAX_ITERATIONS": "5",
+            "BLOCKER_VALID": "false", "BLOCKER_TEXT": "",
+            "DECIDE_SCRIPT": os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "..", "actions",
+                "_shared", "decide-implement-outcome.sh")}
+
+
 def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
                     iteration=ITERATION):
     runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
@@ -274,6 +287,7 @@ def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
            "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
            "UNCHECKED_TIP": unchecked_tip, "REMAINING_TIP": items_tip}
     env.update(read_spec_meta_env(repo))
+    env.update(decide_env(checked_base, checked_tip, unchecked_tip))
     return run_step(BASH, steps[CYCLE_STEP], repo, env, runner_temp)
 
 
@@ -293,6 +307,7 @@ def run_retry_step(steps, repo, base_sha, *, verdict, retry_result):
            "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
            "UNCHECKED_TIP": unchecked_tip, "REMAINING_TIP": items_tip}
     env.update(read_spec_meta_env(repo))
+    env.update(decide_env(checked_base, checked_tip, unchecked_tip))
     return run_step(BASH, steps[RETRY_STEP], repo, env, runner_temp)
 
 
@@ -327,12 +342,12 @@ SIGNAL_SCENARIOS = [
          base_tasks_md=_tasks_md(0, 65), tip_tasks_md=_tasks_md(11, 54),
          converge=False, verdict="healthy", cycle_result="success",
          expect=dict(ok="true", truncated="false", converged="false")),
-    dict(name="US4/FR-010: zero progress, no converge commit -- hand off "
-              "to finalize rather than looping to the cap",
+    dict(name="US4/FR-010 (spec 117): zero progress, no converge commit, no "
+              "validated blocker -- the loop continues rather than handing off",
          base_tasks_md=_tasks_md(0, 3), tip_tasks_md=_tasks_md(0, 3),
          converge=False, verdict="healthy", cycle_result="success",
          expect=dict(ok="true", truncated="false", converged="false",
-                     progressed="false", handoff="true")),
+                     progressed="false", handoff="false")),
     dict(name="US4/FR-010: zero progress but a converge commit landed -- "
               "new work exists, NOT the FR-010 hand-off",
          base_tasks_md=_tasks_md(0, 3),
@@ -591,7 +606,7 @@ def check_dispatch_handoff(steps, root):
     if "wing-commander-5-implement.yml" in calls:
         failures.append(f"US4/FR-010: HANDOFF=true wrongly dispatched a next cycle "
                         f"(SELF_WORKFLOW) instead of handing off -- gh calls were: {calls!r}")
-    if "checked nothing new" not in body:
+    if "Implementation is stalled" not in body:
         failures.append(f"FR-013: the HANDOFF comment did not carry the hand-off "
                         f"reason phrasing -- body={body!r}")
     return failures
@@ -644,20 +659,11 @@ def check_remaining_work_report(steps, root):
     return failures
 
 
-CONVERGED_DECISION = (
-    '  if [ "${UNCHECKED_TIP:-1}" -eq 0 ]; then\n'
-    '    converged=true\n'
-    '  else\n'
-    '    converged=false\n'
-    '  fi\n'
-)
-PROGRESS_TEST = (
-    '  if [ "${CHECKED_TIP:-0}" -gt "${CHECKED_BASE:-0}" ]; then\n'
-    '    progressed=true\n'
-    '  else\n'
-    '    progressed=false\n'
-    '  fi\n'
-)
+# The converged/progressed decisions moved into
+# _shared/decide-implement-outcome.sh (specs/117); the step reads them back,
+# so the mutations below replace the read-back line, the same regression.
+CONVERGED_DECISION = 'converged="$(pick converged)"\n'
+PROGRESS_TEST = 'progressed="$(pick progressed)"\n'
 
 
 def _mut_converge_sha_only(steps):
@@ -699,9 +705,9 @@ MUTATIONS = [
      {"converged": "true"}),
     ("remove/invert the FR-010 progress test",
      _mut_drop_progress_test,
-     "US4/FR-010: zero progress, no converge commit -- hand off "
-     "to finalize rather than looping to the cap",
-     {"progressed": "true", "handoff": "false"}),
+     "US4/FR-010 (spec 117): zero progress, no converge commit, no "
+     "validated blocker -- the loop continues rather than handing off",
+     {"progressed": "true"}),
 ]
 
 

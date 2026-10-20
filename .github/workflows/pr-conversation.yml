@@ -100,6 +100,15 @@ on:
         type: string
         required: false
         default: ""
+      max-iterations:
+        description: >
+          The implement loop's iteration cap, used only to tell the reader
+          how many cycles remain after a re-dispatch (specs/117 FR-011).
+          Pass the same value the implement wrapper uses; it writes no state
+          and never changes the cap itself.
+        type: number
+        required: false
+        default: 5
       pipeline-repo:
         description: >
           Repository to check out for the pipeline's shared composite actions
@@ -3531,10 +3540,19 @@ jobs:
           NEXT_ITERATION: ${{ steps.fold-dispatch.outputs.new-iteration }}
           FOLDED_SUMMARY: ${{ steps.fold-dispatch.outputs.folded-summary }}
           RUN_URL: ${{ steps.fold-dispatch.outputs.run-url }}
+          MAX_ITERATIONS: ${{ inputs.max-iterations }}
         run: |
           set -euo pipefail
           body_file="$RUNNER_TEMP/dispatch-once-reply.md"
           next="$NEXT_ITERATION"
+          # specs/117 FR-011: cycles left under the cap, floor 0; no state
+          # is written and the cap is not reset.
+          remaining=0
+          # 10# so a leading zero ("08") is decimal, not a bad octal.
+          if [[ "$next" =~ ^[0-9]+$ && "$MAX_ITERATIONS" =~ ^[0-9]+$ ]] \
+            && [ "$((10#$MAX_ITERATIONS))" -gt "$((10#$next))" ]; then
+            remaining=$((10#$MAX_ITERATIONS - 10#$next))
+          fi
 
           # Defensive only: this step only runs after a winning claim,
           # which passes round-folded-json and so always resolves
@@ -3574,10 +3592,19 @@ jobs:
               echo "Implementation cycle $NEXT_ITERATION dispatched — note this re-dispatched iteration may hit implement.yml's own iteration cap; see the workflow's Actions tab for the new run."
             fi
             echo ""
+            echo "Cycles remaining under the iteration cap after this one: $remaining."
+            echo ""
             echo "Folded in this review:"
             printf '%s\n' "$FOLDED_SUMMARY"
           } > "$body_file"
           gh pr comment "$PR_NUMBER" --body-file "$body_file"
+          # specs/117 FR-011: the lifecycle issue itself, not only the PR,
+          # is told how many cycles remain when the re-entry starts. The PR
+          # reply above already landed, so a failure here only warns.
+          if [ -n "$ISSUE" ]; then
+            gh issue comment "$ISSUE" --body "Re-entry into implement from review: cycle $NEXT_ITERATION dispatched for this review's fold(s) on PR #$PR_NUMBER. Cycles remaining under the iteration cap after this one: $remaining." \
+              || echo "::warning::could not post the remaining-cycle count on lifecycle issue #$ISSUE"
+          fi
 
       # data-model.md's implement_run_id field: correlates the dispatched
       # run's OWN id (GitHub's run URL always ends in it), distinct from
