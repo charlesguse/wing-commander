@@ -602,11 +602,13 @@ jobs:
       # instead of skip — US3), or `merged`/`closed` (already done; report
       # and change nothing, FR-009/FR-009a). Replaces the old boolean `skip`,
       # which could not tell "open" apart from "already done".
-      # A PR opened before this lifecycle's issue is not its final PR: it is
-      # an earlier lifecycle's on a branch that reused the same slug (#1072,
-      # where a merged PR from five days before read as "already merged" and
-      # the lifecycle never left implement). When the issue's creation time
-      # cannot be read, every PR counts, as before.
+      # A merged or closed PR opened before this lifecycle's issue is not its
+      # final PR: it is an earlier lifecycle's on a branch that reused the
+      # same slug (#1072, where a merged PR from five days before read as
+      # "already merged" and the lifecycle never left implement). An open PR
+      # always counts, however old: GitHub allows one open PR per head, so
+      # it is the PR this branch's commits land on and is refreshed. When
+      # the issue's creation time cannot be read, every PR counts, as before.
       - name: Check for an existing final pull request
         id: guard
         if: steps.lifecycle-gate.outputs.is-open == 'true'
@@ -622,7 +624,7 @@ jobs:
             echo "::warning::finalize: could not read lifecycle issue #$ISSUE's creation time; any pull request from ${SPEC_PREFIX}$SLUG counts as this lifecycle's final PR."
           fi
           prs=$(gh pr list --head "${SPEC_PREFIX}$SLUG" --base "$DB" --state all --json number,state,url,createdAt)
-          existing=$(printf '%s' "$prs" | jq -c --arg since "$issue_created" '[.[] | select(.createdAt >= $since)] | .[0] // empty')
+          existing=$(printf '%s' "$prs" | jq -c --arg since "$issue_created" '[.[] | select(.state == "OPEN" or .createdAt >= $since)] | .[0] // empty')
           if [ -z "$existing" ]; then
             echo "pr-state=none" >> "$GITHUB_OUTPUT"
             exit 0

@@ -349,6 +349,10 @@ def scenario_guard_tri_state(steps, root):
         ('[{"number": 100, "state": "MERGED", "url": "https://x/100", %s}]' % early, "none", {}),
         ('[{"number": 261, "state": "OPEN", "url": "https://x/261", %s},'
          ' {"number": 100, "state": "MERGED", "url": "https://x/100", %s}]' % (late, early), "open", {}),
+        # An open PR counts however old: it is the one PR on this head, and
+        # `none` would send the run to a `gh pr create` GitHub refuses.
+        ('[{"number": 100, "state": "OPEN", "url": "https://x/100", %s}]' % early, "open", {}),
+        ('[{"number": 100, "state": "CLOSED", "url": "https://x/100", %s}]' % early, "none", {}),
         # The issue's creation time unreadable: every PR counts, as before.
         ('[{"number": 100, "state": "MERGED", "url": "https://x/100", %s}]' % early, "merged",
          {"GH_ISSUE_VIEW_EXIT": "1"}),
@@ -1010,11 +1014,22 @@ def _mut_drop_issue_created_filter(steps):
     an earlier lifecycle left on a reused slug reads as this one's final PR.
     """
     steps[GUARD_STEP] = steps[GUARD_STEP].replace(
-        "select(.createdAt >= $since)", "select(true)")
+        'select(.state == "OPEN" or .createdAt >= $since)', "select(true)")
+
+
+def _mut_filter_open_pr_by_age(steps):
+    """An open PR older than the issue filtered out: the guard reports `none`
+    and the run tries a `gh pr create` GitHub refuses for that head.
+    """
+    steps[GUARD_STEP] = steps[GUARD_STEP].replace(
+        'select(.state == "OPEN" or .createdAt >= $since)',
+        "select(.createdAt >= $since)")
 
 
 MUTATIONS = [
     ("#1072 reverted: an earlier lifecycle's PR counts", _mut_drop_issue_created_filter,
+    scenario_guard_tri_state),
+    ("an open PR older than the issue filtered out", _mut_filter_open_pr_by_age,
     scenario_guard_tri_state),
     ("D7 reverted: boolean skip restored", _mut_revert_d7_boolean_skip,
     scenario_guard_tri_state),
