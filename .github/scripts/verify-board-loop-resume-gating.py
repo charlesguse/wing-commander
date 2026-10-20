@@ -930,6 +930,12 @@ RESUME_CASES = [
     ("awaiting-merge, PR unresolved, board:owned fallback PR found -> no-op",
      _resume_env("awaiting-merge", "42", False, "OPEN", "99", from_fallback=True),
      {"step": "awaiting-merge", "recovered_via_fallback": False, "pr_number": ""}),
+    # spec 115: a handed-over item is released exactly like an
+    # awaiting-merge one, so an unresolved PR never lets the fallback
+    # re-adopt the PR GitHub refused and readiness re-report it.
+    ("handed-over, PR unresolved, board:owned fallback PR found -> no-op (spec 115)",
+     _resume_env("handed-over", "42", False, "OPEN", "99", from_fallback=True),
+     {"step": "awaiting-merge", "recovered_via_fallback": False, "pr_number": ""}),
     ("awaiting-merge, PR CLOSED -> triage, FR-022 cleared",
      _resume_env("awaiting-merge", "42", True, "CLOSED", "42"),
      dict(_CLEARED, step="triage")),
@@ -2318,7 +2324,8 @@ def _mutations(text):
         "'awaiting-merge') && needs.select.outputs.pr != '')",
         after="\n  readiness:\n")
     sub("resume clause 0 (awaiting-merge hold) disabled",
-        "elif marker_step == AWAITING_MERGE_STEP and (not pr_from_marker or pr_state == \"OPEN\"):",
+        "elif (marker_step in (AWAITING_MERGE_STEP, HANDED_OVER_STEP)\n"
+        "                and (not pr_from_marker or pr_state == \"OPEN\")):",
         "elif False:")
     # specs/096-durable-prove-entry FR-007/FR-008/FR-009 (research.md D7):
     # a resolved-by-number, MERGED, issue-still-open marker must resolve to
@@ -2499,9 +2506,11 @@ def _mutations(text):
     # select's two prove markers, fix's review hand-off and breach, review's
     # readiness and round, readiness's awaiting-merge, triage's hand-over
     # ("$marker_step"), prove's three (close-on-merge, proven, prove), and
-    # readiness's not-ready record (specs/093-not-ready-board-release).
-    if len(other_at) != 12:
-        raise AssertionError("self-test: expected 12 non-stalled marker renders, found {0}".format(len(other_at)))
+    # readiness's not-ready record (specs/093-not-ready-board-release), and
+    # the merge job's merged and handed-over records
+    # (specs/115-board-loop-self-merge).
+    if len(other_at) != 14:
+        raise AssertionError("self-test: expected 14 non-stalled marker renders, found {0}".format(len(other_at)))
     for n, at in enumerate(other_at):
         guard_at = text.index('|| { echo "::error::', at)
         guard_start = text.rindex(" \\\n", at, guard_at)
@@ -2595,12 +2604,12 @@ def run_selftest(text):
         module = os.path.join(scripts, "board_eligibility.py")
         with open(module, encoding="utf-8") as fh:
             src = fh.read()
-        old = '"readiness", AWAITING_MERGE_STEP, "prove"'
+        old = '"readiness", AWAITING_MERGE_STEP,'
         if old not in src:
             failures.append("mutation `{0}`: fixture text not found in board_eligibility.py".format(label))
         else:
             with open(module, "w", encoding="utf-8") as fh:
-                fh.write(src.replace(old, '"readiness", "prove"', 1))
+                fh.write(src.replace(old, '"readiness",', 1))
             found = select_lookup_findings(yaml.safe_load(text), tmp)
             if not found:
                 failures.append("mutation `{0}` was NOT detected".format(label))

@@ -25,5 +25,12 @@
     "introduction (spec 089's own Assumptions section) -- board-loop.yml on",
     "main already matches the skill's Over-rated example."
   ],
-  "waivers": []
+  "waivers": [
+    {
+      "property": "unexpected-job-in-group",
+      "job": "merge",
+      "issue": "#889",
+      "reason": "specs/115-board-loop-self-merge adds board-loop.yml's `merge` job to the ordinary wing-commander-board-loop group. The implement stage may not write .claude/, so the spec-cross-reference skill's Over-rated example still lists the old job range. Tracked on the maintenance backlog #889 (the line 'update the spec-cross-reference skill's board-loop job range for the merge job'). Remove this waiver when that line is done."
+    }
+  ]
 }

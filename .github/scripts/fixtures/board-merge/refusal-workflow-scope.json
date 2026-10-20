@@ -1,0 +1,1 @@
+{"stderr": "GraphQL: refusing to allow a GitHub App to create or update workflow `.github/workflows/x.yml` without `workflows` permission (mergePullRequest)", "expect_class": "workflow-scope"}

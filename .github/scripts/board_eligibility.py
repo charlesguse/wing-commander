@@ -102,7 +102,15 @@ SELF_MANAGED_LABELS = ("auto-update:tracking", "auto-release:failed")
 AWAITING_MERGE_STEP = "awaiting-merge"
 BREACH_STEP = "breach"
 PRE_FIX_STEPS = frozenset({"triage", "route"})
-FIX_OR_LATER_STEPS = frozenset({"fix", BREACH_STEP, "review", "readiness", AWAITING_MERGE_STEP, "prove"})
+# spec 115 (board loop self-merge): `merged` is the step the merge job records
+# after a successful squash merge (the PR is MERGED, so _merged_fix_holds()
+# and the prove path take it from there); `handed-over` is the step it records
+# when GitHub refused the merge. A handed-over item is released exactly like an
+# awaiting-merge one (_awaiting_merge_holds()), never retried every run.
+MERGED_STEP = "merged"
+HANDED_OVER_STEP = "handed-over"
+FIX_OR_LATER_STEPS = frozenset({"fix", BREACH_STEP, "review", "readiness", AWAITING_MERGE_STEP,
+                                HANDED_OVER_STEP, MERGED_STEP, "prove"})
 
 # spec 108 (contracts/duplicate-disposition.md, data-model.md): the step
 # board_duplicate_disposition.py's marker write records, and the exact
@@ -424,7 +432,7 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_
             continue
         created_at, marker = pair
         step = marker.get("step")
-        if step in TERMINAL_STEPS or step in ("prove", AWAITING_MERGE_STEP):
+        if step in TERMINAL_STEPS or step in ("prove", AWAITING_MERGE_STEP, HANDED_OVER_STEP, MERGED_STEP):
             continue
         if step in PRE_FIX_STEPS:
             candidates.append((created_at, number))
@@ -550,7 +558,7 @@ def _awaiting_merge_holds(marker, pr_state_by_number):
     for the displacement recovery path), and a human merge still reaches
     prove-gate/prove through pull_request: closed, which never consults
     this."""
-    if (marker or {}).get("step") != AWAITING_MERGE_STEP:
+    if (marker or {}).get("step") not in (AWAITING_MERGE_STEP, HANDED_OVER_STEP):
         return False
     try:
         pr = int(marker.get("pr"))
