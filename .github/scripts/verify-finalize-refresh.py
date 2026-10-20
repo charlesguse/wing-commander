@@ -143,8 +143,7 @@ case " $* " in
     exit 0
     ;;
   *" pr "*"list "*)
-    # gh's --jq '.[0] // empty' already reduces the array server-side.
-    printf '%s' "${GH_PR_LIST_JSON:-[]}" | jq -c '.[0] // empty'
+    printf '%s' "${GH_PR_LIST_JSON:-[]}"
     exit 0
     ;;
   *" pr "*"edit "*"--add-reviewer"*)
@@ -155,6 +154,12 @@ case " $* " in
     ;;
   *" pr "*"create "*)
     exit "${GH_PR_CREATE_EXIT:-0}"
+    ;;
+  *" issue "*"view "*"createdAt"*)
+    # gh's --jq '.createdAt' already extracts the raw value server-side.
+    [ "${GH_ISSUE_VIEW_EXIT:-0}" = 0 ] || exit "$GH_ISSUE_VIEW_EXIT"
+    printf '%s' "${GH_ISSUE_CREATED_AT:-2026-01-01T00:00:00Z}"
+    exit 0
     ;;
   *" issue "*"view "*)
     printf '{"labels": []}'
@@ -311,10 +316,12 @@ def base_env(work, bindir, calls, runner_temp, extra=None):
     return env
 
 
-def run_guard(steps, work, bindir, calls, runner_temp, pr_list_json):
+def run_guard(steps, work, bindir, calls, runner_temp, pr_list_json,
+              extra=None):
+    env = {"GH_PR_LIST_JSON": pr_list_json}
+    env.update(extra or {})
     return run_step(BASH, steps[GUARD_STEP], work,
-                    base_env(work, bindir, calls, runner_temp,
-                             {"GH_PR_LIST_JSON": pr_list_json}),
+                    base_env(work, bindir, calls, runner_temp, env),
                     runner_temp)
 
 
@@ -330,19 +337,29 @@ def run_diff(steps, repo, work, bindir, calls, runner_temp, guard_pr_state):
 def scenario_guard_tri_state(steps, root):
     """D7: the guard reports none/open/merged/closed correctly."""
     failures = []
+    late = '"createdAt": "2026-06-01T00:00:00Z"'
+    early = '"createdAt": "2025-06-01T00:00:00Z"'
     cases = [
-        ("[]", "none"),
-        ('[{"number": 260, "state": "OPEN", "url": "https://x/260"}]', "open"),
-        ('[{"number": 260, "state": "MERGED", "url": "https://x/260"}]', "merged"),
-        ('[{"number": 260, "state": "CLOSED", "url": "https://x/260"}]', "closed"),
+        ("[]", "none", {}),
+        ('[{"number": 260, "state": "OPEN", "url": "https://x/260", %s}]' % late, "open", {}),
+        ('[{"number": 260, "state": "MERGED", "url": "https://x/260", %s}]' % late, "merged", {}),
+        ('[{"number": 260, "state": "CLOSED", "url": "https://x/260", %s}]' % late, "closed", {}),
+        # #1072: a merged PR older than the lifecycle issue is an earlier
+        # lifecycle's on a reused slug, not this one's final PR.
+        ('[{"number": 100, "state": "MERGED", "url": "https://x/100", %s}]' % early, "none", {}),
+        ('[{"number": 261, "state": "OPEN", "url": "https://x/261", %s},'
+         ' {"number": 100, "state": "MERGED", "url": "https://x/100", %s}]' % (late, early), "open", {}),
+        # The issue's creation time unreadable: every PR counts, as before.
+        ('[{"number": 100, "state": "MERGED", "url": "https://x/100", %s}]' % early, "merged",
+         {"GH_ISSUE_VIEW_EXIT": "1"}),
     ]
-    for pr_list_json, expected in cases:
+    for pr_list_json, expected, extra in cases:
         work = tempfile.mkdtemp(dir=root)
         runner_temp = os.path.join(work, "runner_temp")
         os.makedirs(runner_temp, exist_ok=True)
         bindir, calls = new_stub_dir(work)
         rc, out, outputs, _ = run_guard(steps, work, bindir, calls,
-                                        runner_temp, pr_list_json)
+                                        runner_temp, pr_list_json, extra)
         if rc != 0:
             failures.append(f"guard({expected}): exited {rc}: {out.strip()}")
             continue
@@ -988,7 +1005,17 @@ def _mut_remove_merged_closed_guard(steps):
         'if false; then')
 
 
+def _mut_drop_issue_created_filter(steps):
+    """#1072 reverted: every PR from the spec branch counts, so a merged PR
+    an earlier lifecycle left on a reused slug reads as this one's final PR.
+    """
+    steps[GUARD_STEP] = steps[GUARD_STEP].replace(
+        "select(.createdAt >= $since)", "select(true)")
+
+
 MUTATIONS = [
+    ("#1072 reverted: an earlier lifecycle's PR counts", _mut_drop_issue_created_filter,
+    scenario_guard_tri_state),
     ("D7 reverted: boolean skip restored", _mut_revert_d7_boolean_skip,
     scenario_guard_tri_state),
     ("D9 reverted: full-body overwrite", _mut_revert_d9_full_overwrite,

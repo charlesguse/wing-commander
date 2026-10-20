@@ -17,8 +17,12 @@ this feature changes `finalize.yml`'s internal behavior only (FR-016).
 | `merged` | The existing PR is merged | (new) |
 | `closed` | The existing PR is closed, not merged | (new) |
 
-`gh pr list --head "${SPEC_PREFIX}$SLUG" --base "$DB" --state all --json number,state,url --jq '.[0] // empty'`
-replaces today's `number`-only query.
+`gh pr list --head "${SPEC_PREFIX}$SLUG" --base "$DB" --state all --json number,state,url,createdAt`
+replaces today's `number`-only query. The guard keeps only the PRs created
+at or after the lifecycle issue (`gh issue view --json createdAt`) and reads
+the newest of those: an older PR belongs to an earlier lifecycle whose
+branch reused the slug (#1072). When the issue's creation time cannot be
+read, every PR counts.
 
 ## Downstream gating change
 
