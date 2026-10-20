@@ -64,6 +64,75 @@ if [ "$rc" -ne 0 ]; then
 fi
 
 counts="$(printf '%s\n' "$content" | awk '
+  # Line classes, first match wins (specs/117 data-model.md): standing
+  # instruction, then maintainer task, then implementation task.
+  # The leading tag run both classes skip: the checkbox, an optional
+  # T###/M### id (suffix letter allowed, T012a), then bracket tags ([P],
+  # [US1], [maintainer], ...). One home, so the two classes can never
+  # disagree about where the text of a line starts.
+  function strip_lead(line,    t) {
+    t = line
+    sub(/^[ \t]*- \[[ xX]\][ \t]*/, "", t)
+    sub(/^[TMtm][0-9]+[a-z]?([ \t]+|$)/, "", t)
+    while (match(t, /^\[[^]]*\]([ \t]+|$)/)) t = substr(t, RLENGTH + 1)
+    return t
+  }
+  function is_standing(line,    t) {
+    t = tolower(strip_lead(line))
+    # A reference to the task list itself ("in tasks.md", "in the
+    # `tasks.md`") names the list being worked, not a deliverable.
+    gsub(/(this spec'"'"'s |the )?`?tasks\.md`?/, "tasks", t)
+    # Ambiguity counts as implementation for every prefix: a line that names a
+    # deliverable (a backtick span, a path, or a "fix"/"add"/"create" verb
+    # clause) is a real task even when it starts like a standing instruction.
+    if (t ~ /^(complete every remaining|keep the gates green|after each cycle)/) {
+      if (t ~ /`|\/|\.(sh|py|yml|yaml|md|json)([^a-z]|$)|(and|then|,) (fix|add|create|write|update|implement)/) return 0
+      # Only filler may follow the prefix: any other word ("for the new
+      # parser") names a deliverable, so the line is a real task.
+      n = split(t, words, /[^a-z]+/)
+      for (i = 1; i <= n; i++) {
+        if (words[i] == "") continue
+        if (!(words[i] in FILLER)) return 0
+      }
+      return 1
+    }
+    if (t ~ /^run the (full )?gate suite/) {
+      # Ambiguity counts as implementation (spec edge case): only the bare
+      # instruction, optionally "locally" and/or "before pushing", is
+      # standing. Anything else after it ("and fix", ", then fix", a path)
+      # is a real task.
+      sub(/^run the (full )?gate suite/, "", t)
+      if (t ~ /^[ .]*(locally)?[ .]*(before (each )?(pushing|push|committing|commit))?[ .]*$/) return 1
+      return 0
+    }
+    return 0
+  }
+  # The T###/M### id of the line (suffix letter kept), or "" when it has none.
+  # decide-implement-outcome.sh tracks implementation work by this id across
+  # the cycle, so a retag or rewording cannot make a task disappear.
+  function lead_id(line,    t) {
+    t = line
+    sub(/^[ \t]*- \[[ xX]\][ \t]*/, "", t)
+    if (match(t, /^[TMtm][0-9]+[a-z]?([ \t]|$)/)) {
+      t = substr(t, 1, RLENGTH)
+      sub(/[ \t]+$/, "", t)
+      return t
+    }
+    return ""
+  }
+  function is_maintainer(line,    t, lead) {
+    # The token sits in the leading tag run (strip_lead), so a long id or
+    # several tags cannot push it out of range. Prose later in the line
+    # never matches.
+    t = line
+    sub(/^[ \t]*- \[[ xX]\][ \t]*/, "", t)
+    lead = substr(t, 1, length(t) - length(strip_lead(line)))
+    return (lead ~ /\[maintainer\]([ \t]|$)/)
+  }
+  BEGIN {
+    nf = split("complete every remaining unchecked task tasks item items in this the file list keep gates green after each cycle phase push pushing commit committing before locally throughout run full gate suite and ci on at all times still until done re read plan tasks", fw, " ")
+    for (k = 1; k <= nf; k++) FILLER[fw[k]] = 1
+  }
   {
     stripped = $0
     sub(/^[ \t]+/, "", stripped)
@@ -72,22 +141,55 @@ counts="$(printf '%s\n' "$content" | awk '
       next
     }
     if (in_fence) next
-    if ($0 ~ /^[ \t]*- \[[xX]\]/) {
-      checked++
-    } else if ($0 ~ /^[ \t]*- \[ \]/) {
-      unchecked++
-      items = items $0 "\n"
+    if ($0 ~ /^[ \t]*- \[[xX ]\]/) {
+      is_checked = ($0 ~ /^[ \t]*- \[[xX]\]/)
+      if (is_checked) checked++; else { unchecked++; items = items $0 "\n" }
+      # One classification for both states, so ticking a standing or
+      # [maintainer] line never reads as implementation progress and the
+      # implementation total (checked + unchecked) is the same at base and tip.
+      if (is_standing($0)) {
+        if (!is_checked) standing++
+      } else if (is_maintainer($0)) {
+        if (!is_checked) maint = maint $0 "\n"
+      } else {
+        id = lead_id($0)
+        if (id != "" && !(id in seen_id)) {
+          seen_id[id] = 1
+          impl_ids = impl_ids (impl_ids == "" ? "" : " ") id
+        }
+        if (is_checked) {
+          impl_checked++
+        } else {
+          impl_unchecked++
+          impl_items = impl_items $0 "\n"
+          if (id != "" && !(id in seen_uid)) {
+            seen_uid[id] = 1
+            impl_uids = impl_uids (impl_uids == "" ? "" : " ") id
+          }
+        }
+      }
     }
   }
   END {
-    printf "%d\x1f%d\x1f%s", checked+0, unchecked+0, items
+    printf "%d\x1f%d\x1f%d\x1f%d\x1f%d\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s", checked+0, unchecked+0, impl_checked+0, impl_unchecked+0, standing+0, impl_ids, impl_uids, items, impl_items, maint
   }
 ')"
 
-checked_count="${counts%%$'\x1f'*}"
-rest="${counts#*$'\x1f'}"
-unchecked_count="${rest%%$'\x1f'*}"
-unchecked_items="${rest#*$'\x1f'}"
+checked_count="${counts%%$'\x1f'*}";         counts="${counts#*$'\x1f'}"
+unchecked_count="${counts%%$'\x1f'*}";       counts="${counts#*$'\x1f'}"
+impl_checked_count="${counts%%$'\x1f'*}";    counts="${counts#*$'\x1f'}"
+impl_unchecked_count="${counts%%$'\x1f'*}";  counts="${counts#*$'\x1f'}"
+standing_count="${counts%%$'\x1f'*}";        counts="${counts#*$'\x1f'}"
+impl_ids="${counts%%$'\x1f'*}";              counts="${counts#*$'\x1f'}"
+impl_unchecked_ids="${counts%%$'\x1f'*}";    counts="${counts#*$'\x1f'}"
+unchecked_items="${counts%%$'\x1f'*}";       counts="${counts#*$'\x1f'}"
+impl_items="${counts%%$'\x1f'*}";            maint_items="${counts#*$'\x1f'}"
+# Mid-record items keep their trailing newline (only the last field's is
+# stripped by the command substitution); drop it so each heredoc below ends
+# with exactly one.
+unchecked_items="${unchecked_items%$'\n'}"
+impl_items="${impl_items%$'\n'}"
+maint_items="${maint_items%$'\n'}"
 
 printf 'checked-count=%s\n' "$checked_count"
 printf 'unchecked-count=%s\n' "$unchecked_count"
@@ -99,3 +201,18 @@ printf 'unchecked-items<<WING_COMMANDER_UNCHECKED_ITEMS_EOF\n'
 # unchecked task.
 [ -z "$unchecked_items" ] || printf '%s\n' "$unchecked_items"
 printf 'WING_COMMANDER_UNCHECKED_ITEMS_EOF\n'
+# Classified view (specs/117 data-model.md): standing instructions are in
+# neither impl-* count; [maintainer] tasks are listed but never counted.
+printf 'impl-checked-count=%s\n' "$impl_checked_count"
+printf 'impl-unchecked-count=%s\n' "$impl_unchecked_count"
+printf 'standing-count=%s\n' "$standing_count"
+# Space-separated ids of the implementation lines at this ref: every one
+# (checked or not), and the unchecked ones. Lines without an id are absent.
+printf 'impl-ids=%s\n' "$impl_ids"
+printf 'impl-unchecked-ids=%s\n' "$impl_unchecked_ids"
+printf 'impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF\n'
+[ -z "$impl_items" ] || printf '%s\n' "$impl_items"
+printf 'WING_COMMANDER_IMPL_ITEMS_EOF\n'
+printf 'maintainer-items<<WING_COMMANDER_MAINTAINER_ITEMS_EOF\n'
+[ -z "$maint_items" ] || printf '%s\n' "$maint_items"
+printf 'WING_COMMANDER_MAINTAINER_ITEMS_EOF\n'

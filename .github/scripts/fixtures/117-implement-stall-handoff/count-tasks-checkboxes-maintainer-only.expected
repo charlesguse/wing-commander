@@ -1,0 +1,17 @@
+checked-count=1
+unchecked-count=2
+unchecked-items<<WING_COMMANDER_UNCHECKED_ITEMS_EOF
+- [ ] T002 [maintainer] Re-drive one finalize run
+- [ ] T003 [maintainer] Note the release
+WING_COMMANDER_UNCHECKED_ITEMS_EOF
+impl-checked-count=1
+impl-unchecked-count=0
+standing-count=0
+impl-ids=T001
+impl-unchecked-ids=
+impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF
+WING_COMMANDER_IMPL_ITEMS_EOF
+maintainer-items<<WING_COMMANDER_MAINTAINER_ITEMS_EOF
+- [ ] T002 [maintainer] Re-drive one finalize run
+- [ ] T003 [maintainer] Note the release
+WING_COMMANDER_MAINTAINER_ITEMS_EOF

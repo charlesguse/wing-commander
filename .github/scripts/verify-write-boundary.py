@@ -288,7 +288,16 @@ def _run_read_back_step(steps, step_key, repo, base_sha, *, verdict,
            "CHECKED_BASE": checked_base, "CHECKED_TIP": checked_tip,
            "UNCHECKED_TIP": unchecked_tip, "REMAINING_TIP": items_tip,
            "WRITE_BOUNDARY_ALL_OOB": all_oob,
-           "WRITE_BOUNDARY_FINDINGS_JSON": findings_json}
+           "WRITE_BOUNDARY_FINDINGS_JSON": findings_json,
+           # specs/117: the stop rule's inputs, from the classified counts
+           # (these fixtures carry no [maintainer] or standing lines) and the
+           # blocker composite (no blocker written).
+           "IMPL_CHECKED_BASE": checked_base, "IMPL_CHECKED_TIP": checked_tip,
+           "IMPL_UNCHECKED_TIP": unchecked_tip, "MAX_ITERATIONS": "5",
+           "BLOCKER_VALID": "false", "BLOCKER_TEXT": "",
+           "DECIDE_SCRIPT": os.path.join(
+               os.path.dirname(os.path.abspath(__file__)), "..", "actions",
+               "_shared", "decide-implement-outcome.sh")}
     if extra_env:
         env.update(extra_env)
     env.update(read_spec_meta_env(repo))
@@ -296,15 +305,15 @@ def _run_read_back_step(steps, step_key, repo, base_sha, *, verdict,
 
 
 def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
-                    no_write_paths=".claude/", iteration=ITERATION):
+                    no_write_paths=".claude/", iteration=ITERATION, extra_env=None):
     return _run_read_back_step(
         steps, CYCLE_STEP, repo, base_sha, verdict=verdict,
         result_key="CYCLE_RESULT", result_value=cycle_result,
-        no_write_paths=no_write_paths, iteration=iteration)
+        no_write_paths=no_write_paths, iteration=iteration, extra_env=extra_env)
 
 
 def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
-                    no_write_paths=".claude/", iteration=ITERATION):
+                    no_write_paths=".claude/", iteration=ITERATION, extra_env=None):
     """Mirrors run_cycle_step, driving the shipped retry arm's own "Read
     back retry outcome" instead (PR #836 review, item 4 -- RETRY_STEP was
     loaded into STEPS_CACHE but never exercised by any scenario)."""
@@ -312,7 +321,28 @@ def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
         steps, RETRY_STEP, repo, base_sha, verdict=verdict,
         result_key="RETRY_RESULT", result_value=retry_result,
         no_write_paths=no_write_paths, iteration=iteration,
-        extra_env={"ESCALATION_MODEL": "escalation-model"})
+        extra_env={"ESCALATION_MODEL": "escalation-model", **(extra_env or {})})
+
+
+def check_dropped_ids_block_routing(steps, root):
+    """specs/117 (owner decisions A and C on #992): with every visible
+    unchecked task out of boundary but an id the stop rule still counts as
+    dropped (here carried from an earlier cycle), the remainder is not all
+    out of reach, so neither arm may set routed=true and end the loop."""
+    failures = []
+    base = "- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n"
+    for name, runner, key in (("cycle", run_cycle_step, "cycle_result"),
+                              ("retry", run_retry_step, "retry_result")):
+        _, repo, base_sha, _ = build_scenario(root, base_tasks_md=base, tip_tasks_md=base)
+        rc, out, outputs, _ = runner(steps, repo, base_sha, verdict="healthy",
+                                     extra_env={"CARRIED_DROPPED_IDS": "T002"},
+                                     **{key: "success"})
+        if rc != 0:
+            failures.append(f"dropped ids ({name}): read-back exited {rc}: {out.strip()}")
+        elif outputs.get("dropped-ids") != "T002" or outputs.get("routed") != "false":
+            failures.append(f"dropped ids ({name}): a dropped id must keep routed=false; got "
+                            f"dropped-ids={outputs.get('dropped-ids')!r} routed={outputs.get('routed')!r}")
+    return failures
 
 
 # PR #836 review-gate-round-1 item 1: drives the shipped "Dispatch next
@@ -847,8 +877,11 @@ def check_termination_and_reason(steps, root):
     if rc != 0:
         failures.append(f"(d) scenario 1: {CYCLE_STEP!r} exited {rc}: {out.strip()}")
     else:
-        if outputs.get("handoff") != "true" or outputs.get("routed") != "true":
-            failures.append(f"(d) scenario 1: expected handoff=true routed=true, "
+        # specs/117: routed no longer implies handoff -- a zero-progress cycle
+        # with no validated blocker continues, and the dispatch step ends the
+        # loop on routed=true itself (scenario 2 drives that).
+        if outputs.get("handoff") != "false" or outputs.get("routed") != "true":
+            failures.append(f"(d) scenario 1: expected handoff=false routed=true, "
                             f"got handoff={outputs.get('handoff')!r} "
                             f"routed={outputs.get('routed')!r}")
         reason = outputs.get("reason", "")
@@ -936,8 +969,12 @@ def check_termination_and_reason(steps, root):
     # Mixed unchecked set (one out-of-boundary, one ordinary).
     base3 = "- [ ] T001 edit `.claude/skills/foo/SKILL.md`\n- [ ] T002 write docs\n"
     work, repo, base_sha, _ = build_scenario(root, base_tasks_md=base3, tip_tasks_md=base3)
-    rc, out, outputs, _ = run_cycle_step(steps, repo, base_sha, verdict="healthy",
-                                         cycle_result="success")
+    # specs/117: a zero-progress cycle with no blocker hands off only at the
+    # iteration cap, so this mixed-stall scenario runs as the capped cycle.
+    rc, out, outputs, _ = _run_read_back_step(
+        steps, CYCLE_STEP, repo, base_sha, verdict="healthy",
+        result_key="CYCLE_RESULT", result_value="success",
+        extra_env={"MAX_ITERATIONS": str(ITERATION)})
     if rc != 0:
         failures.append(f"(d) scenario 3: {CYCLE_STEP!r} exited {rc}: {out.strip()}")
     else:
@@ -948,8 +985,9 @@ def check_termination_and_reason(steps, root):
             failures.append(f"(d) scenario 3: expected handoff=true (spec "
                             f"059's own hand-off condition, unaffected), got "
                             f"handoff={outputs.get('handoff')!r}")
-        expected_reason = ("the cycle checked nothing new, so the loop is "
-                           "ending here rather than dispatching another cycle")
+        expected_reason = (f"the iteration cap ({ITERATION}) was reached, so "
+                           "the loop is ending here rather than dispatching "
+                           "another cycle")
         if outputs.get("reason", "") != expected_reason:
             failures.append(f"(d) scenario 3: existing hand-off narrative "
                             f"changed -- got reason={outputs.get('reason')!r}")
@@ -996,8 +1034,8 @@ def check_termination_and_reason(steps, root):
     if rc != 0:
         failures.append(f"(d) scenario 5 (retry): {RETRY_STEP!r} exited {rc}: {out.strip()}")
     else:
-        if outputs.get("handoff") != "true" or outputs.get("routed") != "true":
-            failures.append(f"(d) scenario 5 (retry): expected handoff=true "
+        if outputs.get("handoff") != "false" or outputs.get("routed") != "true":
+            failures.append(f"(d) scenario 5 (retry): expected handoff=false "
                             f"routed=true, got handoff={outputs.get('handoff')!r} "
                             f"routed={outputs.get('routed')!r}")
         reason = outputs.get("reason", "")
@@ -2356,6 +2394,7 @@ def main():
             failures.extend(check_subfolder_classification(root))
             failures.extend(check_termination_and_reason(steps, root))
             failures.extend(check_route_fires_at_iteration_cap(steps, root))
+            failures.extend(check_dropped_ids_block_routing(steps, root))
             failures.extend(check_no_filing_on_truncated())
             failures.extend(check_idempotency(root))
             failures.extend(check_two_cycles_one_issue())

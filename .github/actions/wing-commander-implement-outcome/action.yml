@@ -1,0 +1,83 @@
+# wing-commander-implement-outcome — the implement loop's stop-rule inputs.
+#
+# The stage workflows' front door to `_shared/validate-implement-blocker.sh`
+# and `_shared/decide-implement-outcome.sh`, the one home of the loop's stop
+# rule (specs/117 research D4-D6). A published stage may not resolve
+# `_shared/` itself (Gate 60), so implement.yml's two read-back arms reach
+# both scripts through here: this composite validates the agent's blocker
+# record and hands back the path of the decision script, which the arm's
+# own read-back step runs once it has computed the cycle's facts.
+#
+# Constitution VII: part of the published surface; adding it is a
+# minor-version change at the next release.
+name: wing-commander-implement-outcome
+description: >-
+  Validates the blocker record an implement agent may write when it must
+  stop with implementation tasks unchecked (exact keys, closed kind list,
+  bounded single-line detail, a task that is still unchecked implementation
+  work) and returns the path of the deterministic stop-rule script. A
+  missing or malformed blocker is reported as invalid, never as a failure.
+inputs:
+  blocker-path:
+    description: "Path of the blocker JSON the agent may have written (runner temp, never the repository)."
+    required: true
+  ref:
+    description: "Git ref of the pushed tip the blocker's task is checked against."
+    required: true
+  path:
+    description: "Repository-relative path to tasks.md within that ref."
+    required: true
+  meta-ref:
+    description: >-
+      Git ref of the cycle's base. spec-meta.json beside tasks.md is read
+      there for dropped_task_ids, the ids earlier cycles dropped, so the
+      agent's own edit of the record cannot clear them. Empty skips the read.
+    required: false
+    default: ""
+outputs:
+  blocker-valid:
+    description: "true when the blocker record passed every check, else false."
+    value: ${{ steps.validate.outputs.blocker-valid }}
+  blocker-text:
+    description: "'<kind: detail (task)>' for a valid blocker, else empty."
+    value: ${{ steps.validate.outputs.blocker-text }}
+  blocker-invalid-reason:
+    description: "Why the blocker was rejected, else empty."
+    value: ${{ steps.validate.outputs.blocker-invalid-reason }}
+  decide-script:
+    description: "Absolute path of decide-implement-outcome.sh; run it with `bash`."
+    value: ${{ steps.validate.outputs.decide-script }}
+  carried-dropped-ids:
+    description: "Space-separated task ids in dropped_task_ids at meta-ref (pass as CARRIED_DROPPED_IDS), else empty."
+    value: ${{ steps.validate.outputs.carried-dropped-ids }}
+runs:
+  using: composite
+  steps:
+    - name: Validate implement blocker
+      id: validate
+      shell: bash
+      env:
+        BLOCKER_PATH: ${{ inputs.blocker-path }}
+        REF: ${{ inputs.ref }}
+        TASKS_PATH: ${{ inputs.path }}
+        META_REF: ${{ inputs.meta-ref }}
+      run: |
+        set -uo pipefail
+        # The script path goes out first: a validator failure (unreadable
+        # tasks.md) must not strand the caller without the stop-rule script.
+        echo "decide-script=$(cd "$GITHUB_ACTION_PATH/../_shared" && pwd)/decide-implement-outcome.sh" >> "$GITHUB_OUTPUT"
+        # Owner decision C on #992: ids an earlier cycle dropped stay
+        # outstanding until they are implementation work again. Only id-shaped
+        # strings pass, since they reach the stall comment.
+        carried=""
+        if [ -n "$META_REF" ]; then
+          carried="$(git show "$META_REF:$(dirname "$TASKS_PATH")/spec-meta.json" 2>/dev/null | jq -r '[(.dropped_task_ids // [])[]? | strings | select(test("^[TMtm][0-9]+[a-z]?$"))] | join(" ")' 2>/dev/null)" || carried=""
+        fi
+        echo "carried-dropped-ids=$carried" >> "$GITHUB_OUTPUT"
+        rc=0
+        out="$(bash "$GITHUB_ACTION_PATH/../_shared/validate-implement-blocker.sh" "$BLOCKER_PATH" "$REF" "$TASKS_PATH")" || rc=$?
+        # Consumed whether or not it validated: the retry arm must not
+        # re-read the primary arm's record.
+        rm -f "$BLOCKER_PATH"
+        [ "$rc" -eq 0 ] || exit "$rc"
+        printf '%s\n' "$out" >> "$GITHUB_OUTPUT"
