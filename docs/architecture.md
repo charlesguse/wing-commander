@@ -421,8 +421,8 @@ change to the tiering above.
   amendment, and — while `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is off, its
   default — every final PR; the bot cannot approve those, and never merges a
   spec PR, a plan PR or an amendment. The bot merges three classes only
-  (constitution X). The board loop merges the first two (spec 115) only
-  while `WING_COMMANDER_BOARD_AUTO_MERGE` is on and
+  (constitution X). The board loop merges the fix PR and the Spec Kit
+  upgrade PR (spec 115) only while `WING_COMMANDER_BOARD_AUTO_MERGE` is on and
   `WING_COMMANDER_BOARD_LOOP_PAUSED` is clear, re-derives every condition
   from a fresh snapshot of the exact head SHA, and hands any merge GitHub
   refuses to a maintainer
