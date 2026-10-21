@@ -19,6 +19,11 @@ The skill's thrash check must also CALL the module (US4 scenario 1): a
 skill script that drops the module and prints nothing would carry no copy
 and still pass the scan, so the skill script is required to import it.
 
+A pull request that edits only a skill script must run this gate, so
+lint-workflows.yml's pull_request paths must cover every scanned skill
+script; otherwise a copy pasted into thrash_signals.py merges green and
+turns main red on the next push.
+
 Each failure branch has a checked-in fixture in
 verify-convergence-single-home-fixtures/ (Constitution VIII): `bad-*` files
 must be rejected, `ok-*` files must pass. A scan that rejects no `bad-*`
@@ -147,8 +152,37 @@ def case_fixtures_are_judged_correctly():
         len(bad), len(ok)))
 
 
+def path_glob_matches(pattern, path):
+    """GitHub's paths-filter glob: `**` crosses `/`, `*` does not."""
+    regex = "".join(".*" if part == "**" else "[^/]*" if part == "*" else re.escape(part)
+                    for part in re.split(r"(\*\*|\*)", pattern))
+    return re.fullmatch(regex, path) is not None
+
+
+def case_pr_trigger_covers_the_skill_scripts():
+    import yaml
+    with open(os.path.join(ROOT, ".github", "workflows", "lint-workflows.yml"),
+              encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    on = doc.get("on", doc.get(True)) or {}
+    patterns = [p for p in ((on.get("pull_request") or {}).get("paths") or [])
+                if not p.startswith("!")]
+    if not path_glob_matches(".claude/skills/*/scripts/**", SKILL_CALLER) \
+            or path_glob_matches(".claude/skills/*/SKILL.md", SKILL_CALLER):
+        fail("the paths-filter matcher misjudges {0}; its verdict on "
+             "lint-workflows.yml proves nothing".format(SKILL_CALLER))
+        return
+    skill_scripts = [os.path.relpath(p, ROOT).replace(os.sep, "/") for p in tree_files()]
+    skill_scripts = [p for p in skill_scripts if p.startswith(".claude/skills/")]
+    for rel in skill_scripts or [SKILL_CALLER]:
+        if not any(path_glob_matches(p, rel) for p in patterns):
+            fail("lint-workflows.yml's pull_request paths do not cover {0}, so a "
+                 "pull request editing it never runs this gate".format(rel))
+
+
 def main():
     case_real_tree_has_no_copy()
+    case_pr_trigger_covers_the_skill_scripts()
     case_fixtures_are_judged_correctly()
     case_skill_calls_the_module()
     if failures:

@@ -119,6 +119,9 @@ on:
       # pointers at spec 117.
       - "specs/059-converged-means-tasks-done/contracts/convergence-signal.md"
       - ".claude/skills/spec-cross-reference/SKILL.md"
+      # verify-convergence-single-home.py scans every skill script, and its
+      # fixtures run thrash_signals.py's parity with wc_convergence.py.
+      - ".claude/skills/*/scripts/**"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:

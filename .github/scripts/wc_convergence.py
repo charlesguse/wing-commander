@@ -178,11 +178,13 @@ DIFF_FP_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64}|empty)$")
 
 def diff_fingerprint(base, head, cwd):
     """A fingerprint of the PR's own changes at head: `git patch-id
-    --stable` of its diff against the merge base, without context lines,
-    so a rebase or a merge of main that leaves those changes as they were
-    keeps it, and a push that changes them does not (the owner's decision
+    --verbatim` (the stable id, whitespace kept) of its diff against the
+    merge base, without context lines, so a rebase or a merge of main that
+    leaves those changes as they were keeps it, and a push that changes
+    them -- re-indenting a block included -- does not (the owner's decision
     on #994, post-split pass 2 candidate #2 (a)). "empty" for no diff;
-    None when git cannot compute it here."""
+    None when git cannot compute it here (a git without --verbatim, 2.39
+    and older, included)."""
     try:
         merge_base = git(["merge-base", rev(base, cwd), rev(head, cwd)], cwd).stdout.strip()
         patch = git(["-c", "core.quotePath=false", "diff", "--no-color", "--no-ext-diff",
@@ -190,7 +192,7 @@ def diff_fingerprint(base, head, cwd):
                      "--src-prefix=a/", "--dst-prefix=b/", merge_base, head], cwd).stdout
         if not patch:
             return "empty"
-        out = subprocess.run(["git", "patch-id", "--stable"], cwd=cwd, input=patch,
+        out = subprocess.run(["git", "patch-id", "--verbatim"], cwd=cwd, input=patch,
                              capture_output=True, text=True)
     except (SystemExit, OSError, ValueError):
         return None
@@ -715,6 +717,18 @@ def _inert(text):
     return str(text or "").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _code_span(text):
+    """text as one inline code span nothing in it can close: the reviewer's
+    path may carry backticks (a delimiter longer than any run inside, the
+    fence_for rule) or line breaks (a blank line would end the list item
+    and render the rest as live Markdown under the App's identity)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from board_spec_request_body import fence_for, split_long_backtick_runs
+    text = split_long_backtick_runs(re.sub(r"[\r\n]+", " ", text))
+    tick = fence_for(text)
+    return "{0} {1} {0}".format(tick, text)
+
+
 def _pct(value, signed=False):
     if value is None:
         return "n/a"
@@ -776,8 +790,9 @@ def render_handoff(decision):
             # The path is the reviewer's, and the hand-off is posted under
             # the App's identity: `<`/`>` as entities, so a path carrying
             # `<!-- ... -->` never reads back as an App-authored marker.
-            lines.append("- `{0}:{1}` {2}{3}".format(
-                _inert(f.get("file")), f.get("line") or "?", _inert(f.get("fingerprint", "")),
+            lines.append("- {0} {1}{2}".format(
+                _code_span("{0}:{1}".format(_inert(f.get("file")), f.get("line") or "?")),
+                _inert(f.get("fingerprint", "")),
                 " (recurring)" if f.get("fingerprint") in recurring else ""))
         if len(open_findings) > MAX_HANDOFF_FINDINGS:
             lines.append("- {0} more open in-scope finding(s) not listed.".format(

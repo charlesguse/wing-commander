@@ -14,7 +14,7 @@ Layer: consuming instrument. (**Analyze finding** and **Fold hold**, the publish
 | findings[].attributable | bool | derived: line valid at head |
 | count | int | `len(findings)` |
 | diff_lines | int ≥0, optional | the head's diff size against the base in lines, measured when the round's review is posted; growth reads it once a rebase has made `head_sha` unresolvable (owner decision F2 (b), #994). Absent on older records and when git could not measure it |
-| diff_fp | string, optional | `git patch-id --stable` of the head's diff against its merge base with the base, without context lines (`diff_fingerprint`), or `empty`; a 40/64-hex value or `empty`, anything else dropped. After a not-converging stop the lifecycle gate selects the PR again only when the current diff's fingerprint differs from the stopped round's (`rearmed_after_stop`; owner decision on #994, post-split pass 2 candidate #2 (a)). Absent on older records and when git could not compute it: the moved head re-arms, as before |
+| diff_fp | string, optional | `git patch-id --verbatim` (the stable id, whitespace kept) of the head's diff against its merge base with the base, without context lines (`diff_fingerprint`), or `empty`; a 40/64-hex value or `empty`, anything else dropped. After a not-converging stop the lifecycle gate selects the PR again only when the current diff's fingerprint differs from the stopped round's (`rearmed_after_stop`; owner decision on #994, post-split pass 2 candidate #2 (a)). Absent on older records and when git could not compute it: the moved head re-arms, as before |
 | signals | Convergence signals | computed, never agent-supplied |
 
 Persistence: appended to the loop's existing round marker (D3); additive fields.

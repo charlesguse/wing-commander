@@ -91,7 +91,17 @@ class DecideRules(unittest.TestCase):
         self.assertIn("<!-- wing-commander-not-converging: round=3 -->", text)
         self.assertIn("count-not-falling", text)
         self.assertIn("Unattributable findings: 1", text)
-        self.assertIn("`a.py:2`", text)
+        self.assertIn("``` a.py:2 ```", text)
+
+    def test_handoff_path_cannot_close_its_code_span(self):
+        # The path is the reviewer's: a backtick in it would close a
+        # one-backtick span and render the rest (a mention, a link) as live
+        # Markdown under the App's identity; a blank line would end the item.
+        d = wc.decide([rnd(1, 3), rnd(2, 3), rnd(3, 3)])
+        d["open_findings"] = [{"file": "a`@owner [x](https://e)`\n\n@owner", "line": 2,
+                               "fingerprint": "fp"}]
+        line = next(l for l in wc.render_handoff(d).splitlines() if "@owner" in l)
+        self.assertEqual(line, "- ``` a`@owner [x](https://e)` @owner:2 ``` fp")
 
 
 class RuleFixtures(unittest.TestCase):
@@ -587,6 +597,12 @@ class EvaluateInGit(GitBacked):
         self.assertNotEqual(rebased, h2)
         self.assertEqual(wc.diff_fingerprint(main2, rebased, self.repo), before)
         self.assertNotEqual(wc.diff_fingerprint(main2, pushed, self.repo), before)
+        # Whitespace is part of the change: a push that only re-indents
+        # the PR's own lines changes the diff, so it re-arms the loop.
+        self.run_git("checkout", "-q", "-b", "reindent", rebased)
+        self.write("main-only\na\nb\nc\n  pr1-fixed\npr2\nfix1-refixed\nfix2\n")
+        reindented = self.commit("re-indent")
+        self.assertNotEqual(wc.diff_fingerprint(main2, reindented, self.repo), before)
         self.assertEqual(wc.diff_fingerprint(base, base, self.repo), "empty")
         self.assertIsNone(wc.diff_fingerprint(base, "0" * 40, self.repo))
 
