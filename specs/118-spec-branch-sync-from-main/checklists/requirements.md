@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,5 +31,5 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain (FR-012 switching while lifecycles are in flight, FR-013 squash-merge interplay, FR-014 rebase-path workarounds). All three were raised as open questions by the issue itself; they are posted to #1074 for the clarify stage.
+- All three clarifications raised on #1074 are resolved (see the spec's Clarifications section): FR-012 applies the switch at run time to every in-flight branch, FR-013 keeps squash-merging as a documented assumption only, FR-014 keeps #1062's stored per-round diff size, adds no new rebase workarounds, and reports other history-derived signals as n/a with a reason.
 - The spec names git-level concepts (merge commit, force-push, SHA, rebase) because they are the domain of the feature itself, not an implementation choice.

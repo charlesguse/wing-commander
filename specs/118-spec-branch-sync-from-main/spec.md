@@ -8,6 +8,14 @@
 
 **Input**: User description: "Keep spec branches current by merging main into them (sync-from-main), selectable instead of rebase" (issue #1074). On every push to `main`, the rebase stage rebases each in-flight `spec/*` branch onto it and force-pushes with lease, so every branch commit gets a new SHA and the old SHAs leave the remote. Anything derived from a branch's history then breaks: spec 116's convergence signals that need earlier round heads (self-inflicted share, churn) read n/a after the first rebase; finalize's fold range starts at a pre-rebase SHA and cannot be resolved, so the fold log stops growing (#1068, #918); and SHAs recorded on PRs and issues (review ledgers, fold logs, "started from" heads) stop resolving. Proposal: add a second way to keep spec branches current that merges `main` into the branch and never rewrites its history, selected by a repository switch, with rebase remaining the default. Its name must read as syncing, not as a feature merge. Conflicts follow the same model as rebase (agent resolution, deterministic scope verification before publish, escalation on the lifecycle issue). Out of scope: changing how final PRs merge into `main`.
 
+## Clarifications
+
+### Session 2026-10-21
+
+- Q: Can a repository switch sync methods while lifecycles are in flight, and how are in-flight branches treated? → A: The switch is read at run time like the other `WING_COMMANDER_*` switches; every in-flight branch uses the new method from the next push to `main` (FR-012).
+- Q: Should merge sync rely on, enforce, or ignore final PRs being squash-merged? → A: Documented assumption only; merge sync adds no coupling to the final-merge method. If squash-merging stops, sync commits reaching `main` are part of that separate decision (FR-013).
+- Q: Should the rebase path keep and grow its history workarounds, or report n/a? → A: Keep the existing workaround (#1062's stored per-round diff size), add no new ones, and report the other history-derived signals as n/a with a reason saying rebase rewrites history and merge sync avoids it. Precedent: spec 116 F2 owner decision (#890 "Owner decisions") (FR-014).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A spec branch stays current without losing its history (Priority: P1)
@@ -39,6 +47,7 @@ An adopter who prefers linear spec branches does nothing and keeps today's rebas
 1. **Given** the switch is unset, **When** `main` receives a push, **Then** spec branches are rebased exactly as today.
 2. **Given** the switch is set to `merge`, **When** `main` receives a push, **Then** spec branches are synced by merging and none is force-pushed.
 3. **Given** the switch holds a value other than `rebase` or `merge`, **When** the sync runs, **Then** it fails before touching any branch and names the invalid value and the accepted values.
+4. **Given** lifecycles are in flight and the switch is changed from `rebase` to `merge` (or back), **When** `main` next receives a push, **Then** every in-flight spec branch is synced with the new method, regardless of the method in force when its lifecycle started.
 
 ---
 
@@ -80,8 +89,9 @@ Under merge sync, the review-convergence signals that need earlier round heads (
 - `main` moves again while a sync is in progress: the publish refuses to overwrite a remote head it did not start from (no force), and the next push to `main` brings the branch current.
 - The remote branch head changed between checkout and publish (another stage pushed): the publish is rejected rather than overwriting, and is retried on the next trigger.
 - A branch that tracks the pipeline's own checkout directory, or a lifecycle in a project subfolder (spec 114): the same refusals and project-folder scoping that apply to rebase apply to merge sync.
-- The switch is changed while lifecycles are in flight: behaviour governed by FR-012.
-- A repository that stops squash-merging final PRs while merge sync is on: behaviour governed by FR-013.
+- The switch is changed while lifecycles are in flight: every in-flight branch uses the new method from the next push to `main` (FR-012).
+- A repository that stops squash-merging final PRs while merge sync is on: nothing refuses or warns; sync commits may then reach `main`, which is part of that separate decision (FR-013).
+- Under rebase, a convergence report after a rebase: share and churn read n/a with the reason "rebase rewrites history; merge sync avoids it", while #1062's stored per-round diff size keeps working (FR-014).
 - A conflict resolution that is textually clean but leaves a file outside the conflict set different from a clean merge: refused by the scope check.
 
 ## Requirements *(mandatory)*
@@ -99,9 +109,9 @@ Under merge sync, the review-convergence signals that need earlier round heads (
 - **FR-009**: Merge sync MUST apply the same pre-sync refusals and scoping as rebase: refusing a branch that tracks the pipeline's own checkout directory, resolving spec names, and honouring project-subfolder lifecycles (spec 114).
 - **FR-010**: Merge sync MUST emit the same run reporting as rebase — execution log and metrics record artifacts, cost line, over-budget report, and agent-verdict handling — so watchdog and metrics consumers see no gap when a repository switches.
 - **FR-011**: History-derived consumers (review-convergence signals, finalize's fold range and fold log, recorded "started from" heads) MUST resolve their recorded SHAs under merge sync, and any diff they compute of the lifecycle's own work MUST exclude changes that arrived through sync commits from `main`.
-- **FR-012**: When the switch changes while lifecycles are in flight, the pipeline MUST [NEEDS CLARIFICATION: Can a repository switch methods while lifecycles are in flight, and if so how are branches already rebased (or already carrying sync commits) treated — apply the new method to every in-flight branch on the next push, pin each lifecycle to the method it started under, or refuse the switch while any lifecycle is open?]
-- **FR-013**: The relationship between merge sync and how final PRs reach `main` MUST be [NEEDS CLARIFICATION: Final PRs are squash-merged today so sync commits never reach `main`. Should merge sync rely on that as a documented assumption only, should it be enforced (e.g. merge sync refuses to run, or finalize refuses to merge, unless the final PR will be squash-merged), or is it acceptable for sync commits to land on `main` if squash-merging stops?]
-- **FR-014**: Under the rebase method, the history-derived signals that cannot survive a rebase MUST be handled as follows: [NEEDS CLARIFICATION: Should the rebase path keep its own workarounds (such as #1062's stored per-round diff size) and gain more where possible, or should it stop carrying workarounds and report those signals as n/a with an explicit "rebase rewrites history; use merge sync" reason?]
+- **FR-012**: The switch MUST be read at run time on every sync, like the other `WING_COMMANDER_*` switches; when it changes while lifecycles are in flight, the pipeline MUST apply the new method to every in-flight spec branch from the next push to `main`. Lifecycles are not pinned to the method they started under, and the switch is not refused while lifecycles are open. A branch that was previously rebased is merge-synced from its current head onward; a branch that already carries sync commits is rebased like any other branch once the switch returns to `rebase`.
+- **FR-013**: Merge sync MUST treat squash-merging of final PRs as a documented assumption only: it MUST NOT check, enforce or depend on how final PRs reach `main` (neither merge sync nor finalize refuses to run based on the merge method). If a repository stops squash-merging, sync commits reaching `main` are a consequence of that separate decision, not something this feature prevents.
+- **FR-014**: Under the rebase method, the pipeline MUST keep the existing workaround (#1062's stored per-round diff size) and MUST NOT add new rebase-path workarounds; every other history-derived signal that cannot survive a rebase (e.g. self-inflicted share, churn) MUST be reported as n/a with an explicit reason stating that rebase rewrites history and that merge sync avoids it.
 - **FR-015**: The documentation for adopters MUST describe both methods, the switch, its default, and the trade-off (linear branches vs. stable history), stating which layer (published contract vs. consuming instrument) each part describes.
 - **FR-016**: Every new deterministic check this feature adds (switch validation, no-force publish, scope verification for merge conflicts) MUST be reachable through the gate registry with checked-in fixtures for each failure branch (constitution VIII).
 
@@ -127,8 +137,8 @@ Under merge sync, the review-convergence signals that need earlier round heads (
 
 - The name defaults to "sync-from-main" (check/job title "Sync spec branch with main") from the issue's candidates; the plan may refine the wording but not toward "merge".
 - The switch's repository variable defaults to the name suggested in the issue, `WING_COMMANDER_SPEC_BRANCH_SYNC`, following the existing `WING_COMMANDER_*` convention.
-- Final PRs continue to be squash-merged (constitution X); changing that is out of scope (see FR-013 for how merge sync treats the assumption).
+- Final PRs continue to be squash-merged (constitution X); changing that is out of scope, and merge sync relies on it as a documented assumption only (FR-013).
 - The trigger is unchanged: the same push to `main` that drives rebase today drives merge sync.
 - Stage work branches (`plan/`, `tasks/`, `impl/`) are not in scope; only spec integration branches are synced.
 - The conflict-resolution agent, its model tier and turn ceiling, and the escalation format are reused from the rebase path rather than redesigned.
-- #1062's stored per-round diff size remains in place until FR-014 is settled.
+- #1062's stored per-round diff size remains in place under rebase (FR-014).
