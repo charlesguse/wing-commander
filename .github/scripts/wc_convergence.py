@@ -315,6 +315,14 @@ def compute_history(base, rounds, ledger, cwd):
     if git_ok:
         base, heads = resolved_heads
         origins = Origins(base, heads, cwd)
+        # Heads that all resolve can still be rewritten history (a rebase
+        # whose old heads another ref keeps): the rebased PR commits are
+        # then ancestors of the later heads only and would be labelled
+        # passK, as measure() warns. Attribution and churn are unknowable,
+        # the same as an unreachable head; growth reads the stored sizes.
+        if any(not origins._is_ancestor(heads[k - 1], heads[k])
+               for k in range(1, len(heads))):
+            git_ok = False
     # Growth and the first churn are measured from round 1's head. When the
     # earliest surviving record is a later round, they are unknowable: n/a,
     # never read against a baseline that is not round 1's.

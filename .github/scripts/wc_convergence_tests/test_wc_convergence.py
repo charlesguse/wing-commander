@@ -517,6 +517,26 @@ class EvaluateInGit(GitBacked):
         self.assertIsNone(d["signals"][-1]["growth"])
         self.assertEqual(d["tripped"], [])
 
+    def test_rewritten_history_with_reachable_old_heads_is_not_attributed(self):
+        # Round 1's head is still in the clone, but round 2's head was
+        # rebuilt on main without it: the PR's own lines must not read as
+        # self-inflicted (their commit is not an ancestor of round 1's head).
+        base, h0, h1, h2 = self.build()
+        self.run_git("checkout", "-q", "-b", "rebased", base)
+        self.write("a\nb\nc\npr1\npr2\n")
+        r0 = self.commit("pr, rebased")
+        self.write("a\nb\nc\npr1\npr2\nfix\n")
+        r1 = self.commit("pass 1, rebased")
+        records = [{"round": 1, "head_sha": h0, "findings": [], "diff_lines": 2},
+                   {"round": 2, "head_sha": r0, "findings": []}]
+        current = {"round": 3, "head_sha": r1,
+                   "findings": [{"fingerprint": "x", "file": "f.py", "line": 4}]}
+        d = wc.evaluate(records, current, base, self.repo)
+        self.assertFalse(d["git_ok"])
+        self.assertNotIn("self-inflicted", d["tripped"])
+        self.assertIsNone(d["signals"][-1]["self_inflicted_share"])
+        self.assertEqual(d["signals"][-1]["growth"], 0.5)
+
     def test_a_missing_round_one_record_leaves_growth_and_first_churn_unknown(self):
         base, h0, h1, h2 = self.build()
         records = [{"round": 3, "head_sha": h1, "findings": []}]
