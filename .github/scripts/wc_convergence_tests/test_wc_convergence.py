@@ -234,6 +234,41 @@ class GitBacked(unittest.TestCase):
         self.assertFalse(wc.validate_line("f.py", True, h0, self.repo))
         self.assertFalse(wc.validate_line("nope.py", 1, h0, self.repo))
 
+    def test_bytes_that_are_not_utf8_or_split_oddly_keep_lines_on_their_commits(self):
+        # A Latin-1 file must not crash evaluate, and a form feed (or \x1c,
+        # U+2028) inside a line must not shift later lines onto another
+        # commit: git output is split on \n alone.
+        def latin1(data):
+            with open(os.path.join(self.repo, "l.txt"), "wb") as fh:
+                fh.write(data)
+        self.run_git("init", "-q", "-b", "main")
+        self.write("a\n\x0c\x1c\u2028b\nc\n")
+        base = self.commit("main")
+        self.run_git("checkout", "-q", "-b", "pr")
+        latin1(b"caf\xe9\n")
+        h0 = self.commit("pr")
+        latin1(b"caf\xe9\nfix\xe9\n")
+        self.write("a\n\x0c\x1c\u2028b\nc\nfix1\n")
+        h1 = self.commit("pass 1")
+        latin1(b"caf\xe9\nfix\xe9 bis\n")
+        h2 = self.commit("pass 2")
+        self.assertTrue(wc.validate_line("l.txt", 2, h1, self.repo))
+        self.assertFalse(wc.validate_line("f.py", 5, h1, self.repo))
+        self.assertEqual(len(wc.blame_file(h1, "f.py", self.repo)), 4)
+        self.assertEqual(wc.blame_file(h1, "f.py", self.repo)[3], h1)
+        # The root commit blames as a boundary: ^ and 39 characters.
+        self.assertEqual([c[:39] for c in wc.blame_commits(h1, "f.py", 2, 3, self.repo)],
+                         [base[:39], base[:39], h1[:39]])
+        self.assertEqual(wc.removed_ranges(h1, h2, self.repo), [("l.txt", 2, 1)])
+        history = wc.compute_history(base, [
+            {"round": 1, "head_sha": h0, "findings": []},
+            {"round": 2, "head_sha": h1, "findings": [
+                {"fingerprint": "x", "file": "f.py", "line": 4},
+                {"fingerprint": "y", "file": "l.txt", "line": 2}]},
+            {"round": 3, "head_sha": h2, "findings": []}], None, self.repo)
+        self.assertEqual((history[1]["attributable"], history[1]["self_inflicted"]), (2, 2))
+        self.assertEqual(history[2]["churn"], 1)
+
     def test_measure_matches_skill_self_test(self):
         base, h0, h1, h2 = self.build()
         report = wc.measure(base, [h0, h1, h2], ["f.py:4", "f.py:6", "f.py:5", "f.py:2"],
@@ -603,6 +638,10 @@ class EvaluateInGit(GitBacked):
         self.write("main-only\na\nb\nc\n  pr1-fixed\npr2\nfix1-refixed\nfix2\n")
         reindented = self.commit("re-indent")
         self.assertNotEqual(wc.diff_fingerprint(main2, reindented, self.repo), before)
+        # So are line endings: the diff reaches patch-id as bytes.
+        self.write("main-only\na\nb\nc\npr1-fixed\r\npr2\r\nfix1-refixed\r\nfix2\r\n")
+        crlf = self.commit("crlf")
+        self.assertNotEqual(wc.diff_fingerprint(main2, crlf, self.repo), before)
         self.assertEqual(wc.diff_fingerprint(base, base, self.repo), "empty")
         self.assertIsNone(wc.diff_fingerprint(base, "0" * 40, self.repo))
 

@@ -52,12 +52,25 @@ SIGNALS = ("count-not-falling", "self-inflicted", "recurrence",
            "churn-streak", "growth")
 
 
-def git(args, cwd=None, check=True):
-    out = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True)
+def git(args, cwd=None, check=True, input=None):
+    # Bytes in, decoded here with surrogateescape: a file that is not UTF-8
+    # never raises, its paths round-trip into the next git call, and no
+    # newline is translated (text mode turns a lone \r, or \r\n, into \n).
+    out = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, input=input)
+    out.stdout = out.stdout.decode("utf-8", "surrogateescape")
+    out.stderr = out.stderr.decode("utf-8", "surrogateescape")
     if check and out.returncode != 0:
         raise SystemExit("wc_convergence: git {0} failed: {1}".format(
             " ".join(args), out.stderr.strip()))
     return out
+
+
+def _lines(text):
+    """git's output split on \n only. str.splitlines() also breaks on \f,
+    \v, \x1c-\x1e, \x85 and U+2028/9, which a source line can carry, and
+    would shift every later blame line onto the wrong commit."""
+    rows = text.split("\n")
+    return rows[:-1] if rows and rows[-1] == "" else rows
 
 
 def rev(ref, cwd):
@@ -102,7 +115,7 @@ def blame_commits(ref, path, start, count, cwd):
     if out.returncode != 0:
         return []
     commits = []
-    for line in out.stdout.splitlines():
+    for line in _lines(out.stdout):
         token = line.split(" ", 1)[0].lstrip("^")
         if token:
             commits.append(token)
@@ -116,7 +129,7 @@ def blame_file(ref, path, cwd):
     out = git(["blame", "-l", "-s", ref, "--", path], cwd, check=False)
     if out.returncode != 0:
         return []
-    return [line.split(" ", 1)[0].lstrip("^") for line in out.stdout.splitlines()]
+    return [line.split(" ", 1)[0].lstrip("^") for line in _lines(out.stdout)]
 
 
 def removed_ranges(old, new, cwd):
@@ -126,7 +139,7 @@ def removed_ranges(old, new, cwd):
     ranges = []
     path = None
     in_header = False
-    for line in out.splitlines():
+    for line in _lines(out):
         # A deleted line reading "-- x" shows up as "--- x" inside a hunk, so
         # "--- " names a file only in the header between "diff --git" and the
         # first "@@". Git ends the name with a tab when it contains a space.
@@ -154,7 +167,7 @@ def diff_size(base, head, cwd):
     merge_base = git(["merge-base", base, head], cwd).stdout.strip()
     out = git(["diff", "--numstat", "--no-renames", merge_base, head], cwd).stdout
     files = lines = 0
-    for row in out.splitlines():
+    for row in _lines(out):
         added, deleted, _path = row.split("\t", 2)
         files += 1
         if added != "-":
@@ -192,8 +205,8 @@ def diff_fingerprint(base, head, cwd):
                      "--src-prefix=a/", "--dst-prefix=b/", merge_base, head], cwd).stdout
         if not patch:
             return "empty"
-        out = subprocess.run(["git", "patch-id", "--verbatim"], cwd=cwd, input=patch,
-                             capture_output=True, text=True)
+        out = git(["patch-id", "--verbatim"], cwd, check=False,
+                  input=patch.encode("utf-8", "surrogateescape"))
     except (SystemExit, OSError, ValueError):
         return None
     ids = out.stdout.split()
