@@ -259,10 +259,7 @@ def main():
     if args.history:
         with open(args.history, encoding="utf-8") as fh:
             rounds = json.load(fh)
-        history = wc.compute_history(args.base, rounds, None, os.getcwd())
-        decision = wc.decide(history)
-        decision["open_findings"] = history[-1]["findings"] if history else []
-        decision["recurrences"] = history[-1]["recurrences"] if history else []
+        decision = wc.decide_history(args.base, rounds, None, os.getcwd())
         print(json.dumps(decision, indent=2) if args.json else
               (wc.render_handoff(decision) if decision["stop"] else "converging: no signal tripped"))
         return 0

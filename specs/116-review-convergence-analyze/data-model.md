@@ -13,6 +13,7 @@ Layer: consuming instrument. (**Analyze finding** and **Fold hold**, the publish
 | findings[].line | int \| null | validated at `head_sha`; null ⇒ unattributable |
 | findings[].attributable | bool | derived: line valid at head |
 | count | int | `len(findings)` |
+| diff_lines | int ≥0, optional | the head's diff size against the base in lines, measured when the round's review is posted; growth reads it once a rebase has made `head_sha` unresolvable (owner decision F2 (b), #994). Absent on older records and when git could not measure it |
 | signals | Convergence signals | computed, never agent-supplied |
 
 Persistence: appended to the loop's existing round marker (D3); additive fields.

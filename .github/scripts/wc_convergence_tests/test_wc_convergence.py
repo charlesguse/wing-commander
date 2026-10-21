@@ -326,6 +326,17 @@ class RoundRecords(unittest.TestCase):
             self.assertEqual(rec["count"], wc.MAX_RECORDED_FINDINGS)
             self.assertTrue(rec["findings"])
 
+    def test_a_full_record_with_its_diff_size_stays_bounded(self):
+        # F2 (b): the stored diff size is inside the MAX_RECORD_CHARS bound.
+        entries = wc.round_findings([self.finding("t%d" % i, "<" * 300, 1)
+                                     for i in range(wc.MAX_RECORDED_FINDINGS)], "42")
+        marker = wc.round_record_marker(5, "a" * 40, entries, 10 ** 12)
+        self.assertLessEqual(len(marker), wc.MAX_RECORD_CHARS)
+        rec = wc.read_round_records([self.review(marker, "t1")], self.BOT)[0]
+        self.assertEqual(rec["diff_lines"], 10 ** 12)
+        for bad in (None, -1, True, "9"):
+            self.assertNotIn("diff_lines", wc.round_record_marker(1, "h", [], bad))
+
     def test_marker_round_trip_newest_per_round(self):
         r1 = wc.round_record_marker(1, "aaa", wc.round_findings([self.finding("a", "x.py", 3)], "42"))
         r1b = wc.round_record_marker(1, "bbb", [])
@@ -477,6 +488,34 @@ class EvaluateInGit(GitBacked):
         self.assertFalse(d["git_ok"])
         self.assertEqual([s["round"] for s in d["signals"]], [1, 2])
         self.assertIsNone(d["signals"][-1]["growth"])
+
+    def test_recorded_diff_lines_measures_the_head_or_says_none(self):
+        base, h0, h1, h2 = self.build()
+        self.assertEqual(wc.recorded_diff_lines(base, h2, self.repo), 4)
+        self.assertIsNone(wc.recorded_diff_lines(base, "0" * 40, self.repo))
+        outside = tempfile.mkdtemp(dir=self.repo)
+        self.assertIsNone(wc.recorded_diff_lines("origin/main", "HEAD", os.path.join(outside)))
+
+    def test_stored_sizes_carry_growth_past_a_rebase(self):
+        # F2 (b), #994: rounds 1-2's heads were rebased away. Their stored
+        # sizes (1 and 2 lines) against h2's measured 4 trip growth at round
+        # 3; a malformed stored size is ignored, never read as a size.
+        base, h0, h1, h2 = self.build()
+        records = [{"round": 1, "head_sha": "1" * 40, "findings": [], "diff_lines": 1},
+                   {"round": 2, "head_sha": "2" * 40, "findings": [], "diff_lines": True}]
+        current = {"round": 3, "head_sha": h2, "findings": []}
+        d = wc.evaluate(records, current, base, self.repo)
+        self.assertFalse(d["git_ok"])
+        self.assertTrue(d["growth_recorded"])
+        self.assertEqual([s["growth"] for s in d["signals"]], [0.0, None, 3.0])
+        self.assertEqual(d["tripped"], ["growth"])
+        self.assertIsNone(d["signals"][-1]["churn"])
+        # A round 1 record without the field (an older round): n/a, as today.
+        del records[0]["diff_lines"]
+        d = wc.evaluate(records, current, base, self.repo)
+        self.assertFalse(d["growth_recorded"])
+        self.assertIsNone(d["signals"][-1]["growth"])
+        self.assertEqual(d["tripped"], [])
 
     def test_a_missing_round_one_record_leaves_growth_and_first_churn_unknown(self):
         base, h0, h1, h2 = self.build()

@@ -767,6 +767,9 @@ the share of findings on lines the loop's own commits wrote after round
 churn (a round rewriting an earlier round's lines), diff growth against
 round 1's head, and recurrence — from round records the `review` job
 appends to its own posted review (`wc_convergence.read_round_records`).
+Each record also stores its head's diff size, so growth survives a rebase
+of the branch; self-inflicted share and churn cannot, and read n/a once
+an earlier head is gone, which the hand-off says.
 From round 3, when the count did not fall, at least half the attributable
 findings are self-inflicted, a folded finding recurs, two rounds in a row
 churned, or the diff grew by more than half, the loop stops with outcome

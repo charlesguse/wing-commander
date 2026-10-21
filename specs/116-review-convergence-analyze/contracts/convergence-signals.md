@@ -9,11 +9,13 @@ validate_line(path, line, head, cwd) -> bool
 classify_recurrence(findings, ledger) -> (fresh, recurrences)
 decide(history, thresholds=THRESHOLDS, budget=None) -> {signals, tripped, stop, reason}
 round_findings(findings, issue) -> [{fingerprint, file, line, title}]   # in-scope only
-round_record_marker(round, head_sha, entries) -> "<!-- wing-commander-convergence-round: {...} -->"
+round_record_marker(round, head_sha, entries, diff_lines=None) -> "<!-- wing-commander-convergence-round: {...} -->"
+recorded_diff_lines(base, head, cwd) -> int | None                    # the record's diff_lines
 read_round_records(reviews, bot_login) -> [record]                     # newest per round
 evaluate(records, current, base, cwd, resolved=None, budget=None,
          resolved_from_history=False, pending=None, dismissed=None)
-    -> decision + {recurrences, git_ok, open_findings}
+    -> decision + {recurrences, git_ok, growth_recorded, baseline_missing, open_findings}
+decide_history(base, rounds, ledger, cwd) -> decision                 # `decide --history`, and the skill's --history
 render_handoff(decision) -> markdown
 ```
 `THRESHOLDS = {min_round: 3, self_inflicted_share: 0.5, consecutive_churn_rounds: 2, growth_ratio: 0.5}` — the only place these numbers live.
@@ -21,7 +23,7 @@ render_handoff(decision) -> markdown
 `budget` is the loop's own budget-stop round: a trip on that round names the budget (`reason: budget-spent`) and still lists the tripped signals; the budget alone never makes `decide` stop (the loop's own check does, FR-009).
 
 ## Round records
-Each loop appends one record per parsed round, last, to the review it posts on the PR: `{round, head_sha, findings: [{fingerprint, file, line}]}`. The record is at most `MAX_RECORD_CHARS` (20000) characters once encoded: entries past it are dropped, never the count. Only the App's own bot-authored reviews count, and only the last marker opener in a body. The lifecycle gate's ledger is its marker's `folded_fingerprints`. `evaluate`'s `dismissed` is the ledger's dismissed list: a dismissed finding raised again is not a recurrence, and `evaluate` subtracts dismissed entries from every round's count, the current round and the recorded rounds alike (`count − |dismissed ∩ entries|`), and leaves them out of `open_findings`, so count-not-falling and the hand-off read only findings the loop still owes; pending findings (fold task still open) stay counted. Neither automated loop feeds a dismissed list today (its one feed, a dropped fold, moved to #1066 with Story 3), so both pass none.
+Each loop appends one record per parsed round, last, to the review it posts on the PR: `{round, head_sha, count, findings: [{fingerprint, file, line}], diff_lines?}`. `diff_lines` is the reviewed head's diff size against the base in lines (`recorded_diff_lines(base, head, cwd)`, the measure growth uses), taken when the review is posted and left out when git cannot measure it. When any recorded head is unresolvable (a rebase or force-push), `compute_history` reads growth from the stored sizes, or measures a head that still resolves (the current one); a round 1 record without `diff_lines` (older rounds) leaves growth n/a, as before. Self-inflicted share and churn then read n/a: `evaluate` reports `git_ok: false` and `growth_recorded`, and the hand-off names which signals could not be computed and why. The record is at most `MAX_RECORD_CHARS` (20000) characters once encoded: entries past it are dropped, never the count. Only the App's own bot-authored reviews count, and only the last marker opener in a body. The lifecycle gate's ledger is its marker's `folded_fingerprints`. `evaluate`'s `dismissed` is the ledger's dismissed list: a dismissed finding raised again is not a recurrence, and `evaluate` subtracts dismissed entries from every round's count, the current round and the recorded rounds alike (`count − |dismissed ∩ entries|`), and leaves them out of `open_findings`, so count-not-falling and the hand-off read only findings the loop still owes; pending findings (fold task still open) stay counted. Neither automated loop feeds a dismissed list today (its one feed, a dropped fold, moved to #1066 with Story 3), so both pass none.
 
 A pending finding re-raised is not a recurrence, and it is not folded again. But it is still open, so a round whose only in-scope findings are pending is not `clean` (FR-003; the owner's decision on C4 of #1062's pass-8 review). The partition reports `findings` and posts no success status, and its `findings-open` and `pending-open` outputs count the pending findings. Its fold section is empty, so `wing-commander-fold-commit` commits nothing (`folded=false`), and nothing is dispatched. The round's report says the findings wait on earlier folds' unchecked tasks. A pending finding beside fresh ones adds to `findings-open` but is left out of the fold section.
 

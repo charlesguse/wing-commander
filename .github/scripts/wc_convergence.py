@@ -160,6 +160,24 @@ def diff_size(base, head, cwd):
     return {"files": files, "lines": lines}
 
 
+def recorded_diff_lines(base, head, cwd):
+    """head's diff size against base in lines, as growth measures it, for
+    the round record (owner decision F2 (b), #994); None when git cannot
+    measure it here (no repository, an unknown ref, no merge base). A
+    record without it falls back to measuring the head itself."""
+    try:
+        return diff_size(rev(base, cwd), rev(head, cwd), cwd)["lines"]
+    except (SystemExit, OSError, ValueError):
+        return None
+
+
+def _stored_diff_lines(rnd):
+    value = rnd.get("diff_lines")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
 def validate_line(path, line, head, cwd):
     """True only when 1 <= line <= number of lines of path at head."""
     if isinstance(line, bool) or not isinstance(line, int) or line < 1 or not path:
@@ -293,10 +311,10 @@ def compute_history(base, rounds, ledger, cwd):
     cwd = _toplevel(cwd)
     resolved_heads = _resolve_heads(base, rounds, cwd)
     git_ok = resolved_heads is not None
+    first_size = 0
     if git_ok:
         base, heads = resolved_heads
         origins = Origins(base, heads, cwd)
-        first_size = 0
     # Growth and the first churn are measured from round 1's head. When the
     # earliest surviving record is a later round, they are unknowable: n/a,
     # never read against a baseline that is not round 1's.
@@ -320,6 +338,19 @@ def compute_history(base, rounds, ledger, cwd):
                 size_of(head)
         except SystemExit:
             git_ok = False
+    # A rebase onto main (rebase.yml force-pushes every spec/* branch)
+    # leaves the earlier heads unresolvable: attribution and churn are then
+    # unknowable, but growth still reads each round's diff size as its
+    # record stored it at review time, or measures a head that survives
+    # (the current one). Round 1's size missing leaves growth n/a.
+    recorded_sizes = []
+    if not git_ok:
+        for rnd in rounds:
+            size = _stored_diff_lines(rnd)
+            if size is None:
+                size = recorded_diff_lines(base, rnd.get("head_sha") or "", cwd)
+            recorded_sizes.append(size)
+        first_size = recorded_sizes[0] if recorded_sizes else 0
     out = []
     for i, rnd in enumerate(rounds):
         attributable = self_inflicted = unattributable = 0
@@ -339,9 +370,15 @@ def compute_history(base, rounds, ledger, cwd):
         _, recurrences = classify_recurrence(rnd.get("findings", []), {
             "resolved": earlier, "dismissed": (ledger or {}).get("dismissed")})
         growth = churn = None
+        growth_source = None
+        if not git_ok and first_size and not baseline_missing \
+                and recorded_sizes[i] is not None:
+            growth = float(recorded_sizes[i]) / first_size - 1
+            growth_source = "recorded"
         if git_ok:
             size = size_of(heads[i])
             growth = (float(size) / first_size - 1) if first_size and not baseline_missing else None
+            growth_source = "git" if growth is not None else None
             if i:
                 churn = _churn(origins, heads, i, cwd)["total"]
             else:
@@ -359,6 +396,7 @@ def compute_history(base, rounds, ledger, cwd):
             "recurrences": [f.get("fingerprint") for f in recurrences],
             "findings": rnd.get("findings", []),
             "git_ok": git_ok,
+            "growth_source": growth_source,
             "baseline_missing": baseline_missing,
         })
     return out
@@ -464,10 +502,12 @@ def round_findings(findings, issue):
     return out
 
 
-def round_record_marker(round_, head_sha, entries):
+def round_record_marker(round_, head_sha, entries, diff_lines=None):
     """The HTML-comment marker a loop appends, LAST, to the review body it
     posts on the PR for one round (data-model "Review round record").
-    Titles stay out of it: the record carries identifiers only."""
+    Titles stay out of it: the record carries identifiers only, plus the
+    head's diff size against the base (recorded_diff_lines) when measured,
+    which growth reads once a rebase has made the head unresolvable."""
     # count is the round's whole in-scope count; only the first
     # MAX_RECORDED_FINDINGS entries are kept, so a later round's trend
     # reads count, never len(findings).
@@ -475,6 +515,8 @@ def round_record_marker(round_, head_sha, entries):
                "findings": [{"fingerprint": e["fingerprint"], "file": e["file"],
                              "line": e["line"]}
                             for e in entries[:MAX_RECORDED_FINDINGS]]}
+    if isinstance(diff_lines, int) and not isinstance(diff_lines, bool) and diff_lines >= 0:
+        payload["diff_lines"] = diff_lines
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from board_item_marker import marker_json
     # The file path is the reviewer's: marker_json keeps a `-->` in it
@@ -568,15 +610,31 @@ def evaluate(records, current, base, cwd, resolved=None, budget=None,
             for f in r.get("findings", []):
                 ledger["resolved"].setdefault(f.get("fingerprint"), r["round"])
     history = compute_history(base, rounds, ledger, cwd)
-    decision = decide(history, budget=budget)
-    decision["recurrences"] = history[-1]["recurrences"] if history else []
-    decision["git_ok"] = bool(history and history[-1].get("git_ok"))
-    decision["baseline_missing"] = bool(history and history[-1].get("baseline_missing"))
+    decision = _annotated(decide(history, budget=budget), history)
     # Identifiers only: the decision crosses job outputs, and the
     # reviewer's free-text title is never part of it.
     decision["open_findings"] = [
         {"fingerprint": f.get("fingerprint"), "file": f.get("file"), "line": f.get("line")}
         for f in current.get("findings", []) if f.get("fingerprint") not in dismissed]
+    return decision
+
+
+def _annotated(decision, history):
+    """decision plus what render_handoff reads off the history: the latest
+    round's recurrences, and which git-derived signals could be computed."""
+    decision["recurrences"] = history[-1]["recurrences"] if history else []
+    decision["git_ok"] = bool(history and history[-1].get("git_ok"))
+    decision["growth_recorded"] = any(r.get("growth_source") == "recorded" for r in history)
+    decision["baseline_missing"] = bool(history and history[-1].get("baseline_missing"))
+    return decision
+
+
+def decide_history(base, rounds, ledger, cwd):
+    """`decide --history`'s decision over a recorded history: the one the
+    review-until-clean skill's --history prints too (SC-003)."""
+    history = compute_history(base, rounds, ledger, cwd)
+    decision = _annotated(decide(history), history)
+    decision["open_findings"] = history[-1]["findings"] if history else []
     return decision
 
 
@@ -624,9 +682,17 @@ def render_handoff(decision):
     lines.append("Tripped: " + (", ".join(decision["tripped"]) or "none"))
     if decision.get("git_ok") is False:
         lines.append("")
-        lines.append("An earlier round's head is unreachable from this "
-                     "checkout, so self-inflicted share, churn and growth "
-                     "could not be computed.")
+        if decision.get("growth_recorded"):
+            lines.append("An earlier round's head is unreachable from this "
+                         "checkout (the branch was rebased or force-pushed), "
+                         "so self-inflicted share and churn could not be "
+                         "computed; growth is read from the diff size each "
+                         "round's record stored at review time.")
+        else:
+            lines.append("An earlier round's head is unreachable from this "
+                         "checkout (the branch was rebased or force-pushed), "
+                         "so self-inflicted share, churn and growth could not "
+                         "be computed: round 1's record stores no diff size.")
     if decision.get("baseline_missing"):
         lines.append("")
         lines.append("Round 1's record is missing, so growth and the first "
@@ -739,10 +805,7 @@ def main():
 
     rounds = _load_json(args.history)
     ledger = _load_json(args.ledger) if args.ledger else None
-    history = compute_history(args.base, rounds, ledger, os.getcwd())
-    decision = decide(history)
-    decision["open_findings"] = history[-1]["findings"] if history else []
-    decision["recurrences"] = history[-1]["recurrences"] if history else []
+    decision = decide_history(args.base, rounds, ledger, os.getcwd())
     if args.json:
         print(json.dumps(decision, indent=2))
     else:

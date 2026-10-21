@@ -37,8 +37,8 @@ def finding(title, path, line, in_scope=True):
             "fingerprint_basis": {"file_path": path, "gate_or_artifact": "g"}}
 
 
-def review(round_, head, entries, stamp):
-    return {"body": "review\n\n" + wc.round_record_marker(round_, head, entries),
+def review(round_, head, entries, stamp, diff_lines=None):
+    return {"body": "review\n\n" + wc.round_record_marker(round_, head, entries, diff_lines),
             "submitted_at": stamp, "user": {"login": BOT, "type": "Bot"}}
 
 
@@ -244,6 +244,38 @@ class LifecyclePartition(LoopRepo):
         decision = json.loads(base64.b64decode(out["convergence-b64"]))
         self.assertIn("count-not-falling", decision["tripped"])
 
+    def test_after_a_rebase_growth_reads_the_recorded_sizes(self):
+        # Owner decision F2 (b), #994: rebase.yml force-pushed the branch,
+        # so rounds 1 and 2's heads are gone. Their records' stored sizes
+        # (4 lines at round 1) against this head's 8 still trip growth;
+        # self-inflicted share and churn read n/a, and the hand-off says so.
+        gone1, gone2 = "1" * 40, "2" * 40
+        out = self.partition(3, self.h3, [finding("H", "f.py", 5)], [
+            review(1, gone1, [entry("A", "f.py", 4), entry("B", "f.py", 5),
+                              entry("C", "f.py", 6)], "t1", diff_lines=4),
+            review(2, gone2, [entry("D", "f.py", 4), entry("E", "f.py", 5)], "t2",
+                   diff_lines=6)])
+        self.assertEqual(out["outcome"], "not-converging")
+        decision = json.loads(base64.b64decode(out["convergence-b64"]))
+        self.assertEqual(decision["tripped"], ["growth"])
+        self.assertFalse(decision["git_ok"])
+        self.assertEqual([s["growth"] for s in decision["signals"]], [0.0, 0.5, 1.0])
+        self.assertEqual([s["churn"] for s in decision["signals"][1:]], [None, None])
+        handoff = wc.render_handoff(decision)
+        self.assertIn("self-inflicted share and churn could not be computed", handoff)
+        self.assertIn("growth is read from the diff size", handoff)
+
+    def test_after_a_rebase_records_without_sizes_leave_growth_unknown(self):
+        out = self.partition(3, self.h3, [finding("H", "f.py", 5)], [
+            review(1, "1" * 40, [entry("A", "f.py", 4), entry("B", "f.py", 5),
+                                 entry("C", "f.py", 6)], "t1"),
+            review(2, "2" * 40, [entry("D", "f.py", 4), entry("E", "f.py", 5)], "t2")])
+        self.assertEqual(out["outcome"], "findings")
+        decision = json.loads(base64.b64decode(out["convergence-b64"]))
+        self.assertIsNone(decision["signals"][-1]["growth"])
+        self.assertIn("self-inflicted share, churn and growth could not",
+                      wc.render_handoff(decision))
+
     def test_round_three_with_a_falling_count_on_original_lines_folds(self):
         out = self.partition(3, self.h3, [finding("H", "f.py", 5)], [
             review(1, self.h1, [entry("A", "f.py", 4), entry("B", "f.py", 5),
@@ -354,6 +386,19 @@ class BoardRound(LoopRepo):
         self.assertIn("Recurring findings", body)
         records = wc.read_round_records([{"body": body, "user": {"login": BOT, "type": "Bot"}}], BOT)
         self.assertEqual([(r["round"], r["head_sha"]) for r in records], [(3, self.h3)])
+        # F2 (b): the record stores this head's diff size against the base.
+        self.assertEqual(records[0]["diff_lines"], 8)
+
+    def test_lifecycle_review_body_records_the_diff_size(self):
+        self.git("checkout", "-q", self.h3)
+        self.write_temp("lifecycle-review-findings.json", [finding("A", "f.py", 5)])
+        self.run_shipped(LIFECYCLE, "Compose the review body", {
+            "PARSE_FAILED": "false", "DROPPED_COUNT": "0", "ROUND": "3",
+            "HEAD_SHA": self.h3, "ISSUE": ISSUE})
+        with open(os.path.join(self.runner_temp, "lifecycle-review-body.md"), encoding="utf-8") as fh:
+            body = fh.read()
+        records = wc.read_round_records([{"body": body, "user": {"login": BOT, "type": "Bot"}}], BOT)
+        self.assertEqual([(r["round"], r["diff_lines"]) for r in records], [(3, 8)])
 
 
 class ForgedRoundRecord(LoopRepo):

@@ -120,6 +120,7 @@ As a maintainer, I want the procedure for verifying a finding, refuting it again
 - **A round with zero in-scope findings.** That round is clean and the loop ends as today; no early-stop rule applies.
 - **A recurrence whose fingerprint matches a finding a human dismissed** (on the dismissed list), not one that was folded or fixed. It is not a recurrence: only a finding whose fix was folded or pushed earlier counts.
 - **The lifecycle review gate's kill switch is set.** The convergence signals do not run, because the gate does not run.
+- **The PR branch is rebased between rounds** (`rebase.yml` force-pushes every `spec/*` branch on each push to main, so an earlier round's head is gone from the checkout). Growth is still computed, from the diff size each round's record stored at review time. Self-inflicted share and churn cannot be: they need the earlier heads' ancestry and blame. They read n/a for the rest of the lifecycle, the count, recurrence and growth rules still apply, and the hand-off and report say which signals could not be computed and why (owner decision F2 (b), 2026-10-21, on #994; the root fix, a merge-from-main sync instead of a rebase, is #1074). A round 1 record that stores no size leaves growth n/a too.
 - **Both a `not-converging` trip and budget exhaustion fall on round 5.** The hand-off names the budget as the stop reason and still lists the tripped signals.
 
 ## Requirements *(mandatory)*
