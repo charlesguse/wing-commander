@@ -28,6 +28,8 @@ CLI:
       --head-sha SHA --issue I --findings F [--base REF] [--resolved fp,...] \\
       [--resolved-from-history] [--budget N] [--decision-out F] [--handoff-out F]
   wc_convergence.py render-handoff --decision F
+  wc_convergence.py rearmed --reviews F --bot-login L --round N \\
+      --head-sha SHA [--base REF]
 """
 import argparse
 import json
@@ -169,6 +171,51 @@ def recorded_diff_lines(base, head, cwd):
         return diff_size(rev(base, cwd), rev(head, cwd), cwd)["lines"]
     except (SystemExit, OSError, ValueError):
         return None
+
+
+DIFF_FP_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64}|empty)$")
+
+
+def diff_fingerprint(base, head, cwd):
+    """A fingerprint of the PR's own changes at head: `git patch-id
+    --stable` of its diff against the merge base, without context lines,
+    so a rebase or a merge of main that leaves those changes as they were
+    keeps it, and a push that changes them does not (the owner's decision
+    on #994, post-split pass 2 candidate #2 (a)). "empty" for no diff;
+    None when git cannot compute it here."""
+    try:
+        merge_base = git(["merge-base", rev(base, cwd), rev(head, cwd)], cwd).stdout.strip()
+        patch = git(["-c", "core.quotePath=false", "diff", "--no-color", "--no-ext-diff",
+                     "--no-textconv", "--no-renames", "--binary", "-U0",
+                     "--src-prefix=a/", "--dst-prefix=b/", merge_base, head], cwd).stdout
+        if not patch:
+            return "empty"
+        out = subprocess.run(["git", "patch-id", "--stable"], cwd=cwd, input=patch,
+                             capture_output=True, text=True)
+    except (SystemExit, OSError, ValueError):
+        return None
+    ids = out.stdout.split()
+    return ids[0] if out.returncode == 0 and ids and DIFF_FP_RE.match(ids[0]) else None
+
+
+def stored_diff_fingerprint(rnd):
+    """The record's diff fingerprint, or None when it stores none (an older
+    record, or one git could not measure) or a value no fingerprint has."""
+    value = (rnd or {}).get("diff_fp")
+    return value if isinstance(value, str) and DIFF_FP_RE.match(value) else None
+
+
+def rearmed_after_stop(records, stopped_round, base, head, cwd):
+    """Whether a PR stopped as not-converging at stopped_round, whose head
+    has since moved to head, is eligible for another round: only when its
+    own changes moved too. A record with no fingerprint, or a current diff
+    git cannot fingerprint, falls back to the head-moved rule (True)."""
+    stopped = next((r for r in records or [] if r.get("round") == stopped_round), None)
+    before = stored_diff_fingerprint(stopped)
+    if before is None:
+        return True
+    now = diff_fingerprint(base, head, cwd)
+    return now is None or now != before
 
 
 def _stored_diff_lines(rnd):
@@ -510,12 +557,14 @@ def round_findings(findings, issue):
     return out
 
 
-def round_record_marker(round_, head_sha, entries, diff_lines=None):
+def round_record_marker(round_, head_sha, entries, diff_lines=None, diff_fp=None):
     """The HTML-comment marker a loop appends, LAST, to the review body it
     posts on the PR for one round (data-model "Review round record").
     Titles stay out of it: the record carries identifiers only, plus the
     head's diff size against the base (recorded_diff_lines) when measured,
-    which growth reads once a rebase has made the head unresolvable."""
+    which growth reads once a rebase has made the head unresolvable, and
+    the reviewed diff's fingerprint (diff_fingerprint), which a stopped
+    loop's re-selection reads (rearmed_after_stop)."""
     # count is the round's whole in-scope count; only the first
     # MAX_RECORDED_FINDINGS entries are kept, so a later round's trend
     # reads count, never len(findings).
@@ -525,6 +574,8 @@ def round_record_marker(round_, head_sha, entries, diff_lines=None):
                             for e in entries[:MAX_RECORDED_FINDINGS]]}
     if isinstance(diff_lines, int) and not isinstance(diff_lines, bool) and diff_lines >= 0:
         payload["diff_lines"] = diff_lines
+    if stored_diff_fingerprint({"diff_fp": diff_fp}):
+        payload["diff_fp"] = diff_fp
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from board_item_marker import marker_json
     # The file path is the reviewer's: marker_json keeps a `-->` in it
@@ -780,11 +831,25 @@ def main():
 
     h = sub.add_parser("render-handoff", help="render a decision JSON as the hand-off")
     h.add_argument("--decision", required=True)
+
+    a = sub.add_parser("rearmed", help="after a not-converging stop at --round, whether "
+                                       "the head's diff moved (prints true or false)")
+    a.add_argument("--reviews", required=True,
+                   help="JSON file: the PR's reviews (REST shape) carrying the round records")
+    a.add_argument("--bot-login", required=True)
+    a.add_argument("--round", type=int, required=True)
+    a.add_argument("--head-sha", required=True)
+    a.add_argument("--base", default="origin/main")
     args = parser.parse_args()
 
     if args.cmd == "record":
         entries = round_findings(_load_json(args.findings), args.issue)
         print(round_record_marker(args.round, args.head_sha, entries))
+        return 0
+    if args.cmd == "rearmed":
+        records = read_round_records(_load_json(args.reviews), args.bot_login)
+        print("true" if rearmed_after_stop(records, args.round, args.base, args.head_sha,
+                                           os.getcwd()) else "false")
         return 0
     if args.cmd == "render-handoff":
         print(render_handoff(_load_json(args.decision)))

@@ -774,7 +774,13 @@ From round 3, when the count did not fall, at least half the attributable
 findings are self-inflicted, a folded finding recurs, two rounds in a row
 churned, or the diff grew by more than half, the loop stops with outcome
 `not-converging`: nothing is folded, the status is `failure`, and the
-budget-exhaustion hand-off is posted with the signal table. Reviewer
+budget-exhaustion hand-off is posted with the signal table. A moved head
+alone does not re-arm a `not-converging` stop: each record also stores a
+fingerprint of its reviewed diff (`git patch-id`), and `select` picks the
+PR again only when the current diff's differs, so `rebase.yml`'s
+force-push leaves the stop in place and a push that changes the PR's own
+changes re-arms it (a record without one falls back to the moved head).
+Reviewer
 findings carry an optional `line` for that attribution; a missing or
 out-of-range line makes the finding unattributable, never a guessed one.
 The arithmetic, the rules and their thresholds have one home,

@@ -4268,7 +4268,7 @@ jobs:
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_spec_request_body import fenced_section
           from board_spec_request_body import utf16_len
-          from wc_convergence import recorded_diff_lines, round_findings, round_record_marker, void_round_record_marker
+          from wc_convergence import diff_fingerprint, recorded_diff_lines, round_findings, round_record_marker, void_round_record_marker
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-review-findings.json"), encoding="utf-8") as fh:
@@ -4331,7 +4331,8 @@ jobs:
               # once a rebase has made this head unresolvable (F2, #994).
               head_sha = os.environ.get("HEAD_SHA", "")
               tail.append(round_record_marker(int(round_) + 1, head_sha, entries,
-                                              recorded_diff_lines("origin/main", head_sha, ".")))
+                                              recorded_diff_lines("origin/main", head_sha, "."),
+                                              diff_fingerprint("origin/main", head_sha, ".")))
           else:
               # -- see lifecycle-review-gate.yml
               tail.append(void_round_record_marker())

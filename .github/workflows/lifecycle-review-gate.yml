@@ -58,7 +58,8 @@ jobs:
   # contracts/lifecycle-review-gate-workflow.md job 2: lists open PRs,
   # filters to spec-meta.json.stage == "review", keeps those whose
   # review_gate.head_sha (if any) differs from the PR's current
-  # headRefOid, picks the oldest. Outputs are all empty on the common,
+  # headRefOid (and, after a not-converging stop, whose diff against main
+  # differs from the stopped round's -- spec 116 FR-008), picks the oldest. Outputs are all empty on the common,
   # cheapest-read case (nothing qualifies) -- SC-009's "at most one round
   # per SHA" starts here, before any billable step runs.
   select:
@@ -137,6 +138,7 @@ jobs:
           best_head_sha=""
           best_review_gate_head_sha=""
           best_created=""
+          main_fetched=""
 
           mapfile -t prs < <(gh pr list --state open \
             --json number,headRefName,headRefOid,createdAt,isCrossRepository,baseRefName \
@@ -208,6 +210,43 @@ jobs:
             fi
             recorded_head_sha="$(printf '%s' "$review_gate_json" | jq -r '.head_sha // empty')"
             [ "$recorded_head_sha" != "$head_sha" ] || continue
+
+            # Spec 116 FR-008 (the owner's decision on #994, post-split pass
+            # 2 candidate #2 (a)): after a not-converging stop a moved head
+            # alone does not re-arm the loop -- rebase.yml force-pushes every
+            # spec/* branch onto main, which would undo the stop with no
+            # human act. The PR is selected again only when its diff against
+            # main no longer matches the stopped round's recorded fingerprint
+            # (wc_convergence.rearmed_after_stop); a record with none falls
+            # back to the moved head. A failed reviews read or fetch stops
+            # select, as the marker read above does.
+            if [ "$(printf '%s' "$review_gate_json" | jq -r '.outcome // empty')" = "not-converging" ]; then
+              if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$number/reviews" --paginate --jq '.[]' \
+                | jq -s '.' > "$RUNNER_TEMP/lifecycle-select-reviews-$number.json"; then
+                echo "::error::lifecycle-review-gate select: could not read PR #$number's reviews for its round records -- select stops here rather than re-arm a not-converging stop unchecked."
+                exit 1
+              fi
+              if [ -z "$main_fetched" ]; then
+                unshallow=()
+                [ "$(git rev-parse --is-shallow-repository)" != "true" ] || unshallow=(--unshallow)
+                if ! git fetch --no-tags --quiet "${unshallow[@]}" origin "+refs/heads/main:refs/remotes/origin/main"; then
+                  echo "::error::lifecycle-review-gate select: could not fetch origin/main to fingerprint PR #$number's diff."
+                  exit 1
+                fi
+                main_fetched=true
+              fi
+              if ! rearmed="$(python3 .wc-pristine-repo/.github/scripts/wc_convergence.py rearmed \
+                --reviews "$RUNNER_TEMP/lifecycle-select-reviews-$number.json" --bot-login "$BOT_LOGIN" \
+                --round "$(printf '%s' "$review_gate_json" | jq -r '.round // 0')" \
+                --head-sha "$head_sha" --base origin/main)"; then
+                echo "::error::lifecycle-review-gate select: could not compare PR #$number's diff with its not-converging round's."
+                exit 1
+              fi
+              if [ "$rearmed" != "true" ]; then
+                echo "lifecycle-review-gate: PR #$number stopped as not-converging and its head moved, but its diff against main did not -- not selected." >> "$GITHUB_STEP_SUMMARY"
+                continue
+              fi
+            fi
 
             if [ -z "$best_created" ] || [[ "$created" < "$best_created" ]]; then
               best_number="$number"
@@ -840,7 +879,7 @@ jobs:
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_spec_request_body import fenced_section
           from board_spec_request_body import utf16_len
-          from wc_convergence import recorded_diff_lines, round_findings, round_record_marker, void_round_record_marker
+          from wc_convergence import diff_fingerprint, recorded_diff_lines, round_findings, round_record_marker, void_round_record_marker
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "lifecycle-review-findings.json"), encoding="utf-8") as fh:
@@ -885,7 +924,8 @@ jobs:
               # -- see board-loop.yml's "Compose the review body"
               tail.append(round_record_marker(int(round_), head_sha,
                                               round_findings(findings, os.environ["ISSUE"]),
-                                              recorded_diff_lines("origin/main", head_sha, ".")))
+                                              recorded_diff_lines("origin/main", head_sha, "."),
+                                              diff_fingerprint("origin/main", head_sha, ".")))
           else:
               tail.append(void_round_record_marker())
           MAX_SHOWN = 25
@@ -1602,7 +1642,7 @@ jobs:
             # specs/116 FR-006/FR-008: the budget-exhaustion hand-off, with
             # the signals that tripped. Nothing was folded.
             result="not-converging"
-            detail="$(printf 'The review loop is not converging, so it stops before the round budget with %s in-scope finding(s) still open; nothing was folded. This PR is not selected again until a human intervenes.\n\n%s' "${FINDINGS_OPEN:-0}" "$handoff")"
+            detail="$(printf 'The review loop is not converging, so it stops before the round budget with %s in-scope finding(s) still open; nothing was folded. This PR is not selected again until its diff against main changes: a rebase or a merge of main that leaves its own changes as they were does not re-arm the review; a push that changes them does (or any head move, when the record of this round stores no diff fingerprint or git cannot compute one).\n\n%s' "${FINDINGS_OPEN:-0}" "$handoff")"
           else
             result="findings"
             detail="${IN_SCOPE_COUNT:-0} in-scope and ${OUT_OF_SCOPE_COUNT:-0} out-of-scope finding(s) were posted on PR #$PR_NUMBER. In-scope survivors (after dedup) were folded into tasks.md and re-dispatched implement; out-of-scope survivors were filed as their own issue(s). ${FINDINGS_OPEN:-0} in-scope finding(s) from this round remain open."

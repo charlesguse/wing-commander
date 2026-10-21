@@ -21,6 +21,7 @@ sys.path.insert(0, SCRIPTS)
 import wc_convergence as wc  # noqa: E402
 from wc_review_finding_fingerprint import fingerprint  # noqa: E402
 from wc_shell_harness import find_step, resolve_bash, run_step  # noqa: E402
+import wc_lifecycle_review_marker as wc_marker  # noqa: E402
 
 LIFECYCLE = os.path.join(ROOT, ".github", "workflows", "lifecycle-review-gate.yml")
 BOARD = os.path.join(ROOT, ".github", "workflows", "board-loop.yml")
@@ -288,7 +289,7 @@ class LifecyclePartition(LoopRepo):
 class LifecycleReport(LoopRepo):
     STEP = "Compose and post the round's outcome"
 
-    def post(self, folded="true", pending_open="0", recurrences=""):
+    def post(self, folded="true", pending_open="0", recurrences="", outcome="findings"):
         bindir = os.path.join(self.tmp.name, "bin")
         os.makedirs(bindir, exist_ok=True)
         sent = os.path.join(self.tmp.name, "sent.txt")
@@ -300,7 +301,7 @@ class LifecycleReport(LoopRepo):
             "GH_TOKEN": "x", "GITHUB_REPOSITORY": "o/r", "ISSUE": ISSUE, "PR_NUMBER": "7",
             "HEAD_SHA": self.h2, "REVIEW_RESULT": "success", "PARSE_FAILED": "false",
             "IN_SCOPE_COUNT": "1", "OUT_OF_SCOPE_COUNT": "0", "ROUND": "2",
-            "DISPOSITION_RESULT": "success", "DISPOSITION_OUTCOME": "findings",
+            "DISPOSITION_RESULT": "success", "DISPOSITION_OUTCOME": outcome,
             "FINDINGS_OPEN": "1", "FOLDED_FINGERPRINTS": "", "FILED_FINGERPRINTS": "",
             "CONVERGENCE_B64": "", "RECURRENCES": recurrences, "FOLDED": folded,
             "PENDING_OPEN": pending_open,
@@ -323,6 +324,102 @@ class LifecycleReport(LoopRepo):
         self.assertIn("still unchecked in tasks.md", body)
         self.assertIn("nothing was folded again", body)
 
+    def test_a_not_converging_stop_names_what_re_arms_it(self):
+        # select re-arms it on a changed diff, never on a rebase alone
+        # (#994, post-split pass 2 candidate #2 (a)): "until a human
+        # intervenes" was false once rebase.yml moved the head.
+        body = self.post(folded="", outcome="not-converging")
+        self.assertIn("not selected again until its diff against main changes", body)
+        self.assertIn("a rebase or a merge of main that leaves its own changes as they were "
+                      "does not re-arm the review", body)
+        self.assertNotIn("until a human intervenes", body)
+
+
+class LifecycleSelect(LoopRepo):
+    """The owner's decision on #994 (post-split pass 2, candidate #2 (a)):
+    after a not-converging stop, select picks the PR again only when its
+    diff against main moved, never on a rebase alone."""
+    STEP = "Fetch open PRs and select the next lifecycle review candidate"
+
+    def setUp(self):
+        super().setUp()
+        remote = os.path.join(self.tmp.name, "remote.git")
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", remote], check=True,
+                       capture_output=True)
+        self.git("remote", "add", "origin", remote)
+        shared = os.path.join(self.repo, ".wc-pristine-repo", ".github", "actions", "_shared")
+        os.makedirs(shared)
+        for name in ("read-spec-meta.sh", "project-name.sh", "kv.sh"):
+            shutil.copyfile(os.path.join(ROOT, ".github", "actions", "_shared", name),
+                            os.path.join(shared, name))
+        self.meta = json.dumps({"spec_dir": "specs/001-x", "stage": "review", "issue": int(ISSUE)})
+        self.stopped = self.pr_commit("pr1-fixed\nfix1\n", "")
+        self.git("push", "-q", "origin", "main", "spec/001-x")
+
+    def pr_commit(self, pr_lines, main_lines):
+        os.makedirs(os.path.join(self.repo, "specs", "001-x"), exist_ok=True)
+        with open(os.path.join(self.repo, "specs", "001-x", "spec-meta.json"), "w", encoding="utf-8") as fh:
+            fh.write(self.meta + "\n")
+        self.git("add", "specs")
+        return self.commit(main_lines + "a\nb\nc\n" + pr_lines)
+
+    def rebase_onto_new_main(self, pr_lines):
+        """main gains a line above the PR's; the PR is rebuilt on it and
+        force-pushed, as rebase.yml does."""
+        self.git("checkout", "-q", "main")
+        main2 = self.commit("main-only\na\nb\nc\n")
+        self.git("checkout", "-q", "-B", "spec/001-x", main2)
+        head = self.pr_commit(pr_lines, "main-only\n")
+        self.git("push", "-q", "-f", "origin", "main", "spec/001-x")
+        return head
+
+    def select(self, head, record_fp=True, outcome="not-converging"):
+        fp = wc.diff_fingerprint(self.base, self.stopped, self.repo) if record_fp else None
+        record = {"body": "review\n\n" + wc.round_record_marker(3, self.stopped, [], 2, fp),
+                  "submitted_at": "t3", "user": {"login": BOT, "type": "Bot"}}
+        gate = wc_marker.write_marker(3, self.stopped, outcome, 1, [], [], None)
+        comment = {"body": "round 3\n\n" + gate, "created_at": "t3",
+                   "user": {"login": BOT, "type": "Bot"}}
+        pr = {"number": 7, "headRefName": "spec/001-x", "headRefOid": head,
+              "createdAt": "2026-01-01T00:00:00Z", "isCrossRepository": False, "baseRefName": "main"}
+        bindir = os.path.join(self.tmp.name, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        data = {}
+        for name, obj in (("pr", pr), ("comment", comment), ("review", record)):
+            data[name] = os.path.join(self.tmp.name, name + ".json")
+            with open(data[name], "w", encoding="utf-8") as fh:
+                json.dump(obj, fh)
+        stub = os.path.join(bindir, "gh")
+        with open(stub, "w", encoding="utf-8") as fh:
+            fh.write("#!/usr/bin/env bash\n"
+                     "case \"$1 $2\" in\n"
+                     "  'pr list') jq -r '@base64' '{pr}' ;;\n"
+                     "  'api repos/o/r/issues/{issue}/comments') jq -c . '{comment}' ;;\n"
+                     "  'api repos/o/r/pulls/7/reviews') jq -c . '{review}' ;;\n"
+                     "  *) exit 1 ;;\n"
+                     "esac\n".format(issue=ISSUE, **data))
+        os.chmod(stub, os.stat(stub).st_mode | stat.S_IEXEC)
+        return self.run_shipped(LIFECYCLE, self.STEP, {
+            "GH_TOKEN": "x", "GITHUB_REPOSITORY": "o/r", "BOT_LOGIN": BOT,
+            "PATH": bindir + os.pathsep + os.environ["PATH"]}, path_prepend=bindir)["pr-number"]
+
+    def test_a_rebase_alone_does_not_re_arm_a_not_converging_stop(self):
+        head = self.rebase_onto_new_main("pr1-fixed\nfix1\n")
+        self.assertNotEqual(head, self.stopped)
+        self.assertEqual(self.select(head), "")
+
+    def test_a_push_that_changes_the_diff_re_arms_it(self):
+        head = self.rebase_onto_new_main("pr1-fixed\nfix1\nhuman\n")
+        self.assertEqual(self.select(head), "7")
+
+    def test_a_record_without_a_fingerprint_falls_back_to_the_moved_head(self):
+        head = self.rebase_onto_new_main("pr1-fixed\nfix1\n")
+        self.assertEqual(self.select(head, record_fp=False), "7")
+
+    def test_other_outcomes_still_re_arm_on_a_moved_head(self):
+        head = self.rebase_onto_new_main("pr1-fixed\nfix1\n")
+        self.assertEqual(self.select(head, outcome="findings"), "7")
+        self.assertEqual(self.select(self.stopped, outcome="findings"), "")
 
 class BoardRound(LoopRepo):
     DECIDE = "Decide the round outcome"
@@ -388,6 +485,9 @@ class BoardRound(LoopRepo):
         self.assertEqual([(r["round"], r["head_sha"]) for r in records], [(3, self.h3)])
         # F2 (b): the record stores this head's diff size against the base.
         self.assertEqual(records[0]["diff_lines"], 8)
+        # And the reviewed diff's fingerprint, which select reads after a
+        # not-converging stop (#994, post-split pass 2 candidate #2 (a)).
+        self.assertEqual(records[0]["diff_fp"], wc.diff_fingerprint(self.base, self.h3, self.repo))
 
     def test_lifecycle_review_body_records_the_diff_size(self):
         self.git("checkout", "-q", self.h3)
@@ -399,6 +499,7 @@ class BoardRound(LoopRepo):
             body = fh.read()
         records = wc.read_round_records([{"body": body, "user": {"login": BOT, "type": "Bot"}}], BOT)
         self.assertEqual([(r["round"], r["diff_lines"]) for r in records], [(3, 8)])
+        self.assertEqual(records[0]["diff_fp"], wc.diff_fingerprint(self.base, self.h3, self.repo))
 
 
 class ForgedRoundRecord(LoopRepo):

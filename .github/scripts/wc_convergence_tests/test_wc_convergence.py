@@ -337,6 +337,20 @@ class RoundRecords(unittest.TestCase):
         for bad in (None, -1, True, "9"):
             self.assertNotIn("diff_lines", wc.round_record_marker(1, "h", [], bad))
 
+    def test_the_record_keeps_a_diff_fingerprint_and_drops_a_malformed_one(self):
+        fp = "a" * 40
+        rec = json.loads(wc.ROUND_MARKER_RE.search(wc.round_record_marker(1, "h", [], 3, fp)).group(1))
+        self.assertEqual(rec["diff_fp"], fp)
+        for bad in (None, "", "-->" + fp, "A" * 40, 7):
+            rec = json.loads(wc.ROUND_MARKER_RE.search(wc.round_record_marker(1, "h", [], 3, bad)).group(1))
+            self.assertNotIn("diff_fp", rec)
+        entries = wc.round_findings([self.finding("t%d" % i, "<" * 300, 1)
+                                     for i in range(wc.MAX_RECORDED_FINDINGS)], "42")
+        marker = wc.round_record_marker(5, "a" * 40, entries, 10 ** 12, "b" * 64)
+        self.assertLessEqual(len(marker), wc.MAX_RECORD_CHARS)
+        self.assertEqual(wc.read_round_records([self.review(marker, "t1")], self.BOT)[0]["diff_fp"],
+                         "b" * 64)
+
     def test_marker_round_trip_newest_per_round(self):
         r1 = wc.round_record_marker(1, "aaa", wc.round_findings([self.finding("a", "x.py", 3)], "42"))
         r1b = wc.round_record_marker(1, "bbb", [])
@@ -549,6 +563,63 @@ class EvaluateInGit(GitBacked):
         d = wc.evaluate([{"round": 1, "head_sha": h0, "findings": []}],
                         {"round": 2, "head_sha": h1, "findings": []}, base, self.repo)
         self.assertFalse(d["baseline_missing"])
+
+    def rebase_onto_new_main(self, base):
+        """main gains a line above the PR's, and the PR is replayed onto it
+        as rebase.yml does (rebased); pushed also changes the PR's own
+        lines, as a human push would. Returns (main2, rebased, pushed)."""
+        self.run_git("checkout", "-q", "-b", "main2", base)
+        self.write("main-only\na\nb\nc\n")
+        main2 = self.commit("main moves")
+        pr = "main-only\na\nb\nc\npr1-fixed\npr2\nfix1-refixed\nfix2\n"
+        self.write(pr)
+        rebased = self.commit("pr, rebased")
+        self.write(pr + "human\n")
+        pushed = self.commit("a human push")
+        return main2, rebased, pushed
+
+    def test_diff_fingerprint_survives_a_rebase_and_moves_with_the_diff(self):
+        # The owner's decision on #994 (post-split pass 2, candidate #2 (a)).
+        base, h0, h1, h2 = self.build()
+        before = wc.diff_fingerprint(base, h2, self.repo)
+        self.assertRegex(before, r"^[0-9a-f]{40}$")
+        main2, rebased, pushed = self.rebase_onto_new_main(base)
+        self.assertNotEqual(rebased, h2)
+        self.assertEqual(wc.diff_fingerprint(main2, rebased, self.repo), before)
+        self.assertNotEqual(wc.diff_fingerprint(main2, pushed, self.repo), before)
+        self.assertEqual(wc.diff_fingerprint(base, base, self.repo), "empty")
+        self.assertIsNone(wc.diff_fingerprint(base, "0" * 40, self.repo))
+
+    def test_a_not_converging_stop_rearms_only_when_the_diff_moves(self):
+        base, h0, h1, h2 = self.build()
+        stopped = [{"round": 3, "head_sha": h2, "findings": [],
+                    "diff_fp": wc.diff_fingerprint(base, h2, self.repo)}]
+        main2, rebased, pushed = self.rebase_onto_new_main(base)
+        self.assertFalse(wc.rearmed_after_stop(stopped, 3, main2, rebased, self.repo))
+        self.assertTrue(wc.rearmed_after_stop(stopped, 3, main2, pushed, self.repo))
+        # No fingerprint (an older record, or none recorded for that round),
+        # a malformed one, or a diff git cannot fingerprint: the moved head.
+        self.assertTrue(wc.rearmed_after_stop(stopped, 2, main2, rebased, self.repo))
+        self.assertTrue(wc.rearmed_after_stop([dict(stopped[0], diff_fp=None)], 3,
+                                              main2, rebased, self.repo))
+        self.assertTrue(wc.rearmed_after_stop([dict(stopped[0], diff_fp="x" * 40)], 3,
+                                              main2, rebased, self.repo))
+        self.assertTrue(wc.rearmed_after_stop(stopped, 3, main2, "0" * 40, self.repo))
+
+    def test_cli_rearmed_reads_the_stopped_rounds_record(self):
+        base, h0, h1, h2 = self.build()
+        reviews = os.path.join(self.repo, "reviews.json")
+        with open(reviews, "w", encoding="utf-8") as fh:
+            json.dump([{"body": wc.round_record_marker(
+                3, h2, [], 4, wc.diff_fingerprint(base, h2, self.repo)),
+                "submitted_at": "t3", "user": {"login": "bot[bot]", "type": "Bot"}}], fh)
+        main2, rebased, _ = self.rebase_onto_new_main(base)
+        import subprocess
+        out = subprocess.run([sys.executable, os.path.join(os.path.dirname(HERE), "wc_convergence.py"),
+                              "rearmed", "--reviews", reviews, "--bot-login", "bot[bot]",
+                              "--round", "3", "--head-sha", rebased, "--base", main2],
+                             cwd=self.repo, capture_output=True, text=True, check=True)
+        self.assertEqual(out.stdout.strip(), "false")
 
     def test_cli_evaluate_writes_outputs_and_handoff(self):
         base, h0, h1, h2 = self.build()
