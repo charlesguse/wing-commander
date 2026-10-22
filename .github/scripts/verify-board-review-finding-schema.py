@@ -69,6 +69,16 @@ def _validate_boolean(value, where):
     return None
 
 
+def _validate_integer(value, spec, where):
+    # bool is an int subclass in Python; JSON true is not an integer.
+    if isinstance(value, bool) or not isinstance(value, int):
+        return "{0} must be an integer, got {1}".format(where, type(value).__name__)
+    minimum = spec.get("minimum")
+    if minimum is not None and value < minimum:
+        return "{0} must be at least {1}, got {2}".format(where, minimum, value)
+    return None
+
+
 def _validate_array(value, spec, where):
     if not isinstance(value, list):
         return "{0} must be an array, got {1}".format(where, type(value).__name__)
@@ -114,6 +124,8 @@ def _validate_value(value, spec, where):
         return _validate_string(value, spec, where)
     if kind == "boolean":
         return _validate_boolean(value, where)
+    if kind == "integer":
+        return _validate_integer(value, spec, where)
     return None
 
 
@@ -122,6 +134,14 @@ def validate_finding(obj):
     item shape, else (False, reason) naming the first field that failed."""
     if not isinstance(obj, dict):
         return False, "finding must be a JSON object, got {0}".format(type(obj).__name__)
+    # spec 116 FR-005: an invalid optional `line` makes the finding
+    # unattributable, never rejects it -- dropping a real in-scope finding
+    # over its line number could leave a round reading clean. The bad line
+    # is removed from `obj` in place, so the caller keeps the finding
+    # without it.
+    if "line" in obj and _validate_value(
+            obj["line"], ITEM_SCHEMA["properties"]["line"], "finding.line"):
+        del obj["line"]
     err = _validate_value(obj, ITEM_SCHEMA, "finding")
     if err:
         return False, err
@@ -134,7 +154,9 @@ def validate_finding(obj):
 # fingerprint_basis) -- each rejected with the missing field named
 # (FR-064's own bullet-5 enumeration for this gate), plus two titles that
 # are not a single line (#583): an embedded LF, and a trailing LF alone;
-# and a lone surrogate in `what`, which cannot be encoded as UTF-8.
+# and a lone surrogate in `what`, which cannot be encoded as UTF-8; plus
+# spec 116's optional `line`: present and valid, and zero or not an
+# integer -- both kept, with the bad line dropped (FR-005).
 # ----------------------------------------------------------------------------
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests", "board-review-finding-schema")
@@ -144,8 +166,8 @@ def _fixture_files():
     if not os.path.isdir(FIXTURES_DIR):
         return []
     found = sorted(glob.glob(os.path.join(FIXTURES_DIR, "*.json")))
-    if len(found) != 9:
-        sys.exit("::error::board-review-finding-schema: expected exactly 9 "
+    if len(found) != 12:
+        sys.exit("::error::board-review-finding-schema: expected exactly 12 "
                  "fixtures under {0}, found {1} -- a fixture was added or "
                  "removed without updating this pin.".format(FIXTURES_DIR, len(found)))
     return found
@@ -161,6 +183,11 @@ def self_test():
         with open(path, encoding="utf-8") as fh:
             finding = json.load(fh)
         ok, reason = validate_finding(finding)
+        if ok and name.endswith("-dropped.json") and "line" in finding:
+            bad += 1
+            print("[FAIL] {0}: expected its invalid line dropped, still {1!r}".format(
+                name, finding["line"]))
+            continue
         if expect_valid and not ok:
             bad += 1
             print("[FAIL] {0}: expected valid, got: {1}".format(name, reason))

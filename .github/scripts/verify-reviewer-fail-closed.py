@@ -108,8 +108,11 @@ LIFECYCLE_WORKFLOW = os.path.join(".github", "workflows", "lifecycle-review-gate
 LIFECYCLE_EXTRACT_STEP = "Extract and validate the review findings"
 LIFECYCLE_PARTITION_STEP = "Partition, dedup, and render this round's findings"
 
+# wc_convergence.py/wc_review_finding_fingerprint.py: "Compose the review
+# body" appends the round record spec 116's convergence signals read back.
 SHARED_SCRIPTS = ("wc_fence_extract.py", "verify-board-review-finding-schema.py",
-                  "wc_schema_pattern.py", "board_spec_request_body.py")
+                  "wc_schema_pattern.py", "board_spec_request_body.py",
+                  "wc_convergence.py", "wc_review_finding_fingerprint.py")
 SHARED_SCHEMAS = ("board-review-finding.schema.json",)
 PRISTINE_DIR = "wc-pristine"
 # board_eligibility.py: board_item_marker.py imports STALLED_LABEL from it
@@ -728,7 +731,7 @@ def check_review_body_cap(compose_script, tmproot):
 def check_review_body_cap_mutation(compose_script, tmproot):
     """The pre-cap compose (every finding shown, max(2000, 60000 // n)
     each) must fail check_review_body_cap()."""
-    old_cap, old_budget = "MAX_SHOWN = 25\n", "budget = 57000 // max(1, len(shown))\n"
+    old_cap, old_budget = "MAX_SHOWN = 25\n", TAIL_BUDGET
     if compose_script.count(old_cap) != 1 or compose_script.count(old_budget) != 1:
         return ["review body cap mutation: the compose step no longer has "
                 "one {0!r} and one {1!r}; update this harness".format(old_cap, old_budget)]
@@ -742,6 +745,102 @@ def check_review_body_cap_mutation(compose_script, tmproot):
         print("note: mutation caught (#580 review body uncapped: {0} problem(s)).".format(len(caught)))
         return []
     return ["mutation '#580 review body uncapped' was NOT caught"]
+
+
+
+# --- spec 116: the round record and recurring section share the cap ------
+#
+# Both compose steps append, after the findings, a round record (up to
+# MAX_RECORDED_FINDINGS entries, each a fingerprint plus the reviewer's
+# path) and, on the board loop, a recurring-findings section. Their length
+# comes out of the findings' 57000, so a full round still posts.
+
+TAIL_BUDGET = 'budget = (57000 - utf16_len("\\n".join(tail))) // max(1, len(shown))\n'
+UNRESERVED_BUDGET = "budget = 57000 // max(1, len(shown))\n"
+
+
+def _tail_round_findings(n):
+    return [{"title": "T{0:02d} ".format(i) + "t" * 115, "what": "w" * 5000, "in_scope": True,
+             "line": 100 + i,
+             "evidence": {"file_paths": ["x.py"], "detail": "d" * 5000},
+             # The longest record round_record_marker writes: every path
+             # character escaped (`<` is \u003c in the marker).
+             "fingerprint_basis": {"file_path": "{0:02d}".format(i) + "<" * 300,
+                                   "gate_or_artifact": "g"}}
+            for i in range(n)]
+
+
+def _run_compose_with_tail(script, tmproot, stem, env):
+    """Runs a compose step with a full round (round record, and every
+    finding recurring); returns (body, error)."""
+    sys.path.insert(0, os.path.join(".github", "scripts"))
+    from wc_convergence import MAX_RECORDED_FINDINGS, round_findings
+    runner_temp = tempfile.mkdtemp(dir=tmproot)
+    try:
+        shutil.copytree(os.path.join(".github", "scripts"),
+                        os.path.join(runner_temp, PRISTINE_DIR, "scripts"))
+        findings = _tail_round_findings(MAX_RECORDED_FINDINGS)
+        with open(os.path.join(runner_temp, stem + "-findings.json"), "w", encoding="utf-8") as fh:
+            json.dump(findings, fh)
+        with open(os.path.join(runner_temp, "board-convergence.json"), "w", encoding="utf-8") as fh:
+            json.dump({"recurrences": [e["fingerprint"] for e in round_findings(findings, "1")]}, fh)
+        full_env = dict(os.environ, RUNNER_TEMP=runner_temp, PARSE_FAILED="false",
+                        DROPPED_COUNT="0", HEAD_SHA="a" * 40, **env)
+        proc = subprocess.run([BASH, "-c", script], env=full_env, capture_output=True,
+                              text=True, cwd=runner_temp)
+        if proc.returncode != 0:
+            return None, "step exited {0}: {1}".format(proc.returncode, proc.stderr)
+        with open(os.path.join(runner_temp, stem + "-body.md"), encoding="utf-8") as fh:
+            return fh.read(), None
+    finally:
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+def check_review_body_cap_with_tail(compose_scripts, tmproot):
+    """compose_scripts: [(label, script, stem, env)]. Each body, with a
+    full round record (and every finding recurring), stays under
+    REVIEW_BODY_LIMIT and still ends in its round record."""
+    sys.path.insert(0, os.path.join(".github", "scripts"))
+    from board_spec_request_body import utf16_len
+    failures = []
+    for label, script, stem, env in compose_scripts:
+        body, err = _run_compose_with_tail(script, tmproot, stem, env)
+        if err:
+            failures.append("{0}: {1}".format(label, err))
+            continue
+        if utf16_len(body) >= REVIEW_BODY_LIMIT:
+            failures.append("{0}: {1} UTF-16 units with the round record, not under {2}".format(
+                label, utf16_len(body), REVIEW_BODY_LIMIT))
+        elif "wing-commander-convergence-round" not in body.rstrip().splitlines()[-1]:
+            failures.append("{0}: the round record is not the body's last line".format(label))
+        else:
+            print("[ok] spec 116 {0} with a full round record: {1} UTF-16 units".format(
+                label, utf16_len(body)))
+    return failures
+
+
+def check_review_body_cap_with_tail_mutation(compose_scripts, tmproot):
+    """Budgeting the findings without the tail (the pass-4 head) must fail
+    check_review_body_cap_with_tail() on every compose step."""
+    failures = []
+    for label, script, stem, env in compose_scripts:
+        if script.count(TAIL_BUDGET) != 1:
+            failures.append("{0}: no one {1!r}; update this harness".format(label, TAIL_BUDGET))
+    if failures:
+        return failures
+    mutated = [(label, script.replace(TAIL_BUDGET, UNRESERVED_BUDGET, 1), stem, env)
+               for label, script, stem, env in compose_scripts]
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()):
+        caught = check_review_body_cap_with_tail(mutated, tmproot)
+    missed = [label for label, _script, _stem, _env in compose_scripts
+              if not any(c.startswith(label + ":") for c in caught)]
+    if not missed:
+        print("note: mutation caught (spec 116 round record outside the review body cap).")
+        return []
+    return ["mutation 'spec 116 round record outside the review body cap' was NOT caught on {0}".format(
+        ", ".join(missed))]
 
 
 # --- #583: agent text cannot set step outputs or suppress a filing --------
@@ -1259,9 +1358,9 @@ def _lifecycle_partition_workdir(tmproot):
     runner_temp = tempfile.mkdtemp(dir=tmproot)
     scripts_dir = os.path.join(workdir, ".wc-pristine-repo", ".github", "scripts")
     os.makedirs(scripts_dir, exist_ok=True)
-    shutil.copyfile(
-        os.path.join(".github", "scripts", "wc_review_finding_fingerprint.py"),
-        os.path.join(scripts_dir, "wc_review_finding_fingerprint.py"))
+    for helper in ("wc_review_finding_fingerprint.py", "wc_convergence.py"):
+        shutil.copyfile(os.path.join(".github", "scripts", helper),
+                        os.path.join(scripts_dir, helper))
     return workdir, runner_temp
 
 
@@ -2128,6 +2227,9 @@ def main():
     if not os.path.isfile(LIFECYCLE_WORKFLOW):
         sys.exit(f"::error::run this from the repository root; {LIFECYCLE_WORKFLOW} not found.")
     lifecycle_extract_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_EXTRACT_STEP)
+    lifecycle_compose_step = find_step(LIFECYCLE_WORKFLOW, COMPOSE_STEP)
+    if lifecycle_compose_step is None:
+        sys.exit(f"::error file={LIFECYCLE_WORKFLOW}::step {COMPOSE_STEP!r} not found.")
     lifecycle_partition_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_PARTITION_STEP)
     lifecycle_merge_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_MERGE_STEP)
     lifecycle_announce_step = find_step(LIFECYCLE_WORKFLOW, LIFECYCLE_ANNOUNCE_STEP)
@@ -2166,6 +2268,13 @@ def main():
         failures += check_fences(fence_scripts, tmproot)
         failures += check_review_body_cap(compose_script, tmproot)
         failures += check_review_body_cap_mutation(compose_script, tmproot)
+        tail_scripts = [
+            ("board-loop compose", compose_script, "board-review",
+             {"ISSUE_NUMBER": "1", "ROUND": "2"}),
+            ("lifecycle-review-gate compose", str(lifecycle_compose_step["run"]),
+             "lifecycle-review", {"ISSUE": LIFECYCLE_ISSUE, "ROUND": "3"})]
+        failures += check_review_body_cap_with_tail(tail_scripts, tmproot)
+        failures += check_review_body_cap_with_tail_mutation(tail_scripts, tmproot)
         failures += check_583(extract_script, round_script, compose_script,
                               fence_scripts["oos"], file_script, tmproot)
         failures += check_lifecycle_extract(lifecycle_extract_script, tmproot)

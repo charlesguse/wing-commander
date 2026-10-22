@@ -755,6 +755,38 @@ constant, currently `5`). On exhaustion the run states the reason and the
 still-open findings on the lifecycle issue and does not select that pull
 request again until a human intervenes.
 
+**Convergence and the `not-converging` stop**
+(`specs/116-review-convergence-analyze/`): a round is no longer read as
+clean just because its findings were folded before. `disposition` keeps
+an in-scope finding whose fingerprint an earlier round already folded,
+folds it again as a *recurring* finding and keeps the round non-clean;
+`report` names it on the lifecycle issue. Every round also computes
+convergence signals in deterministic code — the in-scope count per round,
+the share of findings on lines the loop's own commits wrote after round
+1's head (by blame at the reviewed head, merges from `main` excluded),
+churn (a round rewriting an earlier round's lines), diff growth against
+round 1's head, and recurrence — from round records the `review` job
+appends to its own posted review (`wc_convergence.read_round_records`).
+Each record also stores its head's diff size, so growth survives a rebase
+of the branch; self-inflicted share and churn cannot, and read n/a once
+an earlier head is gone, which the hand-off says.
+From round 3, when the count did not fall, at least half the attributable
+findings are self-inflicted, a folded finding recurs, two rounds in a row
+churned, or the diff grew by more than half, the loop stops with outcome
+`not-converging`: nothing is folded, the status is `failure`, and the
+budget-exhaustion hand-off is posted with the signal table. A moved head
+alone does not re-arm a `not-converging` stop: each record also stores a
+fingerprint of its reviewed diff (`git patch-id`), and `select` picks the
+PR again only when the current diff's differs, so `rebase.yml`'s
+force-push leaves the stop in place and a push that changes the PR's own
+changes re-arms it (a record without one falls back to the moved head).
+Reviewer
+findings carry an optional `line` for that attribution; a missing or
+out-of-range line makes the finding unattributable, never a guessed one.
+The arithmetic, the rules and their thresholds have one home,
+`.github/scripts/wc_convergence.py`, shared with the board loop and the
+local `review-until-clean` skill's `thrash_signals.py`.
+
 **Where gate state lives**: `review_gate` (round, reviewed head SHA,
 outcome, open finding count, the folded/filed fingerprint sets FR-021's
 dedup needs) is never a `spec-meta.json` field and never a commit to the
@@ -769,8 +801,8 @@ fresh via `gh issue view --json comments`.
 
 **Status context**: a clean round posts `state=success` on the reviewed
 head SHA under the `lifecycle-review-gate` context (suitable for use as a
-required check); a round with open findings, an exhausted budget, or a
-review/parse failure posts `state=failure`/`state=error` on the same
+required check); a round with open findings, an exhausted budget, a
+`not-converging` stop, or a review/parse failure posts `state=failure`/`state=error` on the same
 context, so "not yet reviewed" is always distinguishable from every
 not-clean outcome. Posted with `github.token`'s own `statuses: write` job
 permission, since the App installation carries no Commit statuses grant
@@ -789,7 +821,8 @@ Gate 125 enforces this unconditionally, file-wide.
 (`lifecycle_merge_preconditions.py`), 113 (constitution/capability parity —
 fails if the merge code exists while the constitution does not name the
 third bot-mergeable class), 125 (trusted-copy composite/script
-provenance, above).
+provenance, above), 165 (the convergence arithmetic has one home, plus
+`wc_convergence_tests/`).
 
 ## Stage 9 — Watchdog (`watchdog.yml`, wrapper `wing-commander-8-watchdog.yml`)
 

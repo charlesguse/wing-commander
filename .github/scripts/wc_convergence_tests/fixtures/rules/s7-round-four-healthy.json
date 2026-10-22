@@ -1,0 +1,7 @@
+{"note": "Acceptance 7: at round 4 the count fell, findings sit on the PR's original lines, no recurrence, churn streak or growth: continue.",
+ "history": [
+  {"round": 1, "count": 6, "attributable": 6, "self_inflicted": 0, "churn": 0, "growth": 0.0, "recurrences": []},
+  {"round": 2, "count": 4, "attributable": 4, "self_inflicted": 1, "churn": 0, "growth": 0.1, "recurrences": []},
+  {"round": 3, "count": 3, "attributable": 3, "self_inflicted": 1, "churn": 1, "growth": 0.2, "recurrences": []},
+  {"round": 4, "count": 2, "attributable": 2, "self_inflicted": 0, "churn": 0, "growth": 0.3, "recurrences": []}],
+ "expect": {"stop": false, "reason": null, "tripped": []}}

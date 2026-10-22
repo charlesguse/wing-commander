@@ -43,6 +43,14 @@ def marker_regexes(name):
 MARKER_RE, MARKER_OPEN_RE = marker_regexes("wing-commander-board-item")
 
 
+def marker_json(payload):
+    """`payload` as JSON safe inside an HTML-comment marker: `<` and `>`
+    are written as \\u003c/\\u003e (json.loads reads them back), so a
+    string field carrying `-->` or `<!--` can neither close the marker
+    early nor open a second one."""
+    return json.dumps(payload, sort_keys=True).replace("<", "\\u003c").replace(">", "\\u003e")
+
+
 def last_marker_match(body, marker_re=MARKER_RE, open_re=MARKER_OPEN_RE):
     """The marker_re match that starts at the LAST marker opener in `body`,
     or None (issue #580). The one rule every marker reader uses.

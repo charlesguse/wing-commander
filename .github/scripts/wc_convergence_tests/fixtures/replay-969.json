@@ -1,0 +1,8 @@
+{
+  "note": "Shape of #969: most findings sit in the PR's own new parsing.",
+  "history": [
+    {"round": 1, "count": 4, "attributable": 4, "self_inflicted": 0, "unattributable": 0, "churn": 0, "growth": 0.0, "recurrences": []},
+    {"round": 2, "count": 3, "attributable": 3, "self_inflicted": 2, "unattributable": 0, "churn": 2, "growth": 0.2, "recurrences": []},
+    {"round": 3, "count": 2, "attributable": 2, "self_inflicted": 2, "unattributable": 0, "churn": 3, "growth": 0.3, "recurrences": []}
+  ]
+}

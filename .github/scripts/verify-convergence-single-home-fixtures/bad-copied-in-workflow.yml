@@ -1,0 +1,9 @@
+name: synthetic loop
+on: workflow_call
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Count self-inflicted findings
+        run: |
+          origin="$(git blame -l -s -L 3,+1 HEAD -- a.py)"
