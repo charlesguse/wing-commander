@@ -146,8 +146,20 @@ if [ "${1:-}" = "api" ]; then
   path="$2"
   case "$path" in
     */actions/runs\\?*)
-      # The sweep window's own listing call.
-      cat "$WC_FIX/candidates.ndjson" 2>/dev/null
+      # The sweep window's own listing call. Like the real API: only runs
+      # whose created_at (default: concluded_at) falls in the `created`
+      # range, newest first, at most 1,000 (#1054).
+      created="${path##*created=}"; created="${created%%&*}"
+      case "$created" in
+        %3E%3D*) lo="${created#%3E%3D}"; hi="" ;;
+        *..*)    lo="${created%%..*}"; hi="${created#*..}" ;;
+        *)       lo=""; hi="" ;;
+      esac
+      [ -f "$WC_FIX/candidates.ndjson" ] || exit 0
+      jq -c -s --arg lo "$lo" --arg hi "$hi" '
+        map(. + {created_at: (.created_at // .concluded_at)})
+        | map(select(($lo == "" or .created_at >= $lo) and ($hi == "" or .created_at <= $hi)))
+        | sort_by(.created_at) | reverse | .[:1000] | .[]' "$WC_FIX/candidates.ndjson"
       exit 0;;
   esac
   rest="${path#*/actions/runs/}"
@@ -396,7 +408,11 @@ def run_window(work, candidates, mark=None, since_input="", bash=None,
     the server-side `created` bound, before the client-side window filter
     the step applies. A candidate may also carry "conclusion" (MF-02(a) —
     "skipped" is dropped before it ever reaches the composite); absent
-    means non-skipped, matching a real API response's usual shape.
+    means non-skipped, matching a real API response's usual shape. A
+    candidate may carry "created_at" too; absent means its concluded_at.
+    The stub, like the real API, returns only the candidates whose
+    created_at falls in the listing's `created` range, newest first, at
+    most 1,000 (#1054).
 
     `workflow_paths`, when given, is a list of workflow file paths passed
     through as the step's WORKFLOW_PATHS input (MF-02(b)) -- None means

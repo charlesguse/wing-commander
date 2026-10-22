@@ -24,11 +24,13 @@ retry path is the one under test; and metrics-persist.yml's own window
 step for the read, against a destination branch that does and does not
 already carry a mark.
 
-Seven mutations -- the mark written in a second commit, the hold-back
+Ten mutations -- the mark written in a second commit, the hold-back
 read appending its fallback to jq's own output, the mark taken from the
 first run rather than the latest, the one-hour overlap dropped, the mark
-read but ignored, a skipped run not dropped before the composite, and the
-caller's workflow-path allowlist not applied -- must each break an
+read but ignored, a skipped run not dropped before the composite, the
+caller's workflow-path allowlist not applied, the listing truncated at
+GitHub's 1,000-result cap (#1054), a listing stuck at that cap accepted,
+and the runs of overlapping slices not de-duplicated -- must each break an
 assertion.
 
 Wiring: lint-workflows.yml, Gate 77.
@@ -228,9 +230,56 @@ def zero_artifact_failures(bash, mutate=None):
     return broke
 
 
+# #1054: GitHub returns at most 1,000 runs for a filtered listing, newest
+# first. A window holding more must still list every run (2,037 runs on
+# 2026-10-15 left 20 records dropped and never retried), and a cap the
+# step cannot narrow must fail rather than advance the mark.
+def _busy_candidates(n, start="2026-09-20T00:00:00Z"):
+    import datetime
+    t0 = datetime.datetime.strptime(start, "%Y-%m-%dT%H:%M:%SZ")
+    return [{"run_id": str(90000 + i), "workflow": "busy",
+             "concluded_at": (t0 + datetime.timedelta(seconds=20 * i)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+            for i in range(n)]
+
+
+def cap_failures(bash, mutate=None):
+    broke = []
+    busy = _busy_candidates(2037)
+    work = tempfile.mkdtemp(prefix="wc-gate77-c-")
+    try:
+        got = run_window(work, busy, mark="2026-09-20T01:00:00Z", bash=bash, mutate=mutate)
+        if got["rc"] != 0:
+            broke.append(f"a window of 2,037 runs failed: {got['out'].strip()[:300]}")
+        else:
+            want = {c["run_id"] for c in busy if c["concluded_at"] >= "2026-09-20T00:00:00Z"}
+            ids = got["listed_ids"]
+            missing = want - set(ids)
+            if missing:
+                broke.append(f"{len(missing)} of {len(want)} runs in a window over GitHub's "
+                             f"1,000-result cap were never listed (oldest dropped first) -- "
+                             f"the mark would advance past them (#1054)")
+            if len(ids) != len(set(ids)):
+                broke.append("a run listed in two slices reached the composite twice")
+    finally:
+        cleanup(work)
+    # 1,000 runs created in the same second: the listing cannot be narrowed.
+    same = [{"run_id": str(95000 + i), "workflow": "busy",
+             "concluded_at": "2026-09-20T05:00:00Z"} for i in range(1000)]
+    work = tempfile.mkdtemp(prefix="wc-gate77-s-")
+    try:
+        got = run_window(work, same, mark="2026-09-20T01:00:00Z", bash=bash, mutate=mutate)
+        if got["rc"] == 0:
+            broke.append("a listing stuck at the 1,000-result cap succeeded -- it must "
+                         "fail as not-collected rather than advance the mark")
+    finally:
+        cleanup(work)
+    return broke
+
+
 def suite(bash, mutate=None):
     return (write_failures(bash, mutate) + read_failures(bash, mutate)
-            + filter_failures(bash, mutate) + zero_artifact_failures(bash, mutate))
+            + filter_failures(bash, mutate) + zero_artifact_failures(bash, mutate)
+            + cap_failures(bash, mutate))
 
 
 # --------------------------------------------------------------------------
@@ -293,7 +342,38 @@ def mut_hold_back_fallback_appended(name, script):
         '2>/dev/null)" || hold_back=\'[]\'', '2>/dev/null || echo \'[]\')"')
 
 
+def mut_single_capped_listing(name, script):
+    """#1054 reverted: one listing, truncated at the cap, and nothing more."""
+    if name != WINDOW:
+        return script
+    return script.replace('[ "$listed" -ge "$cap" ] || break', 'break')
+
+
+def mut_cap_stuck_not_refused(name, script):
+    """A listing that cannot be narrowed below the cap is accepted as is,
+    so the mark advances over the runs it never saw."""
+    if name != WINDOW:
+        return script
+    i = script.find('if [ -z "$upper" ] || [ "$upper" = "$prev_upper" ]; then')
+    j = script.find("exit 1", i)
+    if i < 0 or j < 0:
+        return script
+    return script[:j] + "break" + script[j + len("exit 1"):]
+
+
+def mut_slices_not_deduplicated(name, script):
+    """Slices share their boundary second, so a run there is listed twice."""
+    if name != WINDOW:
+        return script
+    return script.replace(" | unique_by(.run_id)", "")
+
+
 MUTATIONS = [
+    ("#1054 reverted: one listing truncated at GitHub's 1,000-result cap",
+     mut_single_capped_listing),
+    ("a listing stuck at the cap is not refused", mut_cap_stuck_not_refused),
+    ("runs listed in two overlapping slices are not de-duplicated",
+     mut_slices_not_deduplicated),
     ("the mark advances in its own commit", mut_mark_committed_separately),
     ("the hold-back read appends its fallback to jq's own output "
      "(zero-artifact sweep)", mut_hold_back_fallback_appended),
@@ -334,7 +414,7 @@ def main():
         else:
             print(f"::error::MUTATION SURVIVED - {label} broke nothing in this gate.")
             mutation_failures += 1
-    print(f"Gate 77: 1 contended sweep + 1 zero-artifact sweep + 3 window shape(s), "
+    print(f"Gate 77: 1 contended sweep + 1 zero-artifact sweep + 5 window shape(s), "
           f"{len(MUTATIONS)} mutation(s); {len(failures)} failure(s), "
           f"{mutation_failures} mutation failure(s).")
     return 1 if failures or mutation_failures else 0

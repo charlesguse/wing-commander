@@ -387,12 +387,41 @@ jobs:
           # along unfiltered here (server-side `--jq` runs once per PAGE,
           # not once over the whole result -- Gate 18 -- so every selection
           # that spans pages happens below, over the whole streamed file).
-          if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=completed&per_page=100&created=%3E%3D${list_from}" \
-            --paginate --jq '.workflow_runs[] | {run_id: (.id|tostring), workflow: (.path // ""), concluded_at: (.updated_at // ""), conclusion: (.conclusion // "")}' \
-            > "$cand" 2>"$RUNNER_TEMP/sweep-list-err.txt"; then
-            echo "::error::wing-commander metrics-persist stage: could not list runs for the sweep window from $window_start -- $(cat "$RUNNER_TEMP/sweep-list-err.txt" 2>/dev/null). Reporting as not-collected rather than sweeping an empty window and advancing the mark over it."
-            exit 1
-          fi
+          #
+          # GitHub returns at most 1,000 runs for a filtered listing (#1054:
+          # a busy day's oldest runs were silently dropped and the mark
+          # advanced past them). The listing is newest first, so a listing
+          # that reaches the cap is truncated at its OLD end: list again
+          # with the range closed at the oldest creation time seen, until a
+          # listing comes back under the cap. Slices share their boundary
+          # second, so runs are de-duplicated by id below.
+          cap=1000
+          upper=""
+          prev_upper=""
+          : > "$cand"
+          slice="$RUNNER_TEMP/sweep-slice.ndjson"
+          while :; do
+            if [ -z "$upper" ]; then
+              range="%3E%3D${list_from}"
+            else
+              range="${list_from}T00:00:00Z..${upper}"
+            fi
+            if ! gh api "repos/${GITHUB_REPOSITORY}/actions/runs?status=completed&per_page=100&created=${range}" \
+              --paginate --jq '.workflow_runs[] | {run_id: (.id|tostring), workflow: (.path // ""), concluded_at: (.updated_at // ""), conclusion: (.conclusion // ""), created_at: (.created_at // "")}' \
+              > "$slice" 2>"$RUNNER_TEMP/sweep-list-err.txt"; then
+              echo "::error::wing-commander metrics-persist stage: could not list runs for the sweep window from $window_start -- $(cat "$RUNNER_TEMP/sweep-list-err.txt" 2>/dev/null). Reporting as not-collected rather than sweeping an empty window and advancing the mark over it."
+              exit 1
+            fi
+            cat "$slice" >> "$cand"
+            listed="$(grep -c . "$slice" || true)"
+            [ "$listed" -ge "$cap" ] || break
+            upper="$(jq -s -r '[.[].created_at | select(. != "")] | min // empty' "$slice" 2>/dev/null || true)"
+            if [ -z "$upper" ] || [ "$upper" = "$prev_upper" ]; then
+              echo "::error::wing-commander metrics-persist stage: the runs listing for the sweep window from $window_start reached GitHub's $cap-result cap and could not be narrowed (oldest creation time ${upper:-unknown}). Reporting as not-collected rather than advancing the mark over runs it never saw."
+              exit 1
+            fi
+            prev_upper="$upper"
+          done
           # MF-02(a): a run whose OWN `if:` skipped it end to end carries no
           # metrics-record artifact and never will -- dropped here, before
           # the composite's discover step would otherwise spend two API
@@ -401,7 +430,7 @@ jobs:
           # a record (constitution VI/VII — the stage does not hardcode
           # this list itself).
           runs="$(jq -s -c --arg w "$window_start" --argjson wf "$workflow_paths" \
-            '[.[] | select(.concluded_at >= $w) | select(.conclusion != "skipped") | select(($wf | length) == 0 or ((.workflow as $cw | $wf | index($cw)) != null))]' \
+            '[.[] | select(.concluded_at >= $w) | select(.conclusion != "skipped") | select(($wf | length) == 0 or ((.workflow as $cw | $wf | index($cw)) != null))] | unique_by(.run_id) | map(del(.created_at))' \
             "$cand" 2>/dev/null)" || runs='[]'
           echo "Sweep window from $window_start: $(printf '%s' "$runs" | jq 'length') completed run(s)." >> "$GITHUB_STEP_SUMMARY"
           echo "since=$since" >> "$GITHUB_OUTPUT"
