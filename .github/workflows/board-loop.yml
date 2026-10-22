@@ -5792,7 +5792,8 @@ jobs:
       # The kill-switch re-check's `gh run cancel` runs on github.token,
       # which the App token cannot stand in for -- see the
       # wing-commander-board-stop-check composite's header. Nothing else in
-      # this job writes with github.token.
+      # this job writes with github.token; board_merge.py snapshot only
+      # reads a bump PR's verification run with it.
       actions: write
     # One board item is in flight repository-wide. A directed proof run
     # and a merged item's own prove run — neither of which selects a
@@ -5851,6 +5852,9 @@ jobs:
         id: candidate
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          # board_merge.py snapshot reads each bump PR's verification run
+          # with it (actions: read); it writes nothing.
+          WC_ACTIONS_TOKEN: ${{ github.token }}
           READY: ${{ needs.readiness.outputs.ready }}
           FIX_PR: ${{ needs.readiness.outputs.pr-number }}
           FIX_ISSUE: ${{ needs.readiness.outputs.issue-number }}
@@ -5869,12 +5873,11 @@ jobs:
               || { echo "::warning::board-loop merge: could not list the open PRs -- no bump candidate is looked for this run."; exit 0; }
             shaped="$(python3 -I "$scripts/board_merge.py" bump-shaped --bot-login "$BOT_LOGIN" < "$RUNNER_TEMP/board-merge-open-prs.json")" \
               || { echo "::error::board-loop merge: board_merge.py bump-shaped failed."; exit 1; }
-            fields="$(python3 -I "$scripts/board_merge.py" snapshot-fields)" \
-              || { echo "::error::board-loop merge: board_merge.py snapshot-fields failed."; exit 1; }
             : > "$RUNNER_TEMP/board-merge-bump-snapshots.jsonl"
             for n in $shaped; do
               # One flaky call skips that PR for this run; the others are still evaluated.
-              if ! gh pr view "$n" -R "$GITHUB_REPOSITORY" --json "$fields" > "$RUNNER_TEMP/board-merge-bump-one.json"; then
+              if ! python3 -I "$scripts/board_merge.py" snapshot --repo "$GITHUB_REPOSITORY" --pr "$n" \
+                   --bot-login "$BOT_LOGIN" > "$RUNNER_TEMP/board-merge-bump-one.json"; then
                 echo "::warning::board-loop merge: could not snapshot bump PR #$n -- it is skipped this run."
                 continue
               fi
@@ -5931,21 +5934,27 @@ jobs:
           set -uo pipefail
           echo "board-loop: $STOP_CAUSE_PHRASE found immediately before the merge job's durable actions on issue #$ISSUE_NUMBER -- standing down without acting." >> "$GITHUB_STEP_SUMMARY"
 
-      # FR-036/FR-037: the snapshot is fetched in one `gh pr view` call so
-      # the head SHA and the checks that ran on it are one moment's state.
+      # FR-036/FR-037: the head SHA and the checks that ran on it are read
+      # in one `gh pr view` call, so they are one moment's state.
+      # board_merge.py snapshot (#889) adds the PR's files, commits and
+      # comments, each whole over REST with the counts that prove it, and
+      # for a bump PR the Actions run its verification record names, so
+      # decide() stays pure and no list is truncated.
       - name: Fetch the PR snapshot at its current head
         id: snapshot
         if: steps.candidate.outputs.pr != ''
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          # see "Resolve the merge candidate"
+          WC_ACTIONS_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.candidate.outputs.pr }}
           CLASS: ${{ steps.candidate.outputs.class }}
           ISSUE_NUMBER: ${{ steps.candidate.outputs.issue }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
-          fields="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_merge.py" snapshot-fields)" \
-            || { echo "::error::board-loop merge: board_merge.py snapshot-fields failed -- nothing is merged."; exit 1; }
-          gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json "$fields" \
+          python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_merge.py" snapshot --repo "$GITHUB_REPOSITORY" \
+            --pr "$PR_NUMBER" --bot-login "$BOT_LOGIN" \
             > "$RUNNER_TEMP/board-merge-snapshot.json" \
             || { echo "::error::board-loop merge: could not fetch PR #$PR_NUMBER's snapshot -- nothing is merged."; exit 1; }
           # FR-003: the fix class's review convergence is re-read here, from
@@ -6009,6 +6018,8 @@ jobs:
         if: steps.decide.outputs.may-merge == 'true' && steps.killswitch-recheck.outputs.paused == 'false'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          # see "Resolve the merge candidate"
+          WC_ACTIONS_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.candidate.outputs.pr }}
           HEAD_SHA: ${{ steps.decide.outputs.head-sha }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
@@ -6068,8 +6079,8 @@ jobs:
             # Re-fetched beside the first snapshot and decision, replacing
             # them only once both are whole: a failed re-fetch leaves the
             # announcement reading the pair the first attempt used.
-            fields="$(python3 -I "$scripts/board_merge.py" snapshot-fields)" \
-              && gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json "$fields" > "$RUNNER_TEMP/board-merge-snapshot.retry.json" \
+            python3 -I "$scripts/board_merge.py" snapshot --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" \
+                 --bot-login "${BOT_SLUG}[bot]" > "$RUNNER_TEMP/board-merge-snapshot.retry.json" \
               && python3 -I "$scripts/board_merge.py" decide \
                    --inputs "$RUNNER_TEMP/board-merge-inputs.json" --snapshot "$RUNNER_TEMP/board-merge-snapshot.retry.json" \
                    --issue-comments "$RUNNER_TEMP/board-merge-issue-comments.json" \

@@ -139,22 +139,39 @@ def check_gh_blocked_reasons():
         ok("gh's own not-mergeable reasons classify as protection or conflict by their reason")
 
 
+def _verification_run(head, run_id=1):
+    """What fetch_snapshot() reads for a run that confirms a record at `head`."""
+    return {"id": run_id, "path": board_merge.AUTO_UPDATE_WRAPPER_PATH, "event": "schedule",
+            "head_branch": "main", "repository": "o/r", "status": "completed", "conclusion": "success",
+            "referenced_workflows": ["o/r/{0}@abc0123".format(board_merge.AUTO_UPDATE_STAGE_PATH)],
+            "artifacts": [board_merge.BUMP_VERIFICATION_ARTIFACT_PREFIX + head]}
+
+
 def _bump_snapshot(number, created, head, comments=(), body_issue=77):
-    return {"number": number, "createdAt": created, "headRefOid": head,
-            "author": {"login": "app/wing-commander"},
+    """fetch_snapshot()'s shape: REST commits and comments, whole (counts),
+    and the run the head's record names."""
+    snap = {"number": number, "createdAt": created, "headRefOid": head,
+            "author": {"login": "app/wing-commander", "is_bot": True},
             "headRefName": "auto-update-spec-kit/v1.2.{0}".format(number),
             "baseRefName": "main",
             "body": "Upgrade\nCloses #{0}\n{1}".format(body_issue, board_merge.BUMP_BODY_MARKER),
-            "commits": [{"authors": [{"login": "app/wing-commander"}]}],
+            "commits": [{"sha": head, "author": {"login": "wing-commander[bot]", "type": "Bot"}}],
             "files": [{"path": ".specify/x"}],
             "statusCheckRollup": [{"name": "lint", "workflowName": "lint \u00b7 workflows",
                                    "conclusion": "SUCCESS"}],
-            "comments": list(comments)}
+            "comments": list(comments), "verificationRun": _verification_run(head)}
+    return _counted(snap)
+
+
+def _counted(snap):
+    """`snap` with the counts fetch_snapshot() reads beside its lists."""
+    return dict(snap, counts={"files": len(snap["files"]), "commits": len(snap["commits"]),
+                              "comments": len(snap["comments"]), "head_sha": snap["headRefOid"]})
 
 
 def _bot_comment(body, cid, created="2026-10-01T00:00:00Z"):
-    return {"author": {"login": "app/wing-commander"}, "createdAt": created,
-            "url": "https://github.com/o/r/pull/1#issuecomment-{0}".format(cid), "body": body}
+    return {"user": {"login": "wing-commander[bot]", "type": "Bot"}, "created_at": created,
+            "id": cid, "body": body}
 
 
 def _verified(head, cid):
@@ -182,7 +199,7 @@ def check_bump_pick_and_dedup():
     refusal = board_merge.render_announcement(decision, "refused", verified, refusal_class="workflow-scope",
                                               stderr="refusing to allow a GitHub App to create or update "
                                                      "workflow without `workflows` permission")
-    refused = dict(verified, comments=verified["comments"] + [_bot_comment(refusal, 11)])
+    refused = _counted(dict(verified, comments=verified["comments"] + [_bot_comment(refusal, 11)]))
     if not board_merge.handed_over_at_head(refused, bot):
         fail("a bump PR refused at its head is not recorded as handed over, so it is retried every run")
     elif board_merge.pick_bump_candidate([refused], bot) is not None:
@@ -237,23 +254,26 @@ def check_quoted_verification_record():
 
 
 def check_round2_findings():
-    """Review round 2: an empty commit-author login with the App's noreply
-    email is still the bot's; any other empty-login commit is not; quoted
-    stderr cannot close its code fence."""
+    """Review round 2, superseded by #889: a commit is the bot's only when
+    GitHub resolved its author to the App's account (type Bot). A commit
+    GitHub resolved to no account is never the bot's, whatever noreply email
+    it asserts (anyone can commit as `<slug>[bot]@users.noreply...`), and
+    no commit carries an email to decide by. Quoted stderr cannot close its
+    code fence."""
     bot = "wing-commander[bot]"
     snap = _bump_snapshot(3, "2026-10-03T00:00:00Z", "ddd4", [_verified("ddd4", 20)])
-    mapped = dict(snap, commits=[{"authors": [{"login": "", "email": "12345+wing-commander[bot]@users.noreply.github.com"}]}])
-    foreign = dict(snap, commits=[{"authors": [{"login": "", "email": "someone@example.com"}]}])
-    spoof = dict(snap, commits=[{"authors": [{"login": "", "email": "12345+other[bot]@users.noreply.github.com"}]}])
-    plain = dict(snap, commits=[{"authors": [{"login": "", "email": "wing-commander[bot]@users.noreply.github.com"}]}])
-    if not board_merge._attributed_to_auto_update(mapped, bot):
-        fail("a bot commit whose login gh reports empty (noreply email) is not attributed to the bot")
-    elif not board_merge._attributed_to_auto_update(plain, bot):
-        fail("a bot commit with the auto-update stage's plain <slug>[bot] noreply email is not attributed to the bot")
-    elif board_merge._attributed_to_auto_update(foreign, bot) or board_merge._attributed_to_auto_update(spoof, bot):
-        fail("an empty-login commit by someone other than the bot is attributed to the bot")
+    resolved = dict(snap, commits=[{"sha": "ddd4", "author": {"login": bot, "type": "Bot"}}])
+    unresolved = dict(snap, commits=[{"sha": "ddd4", "author": None,
+                                      "email": "wing-commander[bot]@users.noreply.github.com"}])
+    user = dict(snap, commits=[{"sha": "ddd4", "author": {"login": bot, "type": "User"}}])
+    if not board_merge._attributed_to_auto_update(resolved, bot):
+        fail("a commit GitHub resolved to the App's bot account is not attributed to the bot")
+    elif board_merge._attributed_to_auto_update(unresolved, bot):
+        fail("a commit GitHub resolved to no account is attributed to the bot by its self-asserted email")
+    elif board_merge._attributed_to_auto_update(user, bot):
+        fail("a commit by a user account named like the App is attributed to the bot")
     else:
-        ok("an empty-login bot commit is attributed by its noreply email; others are not")
+        ok("a commit is the bot's only when GitHub resolved its author to the App's bot account")
     decision = board_merge.decide({"class": "bump", "snapshot": snap, "bot_login": bot,
                                    "paused": False, "switch_on": True})
     text = board_merge.render_announcement(decision, "refused", snap, refusal_class="other",
@@ -651,6 +671,128 @@ def check_stalled_tracking_issue():
         ok("the merge job hands pick-bump the open board:stalled issues")
 
 
+SNAPSHOT_CALL_RE = re.compile(r"board_merge\.py\"? snapshot\b")
+
+
+def snapshot_fetch_problems(merge_job):
+    """#889: every snapshot a decision reads comes from board_merge.py
+    snapshot (whole REST lists, their counts, the verification run), never
+    a bare `gh pr view --json` of the truncating lists; and each step that
+    fetches one hands it the token it reads the run with."""
+    problems = []
+    code = _run_blocks_text(merge_job)
+    # Any `gh pr view --json` naming a truncating list, or a field list it
+    # cannot see (a variable), is a snapshot read outside fetch_snapshot().
+    if re.search(r"gh\s+pr\s+view\b[^\n]*--json[\s=]+(\"?\$|[\w,]*\b(files|commits|comments)\b)", code) \
+            or "snapshot-fields" in code:
+        problems.append("the merge job reads files, commits or comments with a bare `gh pr view --json`")
+    steps = [block for block in re.split(r"\n      - name: ", "\n".join(merge_job))[1:]]
+    fetching = [block for block in steps if SNAPSHOT_CALL_RE.search(_run_blocks_text(block.splitlines()))]
+    if len(fetching) < 3:
+        problems.append("expected the candidate scan, the fresh fetch and the retry to use board_merge.py "
+                        "snapshot, found {0} step(s)".format(len(fetching)))
+    for block in fetching:
+        if "WC_ACTIONS_TOKEN: ${{ github.token }}" not in block:
+            problems.append("step '{0}' fetches a snapshot without WC_ACTIONS_TOKEN".format(block.split("\n", 1)[0]))
+    return problems
+
+
+def check_889_findings():
+    """#889, before WING_COMMANDER_BOARD_AUTO_MERGE is enabled: identity is
+    the account GitHub resolved (type Bot), never a login or email alone;
+    each list is whole; a verification record counts only when the Actions
+    API confirms its run. The decision fixtures cover the rules; this covers
+    the bump-shape filters and the workflows that feed them."""
+    bot = "wing-commander[bot]"
+    impostor = {"number": 9, "author": {"login": "wing-commander", "is_bot": False},
+                "headRefName": "auto-update-spec-kit/v1.2.9", "createdAt": "2026-10-09T00:00:00Z"}
+    snap = dict(_bump_snapshot(9, "2026-10-09T00:00:00Z", "hhh9", [_verified("hhh9", 50)]),
+                author=impostor["author"])
+    if board_merge.bump_shaped([impostor], bot) or board_merge.pick_bump_candidate([snap], bot) is not None:
+        fail("a user account named like the App is taken as the bot's auto-update PR")
+    else:
+        ok("a user account named like the App is never an auto-update PR author")
+    with open(BOARD_LOOP, encoding="utf-8") as fh:
+        merge_job = job_block(fh.read().splitlines(), "merge") or []
+    problems = snapshot_fetch_problems(merge_job)
+    for problem in problems:
+        fail("snapshot fetch: {0}".format(problem))
+    if not problems:
+        ok("every merge-job snapshot is board_merge.py snapshot's whole, run-bound read")
+    for pasted_read in ('gh pr view "$n" -R "$GITHUB_REPOSITORY" --json "$fields" > x.json',
+                        'gh pr view "$n" -R "$GITHUB_REPOSITORY" --json "$snapshot_fields" > x.json',
+                        'gh pr view "$n" -R "$GITHUB_REPOSITORY" --json number,files,commits,comments > x.json'):
+        if not snapshot_fetch_problems(merge_job + ["          " + pasted_read]):
+            fail("snapshot fetch self-test: a pasted `{0}` read is not caught".format(pasted_read))
+        else:
+            ok("snapshot fetch self-test: a pasted `{0}` read is caught".format(pasted_read))
+    wrapper = board_merge.AUTO_UPDATE_WRAPPER_PATH
+    if not os.path.isfile(wrapper):
+        fail("AUTO_UPDATE_WRAPPER_PATH {0} does not exist".format(wrapper))
+    else:
+        with open(wrapper, encoding="utf-8") as fh:
+            if "uses: ./{0}".format(board_merge.AUTO_UPDATE_STAGE_PATH) not in fh.read():
+                fail("{0} does not call {1}".format(wrapper, board_merge.AUTO_UPDATE_STAGE_PATH))
+            else:
+                ok("the verification run's workflow paths name the real wrapper and stage")
+    with open(AUTO_UPDATE, encoding="utf-8") as fh:
+        stage = fh.read()
+    upload = "name: {0}${{{{ steps.open-pr.outputs.verified-head }}}}".format(
+        board_merge.BUMP_VERIFICATION_ARTIFACT_PREFIX)
+    if upload not in stage or 'echo "verified-head=$head_sha"' not in stage:
+        fail("{0} does not upload the artifact naming the head its record verified ({1})".format(AUTO_UPDATE, upload))
+    else:
+        ok("the auto-update run uploads the artifact that binds its record to the head")
+    for problem in verified_head_upload_problems(stage):
+        fail("{0}: {1}".format(AUTO_UPDATE, problem))
+    check_verification_run_read_warns()
+
+
+def verified_head_upload_problems(stage):
+    """Once the record is posted, nothing between it and the upload may fail
+    the step (a skipped upload strands a verified PR, unconfirmable for
+    good), and a missing record file fails the upload instead of leaving a
+    green run with no artifact."""
+    problems = []
+    lines = stage.splitlines()
+    start = next((i for i, line in enumerate(lines) if 'echo "verified-head=$head_sha"' in line), None)
+    end = next((i for i, line in enumerate(lines) if "- name: Record the verified head on the run" in line), None)
+    if start is None or end is None or end < start:
+        return ["the open-pr step's verified-head output or the upload step is missing"]
+    commands = re.sub(r"\\\n\s*", " ", "\n".join(lines[start + 1:end])).splitlines()
+    for line in commands:
+        code = line.strip()
+        if code.startswith("gh ") and "||" not in code:
+            problems.append("`{0}` after the verified-head output can fail the step and skip the upload".format(
+                code[:60]))
+    upload = "\n".join(lines[end:end + 12])
+    if "if-no-files-found: error" not in upload:
+        problems.append("the verified-head upload does not set `if-no-files-found: error`")
+    return problems
+
+
+def check_verification_run_read_warns():
+    """A verification run that cannot be read fails closed and says why on
+    stderr (a 403 is a token or permission fault, not an unverified PR)."""
+    import contextlib
+    import io
+    import subprocess
+
+    def refused(args, token=None):
+        raise subprocess.CalledProcessError(1, ["gh"] + list(args), stderr="HTTP 403: Resource not accessible")
+    saved, err = board_merge._gh, io.StringIO()
+    board_merge._gh = refused
+    try:
+        with contextlib.redirect_stderr(err):
+            run = board_merge._fetch_verification_run("o/r", {"run_id": "9"}, "t")
+    finally:
+        board_merge._gh = saved
+    if run is not None or "HTTP 403" not in err.getvalue():
+        fail("an unreadable verification run is not reported on stderr (got {0!r})".format(err.getvalue()))
+    else:
+        ok("an unreadable verification run fails closed and names the refusal")
+
+
 def check_auto_update():
     if not os.path.isfile(AUTO_UPDATE):
         fail("{0} does not exist".format(AUTO_UPDATE))
@@ -683,6 +825,7 @@ def main():
     check_review_head_binding()
     check_pass2_findings()
     check_stalled_tracking_issue()
+    check_889_findings()
     check_auto_update()
     print("verify-board-merge: {0} failure(s).".format(failures))
     return 1 if failures else 0
