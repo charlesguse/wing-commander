@@ -3207,7 +3207,10 @@ jobs:
           fi
           printf '%s\n' "$record" > "$RUNNER_TEMP/wc-bump-verification.md"
           echo "verified-head=$head_sha" >> "$GITHUB_OUTPUT"
-          gh issue comment "$ISSUE" --body "Opened $url — awaiting review and merge (this feature never merges its own PR)."
+          # The record is posted: nothing below may fail this step, or the
+          # upload below is skipped and the PR can never be confirmed.
+          gh issue comment "$ISSUE" --body "Opened $url — awaiting review and merge (this feature never merges its own PR)." \
+            || echo "::warning::act: opened $url but could not say so on issue #$ISSUE."
           echo "act: opened $url for v$CANDIDATE." >> "$GITHUB_STEP_SUMMARY"
 
       # #889: the record's text is public, so anything holding the App token
@@ -3222,6 +3225,7 @@ jobs:
         with:
           name: wc-bump-verification-${{ steps.open-pr.outputs.verified-head }}
           path: ${{ runner.temp }}/wc-bump-verification.md
+          if-no-files-found: error
           retention-days: 90
 
       # T017: verification failed — .specify/init-options.json is left

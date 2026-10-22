@@ -142,7 +142,7 @@ def check_gh_blocked_reasons():
 def _verification_run(head, run_id=1):
     """What fetch_snapshot() reads for a run that confirms a record at `head`."""
     return {"id": run_id, "path": board_merge.AUTO_UPDATE_WRAPPER_PATH, "event": "schedule",
-            "status": "completed", "conclusion": "success",
+            "head_branch": "main", "repository": "o/r", "status": "completed", "conclusion": "success",
             "referenced_workflows": ["o/r/{0}@abc0123".format(board_merge.AUTO_UPDATE_STAGE_PATH)],
             "artifacts": [board_merge.BUMP_VERIFICATION_ARTIFACT_PREFIX + head]}
 
@@ -681,8 +681,11 @@ def snapshot_fetch_problems(merge_job):
     fetches one hands it the token it reads the run with."""
     problems = []
     code = _run_blocks_text(merge_job)
-    if re.search(r"gh\s+pr\s+view\b[^\n]*--json\s+\"?\$\{?fields", code) or "snapshot-fields" in code:
-        problems.append("the merge job still reads a snapshot with `gh pr view --json \"$fields\"`")
+    # Any `gh pr view --json` naming a truncating list, or a field list it
+    # cannot see (a variable), is a snapshot read outside fetch_snapshot().
+    if re.search(r"gh\s+pr\s+view\b[^\n]*--json[\s=]+(\"?\$|[\w,]*\b(files|commits|comments)\b)", code) \
+            or "snapshot-fields" in code:
+        problems.append("the merge job reads files, commits or comments with a bare `gh pr view --json`")
     steps = [block for block in re.split(r"\n      - name: ", "\n".join(merge_job))[1:]]
     fetching = [block for block in steps if SNAPSHOT_CALL_RE.search(_run_blocks_text(block.splitlines()))]
     if len(fetching) < 3:
@@ -716,11 +719,13 @@ def check_889_findings():
         fail("snapshot fetch: {0}".format(problem))
     if not problems:
         ok("every merge-job snapshot is board_merge.py snapshot's whole, run-bound read")
-    pasted = merge_job + ['          gh pr view "$n" -R "$GITHUB_REPOSITORY" --json "$fields" > x.json']
-    if not snapshot_fetch_problems(pasted):
-        fail("snapshot fetch self-test: a pasted `gh pr view --json \"$fields\"` read is not caught")
-    else:
-        ok("snapshot fetch self-test: a pasted `gh pr view --json \"$fields\"` read is caught")
+    for pasted_read in ('gh pr view "$n" -R "$GITHUB_REPOSITORY" --json "$fields" > x.json',
+                        'gh pr view "$n" -R "$GITHUB_REPOSITORY" --json "$snapshot_fields" > x.json',
+                        'gh pr view "$n" -R "$GITHUB_REPOSITORY" --json number,files,commits,comments > x.json'):
+        if not snapshot_fetch_problems(merge_job + ["          " + pasted_read]):
+            fail("snapshot fetch self-test: a pasted `{0}` read is not caught".format(pasted_read))
+        else:
+            ok("snapshot fetch self-test: a pasted `{0}` read is caught".format(pasted_read))
     wrapper = board_merge.AUTO_UPDATE_WRAPPER_PATH
     if not os.path.isfile(wrapper):
         fail("AUTO_UPDATE_WRAPPER_PATH {0} does not exist".format(wrapper))
@@ -738,6 +743,54 @@ def check_889_findings():
         fail("{0} does not upload the artifact naming the head its record verified ({1})".format(AUTO_UPDATE, upload))
     else:
         ok("the auto-update run uploads the artifact that binds its record to the head")
+    for problem in verified_head_upload_problems(stage):
+        fail("{0}: {1}".format(AUTO_UPDATE, problem))
+    check_verification_run_read_warns()
+
+
+def verified_head_upload_problems(stage):
+    """Once the record is posted, nothing between it and the upload may fail
+    the step (a skipped upload strands a verified PR, unconfirmable for
+    good), and a missing record file fails the upload instead of leaving a
+    green run with no artifact."""
+    problems = []
+    lines = stage.splitlines()
+    start = next((i for i, line in enumerate(lines) if 'echo "verified-head=$head_sha"' in line), None)
+    end = next((i for i, line in enumerate(lines) if "- name: Record the verified head on the run" in line), None)
+    if start is None or end is None or end < start:
+        return ["the open-pr step's verified-head output or the upload step is missing"]
+    commands = re.sub(r"\\\n\s*", " ", "\n".join(lines[start + 1:end])).splitlines()
+    for line in commands:
+        code = line.strip()
+        if code.startswith("gh ") and "||" not in code:
+            problems.append("`{0}` after the verified-head output can fail the step and skip the upload".format(
+                code[:60]))
+    upload = "\n".join(lines[end:end + 12])
+    if "if-no-files-found: error" not in upload:
+        problems.append("the verified-head upload does not set `if-no-files-found: error`")
+    return problems
+
+
+def check_verification_run_read_warns():
+    """A verification run that cannot be read fails closed and says why on
+    stderr (a 403 is a token or permission fault, not an unverified PR)."""
+    import contextlib
+    import io
+    import subprocess
+
+    def refused(args, token=None):
+        raise subprocess.CalledProcessError(1, ["gh"] + list(args), stderr="HTTP 403: Resource not accessible")
+    saved, err = board_merge._gh, io.StringIO()
+    board_merge._gh = refused
+    try:
+        with contextlib.redirect_stderr(err):
+            run = board_merge._fetch_verification_run("o/r", {"run_id": "9"}, "t")
+    finally:
+        board_merge._gh = saved
+    if run is not None or "HTTP 403" not in err.getvalue():
+        fail("an unreadable verification run is not reported on stderr (got {0!r})".format(err.getvalue()))
+    else:
+        ok("an unreadable verification run fails closed and names the refusal")
 
 
 def check_auto_update():

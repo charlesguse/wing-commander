@@ -190,10 +190,13 @@ def evaluate_fix(snapshot, review_converged, backstop_holds, paused, switch_on, 
 
 def _bot_commit(commit, bot_login):
     """#889: a commit is the App's only when GitHub resolved its author to the
-    App's own account (REST `author`: type Bot, the App's login). A git email
-    is self-asserted -- anyone can commit as `<slug>[bot]@users.noreply...`
-    -- so a commit GitHub resolved to no account is never the bot's. The
-    stage's `<slug>[bot]` noreply email resolves to the App."""
+    App's own account (REST `author`: type Bot, the App's login); one GitHub
+    resolved to no account is never the bot's. This is attribution, not
+    proof: GitHub resolves the author from the commit's git email, which
+    anyone with push access can set to the App's noreply address. What
+    proves the head is the stage's own is verification_run_confirms(): a
+    commit pushed on top moves the head off the one the run's artifact
+    names."""
     return _is_app_user((commit or {}).get("author"), bot_login)
 
 
@@ -284,19 +287,24 @@ def verification_run_confirms(record, run, head_sha):
     """#889 (the owner's choice: bind the record to its run): `run` is what
     fetch_snapshot() read from the Actions API for the record's `run_id`
     (None when it could not be read). It confirms the record only as a
-    completed, successful scheduled or dispatched run of the auto-update
-    wrapper, calling the stage's own workflow, that uploaded the artifact
-    naming `head_sha`. Anything unconfirmed fails closed."""
+    completed, successful scheduled or dispatched run of main's auto-update
+    wrapper, calling this repository's stage workflow, that uploaded the
+    artifact naming `head_sha`. Anything unconfirmed fails closed."""
     if not isinstance(record, dict) or not isinstance(run, dict) or not head_sha:
         return False
     if not str(record.get("run_id") or "").isdigit() or str(run.get("id")) != str(record.get("run_id")):
         return False
     if run.get("path") != AUTO_UPDATE_WRAPPER_PATH or run.get("event") not in AUTO_UPDATE_RUN_EVENTS:
         return False
+    # A dispatch runs whatever wrapper and stage the dispatched branch
+    # carries, so only main's count; and the stage it called is this
+    # repository's own, not any workflow whose path merely ends the same.
+    if run.get("head_branch") != BASE_BRANCH or not run.get("repository"):
+        return False
     if run.get("status") != "completed" or run.get("conclusion") != "success":
         return False
     called = [str(path).split("@", 1)[0] for path in run.get("referenced_workflows") or []]
-    if not any(path.endswith("/" + AUTO_UPDATE_STAGE_PATH) for path in called):
+    if "{0}/{1}".format(run["repository"], AUTO_UPDATE_STAGE_PATH) not in called:
         return False
     return BUMP_VERIFICATION_ARTIFACT_PREFIX + head_sha in (run.get("artifacts") or [])
 
@@ -552,9 +560,15 @@ def _fetch_verification_run(repo, record, token):
         run = json.loads(_gh(["api", "repos/{0}/actions/runs/{1}".format(repo, run_id)], token))
         artifacts = _gh_items("repos/{0}/actions/runs/{1}/artifacts?per_page=100".format(repo, run_id), token,
                               ".artifacts[]")
-    except (subprocess.CalledProcessError, ValueError):
+    except (subprocess.CalledProcessError, ValueError) as exc:
+        # Fails closed, but says why: a 403 here is a missing actions: read
+        # or an unset WC_ACTIONS_TOKEN, not an unverified PR.
+        print("::warning::board_merge.py snapshot: could not read verification run {0}: {1}".format(
+            run_id, (getattr(exc, "stderr", None) or str(exc)).strip()), file=sys.stderr)
         return None
     return {"id": run.get("id"), "path": run.get("path"), "event": run.get("event"),
+            "head_branch": run.get("head_branch"),
+            "repository": (run.get("repository") or {}).get("full_name"),
             "status": run.get("status"), "conclusion": run.get("conclusion"),
             "referenced_workflows": [(w or {}).get("path") for w in run.get("referenced_workflows") or []],
             "artifacts": [(a or {}).get("name") for a in artifacts]}
