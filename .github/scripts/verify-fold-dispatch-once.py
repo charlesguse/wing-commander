@@ -278,6 +278,7 @@ def run_dispatch_once(steps, repo, base_sha, folded_json, calls, last_comment,
          "NEXT_ITERATION": outputs.get("new-iteration", ""),
          "FOLDED_SUMMARY": outputs.get("folded-summary", ""),
          "RUN_URL": outputs.get("run-url", ""),
+         "MAX_ITERATIONS": "5",
          "GH_CALLS": calls, "GH_LAST_COMMENT": last_comment, "PATH": path},
         runner_temp)
     return rc, out + out2

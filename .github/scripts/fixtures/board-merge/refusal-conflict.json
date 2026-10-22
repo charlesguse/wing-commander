@@ -1,0 +1,1 @@
+{"stderr": "X Pull request #12 is not mergeable: the merge commit cannot be cleanly created.", "expect_class": "conflict"}

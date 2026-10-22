@@ -26,18 +26,35 @@ boundary:
 
 It does not decide whether a finding is real, or whether one finding is a
 re-raise of another; the review-until-clean skill's ledger does that. It
-prints the numbers the skill's stop rules read.
+prints the numbers the skill's stop rules read, and which of those rules
+trip.
+
+THE ARITHMETIC HAS ONE HOME
+---------------------------
+Since spec 116 the attribution, churn and growth arithmetic, the stop rules
+and their thresholds live in .github/scripts/wc_convergence.py, which the
+lifecycle review gate and the board loop call too: this script is the
+skill's CLI over that module and carries no copy of its own (Gate 165,
+verify-convergence-single-home.py, fails on one). A threshold is tuned in
+wc_convergence.THRESHOLDS, once, for the skill and both loops.
 
 USAGE
 -----
   thrash_signals.py --base origin/main --heads H0,H1,H2 \\
-      [--finding path:line ...] [--counts 4,1,1] [--json]
+      [--finding path:line ...] [--counts 4,1] [--recurring N] [--json]
 
   H0 is the PR head before pass 1's fixes; Hk is the head after pass k.
   --finding locations are on H(n-1), the head the latest pass started
   from and reviewed -- as its report gives them. On Hn that pass's own fix
   has already rewritten those lines. --counts holds the number of real
-  findings each pass reported, in order.
+  findings each pass reported, in order. --recurring is how many of the
+  latest pass's findings the ledger marks fixed in an earlier pass. With
+  --counts, the report also names the stop rules that trip (from pass 3).
+
+  thrash_signals.py --history rounds.json [--base origin/main] [--json]
+      the automated loops' own view: wc_convergence.py's `decide` over a
+      recorded round history, so the skill and the loops can be compared
+      on one history (SC-003).
 
   thrash_signals.py --self-test   builds a scratch repository and checks
                                   the attribution, churn and growth math.
@@ -45,175 +62,43 @@ USAGE
 import argparse
 import json
 import os
-import re
-import subprocess
 import sys
 import tempfile
 
-HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@")
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.normpath(os.path.join(HERE, "..", "..", "..", "..", ".github", "scripts")))
+import wc_convergence as wc  # noqa: E402  (the one home of the arithmetic)
 
-
-def git(args, cwd=None, check=True):
-    out = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True)
-    if check and out.returncode != 0:
-        raise SystemExit("thrash_signals: git {0} failed: {1}".format(
-            " ".join(args), out.stderr.strip()))
-    return out
-
-
-def rev(ref, cwd):
-    return git(["rev-parse", "--verify", ref + "^{commit}"], cwd).stdout.strip()
-
-
-class Origins(object):
-    """Maps a commit to the segment of the loop that introduced it."""
-
-    def __init__(self, base, heads, cwd):
-        self.base = base
-        self.heads = heads
-        self.cwd = cwd
-        self._cache = {}
-
-    def _is_ancestor(self, commit, ref):
-        return git(["merge-base", "--is-ancestor", commit, ref],
-                   self.cwd, check=False).returncode == 0
-
-    def of(self, commit):
-        if commit not in self._cache:
-            if self._is_ancestor(commit, self.base):
-                label = "main"
-            elif self._is_ancestor(commit, self.heads[0]):
-                label = "pr"
-            else:
-                label = "unrecorded"
-                for k in range(1, len(self.heads)):
-                    if self._is_ancestor(commit, self.heads[k]):
-                        label = "pass{0}".format(k)
-                        break
-            self._cache[commit] = label
-        return self._cache[commit]
-
-
-def blame_commits(ref, path, start, count, cwd):
-    """The commit that last wrote each line in [start, start+count) at ref."""
-    out = git(["blame", "-l", "-s", "-L", "{0},+{1}".format(start, count),
-               ref, "--", path], cwd, check=False)
-    if out.returncode != 0:
-        return []
-    commits = []
-    for line in out.stdout.splitlines():
-        token = line.split(" ", 1)[0].lstrip("^")
-        if token:
-            commits.append(token)
-    return commits
-
-
-def removed_ranges(old, new, cwd):
-    """(path, start, count) for every old-side range a diff rewrites or deletes."""
-    out = git(["-c", "core.quotePath=false", "diff", "-U0", "--no-renames",
-               "--no-color", old, new], cwd).stdout
-    ranges = []
-    path = None
-    in_header = False
-    for line in out.splitlines():
-        # A deleted line reading "-- x" shows up as "--- x" inside a hunk, so
-        # "--- " names a file only in the header between "diff --git" and the
-        # first "@@". Git ends the name with a tab when it contains a space.
-        if line.startswith("diff --git "):
-            in_header, path = True, None
-        elif in_header and line.startswith("--- "):
-            target = line[4:]
-            if target.endswith("\t"):
-                target = target[:-1]
-            path = target[2:] if target.startswith("a/") else None
-        elif line.startswith("@@"):
-            in_header = False
-            if not path:
-                continue
-            match = HUNK_RE.match(line)
-            if match:
-                start = int(match.group(1))
-                count = int(match.group(2)) if match.group(2) is not None else 1
-                if count:
-                    ranges.append((path, start, count))
-    return ranges
-
-
-def diff_size(base, head, cwd):
-    merge_base = git(["merge-base", base, head], cwd).stdout.strip()
-    out = git(["diff", "--numstat", "--no-renames", merge_base, head], cwd).stdout
-    files = lines = 0
-    for row in out.splitlines():
-        added, deleted, _path = row.split("\t", 2)
-        files += 1
-        if added != "-":
-            lines += int(added) + int(deleted)
-    return {"files": files, "lines": lines}
+git = wc.git
+rev = wc.rev
 
 
 def measure(base, heads, findings, counts, cwd):
-    # Diff paths are relative to the repository root, and blame resolves
-    # a path against its cwd; run from a subdirectory, every blame would
-    # fail and churn and attribution would read 0.
-    cwd = git(["rev-parse", "--show-toplevel"], cwd).stdout.strip()
-    base = rev(base, cwd)
-    heads = [rev(h, cwd) for h in heads]
-    origins = Origins(base, heads, cwd)
-    report = {"base": base, "heads": heads}
+    return wc.measure(base, heads, findings, cwd, counts)
 
-    report["growth"] = [dict(diff_size(base, h, cwd), head=h[:12]) for h in heads]
 
-    # Attribution reads ancestry against the recorded heads; a rebase or
-    # force-push between two of them gives the PR's commits new SHAs that
-    # only the later head contains, which would label them passK.
-    report["warnings"] = [
-        "H{0} is not an ancestor of H{1}: history was rewritten between "
-        "them, so attribution and churn are unreliable".format(k - 1, k)
-        for k in range(1, len(heads))
-        if not origins._is_ancestor(heads[k - 1], heads[k])]
-    # A pass that merged main brings in main commits; if --base predates
-    # that merge they are not its ancestors and would be labelled passK.
-    for k in range(1, len(heads)):
-        merges = git(["rev-list", "--merges", "--parents", heads[k - 1] + ".." + heads[k]],
-                     cwd).stdout.split("\n")
-        if any(not origins._is_ancestor(parent, base)
-               for line in merges if line
-               for parent in line.split()[2:]
-               if not origins._is_ancestor(parent, heads[k - 1])):
-            report["warnings"].append(
-                "pass {0} merged commits --base does not contain: fetch the base "
-                "branch, or they are counted as pass {0}'s".format(k))
+def history_from_report(report, counts, recurring=0):
+    """The report as round records wc_convergence.decide() reads.
 
-    churn = []
-    for k in range(1, len(heads)):
-        rewrote = {}
-        for path, start, count in removed_ranges(heads[k - 1], heads[k], cwd):
-            for commit in blame_commits(heads[k - 1], path, start, count, cwd):
-                label = origins.of(commit)
-                if label.startswith("pass"):
-                    rewrote[label] = rewrote.get(label, 0) + 1
-        churn.append({"pass": k, "rewrote_earlier_pass_lines": rewrote,
-                      "total": sum(rewrote.values())})
-    report["churn"] = churn
-
-    # The latest pass reviewed heads[-2]; its findings' line numbers are
-    # that head's, and on heads[-1] its own fixes own those lines.
-    reviewed = heads[-2] if len(heads) > 1 else heads[-1]
-    attributed = []
-    for spec in findings:
-        path, _, line = spec.rpartition(":")
-        if not path or not line.isdigit():
-            raise SystemExit("thrash_signals: --finding wants path:line, got {0!r}".format(spec))
-        commits = blame_commits(reviewed, path, int(line), 1, cwd)
-        attributed.append({"finding": spec,
-                           "origin": origins.of(commits[0]) if commits else "unknown"})
-    report["findings"] = attributed
-    in_loop = sum(1 for f in attributed if f["origin"].startswith("pass"))
-    report["self_inflicted"] = {"count": in_loop, "of": len(attributed)}
-
-    if counts:
-        report["trend"] = counts
-    return report
+    Pass k reviewed H(k-1): its count is counts[k-1], its churn the lines
+    pass k-1 rewrote of an earlier pass's, its growth H(k-1)'s diff against
+    H0's. Only the latest pass's findings were attributed, so only it has a
+    self-inflicted share, and only it carries --recurring.
+    """
+    first = report["growth"][0]["lines"]
+    rounds = []
+    for k, count in enumerate(counts, 1):
+        latest = k == len(counts)
+        si = report["self_inflicted"] if latest else {"count": 0, "of": 0}
+        rounds.append({
+            "round": k, "count": count,
+            "attributable": si["of"], "self_inflicted": si["count"],
+            "unattributable": report.get("unattributable", 0) if latest else 0,
+            "churn": report["churn"][k - 2]["total"] if k > 1 else 0,
+            "growth": (float(report["growth"][k - 1]["lines"]) / first - 1) if first else None,
+            "recurrences": ["recurring"] * recurring if latest else [],
+        })
+    return rounds
 
 
 def render(report):
@@ -235,6 +120,11 @@ def render(report):
             lines.append("  {0}: {1}".format(f["finding"], f["origin"]))
     if report.get("trend"):
         lines.append("Real findings per pass: {0}".format(" -> ".join(str(c) for c in report["trend"])))
+    if "decision" in report:
+        d = report["decision"]
+        lines.append("Stop rules: {0}".format(
+            "STOP and ask the owner -- tripped: " + ", ".join(d["tripped"]) if d["stop"]
+            else "none tripped"))
     return "\n".join(lines)
 
 
@@ -281,6 +171,19 @@ def self_test():
             failures.append("growth: expected 2, 3, 4 changed lines; got {0}".format(sizes))
         if report["warnings"]:
             failures.append("warnings: expected none on linear history; got {0}".format(report["warnings"]))
+
+        # The stop rules come from the shared module: before pass 3 nothing
+        # trips; a third pass whose count did not fall trips.
+        if wc.decide(history_from_report(report, [2, 1]))["stop"]:
+            failures.append("stop rules: expected nothing to trip before pass 3")
+        write("a\nb\nc\npr1-fixed\npr2\nfix1-refixed\nfix2\nfix3\n")
+        h3 = commit("pass 3")
+        three = measure(base, [h0, h1, h2, h3], ["f.py:2"], [2, 1, 1], repo)
+        tripped = wc.decide(history_from_report(three, [2, 1, 1]))["tripped"]
+        if "count-not-falling" not in tripped:
+            failures.append("stop rules: expected count-not-falling at pass 3; got {0}".format(tripped))
+        if "recurrence" not in wc.decide(history_from_report(three, [3, 2, 1], recurring=1))["tripped"]:
+            failures.append("stop rules: expected --recurring to trip recurrence at pass 3")
 
         # A second loop from H0: pass 2 deletes a "-- c" line above a rewrite
         # of a pass-1 line, and rewrites a pass-1 line in a file whose name
@@ -335,7 +238,7 @@ def self_test():
             print("FAIL " + failure)
         if failures:
             return 1
-        print("ok: attribution, self-inflicted share, churn, growth, header parsing, subdirectory, stale-base and rewrite warnings")
+        print("ok: attribution, self-inflicted share, churn, growth, stop rules, header parsing, subdirectory, stale-base and rewrite warnings")
         return 0
 
 
@@ -345,11 +248,21 @@ def main():
     parser.add_argument("--heads", help="comma-separated: H0 (before pass 1), H1 (after pass 1), ...")
     parser.add_argument("--finding", action="append", default=[], help="path:line on the head the latest pass reviewed")
     parser.add_argument("--counts", help="comma-separated real findings per pass")
+    parser.add_argument("--recurring", type=int, default=0,
+                        help="how many of the latest pass's findings the ledger marks fixed earlier")
+    parser.add_argument("--history", help="JSON file: a recorded round history (wc_convergence.py decide's input)")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
         return self_test()
+    if args.history:
+        with open(args.history, encoding="utf-8") as fh:
+            rounds = json.load(fh)
+        decision = wc.decide_history(args.base, rounds, None, os.getcwd())
+        print(json.dumps(decision, indent=2) if args.json else
+              (wc.render_handoff(decision) if decision["stop"] else "converging: no signal tripped"))
+        return 0
     if not args.heads:
         parser.error("--heads is required")
     heads = [h for h in args.heads.split(",") if h]
@@ -361,6 +274,9 @@ def main():
         parser.error("--counts has {0} value(s) but --heads records {1} pass(es)".format(
             len(counts), len(heads) - 1))
     report = measure(args.base, heads, args.finding, counts, os.getcwd())
+    if counts:
+        decision = wc.decide(history_from_report(report, counts, args.recurring))
+        report["decision"] = {"tripped": decision["tripped"], "stop": decision["stop"]}
     print(json.dumps(report, indent=2) if args.json else render(report))
     return 0
 

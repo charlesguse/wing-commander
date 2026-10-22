@@ -602,6 +602,13 @@ jobs:
       # instead of skip — US3), or `merged`/`closed` (already done; report
       # and change nothing, FR-009/FR-009a). Replaces the old boolean `skip`,
       # which could not tell "open" apart from "already done".
+      # A merged or closed PR opened before this lifecycle's issue is not its
+      # final PR: it is an earlier lifecycle's on a branch that reused the
+      # same slug (#1072, where a merged PR from five days before read as
+      # "already merged" and the lifecycle never left implement). An open PR
+      # always counts, however old: GitHub allows one open PR per head, so
+      # it is the PR this branch's commits land on and is refreshed. When
+      # the issue's creation time cannot be read, every PR counts, as before.
       - name: Check for an existing final pull request
         id: guard
         if: steps.lifecycle-gate.outputs.is-open == 'true'
@@ -610,8 +617,14 @@ jobs:
           SLUG: ${{ steps.spec.outputs.slug }}
           DB: ${{ steps.defbranch.outputs.name }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          ISSUE: ${{ inputs.issue-number }}
         run: |
-          existing=$(gh pr list --head "${SPEC_PREFIX}$SLUG" --base "$DB" --state all --json number,state,url --jq '.[0] // empty')
+          issue_created=$(gh issue view "$ISSUE" --json createdAt --jq '.createdAt' 2>/dev/null) || issue_created=""
+          if [ -z "$issue_created" ]; then
+            echo "::warning::finalize: could not read lifecycle issue #$ISSUE's creation time; any pull request from ${SPEC_PREFIX}$SLUG counts as this lifecycle's final PR."
+          fi
+          prs=$(gh pr list --head "${SPEC_PREFIX}$SLUG" --base "$DB" --state all --json number,state,url,createdAt)
+          existing=$(printf '%s' "$prs" | jq -c --arg since "$issue_created" '[.[] | select(.state == "OPEN" or .createdAt >= $since)] | .[0] // empty')
           if [ -z "$existing" ]; then
             echo "pr-state=none" >> "$GITHUB_OUTPUT"
             exit 0
@@ -858,21 +871,10 @@ jobs:
                plain markdown, no top-level heading) summarizing what this
                specification built, to
                ${{ steps.ctx.outputs.runner-temp }}/finalize-summary.md.
-            4. Write the remaining manual work to
-               ${{ steps.ctx.outputs.runner-temp }}/finalize-remaining.md, one item per line:
-               every tasks.md item that is still unchecked (`- [ ]`), plus
-               any checked item whose text marks it as inherently human-only
-               work (e.g. review, merge, deploy, credential/secret setup)
-               that no agent can complete. Leave the file empty if none
-               remain. Do not invent items that aren't in tasks.md. For any
-               item below in the routed write-boundary lookup, write exactly
-               `<item> — routed, see <issue url>` instead of composing your
-               own description of it; write every other item as today.
-
-               Routed write-boundary lookup (deterministic, computed before
-               this step — never re-derive which unchecked line "looks
-               routed" yourself):
-               ${{ steps.write-boundary-lookup.outputs.rendered != '' && steps.write-boundary-lookup.outputs.rendered || '(none)' }}
+            4. Do not write a remaining-work list: the remaining work
+               (maintainer steps and unfinished implementation) is rendered
+               by deterministic code before this step and reaches the pull
+               request and the lifecycle issue without you.
 
             If, while doing your own task, you notice a defect that is not your
             own task to fix — a gate that cannot fail its subject, a contract
@@ -1069,6 +1071,28 @@ jobs:
             (${{ steps.summarize-ceiling.outputs.ceiling }}) is the only hard
             stop; this is an observability note, not a failure.
 
+      # specs/117-implement-stall-handoff (FR-007, FR-008, FR-009): the
+      # remaining-work report is rendered by code from the classified task
+      # lists, never copied by the summarising agent below -- a standing
+      # instruction is omitted, an owner-only task lands under "Maintainer
+      # steps", and an unbuilt code task under "Unfinished implementation"
+      # with a stall statement. Not continue-on-error: a missing count would
+      # otherwise render as "no manual work remains", so "Verify agent
+      # output" fails the job on the absent finalize-remaining.md instead.
+      # The composite removes that file when the renderer itself fails.
+      # Rendered after the agent step (and its post-agent re-checkout of the
+      # pipeline), so nothing the agent writes to runner temp can stand in
+      # for the deterministic report.
+      - name: Render remaining work
+        id: remaining-work
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && steps.checkbox-tip-finalize.outcome == 'success'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-remaining-work
+        with:
+          maintainer-items: ${{ steps.checkbox-tip-finalize.outputs.maintainer-items }}
+          impl-items: ${{ steps.checkbox-tip-finalize.outputs.impl-unchecked-items }}
+          routed-items: ${{ steps.write-boundary-lookup.outputs.rendered }}
+          output-path: ${{ runner.temp }}/finalize-remaining.md
+
       # Fail loudly rather than opening a PR with incomplete content. Skipped
       # for a rate-limited verdict (FR-015a, specs/047-rate-limited-verdict):
       # a usage-window rejection never produced real output by design, so
@@ -1156,6 +1180,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
         env:
           CONVERGED: ${{ inputs.converged }}
+          IMPL_COUNT: ${{ steps.remaining-work.outputs.impl-count }}
           ISSUE: ${{ inputs.issue-number }}
           COMPARE_LINK: ${{ steps.diff.outputs.compare-link }}
           CHANGED_FILES: ${{ steps.diff.outputs.changed-files }}
@@ -1172,9 +1197,21 @@ jobs:
           narrative_file="$RUNNER_TEMP/finalize-narrative.md"
           : > "$narrative_file"
           if [ "$CONVERGED" = "false" ]; then
-            n=$(grep -cv '^[[:space:]]*$' "$remaining_file" || true)
+            # IMPL_COUNT counts implementation tasks only; when none are
+            # left (only maintainer or routed work remains, or the render
+            # step did not run) a "0 tasks remain" banner would be false.
+            # An empty report renders as "No manual work remains." below, so
+            # the banner must not point at remaining work that is not there.
+            n="${IMPL_COUNT:-0}"
+            if [ "$n" -gt 0 ] 2>/dev/null; then
+              banner="⚠️ **Not fully converged — $n implementation task(s) remain**"
+            elif [ -n "$(tr -d '[:space:]' < "$remaining_file" 2>/dev/null)" ]; then
+              banner="⚠️ **Not fully converged — see the remaining work below**"
+            else
+              banner="⚠️ **Not fully converged — implement handed off before confirming convergence, though tasks.md lists no remaining work**"
+            fi
             {
-              echo "⚠️ **Not fully converged — $n tasks remain**"
+              echo "$banner"
               echo ""
             } >> "$narrative_file"
           fi
@@ -1187,13 +1224,13 @@ jobs:
             echo ""
             echo "$CHANGED_FILES"
             echo ""
-            echo "## Remaining manual work"
-            echo ""
           } >> "$narrative_file"
+          # The rendered report carries its own "## Maintainer steps" /
+          # "## Unfinished implementation" headings (render-remaining-work.sh).
           if [ -s "$remaining_file" ] && [ -n "$(tr -d '[:space:]' < "$remaining_file")" ]; then
             cat "$remaining_file" >> "$narrative_file"
           else
-            echo "No manual work remains." >> "$narrative_file"
+            printf '## Remaining work\n\nNo manual work remains.\n' >> "$narrative_file"
           fi
           {
             echo ""
@@ -1535,12 +1572,18 @@ jobs:
       - name: Check for remaining manual work
         id: remaining
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        env:
+          RENDERED_HAS_REMAINING: ${{ steps.remaining-work.outputs.has-remaining }}
+          RENDERED_STALLED: ${{ steps.remaining-work.outputs.stalled }}
         run: |
-          remaining_file="$RUNNER_TEMP/finalize-remaining.md"
-          if [ -s "$remaining_file" ] && [ -n "$(tr -d '[:space:]' < "$remaining_file")" ]; then
-            echo "has-remaining=true" >> "$GITHUB_OUTPUT"
+          # Re-publishes the renderer's own answer (wing-commander-remaining-work)
+          # rather than recomputing it from the file, so the two cannot diverge.
+          # An empty stalled output means the renderer failed: neither branch
+          # below announces anything (the verify step has already failed).
+          if [ "$RENDERED_STALLED" = "" ]; then
+            echo "has-remaining=unknown" >> "$GITHUB_OUTPUT"
           else
-            echo "has-remaining=false" >> "$GITHUB_OUTPUT"
+            echo "has-remaining=$RENDERED_HAS_REMAINING" >> "$GITHUB_OUTPUT"
           fi
 
       # Retried (#662): run 36264390069 lost this post to one transient
@@ -1556,7 +1599,7 @@ jobs:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ inputs.issue-number }}
           kind: action
-          summary: "Complete the remaining manual work"
+          summary: ${{ steps.remaining-work.outputs.stalled == 'true' && 'Stalled with implementation outstanding' || steps.remaining-work.outputs.stalled == 'false' && 'Maintainer steps remain' || 'Remaining work' }}
           body-file: ${{ runner.temp }}/finalize-remaining.md
           timing: "after this PR merges"
           retry-delays: "5 15 45"
@@ -1612,6 +1655,7 @@ jobs:
               {"name": "Upload Claude execution log", "conclusion": "${{ steps.upload-execution-log.conclusion }}"},
               {"name": "Upload metrics record", "conclusion": "${{ steps.upload-metrics-record.conclusion }}"},
               {"name": "Compute cost line", "conclusion": "${{ steps.cost-line.conclusion }}"},
+              {"name": "Render remaining work", "conclusion": "${{ steps.remaining-work.conclusion }}"},
               {"name": "Verify agent output", "conclusion": "${{ steps.verify-agent-output.conclusion }}"},
               {"name": "Assemble PR body", "conclusion": "${{ steps.body.conclusion }}"},
               {"name": "Determine feature title", "conclusion": "${{ steps.title.conclusion }}"},

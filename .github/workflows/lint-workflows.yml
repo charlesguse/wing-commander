@@ -115,7 +115,13 @@ on:
       - "specs/055-unattended-e2e-gates/research.md"
       - "specs/055-unattended-e2e-gates/spec.md"
       - "specs/056-stage-found-defect-filing/data-model.md"
+      # Gate 165 reads spec 059's convergence-signal contract for its
+      # pointers at spec 117.
+      - "specs/059-converged-means-tasks-done/contracts/convergence-signal.md"
       - ".claude/skills/spec-cross-reference/SKILL.md"
+      # verify-convergence-single-home.py scans every skill script, and its
+      # fixtures run thrash_signals.py's parity with wc_convergence.py.
+      - ".claude/skills/*/scripts/**"
   # Gate 1 only — it reads how GitHub actually registered the workflows on
   # the default branch, which a PR's files cannot tell us.
   push:
@@ -4673,6 +4679,33 @@ jobs:
       - name: Gate 164 — spec-meta self-identity in a project and after graduation
         if: "!cancelled()"
         run: python3 .github/scripts/verify-spec-meta-self-identity.py
+      - name: Gate 165 — implement stall hand-off (task classification, blocker, stop rule, remaining-work report)
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-implement-stall-handoff.py
+      # Gate 165 — specs/116-review-convergence-analyze. It keeps the review
+      # loops' convergence arithmetic and thresholds in wc_convergence.py
+      # alone (FR-010, FR-018, FR-019); its fixtures run the rules, the
+      # replays, the round records, both loops' shipped steps and the
+      # skill's parity (SC-001..SC-003).
+      - name: Gate 165 — the review-convergence arithmetic has exactly one home
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-convergence-single-home.py
+      - name: Gate 165 fixtures — wc_convergence rules, replays, round records and skill parity
+        if: "!cancelled()"
+        run: bash .github/scripts/wc_convergence_tests/run-tests.sh
+
+      # Gate 165 — specs/115-board-loop-self-merge (FR-013, FR-015): every
+      # merge-blocking condition and every refusal branch of board_merge.py
+      # has a checked-in fixture under .github/scripts/fixtures/board-merge/
+      # that must block (or classify), and board-loop.yml's `merge` job is
+      # the only merge call, pinned to the evaluated head SHA with one
+      # method, no --admin/--auto/approval, both switches in its `if:`, the
+      # App token (so prove-gate sees the closed event), and no decision
+      # logic of its own. The auto-update stage posts the verification record
+      # and never merges.
+      - name: Gate 165 — board loop self-merge decision, refusal classes and merge-job shape
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-merge.py
 
       # Gate 10 — the gates themselves are wired up. Every gate above is a
       # file in .github/scripts that some `run:` line has to name, and

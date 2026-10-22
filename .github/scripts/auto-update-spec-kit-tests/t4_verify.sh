@@ -146,7 +146,10 @@ check "S1 no failure-detail step output (#736)" "$(grep -c '^failure-detail' "$G
 echo
 echo "--- Scenario 2: missing expected artifact fails, no fallback, single outcome (US2, FR-004, SC-002) ---"
 
-echo "  plan-template.md missing -> setup-plan.sh's own silent-empty fallback -> zero-byte plan.md -> tier fails"
+echo "  plan-template.md missing -> setup-plan.sh writes no usable plan.md -> tier fails"
+# Spec Kit <= v1.2.0's setup-plan.sh fell back to a zero-byte plan.md and
+# exited 0; v1.2.1 exits non-zero and writes no plan.md. Either way there
+# is no substitute content, and the tier must fail naming plan.md.
 new_step_env
 WT="$RUNNER_TEMP/e2e-missing-plan-template"
 seed_worktree "$WT"
@@ -155,12 +158,14 @@ FD="$WT/specs/029-scratch"
 mkdir -p "$FD"
 printf '# spec\n' > "$FD/spec.md"
 (cd "$WT" && SPECIFY_FEATURE_DIRECTORY="$FD" bash .specify/scripts/bash/setup-plan.sh --json >"$WORK/setup-plan-missing-template.log" 2>&1)
-check "S2 setup-plan.sh itself still exits 0 (its own fallback, not a crash)" "$?" "0"
-check "S2 plan.md written as zero-byte, not a substitute" "$([ -f "$FD/plan.md" ] && [ ! -s "$FD/plan.md" ] && echo yes || echo no)" "yes"
+sp_rc=$?
+check "S2 setup-plan.sh either falls back to a zero-byte plan.md (exit 0) or refuses with none (non-zero)" \
+  "$( { [ "$sp_rc" -eq 0 ] && [ -f "$FD/plan.md" ] && [ ! -s "$FD/plan.md" ]; } || { [ "$sp_rc" -ne 0 ] && [ ! -s "$FD/plan.md" ]; } && echo yes || echo "no (rc=$sp_rc)")" "yes"
+rm -f "$FD/plan.md"
 GHA_SUBST=()
 export WORKTREE="$WT" FEATURE_DIR="$FD"
 run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
-check "S2 tier fails on the empty plan.md" "$(out passed)" "false"
+check "S2 tier fails with no usable plan.md" "$(out passed)" "false"
 check_contains "S2 failure-detail names plan.md" "$(out failure-detail)" "plan.md"
 
 echo "  confirm no locally-manufactured substitute exists anywhere in the extracted step's source"
@@ -331,8 +336,51 @@ run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
 check_contains "S6 missing spec.md carries the FR-008 hint" "$(out failure-detail)" "FR-018"
 
 echo "  missing-artifact failure (plan.md) carries the hint"
+# A candidate whose setup-plan.sh succeeds with the documented JSON shape but
+# leaves no plan.md (e.g. it reorganized its templates). Stubbed, because
+# upstream's own missing-template path now exits non-zero (Spec Kit v1.2.1),
+# which is the non-zero-exit branch tested below, not this one.
 new_step_env
 WT="$RUNNER_TEMP/e2e-hint-plan"
+seed_worktree "$WT"
+cat > "$WT/.specify/scripts/bash/setup-plan.sh" <<'STUB_EOF'
+#!/usr/bin/env bash
+d="$SPECIFY_FEATURE_DIRECTORY"
+printf '{"FEATURE_SPEC":"%s/spec.md","IMPL_PLAN":"%s/plan.md","FEATURE_DIR":"%s","BRANCH":"029-scratch"}\n' "$d" "$d" "$d"
+STUB_EOF
+FD="$WT/specs/029-scratch"
+mkdir -p "$FD"
+printf '# spec\n' > "$FD/spec.md"
+GHA_SUBST=()
+export WORKTREE="$WT" FEATURE_DIR="$FD"
+run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
+check_contains "S6 missing plan.md carries the FR-008 hint" "$(out failure-detail)" "FR-018"
+
+echo "  missing plan template, refused (Spec Kit v1.2.1+: non-zero exit, no plan.md) carries the hint"
+# The refusal lands in the step's non-zero-exit branch, where a crash
+# (below) must NOT carry the hint; the absent template is what tells them apart.
+new_step_env
+WT="$RUNNER_TEMP/e2e-hint-plan-refused"
+seed_worktree "$WT"
+rm -f "$WT/.specify/templates/plan-template.md"
+cat > "$WT/.specify/scripts/bash/setup-plan.sh" <<'STUB_EOF'
+#!/usr/bin/env bash
+echo "ERROR: Plan template not found; no new plan.md was created." >&2
+exit 1
+STUB_EOF
+FD="$WT/specs/029-scratch"
+mkdir -p "$FD"
+printf '# spec\n' > "$FD/spec.md"
+GHA_SUBST=()
+export WORKTREE="$WT" FEATURE_DIR="$FD"
+run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
+check "S6 refused missing plan template fails the tier" "$(out passed)" "false"
+check_contains "S6 refused missing plan template carries the FR-008 hint" "$(out failure-detail)" "FR-018"
+check_contains "S6 refused missing plan template names plan.md itself" "$(out failure-detail)" "$FD/plan.md"
+
+echo "  missing plan template, this repository's own setup-plan.sh (either upstream shape) carries the hint"
+new_step_env
+WT="$RUNNER_TEMP/e2e-hint-plan-real"
 seed_worktree "$WT"
 rm -f "$WT/.specify/templates/plan-template.md"
 FD="$WT/specs/029-scratch"
@@ -341,7 +389,31 @@ printf '# spec\n' > "$FD/spec.md"
 GHA_SUBST=()
 export WORKTREE="$WT" FEATURE_DIR="$FD"
 run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
-check_contains "S6 missing plan.md carries the FR-008 hint" "$(out failure-detail)" "FR-018"
+check "S6 real missing plan template fails the tier" "$(out passed)" "false"
+check_contains "S6 real missing plan template carries the FR-008 hint" "$(out failure-detail)" "FR-018"
+check_contains "S6 real missing plan template names plan.md" "$(out failure-detail)" "$FD/plan.md"
+
+echo "  base plan template absent but plan.md written, then a non-zero exit, does NOT carry the hint"
+# e.g. the template moved to an override and the script died after writing
+# plan.md: nothing expected is missing, so this is an ordinary crash (FR-009).
+new_step_env
+WT="$RUNNER_TEMP/e2e-hint-plan-written-crash"
+seed_worktree "$WT"
+rm -f "$WT/.specify/templates/plan-template.md"
+cat > "$WT/.specify/scripts/bash/setup-plan.sh" <<'STUB_EOF'
+#!/usr/bin/env bash
+printf '# plan\n' > "$SPECIFY_FEATURE_DIRECTORY/plan.md"
+echo "ERROR: something unrelated failed after plan.md was written" >&2
+exit 1
+STUB_EOF
+FD="$WT/specs/029-scratch"
+mkdir -p "$FD"
+printf '# spec\n' > "$FD/spec.md"
+GHA_SUBST=()
+export WORKTREE="$WT" FEATURE_DIR="$FD"
+run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
+check "S6 crash after writing plan.md fails the tier" "$(out passed)" "false"
+check_not_contains "S6 crash after writing plan.md has no FR-008 hint" "$(out failure-detail)" "FR-018"
 
 echo "  a non-zero-exit failure does NOT carry the hint (FR-009: narration content only)"
 new_step_env

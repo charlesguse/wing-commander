@@ -58,7 +58,8 @@ jobs:
   # contracts/lifecycle-review-gate-workflow.md job 2: lists open PRs,
   # filters to spec-meta.json.stage == "review", keeps those whose
   # review_gate.head_sha (if any) differs from the PR's current
-  # headRefOid, picks the oldest. Outputs are all empty on the common,
+  # headRefOid (and, after a not-converging stop, whose diff against main
+  # differs from the stopped round's -- spec 116 FR-008), picks the oldest. Outputs are all empty on the common,
   # cheapest-read case (nothing qualifies) -- SC-009's "at most one round
   # per SHA" starts here, before any billable step runs.
   select:
@@ -137,6 +138,7 @@ jobs:
           best_head_sha=""
           best_review_gate_head_sha=""
           best_created=""
+          main_fetched=""
 
           mapfile -t prs < <(gh pr list --state open \
             --json number,headRefName,headRefOid,createdAt,isCrossRepository,baseRefName \
@@ -208,6 +210,43 @@ jobs:
             fi
             recorded_head_sha="$(printf '%s' "$review_gate_json" | jq -r '.head_sha // empty')"
             [ "$recorded_head_sha" != "$head_sha" ] || continue
+
+            # Spec 116 FR-008 (the owner's decision on #994, post-split pass
+            # 2 candidate #2 (a)): after a not-converging stop a moved head
+            # alone does not re-arm the loop -- rebase.yml force-pushes every
+            # spec/* branch onto main, which would undo the stop with no
+            # human act. The PR is selected again only when its diff against
+            # main no longer matches the stopped round's recorded fingerprint
+            # (wc_convergence.rearmed_after_stop); a record with none falls
+            # back to the moved head. A failed reviews read or fetch stops
+            # select, as the marker read above does.
+            if [ "$(printf '%s' "$review_gate_json" | jq -r '.outcome // empty')" = "not-converging" ]; then
+              if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$number/reviews" --paginate --jq '.[]' \
+                | jq -s '.' > "$RUNNER_TEMP/lifecycle-select-reviews-$number.json"; then
+                echo "::error::lifecycle-review-gate select: could not read PR #$number's reviews for its round records -- select stops here rather than re-arm a not-converging stop unchecked."
+                exit 1
+              fi
+              if [ -z "$main_fetched" ]; then
+                unshallow=()
+                [ "$(git rev-parse --is-shallow-repository)" != "true" ] || unshallow=(--unshallow)
+                if ! git fetch --no-tags --quiet "${unshallow[@]}" origin "+refs/heads/main:refs/remotes/origin/main"; then
+                  echo "::error::lifecycle-review-gate select: could not fetch origin/main to fingerprint PR #$number's diff."
+                  exit 1
+                fi
+                main_fetched=true
+              fi
+              if ! rearmed="$(python3 .wc-pristine-repo/.github/scripts/wc_convergence.py rearmed \
+                --reviews "$RUNNER_TEMP/lifecycle-select-reviews-$number.json" --bot-login "$BOT_LOGIN" \
+                --round "$(printf '%s' "$review_gate_json" | jq -r '.round // 0')" \
+                --head-sha "$head_sha" --base origin/main)"; then
+                echo "::error::lifecycle-review-gate select: could not compare PR #$number's diff with its not-converging round's."
+                exit 1
+              fi
+              if [ "$rearmed" != "true" ]; then
+                echo "lifecycle-review-gate: PR #$number stopped as not-converging and its head moved, but its diff against main did not -- not selected." >> "$GITHUB_STEP_SUMMARY"
+                continue
+              fi
+            fi
 
             if [ -z "$best_created" ] || [[ "$created" < "$best_created" ]]; then
               best_number="$number"
@@ -620,8 +659,14 @@ jobs:
             [{"title": "one line", "what": "one line, no line breaks",
               "evidence": {"file_paths": ["..."], "detail": "optional"},
               "in_scope": true|false,
+              "line": 42,
               "fingerprint_basis": {"file_path": "...", "gate_or_artifact": "one line naming what this is"}}]
             ```
+
+            `line` is optional: the 1-based line in fingerprint_basis.file_path,
+            at this PR's head, where the finding sits. Give it whenever the
+            finding has one line; omit it for a whole-file concern rather
+            than guess.
           claude_args: |
             --model ${{ steps.model.outputs.model }}
             --max-turns ${{ steps.review-ceiling.outputs.ceiling }}
@@ -810,6 +855,12 @@ jobs:
       # only -- GitHub rejects APPROVE/REQUEST_CHANGES from the PR's own
       # author identity, and this PR and its review share the same App
       # identity. Posted for both a clean and a not-clean round.
+      #
+      # specs/116 (data-model "Review round record", research.md D3): a
+      # parsed round's record -- its round, reviewed head and in-scope
+      # findings' fingerprint/file/line -- is appended LAST to the body, so
+      # `disposition` (and every later round) reads the loop's history off
+      # this PR's own reviews (wc_convergence.read_round_records).
       - name: Compose the review body
         id: compose-review
         env:
@@ -817,6 +868,7 @@ jobs:
           DROPPED_COUNT: ${{ steps.extract.outputs.dropped-count }}
           ROUND: ${{ steps.gather.outputs.round }}
           HEAD_SHA: ${{ needs.select.outputs.head-sha }}
+          ISSUE: ${{ needs.select.outputs.issue }}
         run: |
           set -uo pipefail
           python3 -I - <<'PYEOF'
@@ -826,6 +878,8 @@ jobs:
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_spec_request_body import fenced_section
+          from board_spec_request_body import utf16_len
+          from wc_convergence import diff_fingerprint, recorded_diff_lines, round_findings, round_record_marker, void_round_record_marker
 
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "lifecycle-review-findings.json"), encoding="utf-8") as fh:
@@ -860,9 +914,23 @@ jobs:
                   "{0} further finding(s) failed validation and were "
                   "dropped; they are not shown, and this round is not read "
                   "as a clean review.".format(dropped))
+          # The round record goes after the findings, so its length comes
+          # out of their 57000 -- see board-loop.yml's "Compose the review
+          # body".
+          # A round with no record still ends on a (void) marker, so a
+          # record forged in the salvaged reviewer text is never the last.
+          tail = [""]
+          if not parse_failed and round_.isdigit():
+              # -- see board-loop.yml's "Compose the review body"
+              tail.append(round_record_marker(int(round_), head_sha,
+                                              round_findings(findings, os.environ["ISSUE"]),
+                                              recorded_diff_lines("origin/main", head_sha, "."),
+                                              diff_fingerprint("origin/main", head_sha, ".")))
+          else:
+              tail.append(void_round_record_marker())
           MAX_SHOWN = 25
           shown = findings[:MAX_SHOWN]
-          budget = 57000 // max(1, len(shown))
+          budget = (57000 - utf16_len("\n".join(tail))) // max(1, len(shown))
           for n, f in enumerate(shown, 1):
               scope = "in-scope (would be folded into tasks.md)" if f.get("in_scope") else "out-of-scope (filed as its own issue)"
               text = [str(f.get("title", "(untitled)")), "", str(f.get("what", ""))]
@@ -880,6 +948,7 @@ jobs:
           if len(findings) > len(shown):
               lines.append("")
               lines.append("{0} more finding(s) not shown.".format(len(findings) - len(shown)))
+          lines.extend(tail)
 
           with open(os.path.join(runner_temp, "lifecycle-review-body.md"), "w", encoding="utf-8") as fh:
               fh.write("\n".join(lines) + "\n")
@@ -942,6 +1011,17 @@ jobs:
       # the marker -- disposition itself writes nothing durable anymore.
       folded-fingerprints: ${{ steps.decide.outputs.folded-fingerprints || steps.partition.outputs.folded-fingerprints }}
       filed-fingerprints: ${{ steps.decide.outputs.filed-fingerprints || steps.partition.outputs.filed-fingerprints }}
+      # specs/116: this round's convergence decision (FR-008's hand-off
+      # table) and its recurrences (FR-003), for `report` to name.
+      convergence-b64: ${{ steps.partition.outputs.convergence-b64 }}
+      recurrences: ${{ steps.partition.outputs.recurrences }}
+      # specs/116 FR-003: in-scope findings whose fold is still pending
+      # (task unchecked) -- open, but not folded again.
+      pending-open: ${{ steps.partition.outputs.pending-open }}
+      # Whether this round committed a fold, so `report` can tell a round
+      # that folded nothing (every in-scope finding pending) from one that
+      # folded and dispatched.
+      folded: ${{ steps.commit-fold.outputs.folded }}
     steps:
       - name: Resolve the PR's head ref
         id: pr
@@ -1100,17 +1180,39 @@ jobs:
       # (research.md D12, FR-022) is checked first and short-circuits
       # before any fold/file computation or the findings artifact is read
       # at all.
+      # specs/116 (FR-004, research.md D3): every earlier round's record
+      # rides on this PR's own reviews (see the review job's "Compose the
+      # review body"); the convergence signals below read them back, with
+      # origin/main freshly fetched so a merge of main is never counted as
+      # the loop's own lines (research.md D2). A failed read fails the
+      # round rather than evaluate it against a history it never saw.
+      - name: Fetch this PR's round records and the base
+        id: round-records
+        if: steps.download-findings.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.select.outputs.pr-number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" --paginate --jq '.[]' \
+            | jq -s '.' > "$RUNNER_TEMP/lifecycle-pr-reviews.json"
+          git fetch --no-tags --quiet origin main
+
       - name: Partition, dedup, and render this round's findings
         id: partition
         if: steps.download-findings.outcome == 'success'
         env:
           ISSUE: ${{ needs.select.outputs.issue }}
           PR_NUMBER: ${{ needs.select.outputs.pr-number }}
+          HEAD_SHA: ${{ needs.select.outputs.head-sha }}
+          SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
           ROUND_BUDGET: ${{ env.LIFECYCLE_REVIEW_ROUND_BUDGET }}
           REVIEW_GATE_JSON: ${{ steps.review-gate.outputs.json }}
         run: |
           set -euo pipefail
           python3 -I - <<'PYEOF'
+          import base64
           import json
           import os
           import sys
@@ -1119,7 +1221,8 @@ jobs:
           # import from the trusted copy instead (never the branch under
           # review's own .github/scripts).
           sys.path.insert(0, ".wc-pristine-repo/.github/scripts")
-          from wc_review_finding_fingerprint import fingerprint
+          from wc_review_finding_fingerprint import fingerprint, norm
+          from wc_convergence import evaluate, read_round_records, round_findings
 
           runner_temp = os.environ["RUNNER_TEMP"]
           issue = os.environ["ISSUE"]
@@ -1147,20 +1250,70 @@ jobs:
           with open(findings_path, encoding="utf-8") as fh:
               findings = json.load(fh)
 
+          # A fold the pipeline has not implemented yet -- still queued or
+          # in flight -- leaves its task unchecked in tasks.md. Its
+          # finding re-raised is that fold still waiting, not a recurrence
+          # of a fixed one, so it is not counted against the loop.
+          pending_titles = set()
+          try:
+              with open(os.path.join(os.environ.get("SPEC_DIR", ""), "tasks.md"), encoding="utf-8") as fh:
+                  for line in fh:
+                      for lead in ("- [ ] Review finding: ", "- [ ] Recurring review finding: "):
+                          if line.startswith(lead):
+                              pending_titles.add(norm(line[len(lead):]))
+          except OSError as exc:
+              # Nothing pending, not everything: reading every folded finding
+              # as still waiting would let a recurrence resolve clean and post
+              # success (FR-003, SC-001). Counted, it stops the loop visibly.
+              print("::warning::tasks.md unreadable ({0}); folded findings read as recurrences".format(exc))
+
+          pending_fps = set()
+          pending_in_scope = []
           in_scope_survivors = []
           out_of_scope_survivors = []
           for f in findings:
               basis = f.get("fingerprint_basis") or {}
               fp = fingerprint(issue, f.get("title", ""), basis.get("file_path", ""))
-              if fp in folded_fps or fp in filed_fps:
+              if fp in filed_fps:
+                  continue
+              # norm: the title the fingerprint matched on, so a re-raise
+              # differing only in case or punctuation is still that fold.
+              if fp in folded_fps and norm(f.get("title", "")) in pending_titles:
+                  pending_fps.add(fp)
+                  if f.get("in_scope") is True:
+                      pending_in_scope.append(fp)
                   continue
               if f.get("in_scope") is True:
                   in_scope_survivors.append((f, fp))
-              elif f.get("in_scope") is False:
+              elif f.get("in_scope") is False and fp not in folded_fps:
                   out_of_scope_survivors.append((f, fp))
 
-          def render(f):
-              lines = ["", "- [ ] Review finding: {0}".format(f.get("title", "(untitled)")),
+          # Spec 116 FR-002/FR-004/FR-006: an in-scope finding already
+          # folded in an earlier round is a recurrence -- it keeps this round
+          # non-clean and is folded again, named as such, never dropped as
+          # "already handled". wc_convergence (the one home of the
+          # arithmetic) also computes this round's convergence signals from
+          # the PR's own round records; from round 3 a tripped rule stops
+          # the loop as not-converging -- nothing is folded, and `report`
+          # hands the PR to a human the way a spent budget does (FR-008).
+          recurring_fps = set()
+          decision = None
+          if in_scope_survivors:
+              with open(os.path.join(runner_temp, "lifecycle-pr-reviews.json"), encoding="utf-8") as fh:
+                  records = read_round_records(json.load(fh), os.environ["BOT_LOGIN"])
+              # Every in-scope finding, filed or not: the population the
+              # review job's round record carries, so this round's count
+              # and the earlier rounds' read back compare like with like.
+              current = {"round": round_, "head_sha": os.environ["HEAD_SHA"],
+                         "findings": round_findings(findings, issue)}
+              decision = evaluate(records, current, "origin/main", ".", resolved=sorted(folded_fps),
+                                  pending=sorted(pending_fps))
+              recurring_fps = set(decision["recurrences"])
+          stop = bool(decision and decision["stop"])
+
+          def render(f, recurrence=False):
+              prefix = "Recurring review finding" if recurrence else "Review finding"
+              lines = ["", "- [ ] {0}: {1}".format(prefix, f.get("title", "(untitled)")),
                        "", "  {0}".format(f.get("what", ""))]
               paths = (f.get("evidence") or {}).get("file_paths") or []
               if paths:
@@ -1173,10 +1326,10 @@ jobs:
 
           new_folded = []
           section_lines = []
-          if in_scope_survivors:
+          if in_scope_survivors and not stop:
               section_lines.append("## Review Gate Round {0} Findings".format(round_))
               for f, fp in in_scope_survivors:
-                  section_lines.extend(render(f))
+                  section_lines.extend(render(f, fp in recurring_fps))
                   new_folded.append(fp)
 
           section_path = os.path.join(runner_temp, "lifecycle-review-fold-section.md")
@@ -1209,18 +1362,38 @@ jobs:
           # IN-SCOPE findings alone -- a round whose only survivors are
           # out-of-scope (still filed above) is "clean" exactly like a
           # round with no findings at all, never held against the PR's
-          # readiness or gate status. This also covers the case where
-          # every in-scope survivor was already folded in a prior round
-          # (new_folded empty despite a nonzero raw in-scope-count).
-          findings_open = len(new_folded)
-          outcome = "findings" if new_folded else "clean"
+          # readiness or gate status. An in-scope survivor folded in a
+          # prior round is no longer skipped: it recurs and is folded again
+          # (spec 116 FR-002), so it keeps the round "findings".
+          # FR-003 (the owner's decision on C4 of #1062's pass-8 review): a
+          # pending fold's finding re-raised is not folded again, but it is
+          # still open -- its task is undone -- so a round whose only
+          # in-scope findings are pending is `findings`, never `clean`, and
+          # posts no success status. Its fold section is empty, so
+          # fold-commit commits nothing and nothing is dispatched.
+          pending_open = sorted(set(pending_in_scope))
+          findings_open = len(new_folded) + len(pending_open)
+          outcome = "findings" if new_folded or pending_open else "clean"
+          if stop:
+              findings_open = len(in_scope_survivors) + len(pending_open)
+              outcome = "not-converging"
 
           outputs.append(("outcome", outcome))
           outputs.append(("findings-open", str(findings_open)))
+          outputs.append(("pending-open", str(len(pending_open))))
           outputs.append(("folded-fingerprints", ",".join(sorted(folded_fps | set(new_folded)))))
           outputs.append(("filed-fingerprints", ",".join(sorted(filed_fps | set(new_filed)))))
           if new_folded:
-              outputs.append(("fold-summary", "round {0}: {1} finding(s) folded".format(round_, len(new_folded))))
+              summary = "round {0}: {1} finding(s) folded".format(round_, len(new_folded))
+              if recurring_fps:
+                  summary += " ({0} recurring)".format(len(recurring_fps))
+              outputs.append(("fold-summary", summary))
+          outputs.append(("recurrences", ",".join(sorted(recurring_fps))))
+          # The decision crosses to `report` base64-encoded: identifiers
+          # only, never a value the runner's secret masker could drop.
+          if decision is not None:
+              outputs.append(("convergence-b64", base64.b64encode(
+                  json.dumps(decision, sort_keys=True).encode("utf-8")).decode("ascii")))
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               for k, v in outputs:
                   fh.write("{0}={1}\n".format(k, v))
@@ -1428,9 +1601,22 @@ jobs:
           FINDINGS_OPEN: ${{ needs.disposition.outputs.findings-open }}
           FOLDED_FINGERPRINTS: ${{ needs.disposition.outputs.folded-fingerprints }}
           FILED_FINGERPRINTS: ${{ needs.disposition.outputs.filed-fingerprints }}
+          CONVERGENCE_B64: ${{ needs.disposition.outputs.convergence-b64 }}
+          RECURRENCES: ${{ needs.disposition.outputs.recurrences }}
+          FOLDED: ${{ needs.disposition.outputs.folded }}
+          PENDING_OPEN: ${{ needs.disposition.outputs.pending-open }}
           COST_LINE: ${{ needs.review.outputs.cost-line }}
         run: |
           set -uo pipefail
+
+          # specs/116 FR-008: the hand-off table, rendered by the one home of
+          # the arithmetic from disposition's own decision.
+          handoff=""
+          if [ -n "${CONVERGENCE_B64:-}" ]; then
+            printf '%s' "$CONVERGENCE_B64" | base64 -d > "$RUNNER_TEMP/lifecycle-convergence.json" \
+              && handoff="$(python3 .wc-pristine-repo/.github/scripts/wc_convergence.py render-handoff --decision "$RUNNER_TEMP/lifecycle-convergence.json")" \
+              || handoff="(the convergence signals could not be rendered)"
+          fi
 
           if [ "$REVIEW_RESULT" != "success" ]; then
             result="failed"
@@ -1452,9 +1638,23 @@ jobs:
           elif [ "$DISPOSITION_OUTCOME" = "budget-exhausted" ]; then
             result="budget-exhausted"
             detail="The round budget is spent with ${FINDINGS_OPEN:-0} in-scope finding(s) still open. This PR is not selected again until a human intervenes."
+          elif [ "$DISPOSITION_OUTCOME" = "not-converging" ]; then
+            # specs/116 FR-006/FR-008: the budget-exhaustion hand-off, with
+            # the signals that tripped. Nothing was folded.
+            result="not-converging"
+            detail="$(printf 'The review loop is not converging, so it stops before the round budget with %s in-scope finding(s) still open; nothing was folded. This PR is not selected again until its diff against main changes: a rebase or a merge of main that leaves its own changes as they were does not re-arm the review; a push that changes them does (or any head move, when the record of this round stores no diff fingerprint or git cannot compute one).\n\n%s' "${FINDINGS_OPEN:-0}" "$handoff")"
           else
             result="findings"
             detail="${IN_SCOPE_COUNT:-0} in-scope and ${OUT_OF_SCOPE_COUNT:-0} out-of-scope finding(s) were posted on PR #$PR_NUMBER. In-scope survivors (after dedup) were folded into tasks.md and re-dispatched implement; out-of-scope survivors were filed as their own issue(s). ${FINDINGS_OPEN:-0} in-scope finding(s) from this round remain open."
+            # specs/116 FR-003: a round whose only in-scope findings wait on
+            # earlier folds folded and dispatched nothing.
+            if [ "${FOLDED:-}" != "true" ] && [ "${PENDING_OPEN:-0}" != "0" ]; then
+              detail="${IN_SCOPE_COUNT:-0} in-scope and ${OUT_OF_SCOPE_COUNT:-0} out-of-scope finding(s) were posted on PR #$PR_NUMBER. ${PENDING_OPEN} in-scope finding(s) belong to earlier folds whose tasks are still unchecked in tasks.md (not implemented yet), so nothing was folded again and implement was not re-dispatched; out-of-scope survivors were filed as their own issue(s). The round stays open until those tasks are done: ${FINDINGS_OPEN:-0} in-scope finding(s) remain open."
+            fi
+            # specs/116 FR-003: a recurrence is named, never dropped.
+            if [ -n "${RECURRENCES:-}" ]; then
+              detail="$(printf '%s\n\nRecurring finding(s) -- folded before, raised again, so the earlier fix did not hold: %s' "$detail" "$(printf '%s' "$RECURRENCES" | sed 's/,/, /g')")"
+            fi
           fi
 
           line="$COST_LINE"
@@ -1466,7 +1666,7 @@ jobs:
           # T074/F3: this is the review_gate marker's SOLE write site --
           # never spec-meta.json, never a commit to the reviewed branch.
           # Only a round disposition actually completed (clean/findings/
-          # budget-exhausted) advances the marker; a failed/parse-failed
+          # budget-exhausted/not-converging) advances the marker; a failed/parse-failed
           # round leaves the prior marker untouched so it is retried,
           # never counted against the round budget or FR-021's dedup
           # (T021's own discipline, now applied to the write site too).
@@ -1515,6 +1715,10 @@ jobs:
             budget-exhausted)
               state=failure
               description="Round ${ROUND:-?}: round budget spent with ${FINDINGS_OPEN:-0} finding(s) open."
+              ;;
+            not-converging)
+              state=failure
+              description="Round ${ROUND:-?}: not converging, handed to a human with ${FINDINGS_OPEN:-0} finding(s) open."
               ;;
             *)
               state=error

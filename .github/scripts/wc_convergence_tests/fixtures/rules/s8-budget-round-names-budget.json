@@ -1,0 +1,9 @@
+{"note": "Edge case: a trip on the budget's own stop round names the budget as the reason and still lists the tripped signal.",
+ "budget": 5,
+ "history": [
+  {"round": 1, "count": 5, "attributable": 5, "self_inflicted": 0, "churn": 0, "growth": 0.0, "recurrences": []},
+  {"round": 2, "count": 4, "attributable": 4, "self_inflicted": 0, "churn": 0, "growth": 0.1, "recurrences": []},
+  {"round": 3, "count": 3, "attributable": 3, "self_inflicted": 0, "churn": 0, "growth": 0.1, "recurrences": []},
+  {"round": 4, "count": 2, "attributable": 2, "self_inflicted": 0, "churn": 0, "growth": 0.2, "recurrences": []},
+  {"round": 5, "count": 2, "attributable": 2, "self_inflicted": 0, "churn": 0, "growth": 0.2, "recurrences": []}],
+ "expect": {"stop": true, "reason": "budget-spent", "tripped": ["count-not-falling"]}}

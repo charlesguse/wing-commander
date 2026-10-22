@@ -1,0 +1,8 @@
+{
+  "note": "Shape of #954: findings never fall and the diff keeps growing into a parser.",
+  "history": [
+    {"round": 1, "count": 5, "attributable": 5, "self_inflicted": 0, "unattributable": 0, "churn": 0, "growth": 0.0, "recurrences": []},
+    {"round": 2, "count": 6, "attributable": 6, "self_inflicted": 3, "unattributable": 0, "churn": 4, "growth": 0.4, "recurrences": []},
+    {"round": 3, "count": 6, "attributable": 6, "self_inflicted": 4, "unattributable": 0, "churn": 7, "growth": 0.9, "recurrences": []}
+  ]
+}

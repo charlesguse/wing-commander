@@ -234,13 +234,19 @@ the same report.
 git fetch origin main   # a pass that merged main needs a base that contains it
 python3 .claude/skills/review-until-clean/scripts/thrash_signals.py \
   --base origin/main --heads H0,H1,...,Hn \
-  --finding path:line --finding path:line ... --counts c1,c2,...,cn
+  --finding path:line --finding path:line ... --counts c1,c2,...,cn \
+  --recurring r
 ```
 
 `--finding` takes this pass's real findings at the file:line its report
 gives, which is on H(n-1), the head the pass started from and reviewed.
-`--counts` takes the real findings per pass from the ledger. The script
-reports, from git alone:
+`--counts` takes the real findings per pass from the ledger, and
+`--recurring` how many of this pass's findings the ledger marks fixed in an
+earlier pass. The script is a thin CLI over
+`.github/scripts/wc_convergence.py`, the one home of this arithmetic and of
+the stop rules, which lifecycle-review-gate.yml and board-loop.yml call too
+(spec 116), so the skill and the automated loops give the same answer on
+the same history. It reports, from git alone:
 
 - **self-inflicted share:** how many findings sit on lines the loop's own
   fix commits wrote, rather than on the PR as submitted;
@@ -249,9 +255,14 @@ reports, from git alone:
 - **growth:** the PR's diff against main at every head.
 
 Add the one signal git can't see: **recurrence**, a finding the ledger
-marks fixed that a later pass raises again (the fix didn't hold).
+marks fixed that a later pass raises again (the fix didn't hold) -- the
+`--recurring` count.
 
-Rules (starting points; tune them in this file, not per run):
+With `--counts`, the report ends with the rules below that tripped. Their
+thresholds live in `wc_convergence.py`'s `THRESHOLDS` table, shared with
+both automated loops: tune them there, once, never per run.
+
+Rules:
 
 - **Continue** while the count falls and the findings are mostly on the
   PR's original lines.

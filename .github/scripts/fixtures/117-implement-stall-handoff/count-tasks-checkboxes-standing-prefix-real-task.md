@@ -1,0 +1,8 @@
+- [ ] Keep the gates green by fixing `verify-x.py`
+- [ ] After each cycle, update `.github/scripts/y.sh`
+- [ ] Complete every remaining step in docs/guide.md
+- [x] Keep the gates green
+- [ ] Keep the gates green
+- [ ] Keep the gates green for the new parser
+- [ ] Complete every remaining step in docs/tasks.md
+- [ ] T016 [P] Keep the gates green for the new parser

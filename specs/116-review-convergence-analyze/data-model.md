@@ -1,0 +1,42 @@
+# Data Model: 116 Review Convergence and Fold-Time Analyze
+
+Layer: consuming instrument. (**Analyze finding** and **Fold hold**, the published-contract entities, moved to #1066 with Story 3.)
+
+## Review round record (per PR, per round)
+| Field | Type | Notes |
+|---|---|---|
+| round | int ≥1 | |
+| head_sha | string | reviewed head |
+| findings[] | list | in-scope findings only |
+| findings[].fingerprint | string | existing `wc_review_finding_fingerprint` |
+| findings[].file | string | |
+| findings[].line | int \| null | validated at `head_sha`; null ⇒ unattributable |
+| findings[].attributable | bool | derived: line valid at head |
+| count | int | `len(findings)` |
+| diff_lines | int ≥0, optional | the head's diff size against the base in lines, measured when the round's review is posted; growth reads it once a rebase has made `head_sha` unresolvable (owner decision F2 (b), #994). Absent on older records and when git could not measure it |
+| diff_fp | string, optional | `git patch-id --verbatim` (the stable id, whitespace kept) of the head's diff against its merge base with the base, without context lines (`diff_fingerprint`), or `empty`; a 40/64-hex value or `empty`, anything else dropped. After a not-converging stop the lifecycle gate selects the PR again only when the current diff's fingerprint differs from the stopped round's (`rearmed_after_stop`; owner decision on #994, post-split pass 2 candidate #2 (a)). Absent on older records and when git could not compute it: the moved head re-arms, as before |
+| signals | Convergence signals | computed, never agent-supplied |
+
+Persistence: appended to the loop's existing round marker (D3); additive fields.
+
+## Resolved-finding ledger (per PR)
+Map `fingerprint → resolving_round`, written when a round folds (lifecycle) or fixes (board) a finding. Dismissed fingerprints are kept in a separate set and never match recurrence.
+
+## Convergence signals (per round)
+| Field | Rule |
+|---|---|
+| trend | list of counts, rounds 1..n |
+| self_inflicted_share | loop-written attributable findings ÷ attributable findings (0 on round 1; null if none attributable) |
+| unattributable | count |
+| churn | lines this round rewrote that an earlier round wrote (int) |
+| growth | `diff_lines(head_n) / diff_lines(head_1) - 1` |
+| recurrences | fingerprints matching the ledger |
+| tripped | subset of {`count-not-falling`, `self-inflicted`, `recurrence`, `churn-streak`, `growth`}; empty before round 3 |
+
+Decision: `stop = round ≥ 3 and tripped ≠ ∅`; budget stop applies independently (FR-009).
+
+## Stall reason
+Enum extended with `not-converging` (beside clean and budget-spent). Carries the signals table.
+
+## Analyze finding, Fold hold
+Moved to #1066 (Story 3).

@@ -421,7 +421,13 @@ change to the tiering above.
   amendment, and — while `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is off, its
   default — every final PR; the bot cannot approve those, and never merges a
   spec PR, a plan PR or an amendment. The bot merges three classes only
-  (constitution X): the bounded fix PR, behind a deterministic gate — checks
+  (constitution X). The board loop merges the fix PR and the Spec Kit
+  upgrade PR (spec 115) only while `WING_COMMANDER_BOARD_AUTO_MERGE` is on and
+  `WING_COMMANDER_BOARD_LOOP_PAUSED` is clear, re-derives every condition
+  from a fresh snapshot of the exact head SHA, and hands any merge GitHub
+  refuses to a maintainer
+  ([board-merge contract](../specs/115-board-loop-self-merge/contracts/board-merge.md)).
+  The classes: the bounded fix PR, behind a deterministic gate — checks
   green on the exact head SHA (no checks is not green, and the gate suite
   must have run on that SHA), zero open findings from an independent review,
   the size-and-path backstop on the final diff, and a clear
@@ -585,12 +591,23 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
    cycle's pushed tip (`specs/059-converged-means-tasks-done`): zero
    unchecked task-list boxes ⇒ converged, regardless of whether a
    `converge:`-prefixed commit landed this cycle; any remain ⇒ not
-   converged. A checked-task-count comparison against the cycle's own base
-   (reusing the same comparison the truncated-cycle classification below
-   already performs) tells "a later cycle will finish this" apart from "no
-   cycle ever will": progress made ⇒ another cycle is dispatched; no
-   progress and no `converge:` commit ⇒ the loop hands off to finalize
-   early (item 3) rather than grinding to the cap. Before this feature the
+   converged. Only *implementation* tasks count
+   (`specs/117-implement-stall-handoff`): a standing instruction ("keep the
+   gates green") never counts, and a task carrying the literal `[maintainer]`
+   token (owner-only work, placed by the tasks stage in a final "Maintainer
+   follow-up" phase) is skipped by the loop; both are classified in the one
+   shared `count-tasks-checkboxes.sh`. The stop rule is one shared script
+   (`decide-implement-outcome.sh`): progress made, or a `converge:` commit
+   ⇒ another cycle is dispatched; a cycle that checked nothing new no
+   longer ends the loop by itself. The loop hands off to finalize early
+   (item 3) only when the agent wrote a **validated blocker**
+   (`implement-blocker.json` in the runner temp directory with exactly
+   `task`, `kind` — `missing-tool`, `missing-permission`,
+   `contradictory-spec` or `external-dependency` — and a one-line `detail` of
+   up to 300 characters, naming a still-unchecked implementation task;
+   anything malformed is ignored) or when the iteration cap is reached. A
+   stop with implementation outstanding is always reported on the lifecycle
+   issue with the outstanding count and the reason. Before this feature the
    signal was instead the commit-range walk alone (a `converge:`-prefixed
    commit touching tasks.md landed this cycle ⇒ not converged; none ⇒
    converged) — dropped because a cycle that stopped healthy with real
@@ -600,7 +617,7 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
    avoiding a raw working-tree diff — implement's own checkbox edits make
    that ambiguous across the job boundary — still holds; only the signal
    built on top of it changed).
-3. On hitting the iteration cap, or on the FR-010 early hand-off above: post
+3. On hitting the iteration cap, or on the blocker hand-off above: post
    the remaining tasks + final convergence-pass report to the lifecycle
    issue and dispatch finalize with `converged=false`.
 4. Post a brief progress comment (`claude-haiku-5-5` summary) each iteration.
@@ -621,7 +638,15 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
    manual items from tasks.md (structured output via `--json-schema`).
 2. Plain `gh pr create`: `spec/NNN-slug → main`, body = what changed, how to see
    it (diff link, key files), remaining manual tasks, lifecycle issue link.
-3. Comment the same manual-task list on the lifecycle issue; label `stage:review`.
+3. Comment the same remaining-work report on the lifecycle issue; label `stage:review`.
+   The report is rendered by code (`render-remaining-work.sh`), not copied by
+   the summarising agent: `## Maintainer steps` lists unchecked `[maintainer]`
+   tasks, `## Unfinished implementation` lists unchecked implementation tasks
+   with a stall statement ("the lifecycle stalled with implementation
+   outstanding"), and standing instructions are omitted. A lifecycle already
+   in `review` ignores a re-dispatched implement run with an explanatory
+   comment; the only way back is a maintainer comment on the implementation
+   PR, which the PR-conversation stage folds into a Maintainer Feedback cycle.
 
 ## Stage 6 — Cleanup (`cleanup.yml`, wrapper `wing-commander-7-cleanup.yml` — see `specs/007-cleanup-stage/`)
 
@@ -730,6 +755,38 @@ constant, currently `5`). On exhaustion the run states the reason and the
 still-open findings on the lifecycle issue and does not select that pull
 request again until a human intervenes.
 
+**Convergence and the `not-converging` stop**
+(`specs/116-review-convergence-analyze/`): a round is no longer read as
+clean just because its findings were folded before. `disposition` keeps
+an in-scope finding whose fingerprint an earlier round already folded,
+folds it again as a *recurring* finding and keeps the round non-clean;
+`report` names it on the lifecycle issue. Every round also computes
+convergence signals in deterministic code — the in-scope count per round,
+the share of findings on lines the loop's own commits wrote after round
+1's head (by blame at the reviewed head, merges from `main` excluded),
+churn (a round rewriting an earlier round's lines), diff growth against
+round 1's head, and recurrence — from round records the `review` job
+appends to its own posted review (`wc_convergence.read_round_records`).
+Each record also stores its head's diff size, so growth survives a rebase
+of the branch; self-inflicted share and churn cannot, and read n/a once
+an earlier head is gone, which the hand-off says.
+From round 3, when the count did not fall, at least half the attributable
+findings are self-inflicted, a folded finding recurs, two rounds in a row
+churned, or the diff grew by more than half, the loop stops with outcome
+`not-converging`: nothing is folded, the status is `failure`, and the
+budget-exhaustion hand-off is posted with the signal table. A moved head
+alone does not re-arm a `not-converging` stop: each record also stores a
+fingerprint of its reviewed diff (`git patch-id`), and `select` picks the
+PR again only when the current diff's differs, so `rebase.yml`'s
+force-push leaves the stop in place and a push that changes the PR's own
+changes re-arms it (a record without one falls back to the moved head).
+Reviewer
+findings carry an optional `line` for that attribution; a missing or
+out-of-range line makes the finding unattributable, never a guessed one.
+The arithmetic, the rules and their thresholds have one home,
+`.github/scripts/wc_convergence.py`, shared with the board loop and the
+local `review-until-clean` skill's `thrash_signals.py`.
+
 **Where gate state lives**: `review_gate` (round, reviewed head SHA,
 outcome, open finding count, the folded/filed fingerprint sets FR-021's
 dedup needs) is never a `spec-meta.json` field and never a commit to the
@@ -744,8 +801,8 @@ fresh via `gh issue view --json comments`.
 
 **Status context**: a clean round posts `state=success` on the reviewed
 head SHA under the `lifecycle-review-gate` context (suitable for use as a
-required check); a round with open findings, an exhausted budget, or a
-review/parse failure posts `state=failure`/`state=error` on the same
+required check); a round with open findings, an exhausted budget, a
+`not-converging` stop, or a review/parse failure posts `state=failure`/`state=error` on the same
 context, so "not yet reviewed" is always distinguishable from every
 not-clean outcome. Posted with `github.token`'s own `statuses: write` job
 permission, since the App installation carries no Commit statuses grant
@@ -764,7 +821,8 @@ Gate 125 enforces this unconditionally, file-wide.
 (`lifecycle_merge_preconditions.py`), 113 (constitution/capability parity —
 fails if the merge code exists while the constitution does not name the
 third bot-mergeable class), 125 (trusted-copy composite/script
-provenance, above).
+provenance, above), 165 (the convergence arithmetic has one home, plus
+`wc_convergence_tests/`).
 
 ## Stage 9 — Watchdog (`watchdog.yml`, wrapper `wing-commander-8-watchdog.yml`)
 

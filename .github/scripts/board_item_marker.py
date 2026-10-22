@@ -43,6 +43,14 @@ def marker_regexes(name):
 MARKER_RE, MARKER_OPEN_RE = marker_regexes("wing-commander-board-item")
 
 
+def marker_json(payload):
+    """`payload` as JSON safe inside an HTML-comment marker: `<` and `>`
+    are written as \\u003c/\\u003e (json.loads reads them back), so a
+    string field carrying `-->` or `<!--` can neither close the marker
+    early nor open a second one."""
+    return json.dumps(payload, sort_keys=True).replace("<", "\\u003c").replace(">", "\\u003e")
+
+
 def last_marker_match(body, marker_re=MARKER_RE, open_re=MARKER_OPEN_RE):
     """The marker_re match that starts at the LAST marker opener in `body`,
     or None (issue #580). The one rule every marker reader uses.
@@ -222,7 +230,8 @@ def read_marker(issue_comments, bot_login):
 
 def write_marker(step, round, pr, branch, base_sha, spec_request=None,
                  outcome_reason=None, recovery_attempted=False,
-                 nr_count=None, nr_head_sha=None, nr_class=None, nr_reason=None):
+                 nr_count=None, nr_head_sha=None, nr_class=None, nr_reason=None,
+                 merge_sha=None):
     """Renders the run announcement plus the HTML-comment marker line.
     Appended to the loop's own human-legible status comment -- never the
     comment's only content (FR-044) -- by the caller.
@@ -252,7 +261,10 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None,
     a `readiness` marker (and, for the threshold handover only, a
     `stalled` marker's `nr_head_sha`, D7). Each is serialized only when not
     None -- an absent field, not a null-valued one, so every marker that
-    carries no not-ready record keeps its existing shape."""
+    carries no not-ready record keeps its existing shape.
+
+    merge_sha (spec 115): the squash commit on main, meaningful only on a
+    `merged` marker; serialized only when not None, like the fields above."""
     payload_dict = {"step": step, "round": round, "pr": pr, "branch": branch,
                     "base_sha": base_sha, "outcome_reason": outcome_reason,
                     "recovery_attempted": recovery_attempted}
@@ -266,6 +278,8 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None,
         payload_dict["nr_class"] = nr_class
     if nr_reason is not None:
         payload_dict["nr_reason"] = nr_reason
+    if merge_sha is not None:
+        payload_dict["merge_sha"] = merge_sha
     payload = json.dumps(payload_dict, sort_keys=True)
     marker = "<!-- wing-commander-board-item: {0} -->".format(payload)
 
@@ -279,6 +293,21 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None,
 
 
 STALLED_STEP = "stalled"
+
+# spec 115: the hidden marker the auto-update stage's act job posts on its
+# upgrade PR once per verification; board_merge.py reads it back (bot-authored
+# comments only) as the gate for merging a dependency bump.
+BUMP_VERIFICATION_MARKER = "wc-bump-verification"
+
+
+def render_bump_verification(head_sha, tier, result, run_id):
+    """The comment body for one BumpVerificationRecord (data-model.md). It is
+    the whole record: board_merge.bump_records() counts a marker only in a
+    comment that is exactly this body."""
+    payload = json.dumps({"head_sha": head_sha, "tier": tier, "result": result,
+                          "run_id": str(run_id)}, sort_keys=True)
+    return ("Spec Kit upgrade verification ({0}): {1} on {2}.\n\n"
+            "<!-- {3}: {4} -->".format(tier, result, head_sha, BUMP_VERIFICATION_MARKER, payload))
 
 
 # Any review-round verdict line naming a PR: converged, budget-spent,
@@ -312,6 +341,31 @@ def _converged_review_head(body, pr_number):
     return None
 
 
+def last_converged_review_head(pr_number, comments, bot_login):
+    """The head SHA the loop's own newest review-round verdict comment for
+    `pr_number` recorded as *converged*, or None when the newest verdict is
+    not a converged one or there is none (see _converged_review_head()).
+    `comments` is the REST per-issue comments array. The pure half of
+    head_moved_since_last_review(), shared with board_merge.decide(),
+    which binds review convergence to the head it merges."""
+    newest_body = None
+    latest_created_at = None
+    for comment in comments or []:
+        if not is_loop_marker_author(comment, bot_login):
+            continue
+        body = comment.get("body") or ""
+        verdict = _REVIEW_VERDICT_RE.search(body)
+        if verdict is None or verdict.group(1) != str(pr_number):
+            continue
+        created_at = comment.get("created_at") or ""
+        if latest_created_at is None or created_at > latest_created_at:
+            latest_created_at = created_at
+            newest_body = body
+    # Only the newest review verdict for this PR counts: a converged round
+    # followed by a budget-spent or inconclusive one is not reviewed clean.
+    return _converged_review_head(newest_body, pr_number)
+
+
 def head_moved_since_last_review(pr_number, comments, bot_login, run=None):
     """FR-006/FR-006b, contracts/resume-recovery.md clause 2b: whether
     `pr_number`'s live head commit differs from the SHA the loop's own
@@ -336,22 +390,7 @@ def head_moved_since_last_review(pr_number, comments, bot_login, run=None):
     has exactly one home") -- spec 093's own FR-007, when it reaches its
     plan stage, calls this function rather than deriving a second one."""
     run = run or subprocess.run
-    newest_body = None
-    latest_created_at = None
-    for comment in comments or []:
-        if not is_loop_marker_author(comment, bot_login):
-            continue
-        body = comment.get("body") or ""
-        verdict = _REVIEW_VERDICT_RE.search(body)
-        if verdict is None or verdict.group(1) != str(pr_number):
-            continue
-        created_at = comment.get("created_at") or ""
-        if latest_created_at is None or created_at > latest_created_at:
-            latest_created_at = created_at
-            newest_body = body
-    # Only the newest review verdict for this PR counts: a converged round
-    # followed by a budget-spent or inconclusive one is not reviewed clean.
-    reviewed_sha = _converged_review_head(newest_body, pr_number)
+    reviewed_sha = last_converged_review_head(pr_number, comments, bot_login)
     if reviewed_sha is None:
         return True
     repository = os.environ.get("GITHUB_REPOSITORY")
@@ -504,7 +543,26 @@ def main():
     parser.add_argument("--nr-reason", default=None,
                         help="specs/093-not-ready-board-release: the unmet condition (FR-002), "
                              "which the FR-009 dedup compares")
+    parser.add_argument("--merge-sha", default=None,
+                        help="spec 115: the squash commit SHA, with --step merged")
+    parser.add_argument("--bump-verification", nargs=4, default=None,
+                        metavar=("HEAD_SHA", "TIER", "RESULT", "RUN_ID"),
+                        help="spec 115: print a wc-bump-verification comment body instead of a marker")
+    parser.add_argument("--carry-round-from", default=None, metavar="COMMENTS_JSON",
+                        help="spec 115: take --round from the newest marker in this issue-comments "
+                             "JSON array (needs --bot-login), so a merged/handed-over marker does "
+                             "not reset the review round budget")
+    parser.add_argument("--bot-login", default=None)
     args = parser.parse_args()
+    if args.carry_round_from:
+        if not args.bot_login:
+            parser.error("--carry-round-from needs --bot-login")
+        with open(args.carry_round_from, encoding="utf-8") as fh:
+            carried = read_marker(json.load(fh), args.bot_login) or {}
+        args.round = carried.get("round") or 0
+    if args.bump_verification:
+        print(render_bump_verification(*args.bump_verification))
+        return
     if args.record_stall_summary:
         if args.issue is None or not args.from_step:
             parser.error("--record-stall-summary needs --issue N --from-step <name>")
@@ -524,7 +582,8 @@ def main():
                        outcome_reason=args.outcome_reason,
                        recovery_attempted=args.recovery_attempted,
                        nr_count=args.nr_count, nr_head_sha=args.nr_head_sha,
-                       nr_class=args.nr_class, nr_reason=args.nr_reason))
+                       nr_class=args.nr_class, nr_reason=args.nr_reason,
+                       merge_sha=args.merge_sha or None))
 
 
 if __name__ == "__main__":

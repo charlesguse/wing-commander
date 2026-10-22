@@ -1,3 +1,9 @@
-{"issue": 994, "spec_dir": "specs/116-review-convergence-analyze",
- "feature_num": "116", "stage": "spec", "iteration": 0,
- "spec_branch": null}
+{
+  "issue": 994,
+  "spec_dir": "specs/116-review-convergence-analyze",
+  "feature_num": "116",
+  "stage": "review",
+  "iteration": 8,
+  "spec_branch": "spec/116-review-convergence-analyze",
+  "pending_re_review_from": []
+}

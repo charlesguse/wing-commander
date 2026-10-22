@@ -22,6 +22,15 @@ lifecycle-review-gate.yml → this gate passes vacuously, and a constitution
 that already names the class with no code present also passes (the
 amendment may land first).
 
+Spec 115 (specs/115-board-loop-self-merge, T028) adds the same parity for
+the board loop's two classes, which Principle X already authorizes: once
+board-loop.yml carries a `gh pr merge` gated on
+`WING_COMMANDER_BOARD_AUTO_MERGE`, that switch must be named both in
+board-loop.yml's merge-gating code and in Principle X. Both directions:
+a board-loop merge call with no switch, and a constitution that names the
+switch while board-loop.yml never gates on it, each fail. Constitution
+2.6.0 (#1064) names the switch in Principle X.
+
 Only Principles V and X's own text counts. The Sync Impact Report comments
 stacked at the top of the file are amendment *history* (CLAUDE.md keeps
 them deliberately); a past report's prose must never be what satisfies a
@@ -39,6 +48,9 @@ CONSTITUTION = ".specify/memory/constitution.md"
 
 AUTO_MERGE_VAR = "WING_COMMANDER_LIFECYCLE_AUTO_MERGE"
 KILL_SWITCH_VAR = "WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED"
+
+BOARD_WORKFLOW = ".github/workflows/board-loop.yml"
+BOARD_AUTO_MERGE_VAR = "WING_COMMANDER_BOARD_AUTO_MERGE"
 
 # The merge capability's own code: a `gh pr merge` call in a workflow that
 # also gates on the auto-merge variable. Both halves are required — a
@@ -109,12 +121,52 @@ def check(workflow_text, constitution_text):
     return missing_documentation(constitution_text)
 
 
+def board_problems(board_text, constitution_text):
+    """Spec 115 T028: the board loop's merge switch is named in both
+    board-loop.yml and Principle X. Returns the failures."""
+    merges = bool(GH_PR_MERGE_RE.search(board_text))
+    gated = BOARD_AUTO_MERGE_VAR in board_text
+    documented = BOARD_AUTO_MERGE_VAR in principle_text(constitution_text, {"X"})
+    failures = []
+    if merges and not gated:
+        failures.append("{0} calls `gh pr merge` without gating it on {1}".format(
+            BOARD_WORKFLOW, BOARD_AUTO_MERGE_VAR))
+    if documented and not gated:
+        failures.append("Principle X names {0} but {1} never gates on it".format(
+            BOARD_AUTO_MERGE_VAR, BOARD_WORKFLOW))
+    if merges and gated and not documented:
+        failures.append("{0} merges behind {1} but Principle X never names {1}".format(
+            BOARD_WORKFLOW, BOARD_AUTO_MERGE_VAR))
+    return failures
+
+
 def _read(path):
     with open(path, encoding="utf-8") as fh:
         return fh.read()
 
 
 def run():
+    board_rc = run_board()
+    return run_lifecycle() or board_rc
+
+
+def run_board():
+    for path in (BOARD_WORKFLOW, CONSTITUTION):
+        if not os.path.isfile(path):
+            print("::error::verify-constitution-merge-class-parity: {0} "
+                  "does not exist; this gate cannot check what it claims "
+                  "to.".format(path))
+            return 1
+    failures = board_problems(_read(BOARD_WORKFLOW), _read(CONSTITUTION))
+    for problem in failures:
+        print("::error::verify-constitution-merge-class-parity: {0}".format(problem))
+    if not failures:
+        print("[ok] {0}'s merge is gated on {1}, and Principle X names it.".format(
+            BOARD_WORKFLOW, BOARD_AUTO_MERGE_VAR))
+    return 1 if failures else 0
+
+
+def run_lifecycle():
     for path in (WORKFLOW, CONSTITUTION):
         if not os.path.isfile(path):
             print("::error::verify-constitution-merge-class-parity: {0} "
@@ -256,6 +308,26 @@ def self_test():
     else:
         failures += 1
         print("FAIL ungated-merge-call-is-not-this-class: {0!r}".format(got))
+
+    # Spec 115 T028: the board switch in both places, both directions.
+    board_merge = ("  merge:\n    if: vars.WING_COMMANDER_BOARD_AUTO_MERGE == 'true'\n"
+                   "    steps:\n      - run: gh pr merge --squash \"$PR\" --match-head-commit \"$SHA\"\n")
+    x_names = _TWO_CLASS_CONSTITUTION.replace(
+        "only other class the bot may merge is a dependency-bump PR.",
+        "only other class the bot may merge is a dependency-bump PR, both behind "
+        "WING_COMMANDER_BOARD_AUTO_MERGE.")
+    for name, board, constitution, want_fail in (
+            ("board-switch-in-both", board_merge, x_names, False),
+            ("board-switch-undocumented", board_merge, _TWO_CLASS_CONSTITUTION, True),
+            ("board-merge-ungated", '- run: gh pr merge --squash "$PR"\n', x_names, True),
+            ("board-switch-documented-not-gated", _NO_MERGE_CODE, x_names, True),
+            ("board-neither", _NO_MERGE_CODE, _TWO_CLASS_CONSTITUTION, False)):
+        got_fail = board_problems(board, constitution)
+        if bool(got_fail) == want_fail:
+            print("PASS {0}".format(name))
+        else:
+            failures += 1
+            print("FAIL {0}: failures={1!r}".format(name, got_fail))
 
     print("{0} failure(s).".format(failures))
     return 1 if failures else 0

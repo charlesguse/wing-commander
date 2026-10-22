@@ -1,3 +1,9 @@
-{"issue": 992, "spec_dir": "specs/117-implement-stall-handoff",
- "feature_num": "117", "stage": "spec", "iteration": 0,
- "spec_branch": null}
+{
+  "issue": 992,
+  "spec_dir": "specs/117-implement-stall-handoff",
+  "feature_num": "117",
+  "stage": "review",
+  "iteration": 10,
+  "spec_branch": "spec/117-implement-stall-handoff",
+  "pending_re_review_from": []
+}

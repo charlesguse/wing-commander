@@ -1,0 +1,6 @@
+{"note": "Acceptance 3: at round 3 a folded or fixed finding recurs.",
+ "history": [
+  {"round": 1, "count": 4, "attributable": 4, "self_inflicted": 0, "churn": 0, "growth": 0.0, "recurrences": []},
+  {"round": 2, "count": 3, "attributable": 3, "self_inflicted": 0, "churn": 0, "growth": 0.1, "recurrences": []},
+  {"round": 3, "count": 1, "attributable": 1, "self_inflicted": 0, "churn": 0, "growth": 0.1, "recurrences": ["fp-F"]}],
+ "expect": {"stop": true, "reason": "not-converging", "tripped": ["recurrence"]}}

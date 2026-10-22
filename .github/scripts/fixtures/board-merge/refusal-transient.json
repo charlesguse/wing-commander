@@ -1,0 +1,1 @@
+{"stderr": "HTTP 502: Bad Gateway (https://api.github.com/graphql)", "expect_class": "transient"}

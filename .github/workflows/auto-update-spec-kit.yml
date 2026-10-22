@@ -2511,7 +2511,8 @@ jobs:
       # already produced. No fallback content anywhere in this chain
       # (FR-004) — a missing expected artifact fails the same way a
       # non-zero exit or wrong-shape result does, via the ordinary
-      # non-empty/shape assertions below.
+      # non-empty/shape assertions below, or via setup-plan.sh's own
+      # non-zero exit when it refuses on a missing plan template.
       - name: End-to-end verification (minor/major only)
         id: end-to-end
         shell: bash
@@ -2523,13 +2524,15 @@ jobs:
           set -uo pipefail
           pass=true
           detail=""
+          # FR-008: appended to the missing-artifact failures below, and only those.
+          reorg_hint="This may also mean the candidate legitimately reorganized its templates or scripts rather than that it is broken — see specs/027-auto-update-spec-kit's FR-018 for the non-clean-bump route a maintainer can choose instead."
 
           # T005: create-new-feature.sh already ran in the lightweight tier
           # but its own JSON shape check never looked at spec.md's actual
           # content — check-prerequisites.sh --paths-only doesn't either.
           if [ ! -s "$FEATURE_DIR/spec.md" ]; then
             pass=false
-            detail="expected $FEATURE_DIR/spec.md to exist and be non-empty after create-new-feature.sh, but it did not. This may also mean the candidate legitimately reorganized its templates or scripts rather than that it is broken — see specs/027-auto-update-spec-kit's FR-018 for the non-clean-bump route a maintainer can choose instead."
+            detail="expected $FEATURE_DIR/spec.md to exist and be non-empty after create-new-feature.sh, but it did not. $reorg_hint"
           fi
 
           # T006: setup-plan.sh --json — same SPECIFY_FEATURE_DIRECTORY this
@@ -2538,6 +2541,13 @@ jobs:
             sp_out="$(cd "$WORKTREE" && SPECIFY_FEATURE_DIRECTORY="$FEATURE_DIR" bash .specify/scripts/bash/setup-plan.sh --json 2>&1)" || {
               pass=false
               detail="setup-plan.sh --json exited non-zero: $(printf '%s' "$sp_out" | tail -c 500)"
+              # Spec Kit v1.2.1+ refuses (exits non-zero, writes no plan.md)
+              # where earlier releases wrote a zero-byte plan.md, so a
+              # candidate without its plan template lands here, not in the
+              # empty-IMPL_PLAN branch below. Still a missing artifact.
+              if [ ! -s "$WORKTREE/.specify/templates/plan-template.md" ] && [ ! -s "$FEATURE_DIR/plan.md" ]; then
+                detail="$detail -- it left no $FEATURE_DIR/plan.md and the candidate ships no plan-template.md. $reorg_hint"
+              fi
             }
           fi
           if [ "$pass" = "true" ]; then
@@ -2550,7 +2560,7 @@ jobs:
               detail="setup-plan.sh --json did not produce the documented FEATURE_SPEC/IMPL_PLAN/FEATURE_DIR/BRANCH shape: $(printf '%s' "$sp_out" | tail -c 500)"
             elif [ ! -s "$impl_plan" ]; then
               pass=false
-              detail="expected $impl_plan (setup-plan.sh's IMPL_PLAN) to exist and be non-empty, but it did not. This may also mean the candidate legitimately reorganized its templates or scripts rather than that it is broken — see specs/027-auto-update-spec-kit's FR-018 for the non-clean-bump route a maintainer can choose instead."
+              detail="expected $impl_plan (setup-plan.sh's IMPL_PLAN) to exist and be non-empty, but it did not. $reorg_hint"
             fi
           fi
 
@@ -3162,6 +3172,38 @@ jobs:
           } > "$RUNNER_TEMP/pr-body.md"
           url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$DB" \
             --head "$BRANCH" --title "chore: bump Spec Kit to v$CANDIDATE" --body-file "$RUNNER_TEMP/pr-body.md")"
+          # specs/115-board-loop-self-merge FR-013: the verification that just
+          # passed is recorded on the PR as a hidden-marker comment bound to
+          # the commit it ran on -- the local branch just pushed, never a
+          # re-read of the PR's head, which a push after `gh pr create` could
+          # have moved to a commit nobody verified. board-loop's merge job
+          # reads it back (bot-authored comments only) as the gate for merging
+          # this PR; this stage still never merges it. The record is the PR's
+          # only route to merging, so a transient failure to post it is
+          # retried before anything else is said, and a lasting one fails
+          # this step loudly and says on the issue that the PR is a human
+          # merge (contracts/board-merge.md "Auto-update stage change"). The
+          # PR is left open: the next run's guard declines the candidate as
+          # already open, so a lasting cause (a missing permission) is
+          # reported once instead of reopening, failing and closing a PR
+          # every run.
+          pr_number="${url##*/}"
+          head_sha="$(git rev-parse "refs/heads/$BRANCH")"
+          record="$(python3 -I .wing-commander-pipeline/.github/scripts/board_item_marker.py \
+            --bump-verification "$head_sha" "$TIER" passed "$GITHUB_RUN_ID")"
+          posted=false
+          for delay in 0 5 15; do
+            sleep "$delay"
+            if gh pr comment "$pr_number" --repo "$GITHUB_REPOSITORY" --body "$record"; then
+              posted=true
+              break
+            fi
+          done
+          if [ "$posted" != true ]; then
+            echo "::error::act: opened $url but could not post its wc-bump-verification record after 3 attempts -- the board loop will not merge it; it awaits a human merge."
+            gh issue comment "$ISSUE" --body "Opened $url, but its verification record could not be posted, so the board loop will not merge it — awaiting a human review and merge (this feature never merges its own PR)." || true
+            exit 1
+          fi
           gh issue comment "$ISSUE" --body "Opened $url — awaiting review and merge (this feature never merges its own PR)."
           echo "act: opened $url for v$CANDIDATE." >> "$GITHUB_STEP_SUMMARY"
 

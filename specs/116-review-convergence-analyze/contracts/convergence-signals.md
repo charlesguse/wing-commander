@@ -1,0 +1,46 @@
+# Contract: `wc_convergence` module (consuming instrument; internal)
+
+Not part of the published, adopter-pinned surface.
+
+## API
+```
+measure(base, heads, findings, cwd) -> report        # attribution, churn, growth (moved from thrash_signals.py)
+validate_line(path, line, head, cwd) -> bool
+classify_recurrence(findings, ledger) -> (fresh, recurrences)
+decide(history, thresholds=THRESHOLDS, budget=None) -> {signals, tripped, stop, reason}
+round_findings(findings, issue) -> [{fingerprint, file, line, title}]   # in-scope only
+round_record_marker(round, head_sha, entries, diff_lines=None, diff_fp=None) -> "<!-- wing-commander-convergence-round: {...} -->"
+recorded_diff_lines(base, head, cwd) -> int | None                    # the record's diff_lines
+diff_fingerprint(base, head, cwd) -> str | None                       # the record's diff_fp
+rearmed_after_stop(records, stopped_round, base, head, cwd) -> bool   # `rearmed`; lifecycle select after a not-converging stop
+read_round_records(reviews, bot_login) -> [record]                     # newest per round
+evaluate(records, current, base, cwd, resolved=None, budget=None,
+         resolved_from_history=False, pending=None, dismissed=None)
+    -> decision + {recurrences, git_ok, growth_recorded, baseline_missing, open_findings}
+decide_history(base, rounds, ledger, cwd) -> decision                 # `decide --history`, and the skill's --history
+render_handoff(decision) -> markdown
+```
+`THRESHOLDS = {min_round: 3, self_inflicted_share: 0.5, consecutive_churn_rounds: 2, growth_ratio: 0.5}` — the only place these numbers live.
+
+`budget` is the loop's own budget-stop round: a trip on that round names the budget (`reason: budget-spent`) and still lists the tripped signals; the budget alone never makes `decide` stop (the loop's own check does, FR-009).
+
+## Round records
+Each loop appends one record per parsed round, last, to the review it posts on the PR: `{round, head_sha, count, findings: [{fingerprint, file, line}], diff_lines?, diff_fp?}`. `diff_lines` is the reviewed head's diff size against the base in lines (`recorded_diff_lines(base, head, cwd)`, the measure growth uses), taken when the review is posted and left out when git cannot measure it. When any recorded head is unresolvable (a rebase or force-push), `compute_history` reads growth from the stored sizes, or measures a head that still resolves (the current one); a round 1 record without `diff_lines` (older rounds) leaves growth n/a, as before. Self-inflicted share and churn then read n/a: `evaluate` reports `git_ok: false` and `growth_recorded`, and the hand-off names which signals could not be computed and why. `diff_fp` is the reviewed diff's fingerprint (`diff_fingerprint`: `git patch-id --verbatim` (the stable id, whitespace kept) of the head's diff against its merge base with the base, without context lines; `empty` for no diff), left out when git cannot compute it; any value that is not 40 or 64 lowercase hex or `empty` is dropped on write and ignored on read. The record is at most `MAX_RECORD_CHARS` (20000) characters once encoded: entries past it are dropped, never the count. Only the App's own bot-authored reviews count, and only the last marker opener in a body. The lifecycle gate's ledger is its marker's `folded_fingerprints`. `evaluate`'s `dismissed` is the ledger's dismissed list: a dismissed finding raised again is not a recurrence, and `evaluate` subtracts dismissed entries from every round's count, the current round and the recorded rounds alike (`count − |dismissed ∩ entries|`), and leaves them out of `open_findings`, so count-not-falling and the hand-off read only findings the loop still owes; pending findings (fold task still open) stay counted. Neither automated loop feeds a dismissed list today (its one feed, a dropped fold, moved to #1066 with Story 3), so both pass none.
+
+A pending finding re-raised is not a recurrence, and it is not folded again. But it is still open, so a round whose only in-scope findings are pending is not `clean` (FR-003; the owner's decision on C4 of #1062's pass-8 review). The partition reports `findings` and posts no success status, and its `findings-open` and `pending-open` outputs count the pending findings. Its fold section is empty, so `wing-commander-fold-commit` commits nothing (`folded=false`), and nothing is dispatched. The round's report says the findings wait on earlier folds' unchecked tasks. A pending finding beside fresh ones adds to `findings-open` but is left out of the fold section.
+
+The board loop's ledger is every earlier round's findings (`--resolved-from-history`), since review-fixup fixed them. Board-loop rounds are 0-based, so it passes `round + 1` and `BOARD_LOOP_ROUND_BUDGET + 1`.
+
+## CLI
+`python .github/scripts/wc_convergence.py decide --history <json> --base <ref> [--json]`, plus `record`, `evaluate` (what both loops call; writes `stop`, `reason`, `tripped`, `recurrences` to `$GITHUB_OUTPUT`) and `render-handoff`. `thrash_signals.py` retains its flags, gains `--recurring` and `--history`, and delegates.
+
+## Hand-off (FR-008)
+Comment on the lifecycle issue (lifecycle gate) or the originating issue (board loop, where its budget-exhaustion hand-off already posts) with marker `<!-- wing-commander-not-converging: round=N -->`, stall reason `not-converging`, a per-round table of trend/self-inflicted/churn/growth/recurrence, the unattributable count, and the open in-scope findings (at most `MAX_HANDOFF_FINDINGS`, 25, listed; the rest counted), so the comment stays under GitHub's 65536-character limit. The PR is left open and unmerged; stall labelling follows the existing budget-exhaustion path. Re-eligibility (owner decision on #994, post-split pass 2 candidate #2 (a)): the lifecycle gate's `select` skips a PR whose marker reads `not-converging` and whose head moved unless `rearmed_after_stop` holds -- the current diff's fingerprint differs from the stopped round's record, or that record has none, or git cannot compute the current one -- so a rebase or merge of main that leaves the PR's own changes as they were does not re-arm the loop and a push that changes them does; a failed reviews read or fetch stops `select`. The board loop's not-converging stall re-arms only on removing `board:stalled`, a human act, unchanged. CLI: `wc_convergence.py rearmed --reviews F --bot-login L --round N --head-sha SHA [--base REF]` prints `true` or `false`. A recurrence is named on the lifecycle issue (lifecycle gate) or in the round's review on the PR (board loop) (FR-003).
+
+## Reviewer schema change
+Finding objects gain optional `line` (integer ≥ 1, `.github/schemas/board-review-finding.schema.json`). Not part of the fingerprint.
+
+## Invariants
+- Same history in → same signals out, for the skill and both loops (SC-003).
+- Round < 3 never stops early. Budget stop is independent.
+- Invalid or missing line ⇒ unattributable, never a guessed nearby line.
