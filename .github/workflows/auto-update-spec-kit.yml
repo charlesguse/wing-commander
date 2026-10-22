@@ -2523,13 +2523,15 @@ jobs:
           set -uo pipefail
           pass=true
           detail=""
+          # FR-008: appended to every missing-artifact failure, and only those.
+          reorg_hint="This may also mean the candidate legitimately reorganized its templates or scripts rather than that it is broken — see specs/027-auto-update-spec-kit's FR-018 for the non-clean-bump route a maintainer can choose instead."
 
           # T005: create-new-feature.sh already ran in the lightweight tier
           # but its own JSON shape check never looked at spec.md's actual
           # content — check-prerequisites.sh --paths-only doesn't either.
           if [ ! -s "$FEATURE_DIR/spec.md" ]; then
             pass=false
-            detail="expected $FEATURE_DIR/spec.md to exist and be non-empty after create-new-feature.sh, but it did not. This may also mean the candidate legitimately reorganized its templates or scripts rather than that it is broken — see specs/027-auto-update-spec-kit's FR-018 for the non-clean-bump route a maintainer can choose instead."
+            detail="expected $FEATURE_DIR/spec.md to exist and be non-empty after create-new-feature.sh, but it did not. $reorg_hint"
           fi
 
           # T006: setup-plan.sh --json — same SPECIFY_FEATURE_DIRECTORY this
@@ -2538,6 +2540,13 @@ jobs:
             sp_out="$(cd "$WORKTREE" && SPECIFY_FEATURE_DIRECTORY="$FEATURE_DIR" bash .specify/scripts/bash/setup-plan.sh --json 2>&1)" || {
               pass=false
               detail="setup-plan.sh --json exited non-zero: $(printf '%s' "$sp_out" | tail -c 500)"
+              # Spec Kit v1.2.1+ refuses (exits non-zero, writes no plan.md)
+              # where earlier releases wrote a zero-byte plan.md, so a
+              # candidate without its plan template lands here, not in the
+              # empty-IMPL_PLAN branch below. Still a missing artifact.
+              if [ ! -s "$WORKTREE/.specify/templates/plan-template.md" ] && [ ! -s "$FEATURE_DIR/plan.md" ]; then
+                detail="$detail -- it left no $FEATURE_DIR/plan.md and the candidate ships no .specify/templates/plan-template.md. $reorg_hint"
+              fi
             }
           fi
           if [ "$pass" = "true" ]; then
@@ -2550,7 +2559,7 @@ jobs:
               detail="setup-plan.sh --json did not produce the documented FEATURE_SPEC/IMPL_PLAN/FEATURE_DIR/BRANCH shape: $(printf '%s' "$sp_out" | tail -c 500)"
             elif [ ! -s "$impl_plan" ]; then
               pass=false
-              detail="expected $impl_plan (setup-plan.sh's IMPL_PLAN) to exist and be non-empty, but it did not. This may also mean the candidate legitimately reorganized its templates or scripts rather than that it is broken — see specs/027-auto-update-spec-kit's FR-018 for the non-clean-bump route a maintainer can choose instead."
+              detail="expected $impl_plan (setup-plan.sh's IMPL_PLAN) to exist and be non-empty, but it did not. $reorg_hint"
             fi
           fi
 
