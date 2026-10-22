@@ -59,6 +59,7 @@ from wc_shell_harness import (ensure_jq, find_job, resolve_bash, run_step,  # no
                               use_utf8_stdout)
 
 WORKFLOW = ".github/workflows/implement.yml"
+WRAPPER = ".github/workflows/wing-commander-5-implement.yml"
 JOB = "implement"
 GATE_JOB = "gate-suite-implement-cycle"
 NEEDS = "needs.{0}.outputs.".format(GATE_JOB)
@@ -315,6 +316,14 @@ def main():
         got = outputs.get("ref") if rc == 0 else None
         check("(cycle) spec-dir {0!r} gates branch {1!r}".format(spec_dir, want),
               got == want, "rc={0} ref={1!r} {2}".format(rc, got, out))
+    # #1071: this repository's local-path wrapper must pass pipeline-ref, or
+    # the credential-free gate job (no id-token, empty job_workflow_sha)
+    # never checks out the pipeline and the cycle-start suite never runs.
+    wrapper_call = find_job(WRAPPER, "implement")
+    check("(cycle) {0} passes pipeline-ref so {1} can check out the pipeline".format(
+              WRAPPER, GATE_JOB),
+          (wrapper_call.get("with") or {}).get("pipeline-ref") == OPEN + "github.sha" + CLOSE,
+          "with.pipeline-ref={0!r}".format((wrapper_call.get("with") or {}).get("pipeline-ref")))
     # spec 095: the job-to-job wiring of the contained cycle leg.
     check("(cycle) the implement job waits for {0}".format(GATE_JOB),
           GATE_JOB in (job.get("needs") or []), "needs={0}".format(job.get("needs")))
