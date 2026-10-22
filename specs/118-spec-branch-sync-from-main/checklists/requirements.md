@@ -33,3 +33,4 @@
 
 - All three clarifications raised on #1074 are resolved (see the spec's Clarifications section): FR-012 applies the switch at run time to every in-flight branch, FR-013 keeps squash-merging as a documented assumption only, FR-014 keeps #1062's stored per-round diff size, adds no new rebase workarounds, and reports other history-derived signals as n/a with a reason.
 - The spec names git-level concepts (merge commit, force-push, SHA, rebase) because they are the domain of the feature itself, not an implementation choice.
+- Pre-merge review (2026-10-22): FR-003, FR-007–FR-009, FR-011, FR-012, FR-016, SC-001, SC-003, SC-006, the edge cases and the assumptions were tightened to match `rebase.yml`'s real triggers, discovery rules and scope check; the switch-back-to-rebase limit is recorded as accepted under FR-014.
