@@ -814,6 +814,29 @@ def check_retry_arm_b_paced_git(root):
     return failures
 
 
+def check_retry_arm_b_grep_pipe_mutation(root):
+    """FR-019 shape for the retry mirror of _mut_restore_arm_b_grep_pipe:
+    putting #999's grep pipe back in the RETRY step must flip the paced
+    two-commit scenario to no progress, proving the shim still races."""
+    mutated = {RETRY_STEP: _restore_arm_b_grep_pipe(STEPS_CACHE[RETRY_STEP])}
+    if mutated[RETRY_STEP] == STEPS_CACHE[RETRY_STEP]:
+        return ["mutation 'restore Arm B grep pipe (retry)' changed nothing - "
+                "the code it edits was rewritten."]
+    _, repo, _, retry_base_sha, _ = build_retry_scenario(
+        root, retry_tick_task=False, retry_outside_file=True,
+        retry_outside_second=True)
+    rc, out, outputs, _ = run_retry_step(
+        mutated, repo, retry_base_sha, verdict="exhausted",
+        retry_result="failure", paced_git=True)
+    if rc == 0 and outputs.get("ok") == "false":
+        print("Mutation OK — restore Arm B grep pipe (retry): caught (paced "
+              "git log now wrongly reads as no progress).")
+        return []
+    return [f"mutation survived: restoring the retry step's Arm B grep pipe "
+            f"did not flip the paced two-commit scenario (rc={rc}, "
+            f"outputs={outputs})"]
+
+
 def check_retry_arm_b_author_filter(root):
     """PR #258 review B1: Arm B on the RETRY path, both directions - a
     bot-authored outside commit is the retry's own progress; a third-party
@@ -1547,6 +1570,19 @@ def _mut_count_advance_as_progress(steps):
         ')" ]', 1)
 
 
+def _restore_arm_b_grep_pipe(text):
+    """#999's pre-fix shape: Arm B piped `git log` into `grep -q .`, so under
+    pipefail a SIGPIPE'd git read as no progress."""
+    return text.replace(
+        'if [ -n "$(git log -1 -E ', 'if git log -E ', 1).replace(
+        ' ":(exclude)$SPEC_DIR/**")" ]; then',
+        ' ":(exclude)$SPEC_DIR/**" | grep -q .; then', 1)
+
+
+def _mut_restore_arm_b_grep_pipe(steps):
+    steps[CYCLE_STEP] = _restore_arm_b_grep_pipe(steps[CYCLE_STEP])
+
+
 def _mut_widen_exhausted_to_failed(steps):
     """Widen BOTH the advance-detection gate and the branch selector — a
     mutation that widened only the selector would still gate "advanced" on
@@ -1635,6 +1671,11 @@ MUTATIONS = [
     ("count the lifecycle-record advance itself as progress",
      _mut_count_advance_as_progress, "2: exhausted, only the lifecycle-record advance landed",
      {"truncated": "true"}),
+    ("piping Arm B's git log into grep -q reads a SIGPIPE'd git as no progress (#999)",
+     _mut_restore_arm_b_grep_pipe,
+     "4e: 4d with git log's output paced, as a loaded runner delivers it -- "
+     "Arm B must not read SIGPIPE as no progress (#999)",
+     {"ok": "false"}),
     ("widen VERDICT=='exhausted' to also match 'failed'",
      _mut_widen_exhausted_to_failed, "5b: ordinary failure with incidental progress markers",
      {"ok": "true", "truncated": "true"}),
@@ -1736,6 +1777,7 @@ def main():
 
         failures.extend(check_retry_swap_order_mutation(root))
         failures.extend(check_retry_author_filter_mutation(root))
+        failures.extend(check_retry_arm_b_grep_pipe_mutation(root))
         failures.extend(check_tier_carry_over_mutation(root))
         failures.extend(check_gate_wired())
     finally:
