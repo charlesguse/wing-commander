@@ -146,7 +146,10 @@ check "S1 no failure-detail step output (#736)" "$(grep -c '^failure-detail' "$G
 echo
 echo "--- Scenario 2: missing expected artifact fails, no fallback, single outcome (US2, FR-004, SC-002) ---"
 
-echo "  plan-template.md missing -> setup-plan.sh's own silent-empty fallback -> zero-byte plan.md -> tier fails"
+echo "  plan-template.md missing -> setup-plan.sh writes no usable plan.md -> tier fails"
+# Spec Kit <= v1.2.0's setup-plan.sh fell back to a zero-byte plan.md and
+# exited 0; v1.2.1 exits non-zero and writes no plan.md. Either way there
+# is no substitute content, and the tier must fail naming plan.md.
 new_step_env
 WT="$RUNNER_TEMP/e2e-missing-plan-template"
 seed_worktree "$WT"
@@ -155,8 +158,11 @@ FD="$WT/specs/029-scratch"
 mkdir -p "$FD"
 printf '# spec\n' > "$FD/spec.md"
 (cd "$WT" && SPECIFY_FEATURE_DIRECTORY="$FD" bash .specify/scripts/bash/setup-plan.sh --json >"$WORK/setup-plan-missing-template.log" 2>&1)
-check "S2 setup-plan.sh itself still exits 0 (its own fallback, not a crash)" "$?" "0"
-check "S2 plan.md written as zero-byte, not a substitute" "$([ -f "$FD/plan.md" ] && [ ! -s "$FD/plan.md" ] && echo yes || echo no)" "yes"
+sp_rc=$?
+check "S2 setup-plan.sh either falls back to a zero-byte plan.md (exit 0) or refuses with none (non-zero)" \
+  "$( { [ "$sp_rc" -eq 0 ] && [ -f "$FD/plan.md" ] && [ ! -s "$FD/plan.md" ]; } || { [ "$sp_rc" -ne 0 ] && [ ! -s "$FD/plan.md" ]; } && echo yes || echo "no (rc=$sp_rc)")" "yes"
+check "S2 no substitute plan.md content" "$([ -s "$FD/plan.md" ] && echo substitute || echo none)" "none"
+rm -f "$FD/plan.md"
 GHA_SUBST=()
 export WORKTREE="$WT" FEATURE_DIR="$FD"
 run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
@@ -331,10 +337,18 @@ run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
 check_contains "S6 missing spec.md carries the FR-008 hint" "$(out failure-detail)" "FR-018"
 
 echo "  missing-artifact failure (plan.md) carries the hint"
+# A candidate whose setup-plan.sh succeeds with the documented JSON shape but
+# leaves no plan.md (e.g. it reorganized its templates). Stubbed, because
+# upstream's own missing-template path now exits non-zero (Spec Kit v1.2.1),
+# which is the non-zero-exit branch tested below, not this one.
 new_step_env
 WT="$RUNNER_TEMP/e2e-hint-plan"
 seed_worktree "$WT"
-rm -f "$WT/.specify/templates/plan-template.md"
+cat > "$WT/.specify/scripts/bash/setup-plan.sh" <<'STUB_EOF'
+#!/usr/bin/env bash
+d="$SPECIFY_FEATURE_DIRECTORY"
+printf '{"FEATURE_SPEC":"%s/spec.md","IMPL_PLAN":"%s/plan.md","FEATURE_DIR":"%s","BRANCH":"029-scratch"}\n' "$d" "$d" "$d"
+STUB_EOF
 FD="$WT/specs/029-scratch"
 mkdir -p "$FD"
 printf '# spec\n' > "$FD/spec.md"
