@@ -102,6 +102,13 @@ jobs:
       issue-number: ${{ fromJSON(inputs.issue) }}
       iteration: ${{ fromJSON(inputs.iteration) }}
       fold-queue-token: ${{ inputs.fold_queue_token }}
+      # A local-path call leaves github.job_workflow_sha empty, and the
+      # credential-free cycle-start gate-suite job holds no id-token for the
+      # OIDC fallback, so without this it never checked out the pipeline and
+      # the suite never ran (#1071). This wrapper calls implement.yml from its
+      # own commit, so github.sha is that commit: the same ref the OIDC
+      # fallback resolves in the jobs that have one.
+      pipeline-ref: ${{ github.sha }}
       model: ${{ needs.resolve-model.outputs.model }}
       escalation-model: ${{ needs.resolve-model.outputs.escalation-model }}
       summary-model: ${{ needs.resolve-model.outputs.summary-model }}
