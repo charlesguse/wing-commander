@@ -145,7 +145,10 @@ def _targets_main(snapshot):
 
 
 def _touches_constitution(snapshot):
-    return any((f or {}).get("path") == CONSTITUTION_PATH for f in snapshot.get("files") or [])
+    """FR-012: a rename away from the constitution amends it too, so a
+    file's `previousPath` (REST `previous_filename`) counts like its path."""
+    return any(CONSTITUTION_PATH in ((f or {}).get("path"), (f or {}).get("previousPath"))
+               for f in snapshot.get("files") or [])
 
 
 def _decision(snapshot, klass, names, results):
@@ -585,7 +588,8 @@ def fetch_snapshot(repo, pr, bot_login, actions_token=None):
     pull = json.loads(_gh(["api", "repos/{0}/pulls/{1}".format(repo, pr)]))
     snapshot["counts"] = {"files": pull.get("changed_files"), "commits": pull.get("commits"),
                           "comments": pull.get("comments"), "head_sha": (pull.get("head") or {}).get("sha")}
-    snapshot["files"] = [{"path": f.get("filename")}
+    snapshot["files"] = [dict({"path": f.get("filename")},
+                              **({"previousPath": f["previous_filename"]} if f.get("previous_filename") else {}))
                          for f in _gh_items("repos/{0}/pulls/{1}/files?per_page=100".format(repo, pr))]
     snapshot["commits"] = [{"sha": c.get("sha"),
                             "author": ({"login": c["author"].get("login"), "type": c["author"].get("type")}
