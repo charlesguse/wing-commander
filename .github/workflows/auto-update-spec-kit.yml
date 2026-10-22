@@ -2511,7 +2511,8 @@ jobs:
       # already produced. No fallback content anywhere in this chain
       # (FR-004) — a missing expected artifact fails the same way a
       # non-zero exit or wrong-shape result does, via the ordinary
-      # non-empty/shape assertions below.
+      # non-empty/shape assertions below, or via setup-plan.sh's own
+      # non-zero exit when it refuses on a missing plan template.
       - name: End-to-end verification (minor/major only)
         id: end-to-end
         shell: bash
@@ -2523,7 +2524,7 @@ jobs:
           set -uo pipefail
           pass=true
           detail=""
-          # FR-008: appended to every missing-artifact failure, and only those.
+          # FR-008: appended to the missing-artifact failures below, and only those.
           reorg_hint="This may also mean the candidate legitimately reorganized its templates or scripts rather than that it is broken — see specs/027-auto-update-spec-kit's FR-018 for the non-clean-bump route a maintainer can choose instead."
 
           # T005: create-new-feature.sh already ran in the lightweight tier

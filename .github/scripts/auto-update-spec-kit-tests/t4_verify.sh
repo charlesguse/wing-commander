@@ -389,7 +389,31 @@ printf '# spec\n' > "$FD/spec.md"
 GHA_SUBST=()
 export WORKTREE="$WT" FEATURE_DIR="$FD"
 run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
+check "S6 real missing plan template fails the tier" "$(out passed)" "false"
 check_contains "S6 real missing plan template carries the FR-008 hint" "$(out failure-detail)" "FR-018"
+check_contains "S6 real missing plan template names plan.md" "$(out failure-detail)" "$FD/plan.md"
+
+echo "  base plan template absent but plan.md written, then a non-zero exit, does NOT carry the hint"
+# e.g. the template moved to an override and the script died after writing
+# plan.md: nothing expected is missing, so this is an ordinary crash (FR-009).
+new_step_env
+WT="$RUNNER_TEMP/e2e-hint-plan-written-crash"
+seed_worktree "$WT"
+rm -f "$WT/.specify/templates/plan-template.md"
+cat > "$WT/.specify/scripts/bash/setup-plan.sh" <<'STUB_EOF'
+#!/usr/bin/env bash
+printf '# plan\n' > "$SPECIFY_FEATURE_DIRECTORY/plan.md"
+echo "ERROR: something unrelated failed after plan.md was written" >&2
+exit 1
+STUB_EOF
+FD="$WT/specs/029-scratch"
+mkdir -p "$FD"
+printf '# spec\n' > "$FD/spec.md"
+GHA_SUBST=()
+export WORKTREE="$WT" FEATURE_DIR="$FD"
+run_step 'auto-update-spec-kit__verify__*end-to-end*.sh' >/dev/null 2>&1
+check "S6 crash after writing plan.md fails the tier" "$(out passed)" "false"
+check_not_contains "S6 crash after writing plan.md has no FR-008 hint" "$(out failure-detail)" "FR-018"
 
 echo "  a non-zero-exit failure does NOT carry the hint (FR-009: narration content only)"
 new_step_env
