@@ -2545,7 +2545,7 @@ jobs:
               # candidate without its plan template lands here, not in the
               # empty-IMPL_PLAN branch below. Still a missing artifact.
               if [ ! -s "$WORKTREE/.specify/templates/plan-template.md" ] && [ ! -s "$FEATURE_DIR/plan.md" ]; then
-                detail="$detail -- it left no $FEATURE_DIR/plan.md and the candidate ships no .specify/templates/plan-template.md. $reorg_hint"
+                detail="$detail -- it left no $FEATURE_DIR/plan.md and the candidate ships no plan-template.md. $reorg_hint"
               fi
             }
           fi
