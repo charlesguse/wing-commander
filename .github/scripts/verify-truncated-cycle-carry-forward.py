@@ -353,11 +353,18 @@ exec "%(git)s" "$@"
 """
 
 
+def render_paced_git(real_git):
+    # Forward slashes, as stub_jq in verify-gate-19.py does: bash execs a
+    # command with no '/' in it by PATH lookup, so Git for Windows'
+    # `C:\Program Files\Git\cmd\git.EXE` would not resolve inside the shim.
+    return PACED_GIT % {"git": real_git.replace("\\", "/")}
+
+
 def paced_git_env(work_root):
     bindir = tempfile.mkdtemp(dir=work_root)
     path = os.path.join(bindir, "git")
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(PACED_GIT % {"git": shutil.which("git")})
+        fh.write(render_paced_git(shutil.which("git")))
     os.chmod(path, 0o755)
     return {"PATH": bindir + os.pathsep + os.environ["PATH"]}
 
@@ -812,6 +819,16 @@ def check_retry_arm_b_paced_git(root):
                         f"ok={outputs.get('ok')!r}, "
                         f"truncated={outputs.get('truncated')!r}")
     return failures
+
+
+def check_paced_git_windows_path():
+    """The shim must exec the real git by a path bash can run as-is."""
+    real = r"C:\Program Files\Git\cmd\git.EXE"
+    shim = render_paced_git(real)
+    if '"C:/Program Files/Git/cmd/git.EXE"' not in shim:
+        return ["paced-git shim keeps the Windows backslashes in the real git's "
+                "path, so bash looks it up on PATH and the shim fails with 127."]
+    return []
 
 
 def check_retry_arm_b_grep_pipe_mutation(root):
@@ -1739,6 +1756,7 @@ def main():
         failures.extend(check_retry_with_own_progress(root))
         failures.extend(check_retry_arm_b_author_filter(root))
         failures.extend(check_retry_arm_b_paced_git(root))
+        failures.extend(check_paced_git_windows_path())
         failures.extend(check_retry_success_and_exhausted_together(root))
         failures.extend(check_final_selects_retry_truncated(root))
         failures.extend(check_final_refused_retry_attribution(root))
