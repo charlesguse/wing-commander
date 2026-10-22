@@ -1876,7 +1876,11 @@ jobs:
               # would still count default-branch commits a mid-cycle
               # auto-rebase imported (squash merges of pipeline PRs are
               # bot-authored too), hence the `--not` bound resolved above.
-              if git log -E --format='%H' --author="$AGENT_AUTHOR_RE" "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" "${not_default[@]}" -- . ":(exclude)$SPEC_DIR/**" | grep -q .; then
+              # -1 and a captured test, never `| grep -q .`: under the step's
+              # pipefail, grep exiting on the first hash made git take SIGPIPE
+              # (141) on its next per-commit flush whenever two or more commits
+              # qualified, flipping Arm B to false under load (#999).
+              if [ -n "$(git log -1 -E --format='%H' --author="$AGENT_AUTHOR_RE" "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" "${not_default[@]}" -- . ":(exclude)$SPEC_DIR/**")" ]; then
                 arm_b=true
               fi
               if [ "$arm_a" = "true" ] || [ "$arm_b" = "true" ]; then
@@ -2800,7 +2804,8 @@ jobs:
               # would still count default-branch commits a mid-cycle
               # auto-rebase imported (squash merges of pipeline PRs are
               # bot-authored too), hence the `--not` bound resolved above.
-              if git log -E --format='%H' --author="$AGENT_AUTHOR_RE" "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" "${not_default[@]}" -- . ":(exclude)$SPEC_DIR/**" | grep -q .; then
+              # -1, no grep pipe -- see "Read back cycle outcome" (#999).
+              if [ -n "$(git log -1 -E --format='%H' --author="$AGENT_AUTHOR_RE" "$BASE_SHA..origin/${SPEC_PREFIX}$SLUG" "${not_default[@]}" -- . ":(exclude)$SPEC_DIR/**")" ]; then
                 arm_b=true
               fi
               if [ "$arm_a" = "true" ] || [ "$arm_b" = "true" ]; then

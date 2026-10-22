@@ -334,8 +334,36 @@ def decide_env(checked_base, checked_tip, unchecked_tip):
                 "_shared", "decide-implement-outcome.sh")}
 
 
+# #999: a loaded runner can deliver `git log`'s per-commit writes slowly
+# enough that a reader which stops at the first line has already exited
+# before the second write. This shim paces `git log` output, so the race is
+# deterministic rather than load-dependent.
+PACED_GIT = """#!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in
+    log) "%(git)s" "$@" | while IFS= read -r l; do printf '%%s\\n' "$l"; sleep 0.3; done
+         # The writer's own status: 141 when its reader went away first,
+         # as real git reports after SIGPIPE.
+         st=("${PIPESTATUS[@]}"); [ "${st[1]}" -ne 0 ] && exit "${st[1]}"; exit "${st[0]}";;
+    -*) ;;
+    *) break;;
+  esac
+done
+exec "%(git)s" "$@"
+"""
+
+
+def paced_git_env(work_root):
+    bindir = tempfile.mkdtemp(dir=work_root)
+    path = os.path.join(bindir, "git")
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(PACED_GIT % {"git": shutil.which("git")})
+    os.chmod(path, 0o755)
+    return {"PATH": bindir + os.pathsep + os.environ["PATH"]}
+
+
 def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
-                    iteration=ITERATION):
+                    iteration=ITERATION, paced_git=False):
     runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
     checked_base, _ = checkbox_count_env(repo, base_sha)
     checked_tip, unchecked_tip = checkbox_count_env(repo, f"origin/{SPEC_PREFIX}{SLUG}")
@@ -349,11 +377,13 @@ def run_cycle_step(steps, repo, base_sha, *, verdict, cycle_result,
     env.update(read_spec_meta_env(repo))
     env.update(decide_env(*impl_count_env(repo, base_sha)[:1],
                           *impl_count_env(repo, f"origin/{SPEC_PREFIX}{SLUG}")))
+    if paced_git:
+        env.update(paced_git_env(os.path.dirname(repo)))
     return run_step(BASH, steps[CYCLE_STEP], repo, env, runner_temp)
 
 
 def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
-                    iteration=ITERATION):
+                    iteration=ITERATION, paced_git=False):
     runner_temp = tempfile.mkdtemp(dir=os.path.dirname(repo))
     checked_base, _ = checkbox_count_env(repo, base_sha)
     checked_tip, unchecked_tip = checkbox_count_env(repo, f"origin/{SPEC_PREFIX}{SLUG}")
@@ -368,6 +398,8 @@ def run_retry_step(steps, repo, base_sha, *, verdict, retry_result,
     env.update(read_spec_meta_env(repo))
     env.update(decide_env(*impl_count_env(repo, base_sha)[:1],
                           *impl_count_env(repo, f"origin/{SPEC_PREFIX}{SLUG}")))
+    if paced_git:
+        env.update(paced_git_env(os.path.dirname(repo)))
     return run_step(BASH, steps[RETRY_STEP], repo, env, runner_temp)
 
 
@@ -586,6 +618,12 @@ CYCLE_SCENARIOS = [
          advance=True, converge=False,
          verdict="exhausted", cycle_result="failure",
          expect=dict(ok="true", truncated="true", converged="false")),
+    dict(name="4e: 4d with git log's output paced, as a loaded runner delivers "
+              "it -- Arm B must not read SIGPIPE as no progress (#999)",
+         tick_task=False, outside_file=True, outside_revert=True,
+         advance=True, converge=False, paced_git=True,
+         verdict="exhausted", cycle_result="failure",
+         expect=dict(ok="true", truncated="true", converged="false")),
     dict(name="5: ordinary failure, no progress at all",
          tick_task=False, outside_file=False, advance=False, converge=False,
          verdict="failed", cycle_result="failure",
@@ -635,7 +673,8 @@ def run_cycle_scenario(steps, scenario, root):
         base_unchecked=scenario.get("base_unchecked", 3))
     rc, out, outputs, summary = run_cycle_step(
         steps, repo, base_sha, verdict=scenario["verdict"],
-        cycle_result=scenario["cycle_result"])
+        cycle_result=scenario["cycle_result"],
+        paced_git=scenario.get("paced_git", False))
     failures = []
     where = scenario["name"]
     if rc != 0:
@@ -664,7 +703,8 @@ def suite_cycle(steps, root):
 # ---------------------------------------------------------------------------
 
 def build_retry_scenario(root, *, retry_tick_task, retry_outside_file,
-                          retry_advance=True, retry_outside_author=None):
+                          retry_advance=True, retry_outside_author=None,
+                          retry_outside_second=False):
     """Primary attempt ticks ONE task and fails to advance (hence a retry
     fires); the retry's own base is the tip AFTER that partial push. The
     retry's own commits are layered on top of that.
@@ -681,6 +721,10 @@ def build_retry_scenario(root, *, retry_tick_task, retry_outside_file,
         write_file(repo, "src/feature.py", "feature\n")
         git_commit(repo, "implement: retry adds feature file",
                    author=retry_outside_author)
+        if retry_outside_second:
+            write_file(repo, "src/feature.py", "feature, revised\n")
+            git_commit(repo, "implement: retry revises feature file",
+                       author=retry_outside_author)
     if retry_advance:
         write_file(repo, f"{SPEC_DIR}/spec-meta.json", _meta(ITERATION))
         git_commit(repo, "implement: retry advances lifecycle record")
@@ -745,6 +789,28 @@ def check_retry_with_own_progress(root):
         got = outputs.get(key, "")
         if got != want:
             failures.append(f"{where}: expected {key}={want!r}, got {got!r}")
+    return failures
+
+
+def check_retry_arm_b_paced_git(root):
+    """#999 on the retry read-back: two qualifying outside commits, with
+    git log's output paced as on a loaded runner, are still the retry's
+    own progress."""
+    failures = []
+    steps = {RETRY_STEP: STEPS_CACHE[RETRY_STEP]}
+    _, repo, _, retry_base_sha, _ = build_retry_scenario(
+        root, retry_tick_task=False, retry_outside_file=True,
+        retry_outside_second=True)
+    rc, out, outputs, _ = run_retry_step(
+        steps, repo, retry_base_sha, verdict="exhausted",
+        retry_result="failure", paced_git=True)
+    where = "retry with two Arm-B commits and paced git log output (#999)"
+    if rc != 0:
+        failures.append(f"{where}: exited {rc}: {out.strip()}")
+    elif outputs.get("ok") != "true" or outputs.get("truncated") != "true":
+        failures.append(f"{where}: expected ok=true/truncated=true, got "
+                        f"ok={outputs.get('ok')!r}, "
+                        f"truncated={outputs.get('truncated')!r}")
     return failures
 
 
@@ -1477,8 +1543,8 @@ def _mut_count_advance_as_progress(steps):
     advance commit itself (which lives inside $SPEC_DIR) satisfies Arm B —
     a different mechanism than removing the guard outright."""
     steps[CYCLE_STEP] = steps[CYCLE_STEP].replace(
-        ' -- . ":(exclude)$SPEC_DIR/**" | grep -q .',
-        ' | grep -q .', 1)
+        ' -- . ":(exclude)$SPEC_DIR/**")" ]',
+        ')" ]', 1)
 
 
 def _mut_widen_exhausted_to_failed(steps):
@@ -1631,6 +1697,7 @@ def main():
         failures.extend(check_retry_no_own_progress(root))
         failures.extend(check_retry_with_own_progress(root))
         failures.extend(check_retry_arm_b_author_filter(root))
+        failures.extend(check_retry_arm_b_paced_git(root))
         failures.extend(check_retry_success_and_exhausted_together(root))
         failures.extend(check_final_selects_retry_truncated(root))
         failures.extend(check_final_refused_retry_attribution(root))
