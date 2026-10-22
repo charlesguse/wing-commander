@@ -24,11 +24,13 @@ retry path is the one under test; and metrics-persist.yml's own window
 step for the read, against a destination branch that does and does not
 already carry a mark.
 
-Seven mutations -- the mark written in a second commit, the hold-back
+Ten mutations -- the mark written in a second commit, the hold-back
 read appending its fallback to jq's own output, the mark taken from the
 first run rather than the latest, the one-hour overlap dropped, the mark
-read but ignored, a skipped run not dropped before the composite, and the
-caller's workflow-path allowlist not applied -- must each break an
+read but ignored, a skipped run not dropped before the composite, the
+caller's workflow-path allowlist not applied, the listing truncated at
+GitHub's 1,000-result cap (#1054), a listing stuck at that cap accepted,
+and the runs of overlapping slices not de-duplicated -- must each break an
 assertion.
 
 Wiring: lint-workflows.yml, Gate 77.
@@ -359,10 +361,19 @@ def mut_cap_stuck_not_refused(name, script):
     return script[:j] + "break" + script[j + len("exit 1"):]
 
 
+def mut_slices_not_deduplicated(name, script):
+    """Slices share their boundary second, so a run there is listed twice."""
+    if name != WINDOW:
+        return script
+    return script.replace(" | unique_by(.run_id)", "")
+
+
 MUTATIONS = [
     ("#1054 reverted: one listing truncated at GitHub's 1,000-result cap",
      mut_single_capped_listing),
     ("a listing stuck at the cap is not refused", mut_cap_stuck_not_refused),
+    ("runs listed in two overlapping slices are not de-duplicated",
+     mut_slices_not_deduplicated),
     ("the mark advances in its own commit", mut_mark_committed_separately),
     ("the hold-back read appends its fallback to jq's own output "
      "(zero-artifact sweep)", mut_hold_back_fallback_appended),

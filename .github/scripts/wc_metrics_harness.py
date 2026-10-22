@@ -408,7 +408,11 @@ def run_window(work, candidates, mark=None, since_input="", bash=None,
     the server-side `created` bound, before the client-side window filter
     the step applies. A candidate may also carry "conclusion" (MF-02(a) —
     "skipped" is dropped before it ever reaches the composite); absent
-    means non-skipped, matching a real API response's usual shape.
+    means non-skipped, matching a real API response's usual shape. A
+    candidate may carry "created_at" too; absent means its concluded_at.
+    The stub, like the real API, returns only the candidates whose
+    created_at falls in the listing's `created` range, newest first, at
+    most 1,000 (#1054).
 
     `workflow_paths`, when given, is a list of workflow file paths passed
     through as the step's WORKFLOW_PATHS input (MF-02(b)) -- None means
