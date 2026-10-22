@@ -3124,6 +3124,7 @@ jobs:
       # open a version-bump PR. This feature never merges it itself
       # (constitution V, FR-017).
       - name: Open version-bump PR
+        id: open-pr
         shell: bash
         if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success' && needs.verify.outputs.passed == 'true' && steps.preflight.outputs.blocked != 'true'
         env:
@@ -3204,8 +3205,24 @@ jobs:
             gh issue comment "$ISSUE" --body "Opened $url, but its verification record could not be posted, so the board loop will not merge it — awaiting a human review and merge (this feature never merges its own PR)." || true
             exit 1
           fi
+          printf '%s\n' "$record" > "$RUNNER_TEMP/wc-bump-verification.md"
+          echo "verified-head=$head_sha" >> "$GITHUB_OUTPUT"
           gh issue comment "$ISSUE" --body "Opened $url — awaiting review and merge (this feature never merges its own PR)."
           echo "act: opened $url for v$CANDIDATE." >> "$GITHUB_STEP_SUMMARY"
+
+      # #889: the record's text is public, so anything holding the App token
+      # could post a byte-exact copy. board-loop's merge job counts it only
+      # when the run it names carries this artifact, named for the head the
+      # record names: only this run's own jobs can upload into it
+      # (board_merge.verification_run_confirms()). Without it the PR awaits
+      # a human merge, as for any unconfirmed record.
+      - name: Record the verified head on the run
+        if: steps.open-pr.outputs.verified-head != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: wc-bump-verification-${{ steps.open-pr.outputs.verified-head }}
+          path: ${{ runner.temp }}/wc-bump-verification.md
+          retention-days: 90
 
       # T017: verification failed — .specify/init-options.json is left
       # untouched (the prepared branch was never pushed to origin), the

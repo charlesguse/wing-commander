@@ -15,6 +15,10 @@ the gate (verify-board-merge.py) read them from here.
 
 `evaluate_fix()`/`evaluate_bump()` are the pure decisions, fixturable without a
 live `gh` call; `decide()` is the payload wrapper the CLI and the gate share.
+`fetch_snapshot()` is the one place the job's snapshot is read from GitHub:
+every list a condition reads is fetched whole over REST, with the counts that
+prove it whole, and a bump PR's verification run is read beside it, so
+`decide()` stays pure.
 The fix class reuses board_readiness's `_checks_green`/`_gate_suite_green`, so
 an empty rollup is never green (Principle VIII).
 """
@@ -22,19 +26,21 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from board_item_marker import (BUMP_VERIFICATION_MARKER, last_converged_review_head,  # noqa: E402
-                               last_marker_match, marker_regexes, render_bump_verification)
+from board_item_marker import (BUMP_VERIFICATION_MARKER, is_loop_marker_author,  # noqa: E402
+                               last_converged_review_head, last_marker_match, marker_regexes,
+                               render_bump_verification)
 from board_prove import actions_only  # noqa: E402
 from board_readiness import _checks_green, _gate_suite_green  # noqa: E402
 
-CONDITIONS_FIX = ("switch_on", "kill_switch_clear", "eligible_class", "checks_green",
+CONDITIONS_FIX = ("switch_on", "kill_switch_clear", "snapshot_complete", "eligible_class", "checks_green",
                   "gate_suite_green", "review_converged", "backstop_holds")
-CONDITIONS_BUMP = ("switch_on", "kill_switch_clear", "attributed_to_auto_update", "checks_green",
-                   "gate_suite_green", "verification_passed_at_head")
+CONDITIONS_BUMP = ("switch_on", "kill_switch_clear", "snapshot_complete", "attributed_to_auto_update",
+                   "checks_green", "gate_suite_green", "verification_passed_at_head")
 REFUSAL_CLASSES = ("workflow-scope", "transient", "conflict", "protection", "other")
 # A `transient` failure (the head or base moved under --match-head-commit, a
 # 5xx, mergeability still being computed) is not a refusal of this PR: the
@@ -44,10 +50,23 @@ REFUSAL_CLASSES = ("workflow-scope", "transient", "conflict", "protection", "oth
 RETRYABLE_REFUSAL_CLASSES = ("transient",)
 OUTCOMES = ("merged", "refused", "transient", "not-merged")
 
-# The `gh pr view --json` fields every snapshot carries: one list for the
-# candidate scan and the fresh fetch, so both hold the same shape.
-SNAPSHOT_FIELDS = ("number,createdAt,headRefOid,statusCheckRollup,author,headRefName,baseRefName,"
-                   "commits,files,comments,body")
+# The `gh pr view --json` fields every snapshot carries (fetch_snapshot(),
+# the one fetch for the candidate scan, the fresh fetch and the retry). Its
+# files, commits and comments are NOT among them: gh truncates those lists
+# (100 files, the last 100 commits), so fetch_snapshot() reads each whole
+# over REST, with the pull's own counts beside them (snapshot_complete).
+SNAPSHOT_FIELDS = "number,createdAt,headRefOid,statusCheckRollup,author,headRefName,baseRefName,body"
+# A `wc-bump-verification` record is built from public values, so anything
+# holding the App token could post a byte-exact one. It counts only when the
+# Actions API confirms the run it names (#889): a completed, successful
+# scheduled or dispatched run of the auto-update wrapper, calling the stage's
+# own workflow, that uploaded the artifact naming the verified head -- which
+# only that run's own jobs can upload (auto-update-spec-kit.yml "Record the
+# verified head on the run").
+AUTO_UPDATE_WRAPPER_PATH = ".github/workflows/wing-commander-auto-update-spec-kit.yml"
+AUTO_UPDATE_STAGE_PATH = ".github/workflows/auto-update-spec-kit.yml"
+AUTO_UPDATE_RUN_EVENTS = ("schedule", "workflow_dispatch")
+BUMP_VERIFICATION_ARTIFACT_PREFIX = "wc-bump-verification-"
 # Appended to every merge announcement on the PR: which head, which outcome,
 # which reason. It is what keeps a repeated outcome from being re-announced
 # every hourly run, and what releases a refused bump PR until its head moves.
@@ -85,6 +104,42 @@ def _is_bot(login, bot_login):
     return bool(bot_login) and _slug(login) == _slug(bot_login)
 
 
+def _bot_pr_author(pr, bot_login):
+    """A `gh pr view`/`gh pr list` author is the App only when GitHub says it
+    is a bot account: a user whose login equals the App slug is not."""
+    author = (pr or {}).get("author") or {}
+    return author.get("is_bot") is True and _is_bot(author.get("login"), bot_login)
+
+
+def _is_app_user(user, bot_login):
+    """A REST `user`/commit `author` object is the App: the one predicate
+    (board_item_marker.is_loop_marker_author), type Bot and the exact login."""
+    return is_loop_marker_author({"user": user or {}}, bot_login)
+
+
+def snapshot_complete(snapshot):
+    """#889: every list a condition reads is whole. fetch_snapshot() records
+    the pull's own `changed_files`, `commits` and `comments` counts and its
+    head; a list shorter than its count (REST stops at 3000 files and 250
+    commits), a missing count, or lists read at another head is not a
+    snapshot any condition may be decided from. A comment posted after the
+    count was read only lengthens its list."""
+    counts = snapshot.get("counts")
+    head = snapshot.get("headRefOid")
+    if not isinstance(counts, dict) or not head or counts.get("head_sha") != head:
+        return False
+    lists = {name: snapshot.get(name) for name in ("files", "commits", "comments")}
+    if not all(isinstance(value, list) for value in lists.values()):
+        return False
+    if not all(isinstance(counts.get(name), int) for name in lists):
+        return False
+    if len(lists["files"]) != counts["files"] or len(lists["commits"]) != counts["commits"]:
+        return False
+    if len(lists["comments"]) < counts["comments"]:
+        return False
+    return any((c or {}).get("sha") == head for c in lists["commits"])
+
+
 def _targets_main(snapshot):
     return snapshot.get("baseRefName") == BASE_BRANCH
 
@@ -107,8 +162,7 @@ def eligible_fix_class(snapshot, bot_login):
     lifecycle PR, never one touching the constitution, and only into main."""
     if not _targets_main(snapshot):
         return False
-    author = snapshot.get("author") or {}
-    if author.get("is_bot") is not True or not _is_bot(author.get("login"), bot_login):
+    if not _bot_pr_author(snapshot, bot_login):
         return False
     branch = snapshot.get("headRefName") or ""
     if branch.startswith(NON_CANDIDATE_BRANCH_PREFIXES):
@@ -124,6 +178,7 @@ def evaluate_fix(snapshot, review_converged, backstop_holds, paused, switch_on, 
     results = {
         "switch_on": switch_on,
         "kill_switch_clear": not paused,
+        "snapshot_complete": snapshot_complete(snapshot),
         "eligible_class": eligible_fix_class(snapshot, bot_login),
         "checks_green": checks_green,
         "gate_suite_green": checks_green and _gate_suite_green(rollup),
@@ -133,21 +188,13 @@ def evaluate_fix(snapshot, review_converged, backstop_holds, paused, switch_on, 
     return _decision(snapshot, "fix", CONDITIONS_FIX, results)
 
 
-def _bot_commit_author(author, bot_login):
-    """`gh` reports an empty login for a commit whose git email maps to no
-    GitHub account. The App's own commits then still carry its noreply email,
-    either `<slug>[bot]@users.noreply.github.com` (what the auto-update stage
-    configures) or `<id>+<slug>[bot]@users.noreply.github.com`, which only that
-    App can author; any other empty-login commit is not the bot's."""
-    author = author or {}
-    if (author.get("login") or "").strip():
-        return _is_bot(author.get("login"), bot_login)
-    email = (author.get("email") or "").strip().lower()
-    slug = _slug(bot_login)
-    if not slug:
-        return False
-    suffix = "{0}[bot]@users.noreply.github.com".format(slug)
-    return email == suffix or (email.endswith("+" + suffix) and email[:-len(suffix) - 1].isdigit())
+def _bot_commit(commit, bot_login):
+    """#889: a commit is the App's only when GitHub resolved its author to the
+    App's own account (REST `author`: type Bot, the App's login). A git email
+    is self-asserted -- anyone can commit as `<slug>[bot]@users.noreply...`
+    -- so a commit GitHub resolved to no account is never the bot's. The
+    stage's `<slug>[bot]` noreply email resolves to the App."""
+    return _is_app_user((commit or {}).get("author"), bot_login)
 
 
 def _attributed_to_auto_update(snapshot, bot_login):
@@ -156,7 +203,7 @@ def _attributed_to_auto_update(snapshot, bot_login):
     only into main (FR-005)."""
     if not _targets_main(snapshot):
         return False
-    if not _is_bot((snapshot.get("author") or {}).get("login"), bot_login):
+    if not _bot_pr_author(snapshot, bot_login):
         return False
     if BUMP_BRANCH_RE.fullmatch(snapshot.get("headRefName") or "") is None:
         return False
@@ -166,31 +213,31 @@ def _attributed_to_auto_update(snapshot, bot_login):
     commits = snapshot.get("commits") or []
     if not commits:
         return False
-    for commit in commits:
-        authors = (commit or {}).get("authors") or []
-        if not authors or not all(_bot_commit_author(a, bot_login) for a in authors):
-            return False
+    if not all(_bot_commit(commit, bot_login) for commit in commits):
+        return False
     return not _touches_constitution(snapshot)
 
 
 def _comment_order(comment):
-    """(createdAt, comment id): createdAt has one-second resolution, so two
+    """(created_at, comment id): created_at has one-second resolution, so two
     records posted in the same second are ordered by the numeric id GitHub
-    assigns (the `issuecomment-<id>` in the comment's url), never by list
-    position."""
-    match = re.search(r"issuecomment-(\d+)", (comment or {}).get("url") or "")
-    return ((comment or {}).get("createdAt") or "", int(match.group(1)) if match else 0)
+    assigns, never by list position."""
+    comment = comment or {}
+    cid = comment.get("id")
+    return (comment.get("created_at") or "", cid if isinstance(cid, int) else 0)
 
 
 def _bot_marker_records(comments, bot_login, name, whole_body=None):
-    """(order, record) for each `name` marker in a bot-authored comment. A
-    marker in any other login's comment is ignored (a record is a trust
-    surface: only the App's own counts). With `whole_body`, a record counts
-    only when the comment is exactly `whole_body(record)` and nothing else."""
+    """(order, record) for each `name` marker in a comment the App posted.
+    `comments` are REST issue comments (fetch_snapshot()): a comment counts
+    only when its `user` is the App's account (type Bot), so a user whose
+    login equals the App slug is ignored (a record is a trust surface: only
+    the App's own counts). With `whole_body`, a record counts only when the
+    comment is exactly `whole_body(record)` and nothing else."""
     marker_re, open_re = marker_regexes(name)
     found = []
     for comment in comments or []:
-        if not _is_bot(((comment or {}).get("author") or {}).get("login"), bot_login):
+        if not is_loop_marker_author(comment or {}, bot_login):
             continue
         body = comment.get("body") or ""
         match = last_marker_match(body, marker_re, open_re)
@@ -224,26 +271,59 @@ def bump_records(comments, bot_login):
                                                              _rendered_bump_verification)]
 
 
-def verification_passed_at_head(records, head_sha):
-    """The latest of the records bound to `head_sha` passed. A record for any
-    other head says nothing about this one, so a late record for an old head
-    never voids a valid one for this head; among this head's own records the
-    latest wins, so a failed re-run does void an earlier pass."""
+def latest_record_at_head(records, head_sha):
+    """The latest of the records bound to `head_sha`, or None. A record for
+    any other head says nothing about this one, so a late record for an old
+    head never voids a valid one for this head; among this head's own records
+    the latest wins, so a failed re-run does void an earlier pass."""
     at_head = [record for record in records or [] if head_sha and record.get("head_sha") == head_sha]
-    return bool(at_head) and at_head[-1].get("result") == "passed"
+    return at_head[-1] if at_head else None
+
+
+def verification_run_confirms(record, run, head_sha):
+    """#889 (the owner's choice: bind the record to its run): `run` is what
+    fetch_snapshot() read from the Actions API for the record's `run_id`
+    (None when it could not be read). It confirms the record only as a
+    completed, successful scheduled or dispatched run of the auto-update
+    wrapper, calling the stage's own workflow, that uploaded the artifact
+    naming `head_sha`. Anything unconfirmed fails closed."""
+    if not isinstance(record, dict) or not isinstance(run, dict) or not head_sha:
+        return False
+    if not str(record.get("run_id") or "").isdigit() or str(run.get("id")) != str(record.get("run_id")):
+        return False
+    if run.get("path") != AUTO_UPDATE_WRAPPER_PATH or run.get("event") not in AUTO_UPDATE_RUN_EVENTS:
+        return False
+    if run.get("status") != "completed" or run.get("conclusion") != "success":
+        return False
+    called = [str(path).split("@", 1)[0] for path in run.get("referenced_workflows") or []]
+    if not any(path.endswith("/" + AUTO_UPDATE_STAGE_PATH) for path in called):
+        return False
+    return BUMP_VERIFICATION_ARTIFACT_PREFIX + head_sha in (run.get("artifacts") or [])
+
+
+def verification_passed_at_head(records, head_sha, run=None):
+    """The latest record bound to `head_sha` passed, and the Actions API
+    confirms the run it names (verification_run_confirms)."""
+    record = latest_record_at_head(records, head_sha)
+    return (record is not None and record.get("result") == "passed"
+            and verification_run_confirms(record, run, head_sha))
 
 
 def evaluate_bump(snapshot, records, bot_login, paused, switch_on):
-    """No size backstop: the verification gates the merge (Principle X)."""
+    """No size backstop: the verification gates the merge (Principle X).
+    The verification run is the snapshot's `verificationRun`, which
+    fetch_snapshot() read for the latest record at the head."""
     rollup = snapshot.get("statusCheckRollup") or []
     checks_green = _checks_green(rollup)
     results = {
         "switch_on": switch_on,
         "kill_switch_clear": not paused,
+        "snapshot_complete": snapshot_complete(snapshot),
         "attributed_to_auto_update": _attributed_to_auto_update(snapshot, bot_login),
         "checks_green": checks_green,
         "gate_suite_green": checks_green and _gate_suite_green(rollup),
-        "verification_passed_at_head": verification_passed_at_head(records, snapshot.get("headRefOid")),
+        "verification_passed_at_head": verification_passed_at_head(records, snapshot.get("headRefOid"),
+                                                                    snapshot.get("verificationRun")),
     }
     return _decision(snapshot, "bump", CONDITIONS_BUMP, results)
 
@@ -283,7 +363,7 @@ def classify_refusal(stderr):
 
 
 def decide(payload):
-    """payload: {"class": "fix"|"bump", "snapshot": gh pr view JSON,
+    """payload: {"class": "fix"|"bump", "snapshot": fetch_snapshot() JSON,
     "switch_on", "paused", and for fix "review_converged", "backstop_holds",
     "readiness_head_sha", "issue_comments"; "bot_login" for both}. A fix
     backstop measured on a head other than the snapshot's is not a backstop
@@ -415,7 +495,7 @@ def bump_shaped(prs, bot_login):
     D5), oldest first. `prs` is `gh pr list --json
     number,author,headRefName,createdAt`."""
     matching = [pr for pr in prs or []
-                if _is_bot((pr.get("author") or {}).get("login"), bot_login)
+                if _bot_pr_author(pr, bot_login)
                 and BUMP_BRANCH_RE.fullmatch(pr.get("headRefName") or "")]
     matching.sort(key=lambda pr: pr.get("createdAt") or "")
     return [pr["number"] for pr in matching]
@@ -434,7 +514,7 @@ def pick_bump_candidate(snapshots, bot_login, stalled_issues=()):
     # '' (no tracking issue) is skipped like a stalled one.
     skipped_issues = {""} | {str(n) for n in stalled_issues or ()}
     usable = [snap for snap in snapshots or []
-              if _is_bot((snap.get("author") or {}).get("login"), bot_login)
+              if _bot_pr_author(snap, bot_login)
               and BUMP_BRANCH_RE.fullmatch(snap.get("headRefName") or "")
               and bump_tracking_issue(snap.get("body")) not in skipped_issues
               and not handed_over_at_head(snap, bot_login)]
@@ -446,6 +526,67 @@ def pick_bump_candidate(snapshots, bot_login, stalled_issues=()):
                             "paused": False, "switch_on": True})["may_merge"]]
     chosen = (mergeable or usable)[0]
     return {"pr": chosen.get("number"), "issue": bump_tracking_issue(chosen.get("body"))}
+
+
+def _gh(args, token=None):
+    env = dict(os.environ)
+    if token:
+        env["GH_TOKEN"] = token
+    return subprocess.run(["gh"] + list(args), capture_output=True, text=True, check=True, env=env).stdout
+
+
+def _gh_items(path, token=None, items=".[]"):
+    """Every item of a paginated REST list (`items` picks it out of each
+    page), read as one compact JSON object a line."""
+    out = _gh(["api", path, "--paginate", "--jq", items + " | tojson"], token)
+    return [json.loads(line) for line in out.splitlines() if line.strip()]
+
+
+def _fetch_verification_run(repo, record, token):
+    """The Actions API's facts for the run a record names, or None when it
+    cannot be read (verification_run_confirms() then fails closed)."""
+    run_id = str((record or {}).get("run_id") or "")
+    if not run_id.isdigit():
+        return None
+    try:
+        run = json.loads(_gh(["api", "repos/{0}/actions/runs/{1}".format(repo, run_id)], token))
+        artifacts = _gh_items("repos/{0}/actions/runs/{1}/artifacts?per_page=100".format(repo, run_id), token,
+                              ".artifacts[]")
+    except (subprocess.CalledProcessError, ValueError):
+        return None
+    return {"id": run.get("id"), "path": run.get("path"), "event": run.get("event"),
+            "status": run.get("status"), "conclusion": run.get("conclusion"),
+            "referenced_workflows": [(w or {}).get("path") for w in run.get("referenced_workflows") or []],
+            "artifacts": [(a or {}).get("name") for a in artifacts]}
+
+
+def fetch_snapshot(repo, pr, bot_login, actions_token=None):
+    """The snapshot every decision reads (#889): `gh pr view` for the head,
+    the checks and the author, then the pull's counts, and its files,
+    commits and issue comments, each whole over REST (snapshot_complete()
+    compares them). For a PR on the auto-update branch, the run its latest
+    record at the head names, read with `actions_token`. Raises on any
+    failed read but the run's, which only leaves `verificationRun` empty."""
+    snapshot = json.loads(_gh(["pr", "view", str(pr), "-R", repo, "--json", SNAPSHOT_FIELDS]))
+    pull = json.loads(_gh(["api", "repos/{0}/pulls/{1}".format(repo, pr)]))
+    snapshot["counts"] = {"files": pull.get("changed_files"), "commits": pull.get("commits"),
+                          "comments": pull.get("comments"), "head_sha": (pull.get("head") or {}).get("sha")}
+    snapshot["files"] = [{"path": f.get("filename")}
+                         for f in _gh_items("repos/{0}/pulls/{1}/files?per_page=100".format(repo, pr))]
+    snapshot["commits"] = [{"sha": c.get("sha"),
+                            "author": ({"login": c["author"].get("login"), "type": c["author"].get("type")}
+                                       if c.get("author") else None)}
+                           for c in _gh_items("repos/{0}/pulls/{1}/commits?per_page=100".format(repo, pr))]
+    snapshot["comments"] = [{"id": c.get("id"), "created_at": c.get("created_at"), "body": c.get("body"),
+                             "user": {"login": (c.get("user") or {}).get("login"),
+                                      "type": (c.get("user") or {}).get("type")}}
+                            for c in _gh_items("repos/{0}/issues/{1}/comments?per_page=100".format(repo, pr))]
+    snapshot["verificationRun"] = None
+    if BUMP_BRANCH_RE.fullmatch(snapshot.get("headRefName") or ""):
+        record = latest_record_at_head(bump_records(snapshot["comments"], bot_login), snapshot.get("headRefOid"))
+        if record is not None:
+            snapshot["verificationRun"] = _fetch_verification_run(repo, record, actions_token)
+    return snapshot
 
 
 def main():
@@ -467,8 +608,21 @@ def main():
                 payload["issue_comments"] = json.load(fh)
         print(json.dumps(decide(payload)))
     decide_cmd.set_defaults(func=_decide)
-    fields_cmd = sub.add_parser("snapshot-fields", help="the gh pr view --json field list")
-    fields_cmd.set_defaults(func=lambda _a: print(SNAPSHOT_FIELDS))
+    snapshot_cmd = sub.add_parser("snapshot", help="fetch one PR's whole snapshot -> JSON on stdout "
+                                                   "(exit 1 when any part of it could not be read)")
+    snapshot_cmd.add_argument("--repo", required=True)
+    snapshot_cmd.add_argument("--pr", required=True)
+    snapshot_cmd.add_argument("--bot-login", required=True)
+
+    def _snapshot(a):
+        try:
+            snap = fetch_snapshot(a.repo, a.pr, a.bot_login, os.environ.get("WC_ACTIONS_TOKEN") or None)
+        except (subprocess.CalledProcessError, ValueError) as exc:
+            print("board_merge.py snapshot: could not read PR #{0}: {1}".format(
+                a.pr, getattr(exc, "stderr", None) or exc), file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(snap))
+    snapshot_cmd.set_defaults(func=_snapshot)
     refusal_cmd = sub.add_parser("classify-refusal", help="stderr on stdin -> refusal class")
     refusal_cmd.set_defaults(func=lambda _a: print(classify_refusal(sys.stdin.read())))
     retry_cmd = sub.add_parser("retryable", help="exit 0 when the refusal class is retried once")
