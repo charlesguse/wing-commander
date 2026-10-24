@@ -2131,10 +2131,13 @@ jobs:
             echo "⚠️ gate-suite preflight (retry): missing prerequisites —$missing; skipping the local gate suite for this retry." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # FR-009: mirrors "Run local gate suite (cycle)" above.
+      # FR-009: mirrors "Run local gate suite (cycle)" above. Only when the
+      # retry agent is due (its own ok/escalation-model conditions): every
+      # reader of this step's outputs is retry-only, and on a converged cycle
+      # the suite would only hold the job up to its step timeout.
       - name: Run local gate suite (retry)
         id: gate-suite-retry
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.gate-suite-preflight-retry.outputs.ready == 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.gate-suite-preflight-retry.outputs.ready == 'true' && steps.outcome.outputs.ok == 'false' && steps.effective-model.outputs.model != inputs.escalation-model
         continue-on-error: true
         # The step timeout -- see "Run the cycle-start gate suite
         # (credential-free)" above in this file.
@@ -2201,6 +2204,26 @@ jobs:
           fi
           d="wc-gate-suite-eof-$RANDOM$RANDOM$RANDOM"
           printf 'paragraph<<%s\n%s\n%s\n' "$d" "$paragraph" "$d" >> "$GITHUB_OUTPUT"
+
+      # The retry suite can hold the job up to its step timeout after the
+      # post-agent re-mint above, so mint again once it has run: the retry
+      # agent starts with a full-lifetime App token (spec 052).
+      - name: Re-establish Wing Commander context (pre-retry)
+        id: reestablish-pre-retry
+        if: "!cancelled() && steps.gate-suite-retry.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      - name: Refresh authenticated spec-branch remote (pre-retry)
+        id: refresh-remote-pre-retry
+        if: "!cancelled() && steps.gate-suite-retry.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
 
       # One automatic retry of the SAME iteration, one tier up
       # (→ inputs.escalation-model). Skipped when the failing attempt already
