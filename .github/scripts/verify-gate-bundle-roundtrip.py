@@ -69,6 +69,7 @@ SHORT_OPTS_TIMEOUT = ('#!/bin/sh\ncase " $* " in *" --"*) echo "timeout: unrecog
 NO_KILL_TIMEOUT = '#!/bin/sh\necho "timeout: invalid option -- k" >&2\nexit 1\n'
 
 TRUSTED_SHA = "b" * 40
+BUDGET_RUNS = []  # one entry per budget_checks() run
 
 
 def git(cwd, *args):
@@ -303,6 +304,26 @@ def checks(shared):
            pv.get("outcome") == "fail" and pv.get("head_sha") == pre_head
            and "predates the gate suite" in pv.get("first_failure", ""), str(pv))
 
+    with tempfile.TemporaryDirectory() as tmp:
+        v, out, *_rest = round_trip(shared, tmp, remove_suite)
+        ck("a head that deleted run-local-gates.py is red, never a skip",
+           v is not None and v.get("outcome") == "fail"
+           and "removed run-local-gates.py" in v.get("first_failure", ""), str(v))
+    return failures
+
+
+def budget_checks(shared):
+    """The suite time budget (scenario 6). Apart from checks() so --self-test
+    runs these slow round trips only for the mutations of the budget path,
+    never once per mutation (the suite this gate sits in is what the budget
+    is for)."""
+    BUDGET_RUNS.append(shared)
+    failures = []
+
+    def ck(name, cond, detail=""):
+        if not cond:
+            failures.append("{0} -- {1}".format(name, detail))
+
     if shutil.which("timeout"):
         with tempfile.TemporaryDirectory() as tmp:
             v, out, *_rest = round_trip(shared, tmp,
@@ -347,12 +368,6 @@ def checks(shared):
        "WC_GATE_SUITE_TIMEOUT_MINUTES: ${{ inputs.suite-timeout-minutes }}" in action
        and '"${WC_GATE_SUITE_TIMEOUT_MINUTES:-50}"' in script,
        "action.yml or contained-gate-suite.sh no longer carries WC_GATE_SUITE_TIMEOUT_MINUTES")
-
-    with tempfile.TemporaryDirectory() as tmp:
-        v, out, *_rest = round_trip(shared, tmp, remove_suite)
-        ck("a head that deleted run-local-gates.py is red, never a skip",
-           v is not None and v.get("outcome") == "fail"
-           and "removed run-local-gates.py" in v.get("first_failure", ""), str(v))
     return failures
 
 
@@ -398,6 +413,13 @@ MUTATIONS = (
     ("an unknown base is bundled as a thin range anyway",
      [("build-gate-bundle.sh", 'if [ -n "$base_sha" ] && ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then',
        'if false; then')]),
+    ("a head with no new commits ships the whole history",
+     [("build-gate-bundle.sh", 'git bundle create --quiet "$out_dir/bundle.git" HEAD~1..HEAD HEAD',
+       'git bundle create --quiet "$out_dir/bundle.git" HEAD')]),
+)
+
+# Mutations of the budget path, which budget_checks() alone must catch.
+BUDGET_MUTATIONS = (
     ("the suite runs with no time budget",
      [("contained-gate-suite.sh", 'bound=(timeout -k 60 "$suite_seconds")', "bound=()")]),
     ("a stopped suite is reported as an ordinary failure",
@@ -421,24 +443,27 @@ MUTATIONS = (
     ("a leading-zero budget is read as octal",
      [("contained-gate-suite.sh", 'suite_minutes=$((10#$suite_minutes))',
        'suite_minutes=$((suite_minutes))')]),
-    ("a head with no new commits ships the whole history",
-     [("build-gate-bundle.sh", 'git bundle create --quiet "$out_dir/bundle.git" HEAD~1..HEAD HEAD',
-       'git bundle create --quiet "$out_dir/bundle.git" HEAD')]),
 )
 
 
 def main():
-    failures = checks(os.path.abspath(SHARED))
+    failures = checks(os.path.abspath(SHARED)) + budget_checks(os.path.abspath(SHARED))
     if "--self-test" in sys.argv[1:]:
         if failures:
             failures = ["the shipped scripts already fail: " + f for f in failures]
-        for label, edits in MUTATIONS:
+        for label, edits in MUTATIONS + BUDGET_MUTATIONS:
             with tempfile.TemporaryDirectory() as tmp:
-                caught = checks(mutated_shared(tmp, edits))
+                shared = mutated_shared(tmp, edits)
+                caught = (budget_checks(shared) if (label, edits) in BUDGET_MUTATIONS
+                          else checks(shared))
             if caught:
                 print("note: mutation caught ({0}): {1}".format(label, caught[0][:160]))
             else:
                 failures.append("mutation {0!r} was NOT caught".format(label))
+        if len(BUDGET_RUNS) != 1 + len(BUDGET_MUTATIONS):
+            failures.append("the slow budget round trips ran {0} times, not once plus once per "
+                            "budget-path mutation ({1})".format(len(BUDGET_RUNS),
+                                                                1 + len(BUDGET_MUTATIONS)))
     for f in failures:
         print("::error::Gate 155: " + f)
     if failures:
