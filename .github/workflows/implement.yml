@@ -655,13 +655,19 @@ jobs:
             echo "⚠️ gate-suite preflight (cycle): missing prerequisites —$missing; skipping the local gate suite for this cycle." >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # The full suite took over 10 minutes on a hosted runner (run
+      # 40101571746), so a 10-minute step timeout read every cycle start as
+      # an absent verdict. The composite's own budget is below the step's,
+      # so a slow suite writes a fail verdict that names the budget, and
+      # the step timeout stays the backstop for a hung upload.
       - name: Run the cycle-start gate suite (credential-free)
         if: steps.gate-suite-preflight-cycle.outputs.ready == 'true' && steps.pipeline-checkout.outcome == 'success'
-        timeout-minutes: 10
+        timeout-minutes: 30
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-contained-gate-suite
         with:
           site: implement-cycle
           head-ref: ${{ steps.head.outputs.ref }}
+          suite-timeout-minutes: "25"
 
   implement:
     # container-image no-op and the runs-on JSON-array branch stay unverified (D2, D3) -- see
@@ -1202,7 +1208,7 @@ jobs:
           elif [ "$OUTCOME" = "pass" ]; then
             summary="pass"
           else
-            summary="red at cycle start — first failure: $FIRST_FAILURE"
+            summary="red at cycle start — first failure: ${FIRST_FAILURE:-none recorded (the suite step ended without a result; it may have timed out)}"
           fi
           echo "summary=$summary" >> "$GITHUB_OUTPUT"
           if [ "$SCRIPT_EXISTS" = "false" ]; then
@@ -2125,12 +2131,17 @@ jobs:
             echo "⚠️ gate-suite preflight (retry): missing prerequisites —$missing; skipping the local gate suite for this retry." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # FR-009: mirrors "Run local gate suite (cycle)" above.
+      # FR-009: mirrors "Run local gate suite (cycle)" above. Only when the
+      # retry agent is due (its own ok/escalation-model conditions): every
+      # reader of this step's outputs is retry-only, and on a converged cycle
+      # the suite would only hold the job up to its step timeout.
       - name: Run local gate suite (retry)
         id: gate-suite-retry
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.gate-suite-preflight-retry.outputs.ready == 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.gate-suite-preflight-retry.outputs.ready == 'true' && steps.outcome.outputs.ok == 'false' && steps.effective-model.outputs.model != inputs.escalation-model
         continue-on-error: true
-        timeout-minutes: 10
+        # The step timeout -- see "Run the cycle-start gate suite
+        # (credential-free)" above in this file.
+        timeout-minutes: 30
         run: |
           set +e
           python3 .github/scripts/run-local-gates.py > "$RUNNER_TEMP/gate-suite-retry.log" 2>&1
@@ -2163,7 +2174,7 @@ jobs:
           elif [ "$OUTCOME" = "pass" ]; then
             summary="pass"
           else
-            summary="red at retry start — first failure: $FIRST_FAILURE"
+            summary="red at retry start — first failure: ${FIRST_FAILURE:-none recorded (the suite step ended without a result; it may have timed out)}"
           fi
           echo "summary=$summary" >> "$GITHUB_OUTPUT"
           if [ "$SCRIPT_EXISTS" = "false" ]; then
@@ -2193,6 +2204,26 @@ jobs:
           fi
           d="wc-gate-suite-eof-$RANDOM$RANDOM$RANDOM"
           printf 'paragraph<<%s\n%s\n%s\n' "$d" "$paragraph" "$d" >> "$GITHUB_OUTPUT"
+
+      # The retry suite can hold the job up to its step timeout after the
+      # post-agent re-mint above, so mint again once it has run: the retry
+      # agent starts with a full-lifetime App token (spec 052).
+      - name: Re-establish Wing Commander context (pre-retry)
+        id: reestablish-pre-retry
+        if: "!cancelled() && steps.gate-suite-retry.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-context
+        with:
+          app-id: ${{ secrets.speckit-app-id }}
+          private-key: ${{ secrets.speckit-app-private-key }}
+
+      - name: Refresh authenticated spec-branch remote (pre-retry)
+        id: refresh-remote-pre-retry
+        if: "!cancelled() && steps.gate-suite-retry.outcome != 'skipped'"
+        continue-on-error: true
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
 
       # One automatic retry of the SAME iteration, one tier up
       # (→ inputs.escalation-model). Skipped when the failing attempt already

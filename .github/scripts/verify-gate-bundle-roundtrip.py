@@ -27,7 +27,12 @@ base, a trusted clone and a publisher clone that hold only the base:
   4. the restore refuses a head the producer did not report, and a missing
      bundle;
   5. a missing bundle, or a head that deleted run-local-gates.py, is a fail
-     verdict, never a pass or a skip.
+     verdict, never a pass or a skip;
+  6. a suite that outlives its time budget is stopped and is a fail verdict
+     naming the budget and any failure logged before the stop, never an
+     absent verdict (run 40101571746) -- under a BusyBox-shaped timeout too,
+     and a timeout that refuses -k, or a leading-zero budget, never turns a
+     passing suite red or drops the verdict.
 --self-test reruns the checks with each script's fetch reverted to the
 `refs/*` refspec, and with the restore's head check removed, and asserts
 each mutation is caught.
@@ -53,7 +58,18 @@ SCRIPTS = ("build-gate-bundle.sh", "contained-gate-suite.sh", "restore-gate-bund
            "git-push-hardening.sh", "gate-bundle-import.sh")
 PASSING_SUITE = "print('PASS  verify-x.py')\n"
 FAILING_SUITE = "import sys\nprint('FAIL  verify-x.py (planted)')\nsys.exit(1)\n"
+# No flush=True: run-local-gates.py never flushes, so this must not either.
+SLOW_SUITE = ("import time\nprint('FAIL  verify-y.py (planted, before the stop)')\n"
+              "time.sleep(8)\nprint('PASS  verify-x.py')\n")
+# A BusyBox-shaped timeout: no long options, and a stop exits 143 (the TERM
+# it sent), not 124. The real one does the rest.
+SHORT_OPTS_TIMEOUT = ('#!/bin/sh\ncase " $* " in *" --"*) echo "timeout: unrecognized option" >&2; '
+                      'exit 1 ;; esac\n{0} "$@"\nrc=$?\n[ "$rc" -eq 124 ] && exit 143\nexit "$rc"\n')
+# An old BusyBox timeout: refuses -k as well.
+NO_KILL_TIMEOUT = '#!/bin/sh\necho "timeout: invalid option -- k" >&2\nexit 1\n'
+
 TRUSTED_SHA = "b" * 40
+BUDGET_RUNS = []  # one entry per budget_checks() run
 
 
 def git(cwd, *args):
@@ -71,7 +87,10 @@ def write(repo, rel, text):
 
 def sh(shared, script, args, cwd, env_extra=None):
     out = tempfile.mktemp()
-    env = dict(os.environ, GITHUB_OUTPUT=out, **(env_extra or {}))
+    # A host's PYTHONUNBUFFERED would hide a suite whose output is lost when
+    # it is stopped; a runner sets none.
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}
+    env.update(GITHUB_OUTPUT=out, **(env_extra or {}))
     proc = subprocess.run(["bash", os.path.join(shared, script)] + list(args), cwd=cwd,
                           env=env, capture_output=True, text=True)
     outputs = {}
@@ -123,7 +142,19 @@ def no_change(_repo):
     pass
 
 
-def round_trip(shared, tmp, change, site="board-fix", base_override=None, meta_edit=None):
+def stub_timeout(tmp, body):
+    """-> a PATH whose `timeout` is body, ahead of the rest of PATH."""
+    stub = os.path.join(tmp, "stub-bin")
+    os.makedirs(stub)
+    path = os.path.join(stub, "timeout")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(body)
+    os.chmod(path, 0o755)
+    return stub + os.pathsep + os.environ.get("PATH", "")
+
+
+def round_trip(shared, tmp, change, site="board-fix", base_override=None, meta_edit=None,
+               gate_env=None):
     """-> (verdict dict or None, build/gate output, clones, base, head, bundle dir)."""
     clones, base, head = world(tmp, change)
     bundle = os.path.join(tmp, "bundle")
@@ -138,7 +169,7 @@ def round_trip(shared, tmp, change, site="board-fix", base_override=None, meta_e
         return None, "build exited {0}: {1}".format(rc, out), clones, base, head, bundle
     verdict_path = os.path.join(tmp, "verdict.json")
     rc2, out2, _ = sh(shared, "contained-gate-suite.sh",
-                      [site, bundle, TRUSTED_SHA, verdict_path], clones["trusted"])
+                      [site, bundle, TRUSTED_SHA, verdict_path], clones["trusted"], gate_env)
     verdict = None
     if os.path.exists(verdict_path):
         with open(verdict_path, encoding="utf-8") as fh:
@@ -281,6 +312,65 @@ def checks(shared):
     return failures
 
 
+def budget_checks(shared):
+    """The suite time budget (scenario 6). Apart from checks() so --self-test
+    runs these slow round trips only for the mutations of the budget path,
+    never once per mutation (the suite this gate sits in is what the budget
+    is for)."""
+    BUDGET_RUNS.append(shared)
+    failures = []
+
+    def ck(name, cond, detail=""):
+        if not cond:
+            failures.append("{0} -- {1}".format(name, detail))
+
+    if shutil.which("timeout"):
+        with tempfile.TemporaryDirectory() as tmp:
+            v, out, *_rest = round_trip(shared, tmp,
+                                        commit_file(".github/scripts/run-local-gates.py",
+                                                    SLOW_SUITE),
+                                        gate_env={"WC_GATE_SUITE_TIMEOUT_SECONDS": "2"})
+            ck("a suite that outlives its time budget is stopped and red, naming the budget "
+               "and the failure it logged before the stop",
+               v is not None and v.get("outcome") == "fail"
+               and "did not finish within its time budget (2s)" in v.get("first_failure", "")
+               and "before the stop: FAIL  verify-y.py" in v.get("first_failure", ""),
+               "verdict={0}\n{1}".format(v, out[-800:]))
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = stub_timeout(tmp, SHORT_OPTS_TIMEOUT.format(shutil.which("timeout")))
+            v, out, *_rest = round_trip(shared, tmp,
+                                        commit_file(".github/scripts/run-local-gates.py",
+                                                    SLOW_SUITE),
+                                        gate_env={"WC_GATE_SUITE_TIMEOUT_SECONDS": "2",
+                                                  "PATH": stub})
+            ck("a timeout with no long options that exits 143 (BusyBox) still bounds the "
+               "suite and names the budget",
+               v is not None and "did not finish within its time budget (2s)"
+               in v.get("first_failure", ""), "verdict={0}\n{1}".format(v, out[-800:]))
+    with tempfile.TemporaryDirectory() as tmp:
+        stub = stub_timeout(tmp, NO_KILL_TIMEOUT)
+        v, out, *_rest = round_trip(shared, tmp, no_change, gate_env={"PATH": stub})
+        ck("a timeout that refuses -k leaves a passing suite unbounded and green, never red "
+           "before it starts, and says it ran with no budget",
+           v is not None and v.get("outcome") == "pass" and "no time budget of its own" in out,
+           "verdict={0}\n{1}".format(v, out[-800:]))
+    with tempfile.TemporaryDirectory() as tmp:
+        v, out, *_rest = round_trip(shared, tmp, no_change,
+                                    gate_env={"WC_GATE_SUITE_TIMEOUT_MINUTES": "08"})
+        ck("a budget with a leading zero (08) is read as decimal minutes, never an octal "
+           "error that writes no verdict",
+           v is not None and v.get("outcome") == "pass", "verdict={0}\n{1}".format(v, out[-800:]))
+    action = open(os.path.join(shared, "..", "wing-commander-contained-gate-suite", "action.yml"),
+                  encoding="utf-8").read()
+    script = open(os.path.join(shared, "contained-gate-suite.sh"), encoding="utf-8").read()
+    ck("the composite passes its suite-timeout-minutes input to the script under the name "
+       "the script reads",
+       "WC_GATE_SUITE_TIMEOUT_MINUTES: ${{ inputs.suite-timeout-minutes }}" in action
+       and '"${WC_GATE_SUITE_TIMEOUT_MINUTES:-50}"' in script,
+       "action.yml or contained-gate-suite.sh no longer carries WC_GATE_SUITE_TIMEOUT_MINUTES")
+    return failures
+
+
 def mutated_shared(tmp, edits):
     """A copy of _shared/ (and a .github/scripts beside it, which the gate
     script reads its verdict writer from) with (script, old, new) edits."""
@@ -290,6 +380,10 @@ def mutated_shared(tmp, edits):
     os.symlink(os.path.abspath(HERE), os.path.join(root, "scripts"))
     for name in SCRIPTS:
         shutil.copy(os.path.join(SHARED, name), os.path.join(shared, name))
+    composite = os.path.join(root, "actions", "wing-commander-contained-gate-suite")
+    os.makedirs(composite)
+    shutil.copy(os.path.join(SHARED, "..", "wing-commander-contained-gate-suite", "action.yml"),
+                composite)
     for name, old, new in edits:
         path = os.path.join(shared, name)
         text = open(path, encoding="utf-8").read()
@@ -324,19 +418,52 @@ MUTATIONS = (
        'git bundle create --quiet "$out_dir/bundle.git" HEAD')]),
 )
 
+# Mutations of the budget path, which budget_checks() alone must catch.
+BUDGET_MUTATIONS = (
+    ("the suite runs with no time budget",
+     [("contained-gate-suite.sh", 'bound=(timeout -k 60 "$suite_seconds")', "bound=()")]),
+    ("a stopped suite is reported as an ordinary failure",
+     [("contained-gate-suite.sh", 'elif [ "${#bound[@]}" -gt 0 ] && [ "$elapsed" -ge "$suite_seconds" ]',
+       'elif false && [ "$elapsed" -ge "$suite_seconds" ]')]),
+    ("the budget is passed to timeout as a GNU-only long option",
+     [("contained-gate-suite.sh", 'bound=(timeout -k 60 "$suite_seconds")',
+       'bound=(timeout --kill-after=60 "$suite_seconds")')]),
+    ("any timeout on PATH is trusted to accept -k",
+     [("contained-gate-suite.sh", 'timeout -k 1 5 true >/dev/null 2>&1 && bound=',
+       'command -v timeout >/dev/null 2>&1 && bound=')]),
+    ("a stopped suite's verdict drops the failure it logged before the stop",
+     [("contained-gate-suite.sh", '${first:+; first failure before the stop: $first}', "")]),
+    ("a stopped suite's buffered output is lost",
+     [("contained-gate-suite.sh", 'python3 -u .github/scripts/run-local-gates.py)',
+       'python3 .github/scripts/run-local-gates.py)')]),
+    ("BusyBox's 143 is read as an ordinary failure",
+     [("contained-gate-suite.sh", '|| [ "$rc" -eq 143 ]; }', '; }')]),
+    ("an unbounded suite runs silently",
+     [("contained-gate-suite.sh", '[ "${#bound[@]}" -gt 0 ] || echo "::warning::', '[ "${#bound[@]}" -gt 0 ] || true "')]),
+    ("a leading-zero budget is read as octal",
+     [("contained-gate-suite.sh", 'suite_minutes=$((10#$suite_minutes))',
+       'suite_minutes=$((suite_minutes))')]),
+)
+
 
 def main():
-    failures = checks(os.path.abspath(SHARED))
+    failures = checks(os.path.abspath(SHARED)) + budget_checks(os.path.abspath(SHARED))
     if "--self-test" in sys.argv[1:]:
         if failures:
             failures = ["the shipped scripts already fail: " + f for f in failures]
-        for label, edits in MUTATIONS:
+        for label, edits in MUTATIONS + BUDGET_MUTATIONS:
             with tempfile.TemporaryDirectory() as tmp:
-                caught = checks(mutated_shared(tmp, edits))
+                shared = mutated_shared(tmp, edits)
+                caught = (budget_checks(shared) if (label, edits) in BUDGET_MUTATIONS
+                          else checks(shared))
             if caught:
                 print("note: mutation caught ({0}): {1}".format(label, caught[0][:160]))
             else:
                 failures.append("mutation {0!r} was NOT caught".format(label))
+        if len(BUDGET_RUNS) != 1 + len(BUDGET_MUTATIONS):
+            failures.append("the slow budget round trips ran {0} times, not once plus once per "
+                            "budget-path mutation ({1})".format(len(BUDGET_RUNS),
+                                                                1 + len(BUDGET_MUTATIONS)))
     for f in failures:
         print("::error::Gate 155: " + f)
     if failures:

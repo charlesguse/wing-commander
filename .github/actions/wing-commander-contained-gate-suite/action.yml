@@ -32,6 +32,15 @@ inputs:
       as implement's spec branch at cycle start. Empty means use the bundle.
     required: false
     default: ""
+  suite-timeout-minutes:
+    description: >-
+      Wall-clock budget for the suite run itself, in whole minutes. A suite
+      still running then is stopped and the verdict is fail, naming the
+      budget, so a slow suite reads as a timeout rather than an absent
+      verdict. Keep it below the calling step's timeout-minutes, which
+      stops the whole composite, upload included.
+    required: false
+    default: "50"
 outputs:
   verdict-artifact:
     description: Name of the uploaded verdict artifact.
@@ -54,6 +63,7 @@ runs:
         BUNDLE_DIR: ${{ runner.temp }}/wc-gate-bundle
         VERDICT_OUT: ${{ runner.temp }}/wc-gate-verdict.json
         HEAD_REF: ${{ inputs.head-ref }}
+        WC_GATE_SUITE_TIMEOUT_MINUTES: ${{ inputs.suite-timeout-minutes }}
       run: |
         bash "$GITHUB_ACTION_PATH/../_shared/contained-gate-suite.sh" "$SITE" "$BUNDLE_DIR" "$TRUSTED_SHA" "$VERDICT_OUT" "$HEAD_REF"
     - name: Upload gate verdict

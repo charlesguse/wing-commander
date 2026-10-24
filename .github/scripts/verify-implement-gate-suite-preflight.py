@@ -85,6 +85,20 @@ def check(name, cond, detail=""):
         print("::error::verify-implement-gate-suite-preflight: {0} -- {1}".format(name, detail))
 
 
+def budget_fits(step_min, budget):
+    """The composite's suite budget leaves its step timeout room for
+    timeout's 60-second kill grace plus the checkout and upload around it."""
+    return str(budget).isdigit() and 0 < int(budget) and int(budget) + 3 <= step_min
+
+
+def due_only(cond):
+    """The retry suite's if: is a pure conjunction carrying the retry
+    agent's own ok/escalation-model conditions, so no || can let the suite
+    run on a converged cycle."""
+    return ("||" not in cond and "steps.outcome.outputs.ok == 'false'" in cond
+            and "steps.effective-model.outputs.model != inputs.escalation-model" in cond)
+
+
 def expected_paragraph(leg, summary):
     """The prompt's gate-suite paragraph as both prompts carried it before
     #936, with the summary output interpolated. A present script must
@@ -240,6 +254,12 @@ def suite(leg, steps, quiet=False):
        o.get("summary") == red and o.get("paragraph") == expected_paragraph(leg, red),
        "outputs={0}\n{1}".format(o, out))
 
+    rc, out, o, _s, _f = summarize("true", "true", "fail", "")
+    ck("suite red with no failure line (a timed-out step): the summary says none was "
+       "recorded, never a blank after 'first failure:'",
+       o.get("summary", "").startswith("red at {0} start — first failure: none recorded".format(leg)),
+       "outputs={0}\n{1}".format(o, out))
+
     def summarize_missing(missing):
         return run_plain(summ, {"SCRIPT_EXISTS": "true", "READY": "false",
                                 "MISSING": missing, "OUTCOME": "", "FIRST_FAILURE": ""})
@@ -286,6 +306,9 @@ MUTATIONS = (
      'elif [ "$READY" != "true" ]; then\n  paragraph=', 'elif false; then\n  paragraph='),
     ("summary", "the summary stops naming the missing prerequisite",
      'missing prerequisite(s): ${{MISSING:-unrecorded}}"\nelif', 'missing prerequisite(s): unrecorded"\nelif'),
+    ("summary", "a red suite with no failure line leaves the summary blank",
+     '${{FIRST_FAILURE:-none recorded (the suite step ended without a result; it may have timed out)}}',
+     '$FIRST_FAILURE'),
     ("preflight", "the preflight stops emitting its missing output",
      'echo "missing=${{missing# }}" >> "$GITHUB_OUTPUT"\n', ''),
 )
@@ -363,6 +386,41 @@ def main():
     check("(cycle) the gate job installs actionlint only where there is a suite to run (#935)",
           "hashFiles('.github/scripts/run-local-gates.py') != ''" in str(inst.get("if", "")),
           "if={0}".format(inst.get("if")))
+    # The step timeouts and the suite budget -- see "Run the cycle-start
+    # gate suite (credential-free)" in implement.yml.
+    budget = str((contained[0].get("with") or {}).get("suite-timeout-minutes", "")) if contained else ""
+    step_min = contained[0].get("timeout-minutes") if contained else None
+    check("(cycle) the cycle-start suite step allows at least 30 minutes, and the composite's "
+          "suite budget leaves room under it for timeout's kill grace and the upload",
+          isinstance(step_min, int) and step_min >= 30 and budget_fits(step_min, budget),
+          "timeout-minutes={0!r} suite-timeout-minutes={1!r}".format(step_min, budget))
+    check("(gate) a suite budget one minute under the step timeout is refused",
+          not budget_fits(30, "29") and budget_fits(30, "25") and not budget_fits(30, "0"), "")
+    retry_step = by_id.get("gate-suite-retry") or {}
+    check("(retry) the retry suite step allows at least 30 minutes",
+          isinstance(retry_step.get("timeout-minutes"), int)
+          and retry_step.get("timeout-minutes") >= 30,
+          "timeout-minutes={0!r}".format(retry_step.get("timeout-minutes")))
+    retry_if = str(retry_step.get("if", ""))
+    check("(retry) the retry suite runs only when the retry agent is due, never on a "
+          "converged cycle",
+          due_only(retry_if), "if={0}".format(retry_if))
+    check("(gate) a retry suite if: that ORs in the retry conditions is refused",
+          not due_only("a == 'true' || steps.outcome.outputs.ok == 'false' && "
+                       "steps.effective-model.outputs.model != inputs.escalation-model")
+          and due_only(retry_if), "")
+    ids = [(s or {}).get("id") for s in steps]
+    uses = {(s or {}).get("id"): str((s or {}).get("uses", "")) for s in steps}
+    order = [i for i in ("gate-suite-retry", "reestablish-pre-retry", "refresh-remote-pre-retry",
+                         "retry") if i in ids]
+    check("(retry) the App token is re-minted and the remote refreshed after the retry suite, "
+          "before the retry agent",
+          order == ["gate-suite-retry", "reestablish-pre-retry", "refresh-remote-pre-retry",
+                    "retry"]
+          and [ids.index(i) for i in order] == sorted(ids.index(i) for i in order)
+          and uses.get("reestablish-pre-retry", "").endswith("/wing-commander-context")
+          and uses.get("refresh-remote-pre-retry", "").endswith("/wing-commander-refresh-remote"),
+          "order={0}".format(order))
     reader = by_id.get("gate-suite-cycle") or {}
     rif = str(reader.get("if", ""))
     check("(cycle) the implement job reads the verdict fail-closed through wing-commander-gate-verdict",

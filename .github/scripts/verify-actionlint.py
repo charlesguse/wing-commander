@@ -71,7 +71,7 @@ WORKFLOWS_DIR = ".github/workflows"
 # themselves are at, and this gate has to match that or it answers a
 # different question than CI does. It also must never touch the real
 # directory in place -- during a live implement.yml run (implement.yml
-# running the gate suite under a 10-minute timeout) this IS the running
+# running the gate suite under its step timeout) this IS the running
 # job's own checkout, and every later `uses: ./.wing-commander-pipeline/
 # ...` step, including the failure reporter, depends on it staying put.
 # See _lint_tree() (#442, and the review of #479 that replaced an earlier

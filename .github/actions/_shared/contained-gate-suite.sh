@@ -18,6 +18,11 @@
 # oversized bundle, or an unresolvable HEAD_REF, writes outcome=fail -- it
 # never skips.
 #
+# WC_GATE_SUITE_TIMEOUT_MINUTES (whole minutes, default 50) bounds the
+# suite run; a suite still running then is stopped and the verdict is fail,
+# naming the budget. WC_GATE_SUITE_TIMEOUT_SECONDS, when set, overrides it
+# (Gate 155 drives the timeout path in seconds).
+#
 # The verdict is the head's own gate suite reporting on itself: a head
 # that edits run-local-gates.py can make it say anything, as it always
 # could. What this job contains is the credential, not the verdict's
@@ -127,12 +132,34 @@ if [ ! -f "$work/.github/scripts/run-local-gates.py" ]; then
   fi
   exit 0
 fi
+# 10#: a leading zero ("08") is decimal, never an octal error or "00" = off.
+suite_minutes="${WC_GATE_SUITE_TIMEOUT_MINUTES:-50}"
+case "$suite_minutes" in ''|*[!0-9]*) suite_minutes=50 ;; esac
+suite_minutes=$((10#$suite_minutes)); [ "$suite_minutes" -gt 0 ] || suite_minutes=50
+suite_seconds="${WC_GATE_SUITE_TIMEOUT_SECONDS:-$((suite_minutes * 60))}"
+case "$suite_seconds" in ''|*[!0-9]*) suite_seconds=$((suite_minutes * 60)) ;; esac
+suite_seconds=$((10#$suite_seconds)); [ "$suite_seconds" -gt 0 ] || suite_seconds=$((suite_minutes * 60))
+# -u: a stopped suite's output is not lost in python's buffer, so the log
+# and the verdict's first failure hold what ran before the stop.
+# -k, not --kill-after: BusyBox's timeout takes no long options. A timeout
+# that refuses even this (an old BusyBox) leaves the suite unbounded rather
+# than failing every run before it starts.
+bound=()
+timeout -k 1 5 true >/dev/null 2>&1 && bound=(timeout -k 60 "$suite_seconds")
+[ "${#bound[@]}" -gt 0 ] || echo "::warning::contained-gate-suite: timeout is missing or refuses -k; the suite runs with no time budget of its own"
 log="$(mktemp)"
-(cd "$work" && python3 .github/scripts/run-local-gates.py) >"$log" 2>&1
+started=$SECONDS
+(cd "$work" && ${bound[@]+"${bound[@]}"} python3 -u .github/scripts/run-local-gates.py) >"$log" 2>&1
 rc=$?
+elapsed=$((SECONDS - started))
 cat "$log"
 if [ "$rc" -eq 0 ]; then
   write_verdict pass 0 "$head_sha" ""
+elif [ "${#bound[@]}" -gt 0 ] && [ "$elapsed" -ge "$suite_seconds" ] \
+     && { [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ] || [ "$rc" -eq 143 ]; }; then
+  # 143: BusyBox's timeout reports the TERM it sent, not 124.
+  first="$(grep -m1 -E '^(FAIL|ERROR)\b' "$log" | cut -c1-400)"
+  write_verdict fail "$rc" "$head_sha" "gate suite did not finish within its time budget (${suite_seconds}s); stopped${first:+; first failure before the stop: $first}"
 else
   first="$(grep -m1 -E '^(FAIL|ERROR)\b' "$log" | cut -c1-500)"
   write_verdict fail "$rc" "$head_sha" "${first:-gate suite exited $rc}"
