@@ -86,7 +86,10 @@ def write(repo, rel, text):
 
 def sh(shared, script, args, cwd, env_extra=None):
     out = tempfile.mktemp()
-    env = dict(os.environ, GITHUB_OUTPUT=out, **(env_extra or {}))
+    # A host's PYTHONUNBUFFERED would hide a suite whose output is lost when
+    # it is stopped; a runner sets none.
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}
+    env.update(GITHUB_OUTPUT=out, **(env_extra or {}))
     proc = subprocess.run(["bash", os.path.join(shared, script)] + list(args), cwd=cwd,
                           env=env, capture_output=True, text=True)
     outputs = {}
