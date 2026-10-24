@@ -2,7 +2,7 @@
   "issue": 1074,
   "spec_dir": "specs/118-spec-branch-sync-from-main",
   "feature_num": "118",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 3,
   "spec_branch": "spec/118-spec-branch-sync-from-main",
   "pending_re_review_from": []
