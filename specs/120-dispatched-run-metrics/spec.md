@@ -42,6 +42,21 @@ completions (acting on cancellations). None of these currently fire for
 pipeline-dispatched runs, so any remedy that makes completions visible again
 changes their behaviour too.
 
+## Clarifications
+
+### Session 2026-10-24
+
+- Q: Which remedy achieves prompt persistence for pipeline-dispatched runs?
+  → A: (A) Dispatch the next stage with the App token (`APP_TOKEN`, already
+  in the dispatch step's env), so pipeline-dispatched implement, finalize
+  and fold re-drive completions fire `wing-commander-metrics-persist.yml`'s
+  `workflow_run` job and spec 058 FR-030(a) holds as written.
+- Q: How should the other completion listeners behave for
+  pipeline-dispatched completions? → A: (C) The fold-cycle guard fires for
+  pipeline-dispatched implement completions. The watchdog's `workflow_run`
+  trigger does not; it keeps today's behaviour for those runs through an
+  explicit filter on the run's dispatcher, and a gate enforces that filter.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Rollup reflects implement and finalize spend promptly (Priority: P1)
@@ -116,8 +131,15 @@ a pipeline-dispatched run matches what FR-005 decides.
 **Acceptance Scenarios**:
 
 1. **Given** a pipeline-dispatched implement run completes, **When** the
-   remedy is in place, **Then** each other completion listener either does
-   not run or runs as FR-005 specifies.
+   remedy is in place, **Then** the fold-cycle guard runs for it as it does
+   for a person-dispatched implement completion (FR-005a).
+2. **Given** a pipeline-dispatched implement or finalize run completes,
+   **When** the remedy is in place, **Then** the watchdog's completion
+   trigger is filtered out by the run's dispatcher and behaves as today
+   (FR-005b).
+3. **Given** a person-dispatched implement or finalize run completes,
+   **When** the remedy is in place, **Then** the watchdog acts on it exactly
+   as today.
 
 ---
 
@@ -128,8 +150,8 @@ whose records rely on the sweep), the rollup comment says so, so the owner
 does not read a partial total as complete.
 
 **Why this priority**: Honest labelling is the fallback that makes any
-remaining lag harmless; it is the whole remedy only if the owner picks
-sweep-only collection.
+remaining lag harmless (for example a run dispatched while the App token
+was unavailable, or run kinds that remain sweep-only).
 
 **Independent Test**: Render a rollup for a lifecycle with runs completed
 since the last sweep and check the disclosure text is present when, and only
@@ -157,7 +179,11 @@ when, such runs can be missing.
   next stage must still be dispatched (pipeline progress outranks metrics
   freshness); only freshness may degrade.
 - A dispatch chain of many implement cycles: the remedy must not add a
-  persistence or listener run per cycle beyond what FR-005 accepts.
+  persistence or listener run per cycle beyond what FR-005 accepts (one
+  persistence run and one fold-cycle guard run per cycle; no watchdog run).
+- A run dispatched with the built-in token because the App token was
+  unavailable: its completion fires no listener (as today), so its record
+  arrives via the sweep and the rollup discloses the possible gap (FR-006).
 - Runs dropped entirely by the sweep (#1054) are a separate defect; this
   spec must not depend on that fix, nor mask it.
 
@@ -169,21 +195,29 @@ when, such runs can be missing.
   fold-re-drive implement run MUST be persisted to the records file within
   the freshness window (SC-001), regardless of whether a person or the
   pipeline dispatched it.
-- **FR-002**: The mechanism that achieves FR-001 MUST be
-  [NEEDS CLARIFICATION: which remedy — (A) dispatch the next stage with the
-  App token already in the dispatch step's environment, so completions fire
-  the completion trigger; (B) have implement and finalize persist their own
-  record as their last job; or (C) keep sweep-only collection for these runs
-  and disclose the lag (which drops FR-001 and makes FR-006 the remedy)?]
+- **FR-002**: The mechanism that achieves FR-001 MUST be dispatching the
+  next stage (the next implement cycle, finalize, and a fold's implement
+  re-drive) with the App token (`APP_TOKEN`, already in the dispatch step's
+  environment) instead of the built-in token, so that those runs'
+  completions fire `wing-commander-metrics-persist.yml`'s `workflow_run`
+  job exactly as person-dispatched completions do.
 - **FR-003**: Person-dispatched runs MUST keep their current prompt
   persistence behaviour unchanged.
 - **FR-004**: Each run's record MUST appear in the records file exactly once
   even when both the prompt path and the daily sweep encounter it.
 - **FR-005**: For pipeline-dispatched implement and finalize runs, the other
-  completion listeners (the watchdog's completion trigger and the fold-cycle
-  guard) MUST [NEEDS CLARIFICATION: newly start running for these
-  completions as they already do for person-dispatched runs, or be kept from
-  running for them as today?]
+  completion listeners MUST behave as follows:
+  - **FR-005a**: The fold-cycle guard MUST newly run for pipeline-dispatched
+    implement completions, exactly as it already does for person-dispatched
+    ones.
+  - **FR-005b**: The watchdog's `workflow_run` trigger MUST NOT newly act on
+    pipeline-dispatched implement and finalize completions; it MUST keep
+    today's behaviour for those runs through an explicit filter on the run's
+    dispatcher (the App identity that FR-002 dispatches with), while
+    continuing to act on person-dispatched completions as today.
+  - **FR-005c**: A deterministic gate MUST fail if the watchdog's dispatcher
+    filter (FR-005b) is removed or no longer excludes the App-dispatched
+    implement and finalize completions.
 - **FR-006**: Whenever any completed run's record can still arrive only via
   the daily sweep, the rollup comment MUST state that runs since the last
   sweep may be missing from the total.
@@ -192,12 +226,11 @@ when, such runs can be missing.
   the backstop.
 - **FR-008**: Spec 058 FR-030(a)'s contract — that stages whose records are
   read back promptly keep a live completion-driven persistence — MUST be
-  true in practice for implement and finalize after this feature, or the
-  live contract/documentation MUST be corrected to state the actual model.
+  true in practice for implement and finalize after this feature, as
+  written; no correction of that contract is needed.
 - **FR-009**: A deterministic gate MUST fail if a pipeline dispatch of
-  implement or finalize reverts to a path that cannot produce prompt
-  persistence under the chosen mechanism (e.g. a dispatch with the built-in
-  token under remedy A, or a missing final persistence job under remedy B).
+  implement or finalize (including a fold's implement re-drive) reverts to
+  dispatching with the built-in token instead of the App token.
 
 ### Key Entities
 
@@ -223,8 +256,9 @@ when, such runs can be missing.
 - **SC-003**: Zero stage dispatches lost or delayed because of the change
   (every next-stage dispatch that happened before still happens).
 - **SC-004**: The number of extra workflow runs added per implement cycle is
-  bounded and stated (at most one persistence run per completed run, plus
-  whatever FR-005 accepts).
+  bounded and stated: at most one persistence run per completed run plus one
+  fold-cycle guard run per completed implement run (FR-005a); the watchdog
+  adds no inspections for pipeline-dispatched completions (FR-005b).
 
 ## Assumptions
 

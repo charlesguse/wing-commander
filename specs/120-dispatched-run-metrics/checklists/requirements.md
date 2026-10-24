@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,10 @@
 
 ## Notes
 
-- Two [NEEDS CLARIFICATION] markers remain (FR-002 remedy choice, FR-005
-  side effects on other completion listeners); they are posted to lifecycle
-  issue #1055 for the clarify stage.
+- Both clarifications were resolved from the reply on lifecycle issue
+  #1055: FR-002 uses App-token dispatch (remedy A); FR-005 lets the
+  fold-cycle guard fire for pipeline-dispatched implement completions while
+  the watchdog filters them out by dispatcher, enforced by a gate (option C).
 - The spec names pipeline workflows, tokens and trigger kinds because this
   is an infrastructure feature whose "users" are the owner and pipeline
   automation; those names are the domain vocabulary, not implementation
