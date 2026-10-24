@@ -325,6 +325,148 @@ class GitBacked(unittest.TestCase):
         self.assertTrue(wc.decide(history)["stop"])
 
 
+class SyncCommit(GitBacked):
+    """Merge sync (spec 118): a sync commit between two review rounds."""
+
+    GIT = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+
+    def merge(self, ref, message="sync: merge main into pr"):
+        self.run_git(*self.GIT, "merge", "-q", "--no-ff", "-m", message, ref)
+        return wc.rev("HEAD", self.repo)
+
+    def test_a_human_merge_of_another_branch_is_not_main_side(self):
+        old, _new, h0, _h1, _h2 = self.sync_repo()
+        self.run_git("checkout", "-q", "-b", "other", old)
+        self.write("o\n", "o.py")
+        other = self.commit("other work")
+        self.run_git("checkout", "-q", "pr")
+        self.merge(other, "Merge branch other into pr")
+        origins = wc.Origins(old, [h0, wc.rev("HEAD", self.repo)], self.repo)
+        self.assertNotEqual(origins.of(other), "main")
+
+    def test_default_merge_subject_of_a_conflict_resolved_sync_is_main_side(self):
+        # `git merge --continue` after a conflict writes git's own subject.
+        old, new, h0, _h1, _h2 = self.sync_repo()
+        self.run_git("reset", "-q", "--hard", h0)
+        h1 = self.merge(new, "Merge remote-tracking branch 'origin/main' into spec/118-x")
+        origins = wc.Origins(old, [h0, h1], self.repo)
+        self.assertEqual(origins.of(new), "main")
+
+    def test_unreachable_head_does_not_raise(self):
+        old, new, h0, _h1, _h2 = self.sync_repo()
+        origins = wc.Origins(old, [h0, "0" * 40], self.repo)
+        origins.of(new)
+
+    def test_main_side_excludes_history_the_branch_already_had(self):
+        old, new, h0, h1, _h2 = self.sync_repo()
+        origins = wc.Origins(old, [h0, h1], self.repo)
+        self.assertEqual(origins.of(new), "main")
+        self.assertEqual(origins.of(h0), "pr")
+
+    def sync_repo(self, conflict=False):
+        """base <- pr (h0) ; main moves ; sync commit (h1) ; pr fix (h2).
+        Returns the OLD base, main's new tip and the three heads."""
+        self.run_git("init", "-q", "-b", "main")
+        self.write("a\nb\nc\n")
+        old = self.commit("main")
+        self.run_git("checkout", "-q", "-b", "pr")
+        self.write("a\nb\nc\npr1\npr2\n")
+        h0 = self.commit("pr")
+        self.run_git("checkout", "-q", "main")
+        self.write("m1\nm2\n", "m.py")
+        if conflict:
+            self.write("a\nMAIN\nc\n")
+        new = self.commit("main moves")
+        self.run_git("checkout", "-q", "pr")
+        if conflict:
+            self.write("a\nPR\nc\npr1\npr2\n")
+            h0 = self.commit("pr edits b")
+        if conflict:
+            wc.git(self.GIT + ["merge", "--no-commit", "--no-ff", new], self.repo, check=False)
+            self.write("a\nRESOLVED\nc\npr1\npr2\n")
+            self.run_git("add", "-A")
+            self.run_git(*self.GIT, "commit", "-q", "-m", "sync: merge main into pr")
+            h1 = wc.rev("HEAD", self.repo)
+        else:
+            h1 = self.merge(new)
+        self.write("a\nb\nc\npr1\npr2\nfix\n" if not conflict else "a\nRESOLVED\nc\npr1\npr2\nfix\n")
+        h2 = self.commit("pass 2")
+        return old, new, h0, h1, h2
+
+    def test_main_side_of_a_sync_commit_is_attributed_to_main_not_the_pass(self):
+        old, _new, h0, h1, h2 = self.sync_repo()
+        # --base predates the sync: main's m.py arrived through the sync
+        # commit's second parent and is still the default branch's.
+        history = wc.compute_history(old, [
+            {"round": 1, "head_sha": h0, "findings": []},
+            {"round": 2, "head_sha": h1,
+             "findings": [{"fingerprint": "x", "file": "m.py", "line": 1}]},
+            {"round": 3, "head_sha": h2, "findings": []}], None, self.repo)
+        self.assertTrue(history[1]["git_ok"])
+        self.assertEqual((history[1]["attributable"], history[1]["self_inflicted"]), (1, 0))
+
+    def test_share_and_churn_are_values_across_a_sync_commit(self):
+        _old, new, h0, h1, h2 = self.sync_repo()
+        history = wc.compute_history(new, [
+            {"round": 1, "head_sha": h0, "findings": []},
+            {"round": 2, "head_sha": h1,
+             "findings": [{"fingerprint": "x", "file": "f.py", "line": 4}]},
+            {"round": 3, "head_sha": h2,
+             "findings": [{"fingerprint": "y", "file": "f.py", "line": 6}]}], None, self.repo)
+        signals = wc.decide(history)["signals"]
+        self.assertTrue(all(h["git_ok"] for h in history))
+        self.assertEqual([s["self_inflicted_share"] for s in signals], [0.0, 0.0, 1.0])
+        self.assertEqual([s["churn"] for s in signals], [0, 0, 0])
+        self.assertNotIn("n/a", wc.render_handoff(wc.decide(history)))
+
+    def test_conflict_resolution_is_lifecycle_work_and_main_lines_are_not(self):
+        old, new, h0, h1, _h2 = self.sync_repo(conflict=True)
+        origins = wc.Origins(old, [h0, h1], self.repo)
+        blame = wc.blame_file(h1, "f.py", self.repo)
+        self.assertEqual(origins.of(blame[1]), "pass1")   # the resolution line
+        self.assertEqual(origins.of(wc.blame_file(h1, "m.py", self.repo)[0]), "main")
+        # Against the fresh main tip the merge base advances to it, so main's
+        # own changes drop out of the size and only the PR's lines remain.
+        self.assertEqual(wc.diff_size(new, h1, self.repo)["files"], 1)
+        self.assertEqual(wc.diff_size(old, h1, self.repo)["files"], 2)
+
+    def test_rebase_cells_say_why_they_are_n_a(self):
+        decision = {"stop": False, "git_ok": False, "tripped": [], "growth_recorded": True,
+                    "signals": [
+                        {"round": 1, "count": 3, "self_inflicted_share": 0.0, "unattributable": 0,
+                         "churn": 0, "growth": 0.0, "recurrences": []},
+                        {"round": 2, "count": 2, "self_inflicted_share": None, "unattributable": 2,
+                         "churn": None, "growth": 0.5, "recurrences": []}]}
+        text = wc.render_handoff(decision)
+        self.assertIn("(usually a rebase or force-push rewrote history; merge sync avoids it)", text)
+        self.assertNotIn("force-pushed", text)
+        row = next(l for l in text.splitlines() if l.startswith("| 2 |"))
+        self.assertEqual(row.count("n/a — usually a rebase or force-push rewrote history; merge sync avoids it"), 2)
+        self.assertIn("+50%", row)
+
+    def test_fold_range_resolves_across_a_sync_commit(self):
+        # finalize lists fold commits as `git log --grep '^fold(' range_start..tip`.
+        self.run_git("init", "-q", "-b", "main")
+        self.write("a\n")
+        self.commit("main")
+        self.run_git("checkout", "-q", "-b", "pr")
+        self.write("a\nx\n")
+        start = self.commit("fold(leg-0): first")
+        self.run_git("checkout", "-q", "main")
+        self.write("m\n", "m.py")
+        newer = self.commit("main moves")
+        self.run_git("checkout", "-q", "pr")
+        self.merge(newer)
+        self.write("a\nx\ny\n")
+        self.commit("fold(leg-1): second")
+        tip = wc.rev("HEAD", self.repo)
+        subjects = wc.git(["log", "--grep", "^fold(", "--format=%s", start + ".." + tip],
+                          self.repo).stdout.split("\n")
+        self.assertEqual([s for s in subjects if s], ["fold(leg-1): second"])
+        self.assertEqual(len(wc.git(["rev-list", "--merges", start + ".." + tip],
+                                    self.repo).stdout.split()), 1)
+
+
 class RoundRecords(unittest.TestCase):
     BOT = "wing-commander-bot[bot]"
 

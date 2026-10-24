@@ -2,7 +2,8 @@
   "why": "FR-017: spec 114 is additive. `baseline` is every published stage's workflow_call interface before spec 114 (regenerate with `python3 .github/scripts/verify-intake-routing.py --print-interface` only for a reviewed interface change); `additions` lists each new input with the default that reproduces root behaviour.",
   "additions": {
     "intake.yml": {"inputs": {"routing-label-prefix": ""}},
-    "pr-conversation.yml": {"inputs": {"max-iterations": 5}}
+    "pr-conversation.yml": {"inputs": {"max-iterations": 5}},
+    "rebase.yml": {"inputs": {"sync-method": "rebase"}}
   },
   "baseline": {
     "agent-startup-check.yml": {

@@ -112,6 +112,7 @@ create them now so the stubs' documentation stays true):
 | `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE` | unset | ISO start date (`YYYY-MM-DD`) of the watchdog diagnose Haiku 5.5 shadow trial (spec 110). Unset means off, and no trial job runs. Set, `wing-commander-8-watchdog.yml` turns the shadow on until 60 days after this date or 300 compared runs on the metrics branch, whichever comes first; set a new date to restart. `wing-commander-trial-summary.yml` (dispatch) summarises the same window |
 | `WING_COMMANDER_SPEC_DRAFT_PREFIX` | `spec-draft/` | Branch prefix for the draft spec branch (default `spec-draft/`) |
 | `WING_COMMANDER_SPEC_PREFIX` | `spec/` | Branch prefix for the persistent spec branch (default `spec/`) |
+| `WING_COMMANDER_SPEC_BRANCH_SYNC` | `rebase` | How `wing-commander-rebase.yml` keeps spec branches current with the default branch: `rebase` (default) or `merge` (a sync commit, no force-push). Consuming-instrument layer: your wrapper passes it to the stage's `sync-method` input; any other value fails the run before a branch is touched — see [docs/adoption.md](adoption.md#rebase) |
 | `WING_COMMANDER_PLAN_PREFIX` | `plan/` | Branch prefix for the plan branch (default `plan/`) |
 | `WING_COMMANDER_TASKS_PREFIX` | `tasks/` | Branch prefix for the tasks branch (default `tasks/`) |
 | `WING_COMMANDER_IMPL_PREFIX` | `impl/` | Branch prefix for the implement branch (default `impl/`) |

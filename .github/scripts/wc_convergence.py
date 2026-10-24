@@ -85,16 +85,50 @@ class Origins(object):
         self.heads = heads
         self.cwd = cwd
         self._cache = {}
+        self._main_side = None
 
     def _is_ancestor(self, commit, ref):
         return git(["merge-base", "--is-ancestor", commit, ref],
                    self.cwd, check=False).returncode == 0
 
+    def _main_side_commits(self):
+        """Commits that arrived through a sync commit (merge sync, spec 118):
+        reachable from the second parent of a merge on the latest head's
+        first-parent chain and not on that chain themselves. They are the
+        default branch's, even when --base predates the sync; the lines a
+        sync commit's own conflict resolution wrote stay the sync commit's,
+        so they still count as the loop's work (FR-011). Decided from git
+        alone -- no new input (research D9)."""
+        if self._main_side is None:
+            head = self.heads[-1]
+            side = set()
+            # Only the pipeline's own sync commits count: subject `sync: merge
+            # ...`, or git's default `Merge remote-tracking branch 'origin/..`
+            # that an agent's `git merge --continue` writes after a conflict.
+            # A person's merge of another branch stays the loop's work.
+            # Each sync contributes second-parent history minus first-parent
+            # history, so main's earlier history is not swept in.
+            # check=False: an unreachable head or shallow checkout yields no
+            # main-side commits instead of raising, like the other probes.
+            for row in _lines(git(["log", "--first-parent", "--merges",
+                                   "--format=%P\t%s", head], self.cwd,
+                                  check=False).stdout):
+                parents, _, subject = row.partition("\t")
+                ps = parents.split()
+                if len(ps) < 2 or not (
+                        subject.startswith("sync: merge ")
+                        or subject.startswith("Merge remote-tracking branch 'origin/")):
+                    continue
+                side.update(_lines(git(["rev-list", ps[1], "^" + ps[0]], self.cwd,
+                                        check=False).stdout))
+            self._main_side = side
+        return self._main_side
+
     def of(self, commit):
         # A commit in the freshly fetched base is main's, including merges of
         # main the loop made; it is never loop-written (research D2).
         if commit not in self._cache:
-            if self._is_ancestor(commit, self.base):
+            if self._is_ancestor(commit, self.base) or commit in self._main_side_commits():
                 label = "main"
             elif self._is_ancestor(commit, self.heads[0]):
                 label = "pr"
@@ -742,6 +776,13 @@ def _code_span(text):
     return "{0} {1} {0}".format(tick, text)
 
 
+# FR-014: why a git-derived signal reads n/a after a rebase, in one place.
+# git_ok is also False for a shallow checkout or an unreachable head, so the
+# reason names the usual causes, not one.
+REBASE_NA_REASON = "usually a rebase or force-push rewrote history; merge sync avoids it"
+REBASE_NA_CELL = "n/a — " + REBASE_NA_REASON
+
+
 def _pct(value, signed=False):
     if value is None:
         return "n/a"
@@ -770,13 +811,13 @@ def render_handoff(decision):
         lines.append("")
         if decision.get("growth_recorded"):
             lines.append("An earlier round's head is unreachable from this "
-                         "checkout (the branch was rebased or force-pushed), "
+                         "checkout (" + REBASE_NA_REASON + "), "
                          "so self-inflicted share and churn could not be "
                          "computed; growth is read from the diff size each "
                          "round's record stored at review time.")
         else:
             lines.append("An earlier round's head is unreachable from this "
-                         "checkout (the branch was rebased or force-pushed), "
+                         "checkout (" + REBASE_NA_REASON + "), "
                          "so self-inflicted share, churn and growth could not "
                          "be computed: round 1's record stores no diff size.")
     if decision.get("baseline_missing"):
@@ -786,10 +827,14 @@ def render_handoff(decision):
     lines.append("")
     lines.append("| Round | Findings | Self-inflicted share | Churn | Growth | Recurrences |")
     lines.append("|---|---|---|---|---|---|")
+    # FR-014: when history was rewritten, a share or churn cell that cannot be
+    # computed says why instead of a bare n/a.
+    na = REBASE_NA_CELL if decision.get("git_ok") is False else "n/a"
     for s in rounds:
+        share = _pct(s["self_inflicted_share"])
         lines.append("| {0} | {1} | {2} | {3} | {4} | {5} |".format(
-            s["round"], s["count"], _pct(s["self_inflicted_share"]),
-            "n/a" if s["churn"] is None else s["churn"],
+            s["round"], s["count"], na if share == "n/a" else share,
+            na if s["churn"] is None else s["churn"],
             _pct(s["growth"], signed=True), len(s["recurrences"])))
     unattributable = sum(s["unattributable"] for s in rounds)
     lines.append("")

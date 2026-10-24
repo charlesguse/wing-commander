@@ -157,6 +157,18 @@ on:
         type: string
         required: false
         default: ""
+      sync-method:
+        description: >
+          How the default branch is brought into each in-flight spec branch.
+          `rebase` (default, also the empty string) is today's behaviour: a
+          rebase published with force-with-lease. `merge` makes a sync commit
+          with the default branch as its second parent and publishes it with a
+          plain push, never rewriting history. Any other value fails the
+          discover job before a branch is selected
+          (specs/118-spec-branch-sync-from-main/contracts/sync-method-input.md).
+        type: string
+        required: false
+        default: rebase
     secrets:
       claude-code-oauth-token:
         description: "Claude OAuth token (claude setup-token) — one of the two credentials"
@@ -344,6 +356,13 @@ jobs:
           token: ${{ secrets.pipeline-repo-token || github.token }}
           path: .wing-commander-pipeline
           persist-credentials: false
+
+      # An unknown sync-method stops the stage here, before any branch is
+      # selected, so no matrix leg runs and no branch is touched.
+      - name: Validate the sync method
+        env:
+          SYNC_METHOD: ${{ inputs.sync-method }}
+        run: python3 .wing-commander-pipeline/.github/scripts/wc_sync_from_main.py validate-method "$SYNC_METHOD"
 
       # Deterministic fail-fast before any billable work (FR-004). Rebase
       # runs no spec-kit skill, so only the credential invariant applies —
@@ -616,7 +635,7 @@ jobs:
     # The leg name a root matrix entry had before spec 114 added `project`
     # and `artifact_key` to it (FR-016): GitHub's default names a leg by
     # every matrix value.
-    name: rebase (${{ matrix.slug }}, ${{ matrix.spec_dir }}, ${{ matrix.issue }})
+    name: ${{ inputs.sync-method == 'merge' && format('Sync spec branch with main ({0}, {1}, {2})', matrix.slug, matrix.spec_dir, matrix.issue) || format('rebase ({0}, {1}, {2})', matrix.slug, matrix.spec_dir, matrix.issue) }}
     needs: [discover, verify-image-prerequisites]
     # spec 058 (Gate 15/Gate 23): discover now carries !cancelled() (it
     # tolerates a skipped verify-image-prerequisites), so GitHub's
@@ -767,6 +786,7 @@ jobs:
           SLUG: ${{ matrix.slug }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
+          SYNC_METHOD: ${{ inputs.sync-method }}
         run: |
           set -euo pipefail
           git config user.name  "${BOT_SLUG}[bot]"
@@ -776,6 +796,52 @@ jobs:
 
           before="$(git rev-parse HEAD)"
           echo "before=$before" >> "$GITHUB_OUTPUT"
+
+          # sync-method merge: a sync commit instead of a rebase; same outcome
+          # vocabulary (clean|conflict|error) so every later step is shared.
+          # An already-current branch is `clean` with the tip unchanged, which
+          # "Evaluate clean rebase" reads as nothing to publish. The decisions
+          # live in wc_sync_from_main.py.
+          if [ "${SYNC_METHOD:-}" = merge ]; then
+            helper=.wing-commander-pipeline/.github/scripts/wc_sync_from_main.py
+            main_sha="$(git rev-parse "refs/remotes/origin/$DB")"
+            echo "main=$main_sha" >> "$GITHUB_OUTPUT"
+            if [ "$(python3 "$helper" decide --main "$main_sha")" = current ]; then
+              outcome=clean
+            else
+              # The conflicted tree is the merge with markers in conflicted
+              # paths only; exit 1 on conflict is expected, the tree is line 1.
+              # Anything else on line 1 is a merge-tree failure: outcome=error.
+              # A merge-tree failure (git older than 2.38) only costs the
+              # conflict scope check: the merge itself still runs, and a clean
+              # one needs no tree. A conflict without a tree is an error.
+              set +e
+              conflicted_tree="$(git merge-tree --write-tree --no-messages "origin/$DB" HEAD | head -n 1)"
+              set -e
+              printf '%s\n' "$conflicted_tree" > "$RUNNER_TEMP/conflicted-tree.txt"
+              set +e
+              git merge --no-ff --no-commit "origin/$DB"
+              rc=$?
+              set -e
+              if [ "$rc" -ne 0 ] && ! [[ "$conflicted_tree" =~ ^[0-9a-f]{40,64}$ ]]; then
+                rc=2
+              fi
+              if [ "$rc" -eq 0 ]; then
+                git commit --allow-empty -m "sync: merge $DB into ${SPEC_PREFIX}$SLUG"
+                outcome=clean
+              elif [ "$rc" -ne 2 ] && unmerged="$(git -c core.quotepath=off diff --name-only --diff-filter=U)" && [ -n "$unmerged" ]; then
+                outcome=conflict
+                printf '%s\n' "$unmerged" > "$RUNNER_TEMP/conflict-manifest.txt"
+                printf '%s\n' "$unmerged" > "$RUNNER_TEMP/conflict-manifest.seed.txt"
+              else
+                git merge --abort || true
+                outcome=error
+              fi
+            fi
+            echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
+            echo "sync-from-main ${SPEC_PREFIX}$SLUG: merge attempt outcome=**$outcome**." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
           # The ordered list of this branch's own commits about to be replayed
           # onto the default branch — the baseline for the per-commit scope
@@ -842,6 +908,20 @@ jobs:
           project: ${{ matrix.project }}
           step-label: "rebase"
 
+      # sync-method merge: the same surface with merge in place of rebase.
+      - name: Compose tool args (merge)
+        id: tool-args-merge
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,Edit,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git merge --continue:*),Bash(git merge --abort:*)"
+          default-disallowed-tools: "WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage"
+          extra-allowed-tools: ${{ inputs.extra-allowed-tools }}
+          extra-disallowed-tools: ${{ inputs.extra-disallowed-tools }}
+          allowed-tools-override: ${{ inputs.allowed-tools-override }}
+          disallowed-tools-override: ${{ inputs.disallowed-tools-override }}
+          project: ${{ matrix.project }}
+          step-label: "merge"
+
       # specs/037-agent-turn-budget-guard/: turns the intended turn budget
       # (inputs.max-turns) into the literal --max-turns ceiling passed to the
       # agent below — the action's own post-hoc rejection of a healthy run
@@ -849,14 +929,14 @@ jobs:
       # job before the verdict step can run.
       - name: Compute agent turn ceiling
         id: agent-ceiling
-        if: steps.attempt.outputs.outcome == 'conflict' && steps.tool-args-rebase.outputs.allowed-tools != ''
+        if: steps.attempt.outputs.outcome == 'conflict' && ((inputs.sync-method == 'merge' && steps.tool-args-merge.outputs.allowed-tools != '') || (inputs.sync-method != 'merge' && steps.tool-args-rebase.outputs.allowed-tools != ''))
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: ${{ inputs.max-turns }}
 
       - name: Resolve conflicts
         id: agent
-        if: steps.attempt.outputs.outcome == 'conflict' && steps.tool-args-rebase.outputs.allowed-tools != ''
+        if: steps.attempt.outputs.outcome == 'conflict' && ((inputs.sync-method == 'merge' && steps.tool-args-merge.outputs.allowed-tools != '') || (inputs.sync-method != 'merge' && steps.tool-args-rebase.outputs.allowed-tools != ''))
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -872,6 +952,8 @@ jobs:
           # the pipeline's own App bot is allow-listed too (bare slug) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
+            ${{ inputs.sync-method == 'merge' && format('MERGE SYNC MODE. This run merges the default branch into the branch {0}{1}; it is NOT a rebase. The repository is checked out mid-merge (`git merge --no-ff --no-commit` stopped on conflicts). Everywhere the instructions below say rebase, read merge: the conflicted files are those `git diff --name-only --diff-filter=U` lists, finish with a single `git merge --continue` (never `git rebase`), there is exactly one stop and nothing to repeat, and if you cannot reconcile the conflicts run `git merge --abort` and stop. Append the conflicted paths to the manifest file exactly as step 2 says. In the numbered steps below, step 4 ends with `git merge --continue` (not `git rebase --continue`), ignore step 5 (there is no second stop), and step 6 means `git merge --abort`; no rebase command is available to you. Never run `git commit`, `git push`, or any `gh` command.', inputs.spec-prefix, matrix.slug) || '' }}
+
             You are the conflict-resolution assistant for this repository's
             auto-rebase maintenance stage. A rebase of the branch
             ${{ inputs.spec-prefix }}${{ matrix.slug }} onto the repository's default branch has
@@ -910,8 +992,8 @@ jobs:
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}
-            --allowedTools "${{ steps.tool-args-rebase.outputs.allowed-tools }}"
-            --disallowedTools "${{ steps.tool-args-rebase.outputs.disallowed-tools }}"
+            --allowedTools "${{ format('{0}{1}', inputs.sync-method == 'merge' && steps.tool-args-merge.outputs.allowed-tools || '', inputs.sync-method != 'merge' && steps.tool-args-rebase.outputs.allowed-tools || '') }}"
+            --disallowedTools "${{ format('{0}{1}', inputs.sync-method == 'merge' && steps.tool-args-merge.outputs.disallowed-tools || '', inputs.sync-method != 'merge' && steps.tool-args-rebase.outputs.disallowed-tools || '') }}"
 
       # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
       # any step runs pipeline code -- see clarify.yml.
@@ -1065,6 +1147,14 @@ jobs:
       # agent-appended conflict manifest admits only paths inside the project
       # folder, so a resolution can never widen a commit outside it. Same
       # `if:` as the scope check below, plus a subfolder project.
+      # sync-method merge: the agent must not widen the allowed path set, so
+      # the manifest is put back to the deterministic seed before narrowing.
+      - name: Restore the seeded conflict manifest
+        id: manifest-restore
+        shell: bash
+        if: always() && steps.attempt.outputs.outcome == 'conflict' && inputs.sync-method == 'merge'
+        run: cp "$RUNNER_TEMP/conflict-manifest.seed.txt" "$RUNNER_TEMP/conflict-manifest.txt"
+
       - name: Narrow the conflict manifest to the project folder
         id: manifest-filter
         if: always() && steps.attempt.outputs.outcome == 'conflict' && matrix.project != ''
@@ -1095,10 +1185,39 @@ jobs:
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           PROJECT: ${{ matrix.project }}
           MANIFEST_FILTER: ${{ steps.manifest-filter.outcome }}
+          SYNC_METHOD: ${{ inputs.sync-method }}
+          BEFORE: ${{ steps.attempt.outputs.before }}
+          MAIN_SHA: ${{ steps.attempt.outputs.main }}
         run: |
           set -uo pipefail
           push=false
           escalate=false
+
+          # sync-method merge: one two-parent commit, so one deterministic
+          # tree comparison in wc_sync_from_main.py replaces the per-commit
+          # loop below. A merge still in progress, or a subfolder manifest the
+          # step above did not narrow, admits nothing.
+          if [ "${SYNC_METHOD:-}" = merge ]; then
+            manifest="$RUNNER_TEMP/conflict-manifest.txt"
+            if [ -n "$PROJECT" ] && [ "$MANIFEST_FILTER" != "success" ]; then manifest=/dev/null; fi
+            if [ -f "$(git rev-parse --git-path MERGE_HEAD)" ]; then
+              echo "::warning::${SPEC_PREFIX}$SLUG: the merge was not completed (agent verdict=$AGENT_VERDICT) — abandoning."
+              escalate=true
+            elif python3 .wing-commander-pipeline/.github/scripts/wc_sync_from_main.py verify-scope \
+                --before "$BEFORE" --main "$MAIN_SHA" --conflicted-tree "$(cat "$RUNNER_TEMP/conflicted-tree.txt")" \
+                --manifest "$manifest" --project "$PROJECT" --verdict "$AGENT_VERDICT"; then
+              push=true
+              echo "sync-from-main ${SPEC_PREFIX}$SLUG: AI resolution passed the scope check." >> "$GITHUB_STEP_SUMMARY"
+            else
+              escalate=true
+            fi
+            if [ "$escalate" = true ]; then
+              echo "sync-from-main ${SPEC_PREFIX}$SLUG: AI resolution failed the scope check — abandoning and escalating." >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo "push=$push"         >> "$GITHUB_OUTPUT"
+            echo "escalate=$escalate" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           if [ -d "$(git rev-parse --git-path rebase-merge)" ] || \
              [ -d "$(git rev-parse --git-path rebase-apply)" ] || \
@@ -1214,12 +1333,32 @@ jobs:
           # not re-established; empty when the agent never ran (a clean
           # rebase pushes with the credential checkout already proved).
           CREDENTIAL_OK: ${{ steps.credential-status.outputs.ok }}
+          SYNC_METHOD: ${{ inputs.sync-method }}
         run: |
           set -uo pipefail
+          # sync-method merge publishes a descendant of the remote head with a
+          # plain push (no lease, no force): the server refuses anything that
+          # is not a fast-forward, and a "[rejected]" line is the branch race
+          # the lease's "(stale info)" is under rebase.
+          push_branch() {
+            if [ "${SYNC_METHOD:-}" = merge ]; then
+              refspec="$(python3 .wing-commander-pipeline/.github/scripts/wc_sync_from_main.py publish-refspec "${SPEC_PREFIX}$SLUG")" || return 1
+              out="$(git push origin "$refspec" 2>&1)" && return 0
+              printf '%s\n' "$out" >&2
+              if printf '%s' "$out" | grep -qE '\[(remote )?rejected\]'; then echo "(stale info)" >&2; fi
+              return 1
+            else
+              LC_ALL=C git push --force-with-lease origin "HEAD:refs/heads/${SPEC_PREFIX}$SLUG"
+            fi
+          }
           # LC_ALL=C: the credential arm below reads git's "(stale info)"
           # lease rejection, which a translated locale would reword.
-          if LC_ALL=C git push --force-with-lease origin "HEAD:refs/heads/${SPEC_PREFIX}$SLUG" 2>"$RUNNER_TEMP/push-err.txt"; then
-            echo "${SPEC_PREFIX}$SLUG: pushed rebased result (force-with-lease)." >> "$GITHUB_STEP_SUMMARY"
+          if LC_ALL=C push_branch 2>"$RUNNER_TEMP/push-err.txt"; then
+            if [ "${SYNC_METHOD:-}" = merge ]; then
+              echo "${SPEC_PREFIX}$SLUG: pushed sync commit (plain fast-forward push)." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "${SPEC_PREFIX}$SLUG: pushed rebased result (force-with-lease)." >> "$GITHUB_STEP_SUMMARY"
+            fi
             if [ -n "$ISSUE" ]; then
               has_label="$(gh issue view "$ISSUE" --json labels \
                 --jq '[.labels[].name] | index("rebase:blocked") != null' 2>/dev/null)" || has_label=false
@@ -1296,6 +1435,7 @@ jobs:
           # to fail with an unexplained authentication error.
           CREDENTIAL_OK: ${{ steps.credential-status.outputs.ok }}
           FAILED_STEP: ${{ steps.failed-step.outputs.step }}
+          SYNC_METHOD: ${{ inputs.sync-method }}
         run: |
           set -uo pipefail
           # discover's [P/]specs/NNN-slug; spec-meta.json records the
@@ -1304,6 +1444,10 @@ jobs:
 
           if [ -d "$(git rev-parse --git-path rebase-merge)" ] || [ -d "$(git rev-parse --git-path rebase-apply)" ]; then
             git rebase --abort || true
+          fi
+          # sync-method merge: a merge in progress is abandoned the same way.
+          if [ -f "$(git rev-parse --git-path MERGE_HEAD)" ]; then
+            git merge --abort || true
           fi
 
           main_sha="$(git rev-parse "refs/remotes/origin/$DB")"
@@ -1336,9 +1480,15 @@ jobs:
 
           marker="<!-- wing-commander-rebase: blocked branch-sha=$BEFORE main-sha=$main_sha -->"
           {
-            echo "🛠️ **Auto-rebase needs a human** — I could not bring \`${SPEC_PREFIX}$SLUG\` current with \`$DB\` automatically."
-            echo ""
-            echo "The rebase was **abandoned** and the branch left exactly as it was (nothing was force-pushed). Its conflicts against \`$DB\` need a manual rebase or a decision on how to reconcile them."
+            if [ "${SYNC_METHOD:-}" = merge ]; then
+              echo "🛠️ **Spec branch sync needs a human** — I could not merge \`$DB\` into \`${SPEC_PREFIX}$SLUG\` automatically."
+              echo ""
+              echo "The merge was **abandoned** and the branch left exactly as it was (nothing was pushed). Its conflicts against \`$DB\` need a manual \`git merge origin/$DB\` and push, or a decision on how to reconcile them."
+            else
+              echo "🛠️ **Auto-rebase needs a human** — I could not bring \`${SPEC_PREFIX}$SLUG\` current with \`$DB\` automatically."
+              echo ""
+              echo "The rebase was **abandoned** and the branch left exactly as it was (nothing was force-pushed). Its conflicts against \`$DB\` need a manual rebase or a decision on how to reconcile them."
+            fi
             echo ""
             if [ "$CREDENTIAL_OK" = "false" ]; then
               echo "**Cause**: the post-agent wing-commander-bot credential re-establishment failed after the agent step ran — treat the credential, not the conflict resolution, as the cause (see the \"Determine post-agent credential status\" step)."
@@ -1350,7 +1500,11 @@ jobs:
             echo "- Branch tip: \`$BEFORE\`"
             echo "- \`$DB\` tip: \`$main_sha\`"
             echo ""
-            echo "Once you've rebased the branch (or \`$DB\` moves again), the next auto-rebase run retries automatically."
+            if [ "${SYNC_METHOD:-}" = merge ]; then
+              echo "Once you've merged \`$DB\` into the branch (or \`$DB\` moves again), the next sync run retries automatically."
+            else
+              echo "Once you've rebased the branch (or \`$DB\` moves again), the next auto-rebase run retries automatically."
+            fi
             echo ""
             echo "$marker"
           } > "$RUNNER_TEMP/escalation.md"
@@ -1368,5 +1522,5 @@ jobs:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ steps.escalate.outputs.issue }}
           kind: action
-          summary: "Manually rebase this branch"
+          summary: ${{ inputs.sync-method == 'merge' && 'Merge main into this branch' || 'Manually rebase this branch' }}
           body-file: "${{ runner.temp }}/escalation.md"
