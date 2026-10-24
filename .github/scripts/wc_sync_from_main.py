@@ -4,7 +4,7 @@
 The single home of merge-sync decisions: method validation, the
 already-current test, the conflict-resolution scope check and the one
 allowed publish refspec. rebase.yml calls it; nothing else carries a copy
-(verify-single-home-idioms.py). Contract:
+(verify-sync-from-main.py enforces the single home). Contract:
 specs/118-spec-branch-sync-from-main/contracts/sync-method-input.md.
 
 Subcommands:
@@ -19,7 +19,9 @@ import re
 import subprocess
 import sys
 
-MARKER = re.compile(r"^(<<<<<<<|=======|>>>>>>>)( |$)", re.M)
+# A bare `=======` is a valid Markdown setext underline, so only the opening
+# and closing markers count.
+MARKER = re.compile(r"^(<<<<<<<|>>>>>>>)( |$)", re.M)
 
 
 def git(*args, check=True):
@@ -62,7 +64,7 @@ def verify_scope(before, main, conflicted_tree, manifest, project, verdict):
     reasons = []
     if verdict != "healthy":
         reasons.append("agent verdict is '{0}', not healthy".format(verdict))
-    parents = git("rev-list", "--parents", "-n", "1", "HEAD").stdout.split()[1:]
+    parents = git("rev-list", "--parents", "-n", "1", "HEAD", check=False).stdout.split()[1:]
     if parents != [before, main]:
         reasons.append("HEAD parents {0} are not [pre-merge tip, default-branch tip] {1}".format(
             parents, [before, main]))
@@ -72,7 +74,10 @@ def verify_scope(before, main, conflicted_tree, manifest, project, verdict):
     except OSError:
         listed = set()
     allowed = {p for p in listed if in_project(p, project)}
-    changed = [p for p in git("diff", "--name-only", conflicted_tree, "HEAD^{tree}").stdout.splitlines() if p]
+    diff = git("diff", "--name-only", conflicted_tree, "HEAD^{tree}", check=False)
+    if diff.returncode != 0:
+        reasons.append("conflicted tree '{0}' is not a readable tree".format(conflicted_tree))
+    changed = [p for p in diff.stdout.splitlines() if p]
     for p in changed:
         if p not in allowed:
             reasons.append("path outside the conflict manifest differs from a clean merge: " + p)

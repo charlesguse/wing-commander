@@ -101,14 +101,18 @@ class Origins(object):
         alone -- no new input (research D9)."""
         if self._main_side is None:
             head = self.heads[-1]
-            chain = set(_lines(git(["rev-list", "--first-parent", head], self.cwd).stdout))
-            seconds = []
-            for row in _lines(git(["rev-list", "--first-parent", "--merges", "--parents", head],
-                                  self.cwd).stdout):
-                seconds.extend(row.split()[2:])
             side = set()
-            if seconds:
-                side = set(_lines(git(["rev-list"] + seconds, self.cwd).stdout)) - chain
+            # Only the pipeline's own sync commits (subject `sync: merge ...`)
+            # count; a person's merge of another branch stays the loop's work.
+            # Each sync contributes second-parent history minus first-parent
+            # history, so main's earlier history is not swept in.
+            for row in _lines(git(["log", "--first-parent", "--merges",
+                                   "--format=%P\t%s", head], self.cwd).stdout):
+                parents, _, subject = row.partition("\t")
+                ps = parents.split()
+                if len(ps) < 2 or not subject.startswith("sync: merge "):
+                    continue
+                side.update(_lines(git(["rev-list", ps[1], "^" + ps[0]], self.cwd).stdout))
             self._main_side = side
         return self._main_side
 
@@ -765,7 +769,9 @@ def _code_span(text):
 
 
 # FR-014: why a git-derived signal reads n/a after a rebase, in one place.
-REBASE_NA_REASON = "rebase rewrites history; merge sync avoids it"
+# git_ok is also False for a shallow checkout or an unreachable head, so the
+# reason names the usual causes, not one.
+REBASE_NA_REASON = "usually a rebase or force-push rewrote history; merge sync avoids it"
 REBASE_NA_CELL = "n/a — " + REBASE_NA_REASON
 
 

@@ -811,11 +811,19 @@ jobs:
             else
               # The conflicted tree is the merge with markers in conflicted
               # paths only; exit 1 on conflict is expected, the tree is line 1.
-              git merge-tree --write-tree --no-messages "origin/$DB" HEAD | head -n 1 > "$RUNNER_TEMP/conflicted-tree.txt" || true
+              # Anything else on line 1 is a merge-tree failure: outcome=error.
               set +e
-              git merge --no-ff --no-commit "origin/$DB"
-              rc=$?
+              conflicted_tree="$(git merge-tree --write-tree --no-messages "origin/$DB" HEAD | head -n 1)"
               set -e
+              printf '%s\n' "$conflicted_tree" > "$RUNNER_TEMP/conflicted-tree.txt"
+              if ! [[ "$conflicted_tree" =~ ^[0-9a-f]{40,64}$ ]]; then
+                rc=2
+              else
+                set +e
+                git merge --no-ff --no-commit "origin/$DB"
+                rc=$?
+                set -e
+              fi
               if [ "$rc" -eq 0 ]; then
                 git commit --allow-empty -m "sync: merge $DB into ${SPEC_PREFIX}$SLUG"
                 outcome=clean
@@ -918,14 +926,14 @@ jobs:
       # job before the verdict step can run.
       - name: Compute agent turn ceiling
         id: agent-ceiling
-        if: steps.attempt.outputs.outcome == 'conflict' && (inputs.sync-method == 'merge' && steps.tool-args-merge.outputs.allowed-tools || steps.tool-args-rebase.outputs.allowed-tools) != ''
+        if: steps.attempt.outputs.outcome == 'conflict' && ((inputs.sync-method == 'merge' && steps.tool-args-merge.outputs.allowed-tools != '') || (inputs.sync-method != 'merge' && steps.tool-args-rebase.outputs.allowed-tools != ''))
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
         with:
           intended-turns: ${{ inputs.max-turns }}
 
       - name: Resolve conflicts
         id: agent
-        if: steps.attempt.outputs.outcome == 'conflict' && (inputs.sync-method == 'merge' && steps.tool-args-merge.outputs.allowed-tools || steps.tool-args-rebase.outputs.allowed-tools) != ''
+        if: steps.attempt.outputs.outcome == 'conflict' && ((inputs.sync-method == 'merge' && steps.tool-args-merge.outputs.allowed-tools != '') || (inputs.sync-method != 'merge' && steps.tool-args-rebase.outputs.allowed-tools != ''))
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
@@ -941,7 +949,7 @@ jobs:
           # the pipeline's own App bot is allow-listed too (bare slug) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
-            ${{ inputs.sync-method == 'merge' && format('MERGE SYNC MODE. This run merges the default branch into the branch {0}{1}; it is NOT a rebase. The repository is checked out mid-merge (`git merge --no-ff --no-commit` stopped on conflicts). Everywhere the instructions below say rebase, read merge: the conflicted files are those `git diff --name-only --diff-filter=U` lists, finish with a single `git merge --continue` (never `git rebase`), there is exactly one stop and nothing to repeat, and if you cannot reconcile the conflicts run `git merge --abort` and stop. Append the conflicted paths to the manifest file exactly as step 2 says. Never run `git commit`, `git push`, or any `gh` command.', inputs.spec-prefix, matrix.slug) || '' }}
+            ${{ inputs.sync-method == 'merge' && format('MERGE SYNC MODE. This run merges the default branch into the branch {0}{1}; it is NOT a rebase. The repository is checked out mid-merge (`git merge --no-ff --no-commit` stopped on conflicts). Everywhere the instructions below say rebase, read merge: the conflicted files are those `git diff --name-only --diff-filter=U` lists, finish with a single `git merge --continue` (never `git rebase`), there is exactly one stop and nothing to repeat, and if you cannot reconcile the conflicts run `git merge --abort` and stop. Append the conflicted paths to the manifest file exactly as step 2 says. In the numbered steps below, step 4 ends with `git merge --continue` (not `git rebase --continue`), ignore step 5 (there is no second stop), and step 6 means `git merge --abort`; no rebase command is available to you. Never run `git commit`, `git push`, or any `gh` command.', inputs.spec-prefix, matrix.slug) || '' }}
 
             You are the conflict-resolution assistant for this repository's
             auto-rebase maintenance stage. A rebase of the branch
@@ -981,8 +989,8 @@ jobs:
           claude_args: |
             --model ${{ inputs.model }}
             --max-turns ${{ steps.agent-ceiling.outputs.ceiling }}
-            --allowedTools "${{ inputs.sync-method == 'merge' && steps.tool-args-merge.outputs.allowed-tools || steps.tool-args-rebase.outputs.allowed-tools }}"
-            --disallowedTools "${{ inputs.sync-method == 'merge' && steps.tool-args-merge.outputs.disallowed-tools || steps.tool-args-rebase.outputs.disallowed-tools }}"
+            --allowedTools "${{ format('{0}{1}', inputs.sync-method == 'merge' && steps.tool-args-merge.outputs.allowed-tools || '', inputs.sync-method != 'merge' && steps.tool-args-rebase.outputs.allowed-tools || '') }}"
+            --disallowedTools "${{ format('{0}{1}', inputs.sync-method == 'merge' && steps.tool-args-merge.outputs.disallowed-tools || '', inputs.sync-method != 'merge' && steps.tool-args-rebase.outputs.disallowed-tools || '') }}"
 
       # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
       # any step runs pipeline code -- see clarify.yml.
@@ -1335,7 +1343,11 @@ jobs:
           # LC_ALL=C: the credential arm below reads git's "(stale info)"
           # lease rejection, which a translated locale would reword.
           if LC_ALL=C push_branch 2>"$RUNNER_TEMP/push-err.txt"; then
-            echo "${SPEC_PREFIX}$SLUG: pushed rebased result (force-with-lease)." >> "$GITHUB_STEP_SUMMARY"
+            if [ "${SYNC_METHOD:-}" = merge ]; then
+              echo "${SPEC_PREFIX}$SLUG: pushed sync commit (plain fast-forward push)." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "${SPEC_PREFIX}$SLUG: pushed rebased result (force-with-lease)." >> "$GITHUB_STEP_SUMMARY"
+            fi
             if [ -n "$ISSUE" ]; then
               has_label="$(gh issue view "$ISSUE" --json labels \
                 --jq '[.labels[].name] | index("rebase:blocked") != null' 2>/dev/null)" || has_label=false
