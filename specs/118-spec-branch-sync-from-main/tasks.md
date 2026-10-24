@@ -164,3 +164,67 @@ Run `python .github/scripts/run-local-gates.py` after each phase and before push
 ## Implementation Strategy
 
 **MVP**: Phases 1–4 (Setup, Foundational, US1, US2): the switch plus clean-merge sync, which delivers the stable-history benefit for non-conflicting branches. Add US3 for conflicts before enabling it on a busy repository, then US4 for the downstream signals. Keep concurrent local agents to two.
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Merge-mode tool list falls back to rebase tools via && || when empty
+
+  With sync-method=merge, an empty merge allowed-tools output makes the && || expression fall back to the rebase tool list, so the agent runs with git rebase allowed and merge tools missing.
+
+  - .github/workflows/rebase.yml
+
+  Detail: Applies to the if: conditions, --allowedTools and --disallowedTools.
+
+- [ ] Review finding: Success summary claims force-with-lease push in merge mode
+
+  The step summary still reads 'pushed rebased result (force-with-lease)' after a merge-mode plain push, which is false and contradicts the no-force-push requirement.
+
+  - .github/workflows/rebase.yml
+
+- [ ] Review finding: _main_side_commits lists whole main history and mislabels human merges
+
+  git rev-list on merge second parents has no exclusion, so it returns all of main's history. Any first-parent merge is also treated as a sync, so a human merge of an unrelated branch is labelled 'main' and its lines stop counting as lifecycle work.
+
+  - .github/scripts/wc_convergence.py
+
+- [ ] Review finding: git_ok False is reported as proof of a rebase
+
+  git_ok also goes False on a force-push, a shallow checkout or an unreachable head. The report then says 'merge sync avoids it', which misdiagnoses the cause for merge-sync adopters.
+
+  - .github/scripts/wc_convergence.py
+
+- [ ] Review finding: Conflict-marker regex flags a bare ======= line
+
+  A line of seven '=' is a valid Markdown setext underline. verify-scope would report a conflict marker still present and abandon the sync.
+
+  - .github/scripts/wc_sync_from_main.py
+
+- [ ] Review finding: merge-tree result recorded with || true, so a failure gives an empty tree arg
+
+  If git merge-tree fails for a non-conflict reason, the recorded tree file is empty. It is then passed as --conflicted-tree, and verify-scope errors with an unclear traceback.
+
+  - .github/workflows/rebase.yml
+
+- [ ] Review finding: verify_scope uses check=True git calls, so a bad OID raises a traceback
+
+  An invalid or empty --conflicted-tree makes git diff raise CalledProcessError. The documented behaviour is exit 1 with each reason on stderr, and the unit gate has no case for this path.
+
+  - .github/scripts/wc_sync_from_main.py
+
+- [ ] Review finding: Docstring cites verify-single-home-idioms.py, which was not changed
+
+  The helper's docstring says verify-single-home-idioms.py enforces the single-home rule, and the plan names it in T019. The check was added to verify-sync-from-main.py instead.
+
+  - .github/scripts/wc_sync_from_main.py
+
+- [ ] Review finding: Merge prompt layered over the unchanged rebase prompt
+
+  The rebase prompt's instructions for repeating stops and for git rebase --continue remain in the merge-mode prompt. The merge tool list disallows rebase, so the agent can waste turns on denied commands.
+
+  - .github/workflows/rebase.yml
+
+- [ ] Review finding: verify-sync-from-main has dead code and weak fixtures
+
+  The gate has dead code (cases = {} and del cases). The 'already contains main' case is trivial, and there is no case for main moving again after a merge.
+
+  - .github/scripts/verify-sync-from-main.py
