@@ -722,6 +722,38 @@ comments only, to skip a branch whose
 is only escalated once until either side moves (a subsequent success removes
 the label).
 
+### Merge sync (`sync-method: merge`)
+
+This subsection is published-contract design (`rebase.yml`); the switch itself
+is a consuming-instrument variable, `WING_COMMANDER_SPEC_BRANCH_SYNC`.
+
+The same stage can keep a branch current by merging the default branch in
+instead of rebasing onto it. The trade-off: a rebase gives a linear branch but
+rewrites every commit, so any earlier SHA (a review round's recorded head, a
+fold range start) can disappear; a merge sync leaves the branch's history
+append-only, at the price of one two-parent sync commit per catch-up. A
+squash merge to the default branch absorbs those commits, so they never reach
+it.
+
+Per branch: an up-to-date branch is left alone; otherwise `git merge --no-ff
+--no-commit` followed by an explicit commit makes exactly one sync commit (even
+when the merged tree equals the branch tree), published with a plain
+`git push` — the server refuses anything that is not a fast-forward, so a
+branch that moved meanwhile is skipped and retried next run. A conflicting
+merge goes to the same agent under the same model and turn budget, with merge
+instead of rebase tools; `wc_sync_from_main.py verify-scope` then compares the
+result with the recorded `git merge-tree` tree (only conflicting paths may
+differ, no marker left, first parent the old tip, second parent the default
+branch tip). A failure aborts the merge and escalates through the same
+`rebase:blocked` label and SHA marker. Switching back to `rebase` does not
+repair history a merge sync already recorded: the sync commits stay and the
+next rebase flattens them with everything else.
+
+History readers cope with both: `wc_convergence.py` attributes commits that
+arrived through a sync commit's second parent to the default branch and counts
+the sync commit's own conflict resolution as lifecycle work; after a rebase its
+share and churn cells read `n/a — rebase rewrites history; merge sync avoids it`.
+
 ## Lifecycle review gate (`lifecycle-review-gate.yml`, no wrapper — `specs/062-lifecycle-review-gate/`)
 
 **Trigger**: `schedule:` plus manual `workflow_dispatch`. No `workflow_call`

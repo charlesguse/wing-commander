@@ -101,7 +101,7 @@ Run `python .github/scripts/run-local-gates.py` after each phase and before push
 - [X] T026 [US3] In `.github/workflows/rebase.yml`, add the merge-arm verify step calling `wc_sync_from_main.py verify-scope` and setting `push`/`escalate` outputs as the rebase arm does; publish only on pass.
 - [X] T027 [US3] In `.github/workflows/rebase.yml` `Abandon and escalate`, run `git merge --abort` under merge, keep label `rebase:blocked` and the `<!-- wing-commander-rebase: blocked … -->` marker unchanged, and use the merge prose (heading "Spec branch sync needs a human", remedy `git merge origin/$DB` and push, callout summary "Merge main into this branch") only under `merge` (FR-008, research D8).
 - [X] T028 [US3] Confirm the metrics, execution-log, cost-line, over-budget and verdict steps in `.github/workflows/rebase.yml` also run for the merge arm with no pasted copies (FR-010); reuse `wing-commander-metrics-summary`.
-- [ ] T029 [US3] Run `python .github/scripts/run-local-gates.py`, and the `review-step-gating` and `container-shell-safety` skills over the `rebase.yml` diff.
+- [X] T029 [US3] Run `python .github/scripts/run-local-gates.py`, and the `review-step-gating` and `container-shell-safety` skills over the `rebase.yml` diff.
 
 **Checkpoint**: Every conflict ends in a verified published sync commit or an escalation (SC-005).
 
@@ -115,18 +115,18 @@ Run `python .github/scripts/run-local-gates.py` after each phase and before push
 
 ### Tests for User Story 4
 
-- [ ] T030 [P] [US4] Add a fixture under `.github/scripts/wc_convergence_tests/`: two review rounds with a sync commit (merge of `main`) between them; assert share and churn are values, not n/a, and commits reachable from the sync commit's second parent are attributed to `base`, not `passK` (FR-011, SC-003).
-- [ ] T031 [P] [US4] Add a fixture under `.github/scripts/wc_convergence_tests/` where a sync commit carries a conflict resolution: resolution lines count as lifecycle work, lines taken from `main` do not (`diff_size`/`diff_fingerprint` against `git merge-base(base, head)`).
-- [ ] T032 [P] [US4] Add a fixture under `.github/scripts/wc_convergence_tests/` for the rebase path: after a rebase, share and churn cells read `n/a — rebase rewrites history; merge sync avoids it` and #1062's stored per-round diff size still feeds growth (FR-014).
-- [ ] T033 [P] [US4] Add a fixture asserting finalize's fold range `range_start..tip` resolves across a sync commit and `fold(` subject grep excludes the sync merge commit (SC-006); locate finalize's fold-range code first (`grep -rn "fold(" .github/`) and place the fixture beside its existing tests.
+- [X] T030 [P] [US4] Add a fixture under `.github/scripts/wc_convergence_tests/`: two review rounds with a sync commit (merge of `main`) between them; assert share and churn are values, not n/a, and commits reachable from the sync commit's second parent are attributed to `base`, not `passK` (FR-011, SC-003).
+- [X] T031 [P] [US4] Add a fixture under `.github/scripts/wc_convergence_tests/` where a sync commit carries a conflict resolution: resolution lines count as lifecycle work, lines taken from `main` do not (`diff_size`/`diff_fingerprint` against `git merge-base(base, head)`).
+- [X] T032 [P] [US4] Add a fixture under `.github/scripts/wc_convergence_tests/` for the rebase path: after a rebase, share and churn cells read `n/a — rebase rewrites history; merge sync avoids it` and #1062's stored per-round diff size still feeds growth (FR-014).
+- [X] T033 [P] [US4] Add a fixture asserting finalize's fold range `range_start..tip` resolves across a sync commit and `fold(` subject grep excludes the sync merge commit (SC-006); locate finalize's fold-range code first (`grep -rn "fold(" .github/`) and place the fixture beside its existing tests.
 
 ### Implementation for User Story 4
 
-- [ ] T034 [US4] Spike in `.github/scripts/wc_convergence.py`: confirm whether `Origins` can express main-side attribution from the sync commit's second parent without a new input; if not, fall back to taking `--base` as the latest `main` tip (research D9). Record the choice in a code comment.
-- [ ] T035 [US4] Implement main-side attribution in `Origins` in `.github/scripts/wc_convergence.py`: a commit that is an ancestor of the latest recorded `main` tip and not first-parent reachable from the branch's own work is `base`.
-- [ ] T036 [US4] In `.github/scripts/wc_convergence.py` `render_handoff` and the n/a cells, replace the "(the branch was rebased or force-pushed)" prose with `rebase rewrites history; merge sync avoids it`; add no new rebase workaround (FR-014).
-- [ ] T037 [US4] Make the T033 fold-range fixture pass; change finalize only if the fixture shows the range does not resolve.
-- [ ] T038 [US4] Run the convergence tests and `python .github/scripts/run-local-gates.py`.
+- [X] T034 [US4] Spike in `.github/scripts/wc_convergence.py`: confirm whether `Origins` can express main-side attribution from the sync commit's second parent without a new input; if not, fall back to taking `--base` as the latest `main` tip (research D9). Record the choice in a code comment.
+- [X] T035 [US4] Implement main-side attribution in `Origins` in `.github/scripts/wc_convergence.py`: a commit that is an ancestor of the latest recorded `main` tip and not first-parent reachable from the branch's own work is `base`.
+- [X] T036 [US4] In `.github/scripts/wc_convergence.py` `render_handoff` and the n/a cells, replace the "(the branch was rebased or force-pushed)" prose with `rebase rewrites history; merge sync avoids it`; add no new rebase workaround (FR-014).
+- [X] T037 [US4] Make the T033 fold-range fixture pass; change finalize only if the fixture shows the range does not resolve.
+- [X] T038 [US4] Run the convergence tests and `python .github/scripts/run-local-gates.py`.
 
 **Checkpoint**: All four stories work; history consumers are merge-aware.
 
@@ -134,11 +134,11 @@ Run `python .github/scripts/run-local-gates.py` after each phase and before push
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T039 [P] Update `docs/adoption.md` `### rebase`: open with the layer (published contract), add the `sync-method` input row and the merge side-effect row, and state the squash-merge assumption as documentation only (FR-013, FR-015).
-- [ ] T040 [P] Update `docs/architecture.md` Rebase section: add a "Merge sync" subsection with the linear-vs-stable-history trade-off, the FR-012 switch-back limit, and its layer.
-- [ ] T041 [P] Add `WING_COMMANDER_SPEC_BRANCH_SYNC` (default `rebase`, values `rebase`/`merge`) to the variable list in `docs/setup.md`, naming it as consuming-instrument layer.
-- [ ] T042 Walk `specs/118-spec-branch-sync-from-main/quickstart.md` against the finished code and fix any doc or code drift found.
-- [ ] T043 Run the full suite `python .github/scripts/run-local-gates.py` and confirm green.
+- [X] T039 [P] Update `docs/adoption.md` `### rebase`: open with the layer (published contract), add the `sync-method` input row and the merge side-effect row, and state the squash-merge assumption as documentation only (FR-013, FR-015).
+- [X] T040 [P] Update `docs/architecture.md` Rebase section: add a "Merge sync" subsection with the linear-vs-stable-history trade-off, the FR-012 switch-back limit, and its layer.
+- [X] T041 [P] Add `WING_COMMANDER_SPEC_BRANCH_SYNC` (default `rebase`, values `rebase`/`merge`) to the variable list in `docs/setup.md`, naming it as consuming-instrument layer.
+- [X] T042 Walk `specs/118-spec-branch-sync-from-main/quickstart.md` against the finished code and fix any doc or code drift found.
+- [X] T043 Run the full suite `python .github/scripts/run-local-gates.py` and confirm green.
 
 ---
 
