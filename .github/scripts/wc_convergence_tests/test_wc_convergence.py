@@ -330,9 +330,25 @@ class SyncCommit(GitBacked):
 
     GIT = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
 
-    def merge(self, ref):
-        self.run_git(*self.GIT, "merge", "-q", "--no-edit", ref)
+    def merge(self, ref, message="sync: merge main into pr"):
+        self.run_git(*self.GIT, "merge", "-q", "--no-ff", "-m", message, ref)
         return wc.rev("HEAD", self.repo)
+
+    def test_a_human_merge_of_another_branch_is_not_main_side(self):
+        old, _new, h0, _h1, _h2 = self.sync_repo()
+        self.run_git("checkout", "-q", "-b", "other", old)
+        self.write("o\n", "o.py")
+        other = self.commit("other work")
+        self.run_git("checkout", "-q", "pr")
+        self.merge(other, "Merge branch other into pr")
+        origins = wc.Origins(old, [h0, wc.rev("HEAD", self.repo)], self.repo)
+        self.assertNotEqual(origins.of(other), "main")
+
+    def test_main_side_excludes_history_the_branch_already_had(self):
+        old, new, h0, h1, _h2 = self.sync_repo()
+        origins = wc.Origins(old, [h0, h1], self.repo)
+        self.assertEqual(origins.of(new), "main")
+        self.assertEqual(origins.of(h0), "pr")
 
     def sync_repo(self, conflict=False):
         """base <- pr (h0) ; main moves ; sync commit (h1) ; pr fix (h2).
@@ -409,10 +425,10 @@ class SyncCommit(GitBacked):
                         {"round": 2, "count": 2, "self_inflicted_share": None, "unattributable": 2,
                          "churn": None, "growth": 0.5, "recurrences": []}]}
         text = wc.render_handoff(decision)
-        self.assertIn("(rebase rewrites history; merge sync avoids it)", text)
+        self.assertIn("(usually a rebase or force-push rewrote history; merge sync avoids it)", text)
         self.assertNotIn("force-pushed", text)
         row = next(l for l in text.splitlines() if l.startswith("| 2 |"))
-        self.assertEqual(row.count("n/a — rebase rewrites history; merge sync avoids it"), 2)
+        self.assertEqual(row.count("n/a — usually a rebase or force-push rewrote history; merge sync avoids it"), 2)
         self.assertIn("+50%", row)
 
     def test_fold_range_resolves_across_a_sync_commit(self):

@@ -123,6 +123,10 @@ def suite(src, quiet=False):
         sh(work, "git", "merge", "-q", "--no-edit", "origin/main", check_rc=False)
         r = helper(src, work, "decide", "--main", main_sha)
         check("decide: branch already contains main -> current", r.stdout.strip() == "current", r.stdout + r.stderr, q)
+        # main moves again after the sync: the branch is behind once more.
+        newer = advance_main(work, "m2.txt", "later\n", "main moves again")
+        r = helper(src, work, "decide", "--main", newer)
+        check("decide: main moved again after a sync -> merge", r.stdout.strip() == "merge", r.stdout + r.stderr, q)
 
     with tempfile.TemporaryDirectory() as tmp:
         origin, work = make_repo(tmp)
@@ -197,7 +201,6 @@ def suite(src, quiet=False):
             write(os.path.join(work, name), text)
         sh(work, "git", "add", "."), sh(work, "git", "commit", "-q", "-m", "sync: merge main into spec/x")
 
-    cases = {}
     with tempfile.TemporaryDirectory() as tmp:
         w, b, m, t, mf = conflict_case(tmp)
         resolve(w)
@@ -235,7 +238,25 @@ def suite(src, quiet=False):
         r = verify(w, b, m, t, mf, project="proj")
         check("verify-scope: manifest entries outside the project are not admitted",
               r.returncode == 1 and "a.txt" in r.stderr, r.stderr, q)
-    del cases
+    with tempfile.TemporaryDirectory() as tmp:
+        w, b, m, t, mf = conflict_case(tmp)
+        resolve(w, a="Title\n=======\nthree\n")
+        r = verify(w, b, m, t, mf)
+        check("verify-scope: a bare ======= line (setext underline) passes",
+              r.returncode == 0, r.stderr, q)
+    with tempfile.TemporaryDirectory() as tmp:
+        w, b, m, t, mf = conflict_case(tmp)
+        resolve(w)
+        r = verify(w, b, m, "", mf)
+        check("verify-scope: an empty conflicted tree fails with a reason, no traceback",
+              r.returncode == 1 and "conflicted tree" in r.stderr and "Traceback" not in r.stderr,
+              r.stderr, q)
+    with tempfile.TemporaryDirectory() as tmp:
+        w, b, m, t, mf = conflict_case(tmp)
+        resolve(w)
+        r = verify(w, b, m, "0" * 40, mf)
+        check("verify-scope: a bad tree OID fails with a reason, no traceback",
+              r.returncode == 1 and "Traceback" not in r.stderr, r.stderr, q)
     failed = [n for n, ok, _ in results[start:] if not ok]
     if quiet:
         del results[start:]
@@ -244,7 +265,7 @@ def suite(src, quiet=False):
 
 # Single home (CLAUDE.md "Shared logic has exactly one home"): method
 # validation and the conflict-marker scan live only in the helper.
-COPY_SIGNS = ("accepted values are 'rebase' and 'merge'", "(<<<<<<<|=======|>>>>>>>)")
+COPY_SIGNS = ("accepted values are 'rebase' and 'merge'", "(<<<<<<<|>>>>>>>)")
 
 
 def copies_of_helper_logic(files):
