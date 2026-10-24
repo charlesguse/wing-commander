@@ -10,9 +10,13 @@
 
 ## Background
 
-Implement and pr-conversation start the next stage run using the workflow's
-own built-in token: the next implement cycle, finalize, and a fold's
-implement re-drive. Those runs' actor is `github-actions[bot]`. GitHub does
+Pipeline stages start implement and finalize runs using the workflow's own
+built-in token: tasks dispatches implement cycle 1 (both its auto and
+PR-merge modes), implement dispatches the next cycle and finalize, and the
+fold dispatch composite (`wing-commander-fold-dispatch`, called by
+pr-conversation and the lifecycle review gate) and the fold-cycle guard's
+recovery re-dispatch start a fold's implement re-drive. Those runs' actor
+is `github-actions[bot]`. GitHub does
 not start workflows from events caused by that token, so when these runs
 complete, the metrics persistence wrapper's completion trigger never fires
 for them. Their metrics records are written only by the daily 06:37 UTC
@@ -37,10 +41,19 @@ appeared at the 07:00:29Z sweep on Oct 15.
 
 The same token rule also suppresses every *other* completion listener for
 these runs today. The watchdog lists `implement` and `finalize` among its
-completion triggers, and the fold-cycle guard listens to `implement`
+completion triggers, the watchdog's self-verifier (8b) listens to every
+watchdog completion, and the fold-cycle guard listens to `implement`
 completions (acting on cancellations). None of these currently fire for
 pipeline-dispatched runs, so any remedy that makes completions visible again
 changes their behaviour too.
+
+The App's documented permission set (`docs/setup.md`: Contents, Issues and
+Pull requests, "exactly these three") has no Actions permission, and the
+token-permission gate (Gate 12) checks every App-token call against that
+set. Dispatching a workflow needs Actions: write, which is why every
+dispatch site uses the built-in token today. Only implement's dispatch step
+has `APP_TOKEN` in its environment. tasks' and the fold dispatch
+composite's dispatch steps do not.
 
 ## Clarifications
 
@@ -83,18 +96,22 @@ before the next daily sweep.
    for the daily sweep.
 2. **Given** a finalize run dispatched by the pipeline itself, **When** it
    completes, **Then** the same holds.
-3. **Given** a fold's implement re-drive dispatched by pr-conversation,
-   **When** it completes, **Then** the same holds.
-4. **Given** a run dispatched by a person, **When** it completes, **Then**
+3. **Given** a fold's implement re-drive dispatched by the pipeline (the
+   fold dispatch composite, from pr-conversation or the lifecycle review
+   gate), **When** it completes, **Then** the same holds.
+4. **Given** implement cycle 1 dispatched by tasks, **When** it completes,
+   **Then** the same holds.
+5. **Given** a run dispatched by a person, **When** it completes, **Then**
    its record is persisted exactly as promptly as today (no regression).
 
 ---
 
 ### User Story 2 - Mid-lifecycle readers of the records file see current data (Priority: P2)
 
-Automation that reads `records.jsonl` mid-lifecycle — for example spec 110's
-diagnose-shadow cap — sees the records of implement and finalize runs that
-have already completed, rather than data up to a day old.
+Automation that reads `records.jsonl` mid-lifecycle sees the records of
+implement and finalize runs that have already completed, rather than data up
+to a day old. (Spec 110's diagnose-shadow cap is not such a reader: it counts
+watchdog records, which stay sweep-only.)
 
 **Why this priority**: Stale records silently weaken any cap or decision
 computed from them; this is the correctness consequence of User Story 1.
@@ -136,7 +153,8 @@ a pipeline-dispatched run matches what FR-005 decides.
 2. **Given** a pipeline-dispatched implement or finalize run completes,
    **When** the remedy is in place, **Then** the watchdog's completion
    trigger is filtered out by the run's dispatcher and behaves as today
-   (FR-005b).
+   (FR-005b), and the watchdog's self-verifier (8b) neither fails nor files
+   anything for the filtered-out watchdog run.
 3. **Given** a person-dispatched implement or finalize run completes,
    **When** the remedy is in place, **Then** the watchdog acts on it exactly
    as today.
@@ -153,9 +171,9 @@ does not read a partial total as complete.
 remaining lag harmless (for example a run dispatched while the App token
 was unavailable, or run kinds that remain sweep-only).
 
-**Independent Test**: Render a rollup for a lifecycle with runs completed
-since the last sweep and check the disclosure text is present when, and only
-when, such runs can be missing.
+**Independent Test**: Render a rollup for a lifecycle and check it states
+when the last sweep ran and that runs completed since then may be missing
+from the total.
 
 **Acceptance Scenarios**:
 
@@ -177,7 +195,28 @@ when, such runs can be missing.
   new path).
 - The App token is unavailable or minting it fails at dispatch time: the
   next stage must still be dispatched (pipeline progress outranks metrics
-  freshness); only freshness may degrade.
+  freshness); only freshness may degrade. The built-in-token fallback is
+  taken only when no App token is available. An App-token dispatch call
+  that fails or times out is never retried under the built-in token: GitHub
+  may already have accepted it, and a second dispatch would start two
+  cycles for the same spec.
+- An adopter whose wrapper passes no App credentials, or whose App
+  installation lacks the permission the dispatch needs: the dispatch falls
+  back as above, and the stage still progresses.
+- A watchdog run that the dispatcher filter (FR-005b) turns off still
+  completes, with conclusion `skipped` and an inspected-run conclusion that
+  is not `skipped`. Today's 8b self-verifier treats exactly that shape as a
+  watchdog regression and files a pipeline-defect, so the filter must be
+  one 8b recognises as deliberate.
+- A person re-runs an App-dispatched run: the run's original actor stays the
+  App, and only its triggering actor is the person. The re-run is
+  person-dispatched for FR-005b.
+- A pipeline-dispatched implement run is cancelled by the pipeline itself
+  (pr-conversation cancels in-flight implement runs before a fold re-drive):
+  the fold-cycle guard now sees that cancellation. Its existing
+  classification (only never-started, correlated runs, at most one
+  re-dispatch per cycle) must keep it from re-dispatching on top of the
+  pipeline's own re-drive.
 - A dispatch chain of many implement cycles: the remedy must not add a
   persistence or listener run per cycle beyond what FR-005 accepts (one
   persistence run and one fold-cycle guard run per cycle; no watchdog run).
@@ -196,9 +235,11 @@ when, such runs can be missing.
   the freshness window (SC-001), regardless of whether a person or the
   pipeline dispatched it.
 - **FR-002**: The mechanism that achieves FR-001 MUST be dispatching the
-  next stage (the next implement cycle, finalize, and a fold's implement
-  re-drive) with the App token (`APP_TOKEN`, already in the dispatch step's
-  environment) instead of the built-in token, so that those runs'
+  next stage with the App token instead of the built-in token at every site
+  that starts an implement or finalize run: tasks' implement cycle 1 (auto
+  and PR-merge modes), implement's next cycle and finalize, the fold
+  dispatch composite's implement re-drive, and the fold-cycle guard's
+  recovery re-dispatch. That makes those runs'
   completions fire `wing-commander-metrics-persist.yml`'s `workflow_run`
   job exactly as person-dispatched completions do.
 - **FR-003**: Person-dispatched runs MUST keep their current prompt
@@ -214,23 +255,32 @@ when, such runs can be missing.
     pipeline-dispatched implement and finalize completions; it MUST keep
     today's behaviour for those runs through an explicit filter on the run's
     dispatcher (the App identity that FR-002 dispatches with), while
-    continuing to act on person-dispatched completions as today.
+    continuing to act on person-dispatched completions as today. The
+    dispatcher is the triggering actor of the completed run attempt, so a
+    person's re-run of an App-dispatched run is inspected. A watchdog run
+    filtered out this way MUST NOT cause the watchdog self-verifier (8b) to
+    fail or file anything.
   - **FR-005c**: A deterministic gate MUST fail if the watchdog's dispatcher
     filter (FR-005b) is removed or no longer excludes the App-dispatched
-    implement and finalize completions.
-- **FR-006**: Whenever any completed run's record can still arrive only via
-  the daily sweep, the rollup comment MUST state that runs since the last
-  sweep may be missing from the total.
+    implement and finalize completions, or if 8b no longer stands down for
+    a watchdog run that filter turned off.
+- **FR-006**: The rollup comment MUST state when the last daily sweep ran
+  and that runs completed since then may be missing from the total, because
+  some records (sweep-only run kinds, built-in-token fallback dispatches, a
+  failed prompt persistence run) can still arrive only via the sweep.
 - **FR-007**: A failure in the prompt persistence path MUST NOT fail or block
   the stage run or the dispatch of the next stage; the daily sweep MUST remain
   the backstop.
 - **FR-008**: Spec 058 FR-030(a)'s contract — that stages whose records are
   read back promptly keep a live completion-driven persistence — MUST be
   true in practice for implement and finalize after this feature, as
-  written; no correction of that contract is needed.
+  written. This feature makes no claim for `tasks` (dispatched by plan) or
+  `rebase` (which re-dispatches itself), which also use the built-in token
+  and stay sweep-only for pipeline-dispatched runs.
 - **FR-009**: A deterministic gate MUST fail if a pipeline dispatch of
-  implement or finalize (including a fold's implement re-drive) reverts to
-  dispatching with the built-in token instead of the App token.
+  implement or finalize (every site FR-002 names) dispatches with the
+  built-in token other than as the no-App-token fallback the edge cases
+  allow.
 
 ### Key Entities
 
@@ -241,7 +291,8 @@ when, such runs can be missing.
 - **Dispatch actor**: the identity that started a stage run (a person, the
   App, or `github-actions[bot]`); it decides whether completion listeners fire.
 - **Completion listeners**: workflows triggered by a stage run's completion
-  — metrics persistence, watchdog, fold-cycle guard.
+  — metrics persistence, watchdog, fold-cycle guard — plus the watchdog
+  self-verifier (8b), which is triggered by every watchdog completion.
 
 ## Success Criteria *(mandatory)*
 
@@ -262,9 +313,11 @@ when, such runs can be missing.
 
 ## Assumptions
 
-- The App token is already present in the dispatch steps' environment as
-  `APP_TOKEN`, and App-dispatched runs fire completion triggers as
-  person-dispatched ones do.
+- App-dispatched runs fire completion triggers as person-dispatched ones
+  do.
+- The App's documented permission set has no Actions permission today (see
+  Background), so FR-002 cannot work until the owner decides how dispatches
+  get one. That decision is not yet recorded in this spec.
 - The daily sweep stays as the backstop; this feature does not remove it.
 - The sweep's dropping of some runs entirely (#1054) is out of scope and
   tracked separately.

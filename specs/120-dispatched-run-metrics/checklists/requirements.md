@@ -20,7 +20,9 @@
 - [x] All acceptance scenarios are defined
 - [x] Edge cases are identified
 - [x] Scope is clearly bounded
-- [x] Dependencies and assumptions identified
+- [ ] Dependencies and assumptions identified (spec review: FR-002 needs
+  an Actions permission the App's documented set does not grant; see
+  Assumptions)
 
 ## Feature Readiness
 
@@ -39,3 +41,10 @@
   is an infrastructure feature whose "users" are the owner and pipeline
   automation; those names are the domain vocabulary, not implementation
   choices.
+- Spec review of PR #1086 (2026-10-24): corrected the premise that
+  `APP_TOKEN` is already usable at every dispatch site. Widened FR-002 to
+  every site that starts implement or finalize (tasks' cycle 1, the fold
+  dispatch composite, the fold-cycle guard). Added the 8b self-verifier to
+  FR-005b/FR-005c, and defined the dispatcher as the triggering actor. Made
+  FR-006 testable, kept the FR-009 fallback, and narrowed FR-008. The App's
+  missing Actions permission still waits on the owner.
