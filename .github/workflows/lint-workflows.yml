@@ -3501,6 +3501,12 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-rebase-discover-selection.py
 
+      # rebase.yml's merge sync method (spec 118): the helper's decisions run
+      # against real git fixtures. Not numbered, for the same reason.
+      - name: Merge sync method decides, verifies and publishes on real git history
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-sync-from-main.py
+
       # watchdog.yml's own failure accounting (#811, #889): a handled rate
       # limit is not an unhandled failure, and an unreadable self-dispatch
       # chain counts as capped. Not numbered, as for the board status step.
