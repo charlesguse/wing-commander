@@ -240,6 +240,12 @@ def suite(leg, steps, quiet=False):
        o.get("summary") == red and o.get("paragraph") == expected_paragraph(leg, red),
        "outputs={0}\n{1}".format(o, out))
 
+    rc, out, o, _s, _f = summarize("true", "true", "fail", "")
+    ck("suite red with no failure line (a timed-out step): the summary says none was "
+       "recorded, never a blank after 'first failure:'",
+       o.get("summary", "").startswith("red at {0} start — first failure: none recorded".format(leg)),
+       "outputs={0}\n{1}".format(o, out))
+
     def summarize_missing(missing):
         return run_plain(summ, {"SCRIPT_EXISTS": "true", "READY": "false",
                                 "MISSING": missing, "OUTCOME": "", "FIRST_FAILURE": ""})
@@ -286,6 +292,9 @@ MUTATIONS = (
      'elif [ "$READY" != "true" ]; then\n  paragraph=', 'elif false; then\n  paragraph='),
     ("summary", "the summary stops naming the missing prerequisite",
      'missing prerequisite(s): ${{MISSING:-unrecorded}}"\nelif', 'missing prerequisite(s): unrecorded"\nelif'),
+    ("summary", "a red suite with no failure line leaves the summary blank",
+     '${{FIRST_FAILURE:-none recorded (the suite step ended without a result; it may have timed out)}}',
+     '$FIRST_FAILURE'),
     ("preflight", "the preflight stops emitting its missing output",
      'echo "missing=${{missing# }}" >> "$GITHUB_OUTPUT"\n', ''),
 )
@@ -363,6 +372,23 @@ def main():
     check("(cycle) the gate job installs actionlint only where there is a suite to run (#935)",
           "hashFiles('.github/scripts/run-local-gates.py') != ''" in str(inst.get("if", "")),
           "if={0}".format(inst.get("if")))
+    # Run 40101571746: the full suite outlived a 10-minute step timeout on a
+    # hosted runner, so every cycle start read an absent verdict. Both legs'
+    # suite steps get at least 30 minutes, and the composite's own budget
+    # sits below the cycle step's so a slow suite writes a named fail
+    # verdict before the step timeout stops the upload.
+    budget = str((contained[0].get("with") or {}).get("suite-timeout-minutes", "")) if contained else ""
+    step_min = contained[0].get("timeout-minutes") if contained else None
+    check("(cycle) the cycle-start suite step allows at least 30 minutes, and the composite's "
+          "suite budget is set below it",
+          isinstance(step_min, int) and step_min >= 30 and budget.isdigit()
+          and 0 < int(budget) < step_min,
+          "timeout-minutes={0!r} suite-timeout-minutes={1!r}".format(step_min, budget))
+    retry_step = by_id.get("gate-suite-retry") or {}
+    check("(retry) the retry suite step allows at least 30 minutes",
+          isinstance(retry_step.get("timeout-minutes"), int)
+          and retry_step.get("timeout-minutes") >= 30,
+          "timeout-minutes={0!r}".format(retry_step.get("timeout-minutes")))
     reader = by_id.get("gate-suite-cycle") or {}
     rif = str(reader.get("if", ""))
     check("(cycle) the implement job reads the verdict fail-closed through wing-commander-gate-verdict",

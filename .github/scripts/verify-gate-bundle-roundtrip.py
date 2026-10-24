@@ -27,7 +27,9 @@ base, a trusted clone and a publisher clone that hold only the base:
   4. the restore refuses a head the producer did not report, and a missing
      bundle;
   5. a missing bundle, or a head that deleted run-local-gates.py, is a fail
-     verdict, never a pass or a skip.
+     verdict, never a pass or a skip;
+  6. a suite that outlives its time budget is stopped and is a fail verdict
+     naming the budget, never an absent verdict (run 40101571746).
 --self-test reruns the checks with each script's fetch reverted to the
 `refs/*` refspec, and with the restore's head check removed, and asserts
 each mutation is caught.
@@ -53,6 +55,7 @@ SCRIPTS = ("build-gate-bundle.sh", "contained-gate-suite.sh", "restore-gate-bund
            "git-push-hardening.sh", "gate-bundle-import.sh")
 PASSING_SUITE = "print('PASS  verify-x.py')\n"
 FAILING_SUITE = "import sys\nprint('FAIL  verify-x.py (planted)')\nsys.exit(1)\n"
+SLOW_SUITE = "import time\ntime.sleep(8)\nprint('PASS  verify-x.py')\n"
 TRUSTED_SHA = "b" * 40
 
 
@@ -123,7 +126,8 @@ def no_change(_repo):
     pass
 
 
-def round_trip(shared, tmp, change, site="board-fix", base_override=None, meta_edit=None):
+def round_trip(shared, tmp, change, site="board-fix", base_override=None, meta_edit=None,
+               gate_env=None):
     """-> (verdict dict or None, build/gate output, clones, base, head, bundle dir)."""
     clones, base, head = world(tmp, change)
     bundle = os.path.join(tmp, "bundle")
@@ -138,7 +142,7 @@ def round_trip(shared, tmp, change, site="board-fix", base_override=None, meta_e
         return None, "build exited {0}: {1}".format(rc, out), clones, base, head, bundle
     verdict_path = os.path.join(tmp, "verdict.json")
     rc2, out2, _ = sh(shared, "contained-gate-suite.sh",
-                      [site, bundle, TRUSTED_SHA, verdict_path], clones["trusted"])
+                      [site, bundle, TRUSTED_SHA, verdict_path], clones["trusted"], gate_env)
     verdict = None
     if os.path.exists(verdict_path):
         with open(verdict_path, encoding="utf-8") as fh:
@@ -273,6 +277,17 @@ def checks(shared):
            pv.get("outcome") == "fail" and pv.get("head_sha") == pre_head
            and "predates the gate suite" in pv.get("first_failure", ""), str(pv))
 
+    if shutil.which("timeout"):
+        with tempfile.TemporaryDirectory() as tmp:
+            v, out, *_rest = round_trip(shared, tmp,
+                                        commit_file(".github/scripts/run-local-gates.py",
+                                                    SLOW_SUITE),
+                                        gate_env={"WC_GATE_SUITE_TIMEOUT_SECONDS": "2"})
+            ck("a suite that outlives its time budget is stopped and red, naming the budget",
+               v is not None and v.get("outcome") == "fail"
+               and "did not finish within its time budget (2s)" in v.get("first_failure", ""),
+               "verdict={0}\n{1}".format(v, out[-800:]))
+
     with tempfile.TemporaryDirectory() as tmp:
         v, out, *_rest = round_trip(shared, tmp, remove_suite)
         ck("a head that deleted run-local-gates.py is red, never a skip",
@@ -319,6 +334,11 @@ MUTATIONS = (
     ("an unknown base is bundled as a thin range anyway",
      [("build-gate-bundle.sh", 'if [ -n "$base_sha" ] && ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then',
        'if false; then')]),
+    ("the suite runs with no time budget",
+     [("contained-gate-suite.sh", 'bound=(timeout --kill-after=60 "$suite_seconds")', "bound=()")]),
+    ("a stopped suite is reported as an ordinary failure",
+     [("contained-gate-suite.sh", 'elif [ "${#bound[@]}" -gt 0 ] && [ "$elapsed" -ge "$suite_seconds" ]',
+       'elif false && [ "$elapsed" -ge "$suite_seconds" ]')]),
     ("a head with no new commits ships the whole history",
      [("build-gate-bundle.sh", 'git bundle create --quiet "$out_dir/bundle.git" HEAD~1..HEAD HEAD',
        'git bundle create --quiet "$out_dir/bundle.git" HEAD')]),
