@@ -62,5 +62,5 @@ Every exit-1 branch has a checked-in fixture run through the gate registry
 ## n/a reason (FR-014), consuming-side text
 
 Convergence report cells and hand-off text that cannot be computed after a
-rebase read: `n/a — rebase rewrites history; merge sync avoids it`. #1062's
+rebase read: `n/a — usually a rebase or force-push rewrote history; merge sync avoids it`. #1062's
 stored per-round diff size continues to feed growth.

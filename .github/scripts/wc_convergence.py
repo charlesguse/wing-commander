@@ -102,17 +102,25 @@ class Origins(object):
         if self._main_side is None:
             head = self.heads[-1]
             side = set()
-            # Only the pipeline's own sync commits (subject `sync: merge ...`)
-            # count; a person's merge of another branch stays the loop's work.
+            # Only the pipeline's own sync commits count: subject `sync: merge
+            # ...`, or git's default `Merge remote-tracking branch 'origin/..`
+            # that an agent's `git merge --continue` writes after a conflict.
+            # A person's merge of another branch stays the loop's work.
             # Each sync contributes second-parent history minus first-parent
             # history, so main's earlier history is not swept in.
+            # check=False: an unreachable head or shallow checkout yields no
+            # main-side commits instead of raising, like the other probes.
             for row in _lines(git(["log", "--first-parent", "--merges",
-                                   "--format=%P\t%s", head], self.cwd).stdout):
+                                   "--format=%P\t%s", head], self.cwd,
+                                  check=False).stdout):
                 parents, _, subject = row.partition("\t")
                 ps = parents.split()
-                if len(ps) < 2 or not subject.startswith("sync: merge "):
+                if len(ps) < 2 or not (
+                        subject.startswith("sync: merge ")
+                        or subject.startswith("Merge remote-tracking branch 'origin/")):
                     continue
-                side.update(_lines(git(["rev-list", ps[1], "^" + ps[0]], self.cwd).stdout))
+                side.update(_lines(git(["rev-list", ps[1], "^" + ps[0]], self.cwd,
+                                        check=False).stdout))
             self._main_side = side
         return self._main_side
 

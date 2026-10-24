@@ -344,6 +344,19 @@ class SyncCommit(GitBacked):
         origins = wc.Origins(old, [h0, wc.rev("HEAD", self.repo)], self.repo)
         self.assertNotEqual(origins.of(other), "main")
 
+    def test_default_merge_subject_of_a_conflict_resolved_sync_is_main_side(self):
+        # `git merge --continue` after a conflict writes git's own subject.
+        old, new, h0, _h1, _h2 = self.sync_repo()
+        self.run_git("reset", "-q", "--hard", h0)
+        h1 = self.merge(new, "Merge remote-tracking branch 'origin/main' into spec/118-x")
+        origins = wc.Origins(old, [h0, h1], self.repo)
+        self.assertEqual(origins.of(new), "main")
+
+    def test_unreachable_head_does_not_raise(self):
+        old, new, h0, _h1, _h2 = self.sync_repo()
+        origins = wc.Origins(old, [h0, "0" * 40], self.repo)
+        origins.of(new)
+
     def test_main_side_excludes_history_the_branch_already_had(self):
         old, new, h0, h1, _h2 = self.sync_repo()
         origins = wc.Origins(old, [h0, h1], self.repo)
