@@ -231,7 +231,7 @@ Run `python .github/scripts/run-local-gates.py` after each phase and before push
 
 ## Review Gate Round 2 Findings
 
-- [ ] Review finding: _main_side_commits misses conflict-resolved sync commits
+- [X] Review finding: _main_side_commits misses conflict-resolved sync commits
 
   It only matches subjects starting 'sync: merge ', but an agent's `git merge --continue` produces git's default 'Merge remote-tracking branch' subject, so main-origin lines get attributed to the PR.
 
@@ -239,13 +239,13 @@ Run `python .github/scripts/run-local-gates.py` after each phase and before push
 
   Detail: Self-inflicted share and churn are overstated and the convergence gate can trip spuriously. The unit test hard-codes the 'sync: merge' subject, which hides this.
 
-- [ ] Review finding: New docs paragraphs split the rebase table
+- [X] Review finding: New docs paragraphs split the rebase table
 
   The paragraphs were inserted between the 'Side effects' row and the 'Outputs | none |' row, so the Outputs row is orphaned and renders as stray text.
 
   - docs/adoption.md
 
-- [ ] Review finding: verify-scope trusts an agent-writable conflict manifest
+- [X] Review finding: verify-scope trusts an agent-writable conflict manifest
 
   The agent is told to append to conflict-manifest.txt, and verify-scope allows any path listed there, so the agent can widen the allowed path set.
 
@@ -253,32 +253,32 @@ Run `python .github/scripts/run-local-gates.py` after each phase and before push
 
   Detail: Only the seeded, deterministic conflict list should be allowed.
 
-- [ ] Review finding: merge-tree failure escalates clean branches
+- [X] Review finding: merge-tree failure escalates clean branches
 
   `git merge-tree --write-tree` runs for every behind-main branch, and any failure (such as git older than 2.38) forces rc=2 and outcome=error, even for branches that would merge cleanly.
 
   - .github/workflows/rebase.yml
 
-- [ ] Review finding: Documented n/a reason differs from the code
+- [X] Review finding: Documented n/a reason differs from the code
 
   docs/architecture.md and the contract quote 'n/a — rebase rewrites history; merge sync avoids it', but REBASE_NA_REASON in wc_convergence.py says 'usually a rebase or force-push rewrote history; merge sync avoids it'.
 
   - docs/architecture.md
   - .github/scripts/wc_convergence.py
 
-- [ ] Review finding: Unbounded git log with check=True in _main_side_commits
+- [X] Review finding: Unbounded git log with check=True in _main_side_commits
 
   It runs `git log --first-parent --merges` over the whole history with check=True. If heads[-1] is unreachable or the checkout is shallow, it raises out of Origins.of(), unlike the other ancestry probes, which use check=False.
 
   - .github/scripts/wc_convergence.py
 
-- [ ] Review finding: Merge-mode push race detection only matches '[rejected]'
+- [X] Review finding: Merge-mode push race detection only matches '[rejected]'
 
   The '(stale info)' marker is only set when the push output contains '[rejected]'. Other non-fast-forward forms, such as '[remote rejected]', are treated as real or credential failures instead of a skippable race.
 
   - .github/workflows/rebase.yml
 
-- [ ] Review finding: Single-home conflict-marker scan is fragile
+- [X] Review finding: Single-home conflict-marker scan is fragile
 
   verify-sync-from-main.py searches every workflow, action and script file for the literal '(<<<<<<<|>>>>>>>)'. Any legitimate marker-scan regex elsewhere trips the gate, and a copy written differently is not detected.
 
