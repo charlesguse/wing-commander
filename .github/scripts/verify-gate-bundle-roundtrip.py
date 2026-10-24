@@ -58,11 +58,13 @@ SCRIPTS = ("build-gate-bundle.sh", "contained-gate-suite.sh", "restore-gate-bund
            "git-push-hardening.sh", "gate-bundle-import.sh")
 PASSING_SUITE = "print('PASS  verify-x.py')\n"
 FAILING_SUITE = "import sys\nprint('FAIL  verify-x.py (planted)')\nsys.exit(1)\n"
-SLOW_SUITE = ("import time\nprint('FAIL  verify-y.py (planted, before the stop)', flush=True)\n"
+# No flush=True: run-local-gates.py never flushes, so this must not either.
+SLOW_SUITE = ("import time\nprint('FAIL  verify-y.py (planted, before the stop)')\n"
               "time.sleep(8)\nprint('PASS  verify-x.py')\n")
-# A BusyBox-shaped timeout: no long options. The real one does the rest.
+# A BusyBox-shaped timeout: no long options, and a stop exits 143 (the TERM
+# it sent), not 124. The real one does the rest.
 SHORT_OPTS_TIMEOUT = ('#!/bin/sh\ncase " $* " in *" --"*) echo "timeout: unrecognized option" >&2; '
-                      'exit 1 ;; esac\nexec {0} "$@"\n')
+                      'exit 1 ;; esac\n{0} "$@"\nrc=$?\n[ "$rc" -eq 124 ] && exit 143\nexit "$rc"\n')
 # An old BusyBox timeout: refuses -k as well.
 NO_KILL_TIMEOUT = '#!/bin/sh\necho "timeout: invalid option -- k" >&2\nexit 1\n'
 
@@ -317,15 +319,16 @@ def checks(shared):
                                                     SLOW_SUITE),
                                         gate_env={"WC_GATE_SUITE_TIMEOUT_SECONDS": "2",
                                                   "PATH": stub})
-            ck("a timeout with no long options (BusyBox) still bounds the suite and names "
-               "the budget",
+            ck("a timeout with no long options that exits 143 (BusyBox) still bounds the "
+               "suite and names the budget",
                v is not None and "did not finish within its time budget (2s)"
                in v.get("first_failure", ""), "verdict={0}\n{1}".format(v, out[-800:]))
     with tempfile.TemporaryDirectory() as tmp:
         stub = stub_timeout(tmp, NO_KILL_TIMEOUT)
         v, out, *_rest = round_trip(shared, tmp, no_change, gate_env={"PATH": stub})
         ck("a timeout that refuses -k leaves a passing suite unbounded and green, never red "
-           "before it starts", v is not None and v.get("outcome") == "pass",
+           "before it starts, and says it ran with no budget",
+           v is not None and v.get("outcome") == "pass" and "no time budget of its own" in out,
            "verdict={0}\n{1}".format(v, out[-800:]))
     with tempfile.TemporaryDirectory() as tmp:
         v, out, *_rest = round_trip(shared, tmp, no_change,
@@ -405,6 +408,13 @@ MUTATIONS = (
        'command -v timeout >/dev/null 2>&1 && bound=')]),
     ("a stopped suite's verdict drops the failure it logged before the stop",
      [("contained-gate-suite.sh", '${first:+; first failure before the stop: $first}', "")]),
+    ("a stopped suite's buffered output is lost",
+     [("contained-gate-suite.sh", 'python3 -u .github/scripts/run-local-gates.py)',
+       'python3 .github/scripts/run-local-gates.py)')]),
+    ("BusyBox's 143 is read as an ordinary failure",
+     [("contained-gate-suite.sh", '|| [ "$rc" -eq 143 ]; }', '; }')]),
+    ("an unbounded suite runs silently",
+     [("contained-gate-suite.sh", '[ "${#bound[@]}" -gt 0 ] || echo "::warning::', '[ "${#bound[@]}" -gt 0 ] || true "')]),
     ("a leading-zero budget is read as octal",
      [("contained-gate-suite.sh", 'suite_minutes=$((10#$suite_minutes))',
        'suite_minutes=$((suite_minutes))')]),

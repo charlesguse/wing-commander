@@ -91,6 +91,14 @@ def budget_fits(step_min, budget):
     return str(budget).isdigit() and 0 < int(budget) and int(budget) + 3 <= step_min
 
 
+def due_only(cond):
+    """The retry suite's if: is a pure conjunction carrying the retry
+    agent's own ok/escalation-model conditions, so no || can let the suite
+    run on a converged cycle."""
+    return ("||" not in cond and "steps.outcome.outputs.ok == 'false'" in cond
+            and "steps.effective-model.outputs.model != inputs.escalation-model" in cond)
+
+
 def expected_paragraph(leg, summary):
     """The prompt's gate-suite paragraph as both prompts carried it before
     #936, with the summary output interpolated. A present script must
@@ -396,9 +404,11 @@ def main():
     retry_if = str(retry_step.get("if", ""))
     check("(retry) the retry suite runs only when the retry agent is due, never on a "
           "converged cycle",
-          "steps.outcome.outputs.ok == 'false'" in retry_if
-          and "steps.effective-model.outputs.model != inputs.escalation-model" in retry_if,
-          "if={0}".format(retry_if))
+          due_only(retry_if), "if={0}".format(retry_if))
+    check("(gate) a retry suite if: that ORs in the retry conditions is refused",
+          not due_only("a == 'true' || steps.outcome.outputs.ok == 'false' && "
+                       "steps.effective-model.outputs.model != inputs.escalation-model")
+          and due_only(retry_if), "")
     ids = [(s or {}).get("id") for s in steps]
     uses = {(s or {}).get("id"): str((s or {}).get("uses", "")) for s in steps}
     order = [i for i in ("gate-suite-retry", "reestablish-pre-retry", "refresh-remote-pre-retry",
