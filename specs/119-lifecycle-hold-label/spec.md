@@ -33,6 +33,12 @@ Settled by the request (from #994's clarify and owner decisions, carried in by #
 - The analyze agent runs in its **own job with read-only repository contents** (owner decision 15 on #994).
 - A fold's check covers **only its own commits' tasks.md diff** (#994 C6).
 
+### Session 2026-10-24 (answers on #1066)
+
+- Q: Should pr-conversation's LLM-classified `stop` on a lifecycle PR also set the hold, or only the strict exact-match form? → A: **Strict exact-match only** (option C). The hold is set only by the exact `stop` / `/stop` form `board_stop_check.py` accepts. When pr-conversation classifies a free-text stop on a lifecycle PR, its reply cancels in-flight runs as it does today and tells the maintainer how to set the hold.
+- Q: How does a drop record its dismissal? → A: **Derived from the fold task's removal from tasks.md on the lifecycle branch** (option A). No new state and no new writer; the plan must define a reliable link from a removed fold task back to its finding fingerprints.
+- Q: Is a non-comment answer path needed for drop and amend? → A: **No** (option A). The maintainer-feedback comment (drop) and the amendment PR (amend) are sufficient; the request rules out new commands, markers and labels, so there is one label.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A maintainer holds a lifecycle and implement stops building until they release it (Priority: P1)
@@ -49,8 +55,9 @@ A maintainer sees a lifecycle going the wrong way — a fold they disagree with,
 2. **Given** a held lifecycle, **When** a fold commit lands and the fold-dispatch composite runs, **Then** it does not dispatch implement and records that the dispatch was withheld because of the hold.
 3. **Given** a lifecycle with no hold, **When** a maintainer posts a comment whose body is exactly `stop` or `/stop` (the strict form `board_stop_check.py` already accepts) on the lifecycle issue or on the lifecycle's PR, **Then** the hold label is added to the lifecycle issue and an acknowledgement naming the release path is posted there.
 4. **Given** a lifecycle with no hold, **When** a non-maintainer or a bot posts `stop`, or a maintainer posts a comment that merely contains the word "stop" in other text, **Then** no hold is set.
-5. **Given** a held lifecycle, **When** a maintainer removes the hold label, **Then** the next implement cycle or fold dispatch proceeds as if the hold had never been set, and the release is noted on the lifecycle issue.
-6. **Given** a held lifecycle whose implement run was already past its start check when the hold was set, **When** that run finishes, **Then** its work stands, and the next cycle observes the hold.
+5. **Given** a lifecycle with no hold, **When** a maintainer posts free text on the lifecycle's PR that pr-conversation classifies as `stop` but that is not the strict form, **Then** no hold is set, in-flight runs are cancelled as today, and the reply tells the maintainer how to set the hold.
+6. **Given** a held lifecycle, **When** a maintainer removes the hold label, **Then** the next implement cycle or fold dispatch proceeds as if the hold had never been set, and the release is noted on the lifecycle issue.
+7. **Given** a held lifecycle whose implement run was already past its start check when the hold was set, **When** that run finishes, **Then** its work stands, and the next cycle observes the hold.
 
 ---
 
@@ -99,7 +106,7 @@ The owner reads the held question and chooses one of four answers, each through 
 ### Edge Cases
 
 - **Label added twice / by two sources**: setting a hold on an already-held lifecycle is idempotent; the second source's reason is posted but no second label or state is created.
-- **Hold set mid-cycle**: implement checks at the start of each cycle only; a cycle already past that check finishes (User Story 1, scenario 6). A hold never cancels a running cycle; a maintainer who wants that uses pr-conversation's existing `stop` on the PR as well.
+- **Hold set mid-cycle**: implement checks at the start of each cycle only; a cycle already past that check finishes (User Story 1, scenario 7). A hold never cancels a running cycle; a maintainer who wants that uses pr-conversation's existing `stop` on the PR as well.
 - **Hold vs. `stage:stalled`**: the two labels are independent. A stalled lifecycle may also be held; removing one never removes the other.
 - **Hold vs. `parked`**: closing a held lifecycle as parked leaves the label in place; reopening it keeps it held until the label is removed.
 - **Label removed by a non-maintainer**: GitHub permits only users with triage access or above to change labels, so this is a maintainer action by construction; the release note on the lifecycle issue names who removed it.
@@ -119,7 +126,7 @@ The owner reads the held question and chooses one of four answers, each through 
 - **FR-002**: The implement stage MUST read the hold label from a freshly fetched view of the lifecycle issue at the start of every cycle, before invoking any agent or writing anything, and while it is set MUST end the cycle without commits, pushes, PRs or agent invocations, posting one status line on the lifecycle issue that names the hold.
 - **FR-003**: The fold-dispatch composite MUST read the hold label before dispatching implement and MUST withhold the dispatch while it is set, recording the withheld dispatch on the lifecycle issue.
 - **FR-004**: The hold check MUST be deterministic code (constitution IX), MUST fail closed when the lifecycle issue's labels cannot be read (treat as held and say why), and MUST receive the lifecycle issue number as a declared input in any published stage or composite (constitution VII).
-- **FR-005**: A maintainer's comment on a lifecycle issue or on a lifecycle's PR that passes the strict stop parser already used by `board_stop_check.py` (exact `stop` or `/stop`, maintainer author, not a bot) MUST set the hold label on the lifecycle issue and post an acknowledgement naming how to release it. [NEEDS CLARIFICATION: Should pr-conversation's LLM-classified `stop` category on a lifecycle PR also set the hold, or only the strict exact-match form? Constitution IX favours strict-only, since a classifier's judgement would gate a durable action.]
+- **FR-005**: A maintainer's comment on a lifecycle issue or on a lifecycle's PR that passes the strict stop parser already used by `board_stop_check.py` (exact `stop` or `/stop`, maintainer author, not a bot) MUST set the hold label on the lifecycle issue and post an acknowledgement naming how to release it. Only this strict form sets the hold (constitution IX: a classifier's judgement never gates a durable action). When pr-conversation's LLM-classified `stop` category fires on a lifecycle PR for a comment that is not the strict form, it MUST NOT set the hold; its reply cancels in-flight runs as today and tells the maintainer how to set the hold (post exactly `stop` or `/stop`, or add the hold label).
 - **FR-006**: Setting the hold MUST be idempotent: a second source adds no second label and creates no additional state, but its reason is posted.
 - **FR-007**: Removing the hold label MUST be a sufficient release on its own in any repository, with no command, marker, wrapper or release workflow required; the release MUST be noted on the lifecycle issue by the next run that observes it.
 
@@ -137,8 +144,8 @@ The owner reads the held question and chooses one of four answers, each through 
 
 - **FR-015**: The hold question MUST name four answers, each through an existing path: **proceed** (remove the label), **drop** (maintainer-feedback comment on the lifecycle PR to remove the task, then remove the label), **amend** (amendment PR, then remove the label), **retry** (re-run the analyze workflow). It MUST be worded so it applies in an adopting repository.
 - **FR-016**: Re-running fold-time analyze on the same fold MUST remove the hold label if decide no longer finds a conflict, but only when the current hold was set by analyze; a hold set by `stop` or by hand MUST NOT be released by analyze.
-- **FR-017**: The findings that produced a dropped task MUST reach the convergence signals of spec 116 as **dismissed** fingerprints, so a later review round's matching finding is not counted as a recurrence. [NEEDS CLARIFICATION: How does a drop record its dismissal — derived deterministically from the task's removal from tasks.md on the lifecycle branch (no new state), written by pr-conversation when it removes a fold task, or recorded by an explicit maintainer action?]
-- **FR-018**: No new command (no `/fold-hold`), published stage workflow, release wrapper, hold-state or resolved marker, open-holds read, or per-lifecycle fold-queue lock MAY be introduced for holds; any state beyond the label itself is limited to the dismissal record of FR-017. [NEEDS CLARIFICATION: Does the owner want a non-comment answer path for drop and amend beyond those listed (e.g. a review-comment or label-based drop), or are the comment and amendment-PR paths sufficient?]
+- **FR-017**: The findings that produced a dropped task MUST reach the convergence signals of spec 116 as **dismissed** fingerprints, so a later review round's matching finding is not counted as a recurrence. The dismissal MUST be derived deterministically from the fold task's removal from tasks.md on the lifecycle branch: no new stored state and no new writer (neither pr-conversation nor a maintainer action records it). Each folded task MUST therefore carry a reliable link back to the finding fingerprints that produced it, so a removed fold task resolves to its fingerprints; the plan defines that link.
+- **FR-018**: No new command (no `/fold-hold`), published stage workflow, release wrapper, hold-state or resolved marker, additional label, open-holds read, or per-lifecycle fold-queue lock MAY be introduced for holds, and no answer path beyond those of FR-015 (no review-comment or label-based drop); the maintainer-feedback comment (drop) and the amendment PR (amend) are the only non-label answer paths. No state beyond the label itself is introduced; the dismissal of FR-017 is derived from tasks.md, not stored.
 
 **Shared logic and gates**
 
@@ -149,7 +156,7 @@ The owner reads the held question and chooses one of four answers, each through 
 
 - **Lifecycle hold**: the presence of the hold label on a lifecycle issue. Attributes: who or what set it (analyze, strict stop, by hand), when, and the posted reason. It is the only hold state; there is at most one per lifecycle.
 - **Fold-time analyze verdict**: the agent's structured output for one fold — per objected task: task id/text, constitution-conflict flag, cited principle, reasoning. Consumed only by the deterministic decide step.
-- **Dismissed fingerprint**: a finding fingerprint whose task the owner dropped; read by spec 116's convergence signals so it never matches as a recurrence.
+- **Dismissed fingerprint**: a finding fingerprint whose fold task the owner dropped, derived from that task's removal from tasks.md on the lifecycle branch via the task's link to its fingerprints (not stored separately); read by spec 116's convergence signals so it never matches as a recurrence.
 
 ## Success Criteria *(mandatory)*
 
@@ -168,9 +175,9 @@ The owner reads the held question and chooses one of four answers, each through 
 - Fold-time analyze failing (FR-013) reports and lets dispatch proceed rather than holding; spec 116 recorded the guarded failure as unobserved, and holding every fold on a flaky check would block more work than it protects.
 - implement already runs one cycle per spec at a time (per-spec concurrency group), so a start-of-cycle check closes the dispatch race without a lock (#1066).
 - Only maintainers can add or remove labels on GitHub, so label changes need no further authorization check.
-- Spec 116's convergence stories (#1062, after the split) land first and provide the dismissed-fingerprint set this feature writes to (data-model: "Dismissed fingerprints are kept in a separate set and never match recurrence").
+- Spec 116's convergence stories (#1062, after the split) land first and provide the dismissed-fingerprint set this feature feeds (data-model: "Dismissed fingerprints are kept in a separate set and never match recurrence"); this feature contributes to that set by derivation from tasks.md (FR-017), not by writing new state.
 - The board loop's eligibility exclusions are unchanged: a lifecycle still never enters the board loop; this feature only reuses the strict stop parser.
-- pr-conversation's existing `stop` behaviour on PRs (cancel in-flight runs) is unchanged by this feature, apart from FR-005's answer.
+- pr-conversation's existing `stop` behaviour on PRs (cancel in-flight runs) is unchanged by this feature, except that on a lifecycle PR its reply to a classified (non-strict) `stop` also tells the maintainer how to set the hold (FR-005).
 
 ## Out of Scope
 

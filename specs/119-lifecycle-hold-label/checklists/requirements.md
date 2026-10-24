@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,5 +31,5 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain (FR-005, FR-017, FR-018), carried from #1066's "Open questions for clarify"; they are posted to the lifecycle issue for the clarify stage.
+- The three [NEEDS CLARIFICATION] markers (FR-005, FR-017, FR-018) were resolved by the owner's answers on #1066 (2026-10-24): strict-only stop sets the hold, dismissal is derived from the fold task's removal from tasks.md, and the comment and amendment-PR answer paths are sufficient. See the spec's Clarifications section.
 - This is pipeline infrastructure whose stakeholders are maintainers, so the spec names existing pipeline components (labels, composites, `board_stop_check.py`, the constitution's model tier) as the user-visible surface. That is deliberate and not treated as leaked implementation detail; how each is wired is left to plan.
