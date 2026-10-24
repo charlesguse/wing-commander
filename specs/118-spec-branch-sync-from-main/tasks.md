@@ -16,7 +16,7 @@ Run `python .github/scripts/run-local-gates.py` after each phase and before push
 
 **Purpose**: Locate the existing rebase pieces the new arm shares.
 
-- [ ] T001 Read `.github/workflows/rebase.yml`, `.github/workflows/wing-commander-rebase.yml`, `.github/scripts/verify-rebase-discover-selection.py` and the gate registry in `.github/workflows/lint-workflows.yml`; note the step ids, outputs, and the comment blocks the gates byte-compare, so the merge arm reuses them (no code change).
+- [X] T001 Read `.github/workflows/rebase.yml`, `.github/workflows/wing-commander-rebase.yml`, `.github/scripts/verify-rebase-discover-selection.py` and the gate registry in `.github/workflows/lint-workflows.yml`; note the step ids, outputs, and the comment blocks the gates byte-compare, so the merge arm reuses them (no code change).
 
 ---
 
@@ -26,11 +26,11 @@ Run `python .github/scripts/run-local-gates.py` after each phase and before push
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T002 Create `.github/scripts/wc_sync_from_main.py` (stdlib only) with the subcommand skeleton `validate-method`, `decide`, `verify-scope`, `publish-refspec` per `contracts/sync-method-input.md` "Deterministic helper contract".
-- [ ] T003 Implement `validate-method <value>` in `.github/scripts/wc_sync_from_main.py`: empty or `rebase` prints `rebase`, `merge` prints `merge`, anything else exits 1 with exactly `::error::wing-commander rebase: sync-method '<value>' is not valid; accepted values are 'rebase' and 'merge'`.
-- [ ] T004 Implement `publish-refspec <branch>` in `.github/scripts/wc_sync_from_main.py`: print `HEAD:refs/heads/<branch>`; exit 1 for a branch value with a leading `+` or any `--force*` token (SC-002).
-- [ ] T005 Create gate `.github/scripts/verify-sync-from-main.py` with the fixture harness (local bare origin + clone per case, temp dirs, git identity set) and the cases for `validate-method` (unset, `rebase`, `merge`, bogus value, case variant) and `publish-refspec` (plain, `+` prefix, `--force`).
-- [ ] T006 Register `verify-sync-from-main.py` in the gate registry in `.github/workflows/lint-workflows.yml` so `python .github/scripts/run-local-gates.py` runs it with the same arguments as CI; confirm it runs and passes.
+- [X] T002 Create `.github/scripts/wc_sync_from_main.py` (stdlib only) with the subcommand skeleton `validate-method`, `decide`, `verify-scope`, `publish-refspec` per `contracts/sync-method-input.md` "Deterministic helper contract".
+- [X] T003 Implement `validate-method <value>` in `.github/scripts/wc_sync_from_main.py`: empty or `rebase` prints `rebase`, `merge` prints `merge`, anything else exits 1 with exactly `::error::wing-commander rebase: sync-method '<value>' is not valid; accepted values are 'rebase' and 'merge'`.
+- [X] T004 Implement `publish-refspec <branch>` in `.github/scripts/wc_sync_from_main.py`: print `HEAD:refs/heads/<branch>`; exit 1 for a branch value with a leading `+` or any `--force*` token (SC-002).
+- [X] T005 Create gate `.github/scripts/verify-sync-from-main.py` with the fixture harness (local bare origin + clone per case, temp dirs, git identity set) and the cases for `validate-method` (unset, `rebase`, `merge`, bogus value, case variant) and `publish-refspec` (plain, `+` prefix, `--force`).
+- [X] T006 Register `verify-sync-from-main.py` in the gate registry in `.github/workflows/lint-workflows.yml` so `python .github/scripts/run-local-gates.py` runs it with the same arguments as CI; confirm it runs and passes.
 
 **Checkpoint**: Helper validates the method and refspec; gate runs locally and in the registry.
 
@@ -44,17 +44,17 @@ Run `python .github/scripts/run-local-gates.py` after each phase and before push
 
 ### Tests for User Story 1
 
-- [ ] T007 [P] [US1] Add fixture cases in `.github/scripts/verify-sync-from-main.py` for `decide`: branch already contains `main` → `current`; behind → `merge`; same-tree case (`main` gained a cherry-pick of branch work) → `merge` (FR-003).
-- [ ] T008 [P] [US1] Add fixture cases in `.github/scripts/verify-sync-from-main.py` for the clean path: `git merge --no-ff --no-commit` then explicit commit gives a commit with parents `[old tip, main tip]` and message `sync: merge <default> into <spec-branch>`; the same-tree merge still creates the commit; every pre-sync SHA stays an ancestor of the new head (SC-001).
-- [ ] T009 [P] [US1] Add fixture cases in `.github/scripts/verify-sync-from-main.py` for publish: plain `git push` succeeds as fast-forward with no `+`/`--force*`; when the remote head moved after checkout the push is rejected and the remote branch is untouched (FR-002).
+- [X] T007 [P] [US1] Add fixture cases in `.github/scripts/verify-sync-from-main.py` for `decide`: branch already contains `main` → `current`; behind → `merge`; same-tree case (`main` gained a cherry-pick of branch work) → `merge` (FR-003).
+- [X] T008 [P] [US1] Add fixture cases in `.github/scripts/verify-sync-from-main.py` for the clean path: `git merge --no-ff --no-commit` then explicit commit gives a commit with parents `[old tip, main tip]` and message `sync: merge <default> into <spec-branch>`; the same-tree merge still creates the commit; every pre-sync SHA stays an ancestor of the new head (SC-001).
+- [X] T009 [P] [US1] Add fixture cases in `.github/scripts/verify-sync-from-main.py` for publish: plain `git push` succeeds as fast-forward with no `+`/`--force*`; when the remote head moved after checkout the push is rejected and the remote branch is untouched (FR-002).
 
 ### Implementation for User Story 1
 
-- [ ] T010 [US1] Implement `decide --main <sha>` in `.github/scripts/wc_sync_from_main.py`: print `current` if `git merge-base --is-ancestor <main> HEAD`, else `merge` (research D4).
-- [ ] T011 [US1] Add the `sync-method` input (type string, default `rebase`) to `.github/workflows/rebase.yml` `workflow_call.inputs`, with a description matching the contract.
-- [ ] T012 [US1] In `.github/workflows/rebase.yml`, add merge-arm steps to the per-branch matrix job, each gated `if: inputs.sync-method == 'merge'`: fetch `origin $DB` with an explicit refspec (never a bare fetch), call `wc_sync_from_main.py decide`, `git merge --no-ff --no-commit origin/$DB`, classify outcome `current|clean|conflict|error`, explicit `git commit` with the sync message and App identity as in the rebase arm, publish via `wc_sync_from_main.py publish-refspec` and plain `git push`. Existing rebase steps get `if: inputs.sync-method != 'merge'` only where required, with no change to their text.
-- [ ] T013 [US1] In `.github/workflows/rebase.yml`, make the matrix-leg `name:` switch on the method: `Sync spec branch with main ({0}, {1}, {2})` under `merge`, the unchanged `rebase ({0}, {1}, {2})` otherwise; step-summary prefix reads `sync-from-main` under merge (FR-007, research D3).
-- [ ] T014 [US1] Run `python .github/scripts/run-local-gates.py`; fix any gate that byte-compares a comment or step name changed in T011–T013.
+- [X] T010 [US1] Implement `decide --main <sha>` in `.github/scripts/wc_sync_from_main.py`: print `current` if `git merge-base --is-ancestor <main> HEAD`, else `merge` (research D4).
+- [X] T011 [US1] Add the `sync-method` input (type string, default `rebase`) to `.github/workflows/rebase.yml` `workflow_call.inputs`, with a description matching the contract.
+- [X] T012 [US1] In `.github/workflows/rebase.yml`, add merge-arm steps to the per-branch matrix job, each gated `if: inputs.sync-method == 'merge'`: fetch `origin $DB` with an explicit refspec (never a bare fetch), call `wc_sync_from_main.py decide`, `git merge --no-ff --no-commit origin/$DB`, classify outcome `current|clean|conflict|error`, explicit `git commit` with the sync message and App identity as in the rebase arm, publish via `wc_sync_from_main.py publish-refspec` and plain `git push`. Existing rebase steps get `if: inputs.sync-method != 'merge'` only where required, with no change to their text.
+- [X] T013 [US1] In `.github/workflows/rebase.yml`, make the matrix-leg `name:` switch on the method: `Sync spec branch with main ({0}, {1}, {2})` under `merge`, the unchanged `rebase ({0}, {1}, {2})` otherwise; step-summary prefix reads `sync-from-main` under merge (FR-007, research D3).
+- [X] T014 [US1] Run `python .github/scripts/run-local-gates.py`; fix any gate that byte-compares a comment or step name changed in T011–T013.
 
 **Checkpoint**: A clean merge sync works end to end in fixtures and the workflow has the merge arm.
 
@@ -68,15 +68,15 @@ Run `python .github/scripts/run-local-gates.py` after each phase and before push
 
 ### Tests for User Story 2
 
-- [ ] T015 [P] [US2] Extend `.github/scripts/verify-rebase-discover-selection.py` (or a case in `.github/scripts/verify-sync-from-main.py`) so discovery selects the same branches for `rebase` and `merge`, and a bogus `sync-method` fails before `Select in-flight branches` (FR-005, FR-009, FR-012).
-- [ ] T016 [P] [US2] Add a wrapper check in `.github/scripts/verify-sync-from-main.py` that fails if `.github/workflows/rebase.yml` contains `vars.` for the sync switch, and fails unless `.github/workflows/wing-commander-rebase.yml` passes `sync-method: ${{ vars.WING_COMMANDER_SPEC_BRANCH_SYNC || 'rebase' }}` (FR-006, constitution VII).
+- [X] T015 [P] [US2] Extend `.github/scripts/verify-rebase-discover-selection.py` (or a case in `.github/scripts/verify-sync-from-main.py`) so discovery selects the same branches for `rebase` and `merge`, and a bogus `sync-method` fails before `Select in-flight branches` (FR-005, FR-009, FR-012).
+- [X] T016 [P] [US2] Add a wrapper check in `.github/scripts/verify-sync-from-main.py` that fails if `.github/workflows/rebase.yml` contains `vars.` for the sync switch, and fails unless `.github/workflows/wing-commander-rebase.yml` passes `sync-method: ${{ vars.WING_COMMANDER_SPEC_BRANCH_SYNC || 'rebase' }}` (FR-006, constitution VII).
 
 ### Implementation for User Story 2
 
-- [ ] T017 [US2] In `.github/workflows/rebase.yml` `discover` job, add a first step after checkout that calls `python .github/scripts/wc_sync_from_main.py validate-method "${{ inputs.sync-method }}"` (pass via env, not interpolated into the script) and fails the job on exit 1, before `Select in-flight branches`.
-- [ ] T018 [US2] In `.github/workflows/wing-commander-rebase.yml`, pass `sync-method: ${{ vars.WING_COMMANDER_SPEC_BRANCH_SYNC || 'rebase' }}` to the stage.
-- [ ] T019 [US2] Add the single-home check to `.github/scripts/verify-single-home-idioms.py`: method validation and the merge scope check live only in `wc_sync_from_main.py`, and no other workflow or script carries a copy.
-- [ ] T020 [US2] Run `python .github/scripts/run-local-gates.py`.
+- [X] T017 [US2] In `.github/workflows/rebase.yml` `discover` job, add a first step after checkout that calls `python .github/scripts/wc_sync_from_main.py validate-method "${{ inputs.sync-method }}"` (pass via env, not interpolated into the script) and fails the job on exit 1, before `Select in-flight branches`.
+- [X] T018 [US2] In `.github/workflows/wing-commander-rebase.yml`, pass `sync-method: ${{ vars.WING_COMMANDER_SPEC_BRANCH_SYNC || 'rebase' }}` to the stage.
+- [X] T019 [US2] Add the single-home check to `.github/scripts/verify-single-home-idioms.py`: method validation and the merge scope check live only in `wc_sync_from_main.py`, and no other workflow or script carries a copy.
+- [X] T020 [US2] Run `python .github/scripts/run-local-gates.py`.
 
 **Checkpoint**: Switch selects the method; unset behaviour is unchanged (SC-004).
 
@@ -90,17 +90,17 @@ Run `python .github/scripts/run-local-gates.py` after each phase and before push
 
 ### Tests for User Story 3
 
-- [ ] T021 [P] [US3] Add fixture cases in `.github/scripts/verify-sync-from-main.py` for `verify-scope`: resolution within the manifest passes; a resolution changing a path outside the manifest relative to the `git merge-tree --write-tree` tree fails; a textually clean change to a non-conflict file fails; a manifest file with `^(<<<<<<<|=======|>>>>>>>)( |$)` still present fails; HEAD with wrong first/second parent or an extra commit fails; unhealthy verdict fails; project-folder narrowing excludes paths outside the project (spec 114).
-- [ ] T022 [P] [US3] Add mutation cases in `.github/scripts/verify-sync-from-main.py` that disable each `verify-scope` guard in turn and assert the gate then fails (as `verify-rebase-discover-selection.py` does).
+- [X] T021 [P] [US3] Add fixture cases in `.github/scripts/verify-sync-from-main.py` for `verify-scope`: resolution within the manifest passes; a resolution changing a path outside the manifest relative to the `git merge-tree --write-tree` tree fails; a textually clean change to a non-conflict file fails; a manifest file with `^(<<<<<<<|=======|>>>>>>>)( |$)` still present fails; HEAD with wrong first/second parent or an extra commit fails; unhealthy verdict fails; project-folder narrowing excludes paths outside the project (spec 114).
+- [X] T022 [P] [US3] Add mutation cases in `.github/scripts/verify-sync-from-main.py` that disable each `verify-scope` guard in turn and assert the gate then fails (as `verify-rebase-discover-selection.py` does).
 
 ### Implementation for User Story 3
 
-- [ ] T023 [US3] Implement `verify-scope --before --main --conflicted-tree --manifest --project --verdict` in `.github/scripts/wc_sync_from_main.py` per research D5: parents check, `git diff --name-only <conflicted-tree> HEAD^{tree}` ⊆ manifest (project-narrowed), marker scan of manifest paths in HEAD, verdict `healthy`; print each failure reason to stderr, exit 1.
-- [ ] T024 [US3] In `.github/workflows/rebase.yml` merge arm, on `conflict` record `git merge-tree --write-tree --no-messages origin/$DB HEAD` as the conflicted tree and seed the conflict manifest; reuse the existing containment composite for project narrowing.
-- [ ] T025 [US3] In `.github/workflows/rebase.yml`, add the merge-arm conflict agent step reusing `wing-commander-tool-args` (default allowed tools `Read,Edit,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git merge --continue:*),Bash(git merge --abort:*)`), the same `inputs.model`, `--max-turns`, turn-ceiling and agent-verdict composites, and a merge-analogue prompt (research D7). The agent gets no `git commit`, `git push`, or `gh`.
-- [ ] T026 [US3] In `.github/workflows/rebase.yml`, add the merge-arm verify step calling `wc_sync_from_main.py verify-scope` and setting `push`/`escalate` outputs as the rebase arm does; publish only on pass.
-- [ ] T027 [US3] In `.github/workflows/rebase.yml` `Abandon and escalate`, run `git merge --abort` under merge, keep label `rebase:blocked` and the `<!-- wing-commander-rebase: blocked … -->` marker unchanged, and use the merge prose (heading "Spec branch sync needs a human", remedy `git merge origin/$DB` and push, callout summary "Merge main into this branch") only under `merge` (FR-008, research D8).
-- [ ] T028 [US3] Confirm the metrics, execution-log, cost-line, over-budget and verdict steps in `.github/workflows/rebase.yml` also run for the merge arm with no pasted copies (FR-010); reuse `wing-commander-metrics-summary`.
+- [X] T023 [US3] Implement `verify-scope --before --main --conflicted-tree --manifest --project --verdict` in `.github/scripts/wc_sync_from_main.py` per research D5: parents check, `git diff --name-only <conflicted-tree> HEAD^{tree}` ⊆ manifest (project-narrowed), marker scan of manifest paths in HEAD, verdict `healthy`; print each failure reason to stderr, exit 1.
+- [X] T024 [US3] In `.github/workflows/rebase.yml` merge arm, on `conflict` record `git merge-tree --write-tree --no-messages origin/$DB HEAD` as the conflicted tree and seed the conflict manifest; reuse the existing containment composite for project narrowing.
+- [X] T025 [US3] In `.github/workflows/rebase.yml`, add the merge-arm conflict agent step reusing `wing-commander-tool-args` (default allowed tools `Read,Edit,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git merge --continue:*),Bash(git merge --abort:*)`), the same `inputs.model`, `--max-turns`, turn-ceiling and agent-verdict composites, and a merge-analogue prompt (research D7). The agent gets no `git commit`, `git push`, or `gh`.
+- [X] T026 [US3] In `.github/workflows/rebase.yml`, add the merge-arm verify step calling `wc_sync_from_main.py verify-scope` and setting `push`/`escalate` outputs as the rebase arm does; publish only on pass.
+- [X] T027 [US3] In `.github/workflows/rebase.yml` `Abandon and escalate`, run `git merge --abort` under merge, keep label `rebase:blocked` and the `<!-- wing-commander-rebase: blocked … -->` marker unchanged, and use the merge prose (heading "Spec branch sync needs a human", remedy `git merge origin/$DB` and push, callout summary "Merge main into this branch") only under `merge` (FR-008, research D8).
+- [X] T028 [US3] Confirm the metrics, execution-log, cost-line, over-budget and verdict steps in `.github/workflows/rebase.yml` also run for the merge arm with no pasted copies (FR-010); reuse `wing-commander-metrics-summary`.
 - [ ] T029 [US3] Run `python .github/scripts/run-local-gates.py`, and the `review-step-gating` and `container-shell-safety` skills over the `rebase.yml` diff.
 
 **Checkpoint**: Every conflict ends in a verified published sync commit or an escalation (SC-005).
