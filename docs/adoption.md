@@ -1479,6 +1479,7 @@ calls "auto-rebase" — `rebase` is its canonical published id, and its triggers
 | Inputs | `model` (string, `claude-sonnet-5-5`); `max-turns` (number, `50`); `sync-method` (string, `rebase`; `rebase` or `merge`, the empty string reads as `rebase`, any other value fails the `discover` job before a branch is selected) |
 | Preconditions | none — discovers in-flight `spec/*` branches itself; empty discovery is a clean no-op |
 | Side effects | per-branch rebase onto your default branch: clean → force-push with lease; conflicting → agent resolution with a deterministic scope check; unresolvable → abandoned untouched + `rebase:blocked` escalation comment (deduped by SHA marker). With `sync-method: merge`: a branch that lacks the default branch gains one two-parent sync commit published with a plain push (never a force-push); a conflicting merge gets the same agent resolution and a deterministic scope check, and an unresolvable one is aborted untouched with the same `rebase:blocked` escalation |
+| Outputs | none |
 
 The reference wrapper feeds the input from the repository variable
 `WING_COMMANDER_SPEC_BRANCH_SYNC` (default `rebase`; see
@@ -1488,7 +1489,6 @@ on the next run; history a past rebase already rewrote is not restored.
 Merge sync assumes the final merge of a spec branch into your default branch is
 a squash merge, so the sync commits never reach the default branch's history.
 That is documentation only: nothing checks the repository's merge method.
-| Outputs | none |
 
 ### pr-conversation
 

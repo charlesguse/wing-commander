@@ -812,24 +812,27 @@ jobs:
               # The conflicted tree is the merge with markers in conflicted
               # paths only; exit 1 on conflict is expected, the tree is line 1.
               # Anything else on line 1 is a merge-tree failure: outcome=error.
+              # A merge-tree failure (git older than 2.38) only costs the
+              # conflict scope check: the merge itself still runs, and a clean
+              # one needs no tree. A conflict without a tree is an error.
               set +e
               conflicted_tree="$(git merge-tree --write-tree --no-messages "origin/$DB" HEAD | head -n 1)"
               set -e
               printf '%s\n' "$conflicted_tree" > "$RUNNER_TEMP/conflicted-tree.txt"
-              if ! [[ "$conflicted_tree" =~ ^[0-9a-f]{40,64}$ ]]; then
+              set +e
+              git merge --no-ff --no-commit "origin/$DB"
+              rc=$?
+              set -e
+              if [ "$rc" -ne 0 ] && ! [[ "$conflicted_tree" =~ ^[0-9a-f]{40,64}$ ]]; then
                 rc=2
-              else
-                set +e
-                git merge --no-ff --no-commit "origin/$DB"
-                rc=$?
-                set -e
               fi
               if [ "$rc" -eq 0 ]; then
                 git commit --allow-empty -m "sync: merge $DB into ${SPEC_PREFIX}$SLUG"
                 outcome=clean
-              elif unmerged="$(git -c core.quotepath=off diff --name-only --diff-filter=U)" && [ -n "$unmerged" ]; then
+              elif [ "$rc" -ne 2 ] && unmerged="$(git -c core.quotepath=off diff --name-only --diff-filter=U)" && [ -n "$unmerged" ]; then
                 outcome=conflict
                 printf '%s\n' "$unmerged" > "$RUNNER_TEMP/conflict-manifest.txt"
+                printf '%s\n' "$unmerged" > "$RUNNER_TEMP/conflict-manifest.seed.txt"
               else
                 git merge --abort || true
                 outcome=error
@@ -1144,6 +1147,14 @@ jobs:
       # agent-appended conflict manifest admits only paths inside the project
       # folder, so a resolution can never widen a commit outside it. Same
       # `if:` as the scope check below, plus a subfolder project.
+      # sync-method merge: the agent must not widen the allowed path set, so
+      # the manifest is put back to the deterministic seed before narrowing.
+      - name: Restore the seeded conflict manifest
+        id: manifest-restore
+        shell: bash
+        if: always() && steps.attempt.outputs.outcome == 'conflict' && inputs.sync-method == 'merge'
+        run: cp "$RUNNER_TEMP/conflict-manifest.seed.txt" "$RUNNER_TEMP/conflict-manifest.txt"
+
       - name: Narrow the conflict manifest to the project folder
         id: manifest-filter
         if: always() && steps.attempt.outputs.outcome == 'conflict' && matrix.project != ''
@@ -1334,7 +1345,7 @@ jobs:
               refspec="$(python3 .wing-commander-pipeline/.github/scripts/wc_sync_from_main.py publish-refspec "${SPEC_PREFIX}$SLUG")" || return 1
               out="$(git push origin "$refspec" 2>&1)" && return 0
               printf '%s\n' "$out" >&2
-              if printf '%s' "$out" | grep -q '\[rejected\]'; then echo "(stale info)" >&2; fi
+              if printf '%s' "$out" | grep -qE '\[(remote )?rejected\]'; then echo "(stale info)" >&2; fi
               return 1
             else
               LC_ALL=C git push --force-with-lease origin "HEAD:refs/heads/${SPEC_PREFIX}$SLUG"

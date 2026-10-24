@@ -265,7 +265,9 @@ def suite(src, quiet=False):
 
 # Single home (CLAUDE.md "Shared logic has exactly one home"): method
 # validation and the conflict-marker scan live only in the helper.
-COPY_SIGNS = ("accepted values are 'rebase' and 'merge'", "(<<<<<<<|>>>>>>>)")
+# The marker sign is the helper's own compiled pattern, so a verbatim copy is
+# caught and an unrelated marker regex elsewhere does not trip the gate.
+COPY_SIGNS = ("accepted values are 'rebase' and 'merge'", wc_sync_from_main.MARKER.pattern)
 
 
 def copies_of_helper_logic(files):
@@ -314,6 +316,11 @@ def main():
     select = stage.find("name: Select in-flight branches")
     check("an invalid sync-method fails discover before branches are selected",
           0 < validate < select and "validate-method" in stage[validate:select], "")
+
+    restore = stage.find("name: Restore the seeded conflict manifest")
+    narrow = stage.find("name: Narrow the conflict manifest to the project folder")
+    check("the merge arm restores the seeded manifest before narrowing it",
+          0 < restore < narrow and "conflict-manifest.seed.txt" in stage[restore:narrow], "")
 
     mutations = (
         ("verdict guard", 'if verdict != "healthy":', "if False:"),

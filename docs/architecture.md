@@ -752,7 +752,7 @@ next rebase flattens them with everything else.
 History readers cope with both: `wc_convergence.py` attributes commits that
 arrived through a sync commit's second parent to the default branch and counts
 the sync commit's own conflict resolution as lifecycle work; after a rebase its
-share and churn cells read `n/a — rebase rewrites history; merge sync avoids it`.
+share and churn cells read `n/a — usually a rebase or force-push rewrote history; merge sync avoids it`.
 
 ## Lifecycle review gate (`lifecycle-review-gate.yml`, no wrapper — `specs/062-lifecycle-review-gate/`)
 
