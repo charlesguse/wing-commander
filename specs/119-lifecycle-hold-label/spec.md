@@ -47,6 +47,13 @@ Settled by the request (from #994's clarify and owner decisions, carried in by #
 - Q: Analyze-retry auto-release needs to know who set the hold, which FR-018 bans recording; what does retry do? → A: **Retry only posts a fresh verdict and never removes the label** (option a); a maintainer releases. The retry reads the constitution from the default branch and spec.md/tasks.md from the lifecycle branch at re-run time.
 - Q: Should a hold block the lifecycle review gate's auto-merge? → A: **Yes** (option a): no hold label is one more merge precondition.
 
+### Session 2026-10-26 (owner, after the second spec PR review)
+
+- Q: FR-022 makes "no hold label" a ninth lifecycle-merge condition, but constitution X names "all eight of its gates"; how is that reconciled? → A: **A constitution X amendment PR is filed alongside this feature** (option a), so the count stays exact. The amendment stays human-merged (constitution V); it lands before the final PR that ships FR-022 is merged.
+- Q: Keep the default that a strict stop on an issue in `stage:spec`/`stage:clarify` sets the hold and clarify ignores that comment? → A: **Keep it** (FR-024).
+- Q: Should held lifecycles appear on the daily Board status report? → A: **Yes, later**: a Maintenance backlog (#889) line after this feature, not part of it (Out of Scope).
+- Q: Should `@someone stop` (the shared parser drops a leading handle) set a hold? → A: **Keep the shared parser as it is** (FR-020); a wrong hold costs one label removal (Assumptions).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A maintainer holds a lifecycle and implement stops building until they release it (Priority: P1)
@@ -172,7 +179,7 @@ The owner reads the held question and chooses one of four answers, each through 
 - **FR-019**: The hold check MUST have one home (a composite or shared script) consumed by implement and fold-dispatch, and a gate MUST fail when either consumer stops calling it or when a second copy of the check appears in a workflow (CLAUDE.md "Shared logic has exactly one home").
 - **FR-020**: The strict stop parsing MUST reuse `board_stop_check.py`'s parser rather than a copy.
 - **FR-021**: An implement cycle that ends at the hold check (FR-002), including a fail-closed read (FR-004), MUST end in an outcome that implement's stall handling and the watchdog read as held, not as a failure, a stall or lost progress: it MUST NOT apply `stage:stalled` and MUST NOT lead the watchdog to file or report a defect. A fixture MUST show a held cycle's run is not classified as lost progress.
-- **FR-022**: The lifecycle review gate's merge preconditions MUST include "the lifecycle issue does not carry the hold label", read from a freshly fetched view at merge time and failing closed when the labels cannot be read, and the readiness report MUST name the hold as the unmet condition. This feature updates spec 062's `contracts/readiness-and-merge.md`, which today defines `may_merge` as the conjunction of eight conditions.
+- **FR-022**: The lifecycle review gate's merge preconditions MUST include "the lifecycle issue does not carry the hold label", read from a freshly fetched view at merge time and failing closed when the labels cannot be read, and the readiness report MUST name the hold as the unmet condition. This feature updates spec 062's `contracts/readiness-and-merge.md`, which today defines `may_merge` as the conjunction of eight conditions, and a constitution X amendment (human-merged, constitution V) changes "all eight of its gates" to name the hold condition; that amendment MUST be merged before the final PR that ships this requirement.
 - **FR-023**: pr-conversation MUST implement the drop as a deterministic step, not an agent action: from a maintainer's feedback comment on the lifecycle PR it reads the fold tasks the comment names (fold tasks carry no task id today, only the `Review finding:` / `Recurring review finding:` title line the gate writes; the plan fixes the accepted form, parsed deterministically, without adding a task id or marker), removes exactly those tasks from tasks.md when each is an unchecked fold task still present, and commits the removal alone in its own commit that identifies it as a drop, through the fold-queue ticket and push path pr-conversation's feedback folds already use (spec 074), so it is serialized with folds and the implement cycles they dispatch without a new lock. A comment the drop action handles MUST NOT also be classified and folded by pr-conversation's agent as maintainer feedback. It MUST run while the lifecycle is held, MUST NOT dispatch implement on a held lifecycle (FR-003), MUST reply naming what it removed and what it refused, and MUST be the only removal FR-017 counts. Each branch (removed, unknown task, not a fold task, already checked off, already absent, non-maintainer) MUST have a checked-in fixture.
 
 - **FR-024**: clarify MUST NOT treat a comment that sets the hold under FR-005 as an answer to its questions, and MUST NOT start a run for it, on a lifecycle issue in `stage:spec` or `stage:clarify`.
@@ -202,6 +209,7 @@ The owner reads the held question and chooses one of four answers, each through 
 - Only maintainers can add or remove labels on GitHub, so label changes need no further authorization check.
 - Spec 116's convergence stories are on main (#1062). `wc_convergence.py`'s `evaluate` already takes a `dismissed` list and subtracts it from recurrences and counts, but no loop passes one today (spec 116 `contracts/convergence-signals.md`); this feature supplies that list by derivation from tasks.md (FR-017), not by writing new state.
 - The board loop's eligibility exclusions are unchanged: a lifecycle still never enters the board loop; this feature only reuses the strict stop parser.
+- The strict stop parser is reused unchanged (FR-020), including its documented acceptance of a first line that starts with an @handle (`@alice stop`): such a comment from a maintainer sets a hold, and releasing a hold set that way costs one label removal (owner decision 2026-10-26).
 - pr-conversation's existing `stop` behaviour on PRs (cancel in-flight runs) is unchanged by this feature, except that on a lifecycle PR its reply to a classified (non-strict) `stop` also tells the maintainer how to set the hold (FR-005).
 
 ## Out of Scope
@@ -210,3 +218,4 @@ The owner reads the held question and chooses one of four answers, each through 
 - Cancelling an implement run already in progress when a hold is set.
 - The shared reviewer-judgement procedure (spec 116 Story 5).
 - Any change to `stage:stalled` semantics or to the board loop's `board:stalled`.
+- Listing held lifecycles on `board-status.yml`'s daily Board status report (wanted later; tracked on the Maintenance backlog, #889).
