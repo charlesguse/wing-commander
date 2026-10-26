@@ -20,9 +20,7 @@
 - [x] All acceptance scenarios are defined
 - [x] Edge cases are identified
 - [x] Scope is clearly bounded
-- [ ] Dependencies and assumptions identified (spec review: FR-002 needs
-  an Actions permission the App's documented set does not grant; see
-  Assumptions)
+- [x] Dependencies and assumptions identified
 
 ## Feature Readiness
 
@@ -48,3 +46,13 @@
   FR-005b/FR-005c, and defined the dispatcher as the triggering actor. Made
   FR-006 testable, kept the FR-009 fallback, and narrowed FR-008. The App's
   missing Actions permission still waits on the owner.
+- Owner decision of 2026-10-26, after the spec PR review: remedy B
+  replaces A. Each implement and finalize run persists its own records as
+  its last job (FR-002), and the dispatch token is unchanged (FR-010).
+  tasks and rebase stay out of scope (Q2 (a)). The clarify Q2 (C) answer
+  is moot. FR-005/FR-005a–c, the listener user story and the dispatch-actor
+  entity are marked superseded. FR-007, FR-008 and FR-009 are restated for
+  B, and FR-011 (listener verdicts unchanged) and SC-005 (failed and
+  cancelled runs) are added. The Actions-permission dependency no longer
+  applies. The remaining dependencies are in Assumptions, for the plan to
+  verify: artifacts listable mid-run, and cancellation-tolerant gating.

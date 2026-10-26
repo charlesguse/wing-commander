@@ -44,16 +44,20 @@ these runs today. The watchdog lists `implement` and `finalize` among its
 completion triggers, the watchdog's self-verifier (8b) listens to every
 watchdog completion, and the fold-cycle guard listens to `implement`
 completions (acting on cancellations). None of these currently fire for
-pipeline-dispatched runs, so any remedy that makes completions visible again
-changes their behaviour too.
+pipeline-dispatched runs. A remedy that made those completions visible
+would change all of their behaviour too.
 
-The App's documented permission set (`docs/setup.md`: Contents, Issues and
-Pull requests, "exactly these three") has no Actions permission, and the
-token-permission gate (Gate 12) checks every App-token call against that
-set. Dispatching a workflow needs Actions: write, which is why every
-dispatch site uses the built-in token today. Only implement's dispatch step
-has `APP_TOKEN` in its environment. tasks' and the fold dispatch
-composite's dispatch steps do not.
+Making completions visible by dispatching with the App token is not
+available either. The App's documented permission set (`docs/setup.md`:
+Contents, Issues and Pull requests, "exactly these three") has no Actions
+permission, and the token-permission gate (Gate 12) checks every App-token
+call against that set. Dispatching a workflow needs Actions: write, which is
+why every dispatch site uses the built-in token today.
+
+The remedy this spec adopts (owner, 2026-10-26) leaves dispatch alone:
+each implement and finalize run persists its own metrics record as its
+last job, so freshness no longer depends on who dispatched the run or on
+any completion trigger firing.
 
 ## Clarifications
 
@@ -64,11 +68,34 @@ composite's dispatch steps do not.
   in the dispatch step's env), so pipeline-dispatched implement, finalize
   and fold re-drive completions fire `wing-commander-metrics-persist.yml`'s
   `workflow_run` job and spec 058 FR-030(a) holds as written.
+  *Superseded by the 2026-10-26 session: the App has no Actions permission
+  (see Background).*
 - Q: How should the other completion listeners behave for
   pipeline-dispatched completions? → A: (C) The fold-cycle guard fires for
   pipeline-dispatched implement completions. The watchdog's `workflow_run`
   trigger does not; it keeps today's behaviour for those runs through an
   explicit filter on the run's dispatcher, and a gate enforces that filter.
+  *Moot since the 2026-10-26 session: no dispatch changes, so no listener
+  starts firing and there is nothing to filter.*
+
+### Session 2026-10-26 (owner, after the spec PR review)
+
+- Q: Remedy A needs an Actions permission the App does not have. Which
+  remedy replaces it? → A: (B) Each implement and finalize run persists its
+  own metrics record as its last job, whoever dispatched it. The dispatch
+  token stays `github.token`, so no listener starts firing that does not
+  fire today. Spec 058's FR-030 model is restated for these two stages
+  (FR-008). The record is de-duplicated against the `workflow_run` path
+  (which person-dispatched runs still fire) and the daily sweep by the
+  existing record-key idempotence, not a second scheme. The persisting job
+  reuses the existing persistence code, runs even when an earlier job
+  failed or was cancelled where a record exists, and holds no App token.
+- Q: Should `tasks` (dispatched by plan) and `rebase` (which re-dispatches
+  itself) be covered too? → A: (a) No. Both stay out of scope; the
+  orchestrator adds a line for them to the Maintenance backlog (#889).
+- Consequence: the 2026-10-24 Q2 answer (C) is moot. FR-005 (with
+  FR-005a–c), the user story and edge cases about listeners newly firing,
+  and the dispatcher entity are removed or marked superseded below.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -86,23 +113,27 @@ hides the spend the owner most needs to see.
 **Independent Test**: Let the pipeline dispatch an implement cycle on a
 lifecycle (no human dispatch). After it completes, check that its record is
 in the records file and its cost is reflected in the rollup comment well
-before the next daily sweep.
+before the next daily sweep, and that the run's own last job is what
+persisted it.
 
 **Acceptance Scenarios**:
 
-1. **Given** an implement run dispatched by the pipeline itself, **When** it
-   completes, **Then** its metrics record is persisted and reflected in the
-   lifecycle's rollup within the freshness window (SC-001), without waiting
-   for the daily sweep.
-2. **Given** a finalize run dispatched by the pipeline itself, **When** it
-   completes, **Then** the same holds.
+1. **Given** an implement run dispatched by the pipeline itself, **When** its
+   stage job finishes, **Then** the run's own persisting job persists its
+   metrics records and re-renders the lifecycle's rollup within the
+   freshness window (SC-001), without waiting for the daily sweep.
+2. **Given** a finalize run dispatched by the pipeline itself, **When** its
+   stage job finishes, **Then** the same holds.
 3. **Given** a fold's implement re-drive dispatched by the pipeline (the
    fold dispatch composite, from pr-conversation or the lifecycle review
-   gate), **When** it completes, **Then** the same holds.
-4. **Given** implement cycle 1 dispatched by tasks, **When** it completes,
-   **Then** the same holds.
+   gate, or the fold-cycle guard's recovery re-dispatch), **When** its
+   stage job finishes, **Then** the same holds.
+4. **Given** implement cycle 1 dispatched by tasks, **When** its stage job
+   finishes, **Then** the same holds.
 5. **Given** a run dispatched by a person, **When** it completes, **Then**
-   its record is persisted exactly as promptly as today (no regression).
+   its records are persisted at least as promptly as today (no
+   regression), and the later `workflow_run` persistence run for it
+   appends nothing new.
 
 ---
 
@@ -124,40 +155,43 @@ present exactly once.
 
 1. **Given** a pipeline-dispatched run has completed and the freshness
    window has passed, **When** a reader loads the records file, **Then** the
-   run's record is present.
-2. **Given** the run's record was persisted promptly, **When** the daily
-   sweep later runs, **Then** it does not add a second copy of the record.
+   run's records are present.
+2. **Given** the run's records were persisted by its own persisting job,
+   **When** the `workflow_run` persistence path (person-dispatched runs) or
+   the daily sweep later encounters the same run, **Then** neither adds a
+   second copy of any record.
 
 ---
 
-### User Story 3 - No unintended change to other completion listeners (Priority: P2)
+### User Story 3 - A failed or cancelled run's spend is still visible promptly (Priority: P2)
 
-The owner can rely on the watchdog, the fold-cycle guard, and any other
-completion listener behaving deliberately for pipeline-dispatched implement
-and finalize runs — either unchanged, or changed in a way this spec states
-and accepts.
+When an implement or finalize run fails, or is cancelled after it has
+started work (for example pr-conversation cancelling an in-flight implement
+run before a fold re-drive), the records it had already emitted still reach
+the rollup promptly. Failed and cancelled runs still cost money.
 
-**Why this priority**: Making completions visible again can newly start
-watchdog inspections (billed minutes, possible filings) and fold-cycle
-guard runs that have never run for these completions before.
+**Why this priority**: A run that dies mid-cycle is exactly the case the
+owner investigates; a rollup that hides its spend until the next morning
+hides the cost of the failure.
 
-**Independent Test**: Inventory every workflow listening to implement,
-finalize, or pr-conversation completions and confirm each one's behaviour on
-a pipeline-dispatched run matches what FR-005 decides.
+**Independent Test**: Cancel a pipeline-dispatched implement run after its
+agent step has emitted a record. Confirm its persisting job still runs and
+the record is in the records file before the next sweep. Separately, cancel
+a run before any of its jobs start and confirm its persisting job does not
+start.
 
 **Acceptance Scenarios**:
 
-1. **Given** a pipeline-dispatched implement run completes, **When** the
-   remedy is in place, **Then** the fold-cycle guard runs for it as it does
-   for a person-dispatched implement completion (FR-005a).
-2. **Given** a pipeline-dispatched implement or finalize run completes,
-   **When** the remedy is in place, **Then** the watchdog's completion
-   trigger is filtered out by the run's dispatcher and behaves as today
-   (FR-005b), and the watchdog's self-verifier (8b) neither fails nor files
-   anything for the filtered-out watchdog run.
-3. **Given** a person-dispatched implement or finalize run completes,
-   **When** the remedy is in place, **Then** the watchdog acts on it exactly
-   as today.
+1. **Given** an implement or finalize run whose stage job failed after
+   emitting a record, **When** the stage job ends, **Then** the persisting
+   job runs and persists the emitted records.
+2. **Given** an implement or finalize run cancelled after its stage job
+   started, **When** the run is cancelled, **Then** the persisting job
+   still runs and persists whatever records were emitted.
+3. **Given** a run cancelled before any of its jobs started, **When** the
+   run concludes, **Then** the persisting job does not start (it has no
+   record to persist, and a started job would change how the fold-cycle
+   guard classifies the cancellation; FR-011).
 
 ---
 
@@ -168,8 +202,8 @@ whose records rely on the sweep), the rollup comment says so, so the owner
 does not read a partial total as complete.
 
 **Why this priority**: Honest labelling is the fallback that makes any
-remaining lag harmless (for example a run dispatched while the App token
-was unavailable, or run kinds that remain sweep-only).
+remaining lag harmless (for example a run whose persisting job failed, or
+run kinds that remain sweep-only).
 
 **Independent Test**: Render a rollup for a lifecycle and check it states
 when the last sweep ran and that runs completed since then may be missing
@@ -183,46 +217,43 @@ from the total.
 
 ---
 
+### Superseded: User Story "No unintended change to other completion listeners"
+
+Removed by the 2026-10-26 session. It existed because remedy A made
+pipeline-dispatched completions visible to the watchdog, 8b and the
+fold-cycle guard. Under B the dispatch token does not change, so those
+listeners keep firing exactly when they fire today. FR-010 and FR-011
+now state the no-change requirement.
+
 ### Edge Cases
 
-- A pipeline-dispatched run is cancelled or fails: its record (if it emits
-  one) must still be persisted promptly, matching how person-dispatched
-  failures are handled today.
-- The prompt persistence path itself fails (e.g. a transient API error):
-  the daily sweep remains the backstop and must still pick the run up.
-- The same run is persisted by both the prompt path and the sweep: the
-  records file must hold it once (existing de-duplication must cover the
-  new path).
-- The App token is unavailable or minting it fails at dispatch time: the
-  next stage must still be dispatched (pipeline progress outranks metrics
-  freshness); only freshness may degrade. The built-in-token fallback is
-  taken only when no App token is available. An App-token dispatch call
-  that fails or times out is never retried under the built-in token: GitHub
-  may already have accepted it, and a second dispatch would start two
-  cycles for the same spec.
-- An adopter whose wrapper passes no App credentials, or whose App
-  installation lacks the permission the dispatch needs: the dispatch falls
-  back as above, and the stage still progresses.
-- A watchdog run that the dispatcher filter (FR-005b) turns off still
-  completes, with conclusion `skipped` and an inspected-run conclusion that
-  is not `skipped`. Today's 8b self-verifier treats exactly that shape as a
-  watchdog regression and files a pipeline-defect, so the filter must be
-  one 8b recognises as deliberate.
-- A person re-runs an App-dispatched run: the run's original actor stays the
-  App, and only its triggering actor is the person. The re-run is
-  person-dispatched for FR-005b.
-- A pipeline-dispatched implement run is cancelled by the pipeline itself
-  (pr-conversation cancels in-flight implement runs before a fold re-drive):
-  the fold-cycle guard now sees that cancellation. Its existing
-  classification (only never-started, correlated runs, at most one
-  re-dispatch per cycle) must keep it from re-dispatching on top of the
-  pipeline's own re-drive.
-- A dispatch chain of many implement cycles: the remedy must not add a
-  persistence or listener run per cycle beyond what FR-005 accepts (one
-  persistence run and one fold-cycle guard run per cycle; no watchdog run).
-- A run dispatched with the built-in token because the App token was
-  unavailable: its completion fires no listener (as today), so its record
-  arrives via the sweep and the rollup discloses the possible gap (FR-006).
+- A run's stage job fails or is cancelled after starting: the persisting job
+  still runs and persists what was emitted (User Story 3).
+- A run is cancelled before any job starts, or its stage job is skipped by
+  its own `if:`: it emitted no record, so the persisting job does not run
+  (FR-002 gating). The sweep's existing skipped-run filter and FR-021's
+  zero-record no-op already cover such runs.
+- The persisting job itself fails (e.g. a transient API error, or the
+  append retries running out): the run's own outcome is unchanged (FR-007),
+  and the daily sweep remains the backstop that picks the run up.
+- The same run is persisted by its own persisting job, by the `workflow_run`
+  path (person-dispatched runs), and by the sweep: the records file holds
+  each record once, through the existing record-key idempotence (FR-004).
+- The persisting job runs before the run as a whole has concluded. Spec
+  043's persistence contract currently says persistence "runs only after
+  the origin run has concluded"; the plan must amend that live contract and
+  confirm that every record-emitting job's artifact is listable at that
+  point (the persisting job depends on every job that can emit one).
+- The implement and finalize stage jobs share a per-spec concurrency group
+  with the next cycle. The persisting job must not join that group, or it
+  would queue behind the next cycle it just helped dispatch.
+- A person re-runs a run, or re-runs only its failed jobs: the persisting
+  job runs again on that attempt and appends only records it has not seen.
+- A dispatch chain of many implement cycles: the remedy adds exactly one
+  persisting job per run (SC-004), and no new listener run, because the
+  dispatch token is unchanged.
+- An adopter's wrapper that does not add the persisting job keeps today's
+  behaviour (the published stages do not change on their own; FR-008).
 - Runs dropped entirely by the sweep (#1054) are a separate defect; this
   spec must not depend on that fix, nor mask it.
 
@@ -230,69 +261,111 @@ from the total.
 
 ### Functional Requirements
 
-- **FR-001**: The metrics record of every completed implement, finalize, and
+- **FR-001**: The metrics records of every completed implement, finalize, and
   fold-re-drive implement run MUST be persisted to the records file within
   the freshness window (SC-001), regardless of whether a person or the
   pipeline dispatched it.
-- **FR-002**: The mechanism that achieves FR-001 MUST be dispatching the
-  next stage with the App token instead of the built-in token at every site
-  that starts an implement or finalize run: tasks' implement cycle 1 (auto
-  and PR-merge modes), implement's next cycle and finalize, the fold
-  dispatch composite's implement re-drive, and the fold-cycle guard's
-  recovery re-dispatch. That makes those runs'
-  completions fire `wing-commander-metrics-persist.yml`'s `workflow_run`
-  job exactly as person-dispatched completions do.
+- **FR-002**: The mechanism that achieves FR-001 MUST be a persisting job
+  in each implement and finalize run, as that run's last job, that persists
+  the run's own records and re-renders the rollup. Specifically:
+  - It MUST depend on every job in the run that can emit a metrics record,
+    so it starts only after all of them have ended.
+  - It MUST run when the stage job's result is `success`, `failure` or
+    `cancelled` after the stage job started (a run cancelled mid-cycle
+    still persists). It MUST NOT run when the stage job was skipped, or
+    when the run was cancelled before any job started. In both cases no
+    record exists. When the persistence kill switch
+    (`WING_COMMANDER_METRICS_PAUSED`) is `true`, it MUST NOT run either.
+  - It MUST reuse the existing persistence implementation (the
+    `metrics-persist.yml` stage and the `wing-commander-metrics-persist`
+    composite it calls). It MUST NOT paste a copy of discovery, retrieval,
+    validation, append or rollup logic into a workflow (CLAUDE.md "Shared
+    logic has exactly one home").
+  - It MUST receive no App credentials: persistence uses the built-in token
+    today, and the job needs nothing more than the permissions the
+    `workflow_run` path's job holds.
+  - It MUST NOT be in the stage's per-spec concurrency group.
+  - It lives wherever constitution VII puts the destination choice: in
+    this repository's wrappers, which own the destination branch, path and
+    kill switch. The plan decides any declared stage input or output the
+    gating needs.
 - **FR-003**: Person-dispatched runs MUST keep their current prompt
-  persistence behaviour unchanged.
-- **FR-004**: Each run's record MUST appear in the records file exactly once
-  even when both the prompt path and the daily sweep encounter it.
-- **FR-005**: For pipeline-dispatched implement and finalize runs, the other
-  completion listeners MUST behave as follows:
-  - **FR-005a**: The fold-cycle guard MUST newly run for pipeline-dispatched
-    implement completions, exactly as it already does for person-dispatched
-    ones.
-  - **FR-005b**: The watchdog's `workflow_run` trigger MUST NOT newly act on
-    pipeline-dispatched implement and finalize completions; it MUST keep
-    today's behaviour for those runs through an explicit filter on the run's
-    dispatcher (the App identity that FR-002 dispatches with), while
-    continuing to act on person-dispatched completions as today. The
-    dispatcher is the triggering actor of the completed run attempt, so a
-    person's re-run of an App-dispatched run is inspected. A watchdog run
-    filtered out this way MUST NOT cause the watchdog self-verifier (8b) to
-    fail or file anything.
-  - **FR-005c**: A deterministic gate MUST fail if the watchdog's dispatcher
-    filter (FR-005b) is removed or no longer excludes the App-dispatched
-    implement and finalize completions, or if 8b no longer stands down for
-    a watchdog run that filter turned off.
+  persistence behaviour unchanged. The `workflow_run` trigger keeps listing
+  implement and finalize.
+- **FR-004**: Each record MUST appear in the records file exactly once even
+  when the persisting job, the `workflow_run` path and the daily sweep all
+  encounter its run. De-duplication MUST be the existing record-key
+  idempotence (spec 043; `record_key` embeds the run id). This feature
+  MUST NOT add a second de-duplication scheme.
+- **FR-005**: *Superseded (2026-10-26).* FR-005a (the fold-cycle guard newly
+  fires), FR-005b (the watchdog's dispatcher filter, and 8b standing down
+  for runs it filters out) and FR-005c (the gate holding that filter) only
+  made sense under remedy A. Under B no completion listener's firing
+  changes (FR-010).
 - **FR-006**: The rollup comment MUST state when the last daily sweep ran
   and that runs completed since then may be missing from the total, because
-  some records (sweep-only run kinds, built-in-token fallback dispatches, a
-  failed prompt persistence run) can still arrive only via the sweep.
-- **FR-007**: A failure in the prompt persistence path MUST NOT fail or block
-  the stage run or the dispatch of the next stage; the daily sweep MUST remain
-  the backstop.
-- **FR-008**: Spec 058 FR-030(a)'s contract — that stages whose records are
-  read back promptly keep a live completion-driven persistence — MUST be
-  true in practice for implement and finalize after this feature, as
-  written. This feature makes no claim for `tasks` (dispatched by plan) or
-  `rebase` (which re-dispatches itself), which also use the built-in token
-  and stay sweep-only for pipeline-dispatched runs.
-- **FR-009**: A deterministic gate MUST fail if a pipeline dispatch of
-  implement or finalize (every site FR-002 names) dispatches with the
-  built-in token other than as the no-App-token fallback the edge cases
-  allow.
+  some records can still arrive only via the sweep: sweep-only run kinds,
+  and runs whose persisting job failed or never ran.
+- **FR-007**: A failure of the persisting job MUST NOT fail, block or delay
+  the stage job or the dispatch of the next stage. It MUST NOT turn a run
+  whose stage job succeeded into a failed run as seen by listeners, the
+  rollup and readers of run conclusions. The failure MUST stay visible in
+  the persisting job's own summary and annotations, and the daily sweep
+  MUST remain the backstop.
+- **FR-008**: Spec 058 FR-030's trigger model is restated for implement and
+  finalize. Their prompt persistence comes from each run's own persisting
+  job (FR-002), not from the completion trigger. The completion trigger
+  stays for person-dispatched runs and the other promptly-read stages. The
+  daily sweep stays as the backstop (FR-030(c)). Spec 058's spec.md is a
+  merged historical record and is not edited. The plan MUST update the live
+  contracts that state the trigger model:
+  `specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md`
+  (its "unchanged nine-stage path" for completion-triggered runs) and spec
+  043's `contracts/persist-workflow.md` ("runs only after the origin run
+  has concluded") and `contracts/wrapper-contract.md`. This feature makes
+  no claim for `tasks` (dispatched by plan) or `rebase` (which
+  re-dispatches itself). Their pipeline-dispatched runs stay sweep-only.
+- **FR-009**: A deterministic gate MUST fail when any of these holds:
+  - the implement or finalize wrapper lacks the persisting job;
+  - the persisting job's gating would skip a stage job that failed, or one
+    cancelled after it started;
+  - the persisting job does not depend on every record-emitting job in the
+    run;
+  - the persisting job reaches persistence other than through the existing
+    stage or composite;
+  - the persisting job is handed App credentials;
+  - the persisting job joins the per-spec concurrency group.
+  The plan names which existing gate this extends (e.g. Gate 79's
+  record-owner checks).
+- **FR-010**: Every site that starts an implement or finalize run MUST keep
+  dispatching with the built-in token. This feature MUST NOT change any
+  dispatch token, so the watchdog, its self-verifier (8b) and the
+  fold-cycle guard fire for exactly the completions they fire for today.
+- **FR-011**: The persisting job MUST NOT change the verdict of any
+  completion listener that inspects the run's jobs when it does fire
+  (person-dispatched runs). In particular the fold-cycle guard's
+  never-started classification counts any job with a start time, so the
+  persisting job MUST NOT start in a run cancelled before its other jobs
+  started (FR-002). The watchdog's inspection MUST NOT read the persisting
+  job's outcome as the stage's outcome.
 
 ### Key Entities
 
 - **Metrics record**: per-run cost/usage record uploaded by a stage run and
-  appended to `records.jsonl`; keyed by run id.
+  appended to `records.jsonl`; identified by its `record_key` (run id, job
+  id, step index).
+- **Persisting job**: the last job of an implement or finalize run. It
+  calls the existing persistence stage for its own run id and re-renders
+  the rollup.
 - **Rollup comment**: per-lifecycle summary comment on the lifecycle issue,
-  re-rendered from the records file by live persistence runs and the sweep.
-- **Dispatch actor**: the identity that started a stage run (a person, the
-  App, or `github-actions[bot]`); it decides whether completion listeners fire.
+  re-rendered from the records file by persisting jobs, live persistence
+  runs and the sweep.
 - **Completion listeners**: workflows triggered by a stage run's completion
-  — metrics persistence, watchdog, fold-cycle guard — plus the watchdog
-  self-verifier (8b), which is triggered by every watchdog completion.
+  (metrics persistence, watchdog, fold-cycle guard), plus the watchdog
+  self-verifier (8b). This feature leaves when they fire unchanged
+  (FR-010).
+- *Dispatch actor*: superseded (2026-10-26). Who dispatched a run no longer
+  decides whether its records are persisted promptly.
 
 ## Success Criteria *(mandatory)*
 
@@ -303,25 +376,45 @@ from the total.
   15 minutes of completing (today: 0% of `github-actions[bot]`-dispatched
   runs before the next sweep).
 - **SC-002**: Zero duplicate records for any run after a full lifecycle plus
-  one daily sweep.
+  one daily sweep, including person-dispatched runs persisted by both the
+  persisting job and the `workflow_run` path.
 - **SC-003**: Zero stage dispatches lost or delayed because of the change
-  (every next-stage dispatch that happened before still happens).
-- **SC-004**: The number of extra workflow runs added per implement cycle is
-  bounded and stated: at most one persistence run per completed run plus one
-  fold-cycle guard run per completed implement run (FR-005a); the watchdog
-  adds no inspections for pipeline-dispatched completions (FR-005b).
+  (every next-stage dispatch that happened before still happens, at the
+  same point in the run).
+- **SC-004**: The extra runner work per implement or finalize run is
+  bounded and stated: at most one persisting job (plus its image-check job
+  when a container image is configured). It adds no new workflow run and
+  no new watchdog, 8b or fold-cycle guard run. Person-dispatched runs keep
+  their existing `workflow_run` persistence run, which appends nothing new.
+- **SC-005**: Every implement and finalize run whose stage job failed, or
+  was cancelled after starting, during the measured lifecycle has its
+  emitted records in the records file within the SC-001 window.
 
 ## Assumptions
 
-- App-dispatched runs fire completion triggers as person-dispatched ones
-  do.
-- The App's documented permission set has no Actions permission today (see
-  Background), so FR-002 cannot work until the owner decides how dispatches
-  get one. That decision is not yet recorded in this spec.
+- Artifacts uploaded by a run's earlier jobs can be listed and downloaded
+  through the Actions API while the run is still in progress, and those
+  jobs' ids are already resolvable, so the persisting job can derive the
+  same `record_key` the post-completion path does. The plan verifies this
+  before relying on it.
+- A job gated to run after a cancelled job still runs when the run is
+  cancelled, given the right status function. The plan states which
+  function the gating uses and why (`review-step-gating` skill).
 - The daily sweep stays as the backstop; this feature does not remove it.
 - The sweep's dropping of some runs entirely (#1054) is out of scope and
   tracked separately.
-- pr-conversation's other uses of the built-in token (cancelling runs,
-  listing runs) are out of scope; only dispatches that start a stage run
-  whose completion matters are in scope.
 - Board-loop and watchdog records remain sweep-only as 058 and #889 decided.
+
+## Out of Scope
+
+- Changing any dispatch token, or granting the App an Actions permission
+  (remedy A, superseded 2026-10-26).
+- `tasks` runs (dispatched by plan) and `rebase` runs (which re-dispatch
+  themselves). Their pipeline-dispatched runs stay sweep-only; the
+  orchestrator records them as a Maintenance backlog (#889) line (owner,
+  2026-10-26, Q2 (a)).
+- Removing implement and finalize from the `workflow_run` trigger list.
+  The trigger stays for person-dispatched runs (FR-003).
+- pr-conversation's other uses of the built-in token (cancelling runs,
+  listing runs).
+- The sweep dropping runs entirely (#1054).
