@@ -35,6 +35,7 @@
   #1055: FR-002 uses App-token dispatch (remedy A); FR-005 lets the
   fold-cycle guard fire for pipeline-dispatched implement completions while
   the watchdog filters them out by dispatcher, enforced by a gate (option C).
+  Both superseded by the owner decision of 2026-10-26 below (remedy B).
 - The spec names pipeline workflows, tokens and trigger kinds because this
   is an infrastructure feature whose "users" are the owner and pipeline
   automation; those names are the domain vocabulary, not implementation
@@ -56,3 +57,12 @@
   cancelled runs) are added. The Actions-permission dependency no longer
   applies. The remaining dependencies are in Assumptions, for the plan to
   verify: artifacts listable mid-run, and cancellation-tolerant gating.
+- Independent review of PR #1086 (2026-10-30) at b9c42eb5: FR-002's gating
+  restated so it is buildable from the wrapper (the reusable call's result
+  cannot tell a mid-cycle cancel from one before the stage job started; a
+  cancelled job's outputs may be unreadable), and the stage's own
+  `!cancelled()` gate named as needing a defaulted input. FR-007 names the
+  no-`continue-on-error` constraint and requires a defaulted stage input.
+  Edge cases added: the `stalled` job's indirect concurrency wait, in-progress
+  readers, and record_key stability across re-run attempts. US3's example
+  corrected to the `stop` procedure; Background's sweep time reconciled.

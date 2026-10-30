@@ -19,8 +19,9 @@ recovery re-dispatch start a fold's implement re-drive. Those runs' actor
 is `github-actions[bot]`. GitHub does
 not start workflows from events caused by that token, so when these runs
 complete, the metrics persistence wrapper's completion trigger never fires
-for them. Their metrics records are written only by the daily 06:37 UTC
-sweep.
+for them. Their metrics records are written only by the daily sweep
+(scheduled for 06:37 UTC; scheduled runs start late, so it lands around
+07:00Z in the evidence below).
 
 Spec 058 FR-030(a) keeps the live completion trigger for the stages "whose
 records are read back promptly", and lists `implement` and `finalize` among
@@ -166,8 +167,9 @@ present exactly once.
 ### User Story 3 - A failed or cancelled run's spend is still visible promptly (Priority: P2)
 
 When an implement or finalize run fails, or is cancelled after it has
-started work (for example pr-conversation cancelling an in-flight implement
-run before a fold re-drive), the records it had already emitted still reach
+started work (for example a maintainer's `stop` command on the PR, which
+pr-conversation carries out by cancelling the in-progress implement run),
+the records it had already emitted still reach
 the rollup promptly. Failed and cancelled runs still cost money.
 
 **Why this priority**: A run that dies mid-cycle is exactly the case the
@@ -230,7 +232,8 @@ now state the no-change requirement.
 - A run's stage job fails or is cancelled after starting: the persisting job
   still runs and persists what was emitted (User Story 3).
 - A run is cancelled before any job starts, or its stage job is skipped by
-  its own `if:`: it emitted no record, so the persisting job does not run
+  its own `if:`: it emitted no record. In the first case the persisting job
+  does not start; in the second it may start as a zero-record no-op
   (FR-002 gating). The sweep's existing skipped-run filter and FR-021's
   zero-record no-op already cover such runs.
 - The persisting job itself fails (e.g. a transient API error, or the
@@ -246,9 +249,30 @@ now state the no-change requirement.
   point (the persisting job depends on every job that can emit one).
 - The implement and finalize stage jobs share a per-spec concurrency group
   with the next cycle. The persisting job must not join that group, or it
-  would queue behind the next cycle it just helped dispatch.
+  would queue behind the next cycle it just helped dispatch. It can still
+  wait on that group indirectly: from the wrapper it can only depend on the
+  whole reusable call, and that call also contains the stage's `stalled`
+  job, which is in the group. When the stage job fails after it has
+  already dispatched the next cycle, `stalled` (and so the persisting job)
+  waits behind that cycle. The plan MUST show how the persisting job meets
+  SC-001 in that case, or state it as a measured exception to SC-001.
+- The extra job keeps each implement and finalize run in progress for
+  longer. Readers that act on an in-progress implement run (pr-conversation's
+  `stop` procedure, the board loop's stand-down and in-progress head refs)
+  then see a run whose stage job has already finished. The plan MUST list
+  these readers and show that none of them changes behaviour in a way
+  SC-003 forbids. A `stop` that cancels a run during its persisting job
+  leaves its records to the sweep, which FR-006's label covers.
 - A person re-runs a run, or re-runs only its failed jobs: the persisting
   job runs again on that attempt and appends only records it has not seen.
+  The `record_key` embeds a job id that the persistence code resolves from
+  the run's job listing, and that listing shows the latest attempt; the
+  plan MUST verify that a record persisted on an earlier attempt keeps
+  the same key when a later attempt persists the run again. Today this
+  only happens on the `workflow_run` path for person-dispatched re-runs;
+  under this feature it happens for every re-run. If the key is not stable,
+  that is a defect in the existing record-key derivation, fixed there
+  (FR-004 forbids a second scheme), not worked around in the persisting job.
 - A dispatch chain of many implement cycles: the remedy adds exactly one
   persisting job per run (SC-004), and no new listener run, because the
   dispatch token is unchanged.
@@ -270,17 +294,35 @@ now state the no-change requirement.
   the run's own records and re-renders the rollup. Specifically:
   - It MUST depend on every job in the run that can emit a metrics record,
     so it starts only after all of them have ended.
-  - It MUST run when the stage job's result is `success`, `failure` or
-    `cancelled` after the stage job started (a run cancelled mid-cycle
-    still persists). It MUST NOT run when the stage job was skipped, or
-    when the run was cancelled before any job started. In both cases no
-    record exists. When the persistence kill switch
-    (`WING_COMMANDER_METRICS_PAUSED`) is `true`, it MUST NOT run either.
+  - It MUST run when the stage job ended `success` or `failure`, or was
+    `cancelled` after it started (a run cancelled mid-cycle still
+    persists). It MUST NOT start when no other job in the run started (a
+    run cancelled while queued): no record exists, and FR-011 forbids it.
+    The wrapper sees only the reusable call's result, and that result is
+    `cancelled` both for a stage job cancelled mid-cycle and for one
+    cancelled before it started, for example while waiting in the per-spec
+    concurrency group after the run's earlier jobs (model resolution, the
+    image check, the cycle-start gate suite) had run. In that middle case,
+    and when the stage job was skipped by its own `if:`, the persisting job
+    MAY start, and then MUST be a zero-record no-op (spec 043 FR-021) that
+    appends nothing and does not fail. If the plan gates on a stage output
+    saying a record was emitted, it MUST first show that output is readable
+    from the wrapper when the emitting job was cancelled (a cancelled job's
+    outputs may never be published); otherwise that gate would skip
+    exactly the cancelled runs this bullet requires it to persist. When
+    the persistence kill switch (`WING_COMMANDER_METRICS_PAUSED`) is
+    `true`, it MUST NOT run.
   - It MUST reuse the existing persistence implementation (the
     `metrics-persist.yml` stage and the `wing-commander-metrics-persist`
     composite it calls). It MUST NOT paste a copy of discovery, retrieval,
     validation, append or rollup logic into a workflow (CLAUDE.md "Shared
-    logic has exactly one home").
+    logic has exactly one home"). On main that stage's own jobs never run
+    in a cancelled run (the image check's implicit `success()`, and
+    `persist`'s `!cancelled()` gate), so reuse alone cannot meet the
+    cancelled case above or SC-005. Any change that lets the stage run
+    there MUST be a declared, optional `workflow_call` input whose default
+    keeps today's gating for every existing caller (constitution VII); the
+    existing completion-trigger and sweep paths MUST NOT change behaviour.
   - It MUST receive no App credentials: persistence uses the built-in token
     today, and the job needs nothing more than the permissions the
     `workflow_run` path's job holds.
@@ -309,9 +351,15 @@ now state the no-change requirement.
 - **FR-007**: A failure of the persisting job MUST NOT fail, block or delay
   the stage job or the dispatch of the next stage. It MUST NOT turn a run
   whose stage job succeeded into a failed run as seen by listeners, the
-  rollup and readers of run conclusions. The failure MUST stay visible in
-  the persisting job's own summary and annotations, and the daily sweep
-  MUST remain the backstop.
+  rollup and readers of run conclusions. This covers every job the
+  persisting path adds, its image check included. A job that calls a
+  reusable workflow cannot set `continue-on-error`, and the persistence
+  composite exits non-zero on a listing or append failure by design, so
+  this tolerance MUST come from a declared, optional input on the
+  persistence stage whose default keeps today's fail-loud behaviour for
+  every existing caller (constitution VII). The failure MUST stay visible
+  in the persisting job's own summary and annotations (at least a
+  warning), and the daily sweep MUST remain the backstop.
 - **FR-008**: Spec 058 FR-030's trigger model is restated for implement and
   finalize. Their prompt persistence comes from each run's own persisting
   job (FR-002), not from the completion trigger. The completion trigger
@@ -322,7 +370,8 @@ now state the no-change requirement.
   `specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md`
   (its "unchanged nine-stage path" for completion-triggered runs) and spec
   043's `contracts/persist-workflow.md` ("runs only after the origin run
-  has concluded") and `contracts/wrapper-contract.md`. This feature makes
+  has concluded", and the stage's inputs, including any input FR-002 or
+  FR-007 adds) and `contracts/wrapper-contract.md`. This feature makes
   no claim for `tasks` (dispatched by plan) or `rebase` (which
   re-dispatches itself). Their pipeline-dispatched runs stay sweep-only.
 - **FR-009**: A deterministic gate MUST fail when any of these holds:
