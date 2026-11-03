@@ -214,10 +214,11 @@ def render(snap):
     lines.append("- **main:** {0}".format(ci_text))
     lines.append("- **last release:** {0}; auto-release {1}".format(
         rel_text, state("auto_release_paused", "**paused**", "on")))
-    # Every merge switch constitution X names, so the line says what the
-    # pipeline may merge on its own: the board loop's fix and Spec Kit bump
-    # PRs, whether it may push a workflow-file fix at all, and lifecycle
-    # final PRs.
+    # The switches as the owner set them, so the line says what the pipeline
+    # may do on its own: the board loop's kill switch, its merge switch for
+    # fix and Spec Kit bump PRs (constitution X), whether it may push a
+    # workflow-file fix at all (docs/setup.md), and the lifecycle merge
+    # switch. A paused loop merges nothing whatever its merge switch says.
     lines.append("- **board loop:** {0}; board auto-merge {1}; workflow-file fixes {2}; "
                  "lifecycle auto-merge {3}".format(
                      state("board_loop_paused", "**paused**", "running"),
