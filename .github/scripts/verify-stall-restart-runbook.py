@@ -260,7 +260,11 @@ def scenario(steps, seeded, iteration, root):
             continue
         rc, out, outputs, summary = run_step(
             BASH, steps[GUARD_STEP], repo,
-            {"STAGE": "stalled", "RECORDED": str(recorded), "ITERATION": value},
+            # HOLD_STATE=clear: the lifecycle is open and not held. A guard
+            # that proceeds only on state=clear must see it, or every
+            # round trip is withheld (#1106).
+            {"STAGE": "stalled", "RECORDED": str(recorded), "ITERATION": value,
+             "HOLD_STATE": "clear"},
             runner_temp)
         if rc != 0:
             failures.append(f"{where}: {GUARD_STEP!r} exited {rc}: "
