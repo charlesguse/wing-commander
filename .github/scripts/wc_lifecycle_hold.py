@@ -98,6 +98,34 @@ def set_hold(issue, reason, repo=None, hold_label=DEFAULT_HOLD_LABEL,
     return "already" if already else "true"
 
 
+def release_plan(issue_state, labels, branch_exists, spec_stage, recorded_iteration,
+                 spec_dir=""):
+    """FR-007: decide whether removing the hold label should dispatch implement.
+
+    Returns ``{due, reason, spec_dir, issue, iteration}``; ``iteration`` is
+    ``recorded + 1`` when due, else ``None``.
+    """
+    labels = labels or []
+    reason = ""
+    if str(issue_state).lower() != "open":
+        reason = "issue-not-open"
+    elif "parked" in labels:
+        reason = "parked"
+    elif "stage:stalled" in labels:
+        reason = "stalled"
+    elif not branch_exists:
+        reason = "no-spec-branch"
+    elif spec_stage not in ("tasks", "implement"):
+        reason = "stage-not-ready"
+    due = reason == ""
+    return {
+        "due": due,
+        "reason": reason or "due",
+        "spec_dir": spec_dir,
+        "iteration": int(recorded_iteration or 0) + 1 if due else None,
+    }
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -108,7 +136,23 @@ def main(argv=None):
         p.add_argument("--hold-label", default=DEFAULT_HOLD_LABEL)
         if name == "set":
             p.add_argument("--reason", required=True)
+    rp = sub.add_parser("release-plan")
+    rp.add_argument("--issue", required=True)
+    rp.add_argument("--issue-state", required=True)
+    rp.add_argument("--labels", default="", help="comma-separated label names")
+    rp.add_argument("--branch-exists", choices=("true", "false"), required=True)
+    rp.add_argument("--spec-stage", default="")
+    rp.add_argument("--recorded-iteration", default="0")
+    rp.add_argument("--spec-dir", default="")
     args = parser.parse_args(argv)
+    if args.cmd == "release-plan":
+        plan = release_plan(
+            args.issue_state, [x for x in args.labels.split(",") if x],
+            args.branch_exists == "true", args.spec_stage,
+            args.recorded_iteration, args.spec_dir)
+        plan["issue"] = args.issue
+        print(json.dumps(plan))
+        return 0
     if args.cmd == "check":
         print(f"state={check(args.issue, args.repo, args.hold_label)}")
         return 0
