@@ -106,6 +106,12 @@
 
 ---
 
+## Phase 9: Convergence
+
+- [ ] T031 Amend `specs/120-dispatched-run-metrics/contracts/persisting-job.md` sections 1-2 so `run-in-cancelled-run` gates only `persist` (Gate 22 pins `verify-image-prerequisites`'s `if: inputs.container-image != ''`, so that job is skipped in a cancelled run and `persist` tolerates the skip) per plan: persisting-job contract (contradicts)
+
+---
+
 ## Dependencies & Execution Order
 
 - Phase 1 → Phase 2 → stories. T003 gates T006; T004 before T005 (same file); T004/T005 before T007/T008.
