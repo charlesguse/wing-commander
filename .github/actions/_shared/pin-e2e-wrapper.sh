@@ -8,8 +8,9 @@
 #
 # Two rewrites, both needed once the wrapper runs in another repository:
 #
-#   * `uses: ./.github/workflows/<stage>` becomes
-#     `uses: <pipeline-repo>/.github/workflows/<stage>@<uses-ref>`.
+#   * every `uses: ./.github/workflows/<name>` (the stage call and the
+#     wrapper's persist-metrics call to metrics-persist.yml) becomes
+#     `uses: <pipeline-repo>/.github/workflows/<name>@<uses-ref>`.
 #   * `pipeline-ref: ${{ github.sha }}` becomes
 #     `pipeline-ref: <pipeline-commit>`. Here the wrapper calls its stage
 #     by local path, so github.sha is the pipeline's own commit (#1071,
@@ -40,7 +41,7 @@ if ! printf '%s' "$pipeline_commit" | grep -qE '^[0-9a-f]{40}$'; then
 fi
 
 pinned="$(sed \
-  -e "s#uses: \./\.github/workflows/${stage}#uses: ${pipeline_repo}/.github/workflows/${stage}@${uses_ref}#" \
+  -e "s#uses: \./\.github/workflows/\([A-Za-z0-9_.-]*\)#uses: ${pipeline_repo}/.github/workflows/\1@${uses_ref}#" \
   -e "s#pipeline-ref: \${{ *github\.sha *}}#pipeline-ref: ${pipeline_commit}#" \
   "$file")"
 
