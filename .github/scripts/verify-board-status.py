@@ -170,6 +170,13 @@ def render_half():
     check("the waiting-on-you count is in its heading", "### Waiting on you (9)" in body, body)
     check("PRs outside any lifecycle are named", "not part of a lifecycle: #909" in body, body)
     check("the roadmap is linked", "Roadmap issue, #890" in body, body)
+    check("the board loop line names every merge switch, all off by default",
+          "- **board loop:** running; board auto-merge off; workflow-file fixes held for a maintainer; "
+          "lifecycle auto-merge off" in body, body)
+    merging = bs.render(dict(SNAP, switches=dict(SNAP["switches"], board_auto_merge="true",
+                                                  board_can_push_workflows="true")))
+    check("board auto-merge and workflow-file fixes read on when their switches are true",
+          "board auto-merge on; workflow-file fixes allowed; lifecycle auto-merge off" in merging, merging)
     green = bs.render(dict(SNAP, main_ci={"status": "completed", "conclusion": "success", "sha": "abc1234ffff"}))
     check("green CI renders plainly", "- **main:** green on abc1234" in green, green)
 

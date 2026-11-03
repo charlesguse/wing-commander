@@ -214,9 +214,17 @@ def render(snap):
     lines.append("- **main:** {0}".format(ci_text))
     lines.append("- **last release:** {0}; auto-release {1}".format(
         rel_text, state("auto_release_paused", "**paused**", "on")))
-    lines.append("- **board loop:** {0}; lifecycle auto-merge {1}".format(
-        state("board_loop_paused", "**paused**", "running"),
-        state("lifecycle_auto_merge", "on", "off")))
+    # The switches as the owner set them, so the line says what the pipeline
+    # may do on its own: the board loop's kill switch, its merge switch for
+    # fix and Spec Kit bump PRs (constitution X), whether it may push a
+    # workflow-file fix at all (docs/setup.md), and the lifecycle merge
+    # switch. A paused loop merges nothing whatever its merge switch says.
+    lines.append("- **board loop:** {0}; board auto-merge {1}; workflow-file fixes {2}; "
+                 "lifecycle auto-merge {3}".format(
+                     state("board_loop_paused", "**paused**", "running"),
+                     state("board_auto_merge", "on", "off"),
+                     state("board_can_push_workflows", "allowed", "held for a maintainer"),
+                     state("lifecycle_auto_merge", "on", "off")))
     lines.append("")
 
     def table(title, header, items):
@@ -360,6 +368,8 @@ def publish(repo, body):
 # home of this mapping: the whats-on-me skill's board_now.py reads it too.
 SWITCH_ENV = {
     "auto_release_paused": "AUTO_RELEASE_PAUSED",
+    "board_auto_merge": "BOARD_AUTO_MERGE",
+    "board_can_push_workflows": "BOARD_CAN_PUSH_WORKFLOWS",
     "board_loop_paused": "BOARD_LOOP_PAUSED",
     "lifecycle_auto_merge": "LIFECYCLE_AUTO_MERGE",
     "review_gate_paused": "LIFECYCLE_REVIEW_GATE_PAUSED",
