@@ -97,6 +97,21 @@ class SetTests(unittest.TestCase):
             h.set_hold(1, "why", reader=lambda i, r: [], runner=runner)
 
 
+class RoundTwoTests(unittest.TestCase):
+    def test_label_match_is_case_insensitive(self):
+        self.assertEqual(h.classify_labels(["Lifecycle:Held"]), "held")
+
+    def test_label_create_has_no_force_and_tolerates_existing(self):
+        calls = []
+
+        def runner(a):
+            calls.append(a)
+            return proc(1, "label already exists") if a[:2] == ["label", "create"] else proc()
+        h.set_hold(1, "why", reader=lambda i, r: [], runner=runner)
+        create = [c for c in calls if c[:2] == ["label", "create"]][0]
+        self.assertNotIn("--force", create)
+
+
 class MessageTests(unittest.TestCase):
     def test_unreadable_message_distinct_from_hold(self):
         self.assertIn("labels could not be read", h.UNREADABLE_MESSAGE)

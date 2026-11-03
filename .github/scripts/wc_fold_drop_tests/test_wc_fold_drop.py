@@ -67,6 +67,14 @@ class DropTests(unittest.TestCase):
         self.assertEqual(out, {"*": "non-maintainer"})
         self.assertEqual(text, TASKS)
 
+    def test_task_body_removed_with_title(self):
+        tasks = ("- [ ] Review finding: a\n\n  Body para.\n\n  - file.py\n\n"
+                 "  Detail: x\n\n- [ ] T002 keep\n")
+        text, out, _, _ = d.apply(tasks, ["Review finding: a"], "OWNER", 1)
+        self.assertEqual(out["Review finding: a"], "removed")
+        self.assertEqual(text, "\n- [ ] T002 keep\n")
+        self.assertNotIn("Body", text)
+
     def test_same_titled_both_removed(self):
         text, out, _, _ = run(["Review finding: same"])
         self.assertEqual(out["Review finding: same"], "removed")

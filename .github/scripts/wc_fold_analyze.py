@@ -14,7 +14,8 @@ import subprocess
 import sys
 
 TASK_LINE_RE = re.compile(r"^\+\s*-\s*\[[ xX]\]\s+(.*\S)\s*$")
-HEADING_RE = re.compile(r"^#{2,4}\s+(.*\S)\s*$")
+FOLD_TITLE_PREFIXES = ("Review finding:", "Recurring review finding:")
+HEADING_RE =re.compile(r"^#{2,4}\s+(.*\S)\s*$")
 
 
 def added_tasks_from_diff(diff_text):
@@ -32,6 +33,9 @@ def added_tasks_from_diff(diff_text):
         if not m:
             continue
         title = m.group(1)
+        # Only fold-added tasks: a reworded pre-existing task is not one.
+        if not title.startswith(FOLD_TITLE_PREFIXES):
+            continue
         if title in seen:
             continue
         seen.add(title)
@@ -86,10 +90,9 @@ def decide(fold_input, verdict):
             and (obj.get("principle") is None or isinstance(obj.get("principle"), str))
         )
         if not well_formed:
+            # One bad objection must not discard the valid ones.
             result["status"] = "malformed"
-            result["held_items"] = []
-            result["hold"] = False
-            return result
+            continue
         valid_hold = (obj["constitution_conflict"] and obj["principle"] in principles
                       and obj["task"] in ids)
         (result["held_items"] if valid_hold else result["recorded_items"]).append(obj)
