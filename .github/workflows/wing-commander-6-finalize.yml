@@ -52,3 +52,31 @@ jobs:
       speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
       container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
       container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
+
+  # specs/120-dispatched-run-metrics -- see wing-commander-5-implement.yml.
+  # No "something started" signal exists yet for finalize, so a run cancelled
+  # while queued relies on the zero-record no-op (spec 043 FR-021).
+  persist-metrics:
+    needs: [finalize]
+    if: >-
+      always() &&
+      vars.WING_COMMANDER_METRICS_PAUSED != 'true' &&
+      needs.finalize.result != 'skipped'
+    permissions:
+      contents: write
+      issues: write
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/metrics-persist.yml
+    with:
+      run-id: ${{ format('{0}', github.run_id) }}
+      destination-branch: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
+      destination-path: ${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
+      runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
+      container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}
+      run-in-cancelled-run: true
+      tolerate-failure: true
+    secrets:
+      pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
+      container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+      container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}

@@ -151,3 +151,36 @@ jobs:
       speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
       container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
       container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
+
+  # specs/120-dispatched-run-metrics: persist this run's own metrics records
+  # in a last job, because a dispatched run never fires the workflow_run
+  # trigger promptly. always() so a failed or cancelled-after-start run is
+  # still collected; a run cancelled before any stage job started is a
+  # zero-record no-op (spec 043 FR-021). tolerate-failure keeps a persist
+  # failure from turning this run red -- the daily sweep is the backstop.
+  # Single home of the persist logic: metrics-persist.yml (Gate 79).
+  persist-metrics:
+    needs: [resolve-model, implement]
+    if: >-
+      always() &&
+      vars.WING_COMMANDER_METRICS_PAUSED != 'true' &&
+      needs.resolve-model.result == 'success' &&
+      needs.implement.result != 'skipped'
+    permissions:
+      contents: write
+      issues: write
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/metrics-persist.yml
+    with:
+      run-id: ${{ format('{0}', github.run_id) }}
+      destination-branch: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
+      destination-path: ${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
+      runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
+      container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}
+      run-in-cancelled-run: true
+      tolerate-failure: true
+    secrets:
+      pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
+      container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+      container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
