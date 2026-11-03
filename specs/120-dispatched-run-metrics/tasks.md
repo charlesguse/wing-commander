@@ -241,3 +241,51 @@ MVP is Phase 1-2 plus US1: stage inputs, both wrapper jobs, extended Gate 79 wit
   The stable-key membership test spawns grep over growing key files for every batch line, which is quadratic; a single jq or awk pass would do.
 
   - .github/actions/wing-commander-metrics-persist/action.yml
+
+## Review Gate Round 3 Findings
+
+- [ ] Review finding: Finalize persist-metrics lacks 'something started' clause
+
+  persist-metrics `always()` gate in finalize starts on a run cancelled while queued (finalize result 'cancelled'), spinning up a runner/container for a run with no records, contrary to persisting-job.md section 1 and FR-011.
+
+  - .github/workflows/wing-commander-6-finalize.yml
+
+  Detail: Implement gates on resolve-model; finalize has no equivalent.
+
+- [ ] Review finding: Content-based dedup key drops distinct matrix-leg records
+
+  Dedup key excludes job_id and record_key, so two matrix legs with the same job_key, step_index, timestamp, cost and tokens collapse to one record and spend is lost.
+
+  - .github/actions/wing-commander-metrics-persist/action.yml
+
+  Detail: rebase.yml and pr-conversation act matrix legs share job_key; zero-cost 429/error records are identical apart from job_id/record_key.
+
+- [ ] Review finding: warn-sweep-backstop cannot warn on image-check/container-init failure
+
+  With tolerate-failure, an unpullable image makes the image check report success and both persist and warn-sweep-backstop fail at container init under continue-on-error, so no warning is emitted and the run is green (the loud case FR-007 requires).
+
+  - .github/workflows/metrics-persist.yml
+
+- [ ] Review finding: Implement persist-metrics waits on the whole implement call incl. stalled
+
+  persist-metrics needs the entire implement call, so a stalled job queued behind the next cycle delays persistence and exposes it to cancellation, falling back to the daily sweep and contradicting SC-001.
+
+  - .github/workflows/wing-commander-5-implement.yml
+
+- [ ] Review finding: Dedup code uses bash 4 declare -A and silently degrades
+
+  `declare -A` fails under bash 3.2, and a mid-stream jq failure empties the file via the count check and silently falls back to per-line jq forking with no log.
+
+  - .github/actions/wing-commander-metrics-persist/action.yml
+
+- [ ] Review finding: Rollup git checkout failure swallowed with || true
+
+  Failure of `git checkout -q $BRANCH` is hidden, so the sweep line silently reads 'unknown' on every rollup; the new test runs outside a git repo and cannot catch it.
+
+  - .github/actions/wing-commander-metrics-persist/action.yml
+
+- [ ] Review finding: Gate 79 if: checks are substring tests
+
+  The gate tests `'always()' in expr` and 'skipped' substrings, so an expression with always() only in a comment or an || branch passes, and implement's resolve-model started clause is never checked.
+
+  - .github/scripts/verify-metrics-wrapper-trigger-drops-watchdog.py
