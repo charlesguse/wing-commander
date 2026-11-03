@@ -18,7 +18,7 @@ TASK_RE = re.compile(r"^(\s*-\s*)\[([ xX])\](\s+)(.*\S)\s*$")
 
 
 def parse(comment):
-    """Return ``{comment_titles: [...]}`` or None when not a drop command."""
+    """Return ``{titles: [...]}`` or None when not a drop command."""
     lines = [ln.rstrip() for ln in (comment or "").splitlines()
              if ln.strip() and not ln.lstrip().startswith(">")]
     if not lines or not DROP_RE.match(lines[0].strip()):
@@ -70,7 +70,18 @@ def apply(tasks_text, titles, author_association, comment_id, dropped_titles=())
             for i in unchecked:
                 removed.append((i, title))
             outcomes[title] = "removed"
-    drop_idx = {i for i, _ in removed}
+    # Remove each task as a whole block: the title line plus its body up to
+    # the next task checkbox or heading (trailing blank lines stay as the
+    # separator).
+    drop_idx = set()
+    for i, _ in removed:
+        end = i + 1
+        while end < len(lines) and not TASK_RE.match(lines[end]) \
+                and not lines[end].startswith("#"):
+            end += 1
+        while end > i + 1 and not lines[end - 1].strip():
+            end -= 1
+        drop_idx.update(range(i, end))
     new_lines = [ln for i, ln in enumerate(lines) if i not in drop_idx]
     done = [t for t, o in outcomes.items() if o == "removed"]
     msg = ""
@@ -90,20 +101,26 @@ def main(argv=None):
     if argv and argv[0] == "parse" and len(argv) == 1:
         print(json.dumps(parse(sys.stdin.read())))
         return 0
-    if argv and argv[0] == "apply" and len(argv) == 4:
-        # apply <tasks.md> <author_association> <comment_id>; comment on stdin.
+    if argv and argv[0] == "apply" and len(argv) in (4, 5):
+        # apply <tasks.md> <author_association> <comment_id> [dropped-titles
+        # file, one title per line]; comment on stdin.
+        dropped = ()
+        if len(argv) == 5:
+            with open(argv[4], encoding="utf-8") as fh:
+                dropped = tuple(ln.strip() for ln in fh if ln.strip())
         parsed = parse(sys.stdin.read())
         if parsed is None:
             print("not a drop command", file=sys.stderr)
             return 1
         with open(argv[1], encoding="utf-8") as fh:
             text = fh.read()
-        new, outcomes, msg, reply = apply(text, parsed["titles"], argv[2], argv[3])
+        new, outcomes, msg, reply = apply(text, parsed["titles"], argv[2], argv[3],
+                                             dropped)
         with open(argv[1], "w", encoding="utf-8") as fh:
             fh.write(new)
         print(json.dumps({"outcomes": outcomes, "commit_message": msg, "reply": reply}))
         return 0
-    print("usage: wc_fold_drop.py parse < comment | apply TASKS ASSOC ID < comment",
+    print("usage: wc_fold_drop.py parse < comment | apply TASKS ASSOC ID [DROPPED_FILE] < comment",
           file=sys.stderr)
     return 2
 

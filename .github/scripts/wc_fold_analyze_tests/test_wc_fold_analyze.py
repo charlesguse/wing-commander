@@ -51,6 +51,16 @@ class FoldAnalyzeTests(unittest.TestCase):
         self.assertEqual(bad["status"], "malformed")
         self.assertFalse(bad["hold"])
 
+    def test_one_malformed_keeps_valid_hold(self):
+        r = fa.decide(inp(), {"objections": [{"task": "x"}, obj()]})
+        self.assertTrue(r["hold"])
+        self.assertEqual(r["status"], "malformed")
+
+    def test_non_fold_added_lines_excluded(self):
+        diff = DIFF + "+- [ ] T001 reworded base task\n"
+        ids = [t["id"] for t in inp(diff)["added_tasks"]]
+        self.assertNotIn("T001 reworded base task", ids)
+
     def test_unknown_principle(self):
         r = fa.decide(inp(), {"objections": [obj(principle="IX. Invented")]})
         self.assertFalse(r["hold"])

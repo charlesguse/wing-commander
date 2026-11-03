@@ -37,7 +37,10 @@ UNREADABLE_MESSAGE = (
 
 def classify_labels(label_names, hold_label=DEFAULT_HOLD_LABEL):
     """Return ``held`` or ``clear`` for a list of label names."""
-    return "held" if hold_label in (label_names or []) else "clear"
+    # GitHub label names are case-insensitive.
+    wanted = hold_label.casefold()
+    return "held" if any(str(n).casefold() == wanted
+                         for n in (label_names or [])) else "clear"
 
 
 def parse_labels(raw):
@@ -89,10 +92,12 @@ def set_hold(issue, reason, repo=None, hold_label=DEFAULT_HOLD_LABEL,
     # label is added, so fall back to a fixed line before touching anything.
     reason = (reason or "").strip() or f"Lifecycle held: `{hold_label}` added."
     if not already:
-        # Ensure the label exists; --force makes a second create a no-op.
-        created = runner(["label", "create", hold_label, "--force", *repo_args,
+        # Create the label only when missing (no --force): an existing label
+        # keeps the adopter's description and colour.
+        created = runner(["label", "create", hold_label, *repo_args,
                           "--description", "Lifecycle held: implement stops until released"])
-        if created.returncode != 0:
+        if created.returncode != 0 and "already exists" not in (
+                (created.stderr or "") + (created.stdout or "")).lower():
             raise RuntimeError(f"could not create {hold_label}: {created.stderr.strip()}")
         add = runner(["issue", "edit", str(issue), "--add-label", hold_label, *repo_args])
         if add.returncode != 0:
