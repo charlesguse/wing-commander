@@ -49,7 +49,8 @@ auto-update-spec-kit-scratch-preflight.yml's call to
 provision-e2e-target.sh and expects a failure, (d) drops the
 pin script's pipeline-ref rewrite and expects the implement wrapper to
 fail, and (e) puts auto-release.yml's old inline sed back and expects a
-failure naming it.
+failure naming it, and (f) pastes an unescaped inline sed into
+provision-e2e-target.sh and expects a failure naming it.
 
 Usage: python3 .github/scripts/verify-e2e-provisioning-single-home.py [--self-test]
 """
@@ -77,8 +78,9 @@ PIN_SCRIPT = ".github/actions/_shared/pin-e2e-wrapper.sh"
 PIN_CALLERS = (".github/workflows/auto-release.yml", ".github/scripts/provision-e2e-target.sh")
 AUTO_RELEASE = ".github/workflows/auto-release.yml"
 # An inline copy of the stage-call rewrite: a sed substitution whose
-# pattern is the local `uses: ./.github/workflows/` call.
-INLINE_PIN_RE = re.compile(r"s(.)uses: \\\./\\\.github/workflows/")
+# pattern is the local `uses: ./.github/workflows/` call, with the dots
+# escaped or not.
+INLINE_PIN_RE = re.compile(r"s(.)uses: \\?\./\\?\.github/workflows/")
 # The scaffold step's wrapper -> stage map: `[wing-commander-5-implement.yml]=implement.yml`.
 STAGE_MAP_RE = re.compile(r"^\s*\[(wing-commander-[\w.-]+\.yml)\]=([\w.-]+\.yml)\s*$", re.M)
 FAKE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
@@ -189,8 +191,9 @@ def scan_wrapper_pin(root="."):
         rel = os.path.relpath(f, root).replace("\\", "/")
         if rel in (PIN_SCRIPT, SELF_PATH):
             continue
-        for m in INLINE_PIN_RE.finditer(_read(f)):
-            line = _read(f).count("\n", 0, m.start()) + 1
+        text = _read(f)
+        for m in INLINE_PIN_RE.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
             failures.append(f"{rel}:{line}: an inline rewrite of a wrapper's local stage call -- "
                             f"the one home is {PIN_SCRIPT}, which also pins pipeline-ref.")
 
@@ -287,6 +290,16 @@ def self_test():
         got = scan(inline)
         if not any(AUTO_RELEASE in g and "inline rewrite" in g for g in got):
             problems.append(f"an inline sed pin pasted back into {AUTO_RELEASE} was NOT detected; got: {got}")
+
+        unescaped = os.path.join(root, "unescaped")
+        _copy_tree(unescaped)
+        prov = os.path.join(unescaped, ".github/scripts", PROVISION_SCRIPT)
+        with io.open(prov, "a", encoding="utf-8") as fh:
+            fh.write('\n# unescaped-pin fixture\n# sed "s|uses: ./.github/workflows/${stage}|uses: x@y|" f\n')
+        got = scan(unescaped)
+        if not any(PROVISION_SCRIPT in g and "inline rewrite" in g for g in got):
+            problems.append(f"an inline sed pin with unescaped dots pasted into {PROVISION_SCRIPT} was "
+                            f"NOT detected; got: {got}")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -296,7 +309,7 @@ def self_test():
         return 1
     print("verify-e2e-provisioning-single-home self-test: clean tree passes; a pasted copy of the "
           "element list, a dropped call to provision-e2e-target.sh, a pin that leaves pipeline-ref "
-          "at github.sha, and an inline sed pin each fail.")
+          "at github.sha, and an inline sed pin (escaped or not) each fail.")
     return 0
 
 

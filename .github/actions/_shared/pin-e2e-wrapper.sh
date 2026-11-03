@@ -3,7 +3,8 @@
 # test repository, and prints the pinned file on stdout. The one home of
 # that rewrite: auto-release.yml's scaffold step and
 # .github/scripts/provision-e2e-target.sh both call it, and
-# verify-e2e-wrapper-pin.py fails if either goes back to an inline sed.
+# .github/scripts/verify-e2e-provisioning-single-home.py fails if either
+# goes back to an inline sed.
 #
 # Two rewrites, both needed once the wrapper runs in another repository:
 #
