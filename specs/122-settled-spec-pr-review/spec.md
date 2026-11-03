@@ -8,7 +8,7 @@
 
 **Lifecycle issue**: #1094
 
-**Input**: User description: "Review a spec PR automatically once clarification has settled it. A spec PR gets an independent review today only when a local session runs one by hand. Spec 062 (#476) gave final PRs an automated review gate, but its FR-002 leaves spec and plan PRs out on purpose: they have no implement stage behind them, so a not-clean round has nothing to fold into. The manual reviews have been worth running (#1086 / spec 120: FR-002 needed an Actions: write permission the App doesn't hold; #1078 / spec 119: FR-022 added a ninth merge condition conflicting with constitution X's eight gates). None of those reviews left a record on GitHub. When a spec PR has settled, an independent review runs on its own and posts its result on the PR, before the owner reads it: settled = intake or clarify announced the PR ready, no [NEEDS CLARIFICATION: markers, issue at stage:spec, head unchanged since; one review per head; checks buildability against current main's permissions/secrets/variables, conflicts with the constitution and live contracts of merged specs, contradictory/untestable/undecided requirements; reports a verdict and structured findings on the PR, owner-only decisions as questions with options, a recommendation and any precedent cited; bounded by a round budget and the spec 116 convergence check; a WING_COMMANDER_*_PAUSED kill switch. Spec PR merge stays human; the review never approves, requests changes, or merges. Out of scope: final PRs; any change to who merges a spec or plan PR."
+**Input**: User description: "Review a spec PR automatically once clarification has settled it. A spec PR gets an independent review today only when a local session runs one by hand. Spec 062 (#476) gave final PRs an automated review gate, but its FR-002 leaves spec and plan PRs out on purpose: they have no implement stage behind them, so a not-clean round has nothing to fold into. The manual reviews have been worth running (#1086 / spec 120: FR-002 needed an Actions: write permission the App doesn't hold; #1078 / spec 119: FR-022 added a ninth merge condition conflicting with constitution X's eight gates). None of those reviews left a record on GitHub. When a spec PR has settled, an independent review runs on its own and posts its result on the PR, before the owner reads it: settled = intake or clarify announced the PR ready, no NEEDS CLARIFICATION markers, issue at stage:spec, head unchanged since; one review per head; checks buildability against current main's permissions/secrets/variables, conflicts with the constitution and live contracts of merged specs, contradictory/untestable/undecided requirements; reports a verdict and structured findings on the PR, owner-only decisions as questions with options, a recommendation and any precedent cited; bounded by a round budget and the spec 116 convergence check; a WING_COMMANDER_*_PAUSED kill switch. Spec PR merge stays human; the review never approves, requests changes, or merges. Out of scope: final PRs; any change to who merges a spec or plan PR."
 
 ## Overview
 
@@ -72,7 +72,7 @@ reviews caught are caught without a local session, and the result is on
 GitHub rather than in a transcript.
 
 **Independent Test**: Take a spec PR whose lifecycle issue is at
-`stage:spec`, with no `[NEEDS CLARIFICATION:` markers and a ready
+`stage:spec`, with no `NEEDS CLARIFICATION` markers and a ready
 announcement newer than its head commit. Run the review once. A single
 review-result comment appears on the PR naming the reviewed head SHA, a
 verdict, and zero or more structured findings.
@@ -112,7 +112,7 @@ once and confirm the PR is skipped with the reason recorded in the run log.
 1. **Given** a spec PR whose lifecycle issue carries `stage:clarify`, **When**
    the selection runs, **Then** the PR is not reviewed.
 2. **Given** a spec PR whose spec.md still contains a
-   `[NEEDS CLARIFICATION:` marker, **When** the selection runs, **Then** the
+   `NEEDS CLARIFICATION` marker, **When** the selection runs, **Then** the
    PR is not reviewed.
 3. **Given** a spec PR whose head commit is newer than the most recent ready
    announcement, **When** the selection runs, **Then** the PR is not reviewed.
@@ -243,7 +243,7 @@ confirm no review runs and the stand-down is recorded.
   all of the following hold, re-derived in deterministic code against the
   pull request's current head SHA at selection time:
   (a) the lifecycle issue carries `stage:spec` and not `stage:clarify`;
-  (b) the spec.md on the head contains no `[NEEDS CLARIFICATION:` marker;
+  (b) the spec.md on the head contains no `NEEDS CLARIFICATION` marker;
   (c) intake, clarify, or a review round that pushed only unambiguous fixes
   (FR-015d) has posted its ready-for-review announcement on the
   lifecycle; and (d) the head commit is not newer than that announcement.
