@@ -50,7 +50,16 @@ provision-e2e-target.sh and expects a failure, (d) drops the
 pin script's pipeline-ref rewrite and expects the implement wrapper to
 fail, and (e) puts auto-release.yml's old inline sed back and expects a
 failure naming it, and (f) pastes an unescaped inline sed into
-provision-e2e-target.sh and expects a failure naming it.
+provision-e2e-target.sh and expects a failure naming it, (g) adds a prose
+comment naming a wrapper's `uses: ./.github/workflows/` call and expects
+no inline-rewrite failure, (h) pastes an inline sed into a script under
+.github/scripts/e2e-provisioning/ and expects a failure naming it, (i)
+swaps provision-e2e-target.sh's pin-script call for a plain read while its
+pointer comment stays and expects a "does not call" failure, (j) renames
+auto-release.yml's stage map away and expects a failure, and (k) runs the
+pin script on a 2 MB file that still calls a stage by local path and
+expects the refusal (a `printf | grep -q` pipe under pipefail lost it to
+SIGPIPE).
 
 Usage: python3 .github/scripts/verify-e2e-provisioning-single-home.py [--self-test]
 """
@@ -79,8 +88,14 @@ PIN_CALLERS = (".github/workflows/auto-release.yml", ".github/scripts/provision-
 AUTO_RELEASE = ".github/workflows/auto-release.yml"
 # An inline copy of the stage-call rewrite: a sed substitution whose
 # pattern is the local `uses: ./.github/workflows/` call, with the dots
-# escaped or not.
-INLINE_PIN_RE = re.compile(r"s(.)uses: \\?\./\\?\.github/workflows/")
+# escaped or not. The `s` must start a word and its delimiter must be
+# punctuation that closes the pattern later on the line, so prose such as
+# "the wrapper's uses: ./.github/workflows/x.yml call" is not a sed.
+INLINE_PIN_RE = re.compile(r"(?<!\w)s([^\w\s])uses: \\?\./\\?\.github/workflows/[^\n]*?\1")
+# A real call of the pin script: `bash "<root>/.github/actions/_shared/
+# pin-e2e-wrapper.sh"` on a line that is not a comment -- the pointer
+# comment at each call site names the script too, and must not count.
+PIN_CALL_RE = re.compile(r'^(?![ \t]*#)[^\n]*\bbash[ \t]+"[^"\n]*/\.github/actions/_shared/pin-e2e-wrapper\.sh"', re.M)
 # The scaffold step's wrapper -> stage map: `[wing-commander-5-implement.yml]=implement.yml`.
 STAGE_MAP_RE = re.compile(r"^\s*\[(wing-commander-[\w.-]+\.yml)\]=([\w.-]+\.yml)\s*$", re.M)
 FAKE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
@@ -179,14 +194,15 @@ def scan_wrapper_pin(root="."):
         path = os.path.join(root, caller)
         if not os.path.isfile(path):
             failures.append(f"{caller} is missing.")
-        elif os.path.basename(PIN_SCRIPT) not in _read(path):
+        elif not PIN_CALL_RE.search(_read(path)):
             failures.append(f"{caller} does not call {PIN_SCRIPT} -- the e2e wrapper pin must go "
                             f"through it, not a rewrite of its own.")
-    files = (glob.glob(os.path.join(root, ".github/workflows/*.yml"))
-             + glob.glob(os.path.join(root, ".github/scripts/*.sh"))
-             + glob.glob(os.path.join(root, ".github/scripts/*.py"))
-             + glob.glob(os.path.join(root, ".github/actions/**/*.sh"), recursive=True)
-             + glob.glob(os.path.join(root, ".github/actions/**/action.yml"), recursive=True))
+    files = set()
+    for pattern in (".github/workflows/*.yml", ".github/workflows/*.yaml",
+                    ".github/scripts/**/*.sh", ".github/scripts/**/*.py",
+                    ".github/actions/**/*.sh", ".github/actions/**/action.yml",
+                    ".github/actions/**/action.yaml"):
+        files.update(glob.glob(os.path.join(root, pattern), recursive=True))
     for f in sorted(files):
         rel = os.path.relpath(f, root).replace("\\", "/")
         if rel in (PIN_SCRIPT, SELF_PATH):
@@ -300,6 +316,57 @@ def self_test():
         if not any(PROVISION_SCRIPT in g and "inline rewrite" in g for g in got):
             problems.append(f"an inline sed pin with unescaped dots pasted into {PROVISION_SCRIPT} was "
                             f"NOT detected; got: {got}")
+
+        prose = os.path.join(root, "prose")
+        _copy_tree(prose)
+        with io.open(os.path.join(prose, AUTO_RELEASE), "a", encoding="utf-8") as fh:
+            fh.write("\n# prose fixture: the implement wrapper's uses: ./.github/workflows/implement.yml "
+                     "call, and it calls uses: ./.github/workflows/plan.yml too\n")
+        got = scan(prose)
+        if any("inline rewrite" in g for g in got):
+            problems.append(f"a prose comment naming a wrapper's local stage call was flagged as an "
+                            f"inline sed pin; got: {got}")
+
+        nested = os.path.join(root, "nested")
+        _copy_tree(nested)
+        with io.open(os.path.join(nested, CHECKS), "a", encoding="utf-8") as fh:
+            fh.write('\n# nested-pin fixture\n# sed "s#uses: \\./\\.github/workflows/${stage}#uses: x@y#" f\n')
+        got = scan(nested)
+        if not any(CHECKS in g and "inline rewrite" in g for g in got):
+            problems.append(f"an inline sed pin pasted into {CHECKS} was NOT detected; got: {got}")
+
+        uncalled = os.path.join(root, "uncalled")
+        _copy_tree(uncalled)
+        prov = os.path.join(uncalled, ".github/scripts", PROVISION_SCRIPT)
+        text = _read(prov)
+        call = 'bash "$REPO_ROOT/.github/actions/_shared/pin-e2e-wrapper.sh"'
+        if text.count(call) != 1:
+            problems.append(f"fixture: could not find {PROVISION_SCRIPT}'s pin-script call")
+        with io.open(prov, "w", encoding="utf-8") as fh:
+            fh.write(text.replace(call, "cat"))
+        got = scan(uncalled)
+        if not any(PROVISION_SCRIPT in g and "does not call" in g for g in got):
+            problems.append(f"{PROVISION_SCRIPT} dropping its pin-script call (pointer comment kept) "
+                            f"was NOT detected; got: {got}")
+
+        nomap = os.path.join(root, "nomap")
+        _copy_tree(nomap)
+        ar = os.path.join(nomap, AUTO_RELEASE)
+        text = _read(ar)
+        with io.open(ar, "w", encoding="utf-8") as fh:
+            fh.write(text.replace("[wing-commander-", "[wc-"))
+        got = scan(nomap)
+        if not any("wrapper -> stage map" in g for g in got):
+            problems.append(f"{AUTO_RELEASE} losing its wrapper -> stage map was NOT detected; got: {got}")
+
+        big = os.path.join(root, "big.yml")
+        with io.open(big, "w", encoding="utf-8") as fh:
+            fh.write("    uses: ./.github/workflows/other.yml\n" + ("# pad " + "x" * 70 + "\n") * 30000)
+        r = subprocess.run(["bash", PIN_SCRIPT, big, "nomatch.yml", "o/r", "t", FAKE_COMMIT],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            problems.append(f"{PIN_SCRIPT} printed a 2 MB wrapper that still calls a stage by local "
+                            f"path instead of refusing it")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -309,7 +376,9 @@ def self_test():
         return 1
     print("verify-e2e-provisioning-single-home self-test: clean tree passes; a pasted copy of the "
           "element list, a dropped call to provision-e2e-target.sh, a pin that leaves pipeline-ref "
-          "at github.sha, and an inline sed pin (escaped or not) each fail.")
+          "at github.sha, an inline sed pin (escaped or not, nested or not), a caller that drops its "
+          "pin-script call, a missing stage map and a large unpinnable wrapper each fail; prose naming "
+          "a local stage call passes.")
     return 0
 
 

@@ -44,11 +44,14 @@ pinned="$(sed \
   -e "s#pipeline-ref: \${{ *github\.sha *}}#pipeline-ref: ${pipeline_commit}#" \
   "$file")"
 
-if printf '%s\n' "$pinned" | grep -qE "uses: \./\.github/workflows/"; then
+# Here-strings, not `printf | grep -q`: under pipefail, grep -q exiting on
+# its first match can SIGPIPE a printf still writing a large file, and the
+# pipeline's 141 would read as "no match" and skip the refusal.
+if grep -qE "uses: \./\.github/workflows/" <<<"$pinned"; then
   echo "pin-e2e-wrapper.sh: $file still calls a stage by local path after pinning (stage '$stage')" >&2
   exit 1
 fi
-if printf '%s\n' "$pinned" | grep -qE 'pipeline-ref:.*github\.sha'; then
+if grep -qE 'pipeline-ref:.*github\.sha' <<<"$pinned"; then
   echo "pin-e2e-wrapper.sh: $file still passes github.sha as pipeline-ref after pinning; in a test repository that is the test repository's commit, not the pipeline's" >&2
   exit 1
 fi
