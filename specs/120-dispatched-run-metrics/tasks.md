@@ -131,3 +131,55 @@
 ## Implementation Strategy
 
 MVP is Phase 1-2 plus US1: stage inputs, both wrapper jobs, extended Gate 79 with fixtures. Then US2 (idempotence and reader audit), US3 (gating reviews, finalize signal), US4 (rollup label), polish. Maintainer drills prove the behaviour after merge; D2 for finalize is the one drill that informs implementation.
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Stable dedup key lacks run_attempt, dropping re-run records
+
+  The key workflow_run_id:job_key:step_index has no run_attempt component, so a re-run attempt's newly spent agent record is skipped as a duplicate of attempt 1.
+
+  - .github/actions/wing-commander-metrics-persist/action.yml
+
+  Detail: Re-run spend vanishes from records.jsonl and the rollup.
+
+- [ ] Review finding: continue-on-error on image check masks failure from persist guard
+
+  continue-on-error: inputs.tolerate-failure makes a failed verify-image-prerequisites report success, so persist's result != 'failure' guard never fires and persist fails in container init with no warning step.
+
+  - .github/workflows/metrics-persist.yml
+
+- [ ] Review finding: Failure warning step misses init failures and misfires for non-tolerant callers
+
+  The warning step lives inside persist, so it does not run on container-init or earlier-job failures, and for non-tolerant callers (sweep) it wrongly says the daily sweep will collect the records.
+
+  - .github/workflows/metrics-persist.yml
+
+- [ ] Review finding: Stable-key skip never records batch-internal keys
+
+  $stable_keys is built before the loop and not updated on append, so two lines in one batch with the same stable key are both appended, and jq is forked per line.
+
+  - .github/actions/wing-commander-metrics-persist/action.yml
+
+- [ ] Review finding: Gate 79 does not assert persisting jobs pass the new opt-in inputs
+
+  The check and mutation cover only the sweep job; nothing asserts the persist jobs set run-in-cancelled-run and tolerate-failure, and the workflow_run mutation edits sweep.
+
+  - .github/scripts/verify-metrics-wrapper-trigger-drops-watchdog.py
+
+- [ ] Review finding: pin-e2e-wrapper rewrite no longer scoped by stage
+
+  The sed rewrites every local workflow call regardless of $stage, so a typo'd uses: is pinned to a bogus ref rather than refused.
+
+  - .github/actions/_shared/pin-e2e-wrapper.sh
+
+- [ ] Review finding: Finalize persist-metrics gate starts job for cancelled-while-queued runs
+
+  The gate is always() && finalize.result != 'skipped', so a run cancelled before stages start still runs persist-metrics, contrary to FR-011.
+
+  - .github/workflows/wing-commander-6-finalize.yml
+
+- [ ] Review finding: persist-metrics needing whole implement call delays run completion
+
+  Persist needs the entire implement call including the stalled job, so the implement run's completion (and workflow_run consumers like fold-cycle-guard) is delayed behind persist.
+
+  - .github/workflows/wing-commander-5-implement.yml
