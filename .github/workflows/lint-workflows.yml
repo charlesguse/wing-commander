@@ -3051,6 +3051,9 @@ jobs:
       - name: Lifecycle hold label self-test — an inline copy and a missing shell each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-hold-single-home.py --self-test
+      - name: Fold analyze and drop — every decide and drop branch behaves as specified
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-analyze-drop.py
 
       # Gate 62 — specs/054-e2e-container-coverage (research.md D6, FR-019):
       # Gate 23's drift check is purely textual (it compares the embedded
