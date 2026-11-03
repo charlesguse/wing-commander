@@ -1,0 +1,70 @@
+# The lifecycle hold label's check and set, in one home
+# (specs/119-lifecycle-hold-label, FR-019, contracts/hold-interfaces.md).
+# Every consumer -- implement's start-of-cycle check, fold-dispatch, the
+# stop-comment setters and the fold-analyze decide job -- calls this
+# composite; none reads or adds the hold label itself.
+#
+# `check` never writes and fails closed: any label-read failure is
+# `state=unreadable`, never `clear`. `set` is idempotent on the label and
+# always posts `reason`.
+name: wing-commander-lifecycle-hold
+description: >
+  Reads (mode check) or sets (mode set) the lifecycle hold label on a
+  lifecycle issue.
+
+inputs:
+  mode:
+    description: "check or set"
+    required: true
+  issue:
+    description: The lifecycle issue number (declared input)
+    required: true
+  hold-label:
+    description: The hold label name
+    required: false
+    default: lifecycle:held
+  token:
+    description: A token with issues read (check) or issues write (set)
+    required: true
+  reason:
+    description: Text posted on the issue (set mode only)
+    required: false
+    default: ""
+
+outputs:
+  state:
+    description: "clear | held | unreadable (check mode)"
+    value: ${{ steps.run.outputs.state }}
+  set:
+    description: "true | already (set mode)"
+    value: ${{ steps.run.outputs.set }}
+
+runs:
+  using: composite
+  steps:
+    - name: Run the lifecycle hold script
+      id: run
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        MODE: ${{ inputs.mode }}
+        ISSUE: ${{ inputs.issue }}
+        HOLD_LABEL: ${{ inputs.hold-label }}
+        REASON: ${{ inputs.reason }}
+      run: |
+        set -uo pipefail
+        script="$GITHUB_ACTION_PATH/../../scripts/wc_lifecycle_hold.py"
+        case "$MODE" in
+          check)
+            python3 -I "$script" check --issue "$ISSUE" --repo "$GITHUB_REPOSITORY" \
+              --hold-label "$HOLD_LABEL" >> "$GITHUB_OUTPUT" || echo "state=unreadable" >> "$GITHUB_OUTPUT"
+            ;;
+          set)
+            python3 -I "$script" set --issue "$ISSUE" --repo "$GITHUB_REPOSITORY" \
+              --hold-label "$HOLD_LABEL" --reason "$REASON" >> "$GITHUB_OUTPUT"
+            ;;
+          *)
+            echo "::error::wing-commander-lifecycle-hold: mode must be check or set, got '$MODE'"
+            exit 1
+            ;;
+        esac
