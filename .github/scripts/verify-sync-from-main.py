@@ -346,6 +346,42 @@ def suite(src, quiet=False):
         r = verify(w, b, m, t_no_a, mf)
         check("verify-scope: an out-of-scope deletion hidden by rename pairing fails",
               r.returncode == 1 and "b.txt" in r.stderr, r.stderr, q)
+    with tempfile.TemporaryDirectory() as tmp:
+        # A subfolder lifecycle: a modify/delete conflict outside the project
+        # folder leaves the modified file unmarked in both the conflicted tree
+        # and the working tree, so `git add -A` keeps it and the tree compare
+        # sees no difference. It is still a conflict this stage may not settle.
+        _, w = make_repo(tmp)
+        os.makedirs(os.path.join(w, "proj"))
+        write(os.path.join(w, "proj", "p.txt"), "one\ntwo\nthree\n")
+        sh(w, "git", "add", "."), sh(w, "git", "commit", "-q", "-m", "proj file")
+        sh(w, "git", "push", "-q", "origin", "spec/x")
+        sh(w, "git", "checkout", "-q", "main")
+        sh(w, "git", "merge", "-q", "--ff-only", "spec/x")
+        sh(w, "git", "push", "-q", "origin", "main")
+        sh(w, "git", "checkout", "-q", "spec/x")
+        write(os.path.join(w, "proj", "p.txt"), "one\nBRANCH\nthree\n")
+        os.remove(os.path.join(w, "b.txt"))
+        sh(w, "git", "add", "-A"), sh(w, "git", "commit", "-q", "-m", "branch edits p, deletes b")
+        b = head(w)
+        sh(w, "git", "checkout", "-q", "main")
+        write(os.path.join(w, "proj", "p.txt"), "one\nMAIN\nthree\n")
+        write(os.path.join(w, "b.txt"), "b changed on main\n")
+        sh(w, "git", "add", "."), sh(w, "git", "commit", "-q", "-m", "main edits p and b")
+        sh(w, "git", "push", "-q", "origin", "main")
+        sh(w, "git", "checkout", "-q", "spec/x")
+        sh(w, "git", "fetch", "-q", "--no-tags", "origin", "main:refs/remotes/origin/main")
+        m = head(w, "origin/main")
+        t = sh(w, "git", "merge-tree", "--write-tree", "--no-messages", m, "HEAD", check_rc=False).stdout.split()[0]
+        sh(w, "git", "merge", "--no-ff", "--no-commit", m, check_rc=False)
+        mf = os.path.join(tmp, "manifest.txt")
+        write(mf, sh(w, "git", "-c", "core.quotepath=off", "diff", "--name-only", "--diff-filter=U").stdout)
+        write(os.path.join(w, "proj", "p.txt"), "one\nBOTH\nthree\n")
+        sh(w, "git", "add", "-A"), sh(w, "git", "commit", "-q", "-m", "sync: merge main into spec/x")
+        r = verify(w, b, m, t, mf, project="proj")
+        check("verify-scope: an unmarked out-of-project modify/delete conflict fails",
+              r.returncode == 1 and "b.txt" in r.stderr and "outside the admitted scope" in r.stderr,
+              r.stderr, q)
     failed = [n for n, ok, _ in results[start:] if not ok]
     if quiet:
         del results[start:]
@@ -448,6 +484,7 @@ def main():
         ("push-race classifier", "return 0 if RACE.search(stderr_text) else 1", "return 0"),
         ("force refusal", 'branch.startswith("+") or ', ""),
         ("quoted-name unquote", '"HEAD:" + unquote(p)', '"HEAD:" + p'),
+        ("unadmitted-conflict guard", "for p in sorted(conflicts - allowed):", "for p in ():"),
         ("rename-blind diff", '"diff", "--no-renames", "--name-only"', '"diff", "--name-only"'),
     )
     for name, old, new in mutations:

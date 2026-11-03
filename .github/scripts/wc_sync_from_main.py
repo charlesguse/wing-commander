@@ -118,6 +118,12 @@ def verify_scope(before, main, conflicted_tree, manifest, project, verdict):
         reasons.append("could not list the conflicting paths of {0} and {1}".format(before, main))
         conflicts = set()
     allowed = {p for p in listed if in_project(p, project) and p in conflicts}
+    # A conflict outside the admitted scope (outside the project folder, or
+    # every conflict when the manifest admits nothing) needs a decision this
+    # stage may not make (FR-008), even when the result equals the conflicted
+    # tree: a modify/delete conflict keeps the modified file there unmarked.
+    for p in sorted(conflicts - allowed):
+        reasons.append("conflicting path outside the admitted scope: " + p)
     # --no-renames: a rename prints only its destination, which would hide
     # the deletion of an out-of-scope source behind an allowed path.
     diff = git("diff", "--no-renames", "--name-only", conflicted_tree, "HEAD^{tree}", check=False)
