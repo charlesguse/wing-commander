@@ -102,10 +102,11 @@ class Origins(object):
         if self._main_side is None:
             head = self.heads[-1]
             side = set()
-            # Only the pipeline's own sync commits count: subject `sync: merge
-            # ...`, or git's default `Merge remote-tracking branch 'origin/..`
-            # that an agent's `git merge --continue` writes after a conflict.
-            # A person's merge of another branch stays the loop's work.
+            # Only syncs of the default branch count: subject `sync: merge
+            # ...`, or git's default `Merge remote-tracking branch '<base>'`
+            # that an agent's `git merge --continue` (or a person's manual
+            # sync) writes. A merge of any other branch, remote-tracking or
+            # not, stays the loop's work.
             # Each sync contributes second-parent history minus first-parent
             # history, so main's earlier history is not swept in.
             # check=False: an unreachable head or shallow checkout yields no
@@ -117,7 +118,7 @@ class Origins(object):
                 ps = parents.split()
                 if len(ps) < 2 or not (
                         subject.startswith("sync: merge ")
-                        or subject.startswith("Merge remote-tracking branch 'origin/")):
+                        or subject.startswith("Merge remote-tracking branch '{0}'".format(self.base))):
                     continue
                 side.update(_lines(git(["rev-list", ps[1], "^" + ps[0]], self.cwd,
                                         check=False).stdout))

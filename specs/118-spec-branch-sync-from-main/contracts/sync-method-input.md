@@ -53,8 +53,9 @@ the same steps rebase uses.
 |---|---|---|
 | `validate-method <value>` | method string | 0 and prints the normalised method; 1 with the error above |
 | `decide --main <sha>` | git state | prints `current` \| `merge` |
-| `verify-scope` | `--before --main --conflicted-tree --manifest --project --verdict` | 0 = pass; 1 = fail with each reason on stderr (wrong parents, path outside manifest, leftover marker, unhealthy verdict) |
-| `publish-refspec <branch>` | spec branch name | prints `HEAD:refs/heads/<branch>`; exits 1 for a value with `+` or a force token |
+| `verify-scope` | `--before --main --conflicted-tree --manifest --project --verdict` | 0 = pass; 1 = fail with each reason on stderr (wrong parents, path outside manifest, leftover marker, unhealthy verdict). A manifest path counts only if `git merge-tree --name-only` of `--main` into `--before` lists it as conflicting, so the agent-writable manifest can narrow the allowed set but never widen it; `--conflicted-tree` comes from the attempt step's output |
+| `publish-refspec <branch>` | spec branch name | prints `HEAD:refs/heads/<branch>`; exits 1 for an empty value, a leading `+` or `-`, or whitespace |
+| `push-race` | a refused push's stderr on stdin | 0 when it is git's client-side `[rejected]` (the branch moved: reported as `(stale info)`); 1 for any other refusal, including `[remote rejected]` |
 
 Every exit-1 branch has a checked-in fixture run through the gate registry
 (`verify-sync-from-main.py`), FR-016.

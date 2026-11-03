@@ -45,7 +45,7 @@ says to merge `main` into the branch.
 With a lifecycle that has two recorded review rounds and a `main` push between
 them under merge mode, `wc_convergence.py` reports share and churn as values;
 finalize's fold-log range resolves and the log grows. Under rebase, the same
-report shows `n/a — rebase rewrites history; merge sync avoids it`.
+report shows `n/a — usually a rebase or force-push rewrote history; merge sync avoids it`.
 
 ## Prove after merge
 

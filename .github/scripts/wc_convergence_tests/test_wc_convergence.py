@@ -344,12 +344,24 @@ class SyncCommit(GitBacked):
         origins = wc.Origins(old, [h0, wc.rev("HEAD", self.repo)], self.repo)
         self.assertNotEqual(origins.of(other), "main")
 
+    def test_a_merge_of_another_remote_tracking_branch_is_not_main_side(self):
+        old, _new, h0, _h1, _h2 = self.sync_repo()
+        self.run_git("checkout", "-q", "-b", "other", old)
+        self.write("o\n", "o.py")
+        other = self.commit("other work")
+        self.run_git("checkout", "-q", "pr")
+        self.merge(other, "Merge remote-tracking branch 'origin/feature-x' into pr")
+        origins = wc.Origins("origin/main", [h0, wc.rev("HEAD", self.repo)], self.repo)
+        self.run_git("update-ref", "refs/remotes/origin/main", old)
+        self.assertNotEqual(origins.of(other), "main")
+
     def test_default_merge_subject_of_a_conflict_resolved_sync_is_main_side(self):
         # `git merge --continue` after a conflict writes git's own subject.
         old, new, h0, _h1, _h2 = self.sync_repo()
         self.run_git("reset", "-q", "--hard", h0)
         h1 = self.merge(new, "Merge remote-tracking branch 'origin/main' into spec/118-x")
-        origins = wc.Origins(old, [h0, h1], self.repo)
+        self.run_git("update-ref", "refs/remotes/origin/main", old)
+        origins = wc.Origins("origin/main", [h0, h1], self.repo)
         self.assertEqual(origins.of(new), "main")
 
     def test_unreachable_head_does_not_raise(self):

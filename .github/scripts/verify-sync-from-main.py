@@ -111,9 +111,10 @@ def suite(src, quiet=False):
         if want_rc:
             ok = ok and ("sync-method '{0}' is not valid; accepted values are 'rebase' and 'merge'".format(val) in r.stdout)
         check("validate-method {0!r}".format(val), ok, r.stdout + r.stderr, q)
-    for br, rc in (("spec/x", 0), ("+spec/x", 1), ("--force-with-lease", 1)):
+    for br, rc in (("spec/x", 0), ("+spec/x", 1), ("--force-with-lease", 1),
+                   ("spec/fix--force-push", 0), ("spec/a\tb", 1)):
         r = helper(src, ".", "publish-refspec", "--", br)
-        ok = r.returncode == rc and (rc == 1 or r.stdout.strip() == "HEAD:refs/heads/spec/x")
+        ok = r.returncode == rc and (rc == 1 or r.stdout.strip() == "HEAD:refs/heads/" + br)
         check("publish-refspec {0!r}".format(br), ok, r.stdout + r.stderr, q)
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -176,6 +177,17 @@ def suite(src, quiet=False):
         r = sh(work, "git", "push", "origin", "HEAD:refs/heads/spec/x", check_rc=False)
         check("publish: rejected when the remote head moved, branch untouched",
               r.returncode != 0 and head(origin, "refs/heads/spec/x") == moved, r.stderr, q)
+        race = subprocess.run([sys.executable, src, "push-race"], input=r.stderr,
+                              capture_output=True, text=True)
+        check("push-race: a non-fast-forward refusal is the branch race", race.returncode == 0,
+              r.stderr + race.stderr, q)
+    # A server refusal is never the race: it must fail loud after a bad credential.
+    refused = (" ! [remote rejected] HEAD -> spec/x (refusing to allow a GitHub App to "
+               "create or update workflow `.github/workflows/x.yml` without `workflows` permission)\n"
+               "error: failed to push some refs to 'https://github.com/o/r'\n")
+    race = subprocess.run([sys.executable, src, "push-race"], input=refused, capture_output=True, text=True)
+    check("push-race: a [remote rejected] refusal is not the branch race", race.returncode == 1,
+          race.stdout + race.stderr, q)
 
     # verify-scope: a conflicting edit of a.txt on both sides, plus a bystander.
     def conflict_case(tmp):
@@ -212,6 +224,40 @@ def suite(src, quiet=False):
         r = verify(w, b, m, t, mf)
         check("verify-scope: path outside the manifest fails",
               r.returncode == 1 and "b.txt" in r.stderr, r.stderr, q)
+    with tempfile.TemporaryDirectory() as tmp:
+        # The manifest file is agent-writable: listing a non-conflicting path
+        # there must not let the resolution change it.
+        w, b, m, t, mf = conflict_case(tmp)
+        write(mf, "a.txt\nb.txt\n")
+        resolve(w, {"b.txt": "tampered\n"})
+        r = verify(w, b, m, t, mf)
+        check("verify-scope: a manifest widened past git's conflict list still fails",
+              r.returncode == 1 and "b.txt" in r.stderr, r.stderr, q)
+    with tempfile.TemporaryDirectory() as tmp:
+        # A conflicted binary file resolved cleanly passes, with no traceback.
+        _, w = make_repo(tmp)
+        with open(os.path.join(w, "img.bin"), "wb") as fh:
+            fh.write(b"\x00\xffbranch")
+        sh(w, "git", "add", "."), sh(w, "git", "commit", "-q", "-m", "branch img")
+        b = head(w)
+        sh(w, "git", "checkout", "-q", "main")
+        with open(os.path.join(w, "img.bin"), "wb") as fh:
+            fh.write(b"\x00\xffmain")
+        sh(w, "git", "add", "."), sh(w, "git", "commit", "-q", "-m", "main img")
+        sh(w, "git", "push", "-q", "origin", "main")
+        sh(w, "git", "checkout", "-q", "spec/x")
+        sh(w, "git", "fetch", "-q", "--no-tags", "origin", "main:refs/remotes/origin/main")
+        m = head(w, "origin/main")
+        t = sh(w, "git", "merge-tree", "--write-tree", "--no-messages", m, "HEAD", check_rc=False).stdout.split()[0]
+        sh(w, "git", "merge", "--no-ff", "--no-commit", m, check_rc=False)
+        with open(os.path.join(w, "img.bin"), "wb") as fh:
+            fh.write(b"\x00\xffboth")
+        sh(w, "git", "add", "."), sh(w, "git", "commit", "-q", "-m", "sync: merge main into spec/x")
+        mf = os.path.join(tmp, "manifest.txt")
+        write(mf, "img.bin\n")
+        r = verify(w, b, m, t, mf)
+        check("verify-scope: a resolved binary conflict passes, no traceback",
+              r.returncode == 0 and "Traceback" not in r.stderr, r.stderr, q)
     with tempfile.TemporaryDirectory() as tmp:
         w, b, m, t, mf = conflict_case(tmp)
         resolve(w, a="one\n<<<<<<< HEAD\nBOTH\n=======\nx\n>>>>>>> main\nthree\n")
@@ -322,12 +368,38 @@ def main():
     check("the merge arm restores the seeded manifest before narrowing it",
           0 < restore < narrow and "conflict-manifest.seed.txt" in stage[restore:narrow], "")
 
+    # The rebase prompt stays byte-identical (SC-004): the merge-only preamble
+    # renders to nothing under rebase, leaving no stray leading lines.
+    agent = stage.find("name: Resolve conflicts")
+    p0 = stage.find("prompt: |", agent)
+    block = []
+    for ln in stage[p0:].splitlines()[1:]:
+        if ln.strip() and not ln.startswith(" " * 12):
+            break
+        block.append(ln[12:])
+    prompt = "\n".join(block)
+    rebase_prompt = re.sub(r"\$\{\{ inputs\.sync-method == 'merge' && .*? \|\| '' \}\}", "", prompt)
+    check("the rebase prompt renders with no merge-mode residue",
+          rebase_prompt.startswith("You are the conflict-resolution assistant"), repr(rebase_prompt[:80]))
+    check("the merge preamble does not ask for a manifest append the restore step discards",
+          "Append the conflicted paths" not in prompt, "")
+    verify_step = stage[stage.find("name: Verify AI resolution scope"):]
+    check("the conflicted tree reaches verify-scope as a step output, not an agent-writable file",
+          "conflicted-tree.txt" not in stage
+          and "steps.attempt.outputs.conflicted-tree" in verify_step[:verify_step.find("run: |")], "")
+    publish = stage[stage.find("name: Publish rebased branch"):]
+    publish = publish[:publish.find("- name:", 10)]
+    check("the merge push refusal is classified by the helper, not an inline pattern",
+          "push-race" in publish and "rejected\\]" not in publish, "")
+
     mutations = (
         ("verdict guard", 'if verdict != "healthy":', "if False:"),
         ("parents guard", "if parents != [before, main]:", "if False:"),
         ("manifest guard", "if p not in allowed:", "if False:"),
         ("marker guard", "if blob.returncode == 0 and MARKER.search(blob.stdout):", "if False:"),
-        ("project narrowing", "allowed = {p for p in listed if in_project(p, project)}", "allowed = set(listed)"),
+        ("project narrowing", "if in_project(p, project) and p in conflicts}", "if p in conflicts}"),
+        ("conflict bound", "if in_project(p, project) and p in conflicts}", "if in_project(p, project)}"),
+        ("push-race classifier", "return 0 if RACE.search(stderr_text) else 1", "return 0"),
         ("force refusal", 'branch.startswith("+") or ', ""),
     )
     for name, old, new in mutations:

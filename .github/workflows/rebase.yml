@@ -815,10 +815,12 @@ jobs:
               # A merge-tree failure (git older than 2.38) only costs the
               # conflict scope check: the merge itself still runs, and a clean
               # one needs no tree. A conflict without a tree is an error.
+              # A step output, not a $RUNNER_TEMP file: the agent can write
+              # $RUNNER_TEMP, never this step's outputs.
               set +e
               conflicted_tree="$(git merge-tree --write-tree --no-messages "origin/$DB" HEAD | head -n 1)"
               set -e
-              printf '%s\n' "$conflicted_tree" > "$RUNNER_TEMP/conflicted-tree.txt"
+              echo "conflicted-tree=$conflicted_tree" >> "$GITHUB_OUTPUT"
               set +e
               git merge --no-ff --no-commit "origin/$DB"
               rc=$?
@@ -952,9 +954,7 @@ jobs:
           # the pipeline's own App bot is allow-listed too (bare slug) -- see clarify.yml.
           allowed_bots: "github-actions,${{ steps.ctx.outputs.bot-slug }}"
           prompt: |
-            ${{ inputs.sync-method == 'merge' && format('MERGE SYNC MODE. This run merges the default branch into the branch {0}{1}; it is NOT a rebase. The repository is checked out mid-merge (`git merge --no-ff --no-commit` stopped on conflicts). Everywhere the instructions below say rebase, read merge: the conflicted files are those `git diff --name-only --diff-filter=U` lists, finish with a single `git merge --continue` (never `git rebase`), there is exactly one stop and nothing to repeat, and if you cannot reconcile the conflicts run `git merge --abort` and stop. Append the conflicted paths to the manifest file exactly as step 2 says. In the numbered steps below, step 4 ends with `git merge --continue` (not `git rebase --continue`), ignore step 5 (there is no second stop), and step 6 means `git merge --abort`; no rebase command is available to you. Never run `git commit`, `git push`, or any `gh` command.', inputs.spec-prefix, matrix.slug) || '' }}
-
-            You are the conflict-resolution assistant for this repository's
+            ${{ inputs.sync-method == 'merge' && format('MERGE SYNC MODE. This run merges the default branch into the branch {0}{1}; it is NOT a rebase. The repository is checked out mid-merge (`git merge --no-ff --no-commit` stopped on conflicts). Everywhere the instructions below say rebase, read merge: the conflicted files are those `git diff --name-only --diff-filter=U` lists, finish with a single `git merge --continue` (never `git rebase`), there is exactly one stop and nothing to repeat, and if you cannot reconcile the conflicts run `git merge --abort` and stop. Skip the manifest append in step 2: the manifest is already seeded with the conflicted paths. In the numbered steps below, step 4 ends with `git merge --continue` (not `git rebase --continue`), ignore step 5 (there is no second stop), and step 6 means `git merge --abort`; no rebase command is available to you. Never run `git commit`, `git push`, or any `gh` command.{2}', inputs.spec-prefix, matrix.slug, fromJSON('"\n\n"')) || '' }}You are the conflict-resolution assistant for this repository's
             auto-rebase maintenance stage. A rebase of the branch
             ${{ inputs.spec-prefix }}${{ matrix.slug }} onto the repository's default branch has
             stopped on merge conflicts, and the repository is checked out on
@@ -1143,18 +1143,19 @@ jobs:
             (${{ steps.agent-ceiling.outputs.ceiling }}) is the only hard
             stop; this is an observability note, not a failure.
 
-      # Containment (spec 114, FR-021): for a subfolder lifecycle the
-      # agent-appended conflict manifest admits only paths inside the project
-      # folder, so a resolution can never widen a commit outside it. Same
-      # `if:` as the scope check below, plus a subfolder project.
-      # sync-method merge: the agent must not widen the allowed path set, so
-      # the manifest is put back to the deterministic seed before narrowing.
+      # sync-method merge: the manifest is put back to the deterministic seed
+      # before narrowing. The bound the agent cannot widen is verify-scope's
+      # own: it admits only paths git itself lists as conflicting.
       - name: Restore the seeded conflict manifest
         id: manifest-restore
         shell: bash
         if: always() && steps.attempt.outputs.outcome == 'conflict' && inputs.sync-method == 'merge'
         run: cp "$RUNNER_TEMP/conflict-manifest.seed.txt" "$RUNNER_TEMP/conflict-manifest.txt"
 
+      # Containment (spec 114, FR-021): for a subfolder lifecycle the
+      # agent-appended conflict manifest admits only paths inside the project
+      # folder, so a resolution can never widen a commit outside it. Same
+      # `if:` as the scope check below, plus a subfolder project.
       - name: Narrow the conflict manifest to the project folder
         id: manifest-filter
         if: always() && steps.attempt.outputs.outcome == 'conflict' && matrix.project != ''
@@ -1188,6 +1189,7 @@ jobs:
           SYNC_METHOD: ${{ inputs.sync-method }}
           BEFORE: ${{ steps.attempt.outputs.before }}
           MAIN_SHA: ${{ steps.attempt.outputs.main }}
+          CONFLICTED_TREE: ${{ steps.attempt.outputs.conflicted-tree }}
         run: |
           set -uo pipefail
           push=false
@@ -1204,7 +1206,7 @@ jobs:
               echo "::warning::${SPEC_PREFIX}$SLUG: the merge was not completed (agent verdict=$AGENT_VERDICT) — abandoning."
               escalate=true
             elif python3 .wing-commander-pipeline/.github/scripts/wc_sync_from_main.py verify-scope \
-                --before "$BEFORE" --main "$MAIN_SHA" --conflicted-tree "$(cat "$RUNNER_TEMP/conflicted-tree.txt")" \
+                --before "$BEFORE" --main "$MAIN_SHA" --conflicted-tree "$CONFLICTED_TREE" \
                 --manifest "$manifest" --project "$PROJECT" --verdict "$AGENT_VERDICT"; then
               push=true
               echo "sync-from-main ${SPEC_PREFIX}$SLUG: AI resolution passed the scope check." >> "$GITHUB_STEP_SUMMARY"
@@ -1338,14 +1340,16 @@ jobs:
           set -uo pipefail
           # sync-method merge publishes a descendant of the remote head with a
           # plain push (no lease, no force): the server refuses anything that
-          # is not a fast-forward, and a "[rejected]" line is the branch race
-          # the lease's "(stale info)" is under rebase.
+          # is not a fast-forward, and git's "[rejected]" line is the branch
+          # race the lease's "(stale info)" is under rebase. A "[remote
+          # rejected]" refusal (protection, a hook, a permission) is not:
+          # wc_sync_from_main.py push-race decides.
           push_branch() {
             if [ "${SYNC_METHOD:-}" = merge ]; then
               refspec="$(python3 .wing-commander-pipeline/.github/scripts/wc_sync_from_main.py publish-refspec "${SPEC_PREFIX}$SLUG")" || return 1
               out="$(git push origin "$refspec" 2>&1)" && return 0
               printf '%s\n' "$out" >&2
-              if printf '%s' "$out" | grep -qE '\[(remote )?rejected\]'; then echo "(stale info)" >&2; fi
+              if printf '%s\n' "$out" | python3 .wing-commander-pipeline/.github/scripts/wc_sync_from_main.py push-race; then echo "(stale info)" >&2; fi
               return 1
             else
               LC_ALL=C git push --force-with-lease origin "HEAD:refs/heads/${SPEC_PREFIX}$SLUG"

@@ -13,6 +13,9 @@ Subcommands:
   verify-scope ...          exit 0 pass; exit 1 with each reason on stderr
   publish-refspec <branch>  prints HEAD:refs/heads/<branch>; exit 1 on a
                             forced or malformed branch value
+  push-race                 reads a refused push's stderr on stdin; exit 0
+                            when it is the branch race (git's client-side
+                            "[rejected]"), 1 for any other refusal
 """
 import argparse
 import re
@@ -25,8 +28,11 @@ MARKER = re.compile(r"^(<<<<<<<|>>>>>>>)( |$)", re.M)
 
 
 def git(*args, check=True):
+    # errors="replace": a conflicted file can be binary or not UTF-8, and the
+    # marker scan must read it rather than crash on the decode.
     return subprocess.run(["git", "-c", "core.quotepath=off", *args],
-                          capture_output=True, text=True, check=check)
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", check=check)
 
 
 def validate_method(value):
@@ -42,12 +48,25 @@ def validate_method(value):
 
 
 def publish_refspec(branch):
-    if branch.startswith("+") or branch.startswith("-") or "--force" in branch or " " in branch or not branch:
+    # One argv word cannot become an option or a forced update unless it
+    # starts with '+' or '-'; a '--force' later in a slug is just a name.
+    if not branch or branch.startswith("+") or branch.startswith("-") or any(c.isspace() for c in branch):
         print("::error::wing-commander rebase: refusing a forced or malformed "
               "publish target '{0}'".format(branch), file=sys.stderr)
         return 1
     print("HEAD:refs/heads/{0}".format(branch))
     return 0
+
+
+# A plain push the server refuses as a non-fast-forward is git's client-side
+# "! [rejected]" line: the branch moved since checkout. "[remote rejected]"
+# is the server refusing (branch protection, a hook, a missing permission)
+# and is never the race.
+RACE = re.compile(r"^ ?! \[rejected\] ", re.M)
+
+
+def push_race(stderr_text):
+    return 0 if RACE.search(stderr_text) else 1
 
 
 def decide(main):
@@ -58,6 +77,16 @@ def decide(main):
 
 def in_project(path, project):
     return not project or path == project or path.startswith(project.rstrip("/") + "/")
+
+
+def conflicted_paths(before, main):
+    """The paths a merge of `main` into `before` conflicts on, from git alone:
+    the deterministic bound on what a resolution may change, whatever the
+    agent-writable manifest file says. None when git cannot say."""
+    r = git("merge-tree", "--write-tree", "--name-only", "--no-messages", main, before, check=False)
+    if r.returncode not in (0, 1):
+        return None
+    return {ln for ln in r.stdout.splitlines()[1:] if ln}
 
 
 def verify_scope(before, main, conflicted_tree, manifest, project, verdict):
@@ -73,7 +102,11 @@ def verify_scope(before, main, conflicted_tree, manifest, project, verdict):
             listed = {ln.rstrip("\n") for ln in fh if ln.strip()}
     except OSError:
         listed = set()
-    allowed = {p for p in listed if in_project(p, project)}
+    conflicts = conflicted_paths(before, main)
+    if conflicts is None:
+        reasons.append("could not list the conflicting paths of {0} and {1}".format(before, main))
+        conflicts = set()
+    allowed = {p for p in listed if in_project(p, project) and p in conflicts}
     diff = git("diff", "--name-only", conflicted_tree, "HEAD^{tree}", check=False)
     if diff.returncode != 0:
         reasons.append("conflicted tree '{0}' is not a readable tree".format(conflicted_tree))
@@ -100,7 +133,10 @@ def main(argv=None):
         p.add_argument("--" + name, required=True)
     p.add_argument("--project", default="")
     sub.add_parser("publish-refspec").add_argument("branch")
+    sub.add_parser("push-race")
     a = ap.parse_args(argv)
+    if a.cmd == "push-race":
+        return push_race(sys.stdin.read())
     if a.cmd == "validate-method":
         return validate_method(a.value)
     if a.cmd == "decide":
