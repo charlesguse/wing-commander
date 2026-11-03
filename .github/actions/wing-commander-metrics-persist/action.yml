@@ -435,9 +435,17 @@ runs:
           jq -r "[(.run.record_key // \"\"), ($stable_expr // \"\")] | @tsv" "$batch" > "$pairs" 2>/dev/null || : > "$pairs"
           n_lines="$(wc -l < "$batch" | tr -d ' ')"
           n_pairs="$(wc -l < "$pairs" | tr -d ' ')"
-          if [ "$n_lines" != "$n_pairs" ]; then : > "$pairs"; fi
-          # Membership is an associative-array lookup, loaded once per
-          # attempt, so the batch loop does no per-line process spawn.
+          if [ "$n_lines" != "$n_pairs" ]; then
+            echo "::warning::wing-commander-metrics-persist: batch key derivation produced $n_pairs of $n_lines expected line(s); deriving keys per line instead."
+            : > "$pairs"
+          fi
+          # Membership is an associative-array lookup (bash 4+), loaded once
+          # per attempt, so the batch loop does no per-line process spawn.
+          # Fail loudly rather than degrade on an older bash.
+          if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
+            echo "::error::wing-commander-metrics-persist: bash 4+ is required for the dedup lookup (found ${BASH_VERSION:-unknown})."
+            exit 1
+          fi
           declare -A seen_key=() seen_stable=()
           while IFS= read -r k; do [ -z "$k" ] || seen_key["$k"]=1; done < "$existing_keys"
           while IFS= read -r k; do [ -z "$k" ] || seen_stable["$k"]=1; done < "$stable_keys"
@@ -608,7 +616,9 @@ runs:
 
         # DEST_PATH and sweep-state.json are read from the worktree, so make
         # sure it is on the destination branch the append step wrote them to.
-        git checkout -q "$BRANCH" >/dev/null 2>&1 || true
+        if ! git checkout -q "$BRANCH" >/dev/null 2>&1; then
+          echo "::warning::wing-commander-metrics-persist: could not check out $BRANCH for the rollup; the last-sweep line may read 'unknown'."
+        fi
 
         for spec_dir in $SPEC_DIRS; do
           [ -n "$spec_dir" ] || continue
