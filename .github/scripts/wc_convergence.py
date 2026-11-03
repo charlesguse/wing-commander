@@ -80,11 +80,8 @@ def rev(ref, cwd):
 class Origins(object):
     """Maps a commit to the segment of the loop that introduced it."""
 
-    def __init__(self, base, heads, cwd, base_name=None):
+    def __init__(self, base, heads, cwd):
         self.base = base
-        # The ref the caller named (`origin/main`): git's default merge
-        # subject quotes it, never the SHA `base` is resolved to.
-        self.base_name = base_name or base
         self.heads = heads
         self.cwd = cwd
         self._cache = {}
@@ -97,19 +94,20 @@ class Origins(object):
     def _main_side_commits(self):
         """Commits that arrived through a sync commit (merge sync, spec 118):
         reachable from the second parent of a merge on the latest head's
-        first-parent chain and not on that chain themselves. They are the
-        default branch's, even when --base predates the sync; the lines a
+        first-parent chain and not on that chain themselves. The lines a
         sync commit's own conflict resolution wrote stay the sync commit's,
         so they still count as the loop's work (FR-011). Decided from git
         alone -- no new input (research D9)."""
         if self._main_side is None:
             head = self.heads[-1]
             side = set()
-            # Only syncs of the default branch count: subject `sync: merge
-            # ...`, or git's default `Merge remote-tracking branch '<base>'`
-            # that an agent's `git merge --continue` (or a person's manual
-            # sync) writes. A merge of any other branch, remote-tracking or
-            # not, stays the loop's work.
+            # A merge is a sync of the default branch only when its second
+            # parent is an ancestor of the fetched base: ancestry, never the
+            # subject, which anyone can write and whose quoted ref depends on
+            # how the merge was spelled. A merge of any other branch stays
+            # the loop's work. Callers pass the freshly fetched default
+            # branch as --base; a stale one recognises no later sync, and
+            # measure() warns to fetch it.
             # Each sync contributes second-parent history minus first-parent
             # history, so main's earlier history is not swept in.
             # check=False: an unreachable head or shallow checkout yields no
@@ -117,13 +115,10 @@ class Origins(object):
             # ^base: a sync commit is never in the base, so main's own
             # first-parent history below the fork point is not walked.
             for row in _lines(git(["log", "--first-parent", "--merges",
-                                   "--format=%P\t%s", head, "^" + self.base], self.cwd,
+                                   "--format=%P", head, "^" + self.base], self.cwd,
                                   check=False).stdout):
-                parents, _, subject = row.partition("\t")
-                ps = parents.split()
-                if len(ps) < 2 or not (
-                        subject.startswith("sync: merge ")
-                        or subject.startswith("Merge remote-tracking branch '{0}'".format(self.base_name))):
+                ps = row.split()
+                if len(ps) < 2 or not self._is_ancestor(ps[1], self.base):
                     continue
                 side.update(_lines(git(["rev-list", ps[1], "^" + ps[0]], self.cwd,
                                         check=False).stdout))
@@ -306,10 +301,9 @@ def measure(base, heads, findings, cwd, counts=None):
     # a path against its cwd; run from a subdirectory, every blame would
     # fail and churn and attribution would read 0.
     cwd = _toplevel(cwd)
-    base_name = base
     base = rev(base, cwd)
     heads = [rev(h, cwd) for h in heads]
-    origins = Origins(base, heads, cwd, base_name)
+    origins = Origins(base, heads, cwd)
     report = {"base": base, "heads": heads}
 
     report["growth"] = [dict(diff_size(base, h, cwd), head=h[:12]) for h in heads]
@@ -414,13 +408,12 @@ def _resolve_heads(base, rounds, cwd):
 def compute_history(base, rounds, ledger, cwd):
     """Fill each round's signals from git. Never agent-supplied."""
     cwd = _toplevel(cwd)
-    base_name = base
     resolved_heads = _resolve_heads(base, rounds, cwd)
     git_ok = resolved_heads is not None
     first_size = 0
     if git_ok:
         base, heads = resolved_heads
-        origins = Origins(base, heads, cwd, base_name)
+        origins = Origins(base, heads, cwd)
         # Heads that all resolve can still be rewritten history (a rebase
         # whose old heads another ref keeps): the rebased PR commits are
         # then ancestors of the later heads only and would be labelled

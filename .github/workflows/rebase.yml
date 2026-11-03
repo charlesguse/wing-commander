@@ -834,7 +834,8 @@ jobs:
               elif [ "$rc" -ne 2 ] && unmerged="$(git -c core.quotepath=off diff --name-only --diff-filter=U)" && [ -n "$unmerged" ]; then
                 outcome=conflict
                 printf '%s\n' "$unmerged" > "$RUNNER_TEMP/conflict-manifest.txt"
-                printf '%s\n' "$unmerged" > "$RUNNER_TEMP/conflict-manifest.seed.txt"
+                # The seed is a step output for the same reason as the tree.
+                echo "conflict-seed=$(printf '%s\n' "$unmerged" | base64 -w 0)" >> "$GITHUB_OUTPUT"
               else
                 git merge --abort || true
                 outcome=error
@@ -899,6 +900,7 @@ jobs:
       # scope-check step below, not the job.
       - name: Compose tool args (rebase)
         id: tool-args-rebase
+        if: inputs.sync-method != 'merge'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
           default-allowed-tools: "Read,Edit,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git rebase --continue:*),Bash(git rebase --abort:*)"
@@ -913,6 +915,7 @@ jobs:
       # sync-method merge: the same surface with merge in place of rebase.
       - name: Compose tool args (merge)
         id: tool-args-merge
+        if: inputs.sync-method == 'merge'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-tool-args
         with:
           default-allowed-tools: "Read,Edit,Grep,Glob,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git merge --continue:*),Bash(git merge --abort:*)"
@@ -1143,14 +1146,18 @@ jobs:
             (${{ steps.agent-ceiling.outputs.ceiling }}) is the only hard
             stop; this is an observability note, not a failure.
 
-      # sync-method merge: the manifest is put back to the deterministic seed
-      # before narrowing. The bound the agent cannot widen is verify-scope's
-      # own: it admits only paths git itself lists as conflicting.
+      # sync-method merge: the manifest is rewritten from the deterministic
+      # seed before narrowing. The seed is the attempt step's output, which
+      # the agent cannot write; verify-scope also admits only paths git itself
+      # lists as conflicting. !cancelled(), not always(): a cancelled run
+      # publishes nothing, so there is no manifest to restore.
       - name: Restore the seeded conflict manifest
         id: manifest-restore
         shell: bash
-        if: always() && steps.attempt.outputs.outcome == 'conflict' && inputs.sync-method == 'merge'
-        run: cp "$RUNNER_TEMP/conflict-manifest.seed.txt" "$RUNNER_TEMP/conflict-manifest.txt"
+        if: ${{ !cancelled() && steps.attempt.outputs.outcome == 'conflict' && inputs.sync-method == 'merge' }}
+        env:
+          CONFLICT_SEED: ${{ steps.attempt.outputs.conflict-seed }}
+        run: printf '%s' "$CONFLICT_SEED" | base64 -d > "$RUNNER_TEMP/conflict-manifest.txt"
 
       # Containment (spec 114, FR-021): for a subfolder lifecycle the
       # agent-appended conflict manifest admits only paths inside the project

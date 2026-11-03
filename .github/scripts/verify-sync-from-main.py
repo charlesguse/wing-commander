@@ -54,6 +54,7 @@ def sh(cwd, *args, check_rc=True):
 
 
 def write(path, text):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
 
@@ -105,7 +106,8 @@ def suite(src, quiet=False):
     q = quiet
 
     for val, want_rc, want_out in (("", 0, "rebase"), ("rebase", 0, "rebase"), ("merge", 0, "merge"),
-                                   ("bogus", 1, None), ("Merge", 1, None)):
+                                   ("bogus", 1, None), ("Merge", 1, None),
+                                   ("--merge", 1, None), ("-x", 1, None)):
         r = helper(src, ".", "validate-method", val)
         ok = r.returncode == want_rc and (want_out is None or r.stdout.strip() == want_out)
         if want_rc:
@@ -322,6 +324,24 @@ def suite(src, quiet=False):
         check("verify-scope: leftover marker in a C-quoted conflicted name fails",
               r.returncode == 1 and "marker" in r.stderr, r.stderr, q)
     with tempfile.TemporaryDirectory() as tmp:
+        # A C-quoted conflicted name inside a subfolder project is in scope:
+        # the project test reads the real name, not the leading '"'.
+        _, w = make_repo(tmp)
+        qn = 'proj/q"t.txt'
+        write(os.path.join(w, qn), "one\nBRANCH\nthree\n")
+        sh(w, "git", "add", "."), sh(w, "git", "commit", "-q", "-m", "branch q")
+        b = head(w)
+        m = advance_main(w, qn, "one\nMAIN\nthree\n")
+        t = sh(w, "git", "merge-tree", "--write-tree", "--no-messages", m, "HEAD", check_rc=False).stdout.split()[0]
+        sh(w, "git", "merge", "--no-ff", "--no-commit", m, check_rc=False)
+        mf = os.path.join(tmp, "manifest.txt")
+        write(mf, sh(w, "git", "-c", "core.quotepath=off", "diff", "--name-only", "--diff-filter=U").stdout)
+        write(os.path.join(w, qn), "one\nBOTH\nthree\n")
+        sh(w, "git", "add", "."), sh(w, "git", "commit", "-q", "-m", "sync: merge main into spec/x")
+        r = verify(w, b, m, t, mf, project="proj")
+        check("verify-scope: a C-quoted conflicted name inside the project passes",
+              r.returncode == 0, r.stderr, q)
+    with tempfile.TemporaryDirectory() as tmp:
         # Rename detection pairs a deleted out-of-scope file with an allowed
         # path the conflicted tree lacks and prints only the allowed one.
         _, w = make_repo(tmp)
@@ -421,27 +441,36 @@ def suite(src, quiet=False):
 
 # Single home (CLAUDE.md "Shared logic has exactly one home"): method
 # validation and the conflict-marker scan live only in the helper.
-# The marker sign is the helper's own compiled pattern, so a verbatim copy is
-# caught and an unrelated marker regex elsewhere does not trip the gate.
+# The signs: the validation message's wording, the helper's own compiled
+# marker pattern verbatim, and a seven-marker regex written with a quantifier
+# (`<{7}`, `[<]{7}`, `\<{7}`). A plain literal `<<<<<<<` elsewhere (a git
+# fixture, prose) is not a sign, so an unrelated use does not trip the gate.
 COPY_SIGNS = ("accepted values are 'rebase' and 'merge'", wc_sync_from_main.MARKER.pattern)
+COPY_PATTERNS = (re.compile(r"sync-method\b.{0,40}\bis not valid"),
+                 re.compile(r"(\[\\?[<>]\]|\\?[<>])\{7\}"))
+# Every tracked text file is scanned, docs and shell included. specs/ is the
+# record of what was asked for (the contract quotes the message by design).
+SINGLE_HOME_EXEMPT = (".github/scripts/wc_sync_from_main.py", ".github/scripts/verify-sync-from-main.py")
 
 
 def copies_of_helper_logic(files):
     """Names of the files in `files` ({path: text}) that carry a sign."""
-    return sorted(p for p, text in files.items() if any(s in text for s in COPY_SIGNS))
+    return sorted(p for p, text in files.items()
+                  if any(s in text for s in COPY_SIGNS) or any(r.search(text) for r in COPY_PATTERNS))
 
 
 def single_home_files():
     found = {}
-    for base, ext in ((".github/workflows", (".yml", ".yaml")), (".github/actions", (".yml", ".yaml", ".sh")),
-                      (".github/scripts", (".py", ".sh"))):
-        for dirpath, _dirs, names in os.walk(base):
-            for name in names:
-                path = os.path.join(dirpath, name).replace(os.sep, "/")
-                if name.endswith(ext) and path not in (".github/scripts/wc_sync_from_main.py",
-                                                       ".github/scripts/verify-sync-from-main.py"):
-                    with open(path, encoding="utf-8", errors="replace") as fh:
-                        found[path] = fh.read()
+    listed = subprocess.run(["git", "ls-files", "-z"], capture_output=True, check=True).stdout
+    for raw in listed.split(b"\0"):
+        path = raw.decode("utf-8", "replace")
+        if not path or path.startswith("specs/") or path in SINGLE_HOME_EXEMPT or not os.path.isfile(path):
+            continue
+        with open(path, "rb") as fh:
+            data = fh.read()
+        if b"\0" in data:
+            continue
+        found[path] = data.decode("utf-8", "replace")
     return found
 
 
@@ -455,6 +484,15 @@ def main():
           "copied into: " + ", ".join(copies))
     check("the single-home check sees a pasted copy",
           copies_of_helper_logic({"x.yml": "echo \"accepted values are 'rebase' and 'merge'\""}) == ["x.yml"], "")
+    check("the single-home check sees reworded and respelled copies",
+          copies_of_helper_logic({
+              "docs/a.md": "sync-method 'x' is not valid",
+              "b.sh": "grep -E '^[<]{7} ' f",
+              "c.py": r"re.compile(r'^\<{7}')",
+              "ok.sh": "printf '<<<<<<< HEAD\\n' > fixture",
+          }) == ["b.sh", "c.py", "docs/a.md"], "")
+    check("the single-home scan covers docs and shell, not only .github",
+          any(p.startswith("docs/") for p in single_home_files()), "")
     # The importable module and the subprocess entry point are one file.
     check("helper marker pattern matches a conflict line and not prose",
           bool(wc_sync_from_main.MARKER.search("a\n<<<<<<< HEAD\nb"))
@@ -475,8 +513,18 @@ def main():
 
     restore = stage.find("name: Restore the seeded conflict manifest")
     narrow = stage.find("name: Narrow the conflict manifest to the project folder")
+    restore_step = stage[restore:narrow]
     check("the merge arm restores the seeded manifest before narrowing it",
-          0 < restore < narrow and "conflict-manifest.seed.txt" in stage[restore:narrow], "")
+          0 < restore < narrow and "steps.attempt.outputs.conflict-seed" in restore_step, "")
+    check("the seed is a step output, never an agent-writable file",
+          "conflict-manifest.seed" not in stage and "conflict-seed=" in stage, "")
+    check("the restore step is gated on !cancelled(), not always()",
+          "!cancelled()" in restore_step and "always()" not in restore_step.split("run:")[0], "")
+    for method, cond in (("rebase", "if: inputs.sync-method != 'merge'"),
+                         ("merge", "if: inputs.sync-method == 'merge'")):
+        args = stage[stage.find("name: Compose tool args ({0})".format(method)):]
+        args = args[:args.find("- name:", 10)]
+        check("the {0} tool-args step runs only under {0}".format(method), cond in args, "")
 
     # The rebase prompt stays byte-identical (SC-004): the merge-only preamble
     # renders to nothing under rebase, leaving no stray leading lines.
@@ -514,8 +562,11 @@ def main():
         ("parents guard", "if parents != [before, main]:", "if False:"),
         ("manifest guard", "if p not in allowed:", "if False:"),
         ("marker guard", "if blob.returncode == 0 and MARKER.search(blob.stdout):", "if False:"),
-        ("project narrowing", "if in_project(p, project) and p in conflicts}", "if p in conflicts}"),
-        ("conflict bound", "if in_project(p, project) and p in conflicts}", "if in_project(p, project)}"),
+        ("project narrowing", "if in_project(unquote(p), project) and p in conflicts}", "if p in conflicts}"),
+        ("conflict bound", "if in_project(unquote(p), project) and p in conflicts}",
+         "if in_project(unquote(p), project)}"),
+        ("quoted-name project test", "in_project(unquote(p), project)", "in_project(p, project)"),
+        ("raw method value", 'if argv[:1] == ["validate-method"]:', "if False:"),
         ("push-race classifier", "return 0 if RACE.search(stderr_text) else 1", "return 0"),
         ("force refusal", 'branch.startswith("+") or ', ""),
         ("quoted-name unquote", '"HEAD:" + unquote(p)', '"HEAD:" + p'),

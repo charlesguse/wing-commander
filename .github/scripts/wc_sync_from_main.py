@@ -131,7 +131,9 @@ def verify_scope(before, main, conflicted_tree, manifest, project, verdict, main
     if conflicts is None:
         reasons.append("could not list the conflicting paths of {0} and {1}".format(before, main))
         conflicts = set()
-    allowed = {p for p in listed if in_project(p, project) and p in conflicts}
+    # unquote: a C-quoted name ("proj/q\"t.txt") starts with '"', not the
+    # project folder.
+    allowed = {p for p in listed if in_project(unquote(p), project) and p in conflicts}
     # A conflict outside the admitted scope (outside the project folder, or
     # every conflict when the manifest admits nothing) needs a decision this
     # stage may not make (FR-008), even when the result equals the conflicted
@@ -157,6 +159,12 @@ def verify_scope(before, main, conflicted_tree, manifest, project, verdict, main
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    # The method value is read raw, never by argparse: a value such as
+    # `--merge` or `-x` would otherwise parse as an option and exit 2 with
+    # usage text instead of the contracted exit-1 ::error:: line.
+    if argv[:1] == ["validate-method"]:
+        return validate_method(" ".join(argv[1:]))
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("validate-method").add_argument("value", nargs="?", default="")

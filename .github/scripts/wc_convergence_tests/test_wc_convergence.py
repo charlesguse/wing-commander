@@ -355,24 +355,44 @@ class SyncCommit(GitBacked):
         self.run_git("update-ref", "refs/remotes/origin/main", old)
         self.assertNotEqual(origins.of(other), "main")
 
-    def test_default_merge_subject_of_a_conflict_resolved_sync_is_main_side(self):
-        # `git merge --continue` after a conflict writes git's own subject.
-        old, new, h0, _h1, _h2 = self.sync_repo()
+    def test_a_forged_sync_subject_on_another_branch_is_not_main_side(self):
+        # The subject is not evidence: only ancestry against the base is.
+        old, _new, h0, _h1, _h2 = self.sync_repo()
+        self.run_git("checkout", "-q", "-b", "other", old)
+        self.write("o\n", "o.py")
+        other = self.commit("other work")
+        self.run_git("checkout", "-q", "pr")
+        h = self.merge(other, "sync: merge feature into pr")
+        origins = wc.Origins("main", [h0, h], self.repo)
+        self.assertNotIn(other, origins._main_side_commits())
+        self.assertNotEqual(origins.of(other), "main")
+
+    def test_a_sync_is_recognised_whatever_the_base_spelling_or_subject(self):
+        # `git merge --continue` after a conflict writes git's own subject,
+        # which quotes whatever ref the merge named.
+        _old, new, h0, _h1, _h2 = self.sync_repo()
         self.run_git("reset", "-q", "--hard", h0)
-        h1 = self.merge(new, "Merge remote-tracking branch 'origin/main' into spec/118-x")
-        self.run_git("update-ref", "refs/remotes/origin/main", old)
-        origins = wc.Origins("origin/main", [h0, h1], self.repo)
-        self.assertEqual(origins.of(new), "main")
+        h1 = self.merge(new, "Merge remote-tracking branch 'upstream/trunk' into spec/118-x")
+        self.run_git("update-ref", "refs/remotes/origin/main", new)
+        for base in ("origin/main", "main", "refs/remotes/origin/main", new):
+            origins = wc.Origins(wc.rev(base, self.repo), [h0, h1], self.repo)
+            self.assertIn(new, origins._main_side_commits(), base)
+            self.assertEqual(origins.of(new), "main", base)
+
+    def test_a_stale_base_recognises_no_later_sync_and_warns(self):
+        old, new, h0, h1, h2 = self.sync_repo()
+        self.assertNotIn(new, wc.Origins(old, [h0, h1], self.repo)._main_side_commits())
+        report = wc.measure(old, [h0, h1, h2], [], self.repo)
+        self.assertTrue([w for w in report["warnings"] if "merged commits" in w])
 
     def test_default_merge_subject_matches_when_callers_resolve_the_base(self):
-        # measure() and compute_history() resolve --base to a SHA; git's
-        # subject quotes the ref the caller named, `origin/main`.
-        old, new, h0, _h1, _h2 = self.sync_repo()
+        # measure() and compute_history() resolve --base to a SHA.
+        _old, new, h0, _h1, _h2 = self.sync_repo()
         self.run_git("reset", "-q", "--hard", h0)
         h1 = self.merge(new, "Merge remote-tracking branch 'origin/main' into spec/118-x")
         self.write("a\nb\nc\npr1\npr2\nfix\n")
         h2 = self.commit("pass 2")
-        self.run_git("update-ref", "refs/remotes/origin/main", old)
+        self.run_git("update-ref", "refs/remotes/origin/main", new)
         history = wc.compute_history("origin/main", [
             {"round": 1, "head_sha": h0, "findings": []},
             {"round": 2, "head_sha": h1,
@@ -384,8 +404,8 @@ class SyncCommit(GitBacked):
         self.assertEqual(report["findings"][0]["origin"], "main")
 
     def test_measure_does_not_warn_about_a_sync_commits_main_side(self):
-        old, _new, h0, h1, h2 = self.sync_repo()
-        report = wc.measure(old, [h0, h1, h2], [], self.repo)
+        _old, new, h0, h1, h2 = self.sync_repo()
+        report = wc.measure(new, [h0, h1, h2], [], self.repo)
         self.assertEqual([w for w in report["warnings"] if "merged commits" in w], [])
 
     def test_main_side_walk_stops_at_the_base(self):
@@ -412,9 +432,10 @@ class SyncCommit(GitBacked):
 
     def test_main_side_excludes_history_the_branch_already_had(self):
         old, new, h0, h1, _h2 = self.sync_repo()
-        origins = wc.Origins(old, [h0, h1], self.repo)
-        self.assertEqual(origins.of(new), "main")
-        self.assertEqual(origins.of(h0), "pr")
+        side = wc.Origins(new, [h0, h1], self.repo)._main_side_commits()
+        self.assertEqual(side, {new})
+        self.assertNotIn(old, side)
+        self.assertEqual(wc.Origins(new, [h0, h1], self.repo).of(h0), "pr")
 
     def sync_repo(self, conflict=False):
         """base <- pr (h0) ; main moves ; sync commit (h1) ; pr fix (h2).
@@ -447,10 +468,10 @@ class SyncCommit(GitBacked):
         return old, new, h0, h1, h2
 
     def test_main_side_of_a_sync_commit_is_attributed_to_main_not_the_pass(self):
-        old, _new, h0, h1, h2 = self.sync_repo()
-        # --base predates the sync: main's m.py arrived through the sync
-        # commit's second parent and is still the default branch's.
-        history = wc.compute_history(old, [
+        _old, new, h0, h1, h2 = self.sync_repo()
+        # main's m.py arrived through the sync commit's second parent and
+        # is the default branch's.
+        history = wc.compute_history(new, [
             {"round": 1, "head_sha": h0, "findings": []},
             {"round": 2, "head_sha": h1,
              "findings": [{"fingerprint": "x", "file": "m.py", "line": 1}]},
@@ -474,7 +495,7 @@ class SyncCommit(GitBacked):
 
     def test_conflict_resolution_is_lifecycle_work_and_main_lines_are_not(self):
         old, new, h0, h1, _h2 = self.sync_repo(conflict=True)
-        origins = wc.Origins(old, [h0, h1], self.repo)
+        origins = wc.Origins(new, [h0, h1], self.repo)
         blame = wc.blame_file(h1, "f.py", self.repo)
         self.assertEqual(origins.of(blame[1]), "pass1")   # the resolution line
         self.assertEqual(origins.of(wc.blame_file(h1, "m.py", self.repo)[0]), "main")
