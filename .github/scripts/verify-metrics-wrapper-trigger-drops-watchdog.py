@@ -52,7 +52,7 @@ and the stage's two new inputs exist
 with `default: false` and are passed by neither the `workflow_run` job nor
 the `sweep` job.
 
-28 subject mutations and two discovery mutations must each break an
+30 subject mutations and two discovery mutations must each break an
 assertion. Each check in suite() is the only one some mutation trips --
 a mutation that a second check also catches would keep passing with its
 target check deleted -- except the missing-`if:` check, which the
@@ -133,16 +133,27 @@ def persisting_failures(subject):
             broke.append(f"{path}: `{PERSISTING_JOB}` does not list "
                          f"{stage_job!r} in `needs`")
         expr = str(job.get("if") or "")
-        if "always()" not in expr:
+        # The clauses must be top-level conjuncts: a substring test passes
+        # an always() that sits in an `||` branch, and a clause that only
+        # appears inside another conjunct.
+        if "||" in expr:
+            broke.append(f"{path}: `{PERSISTING_JOB}`'s `if:` uses `||` -- "
+                         f"every clause must be a top-level `&&` conjunct")
+        conjuncts = [" ".join(c.split()) for c in expr.split("&&")]
+        if "always()" not in conjuncts:
             broke.append(f"{path}: `{PERSISTING_JOB}`'s `if:` lacks always() "
                          f"-- success()/!cancelled() alone skips it exactly "
                          f"when the run failed or was cancelled")
-        if PAUSE_VAR not in expr:
+        if not any(c.startswith(f"{PAUSE_VAR} !=") for c in conjuncts):
             broke.append(f"{path}: `{PERSISTING_JOB}`'s `if:` does not read "
                          f"{PAUSE_VAR}")
-        if f"needs.{stage_job}.result" not in expr or "skipped" not in expr:
+        if f"needs.{stage_job}.result != 'skipped'" not in conjuncts:
             broke.append(f"{path}: `{PERSISTING_JOB}`'s `if:` does not "
                          f"exclude a skipped {stage_job!r}")
+        if stage_job == "implement" and \
+                "needs.resolve-model.result == 'success'" not in conjuncts:
+            broke.append(f"{path}: `{PERSISTING_JOB}`'s `if:` lacks the "
+                         f"resolve-model 'something started' clause")
         passed = dict(job.get("with") or {})
         for name in NEW_INPUTS:
             if passed.get(name) is not True:
@@ -831,6 +842,19 @@ def mut_persisting_no_always(subject):
               "needs.implement.result != 'skipped'"))
 
 
+def mut_persisting_always_in_or_branch(subject):
+    return _persisting(subject, "implement", _set(
+        "if", "vars.WING_COMMANDER_METRICS_PAUSED != 'true' && "
+              "needs.resolve-model.result == 'success' && "
+              "needs.implement.result != 'skipped' || always()"))
+
+
+def mut_persisting_no_started_clause(subject):
+    return _persisting(subject, "implement", _set(
+        "if", "always() && vars.WING_COMMANDER_METRICS_PAUSED != 'true' && "
+              "needs.implement.result != 'skipped'"))
+
+
 def mut_persisting_no_needs(subject):
     return _persisting(subject, "finalize", _set("needs", []))
 
@@ -924,6 +948,10 @@ MUTATIONS = [
     ("the finalize wrapper loses its persisting job",
      mut_persisting_missing_finalize),
     ("a persisting job's `if:` drops always()", mut_persisting_no_always),
+    ("a persisting job's always() sits only in an `||` branch",
+     mut_persisting_always_in_or_branch),
+    ("the implement persisting job loses its resolve-model started clause",
+     mut_persisting_no_started_clause),
     ("a persisting job stops waiting for its stage", mut_persisting_no_needs),
     ("a persisting job calls something other than metrics-persist.yml",
      mut_persisting_wrong_callee),

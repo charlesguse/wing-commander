@@ -272,19 +272,19 @@ MVP is Phase 1-2 plus US1: stage inputs, both wrapper jobs, extended Gate 79 wit
 
   - .github/workflows/wing-commander-5-implement.yml
 
-- [ ] Review finding: Dedup code uses bash 4 declare -A and silently degrades
+- [x] Review finding: Dedup code uses bash 4 declare -A and silently degrades
 
   `declare -A` fails under bash 3.2, and a mid-stream jq failure empties the file via the count check and silently falls back to per-line jq forking with no log.
 
   - .github/actions/wing-commander-metrics-persist/action.yml
 
-- [ ] Review finding: Rollup git checkout failure swallowed with || true
+- [x] Review finding: Rollup git checkout failure swallowed with || true
 
   Failure of `git checkout -q $BRANCH` is hidden, so the sweep line silently reads 'unknown' on every rollup; the new test runs outside a git repo and cannot catch it.
 
   - .github/actions/wing-commander-metrics-persist/action.yml
 
-- [ ] Review finding: Gate 79 if: checks are substring tests
+- [x] Review finding: Gate 79 if: checks are substring tests
 
   The gate tests `'always()' in expr` and 'skipped' substrings, so an expression with always() only in a comment or an || branch passes, and implement's resolve-model started clause is never checked.
 
