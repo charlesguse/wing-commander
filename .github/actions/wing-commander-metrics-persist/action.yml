@@ -411,28 +411,53 @@ runs:
           # record_key changes when a re-run attempt gives the same job a
           # new id, so a run met again by a later path would append a
           # second copy. The attempt-independent identity of a record is
-          # run : job_key : step_index; skip on either form.
+          # run : job_key : step_index : emitted_at; skip on either form.
+          # emitted_at is part of it because a re-run attempt's newly spent
+          # agent record shares run, job_key and step_index with attempt 1's
+          # but is emitted at a different time; the same record met again
+          # carries the identical emitted_at.
           stable_keys="$dir/existing-stable-keys.txt"
+          stable_expr='select(.run.job_key != null) | "\(.run.workflow_run_id):\(.run.job_key):\(.run.step_index):\(.emitted_at // "")"'
           if [ -f "$DEST_PATH" ]; then
-            jq -r 'select(.run.job_key != null) | "\(.run.workflow_run_id):\(.run.job_key):\(.run.step_index)"' "$DEST_PATH" 2>/dev/null > "$stable_keys" || : > "$stable_keys"
+            jq -r "$stable_expr" "$DEST_PATH" 2>/dev/null > "$stable_keys" || : > "$stable_keys"
           else
             : > "$stable_keys"
           fi
 
           to_append="$dir/to-append.jsonl"
           : > "$to_append"
+          # One jq pass derives both keys for every batch line; a line's
+          # stable key is added to the in-memory list as it is appended, so
+          # two lines of one batch sharing a stable key land only once.
+          pairs="$dir/batch-keys.tsv"
+          jq -r "[(.run.record_key // \"\"), ($stable_expr // \"\")] | @tsv" "$batch" > "$pairs" 2>/dev/null || : > "$pairs"
+          n_lines="$(wc -l < "$batch" | tr -d ' ')"
+          n_pairs="$(wc -l < "$pairs" | tr -d ' ')"
+          if [ "$n_lines" != "$n_pairs" ]; then : > "$pairs"; fi
+          exec 3< "$pairs"
           while IFS= read -r line; do
             [ -n "$line" ] || continue
-            key="$(printf '%s' "$line" | jq -r '.run.record_key // empty')"
+            pair=""
+            IFS= read -r pair <&3 || pair=""
+            if [ "$n_lines" = "$n_pairs" ]; then
+              key="${pair%%$'\t'*}"
+              stable=""
+              case "$pair" in *$'\t'*) stable="${pair#*$'\t'}" ;; esac
+            else
+              key="$(printf '%s' "$line" | jq -r '.run.record_key // empty')"
+              stable="$(printf '%s' "$line" | jq -r "$stable_expr" 2>/dev/null || true)"
+            fi
             if [ -n "$key" ] && grep -qxF "$key" "$existing_keys" 2>/dev/null; then
               continue
             fi
-            stable="$(printf '%s' "$line" | jq -r 'select(.run.job_key != null) | "\(.run.workflow_run_id):\(.run.job_key):\(.run.step_index)"' 2>/dev/null || true)"
             if [ -n "$stable" ] && grep -qxF "$stable" "$stable_keys" 2>/dev/null; then
               continue
             fi
+            [ -z "$stable" ] || printf '%s\n' "$stable" >> "$stable_keys"
+            [ -z "$key" ] || printf '%s\n' "$key" >> "$existing_keys"
             printf '%s\n' "$line" >> "$to_append"
           done < "$batch"
+          exec 3<&-
 
           # specs/058-per-job-minute-floor (research.md R-C2): a sweep's two
           # bookkeeping files are staged HERE, inside the contention loop and

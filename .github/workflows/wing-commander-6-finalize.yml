@@ -54,8 +54,10 @@ jobs:
       container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
 
   # specs/120-dispatched-run-metrics -- see wing-commander-5-implement.yml.
-  # No "something started" signal exists yet for finalize, so a run cancelled
-  # while queued relies on the zero-record no-op (spec 043 FR-021).
+  # No "something started" signal exists yet for finalize (T017 waits on the
+  # maintainer drill T023), so this job may start in a run cancelled while
+  # queued; it then finds no artifact and is the zero-record no-op (spec 043
+  # FR-021). That is the recorded, measured-pending exception to FR-011.
   persist-metrics:
     needs: [finalize]
     if: >-

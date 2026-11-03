@@ -47,11 +47,12 @@ Spec 120 adds the persisting-job contract (specs/120-dispatched-run-metrics/
 contracts/persisting-job.md): the implement and finalize wrappers each carry
 a `persist-metrics` job that calls metrics-persist.yml with an always()
 gate, the kill switch, the stage in `needs`, no App secret, no
-`concurrency:` and no inline shell; and the stage's two new inputs exist
+`concurrency:` and no inline shell, and passing both new inputs as true;
+and the stage's two new inputs exist
 with `default: false` and are passed by neither the `workflow_run` job nor
 the `sweep` job.
 
-26 subject mutations and two discovery mutations must each break an
+28 subject mutations and two discovery mutations must each break an
 assertion. Each check in suite() is the only one some mutation trips --
 a mutation that a second check also catches would keep passing with its
 target check deleted -- except the missing-`if:` check, which the
@@ -142,6 +143,13 @@ def persisting_failures(subject):
         if f"needs.{stage_job}.result" not in expr or "skipped" not in expr:
             broke.append(f"{path}: `{PERSISTING_JOB}`'s `if:` does not "
                          f"exclude a skipped {stage_job!r}")
+        passed = dict(job.get("with") or {})
+        for name in NEW_INPUTS:
+            if passed.get(name) is not True:
+                broke.append(f"{path}: `{PERSISTING_JOB}` does not pass "
+                             f"{name}: true to the persist stage -- without "
+                             f"it the stage keeps its fail-loud, "
+                             f"success()-gated default")
         secrets = " ".join(f"{k} {v}" for k, v in
                            dict(job.get("secrets") or {}).items())
         if "APP_TOKEN" in secrets or "speckit-app" in secrets \
@@ -856,6 +864,21 @@ def mut_workflow_run_job_opts_in(subject):
     return s
 
 
+def mut_workflow_run_persist_job_opts_in(subject):
+    s = dict(subject)
+    s["wrapper-with"] = copy.deepcopy(subject["wrapper-with"])
+    s["wrapper-with"].setdefault(PERSIST_JOB, {})["tolerate-failure"] = True
+    return s
+
+
+def mut_persisting_drops_opt_in(subject):
+    def edit(job):
+        job["with"] = {k: v for k, v in dict(job.get("with") or {}).items()
+                       if k != "run-in-cancelled-run"}
+        return job
+    return _persisting(subject, "implement", edit)
+
+
 DISCOVERY_MUTATIONS = [
     ("discovery stops following local composites",
      {"follow_composites": False}),
@@ -909,6 +932,10 @@ MUTATIONS = [
     ("a new stage input's default is not false", mut_input_default_true),
     ("the sweep job opts in to a persisting-job input",
      mut_workflow_run_job_opts_in),
+    ("the workflow_run persist job opts in to a persisting-job input",
+     mut_workflow_run_persist_job_opts_in),
+    ("a persisting job stops passing run-in-cancelled-run",
+     mut_persisting_drops_opt_in),
 ]
 
 

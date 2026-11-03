@@ -286,6 +286,7 @@ jobs:
     outputs:
       persisted-count: ${{ steps.persist.outputs.persisted-count }}
       unpersisted-record-keys: ${{ steps.persist.outputs.unpersisted-record-keys }}
+      completed: ${{ steps.complete.outputs.completed }}
     steps:
       # MF-10: a workflow_dispatch with both `run-id` and `since` left blank
       # used to route here anyway (single-run mode, run-id '') and report
@@ -474,11 +475,50 @@ jobs:
           # completion-triggered run, which is single-run mode unchanged.
           sweep-runs: ${{ steps.sweep.outputs.sweep-runs }}
 
-      # specs/120-dispatched-run-metrics FR-007: with tolerate-failure the
-      # job ends green, so say loudly that this run's records are left to
-      # the daily sweep.
+      # Last step, success() only: persist's `completed` output is the one
+      # signal that survives continue-on-error (a tolerated job reports
+      # result 'success' whatever failed in it, including container init).
+      - name: Mark persisting complete
+        id: complete
+        run: echo "completed=true" >> "$GITHUB_OUTPUT"
+
+  # specs/120-dispatched-run-metrics FR-007: with tolerate-failure the
+  # persisting jobs end green, so this job says loudly that the run's records
+  # are left to the daily sweep. It is a separate job because a failure in
+  # container init or the image check never reaches a step inside persist,
+  # and it reads persist's `completed` output rather than a result, which
+  # continue-on-error turns into 'success'. Callers that do not tolerate
+  # failure fail loudly instead and get no warning.
+  warn-sweep-backstop:
+    needs: [verify-image-prerequisites, persist]
+    # The image check is required to be 'success' (Gate 23: a status-check
+    # function must not run past a real prerequisite failure). With
+    # tolerate-failure a failed check also reports 'success', so a broken
+    # image reaches this job too; its own container init then fails, and
+    # continue-on-error keeps that from reddening the run -- the image
+    # check's ::error:: annotation is the visible signal in that case.
+    if: "always() && inputs.tolerate-failure && needs.verify-image-prerequisites.result != 'failure' && needs.persist.result != 'skipped' && needs.persist.outputs.completed != 'true'"
+    continue-on-error: true
+    permissions: {}
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    container:
+      image: ${{ inputs.container-image }}
+      credentials: >-
+        ${{
+          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
+            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
+            || fromJSON('{}')
+        }}
+      # Git safe.directory for the caller's container image -- see clarify.yml.
+      env:
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: safe.directory
+        GIT_CONFIG_VALUE_0: "*"
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    steps:
       - name: Warn that the daily sweep is the backstop
-        if: failure()
         shell: bash
         run: |
           echo "::warning::wing-commander metrics-persist stage: persisting this run's metrics records failed; the daily sweep will collect them."

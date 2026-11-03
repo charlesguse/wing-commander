@@ -159,6 +159,10 @@ jobs:
   # zero-record no-op (spec 043 FR-021). tolerate-failure keeps a persist
   # failure from turning this run red -- the daily sweep is the backstop.
   # Single home of the persist logic: metrics-persist.yml (Gate 79).
+  # It needs the whole implement call on purpose: the records it collects are
+  # emitted by jobs throughout that call, so persisting any earlier would miss
+  # them. The cost is that this run (and its workflow_run consumers) completes
+  # after persist, a minute or so later; tolerate-failure bounds it.
   persist-metrics:
     needs: [resolve-model, implement]
     if: >-

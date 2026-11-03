@@ -8,8 +8,8 @@
 #
 # Two rewrites, both needed once the wrapper runs in another repository:
 #
-#   * every `uses: ./.github/workflows/<name>` (the stage call and the
-#     wrapper's persist-metrics call to metrics-persist.yml) becomes
+#   * `uses: ./.github/workflows/<name>` for the wrapper's STAGE and for
+#     metrics-persist.yml (its persist-metrics call) becomes
 #     `uses: <pipeline-repo>/.github/workflows/<name>@<uses-ref>`.
 #   * `pipeline-ref: ${{ github.sha }}` becomes
 #     `pipeline-ref: <pipeline-commit>`. Here the wrapper calls its stage
@@ -40,8 +40,13 @@ if ! printf '%s' "$pipeline_commit" | grep -qE '^[0-9a-f]{40}$'; then
   exit 1
 fi
 
+# Scoped to the wrapper's own stage and the metrics-persist.yml its
+# persist-metrics job calls: any other local call (a typo'd `uses:`) stays
+# local and trips the refusal below instead of being pinned to a bogus ref.
+stage_re="$(printf '%s' "$stage" | sed 's/[][\.*^$#]/\\&/g')"
 pinned="$(sed \
-  -e "s#uses: \./\.github/workflows/\([A-Za-z0-9_.-]*\)#uses: ${pipeline_repo}/.github/workflows/\1@${uses_ref}#" \
+  -e "s#uses: \./\.github/workflows/\(${stage_re}\|metrics-persist\.yml\)\$#uses: ${pipeline_repo}/.github/workflows/\1@${uses_ref}#" \
+  -e "s#uses: \./\.github/workflows/\(${stage_re}\|metrics-persist\.yml\)\([^A-Za-z0-9_.-]\)#uses: ${pipeline_repo}/.github/workflows/\1@${uses_ref}\2#" \
   -e "s#pipeline-ref: \${{ *github\.sha *}}#pipeline-ref: ${pipeline_commit}#" \
   "$file")"
 
