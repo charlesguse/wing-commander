@@ -183,3 +183,61 @@ MVP is Phase 1-2 plus US1: stage inputs, both wrapper jobs, extended Gate 79 wit
   Persist needs the entire implement call including the stalled job, so the implement run's completion (and workflow_run consumers like fold-cycle-guard) is delayed behind persist.
 
   - .github/workflows/wing-commander-5-implement.yml
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: persist-metrics gate lacks the required 'something started' clause
+
+  The finalize persist-metrics `if` is `always() && finalize.result != 'skipped'` with no started clause, contradicting contracts/persisting-job.md section 1 and the round-1 finding marked fixed; a run cancelled while queued still spins up a runner.
+
+  - .github/workflows/wing-commander-6-finalize.yml
+
+  Detail: Wrapper comment documents the gap as an exception rather than adding the clause.
+
+- [ ] Review finding: warn-sweep-backstop cannot warn on image-check or container-init failure
+
+  With tolerate-failure set, an unpullable image or bad registry credentials fails container init for both persist and the warning job, so no ::warning:: is emitted and the run ends green with records silently waiting for the sweep.
+
+  - .github/workflows/metrics-persist.yml
+
+  Detail: The in-file comment admits the limitation, so the warning is unreliable for the failures it targets.
+
+- [ ] Review finding: Stable dedup key depends on emitted_at and can drop distinct records
+
+  The key (run, job_key, step_index, emitted_at) skips any second record in the same step with the same second-resolution emitted_at, and misses duplicates if any path normalises emitted_at.
+
+  - .github/actions/wing-commander-metrics-persist/action.yml
+
+  Detail: The old record_key had the same weakness, so the new key does not clearly fix it.
+
+- [ ] Review finding: Rollup reads sweep-state.json from the cwd without guaranteeing the metrics branch checkout
+
+  The rollup step assumes the worktree is still on the destination branch where the append step wrote sweep-state.json; otherwise every rollup prints 'Last daily sweep: unknown'. The new test only places the file in a temp dir, so it cannot catch this.
+
+  - .github/actions/wing-commander-metrics-persist/action.yml
+
+- [ ] Review finding: pin-e2e-wrapper.sh uses GNU-only sed alternation and incomplete escaping
+
+  `\|` alternation fails on BSD sed, so no uses: line is pinned and the script exits 1 on local runs; stage_re does not escape `/`, `&` or `|`.
+
+  - .github/actions/_shared/pin-e2e-wrapper.sh
+
+- [ ] Review finding: implement persist-metrics delays the implement run's conclusion
+
+  persist-metrics waits on the whole implement call, so the run stays in progress while a queued `stalled` job waits, delaying workflow_run consumers and exposing records to cancellation.
+
+  - .github/workflows/wing-commander-5-implement.yml
+
+  Detail: The spec records this as an accepted exception.
+
+- [ ] Review finding: Test case directories derived from len(label) can collide
+
+  verify-metrics-rollup-idempotent.py names per-case directories by label length, so two equal-length labels would share state and leak sweep-state.json between cases.
+
+  - .github/scripts/verify-metrics-rollup-idempotent.py
+
+- [ ] Review finding: Quadratic grep-per-line dedup membership test
+
+  The stable-key membership test spawns grep over growing key files for every batch line, which is quadratic; a single jq or awk pass would do.
+
+  - .github/actions/wing-commander-metrics-persist/action.yml
