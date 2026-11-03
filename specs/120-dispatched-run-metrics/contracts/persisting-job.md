@@ -26,7 +26,7 @@ Present in `wing-commander-5-implement.yml` and `wing-commander-6-finalize.yml`:
 
 | Input | Type | Default | Semantics |
 |---|---|---|---|
-| `run-in-cancelled-run` | boolean | `false` | `true`: `verify-image-prerequisites` and `persist` use `always()` gating so they run in a cancelled run. `false`: today's gating bit for bit. |
+| `run-in-cancelled-run` | boolean | `false` | `true`: `persist` uses `always()` gating so it runs in a cancelled run. `verify-image-prerequisites` keeps its Gate 22-pinned `if: inputs.container-image != ''` (skipped in a cancelled run); `persist` only stops on a `failure` result of that check, so it tolerates the skip. `false`: today's gating bit for bit. |
 | `tolerate-failure` | boolean | `false` | `true`: `continue-on-error` on both jobs; a failing `persist` ends with a `::warning::` and step-summary line naming the sweep as backstop. `false`: today's fail-loud. |
 
 `persisted-count` and `unpersisted-record-keys` outputs unchanged.

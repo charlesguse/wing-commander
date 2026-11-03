@@ -56,7 +56,7 @@
 **Independent Test**: After a person-dispatched run, persisting job and `workflow_run` job both run and `records.jsonl` holds one copy per `record_key` (quickstart D4, D6).
 
 - [x] T013 [US2] Add a composite fixture test next to T003 asserting idempotence across three encounters of one run (persisting-job call, `workflow_run`-style call, sweep-style call) yields one copy of each record (FR-004, SC-002); fix in the composite only if it fails.
-- [ ] T014 [P] [US2] Audit the readers of an in-progress implement run (research R7): `.github/workflows/wing-commander-9-pr-conversation.yml` (`stop`), `.github/workflows/lifecycle-review-gate.yml`, `.github/workflows/fold-cycle-guard.yml` and `.github/workflows/wing-commander-9b-fold-cycle-guard.yml`, `.github/actions/wing-commander-fold-dispatch`, `.github/workflows/board-loop.yml`, `.github/workflows/auto-release.yml`. Complete the "Readers" table in `specs/120-dispatched-run-metrics/data-model.md` with a disposition and proof (SC-003, FR-011) for each; if any reader changes behaviour, record the finding in the PR description rather than widening this change.
+- [x] T014 [P] [US2] Audit the readers of an in-progress implement run (research R7): `.github/workflows/wing-commander-9-pr-conversation.yml` (`stop`), `.github/workflows/lifecycle-review-gate.yml`, `.github/workflows/fold-cycle-guard.yml` and `.github/workflows/wing-commander-9b-fold-cycle-guard.yml`, `.github/actions/wing-commander-fold-dispatch`, `.github/workflows/board-loop.yml`, `.github/workflows/auto-release.yml`. Complete the "Readers" table in `specs/120-dispatched-run-metrics/data-model.md` with a disposition and proof (SC-003, FR-011) for each; if any reader changes behaviour, record the finding in the PR description rather than widening this change.
 
 ---
 
@@ -66,8 +66,8 @@
 
 **Independent Test**: Quickstart D2 (cancel mid-cycle persists; cancel while queued does not start it).
 
-- [ ] T015 [US3] Review the `if:` and `continue-on-error:` lines added in T005, T007, T008 with the `review-step-gating` skill (`always()` vs `!cancelled()`, outputs readable from an always-gated job, teardown not stranded); fix findings in `.github/workflows/metrics-persist.yml` and both wrappers.
-- [ ] T016 [US3] Review the added `persist-metrics` job and the `run-in-cancelled-run` gating with the `container-shell-safety` skill (the stage's `run:` steps run inside a caller-supplied container); fix any step lacking an effective `shell: bash` in `.github/workflows/metrics-persist.yml`.
+- [x] T015 [US3] Review the `if:` and `continue-on-error:` lines added in T005, T007, T008 with the `review-step-gating` skill (`always()` vs `!cancelled()`, outputs readable from an always-gated job, teardown not stranded); fix findings in `.github/workflows/metrics-persist.yml` and both wrappers.
+- [x] T016 [US3] Review the added `persist-metrics` job and the `run-in-cancelled-run` gating with the `container-shell-safety` skill (the stage's `run:` steps run inside a caller-supplied container); fix any step lacking an effective `shell: bash` in `.github/workflows/metrics-persist.yml`.
 - [ ] T017 [US3] Add an optional `started` output to `.github/workflows/finalize.yml` published by an early record-free job, and gate finalize's `persist-metrics` on it in `.github/workflows/wing-commander-6-finalize.yml` (research R2) — only after the maintainer drill (T022) shows the output is readable from the wrapper when a later job was cancelled; if the drill fails, keep the T008 fallback and record it as a measured exception to FR-011 in the wrapper comment. Update Gate 79 and its fixtures (T009, T011) if the gate text changes.
 
 ---
@@ -85,8 +85,8 @@
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T020 [P] Amend `specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md` (implement/finalize completion-triggered path restated per FR-008; `tasks` and `rebase` stay sweep-only), `specs/043-durable-metrics-record/contracts/persist-workflow.md` ("runs only after the origin run has concluded" amended; document both new inputs and defaults) and `specs/043-durable-metrics-record/contracts/wrapper-contract.md` (the persisting job). These contracts are live; fix like code. Do not edit any spec.md.
-- [ ] T021 [P] Grep `docs/` for pages stating the metrics trigger model (for example "workflow_run" with "implement"/"finalize" near "metrics") and update any that claim implement/finalize persistence comes from the completion trigger.
+- [x] T020 [P] Amend `specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md` (implement/finalize completion-triggered path restated per FR-008; `tasks` and `rebase` stay sweep-only), `specs/043-durable-metrics-record/contracts/persist-workflow.md` ("runs only after the origin run has concluded" amended; document both new inputs and defaults) and `specs/043-durable-metrics-record/contracts/wrapper-contract.md` (the persisting job). These contracts are live; fix like code. Do not edit any spec.md.
+- [x] T021 [P] Grep `docs/` for pages stating the metrics trigger model (for example "workflow_run" with "implement"/"finalize" near "metrics") and update any that claim implement/finalize persistence comes from the completion trigger.
 - [ ] T022 Run `python .github/scripts/run-local-gates.py` and confirm every gate is green (Gates 12, 45, 47, 79 in particular); fix anything red before pushing.
 
 ---
@@ -108,7 +108,7 @@
 
 ## Phase 9: Convergence
 
-- [ ] T031 Amend `specs/120-dispatched-run-metrics/contracts/persisting-job.md` sections 1-2 so `run-in-cancelled-run` gates only `persist` (Gate 22 pins `verify-image-prerequisites`'s `if: inputs.container-image != ''`, so that job is skipped in a cancelled run and `persist` tolerates the skip) per plan: persisting-job contract (contradicts)
+- [x] T031 Amend `specs/120-dispatched-run-metrics/contracts/persisting-job.md` sections 1-2 so `run-in-cancelled-run` gates only `persist` (Gate 22 pins `verify-image-prerequisites`'s `if: inputs.container-image != ''`, so that job is skipped in a cancelled run and `persist` tolerates the skip) per plan: persisting-job contract (contradicts)
 
 ---
 
