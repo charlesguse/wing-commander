@@ -11,8 +11,9 @@ import re
 import sys
 
 DROP_RE = re.compile(r"^drop\s*:?\s*$", re.I)
-TITLE_RE = re.compile(
-    r"^-\s+(?:\[[ xX]\]\s+)?((?:Recurring review finding|Review finding):\s*\S.*?)\s*$")
+# Any bullet names a task; whether it is a fold task is decided in apply()
+# (so ``not-fold-task`` is reachable from a parsed comment).
+TITLE_RE = re.compile(r"^-\s+(?:\[[ xX]\]\s+)?(\S.*?)\s*$")
 TASK_RE = re.compile(r"^(\s*-\s*)\[([ xX])\](\s+)(.*\S)\s*$")
 
 
@@ -34,8 +35,11 @@ def _fold_task_title(text):
     return text if text.startswith(("Review finding:", "Recurring review finding:")) else None
 
 
-def apply(tasks_text, titles, author_association, comment_id):
+def apply(tasks_text, titles, author_association, comment_id, dropped_titles=()):
     """Return ``(new_text, outcomes, commit_message, reply)``.
+
+    ``dropped_titles`` are titles an earlier drop commit already removed; a
+    fold title absent from tasks.md and in that set is ``already-absent``.
 
     ``outcomes`` maps title -> removed|unknown|not-fold-task|already-checked|
     already-absent, or the whole comment is ``non-maintainer`` (no change).
@@ -52,6 +56,8 @@ def apply(tasks_text, titles, author_association, comment_id):
         if not idxs:
             if _fold_task_title(title) is None:
                 outcomes[title] = "not-fold-task"
+            elif title in dropped_titles:
+                outcomes[title] = "already-absent"
             else:
                 outcomes[title] = "unknown"
             continue
@@ -81,12 +87,24 @@ def apply(tasks_text, titles, author_association, comment_id):
 
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
-    if len(argv) != 1:
-        print("usage: wc_fold_drop.py parse < comment", file=sys.stderr)
-        return 2
-    if argv[0] == "parse":
+    if argv and argv[0] == "parse" and len(argv) == 1:
         print(json.dumps(parse(sys.stdin.read())))
         return 0
+    if argv and argv[0] == "apply" and len(argv) == 4:
+        # apply <tasks.md> <author_association> <comment_id>; comment on stdin.
+        parsed = parse(sys.stdin.read())
+        if parsed is None:
+            print("not a drop command", file=sys.stderr)
+            return 1
+        with open(argv[1], encoding="utf-8") as fh:
+            text = fh.read()
+        new, outcomes, msg, reply = apply(text, parsed["titles"], argv[2], argv[3])
+        with open(argv[1], "w", encoding="utf-8") as fh:
+            fh.write(new)
+        print(json.dumps({"outcomes": outcomes, "commit_message": msg, "reply": reply}))
+        return 0
+    print("usage: wc_fold_drop.py parse < comment | apply TASKS ASSOC ID < comment",
+          file=sys.stderr)
     return 2
 
 

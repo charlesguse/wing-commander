@@ -84,6 +84,18 @@ class SetTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             h.set_hold(1, "why", reader=lambda i, r: [], runner=runner)
 
+    def test_empty_reason_still_posts_nonempty_comment(self):
+        calls = []
+        runner = lambda a: calls.append(a) or proc()
+        h.set_hold(1, "", reader=lambda i, r: [], runner=runner)
+        comment = [c for c in calls if c[:2] == ["issue", "comment"]][0]
+        self.assertTrue(comment[comment.index("--body") + 1].strip())
+
+    def test_label_create_failure_raises(self):
+        runner = lambda a: proc(1, "no") if a[:2] == ["label", "create"] else proc()
+        with self.assertRaises(RuntimeError):
+            h.set_hold(1, "why", reader=lambda i, r: [], runner=runner)
+
 
 class MessageTests(unittest.TestCase):
     def test_unreadable_message_distinct_from_hold(self):

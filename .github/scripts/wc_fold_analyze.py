@@ -142,9 +142,10 @@ def main(argv=None):
     except (OSError, ValueError):
         verdict = None
     res = decide(fold_input, verdict)
-    print(json.dumps(res))
-    print(f"first-attempt={'true' if is_first_attempt(args.run_attempt) else 'false'}",
-          file=sys.stderr)
+    # key=value lines on stdout, so `>> "$GITHUB_OUTPUT"` is valid.
+    print(f"result={json.dumps(res)}")
+    print(f"hold={'true' if res.get('hold') else 'false'}")
+    print(f"first-attempt={'true' if is_first_attempt(args.run_attempt) else 'false'}")
     return 0
 
 
