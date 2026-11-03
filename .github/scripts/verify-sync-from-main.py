@@ -303,6 +303,49 @@ def suite(src, quiet=False):
         r = verify(w, b, m, "0" * 40, mf)
         check("verify-scope: a bad tree OID fails with a reason, no traceback",
               r.returncode == 1 and "Traceback" not in r.stderr, r.stderr, q)
+    with tempfile.TemporaryDirectory() as tmp:
+        # A conflicted name git C-quotes even with core.quotepath=off (it
+        # holds a `"`): the marker scan must still read its blob.
+        _, w = make_repo(tmp)
+        qn = 'q"t.txt'
+        write(os.path.join(w, qn), "one\nBRANCH\nthree\n")
+        sh(w, "git", "add", "."), sh(w, "git", "commit", "-q", "-m", "branch q")
+        b = head(w)
+        m = advance_main(w, qn, "one\nMAIN\nthree\n")
+        t = sh(w, "git", "merge-tree", "--write-tree", "--no-messages", m, "HEAD", check_rc=False).stdout.split()[0]
+        sh(w, "git", "merge", "--no-ff", "--no-commit", m, check_rc=False)
+        mf = os.path.join(tmp, "manifest.txt")
+        write(mf, sh(w, "git", "-c", "core.quotepath=off", "diff", "--name-only", "--diff-filter=U").stdout)
+        write(os.path.join(w, qn), "one\n<<<<<<< HEAD\nBRANCH\n=======\nMAIN\n>>>>>>> main\nthree\n")
+        sh(w, "git", "add", "."), sh(w, "git", "commit", "-q", "-m", "sync: merge main into spec/x")
+        r = verify(w, b, m, t, mf)
+        check("verify-scope: leftover marker in a C-quoted conflicted name fails",
+              r.returncode == 1 and "marker" in r.stderr, r.stderr, q)
+    with tempfile.TemporaryDirectory() as tmp:
+        # Rename detection pairs a deleted out-of-scope file with an allowed
+        # path the conflicted tree lacks and prints only the allowed one.
+        _, w = make_repo(tmp)
+        body = "".join("line {0}\n".format(i) for i in range(40))
+        write(os.path.join(w, "a.txt"), "one\nBRANCH\nthree\n")
+        write(os.path.join(w, "b.txt"), body)
+        sh(w, "git", "add", "."), sh(w, "git", "commit", "-q", "-m", "branch edits a, grows b")
+        b = head(w)
+        m = advance_main(w, "a.txt", "one\nMAIN\nthree\n")
+        t = sh(w, "git", "merge-tree", "--write-tree", "--no-messages", m, "HEAD", check_rc=False).stdout.split()[0]
+        env_idx = dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "idx"))
+        subprocess.run(["git", "read-tree", t], cwd=w, env=env_idx, check=True)
+        subprocess.run(["git", "update-index", "--force-remove", "a.txt"], cwd=w, env=env_idx, check=True)
+        t_no_a = subprocess.run(["git", "write-tree"], cwd=w, env=env_idx, capture_output=True,
+                                text=True, check=True).stdout.strip()
+        mf = os.path.join(tmp, "manifest.txt")
+        write(mf, "a.txt\n")
+        sh(w, "git", "merge", "--no-ff", "--no-commit", m, check_rc=False)
+        write(os.path.join(w, "a.txt"), body + "resolved\n")
+        os.remove(os.path.join(w, "b.txt"))
+        sh(w, "git", "add", "-A"), sh(w, "git", "commit", "-q", "-m", "sync: merge main into spec/x")
+        r = verify(w, b, m, t_no_a, mf)
+        check("verify-scope: an out-of-scope deletion hidden by rename pairing fails",
+              r.returncode == 1 and "b.txt" in r.stderr, r.stderr, q)
     failed = [n for n, ok, _ in results[start:] if not ok]
     if quiet:
         del results[start:]
@@ -381,8 +424,11 @@ def main():
     rebase_prompt = re.sub(r"\$\{\{ inputs\.sync-method == 'merge' && .*? \|\| '' \}\}", "", prompt)
     check("the rebase prompt renders with no merge-mode residue",
           rebase_prompt.startswith("You are the conflict-resolution assistant"), repr(rebase_prompt[:80]))
+    preamble = prompt[prompt.find("format('MERGE SYNC MODE"):prompt.find("', inputs.spec-prefix")]
     check("the merge preamble does not ask for a manifest append the restore step discards",
-          "Append the conflicted paths" not in prompt, "")
+          "Skip the manifest append in step 2" in preamble
+          and not re.search(r"(?i)\bappend", preamble.replace("Skip the manifest append", "")),
+          repr(preamble[:80]))
     verify_step = stage[stage.find("name: Verify AI resolution scope"):]
     check("the conflicted tree reaches verify-scope as a step output, not an agent-writable file",
           "conflicted-tree.txt" not in stage
@@ -401,6 +447,8 @@ def main():
         ("conflict bound", "if in_project(p, project) and p in conflicts}", "if in_project(p, project)}"),
         ("push-race classifier", "return 0 if RACE.search(stderr_text) else 1", "return 0"),
         ("force refusal", 'branch.startswith("+") or ', ""),
+        ("quoted-name unquote", '"HEAD:" + unquote(p)', '"HEAD:" + p'),
+        ("rename-blind diff", '"diff", "--no-renames", "--name-only"', '"diff", "--name-only"'),
     )
     for name, old, new in mutations:
         if old not in source:

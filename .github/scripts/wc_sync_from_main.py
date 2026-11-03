@@ -18,6 +18,7 @@ Subcommands:
                             "[rejected]"), 1 for any other refusal
 """
 import argparse
+import codecs
 import re
 import subprocess
 import sys
@@ -75,6 +76,16 @@ def decide(main):
     return 0
 
 
+def unquote(path):
+    """The real name of a path git printed. core.quotepath=off leaves high
+    bytes alone but still C-quotes a name holding `"`, `\\` or a control
+    character, and `git show HEAD:<quoted>` names no blob."""
+    if len(path) < 2 or not (path.startswith('"') and path.endswith('"')):
+        return path
+    raw = codecs.escape_decode(path[1:-1].encode("utf-8"))[0]
+    return raw.decode("utf-8", errors="replace")
+
+
 def in_project(path, project):
     return not project or path == project or path.startswith(project.rstrip("/") + "/")
 
@@ -107,7 +118,9 @@ def verify_scope(before, main, conflicted_tree, manifest, project, verdict):
         reasons.append("could not list the conflicting paths of {0} and {1}".format(before, main))
         conflicts = set()
     allowed = {p for p in listed if in_project(p, project) and p in conflicts}
-    diff = git("diff", "--name-only", conflicted_tree, "HEAD^{tree}", check=False)
+    # --no-renames: a rename prints only its destination, which would hide
+    # the deletion of an out-of-scope source behind an allowed path.
+    diff = git("diff", "--no-renames", "--name-only", conflicted_tree, "HEAD^{tree}", check=False)
     if diff.returncode != 0:
         reasons.append("conflicted tree '{0}' is not a readable tree".format(conflicted_tree))
     changed = [p for p in diff.stdout.splitlines() if p]
@@ -115,7 +128,7 @@ def verify_scope(before, main, conflicted_tree, manifest, project, verdict):
         if p not in allowed:
             reasons.append("path outside the conflict manifest differs from a clean merge: " + p)
     for p in sorted(allowed):
-        blob = git("show", "HEAD:" + p, check=False)
+        blob = git("show", "HEAD:" + unquote(p), check=False)
         if blob.returncode == 0 and MARKER.search(blob.stdout):
             reasons.append("conflict marker still present in " + p)
     for r in reasons:

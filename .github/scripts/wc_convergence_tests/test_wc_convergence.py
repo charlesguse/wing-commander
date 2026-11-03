@@ -364,6 +364,47 @@ class SyncCommit(GitBacked):
         origins = wc.Origins("origin/main", [h0, h1], self.repo)
         self.assertEqual(origins.of(new), "main")
 
+    def test_default_merge_subject_matches_when_callers_resolve_the_base(self):
+        # measure() and compute_history() resolve --base to a SHA; git's
+        # subject quotes the ref the caller named, `origin/main`.
+        old, new, h0, _h1, _h2 = self.sync_repo()
+        self.run_git("reset", "-q", "--hard", h0)
+        h1 = self.merge(new, "Merge remote-tracking branch 'origin/main' into spec/118-x")
+        self.write("a\nb\nc\npr1\npr2\nfix\n")
+        h2 = self.commit("pass 2")
+        self.run_git("update-ref", "refs/remotes/origin/main", old)
+        history = wc.compute_history("origin/main", [
+            {"round": 1, "head_sha": h0, "findings": []},
+            {"round": 2, "head_sha": h1,
+             "findings": [{"fingerprint": "x", "file": "m.py", "line": 1}]},
+            {"round": 3, "head_sha": h2, "findings": []}], None, self.repo)
+        self.assertTrue(history[1]["git_ok"])
+        self.assertEqual((history[1]["attributable"], history[1]["self_inflicted"]), (1, 0))
+        report = wc.measure("origin/main", [h0, h1, h2], ["m.py:1"], self.repo)
+        self.assertEqual(report["findings"][0]["origin"], "main")
+
+    def test_measure_does_not_warn_about_a_sync_commits_main_side(self):
+        old, _new, h0, h1, h2 = self.sync_repo()
+        report = wc.measure(old, [h0, h1, h2], [], self.repo)
+        self.assertEqual([w for w in report["warnings"] if "merged commits" in w], [])
+
+    def test_main_side_walk_stops_at_the_base(self):
+        old, _new, h0, h1, _h2 = self.sync_repo()
+        seen = []
+        real = wc.git
+
+        def spy(args, cwd=None, check=True, input=None):
+            seen.append(list(args))
+            return real(args, cwd, check=check, input=input)
+        origins = wc.Origins(old, [h0, h1], self.repo)
+        wc.git = spy
+        try:
+            origins._main_side_commits()
+        finally:
+            wc.git = real
+        walks = [a for a in seen if a[:3] == ["log", "--first-parent", "--merges"]]
+        self.assertTrue(walks and all("^" + old in a for a in walks), walks)
+
     def test_unreachable_head_does_not_raise(self):
         old, new, h0, _h1, _h2 = self.sync_repo()
         origins = wc.Origins(old, [h0, "0" * 40], self.repo)
