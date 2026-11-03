@@ -407,6 +407,17 @@ runs:
           else
             : > "$existing_keys"
           fi
+          # specs/120-dispatched-run-metrics (FR-004): the job id inside
+          # record_key changes when a re-run attempt gives the same job a
+          # new id, so a run met again by a later path would append a
+          # second copy. The attempt-independent identity of a record is
+          # run : job_key : step_index; skip on either form.
+          stable_keys="$dir/existing-stable-keys.txt"
+          if [ -f "$DEST_PATH" ]; then
+            jq -r 'select(.run.job_key != null) | "\(.run.workflow_run_id):\(.run.job_key):\(.run.step_index)"' "$DEST_PATH" 2>/dev/null > "$stable_keys" || : > "$stable_keys"
+          else
+            : > "$stable_keys"
+          fi
 
           to_append="$dir/to-append.jsonl"
           : > "$to_append"
@@ -414,6 +425,10 @@ runs:
             [ -n "$line" ] || continue
             key="$(printf '%s' "$line" | jq -r '.run.record_key // empty')"
             if [ -n "$key" ] && grep -qxF "$key" "$existing_keys" 2>/dev/null; then
+              continue
+            fi
+            stable="$(printf '%s' "$line" | jq -r 'select(.run.job_key != null) | "\(.run.workflow_run_id):\(.run.job_key):\(.run.step_index)"' 2>/dev/null || true)"
+            if [ -n "$stable" ] && grep -qxF "$stable" "$stable_keys" 2>/dev/null; then
               continue
             fi
             printf '%s\n' "$line" >> "$to_append"
@@ -606,6 +621,11 @@ runs:
             total_records="$(printf '%s' "$totals" | jq -r '.total_records // 0')"
             incomplete="$(printf '%s' "$totals" | jq -r '.incomplete // 0')"
             printf '**Total**: $%s across %s agent run(s) (as of %s)\n' "$total_cost" "$total_records" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            # specs/120-dispatched-run-metrics FR-006: the total is only as
+            # fresh as the last sweep for runs no persisting job covers.
+            # This is the one home of this sentence.
+            last_sweep="$(jq -r '.high_water_mark // empty' sweep-state.json 2>/dev/null || true)"
+            printf '\n_Last daily sweep: `%s` — runs completed since then may be missing from the total._\n' "${last_sweep:-unknown}"
             if [ "$incomplete" != "0" ]; then
               printf '\n_Incomplete: %s of %s run(s) have unavailable metrics and are excluded from the total above._\n' "$incomplete" "$total_records"
             fi
