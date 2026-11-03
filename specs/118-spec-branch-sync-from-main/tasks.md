@@ -283,3 +283,69 @@ Run `python .github/scripts/run-local-gates.py` after each phase and before push
   verify-sync-from-main.py searches every workflow, action and script file for the literal '(<<<<<<<|>>>>>>>)'. Any legitimate marker-scan regex elsewhere trips the gate, and a copy written differently is not detected.
 
   - .github/scripts/verify-sync-from-main.py
+
+## Review Gate Round 4 Findings
+
+- [ ] Review finding: Sync-merge recognition depends on --base spelling
+
+  wc_convergence.py matches the sync commit subject by prefix against base_name, so any --base other than the default origin/main (main, refs/remotes/origin/main, a SHA) skips the sync and falls back to the old mislabelling.
+
+  - .github/scripts/wc_convergence.py
+
+  Detail: Merge subject written by git is "Merge remote-tracking branch 'origin/main' into ..."; startswith test fails for other spellings, so main-origin lines are attributed to the PR pass and self-inflicted share/churn is overstated.
+
+- [ ] Review finding: Sync commits identified by forgeable subject prefix
+
+  wc_convergence.py labels a merge's second-parent commits as main purely from a 'sync: merge ' subject prefix, which any human or agent can reproduce, hiding self-inflicted churn.
+
+  - .github/scripts/wc_convergence.py
+
+  Detail: No check that the second parent is an ancestor of a fetched origin/<default>; an unrelated merge titled 'sync: merge feature into pr' gets its lines labelled main.
+
+- [ ] Review finding: Restore step uses always() instead of !cancelled()
+
+  The rebase.yml manifest restore step is gated with always(), where the repo rule for these guards is !cancelled(); on cancellation it can still run and fail on a missing or half-written seed file.
+
+  - .github/workflows/rebase.yml
+
+  Detail: CLAUDE.md requires a review-step-gating pass for any `if:` change and flags always() used where !cancelled() was meant.
+
+- [ ] Review finding: Seed manifest in RUNNER_TEMP is agent-writable
+
+  The seed manifest is stored where the Edit-capable agent can write it, so the restore step is not a deterministic reset as its comment claims; it only protects what the intersection with git's conflict list already protects.
+
+  - .github/workflows/rebase.yml
+
+  Detail: Agent can edit conflict-manifest.seed.txt before restore. verify-scope intersects with git's own conflict list, so the set can only narrow, not widen.
+
+- [ ] Review finding: Compose tool args (merge) step is ungated
+
+  The merge tool-args composite has no `if:`, so it also runs under the default rebase method, and the rebase twin likewise runs under merge, contradicting the byte-identical-rebase claim.
+
+  - .github/workflows/rebase.yml
+
+  Detail: With sync-method unset or rebase, the composite still runs with step-label: merge and may emit spurious metrics or summary entries.
+
+- [ ] Review finding: validate-method positional accepts dash-prefixed values as options
+
+  validate-method takes its value as a bare argparse positional, so a value starting with '-' makes argparse exit 2 with usage text instead of the contracted exit-1 ::error:: message.
+
+  - .github/scripts/wc_sync_from_main.py
+
+  Detail: A value like --merge or -x is parsed as an option; the gate tests only 'bogus' and 'Merge'.
+
+- [ ] Review finding: Quoted conflict names fail in_project filter
+
+  The `allowed` computation filters raw, possibly C-quoted names with in_project, while unquote is applied only to the marker scan, so quoted filenames in a subfolder lifecycle are wrongly treated as out of scope.
+
+  - .github/scripts/wc_sync_from_main.py
+
+  Detail: A name like "proj/q\"t.txt" starts with a quote and fails in_project(project); verify-scope escalates an in-scope conflict. Gate covers quoted names only with an empty project.
+
+- [ ] Review finding: Single-home gate scan scope is narrow and bypassable
+
+  verify-sync-from-main.py scans only .github/{workflows,actions,scripts}, and the marker copy is detected only if byte-identical, so a pasted validation message or reformatted regex elsewhere evades the single-home rule.
+
+  - .github/scripts/verify-sync-from-main.py
+
+  Detail: A copy in docs/, a .sh file, or a regex written as [<]{7} is not detected.
