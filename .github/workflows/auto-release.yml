@@ -1149,8 +1149,19 @@ jobs:
           mkdir -p .github/workflows
           for f in "${!stage_file[@]}"; do
             stage="${stage_file[$f]}"
-            cp "../e2e-source/.github/workflows/$f" ".github/workflows/$f"
-            sed -i "s#uses: \./\.github/workflows/${stage}#uses: charlesguse/wing-commander/.github/workflows/${stage}@${PIN_TAG}#" ".github/workflows/$f"
+            # Pins the stage call and the wrapper's pipeline-ref (#1083) --
+            # see pin-e2e-wrapper.sh.
+            if ! bash "$GITHUB_WORKSPACE/.github/actions/_shared/pin-e2e-wrapper.sh" \
+                "../e2e-source/.github/workflows/$f" "$stage" charlesguse/wing-commander "$PIN_TAG" "$HEAD_SHA" \
+                > ".github/workflows/$f" 2> "$RUNNER_TEMP/auto-release-pin-wrapper.err"; then
+              echo "ok=false" >> "$GITHUB_OUTPUT"
+              {
+                echo 'verdict<<AUTO_RELEASE_VERDICT_EOF'
+                bash "$GITHUB_WORKSPACE/.github/actions/_shared/auto-release-verdict.sh" "fail-infra" "$HEAD_SHA" "pinning $f to the pipeline commit" "the copied wrapper calls the pipeline at ${PIN_TAG} and passes ${HEAD_SHA} as pipeline-ref" "$(tail -c 500 "$RUNNER_TEMP/auto-release-pin-wrapper.err")" "$E2E_REPO" "$MODE"
+                echo 'AUTO_RELEASE_VERDICT_EOF'
+              } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             # A permanently-configured test-repository WING_COMMANDER_CONTAINER_IMAGE
             # must not leak container mode into a default-runner-turn run
             # (research.md D2). No rewrite on a container-mode turn -- the
