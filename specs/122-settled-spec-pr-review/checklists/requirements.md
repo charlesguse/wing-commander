@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,13 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain for the clarify stage (#1094):
-  FR-001 (plan PRs in scope), FR-008 (reviewer model/effort), FR-015
-  (disposition of findings beyond the report).
+- All three [NEEDS CLARIFICATION] markers were resolved by the owner's
+  answers on #1094 (see the spec's Clarifications section): FR-001 — spec
+  PRs only, plan PRs a named follow-up in Out of Scope; FR-008 — Opus
+  (`claude-opus-5-5`), full `code-review` recipe at `high` effort; FR-015 —
+  report every finding, push unambiguous fixes (boundary defined in
+  FR-015a) and send owner decisions back to clarify, with a pushed head
+  re-settling before the next round (FR-015b–FR-015d).
 - The issue's other open questions were settled by informed defaults recorded
   in Assumptions: settledness = head unchanged since the ready announcement
   (no quiet period); trigger = scheduled selection + manual dispatch;
