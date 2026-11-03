@@ -2,7 +2,7 @@
   "issue": 1066,
   "spec_dir": "specs/119-lifecycle-hold-label",
   "feature_num": "119",
-  "stage": "review",
+  "stage": "implement",
   "iteration": 5,
   "spec_branch": "spec/119-lifecycle-hold-label",
   "pending_re_review_from": []

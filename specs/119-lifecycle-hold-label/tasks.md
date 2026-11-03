@@ -128,3 +128,78 @@
 ## Implementation strategy
 
 MVP is Phase 1–3 (US1): the label, implement/fold-dispatch/merge honouring it, stop-comment setters, and the label-removed release trigger. Then US2 (analyze + decide), then US3 (drop, dismissals, retry). Each phase ends with the gate suite green. Task count: 49 (US1 18, US2 7, US3 11, Setup 2, Foundational 5, Polish 3, Maintainer 3).
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Held fold-dispatch takes the success path and posts a wrong reply
+
+  When the hold check withholds the dispatch, folded/dispatched/new-iteration are empty, so the caller's success-path reply says nothing was folded; the caller ignores the new `withheld` output and does not pass `hold-label`.
+
+  - .github/actions/wing-commander-fold-dispatch/action.yml
+
+  Detail: pr-conversation.yml dispatch-once reply step runs on outcome == 'success' with empty FOLDED; T013 caller wiring not done yet.
+
+- [ ] Review finding: decide CLI emits first-attempt to stderr, not GITHUB_OUTPUT lines
+
+  wc_fold_analyze.py decide prints first-attempt to stderr and a bare JSON blob to stdout, so redirecting stdout to $GITHUB_OUTPUT yields invalid output and the run_attempt guard cannot be wired.
+
+  - .github/scripts/wc_fold_analyze.py
+
+  Detail: T027 / research D6 expect a key=value first-attempt output.
+
+- [ ] Review finding: fold-drop TITLE_RE too narrow; already-absent never produced; apply has no CLI
+
+  TITLE_RE only accepts two title prefixes, so not-fold-task is unreachable via parse, already-absent is never returned (unknown is), and main only supports parse.
+
+  - .github/scripts/wc_fold_drop.py
+
+  Detail: Spec research D8 and data-model.md specify the already-absent outcome.
+
+- [ ] Review finding: Unreadable-labels wording duplicated inline in implement.yml
+
+  The callout summary hard-codes the unreadable wording instead of consuming the canonical UNREADABLE_MESSAGE from wc_lifecycle_hold.py, violating the single-home rule; the gate only checks the constant.
+
+  - .github/workflows/implement.yml
+  - .github/scripts/wc_lifecycle_hold.py
+
+  Detail: FR-004 / T006 require one canonical string.
+
+- [ ] Review finding: Hold guard proceeds on empty HOLD_STATE and does not fail closed
+
+  If the hold composite errors or is skipped, a composite error stalls the lifecycle, while an empty HOLD_STATE lets the cycle proceed; only an explicit held/unreadable stops it.
+
+  - .github/workflows/implement.yml
+
+  Detail: Fail-closed covers only the composite's own output.
+
+- [ ] Review finding: Single-home gate does not enforce composite use
+
+  verify-lifecycle-hold-single-home.py matches only single-line literals, skips .py files and never checks that callers invoke the check composite, so FR-019 is not enforced.
+
+  - .github/scripts/verify-lifecycle-hold-single-home.py
+
+  Detail: Multi-line or variable-based label reads, or removal of the composite call, still pass.
+
+- [ ] Review finding: set_hold fails after labelling when reason is empty
+
+  In set mode with the default empty reason, gh issue comment --body '' fails after the label is added, so set raises with no set= output and a retry reports 'already' without posting the reason.
+
+  - .github/scripts/wc_lifecycle_hold.py
+
+  Detail: Label create result is also ignored.
+
+- [ ] Review finding: Vacuous assertion in test_already_checked
+
+  assertEqual(text, <expr> if False else text) compares text to itself, so the test cannot catch apply mutating an already-checked task.
+
+  - .github/scripts/wc_fold_drop_tests/test_wc_fold_drop.py
+
+  Detail: Should compare against TASKS.
+
+- [ ] Review finding: check mode can write duplicate state= outputs and swallows failure
+
+  `script >> $GITHUB_OUTPUT || echo state=unreadable >> $GITHUB_OUTPUT` can append a second state= line after a partial success, so held may be reported as unreadable, and script errors give no annotation.
+
+  - .github/actions/wing-commander-lifecycle-hold/action.yml
+
+  Detail: GitHub takes the last duplicate output.
