@@ -1150,7 +1150,7 @@ jobs:
           for f in "${!stage_file[@]}"; do
             stage="${stage_file[$f]}"
             # Pins the stage call and the wrapper's pipeline-ref (#1083) --
-            # see .github/actions/_shared/pin-e2e-wrapper.sh.
+            # see pin-e2e-wrapper.sh.
             if ! bash "$GITHUB_WORKSPACE/.github/actions/_shared/pin-e2e-wrapper.sh" \
                 "../e2e-source/.github/workflows/$f" "$stage" charlesguse/wing-commander "$PIN_TAG" "$HEAD_SHA" \
                 > ".github/workflows/$f" 2> "$RUNNER_TEMP/auto-release-pin-wrapper.err"; then

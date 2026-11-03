@@ -416,8 +416,12 @@ def static_checks(jobs, steps):
           not deleters, "deleting steps: {0}".format(deleters))
     scaffold = steps["scaffold"]
     run = scaffold.get("run", "")
+    # The rewrite itself lives in pin-e2e-wrapper.sh (#1083): its USES_REF
+    # argument is the pin tag, and only PIPELINE_COMMIT is the bare head.
     check("the fixture's uses: rewrite names the pin tag, never the bare head",
-          "/.github/workflows/${stage}@${PIN_TAG}#" in run and "${stage}@${HEAD_SHA}" not in run
+          'pin-e2e-wrapper.sh" ' in run
+          and '"$stage" charlesguse/wing-commander "$PIN_TAG" "$HEAD_SHA"' in run
+          and "${stage}@${HEAD_SHA}" not in run
           and (scaffold.get("env") or {}).get("PIN_TAG") == "${{ needs.e2e-pin.outputs.tag }}",
           "scaffold env={0}".format(scaffold.get("env")))
     check("the scaffold waits for the pin check",
