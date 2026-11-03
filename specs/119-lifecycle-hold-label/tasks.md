@@ -203,3 +203,75 @@ MVP is Phase 1–3 (US1): the label, implement/fold-dispatch/merge honouring it,
   - .github/actions/wing-commander-lifecycle-hold/action.yml
 
   Detail: GitHub takes the last duplicate output.
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: Fold drop leaves task body behind in tasks.md
+
+  wc_fold_drop apply deletes only the matched checkbox title line, leaving the task's paragraph, file bullets and Detail line orphaned, while the reply and Drop commit report it removed.
+
+  - .github/scripts/wc_fold_drop.py
+
+  Detail: drop_idx holds only title indexes; multi-line fold task blocks are not removed whole.
+
+- [ ] Review finding: Fold-dispatch does not set dispatched=false when hold withholds
+
+  When the hold skips the dispatch step, dispatched/folded/new-iteration/run-url outputs are empty rather than false, and existing callers neither read withheld nor pass hold-label, so they post misleading success replies.
+
+  - .github/actions/wing-commander-fold-dispatch/action.yml
+
+  Detail: contracts/hold-interfaces.md promises dispatched=false and a withheld line from callers.
+
+- [ ] Review finding: implement.yml hold guard fails open on empty HOLD_STATE
+
+  If the Check lifecycle hold step is skipped or emits no state, HOLD_STATE is empty and the guard only stops on 'held' or 'unreadable', so implement runs on a held lifecycle.
+
+  - .github/workflows/implement.yml
+
+  Detail: Violates the fail-closed requirement (FR-004).
+
+- [ ] Review finding: Single-home hold gate does not enforce its contract
+
+  verify-lifecycle-hold-single-home.py only regex-matches single-line gh literals in yml/sh files and never checks that callers invoke the composite, so multi-line gh calls, Python scripts or removed composite calls pass.
+
+  - .github/scripts/verify-lifecycle-hold-single-home.py
+
+- [ ] Review finding: fold-drop CLI never passes dropped_titles
+
+  main calls apply without earlier-dropped titles, so a repeat drop returns 'unknown' instead of 'already-absent' when run from a workflow.
+
+  - .github/scripts/wc_fold_drop.py
+
+  Detail: Contradicts research D8 and data-model.md; only unit tests reach the branch.
+
+- [ ] Review finding: One malformed objection discards all valid hold objections
+
+  decide sets hold=False and held_items=[] when any single objection is malformed, so a real constitution conflict is lost and implement is dispatched.
+
+  - .github/scripts/wc_fold_analyze.py
+
+- [ ] Review finding: Hold label matching is case-sensitive
+
+  classify_labels compares label names exactly, but GitHub label names are case-insensitive, so a differently-cased hold label reads as clear instead of failing closed.
+
+  - .github/scripts/wc_lifecycle_hold.py
+
+- [ ] Review finding: label create --force overwrites adopter label customizations
+
+  Each first-time set runs gh label create --force with a fixed description, resetting an existing hold label's description and color.
+
+  - .github/scripts/wc_lifecycle_hold.py
+
+  Detail: Create the label only when it is missing.
+
+- [ ] Review finding: added_tasks includes non-fold and reworded task lines
+
+  The -U0 tasks.md diff collects every added checkbox line, so reformatted or reworded pre-existing tasks go to the analyzer and can trigger a hold; filter to fold-title prefixes.
+
+  - .github/scripts/wc_fold_analyze.py
+
+- [ ] Review finding: fold-drop parse docstring says comment_titles but returns titles
+
+  The documented parse output key differs from the real one, and the CLI shape differs from the contract, which can mislead callers.
+
+  - .github/scripts/wc_fold_drop.py
