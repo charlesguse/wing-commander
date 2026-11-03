@@ -411,15 +411,17 @@ runs:
           # record_key changes when a re-run attempt gives the same job a
           # new id, so a run met again by a later path would append a
           # second copy. The attempt-independent identity of a record is
-          # run : job_key : step_index : emitted_at; skip on either form.
-          # emitted_at is part of it because a re-run attempt's newly spent
-          # agent record shares run, job_key and step_index with attempt 1's
-          # but is emitted at a different time; the same record met again
-          # carries the identical emitted_at.
+          # its whole content minus the two fields that change with the job
+          # id (run.job_id, run.record_key); skip on either form. Content,
+          # not a field tuple: two distinct records of one step can share a
+          # second-resolution emitted_at, while the same record met again is
+          # identical in everything else.
           stable_keys="$dir/existing-stable-keys.txt"
-          stable_expr='select(.run.job_key != null) | "\(.run.workflow_run_id):\(.run.job_key):\(.run.step_index):\(.emitted_at // "")"'
+          stable_expr='select(.run.job_key != null) | del(.run.job_id, .run.record_key) | tojson'
+          # Wrapped in [..] | @tsv so a stored key is escaped exactly as the
+          # batch column below is (a backslash in the content doubles in both).
           if [ -f "$DEST_PATH" ]; then
-            jq -r "$stable_expr" "$DEST_PATH" 2>/dev/null > "$stable_keys" || : > "$stable_keys"
+            jq -r "[($stable_expr)] | @tsv" "$DEST_PATH" 2>/dev/null > "$stable_keys" || : > "$stable_keys"
           else
             : > "$stable_keys"
           fi
@@ -434,6 +436,11 @@ runs:
           n_lines="$(wc -l < "$batch" | tr -d ' ')"
           n_pairs="$(wc -l < "$pairs" | tr -d ' ')"
           if [ "$n_lines" != "$n_pairs" ]; then : > "$pairs"; fi
+          # Membership is an associative-array lookup, loaded once per
+          # attempt, so the batch loop does no per-line process spawn.
+          declare -A seen_key=() seen_stable=()
+          while IFS= read -r k; do [ -z "$k" ] || seen_key["$k"]=1; done < "$existing_keys"
+          while IFS= read -r k; do [ -z "$k" ] || seen_stable["$k"]=1; done < "$stable_keys"
           exec 3< "$pairs"
           while IFS= read -r line; do
             [ -n "$line" ] || continue
@@ -445,16 +452,16 @@ runs:
               case "$pair" in *$'\t'*) stable="${pair#*$'\t'}" ;; esac
             else
               key="$(printf '%s' "$line" | jq -r '.run.record_key // empty')"
-              stable="$(printf '%s' "$line" | jq -r "$stable_expr" 2>/dev/null || true)"
+              stable="$(printf '%s' "$line" | jq -r "[($stable_expr)] | @tsv" 2>/dev/null || true)"
             fi
-            if [ -n "$key" ] && grep -qxF "$key" "$existing_keys" 2>/dev/null; then
+            if [ -n "$key" ] && [ -n "${seen_key[$key]:-}" ]; then
               continue
             fi
-            if [ -n "$stable" ] && grep -qxF "$stable" "$stable_keys" 2>/dev/null; then
+            if [ -n "$stable" ] && [ -n "${seen_stable[$stable]:-}" ]; then
               continue
             fi
-            [ -z "$stable" ] || printf '%s\n' "$stable" >> "$stable_keys"
-            [ -z "$key" ] || printf '%s\n' "$key" >> "$existing_keys"
+            [ -z "$stable" ] || seen_stable["$stable"]=1
+            [ -z "$key" ] || seen_key["$key"]=1
             printf '%s\n' "$line" >> "$to_append"
           done < "$batch"
           exec 3<&-
@@ -598,6 +605,10 @@ runs:
         dir="$RUNNER_TEMP/wc-metrics-persist"
         BEGIN_MARKER="<!-- wing-commander-metrics-rollup:begin -->"
         END_MARKER="<!-- wing-commander-metrics-rollup:end -->"
+
+        # DEST_PATH and sweep-state.json are read from the worktree, so make
+        # sure it is on the destination branch the append step wrote them to.
+        git checkout -q "$BRANCH" >/dev/null 2>&1 || true
 
         for spec_dir in $SPEC_DIRS; do
           [ -n "$spec_dir" ] || continue
