@@ -87,7 +87,7 @@
 
 - [x] T020 [P] Amend `specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md` (implement/finalize completion-triggered path restated per FR-008; `tasks` and `rebase` stay sweep-only), `specs/043-durable-metrics-record/contracts/persist-workflow.md` ("runs only after the origin run has concluded" amended; document both new inputs and defaults) and `specs/043-durable-metrics-record/contracts/wrapper-contract.md` (the persisting job). These contracts are live; fix like code. Do not edit any spec.md.
 - [x] T021 [P] Grep `docs/` for pages stating the metrics trigger model (for example "workflow_run" with "implement"/"finalize" near "metrics") and update any that claim implement/finalize persistence comes from the completion trigger.
-- [ ] T022 Run `python .github/scripts/run-local-gates.py` and confirm every gate is green (Gates 12, 45, 47, 79 in particular); fix anything red before pushing.
+- [x] T022 Run `python .github/scripts/run-local-gates.py` and confirm every gate is green (Gates 12, 45, 47, 79 in particular); fix anything red before pushing.
 
 ---
 
