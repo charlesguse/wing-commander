@@ -202,7 +202,7 @@ MVP is Phase 1-2 plus US1: stage inputs, both wrapper jobs, extended Gate 79 wit
 
   Detail: The in-file comment admits the limitation, so the warning is unreliable for the failures it targets.
 
-- [ ] Review finding: Stable dedup key depends on emitted_at and can drop distinct records
+- [x] Review finding: Stable dedup key depends on emitted_at and can drop distinct records
 
   The key (run, job_key, step_index, emitted_at) skips any second record in the same step with the same second-resolution emitted_at, and misses duplicates if any path normalises emitted_at.
 
@@ -210,13 +210,13 @@ MVP is Phase 1-2 plus US1: stage inputs, both wrapper jobs, extended Gate 79 wit
 
   Detail: The old record_key had the same weakness, so the new key does not clearly fix it.
 
-- [ ] Review finding: Rollup reads sweep-state.json from the cwd without guaranteeing the metrics branch checkout
+- [x] Review finding: Rollup reads sweep-state.json from the cwd without guaranteeing the metrics branch checkout
 
   The rollup step assumes the worktree is still on the destination branch where the append step wrote sweep-state.json; otherwise every rollup prints 'Last daily sweep: unknown'. The new test only places the file in a temp dir, so it cannot catch this.
 
   - .github/actions/wing-commander-metrics-persist/action.yml
 
-- [ ] Review finding: pin-e2e-wrapper.sh uses GNU-only sed alternation and incomplete escaping
+- [x] Review finding: pin-e2e-wrapper.sh uses GNU-only sed alternation and incomplete escaping
 
   `\|` alternation fails on BSD sed, so no uses: line is pinned and the script exits 1 on local runs; stage_re does not escape `/`, `&` or `|`.
 
@@ -230,13 +230,13 @@ MVP is Phase 1-2 plus US1: stage inputs, both wrapper jobs, extended Gate 79 wit
 
   Detail: The spec records this as an accepted exception.
 
-- [ ] Review finding: Test case directories derived from len(label) can collide
+- [x] Review finding: Test case directories derived from len(label) can collide
 
   verify-metrics-rollup-idempotent.py names per-case directories by label length, so two equal-length labels would share state and leak sweep-state.json between cases.
 
   - .github/scripts/verify-metrics-rollup-idempotent.py
 
-- [ ] Review finding: Quadratic grep-per-line dedup membership test
+- [x] Review finding: Quadratic grep-per-line dedup membership test
 
   The stable-key membership test spawns grep over growing key files for every batch line, which is quadratic; a single jq or awk pass would do.
 

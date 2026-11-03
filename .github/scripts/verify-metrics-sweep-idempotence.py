@@ -155,9 +155,9 @@ def mut_append_forgets_existing_keys(name, script):
     # Both skips: the record_key one and the attempt-independent one (spec
     # 120) -- either alone still catches an already-persisted record.
     return script.replace(
-        'if [ -n "$key" ] && grep -qxF "$key" "$existing_keys" 2>/dev/null; then',
+        'if [ -n "$key" ] && [ -n "${seen_key[$key]:-}" ]; then',
         'if [ -n "$key" ] && false; then').replace(
-        'if [ -n "$stable" ] && grep -qxF "$stable" "$stable_keys" 2>/dev/null; then',
+        'if [ -n "$stable" ] && [ -n "${seen_stable[$stable]:-}" ]; then',
         'if [ -n "$stable" ] && false; then')
 
 
@@ -165,7 +165,7 @@ def mut_append_forgets_stable_keys(name, script):
     if name != APPEND:
         return script
     return script.replace(
-        'if [ -n "$stable" ] && grep -qxF "$stable" "$stable_keys" 2>/dev/null; then',
+        'if [ -n "$stable" ] && [ -n "${seen_stable[$stable]:-}" ]; then',
         'if [ -n "$stable" ] && false; then')
 
 

@@ -233,16 +233,16 @@ def case_rollup_states_the_last_sweep():
     _write_exec(os.path.join(stub_dir, "gh"), GH_STUB)
     _write_exec(os.path.join(stub_dir, "date"), DATE_STUB)
     try:
-        for label, state, want in (
+        for idx, (label, state, want) in enumerate((
                 ("with a high-water mark",
                  '{"high_water_mark":"2026-09-20T03:00:00Z"}',
                  "Last daily sweep: `2026-09-20T03:00:00Z`"),
                 ("without sweep-state.json", None,
-                 "Last daily sweep: `unknown`")):
-            gh_state = os.path.join(tmp, "gh-" + str(len(label)))
+                 "Last daily sweep: `unknown`"))):
+            gh_state = os.path.join(tmp, f"gh-{idx}")
             os.makedirs(gh_state, exist_ok=True)
             rc, out, region, _c = run_rollup(
-                os.path.join(tmp, "run-" + str(len(label))), RECORDS,
+                os.path.join(tmp, f"run-{idx}"), RECORDS,
                 "specs/043-durable-metrics-record", 148, gh_state, stub_dir,
                 sweep_state=state)
             if rc != 0 or region is None:
