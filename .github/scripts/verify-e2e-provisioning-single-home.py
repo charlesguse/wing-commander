@@ -26,11 +26,30 @@ This gate fails when:
     cannot fail proves nothing" only holds if the one real call site stays
     wired.
 
+It also guards the wrapper pin (#1083): the rewrite that turns this
+repository's own wrapper workflows into ones a test repository can run
+lives only in `.github/actions/_shared/pin-e2e-wrapper.sh`. This gate
+fails when:
+
+  * auto-release.yml or provision-e2e-target.sh stops calling it, or any
+    workflow or script outside it carries its own `uses: ./.github/
+    workflows/` rewrite;
+  * running the real script over every wrapper auto-release.yml's scaffold
+    step copies leaves a local stage call, or leaves the wrapper passing
+    `github.sha` as `pipeline-ref` -- in a test repository that is the
+    test repository's commit, the pipeline repository can't fetch it, and
+    every implement job failed its pipeline checkout with "not our ref";
+  * a wrapper that passes a `pipeline-ref` comes out passing anything but
+    the pipeline commit it was pinned to.
+
 Self-test (--self-test): copies the real tree, then (a) passes it clean,
 (b) pastes a second copy of the element list into a workflow and expects a
 failure naming that line, (c) removes
 auto-update-spec-kit-scratch-preflight.yml's call to
-provision-e2e-target.sh and expects a failure.
+provision-e2e-target.sh and expects a failure, (d) drops the
+pin script's pipeline-ref rewrite and expects the implement wrapper to
+fail, and (e) puts auto-release.yml's old inline sed back and expects a
+failure naming it.
 
 Usage: python3 .github/scripts/verify-e2e-provisioning-single-home.py [--self-test]
 """
@@ -39,6 +58,7 @@ import io
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -51,6 +71,17 @@ PROVISION_SCRIPT = "provision-e2e-target.sh"
 # what to look for; that is not a second, independent definition and must
 # not flag itself.
 SELF_PATH = ".github/scripts/verify-e2e-provisioning-single-home.py"
+
+# The wrapper pin's one home and the two places that must call it (#1083).
+PIN_SCRIPT = ".github/actions/_shared/pin-e2e-wrapper.sh"
+PIN_CALLERS = (".github/workflows/auto-release.yml", ".github/scripts/provision-e2e-target.sh")
+AUTO_RELEASE = ".github/workflows/auto-release.yml"
+# An inline copy of the stage-call rewrite: a sed substitution whose
+# pattern is the local `uses: ./.github/workflows/` call.
+INLINE_PIN_RE = re.compile(r"s(.)uses: \\\./\\\.github/workflows/")
+# The scaffold step's wrapper -> stage map: `[wing-commander-5-implement.yml]=implement.yml`.
+STAGE_MAP_RE = re.compile(r"^\s*\[(wing-commander-[\w.-]+\.yml)\]=([\w.-]+\.yml)\s*$", re.M)
+FAKE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
 # The seven OnboardingElement keys (data-model.md), in the exact order
 # data-model.md and profiles.sh's spec-kit-scratch/auto-release lists carry
@@ -133,6 +164,61 @@ def scan(root="."):
         failures.append(f"{READINESS_WORKFLOW} does not call {PROVISION_SCRIPT} -- it must compute "
                          f"readiness through the shared checks.sh/profiles.sh library (via that "
                          f"script), not a re-derived check of its own.")
+    return failures + scan_wrapper_pin(root)
+
+
+def scan_wrapper_pin(root="."):
+    """The wrapper pin's one home, and what it produces on the real wrappers (#1083)."""
+    failures = []
+    pin = os.path.join(root, PIN_SCRIPT)
+    if not os.path.isfile(pin):
+        return [f"{PIN_SCRIPT} is missing -- it is the one home of the e2e wrapper pin."]
+    for caller in PIN_CALLERS:
+        path = os.path.join(root, caller)
+        if not os.path.isfile(path):
+            failures.append(f"{caller} is missing.")
+        elif os.path.basename(PIN_SCRIPT) not in _read(path):
+            failures.append(f"{caller} does not call {PIN_SCRIPT} -- the e2e wrapper pin must go "
+                            f"through it, not a rewrite of its own.")
+    files = (glob.glob(os.path.join(root, ".github/workflows/*.yml"))
+             + glob.glob(os.path.join(root, ".github/scripts/*.sh"))
+             + glob.glob(os.path.join(root, ".github/scripts/*.py"))
+             + glob.glob(os.path.join(root, ".github/actions/**/*.sh"), recursive=True)
+             + glob.glob(os.path.join(root, ".github/actions/**/action.yml"), recursive=True))
+    for f in sorted(files):
+        rel = os.path.relpath(f, root).replace("\\", "/")
+        if rel in (PIN_SCRIPT, SELF_PATH):
+            continue
+        for m in INLINE_PIN_RE.finditer(_read(f)):
+            line = _read(f).count("\n", 0, m.start()) + 1
+            failures.append(f"{rel}:{line}: an inline rewrite of a wrapper's local stage call -- "
+                            f"the one home is {PIN_SCRIPT}, which also pins pipeline-ref.")
+
+    ar = os.path.join(root, AUTO_RELEASE)
+    pairs = STAGE_MAP_RE.findall(_read(ar)) if os.path.isfile(ar) else []
+    if not pairs:
+        failures.append(f"{AUTO_RELEASE}: could not find the scaffold step's wrapper -> stage map "
+                        f"([wing-commander-N-x.yml]=x.yml); if it moved, move this gate with it.")
+    for wrapper, stage in pairs:
+        src = os.path.join(root, ".github/workflows", wrapper)
+        if not os.path.isfile(src):
+            failures.append(f"{AUTO_RELEASE} copies {wrapper}, which does not exist.")
+            continue
+        r = subprocess.run(["bash", pin, src, stage, "example/pipeline", "e2e-verify-tag", FAKE_COMMIT],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            failures.append(f"{PIN_SCRIPT} refused {wrapper}: {r.stderr.strip()[:300]}")
+            continue
+        out = r.stdout
+        if re.search(r"uses: \./\.github/workflows/", out):
+            failures.append(f"{wrapper}: still calls its stage by local path after pinning.")
+        if f"uses: example/pipeline/.github/workflows/{stage}@e2e-verify-tag" not in out:
+            failures.append(f"{wrapper}: pinning did not produce a call to {stage} at the pin tag.")
+        for ref in re.findall(r"^\s*pipeline-ref:\s*(.*?)\s*$", out, re.M):
+            if ref != FAKE_COMMIT:
+                failures.append(f"{wrapper}: pinned wrapper passes pipeline-ref {ref!r}, not the "
+                                f"pipeline commit it was pinned to -- in a test repository the "
+                                f"pipeline checkout would fail (#1083).")
     return failures
 
 
@@ -175,6 +261,32 @@ def self_test():
         if not any(READINESS_WORKFLOW in g and "does not call" in g for g in got):
             problems.append(f"the readiness workflow dropping its call to {PROVISION_SCRIPT} was NOT "
                              f"detected; got: {got}")
+
+        unpinned = os.path.join(root, "unpinned")
+        _copy_tree(unpinned)
+        pin = os.path.join(unpinned, PIN_SCRIPT)
+        text = _read(pin)
+        # Drop the rewrite and disarm the refusal, so what's left is the
+        # old, uses:-only pin: the scan's own check must still catch it.
+        mutated = "".join(l for l in text.splitlines(True) if '-e "s#pipeline-ref' not in l)
+        mutated = mutated.replace("'pipeline-ref:.*github\\.sha'", "'^never-matches$'")
+        if mutated.count("\n") == text.count("\n") or "never-matches" not in mutated:
+            problems.append(f"fixture: could not find the pipeline-ref rewrite and refusal in {PIN_SCRIPT}")
+        with io.open(pin, "w", encoding="utf-8") as fh:
+            fh.write(mutated)
+        got = scan(unpinned)
+        if not any("wing-commander-5-implement.yml" in g and "pipeline-ref" in g for g in got):
+            problems.append(f"a pin that leaves the implement wrapper passing github.sha as "
+                            f"pipeline-ref was NOT detected; got: {got}")
+
+        inline = os.path.join(root, "inline")
+        _copy_tree(inline)
+        ar = os.path.join(inline, AUTO_RELEASE)
+        with io.open(ar, "a", encoding="utf-8") as fh:
+            fh.write('\n# inline-pin fixture\n# sed -i "s#uses: \\./\\.github/workflows/${stage}#uses: x@y#" f\n')
+        got = scan(inline)
+        if not any(AUTO_RELEASE in g and "inline rewrite" in g for g in got):
+            problems.append(f"an inline sed pin pasted back into {AUTO_RELEASE} was NOT detected; got: {got}")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -183,7 +295,8 @@ def self_test():
     if problems:
         return 1
     print("verify-e2e-provisioning-single-home self-test: clean tree passes; a pasted copy of the "
-          "element list and a dropped call to provision-e2e-target.sh each fail.")
+          "element list, a dropped call to provision-e2e-target.sh, a pin that leaves pipeline-ref "
+          "at github.sha, and an inline sed pin each fail.")
     return 0
 
 
@@ -194,7 +307,8 @@ def main(argv):
     for f in failures:
         print(f"::error::verify-e2e-provisioning-single-home: {f}")
     print(f"verify-e2e-provisioning-single-home: the onboarding-element list has one home "
-          f"({CHECKS}/{PROFILES}); {len(failures)} failure(s).")
+          f"({CHECKS}/{PROFILES}) and the wrapper pin has one home ({PIN_SCRIPT}); "
+          f"{len(failures)} failure(s).")
     return 1 if failures else 0
 
 

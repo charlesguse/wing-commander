@@ -183,8 +183,13 @@ act_wrapper_set() { # act_wrapper_set OWNER NAME
   [ -n "$default_branch" ] || default_branch="main"
   for f in "${WRAPPER_FILES[@]}"; do
     stage="${WRAPPER_STAGE_FILE[$f]}"
-    content="$(sed -e "s#uses: \./\.github/workflows/${stage}#uses: ${this_repo}/.github/workflows/${stage}@${head_sha}#" \
-      "$REPO_ROOT/.github/workflows/$f")"
+    # Pins the stage call and the wrapper's pipeline-ref (#1083) -- see
+    # .github/actions/_shared/pin-e2e-wrapper.sh.
+    content="$(bash "$REPO_ROOT/.github/actions/_shared/pin-e2e-wrapper.sh" \
+      "$REPO_ROOT/.github/workflows/$f" "$stage" "$this_repo" "$head_sha" "$head_sha")" || {
+      echo "provision-e2e-target.sh: could not pin $f for $owner/$name -- refusing to install a wrapper that would check out the wrong pipeline commit (#1083)" >&2
+      exit 1
+    }
     # docs/adoption.md's own instruction, applied the same way
     # auto-release.yml's scaffold step applies it: replace the literal
     # `main` in the two wrappers whose gate/trigger names it with the
