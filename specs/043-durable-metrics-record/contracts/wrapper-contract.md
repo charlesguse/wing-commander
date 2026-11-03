@@ -105,6 +105,18 @@ emission still runs unconditionally at every stage (contracts/emission-contract.
 nothing pushes to any branch, and no configuration was required to reach
 that state (FR-002, spec.md Edge Case).
 
+## The persisting job in the implement and finalize wrappers
+
+Amended by specs/120-dispatched-run-metrics. `wing-commander-5-implement.yml`
+and `wing-commander-6-finalize.yml` each carry a last job, `persist-metrics`,
+a bare `uses:` of `metrics-persist.yml` with `run-id: ${{ github.run_id }}`,
+`run-in-cancelled-run: true` and `tolerate-failure: true`, gated on
+`always()` plus the same kill switch and a skipped-stage exclusion, with
+no App secrets and no `concurrency:` key. Its full shape is
+specs/120-dispatched-run-metrics/contracts/persisting-job.md. Gate 79
+checks it. The `workflow_run` persist job above is unchanged and
+idempotent with it by `record_key`.
+
 ## What this file owns that the published workflow does not
 
 - The trigger (`workflow_run` + the specific workflow name list).

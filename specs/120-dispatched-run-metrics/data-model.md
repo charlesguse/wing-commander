@@ -28,7 +28,7 @@ risk R6: stability of `job_id` across re-run attempts.
 ### Stage input / output deltas (published surface, VII)
 | Name | Kind | Type | Default | Effect |
 |---|---|---|---|---|
-| `run-in-cancelled-run` | input | boolean | `false` | image check and `persist` gate on `always()` |
+| `run-in-cancelled-run` | input | boolean | `false` | `persist` gates on `always()`; the image check keeps its Gate 22-pinned `if` and is skipped in a cancelled run |
 | `tolerate-failure` | input | boolean | `false` | `continue-on-error` on both jobs; warning step on failure |
 | `started` (finalize.yml) | output | string | n/a | `'true'` once an early record-free job ran (R2); only if the drill requires it |
 
@@ -45,7 +45,15 @@ be missing from the total." Source: `sweep-state.json` on the destination branch
 | pr-conversation `stop` | may cancel during persisting job | records to sweep; label covers |
 | fold-cycle guard | classifies cancellations by started jobs | persisting job gated off when nothing started (R2) |
 | fold-dispatch / fold queue | keyed on the stage concurrency group | unaffected (job outside group) |
-| lifecycle-review-gate, board-loop, auto-release | read run status/head refs | audited in tasks; table completed there |
+| lifecycle-review-gate | dispatches the implement wrapper by file name (`implement-workflow: wing-commander-5-implement.yml`, L1428-1442); does not read the run's duration | unaffected; the added job runs after `implement`, outside the stage's concurrency group |
+| `wing-commander-9b-fold-cycle-guard.yml` / `fold-cycle-guard.yml` | reacts to the implement run's `workflow_run` completion (9b L13) and dispatches by file name (L255) | unaffected in kind: completion now follows the persisting job, a bounded delay (the job is tolerant, FR-007); a cancelled-before-start run gates the job off (R2) |
+| `wing-commander-fold-dispatch` | dispatches the wrapper with `fold_queue_token` (action.yml L242) | unaffected; keyed on the dispatch, not the run's end |
+| `board-loop.yml` | no reference to the implement wrapper in the audit grep | no dependency found |
+| `auto-release.yml` | maps the wrapper file to its stage (L1144); reads no run status of an in-progress implement run | no dependency found |
+
+Proof limit: this audit is a read of the referencing lines (grep of each
+reader for the wrapper's name), not a live run; the post-merge drills
+(T024, T025) are what prove the delayed `completed` event is harmless.
 
 ## State transitions
 
