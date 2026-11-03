@@ -382,6 +382,37 @@ def suite(src, quiet=False):
         check("verify-scope: an unmarked out-of-project modify/delete conflict fails",
               r.returncode == 1 and "b.txt" in r.stderr and "outside the admitted scope" in r.stderr,
               r.stderr, q)
+    with tempfile.TemporaryDirectory() as tmp:
+        # File/directory conflicts, labelled the way rebase.yml labels them
+        # (`origin/main` and HEAD): the branch's file x meets main's x/y and
+        # moves to x~HEAD; main's file y meets the branch's y/z and moves to
+        # y~origin_main. A resolution of just those files is in scope.
+        _, w = make_repo(tmp)
+        os.makedirs(os.path.join(w, "y"))
+        write(os.path.join(w, "x"), "branch file\n")
+        write(os.path.join(w, "y", "z"), "branch dir\n")
+        sh(w, "git", "add", "."), sh(w, "git", "commit", "-q", "-m", "branch adds x, y/z")
+        b = head(w)
+        sh(w, "git", "checkout", "-q", "main")
+        os.makedirs(os.path.join(w, "x"))
+        write(os.path.join(w, "x", "y"), "main dir\n")
+        write(os.path.join(w, "y"), "main file\n")
+        sh(w, "git", "add", "."), sh(w, "git", "commit", "-q", "-m", "main adds x/y, y")
+        sh(w, "git", "push", "-q", "origin", "main")
+        sh(w, "git", "checkout", "-q", "spec/x")
+        sh(w, "git", "fetch", "-q", "--no-tags", "origin", "main:refs/remotes/origin/main")
+        m = head(w, "origin/main")
+        t = sh(w, "git", "merge-tree", "--write-tree", "--no-messages", "origin/main", "HEAD",
+               check_rc=False).stdout.split()[0]
+        sh(w, "git", "merge", "--no-ff", "--no-commit", "origin/main", check_rc=False)
+        mf = os.path.join(tmp, "manifest.txt")
+        write(mf, sh(w, "git", "-c", "core.quotepath=off", "diff", "--name-only", "--diff-filter=U").stdout)
+        write(os.path.join(w, "x~HEAD"), "branch file, resolved\n")
+        sh(w, "git", "add", "-A"), sh(w, "git", "commit", "-q", "-m", "sync: merge main into spec/x")
+        r = helper(src, w, "verify-scope", "--before", b, "--main", m, "--conflicted-tree", t,
+                   "--manifest", mf, "--project", "", "--verdict", "healthy", "--main-label", "origin/main")
+        check("verify-scope: a file/directory conflict resolved in place passes",
+              r.returncode == 0, r.stderr, q)
     failed = [n for n, ok, _ in results[start:] if not ok]
     if quiet:
         del results[start:]
@@ -469,6 +500,10 @@ def main():
     check("the conflicted tree reaches verify-scope as a step output, not an agent-writable file",
           "conflicted-tree.txt" not in stage
           and "steps.attempt.outputs.conflicted-tree" in verify_step[:verify_step.find("run: |")], "")
+    check("verify-scope gets the name the attempt step merged by, which labels file/directory conflicts",
+          '--main-label "origin/$DB"' in verify_step[:verify_step.find("- name:", 10)]
+          and 'merge-tree --write-tree --no-messages "origin/$DB" HEAD' in stage
+          and 'git merge --no-ff --no-commit "origin/$DB"' in stage, "")
     publish = stage[stage.find("name: Publish rebased branch"):]
     publish = publish[:publish.find("- name:", 10)]
     check("the merge push refusal is classified by the helper, not an inline pattern",
@@ -486,6 +521,7 @@ def main():
         ("quoted-name unquote", '"HEAD:" + unquote(p)', '"HEAD:" + p'),
         ("unadmitted-conflict guard", "for p in sorted(conflicts - allowed):", "for p in ():"),
         ("rename-blind diff", '"diff", "--no-renames", "--name-only"', '"diff", "--name-only"'),
+        ("file/directory relabel", "return {relabel(ln, before, main, main_label) for ln", "return {ln for ln"),
     )
     for name, old, new in mutations:
         if old not in source:

@@ -90,17 +90,31 @@ def in_project(path, project):
     return not project or path == project or path.startswith(project.rstrip("/") + "/")
 
 
-def conflicted_paths(before, main):
+def relabel(path, before, main, main_label):
+    """A file/directory conflict moves the file to `<path>~<side>`, the side
+    named as the merge named it with '/' flattened to '_'. The attempt step's
+    tree and the real merge name the sides HEAD and `main_label`; the
+    merge-tree here names them by SHA, so rename the suffix to match."""
+    quoted = path.endswith('"')
+    body = path[:-1] if quoted else path
+    for sha, label in ((before, "HEAD"), (main, main_label)):
+        if body.endswith("~" + sha):
+            body = body[:-len(sha)] + label.replace("/", "_")
+            break
+    return body + '"' if quoted else body
+
+
+def conflicted_paths(before, main, main_label):
     """The paths a merge of `main` into `before` conflicts on, from git alone:
     the deterministic bound on what a resolution may change, whatever the
     agent-writable manifest file says. None when git cannot say."""
     r = git("merge-tree", "--write-tree", "--name-only", "--no-messages", main, before, check=False)
     if r.returncode not in (0, 1):
         return None
-    return {ln for ln in r.stdout.splitlines()[1:] if ln}
+    return {relabel(ln, before, main, main_label) for ln in r.stdout.splitlines()[1:] if ln}
 
 
-def verify_scope(before, main, conflicted_tree, manifest, project, verdict):
+def verify_scope(before, main, conflicted_tree, manifest, project, verdict, main_label=None):
     reasons = []
     if verdict != "healthy":
         reasons.append("agent verdict is '{0}', not healthy".format(verdict))
@@ -113,7 +127,7 @@ def verify_scope(before, main, conflicted_tree, manifest, project, verdict):
             listed = {ln.rstrip("\n") for ln in fh if ln.strip()}
     except OSError:
         listed = set()
-    conflicts = conflicted_paths(before, main)
+    conflicts = conflicted_paths(before, main, main_label or main)
     if conflicts is None:
         reasons.append("could not list the conflicting paths of {0} and {1}".format(before, main))
         conflicts = set()
@@ -151,6 +165,9 @@ def main(argv=None):
     for name in ("before", "main", "conflicted-tree", "manifest", "verdict"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--project", default="")
+    # The name the attempt step merged the default branch by (origin/<DB>);
+    # it labels a file/directory conflict's moved file. Default: --main.
+    p.add_argument("--main-label", default="")
     sub.add_parser("publish-refspec").add_argument("branch")
     sub.add_parser("push-race")
     a = ap.parse_args(argv)
@@ -162,7 +179,7 @@ def main(argv=None):
         return decide(a.main)
     if a.cmd == "publish-refspec":
         return publish_refspec(a.branch)
-    return verify_scope(a.before, a.main, a.conflicted_tree, a.manifest, a.project, a.verdict)
+    return verify_scope(a.before, a.main, a.conflicted_tree, a.manifest, a.project, a.verdict, a.main_label)
 
 
 if __name__ == "__main__":

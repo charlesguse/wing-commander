@@ -1207,7 +1207,8 @@ jobs:
               escalate=true
             elif python3 .wing-commander-pipeline/.github/scripts/wc_sync_from_main.py verify-scope \
                 --before "$BEFORE" --main "$MAIN_SHA" --conflicted-tree "$CONFLICTED_TREE" \
-                --manifest "$manifest" --project "$PROJECT" --verdict "$AGENT_VERDICT"; then
+                --manifest "$manifest" --project "$PROJECT" --verdict "$AGENT_VERDICT" \
+                --main-label "origin/$DB"; then
               push=true
               echo "sync-from-main ${SPEC_PREFIX}$SLUG: AI resolution passed the scope check." >> "$GITHUB_STEP_SUMMARY"
             else
