@@ -139,7 +139,7 @@ MVP is Phase 1–3 (US1): the label, implement/fold-dispatch/merge honouring it,
 
   Detail: pr-conversation.yml dispatch-once reply step runs on outcome == 'success' with empty FOLDED; T013 caller wiring not done yet.
 
-- [ ] Review finding: decide CLI emits first-attempt to stderr, not GITHUB_OUTPUT lines
+- [x] Review finding: decide CLI emits first-attempt to stderr, not GITHUB_OUTPUT lines
 
   wc_fold_analyze.py decide prints first-attempt to stderr and a bare JSON blob to stdout, so redirecting stdout to $GITHUB_OUTPUT yields invalid output and the run_attempt guard cannot be wired.
 
@@ -147,7 +147,7 @@ MVP is Phase 1–3 (US1): the label, implement/fold-dispatch/merge honouring it,
 
   Detail: T027 / research D6 expect a key=value first-attempt output.
 
-- [ ] Review finding: fold-drop TITLE_RE too narrow; already-absent never produced; apply has no CLI
+- [x] Review finding: fold-drop TITLE_RE too narrow; already-absent never produced; apply has no CLI
 
   TITLE_RE only accepts two title prefixes, so not-fold-task is unreachable via parse, already-absent is never returned (unknown is), and main only supports parse.
 
@@ -180,7 +180,7 @@ MVP is Phase 1–3 (US1): the label, implement/fold-dispatch/merge honouring it,
 
   Detail: Multi-line or variable-based label reads, or removal of the composite call, still pass.
 
-- [ ] Review finding: set_hold fails after labelling when reason is empty
+- [x] Review finding: set_hold fails after labelling when reason is empty
 
   In set mode with the default empty reason, gh issue comment --body '' fails after the label is added, so set raises with no set= output and a retry reports 'already' without posting the reason.
 
@@ -188,7 +188,7 @@ MVP is Phase 1–3 (US1): the label, implement/fold-dispatch/merge honouring it,
 
   Detail: Label create result is also ignored.
 
-- [ ] Review finding: Vacuous assertion in test_already_checked
+- [x] Review finding: Vacuous assertion in test_already_checked
 
   assertEqual(text, <expr> if False else text) compares text to itself, so the test cannot catch apply mutating an already-checked task.
 
@@ -196,7 +196,7 @@ MVP is Phase 1–3 (US1): the label, implement/fold-dispatch/merge honouring it,
 
   Detail: Should compare against TASKS.
 
-- [ ] Review finding: check mode can write duplicate state= outputs and swallows failure
+- [x] Review finding: check mode can write duplicate state= outputs and swallows failure
 
   `script >> $GITHUB_OUTPUT || echo state=unreadable >> $GITHUB_OUTPUT` can append a second state= line after a partial success, so held may be reported as unreadable, and script errors give no annotation.
 

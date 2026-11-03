@@ -43,8 +43,24 @@ class DropTests(unittest.TestCase):
         t = "Review finding: done already"
         text, out, msg, _ = run([t])
         self.assertEqual(out[t], "already-checked")
-        self.assertEqual(text, TASKS.rstrip("\n") + "\n" if False else text)
+        self.assertEqual(text, TASKS)
         self.assertEqual(msg, "")
+
+    def test_parse_accepts_non_fold_title(self):
+        p = d.parse("drop\n- T012 some task\n")
+        self.assertEqual(p["titles"], ["T012 some task"])
+
+    def test_not_fold_task_via_parse(self):
+        t = d.parse("drop\n- plain title\n")["titles"][0]
+        _, out, _, _ = run([t])
+        self.assertEqual(out[t], "not-fold-task")
+
+    def test_already_absent(self):
+        t = "Review finding: gone before"
+        _, out, _, _ = d.apply(TASKS, [t], "OWNER", 42, dropped_titles=(t,))
+        self.assertEqual(out[t], "already-absent")
+        _, out2, _, _ = run([t])
+        self.assertEqual(out2[t], "unknown")
 
     def test_non_maintainer(self):
         text, out, msg, _ = run(["Review finding: add a cache"], "NONE")

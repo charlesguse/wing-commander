@@ -85,10 +85,15 @@ def set_hold(issue, reason, repo=None, hold_label=DEFAULT_HOLD_LABEL,
     except Exception:
         already = False
     repo_args = ["-R", repo] if repo else []
+    # An empty reason would make `gh issue comment --body ''` fail after the
+    # label is added, so fall back to a fixed line before touching anything.
+    reason = (reason or "").strip() or f"Lifecycle held: `{hold_label}` added."
     if not already:
         # Ensure the label exists; --force makes a second create a no-op.
-        runner(["label", "create", hold_label, "--force", *repo_args,
-                "--description", "Lifecycle held: implement stops until released"])
+        created = runner(["label", "create", hold_label, "--force", *repo_args,
+                          "--description", "Lifecycle held: implement stops until released"])
+        if created.returncode != 0:
+            raise RuntimeError(f"could not create {hold_label}: {created.stderr.strip()}")
         add = runner(["issue", "edit", str(issue), "--add-label", hold_label, *repo_args])
         if add.returncode != 0:
             raise RuntimeError(f"could not add {hold_label}: {add.stderr.strip()}")

@@ -56,8 +56,14 @@ runs:
         script="$GITHUB_ACTION_PATH/../../scripts/wc_lifecycle_hold.py"
         case "$MODE" in
           check)
-            python3 -I "$script" check --issue "$ISSUE" --repo "$GITHUB_REPOSITORY" \
-              --hold-label "$HOLD_LABEL" >> "$GITHUB_OUTPUT" || echo "state=unreadable" >> "$GITHUB_OUTPUT"
+            # Capture first so a partial write can never leave two state= lines.
+            if out="$(python3 -I "$script" check --issue "$ISSUE" --repo "$GITHUB_REPOSITORY" \
+              --hold-label "$HOLD_LABEL")" && [ -n "$out" ]; then
+              echo "$out" >> "$GITHUB_OUTPUT"
+            else
+              echo "::warning::wing-commander-lifecycle-hold: check script failed; reporting unreadable"
+              echo "state=unreadable" >> "$GITHUB_OUTPUT"
+            fi
             ;;
           set)
             python3 -I "$script" set --issue "$ISSUE" --repo "$GITHUB_REPOSITORY" \
