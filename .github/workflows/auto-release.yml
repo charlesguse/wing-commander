@@ -1504,6 +1504,10 @@ jobs:
           # polls before it counts as terminal.
           closed_settle_polls=0
           MAX_CLOSED_SETTLE_POLLS=4
+          # The stderr of the last settle re-read when it failed: a window
+          # that ends on a failed re-read never saw the issue settle, so its
+          # stale closed read is an infrastructure failure, not fail-incomplete.
+          settle_unread=""
           # One read of the issue's state and labels, shared by the poll
           # and the settle re-reads. A failed or empty read leaves state and
           # labels as they were and its stderr in auto-release-poll-err.txt.
@@ -1736,7 +1740,8 @@ jobs:
               # not act on a lifecycle that is already closed. A failed
               # re-read keeps the last state read, and a rate-limited one
               # counts toward the same MAX_RATE_LIMIT_POLLS as the read
-              # above.
+              # above. A window whose last re-read failed ends the run
+              # through settle_unread.
               while [ "$state" = "CLOSED" ] \
                  && ! printf ',%s,' "$labels" | grep -qE ',stage:(done|stalled),' \
                  && [ "$closed_settle_polls" -lt "$MAX_CLOSED_SETTLE_POLLS" ]; do
@@ -1744,10 +1749,15 @@ jobs:
                 sleep 30
                 if read_issue; then
                   rate_limit_hits=0
+                  settle_unread=""
                 elif rate_limit_exhausted; then
                   break 2
+                else
+                  settle_unread="$(tail -c 500 "$RUNNER_TEMP/auto-release-poll-err.txt")"
+                  [ -n "$settle_unread" ] || settle_unread="gh issue view returned no output"
                 fi
               done
+              [ -z "$settle_unread" ] || break
               if [ "$state" = "CLOSED" ] || printf ',%s,' "$labels" | grep -q ',stage:stalled,'; then
                 terminal=true
                 break
@@ -1762,6 +1772,14 @@ jobs:
             write_verdict "fail-infra" "polling the test repository for a terminal state" \
               "gh issue view succeeds within the poll budget" \
               "GitHub API rate limit encountered while polling: $rate_limited"
+            emit_verdict
+            exit 0
+          fi
+
+          if [ -n "$settle_unread" ]; then
+            write_verdict "fail-infra" "re-reading a closed lifecycle issue for stage:done" \
+              "gh issue view succeeds while a closed issue settles" \
+              "read CLOSED with labels [$labels], then the last of ${MAX_CLOSED_SETTLE_POLLS} re-reads failed: $settle_unread"
             emit_verdict
             exit 0
           fi

@@ -67,7 +67,11 @@ must still run and reach the control's verdict, never fail-timeout's "still
 open" on a closed issue; it waits on the real clock, so it runs only in the
 base suite and under the mutation that lists it. A fifth has every settle
 re-read rate-limited: it must end on the poll's rate-limit fail-infra, not
-fail-incomplete.
+fail-incomplete. Two more end the settle window on a failed re-read, one
+on an HTTP 502 and one on rate limits broken up by a 502 (so the
+rate-limit count restarts): neither saw the issue settle, so both must end
+on the settle window's own fail-infra, not fail-incomplete on the stale
+closed read.
 
 A second mutation binds the step's GH_TOKEN back to `steps.token`, and each
 mutation lists the scenarios that must break under it (`must_break`), so
@@ -312,8 +316,14 @@ SETTLE_BUDGET_SECONDS = 6
 SETTLE_BUDGET_DELAY = SETTLE_BUDGET_SECONDS + 1
 REAL_SLEEP = shutil.which("sleep") or "/bin/sleep"
 IN_FLIGHT = [("OPEN", "stage:implement")] * 2
+CLOSE_SETTLE_UNREAD = ("a lifecycle read closed before stage:done whose last settle re-read "
+                       "fails ends fail-infra, not fail-incomplete on the stale read")
+CLOSE_SETTLE_MIXED = ("a lifecycle read closed before stage:done whose settle re-reads are "
+                      "rate limits broken up by a 502 ends fail-infra, not fail-incomplete")
+SETTLE_UNREAD_CHECK = "re-reading a closed lifecycle issue for stage:done"
+RATE_LIMIT_ERR = "API rate limit exceeded for installation ID 12345678."
 SETTLE_SCENARIOS = (CLOSE_DONE, CLOSE_RACE, CLOSE_NEVER_DONE, CLOSE_RACE_AT_BUDGET_END,
-                    CLOSE_RATE_LIMITED)
+                    CLOSE_RATE_LIMITED, CLOSE_SETTLE_UNREAD, CLOSE_SETTLE_MIXED)
 
 
 def settle_suite(script, token_env, tmproot, budget_end=True):
@@ -330,8 +340,15 @@ def settle_suite(script, token_env, tmproot, budget_end=True):
               ("CLOSED", "stage:done")],
              {"POLL_BUDGET_SECONDS": str(SETTLE_BUDGET_SECONDS)}),
             (CLOSE_RATE_LIMITED,
-             IN_FLIGHT + [("CLOSED", "stage:review"),
-                          ("ERR", "API rate limit exceeded for installation ID 12345678.")],
+             IN_FLIGHT + [("CLOSED", "stage:review"), ("ERR", RATE_LIMIT_ERR)],
+             {}),
+            (CLOSE_SETTLE_UNREAD,
+             IN_FLIGHT + [("CLOSED", "stage:review"), ("ERR", "HTTP 502: Bad Gateway")],
+             {}),
+            (CLOSE_SETTLE_MIXED,
+             IN_FLIGHT + [("CLOSED", "stage:review"), ("ERR", RATE_LIMIT_ERR),
+                          ("ERR", RATE_LIMIT_ERR), ("ERR", "HTTP 502: Bad Gateway"),
+                          ("ERR", RATE_LIMIT_ERR)],
              {})):
         if name == CLOSE_RACE_AT_BUDGET_END and not budget_end:
             continue
@@ -352,6 +369,11 @@ def settle_suite(script, token_env, tmproot, budget_end=True):
     if not isinstance(limited, dict) or limited.get("outcome") != "fail-infra" or \
             limited.get("failing_check") != "polling the test repository for a terminal state":
         failures.append(f"{CLOSE_RATE_LIMITED}: expected the rate-limit fail-infra, got {limited!r}")
+    for name in (CLOSE_SETTLE_UNREAD, CLOSE_SETTLE_MIXED):
+        unread = runs.get(name)
+        if not isinstance(unread, dict) or unread.get("outcome") != "fail-infra" or \
+                unread.get("failing_check") != SETTLE_UNREAD_CHECK:
+            failures.append(f"{name}: expected the settle window's fail-infra, got {unread!r}")
     if not budget_end:
         return failures
     late = runs.get(CLOSE_RACE_AT_BUDGET_END)
@@ -548,7 +570,8 @@ MUTATIONS = [
      (EXPIRY_OUTLIVES_APP_TOKEN, EXPIRY_NAMES_REJECTED_CREDENTIAL)),
     ("the poll's closed-issue settle window dropped (#1083)",
      mut_drop_close_settle,
-     (CLOSE_RACE, CLOSE_RACE_AT_BUDGET_END, CLOSE_RATE_LIMITED)),
+     (CLOSE_RACE, CLOSE_RACE_AT_BUDGET_END, CLOSE_RATE_LIMITED, CLOSE_SETTLE_UNREAD,
+      CLOSE_SETTLE_MIXED)),
 ]
 
 
