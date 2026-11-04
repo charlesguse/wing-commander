@@ -71,7 +71,10 @@ fail-incomplete. Two more end the settle window on a failed re-read, one
 on an HTTP 502 and one on rate limits broken up by a 502 (so the
 rate-limit count restarts): neither saw the issue settle, so both must end
 on the settle window's own fail-infra, not fail-incomplete on the stale
-closed read.
+closed read. An eighth sees the issue still closed with the old label on
+every settle re-read but the last, which is rate-limited: having seen it
+unsettled, it must still end fail-incomplete, not the settle window's
+fail-infra.
 
 A second mutation binds the step's GH_TOKEN back to `steps.token`, and each
 mutation lists the scenarios that must break under it (`must_break`), so
@@ -265,7 +268,8 @@ def view_sequence_stub(views):
     """A `gh` stub whose every read succeeds under either credential, and
     whose `gh issue view` answers from `views`, a list of (state, label) or
     (state, label, delay_seconds) entries 1-indexed by call (state "ERR"
-    fails the call with label as its stderr); a call beyond
+    fails the call at once with label as its stderr, ignoring any delay); a
+    call beyond
     the list repeats the last entry. A delay holds that answer back on the
     real clock (the step's `sleep` is stubbed out), so the step's $SECONDS
     can pass a small POLL_BUDGET_SECONDS during that read.
