@@ -64,7 +64,10 @@ stage:done (the control), closed with the old label and then stage:done
 mutation drops the settle window. A fourth scenario reads the issue closed
 with the old label just as the poll budget runs out: the settle re-reads
 must still run and reach the control's verdict, never fail-timeout's "still
-open" on a closed issue.
+open" on a closed issue; it waits on the real clock, so it runs only in the
+base suite and under the mutation that lists it. A fifth has every settle
+re-read rate-limited: it must end on the poll's rate-limit fail-infra, not
+fail-incomplete.
 
 A second mutation binds the step's GH_TOKEN back to `steps.token`, and each
 mutation lists the scenarios that must break under it (`must_break`), so
@@ -257,7 +260,8 @@ def expiry_stub_script(app_expires_after, harness_expires_after=None):
 def view_sequence_stub(views):
     """A `gh` stub whose every read succeeds under either credential, and
     whose `gh issue view` answers from `views`, a list of (state, label) or
-    (state, label, delay_seconds) entries 1-indexed by call; a call beyond
+    (state, label, delay_seconds) entries 1-indexed by call (state "ERR"
+    fails the call with label as its stderr); a call beyond
     the list repeats the last entry. A delay holds that answer back on the
     real clock (the step's `sleep` is stubbed out), so the step's $SECONDS
     can pass a small POLL_BUDGET_SECONDS during that read.
@@ -284,7 +288,10 @@ def view_sequence_stub(views):
         pat = str(i) if i < len(views) else "*"
         body = json.dumps({"state": state, "labels": [{"name": label}]})
         wait = f"{shlex.quote(REAL_SLEEP)} {int(delay[0])}; " if delay else ""
-        lines.append(f"    {pat}) {wait}printf '%s\\n' {shlex.quote(body)} ;;")
+        if state == "ERR":
+            lines.append(f"    {pat}) printf '%s\\n' {shlex.quote(label)} >&2; exit 1 ;;")
+        else:
+            lines.append(f"    {pat}) {wait}printf '%s\\n' {shlex.quote(body)} ;;")
     lines += ["  esac", "  exit 0", "fi", "exit 0"]
     return "\n".join(lines) + "\n"
 
@@ -295,16 +302,23 @@ CLOSE_RACE = ("a lifecycle read closed before cleanup swaps its stage label for 
 CLOSE_NEVER_DONE = "a lifecycle closed without stage:done still ends fail-incomplete after the settle window"
 CLOSE_RACE_AT_BUDGET_END = ("a lifecycle read closed before stage:done just as the poll budget runs "
                             "out still settles to the control's verdict, not fail-timeout")
+CLOSE_RATE_LIMITED = ("a lifecycle read closed before stage:done whose settle re-reads are "
+                      "rate-limited ends on the poll's rate-limit fail-infra")
 # The budget-end scenario's poll budget, and how long its closed-with-the-
 # old-label read is held back: the read returns after the budget is spent.
-SETTLE_BUDGET_SECONDS = 3
+# The step's setup and first iteration must finish inside the budget, and
+# bash's whole-second $SECONDS can read one second high, so leave margin.
+SETTLE_BUDGET_SECONDS = 6
 SETTLE_BUDGET_DELAY = SETTLE_BUDGET_SECONDS + 1
 REAL_SLEEP = shutil.which("sleep") or "/bin/sleep"
 IN_FLIGHT = [("OPEN", "stage:implement")] * 2
+SETTLE_SCENARIOS = (CLOSE_DONE, CLOSE_RACE, CLOSE_NEVER_DONE, CLOSE_RACE_AT_BUDGET_END,
+                    CLOSE_RATE_LIMITED)
 
 
-def settle_suite(script, token_env, tmproot):
-    """#1083: the poll's closed-issue settle window."""
+def settle_suite(script, token_env, tmproot, budget_end=True):
+    """#1083: the poll's closed-issue settle window. budget_end=False skips
+    the scenario that waits on the real clock."""
     failures = []
     runs = {}
     for name, views, extra in (
@@ -314,7 +328,13 @@ def settle_suite(script, token_env, tmproot):
             (CLOSE_RACE_AT_BUDGET_END,
              [("OPEN", "stage:implement"), ("CLOSED", "stage:review", SETTLE_BUDGET_DELAY),
               ("CLOSED", "stage:done")],
-             {"POLL_BUDGET_SECONDS": str(SETTLE_BUDGET_SECONDS)})):
+             {"POLL_BUDGET_SECONDS": str(SETTLE_BUDGET_SECONDS)}),
+            (CLOSE_RATE_LIMITED,
+             IN_FLIGHT + [("CLOSED", "stage:review"),
+                          ("ERR", "API rate limit exceeded for installation ID 12345678.")],
+             {})):
+        if name == CLOSE_RACE_AT_BUDGET_END and not budget_end:
+            continue
         rc, out, outputs = run_with_stub(script, dict(token_env, **extra),
                                          view_sequence_stub(views), tmproot)
         if rc != 0:
@@ -328,6 +348,12 @@ def settle_suite(script, token_env, tmproot):
             race.get("outcome"), race.get("failing_check")) != (
             control.get("outcome"), control.get("failing_check")):
         failures.append(f"{CLOSE_RACE}: verdict {race!r} differs from the control's {control!r}")
+    limited = runs.get(CLOSE_RATE_LIMITED)
+    if not isinstance(limited, dict) or limited.get("outcome") != "fail-infra" or \
+            limited.get("failing_check") != "polling the test repository for a terminal state":
+        failures.append(f"{CLOSE_RATE_LIMITED}: expected the rate-limit fail-infra, got {limited!r}")
+    if not budget_end:
+        return failures
     late = runs.get(CLOSE_RACE_AT_BUDGET_END)
     if not isinstance(late, dict) or not isinstance(control, dict) or (
             late.get("outcome"), late.get("failing_check")) != (
@@ -458,7 +484,7 @@ def check_verdict(name, rc, out, outputs, want_outcome, want_failing_check,
     return failures
 
 
-def suite(script, step_env, tmproot):
+def suite(script, step_env, tmproot, budget_end=True):
     token_env = resolve_token_env(step_env)
     failures = []
     for name, behaviors, want_outcome, want_failing_check, want_in_text in SCENARIOS:
@@ -474,7 +500,7 @@ def suite(script, step_env, tmproot):
         failures += check_verdict(name, rc, out, outputs, want_outcome,
                                   want_failing_check, want_in_text,
                                   want_not_in_text)
-    failures += settle_suite(script, token_env, tmproot)
+    failures += settle_suite(script, token_env, tmproot, budget_end)
     return failures
 
 
@@ -522,7 +548,7 @@ MUTATIONS = [
      (EXPIRY_OUTLIVES_APP_TOKEN, EXPIRY_NAMES_REJECTED_CREDENTIAL)),
     ("the poll's closed-issue settle window dropped (#1083)",
      mut_drop_close_settle,
-     (CLOSE_RACE, CLOSE_RACE_AT_BUDGET_END)),
+     (CLOSE_RACE, CLOSE_RACE_AT_BUDGET_END, CLOSE_RATE_LIMITED)),
 ]
 
 
@@ -554,7 +580,8 @@ def main():
                       f"proving it can fail.")
                 failures.append(f"mutation inapplicable: {label}")
                 continue
-            broke = suite(m_script, m_env, tmproot)
+            broke = suite(m_script, m_env, tmproot,
+                          budget_end=CLOSE_RACE_AT_BUDGET_END in must_break)
             unbroken = [n for n in must_break
                         if not any(b.startswith(f"{n}:") for b in broke)]
             if unbroken:
@@ -573,7 +600,7 @@ def main():
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 
-    total = len(SCENARIOS) + len(EXPIRY_SCENARIOS)
+    total = len(SCENARIOS) + len(EXPIRY_SCENARIOS) + len(SETTLE_SCENARIOS)
     print(f"Gate 115: {total} scenario(s), {len(MUTATIONS)} mutation(s); "
           f"{len(failures)} failure(s).")
     return 1 if failures else 0
