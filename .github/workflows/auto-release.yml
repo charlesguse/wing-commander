@@ -1504,10 +1504,13 @@ jobs:
           # polls before it counts as terminal.
           closed_settle_polls=0
           MAX_CLOSED_SETTLE_POLLS=4
-          # The stderr of the last settle re-read when it failed: a window
-          # that ends on a failed re-read never saw the issue settle, so its
-          # stale closed read is an infrastructure failure, not fail-incomplete.
+          # The stderr of the last settle re-read when every re-read so far
+          # failed: a window none of whose re-reads succeeded never looked at
+          # the issue after the closed read, so that read is an infrastructure
+          # failure, not fail-incomplete. Once one re-read succeeds, a later
+          # failed one keeps that read, as a failed poll read does.
           settle_unread=""
+          settle_read_ok=""
           # One read of the issue's state and labels, shared by the poll
           # and the settle re-reads. A failed or empty read leaves state and
           # labels as they were and its stderr in auto-release-poll-err.txt.
@@ -1740,8 +1743,8 @@ jobs:
               # not act on a lifecycle that is already closed. A failed
               # re-read keeps the last state read, and a rate-limited one
               # counts toward the same MAX_RATE_LIMIT_POLLS as the read
-              # above. A window whose last re-read failed ends the run
-              # through settle_unread.
+              # above. A window none of whose re-reads succeeded ends the
+              # run through settle_unread.
               while [ "$state" = "CLOSED" ] \
                  && ! printf ',%s,' "$labels" | grep -qE ',stage:(done|stalled),' \
                  && [ "$closed_settle_polls" -lt "$MAX_CLOSED_SETTLE_POLLS" ]; do
@@ -1750,9 +1753,10 @@ jobs:
                 if read_issue; then
                   rate_limit_hits=0
                   settle_unread=""
+                  settle_read_ok=true
                 elif rate_limit_exhausted; then
                   break 2
-                else
+                elif [ -z "$settle_read_ok" ]; then
                   settle_unread="$(tail -c 500 "$RUNNER_TEMP/auto-release-poll-err.txt")"
                   [ -n "$settle_unread" ] || settle_unread="gh issue view returned no output"
                 fi
@@ -1779,7 +1783,7 @@ jobs:
           if [ -n "$settle_unread" ]; then
             write_verdict "fail-infra" "re-reading a closed lifecycle issue for stage:done" \
               "gh issue view succeeds while a closed issue settles" \
-              "read CLOSED with labels [$labels], then the last of ${MAX_CLOSED_SETTLE_POLLS} re-reads failed: $settle_unread"
+              "read CLOSED with labels [$labels], then all ${closed_settle_polls} re-reads failed, the last with: $settle_unread"
             emit_verdict
             exit 0
           fi

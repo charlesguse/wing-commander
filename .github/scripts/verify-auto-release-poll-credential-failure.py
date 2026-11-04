@@ -320,10 +320,13 @@ CLOSE_SETTLE_UNREAD = ("a lifecycle read closed before stage:done whose last set
                        "fails ends fail-infra, not fail-incomplete on the stale read")
 CLOSE_SETTLE_MIXED = ("a lifecycle read closed before stage:done whose settle re-reads are "
                       "rate limits broken up by a 502 ends fail-infra, not fail-incomplete")
+CLOSE_SETTLE_LATE_ERR = ("a lifecycle closed without stage:done whose settle re-reads saw it "
+                         "unsettled before one failed still ends fail-incomplete, not fail-infra")
 SETTLE_UNREAD_CHECK = "re-reading a closed lifecycle issue for stage:done"
 RATE_LIMIT_ERR = "API rate limit exceeded for installation ID 12345678."
 SETTLE_SCENARIOS = (CLOSE_DONE, CLOSE_RACE, CLOSE_NEVER_DONE, CLOSE_RACE_AT_BUDGET_END,
-                    CLOSE_RATE_LIMITED, CLOSE_SETTLE_UNREAD, CLOSE_SETTLE_MIXED)
+                    CLOSE_RATE_LIMITED, CLOSE_SETTLE_UNREAD, CLOSE_SETTLE_MIXED,
+                    CLOSE_SETTLE_LATE_ERR)
 
 
 def settle_suite(script, token_env, tmproot, budget_end=True):
@@ -349,6 +352,9 @@ def settle_suite(script, token_env, tmproot, budget_end=True):
              IN_FLIGHT + [("CLOSED", "stage:review"), ("ERR", RATE_LIMIT_ERR),
                           ("ERR", RATE_LIMIT_ERR), ("ERR", "HTTP 502: Bad Gateway"),
                           ("ERR", RATE_LIMIT_ERR)],
+             {}),
+            (CLOSE_SETTLE_LATE_ERR,
+             IN_FLIGHT + [("CLOSED", "stage:review")] * 4 + [("ERR", RATE_LIMIT_ERR)],
              {})):
         if name == CLOSE_RACE_AT_BUDGET_END and not budget_end:
             continue
@@ -374,6 +380,10 @@ def settle_suite(script, token_env, tmproot, budget_end=True):
         if not isinstance(unread, dict) or unread.get("outcome") != "fail-infra" or \
                 unread.get("failing_check") != SETTLE_UNREAD_CHECK:
             failures.append(f"{name}: expected the settle window's fail-infra, got {unread!r}")
+    late_err = runs.get(CLOSE_SETTLE_LATE_ERR)
+    if not isinstance(late_err, dict) or late_err.get("outcome") != "fail-incomplete" or \
+            "stage:review" not in str(late_err.get("observed", "")):
+        failures.append(f"{CLOSE_SETTLE_LATE_ERR}: expected fail-incomplete naming stage:review, got {late_err!r}")
     if not budget_end:
         return failures
     late = runs.get(CLOSE_RACE_AT_BUDGET_END)
