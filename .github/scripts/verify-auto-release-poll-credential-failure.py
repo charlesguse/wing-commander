@@ -61,7 +61,10 @@ succeeded. Three more scenarios replay `gh issue view` answers: closed with
 stage:done (the control), closed with the old label and then stage:done
 (must reach the control's verdict), and closed without stage:done for good
 (must still end fail-incomplete once the settle window is spent). A third
-mutation drops the settle window.
+mutation drops the settle window. A fourth scenario reads the issue closed
+with the old label just as the poll budget runs out: the settle re-reads
+must still run and reach the control's verdict, never fail-timeout's "still
+open" on a closed issue.
 
 A second mutation binds the step's GH_TOKEN back to `steps.token`, and each
 mutation lists the scenarios that must break under it (`must_break`), so
@@ -253,8 +256,11 @@ def expiry_stub_script(app_expires_after, harness_expires_after=None):
 
 def view_sequence_stub(views):
     """A `gh` stub whose every read succeeds under either credential, and
-    whose `gh issue view` answers from `views`, a list of (state, label)
-    pairs 1-indexed by call; a call beyond the list repeats the last entry.
+    whose `gh issue view` answers from `views`, a list of (state, label) or
+    (state, label, delay_seconds) entries 1-indexed by call; a call beyond
+    the list repeats the last entry. A delay holds that answer back on the
+    real clock (the step's `sleep` is stubbed out), so the step's $SECONDS
+    can pass a small POLL_BUDGET_SECONDS during that read.
     #1083 (2026-11-04): cleanup.yml closes the issue, then swaps its stage
     label for stage:done, so the poll can read it CLOSED with the old label
     in between."""
@@ -274,10 +280,11 @@ def view_sequence_stub(views):
         '  echo "$v" > "$STUB_VIEW_CALLS"',
         '  case "$v" in',
     ]
-    for i, (state, label) in enumerate(views, start=1):
+    for i, (state, label, *delay) in enumerate(views, start=1):
         pat = str(i) if i < len(views) else "*"
         body = json.dumps({"state": state, "labels": [{"name": label}]})
-        lines.append(f"    {pat}) printf '%s\\n' {shlex.quote(body)} ;;")
+        wait = f"{shlex.quote(REAL_SLEEP)} {int(delay[0])}; " if delay else ""
+        lines.append(f"    {pat}) {wait}printf '%s\\n' {shlex.quote(body)} ;;")
     lines += ["  esac", "  exit 0", "fi", "exit 0"]
     return "\n".join(lines) + "\n"
 
@@ -286,6 +293,13 @@ CLOSE_DONE = "a lifecycle closed with stage:done at once (the control for #1083'
 CLOSE_RACE = ("a lifecycle read closed before cleanup swaps its stage label for "
               "stage:done settles to the same verdict as one closed with stage:done (#1083)")
 CLOSE_NEVER_DONE = "a lifecycle closed without stage:done still ends fail-incomplete after the settle window"
+CLOSE_RACE_AT_BUDGET_END = ("a lifecycle read closed before stage:done just as the poll budget runs "
+                            "out still settles to the control's verdict, not fail-timeout")
+# The budget-end scenario's poll budget, and how long its closed-with-the-
+# old-label read is held back: the read returns after the budget is spent.
+SETTLE_BUDGET_SECONDS = 3
+SETTLE_BUDGET_DELAY = SETTLE_BUDGET_SECONDS + 1
+REAL_SLEEP = shutil.which("sleep") or "/bin/sleep"
 IN_FLIGHT = [("OPEN", "stage:implement")] * 2
 
 
@@ -293,10 +307,16 @@ def settle_suite(script, token_env, tmproot):
     """#1083: the poll's closed-issue settle window."""
     failures = []
     runs = {}
-    for name, views in ((CLOSE_DONE, IN_FLIGHT + [("CLOSED", "stage:done")]),
-                        (CLOSE_RACE, IN_FLIGHT + [("CLOSED", "stage:review"), ("CLOSED", "stage:done")]),
-                        (CLOSE_NEVER_DONE, IN_FLIGHT + [("CLOSED", "stage:review")])):
-        rc, out, outputs = run_with_stub(script, token_env, view_sequence_stub(views), tmproot)
+    for name, views, extra in (
+            (CLOSE_DONE, IN_FLIGHT + [("CLOSED", "stage:done")], {}),
+            (CLOSE_RACE, IN_FLIGHT + [("CLOSED", "stage:review"), ("CLOSED", "stage:done")], {}),
+            (CLOSE_NEVER_DONE, IN_FLIGHT + [("CLOSED", "stage:review")], {}),
+            (CLOSE_RACE_AT_BUDGET_END,
+             [("OPEN", "stage:implement"), ("CLOSED", "stage:review", SETTLE_BUDGET_DELAY),
+              ("CLOSED", "stage:done")],
+             {"POLL_BUDGET_SECONDS": str(SETTLE_BUDGET_SECONDS)})):
+        rc, out, outputs = run_with_stub(script, dict(token_env, **extra),
+                                         view_sequence_stub(views), tmproot)
         if rc != 0:
             failures.append(f"{name}: the step exited {rc}, expected 0: {out.strip()}")
         runs[name] = verdict_of(outputs)
@@ -308,6 +328,11 @@ def settle_suite(script, token_env, tmproot):
             race.get("outcome"), race.get("failing_check")) != (
             control.get("outcome"), control.get("failing_check")):
         failures.append(f"{CLOSE_RACE}: verdict {race!r} differs from the control's {control!r}")
+    late = runs.get(CLOSE_RACE_AT_BUDGET_END)
+    if not isinstance(late, dict) or not isinstance(control, dict) or (
+            late.get("outcome"), late.get("failing_check")) != (
+            control.get("outcome"), control.get("failing_check")):
+        failures.append(f"{CLOSE_RACE_AT_BUDGET_END}: verdict {late!r} differs from the control's {control!r}")
     never = runs.get(CLOSE_NEVER_DONE)
     if not isinstance(never, dict) or never.get("outcome") != "fail-incomplete" or \
             "stage:review" not in str(never.get("observed", "")):
@@ -497,7 +522,7 @@ MUTATIONS = [
      (EXPIRY_OUTLIVES_APP_TOKEN, EXPIRY_NAMES_REJECTED_CREDENTIAL)),
     ("the poll's closed-issue settle window dropped (#1083)",
      mut_drop_close_settle,
-     (CLOSE_RACE,)),
+     (CLOSE_RACE, CLOSE_RACE_AT_BUDGET_END)),
 ]
 
 

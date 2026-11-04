@@ -1697,11 +1697,22 @@ jobs:
               rate_limit_hits=0
               state="$(printf '%s' "$info" | jq -r '.state')"
               labels="$(printf '%s' "$info" | jq -r '[.labels[].name] | join(",")')"
-              if [ "$state" = "CLOSED" ] \
+              # The settle re-reads run here, not on later loop iterations:
+              # the poll budget's end must not cut them short into a
+              # fail-timeout on a closed issue, and the gates above must
+              # not act on a lifecycle that is already closed. A failed
+              # re-read keeps the last state read.
+              while [ "$state" = "CLOSED" ] \
                  && ! printf ',%s,' "$labels" | grep -qE ',stage:(done|stalled),' \
-                 && [ "$closed_settle_polls" -lt "$MAX_CLOSED_SETTLE_POLLS" ]; then
+                 && [ "$closed_settle_polls" -lt "$MAX_CLOSED_SETTLE_POLLS" ]; do
                 closed_settle_polls=$((closed_settle_polls + 1))
-              elif [ "$state" = "CLOSED" ] || printf ',%s,' "$labels" | grep -q ',stage:stalled,'; then
+                sleep 30
+                if info="$(gh issue view "$ISSUE" --repo "$E2E_REPO" --json state,labels 2>/dev/null)" && [ -n "$info" ]; then
+                  state="$(printf '%s' "$info" | jq -r '.state')"
+                  labels="$(printf '%s' "$info" | jq -r '[.labels[].name] | join(",")')"
+                fi
+              done
+              if [ "$state" = "CLOSED" ] || printf ',%s,' "$labels" | grep -q ',stage:stalled,'; then
                 terminal=true
                 break
               fi
