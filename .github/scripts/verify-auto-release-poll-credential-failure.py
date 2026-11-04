@@ -54,6 +54,15 @@ few calls:
     WHICH gate fails proves the reads ran under it -- under the App token
     they would keep succeeding and the attempt would end elsewhere.
 
+#1083 (2026-11-04): cleanup.yml closes a finished lifecycle and only then
+swaps its stage label for stage:done, and a container-mode poll read the
+issue in that two-second gap and filed fail-incomplete on a run that had
+succeeded. Three more scenarios replay `gh issue view` answers: closed with
+stage:done (the control), closed with the old label and then stage:done
+(must reach the control's verdict), and closed without stage:done for good
+(must still end fail-incomplete once the settle window is spent). A third
+mutation drops the settle window.
+
 A second mutation binds the step's GH_TOKEN back to `steps.token`, and each
 mutation lists the scenarios that must break under it (`must_break`), so
 "must fail both" is enforced rather than satisfied by any one failing
@@ -242,6 +251,70 @@ def expiry_stub_script(app_expires_after, harness_expires_after=None):
     ]) + "\n"
 
 
+def view_sequence_stub(views):
+    """A `gh` stub whose every read succeeds under either credential, and
+    whose `gh issue view` answers from `views`, a list of (state, label)
+    pairs 1-indexed by call; a call beyond the list repeats the last entry.
+    #1083 (2026-11-04): cleanup.yml closes the issue, then swaps its stage
+    label for stage:done, so the poll can read it CLOSED with the old label
+    in between."""
+    lines = [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "api" ]; then',
+        '  case "$2" in',
+        "    */comments|*/timeline) exit 0 ;;",
+        "    */issues/*) printf '999\\n'; exit 0 ;;",
+        "  esac",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"list\" ]; then printf '[]\\n'; exit 0; fi",
+        'if [ "$1" = "issue" ] && [ "$2" = "view" ]; then',
+        '  v=$(cat "$STUB_VIEW_CALLS" 2>/dev/null || echo 0)',
+        "  v=$((v + 1))",
+        '  echo "$v" > "$STUB_VIEW_CALLS"',
+        '  case "$v" in',
+    ]
+    for i, (state, label) in enumerate(views, start=1):
+        pat = str(i) if i < len(views) else "*"
+        body = json.dumps({"state": state, "labels": [{"name": label}]})
+        lines.append(f"    {pat}) printf '%s\\n' {shlex.quote(body)} ;;")
+    lines += ["  esac", "  exit 0", "fi", "exit 0"]
+    return "\n".join(lines) + "\n"
+
+
+CLOSE_DONE = "a lifecycle closed with stage:done at once (the control for #1083's race)"
+CLOSE_RACE = ("a lifecycle read closed before cleanup swaps its stage label for "
+              "stage:done settles to the same verdict as one closed with stage:done (#1083)")
+CLOSE_NEVER_DONE = "a lifecycle closed without stage:done still ends fail-incomplete after the settle window"
+IN_FLIGHT = [("OPEN", "stage:implement")] * 2
+
+
+def settle_suite(script, token_env, tmproot):
+    """#1083: the poll's closed-issue settle window."""
+    failures = []
+    runs = {}
+    for name, views in ((CLOSE_DONE, IN_FLIGHT + [("CLOSED", "stage:done")]),
+                        (CLOSE_RACE, IN_FLIGHT + [("CLOSED", "stage:review"), ("CLOSED", "stage:done")]),
+                        (CLOSE_NEVER_DONE, IN_FLIGHT + [("CLOSED", "stage:review")])):
+        rc, out, outputs = run_with_stub(script, token_env, view_sequence_stub(views), tmproot)
+        if rc != 0:
+            failures.append(f"{name}: the step exited {rc}, expected 0: {out.strip()}")
+        runs[name] = verdict_of(outputs)
+    control = runs.get(CLOSE_DONE)
+    if not isinstance(control, dict) or control.get("outcome") == "fail-incomplete":
+        failures.append(f"{CLOSE_DONE}: expected a verdict that is not fail-incomplete, got {control!r}")
+    race = runs.get(CLOSE_RACE)
+    if not isinstance(race, dict) or not isinstance(control, dict) or (
+            race.get("outcome"), race.get("failing_check")) != (
+            control.get("outcome"), control.get("failing_check")):
+        failures.append(f"{CLOSE_RACE}: verdict {race!r} differs from the control's {control!r}")
+    never = runs.get(CLOSE_NEVER_DONE)
+    if not isinstance(never, dict) or never.get("outcome") != "fail-incomplete" or \
+            "stage:review" not in str(never.get("observed", "")):
+        failures.append(f"{CLOSE_NEVER_DONE}: expected fail-incomplete naming stage:review, got {never!r}")
+    return failures
+
+
 def verdict_of(outputs):
     raw = outputs.get("verdict")
     if raw is None:
@@ -376,6 +449,7 @@ def suite(script, step_env, tmproot):
         failures += check_verdict(name, rc, out, outputs, want_outcome,
                                   want_failing_check, want_in_text,
                                   want_not_in_text)
+    failures += settle_suite(script, token_env, tmproot)
     return failures
 
 
@@ -402,6 +476,15 @@ def mut_reads_under_app_token(script, step_env):
     return script, env
 
 
+def mut_drop_close_settle(script, step_env):
+    """Revert #1083's fix: a closed issue is terminal on the first read,
+    whatever its stage label says."""
+    old = '[ "$closed_settle_polls" -lt "$MAX_CLOSED_SETTLE_POLLS" ]'
+    if old not in script:
+        return script, step_env
+    return script.replace(old, "false", 1), step_env
+
+
 # label, mutation, scenario names each of which must fail under it (empty:
 # any one failing assertion is enough). Every scenario that expects the
 # credential arm's verdict must break when that arm is dropped.
@@ -412,6 +495,9 @@ MUTATIONS = [
     ("the poll step's reads run under the App installation token again (#979)",
      mut_reads_under_app_token,
      (EXPIRY_OUTLIVES_APP_TOKEN, EXPIRY_NAMES_REJECTED_CREDENTIAL)),
+    ("the poll's closed-issue settle window dropped (#1083)",
+     mut_drop_close_settle,
+     (CLOSE_RACE,)),
 ]
 
 

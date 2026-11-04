@@ -1496,6 +1496,14 @@ jobs:
           rate_limited=""
           rate_limit_hits=0
           MAX_RATE_LIMIT_POLLS=3
+          # cleanup.yml closes the lifecycle issue (close-with-comment) and only
+          # then swaps its last stage label for stage:done, so a poll can read
+          # it CLOSED with neither stage:done nor stage:stalled for a few
+          # seconds (#1083, 2026-11-04: closed 09:31:20, stage:done 09:31:22).
+          # A closed issue in that state is re-read for up to this many more
+          # polls before it counts as terminal.
+          closed_settle_polls=0
+          MAX_CLOSED_SETTLE_POLLS=4
           while [ "$SECONDS" -lt "$POLL_BUDGET_SECONDS" ]; do
             # --- Clarification gate (research.md D4, D6, D7, D8) ---
             # author_id is resolved lazily here (not before the loop), so a
@@ -1689,7 +1697,11 @@ jobs:
               rate_limit_hits=0
               state="$(printf '%s' "$info" | jq -r '.state')"
               labels="$(printf '%s' "$info" | jq -r '[.labels[].name] | join(",")')"
-              if [ "$state" = "CLOSED" ] || printf ',%s,' "$labels" | grep -q ',stage:stalled,'; then
+              if [ "$state" = "CLOSED" ] \
+                 && ! printf ',%s,' "$labels" | grep -qE ',stage:(done|stalled),' \
+                 && [ "$closed_settle_polls" -lt "$MAX_CLOSED_SETTLE_POLLS" ]; then
+                closed_settle_polls=$((closed_settle_polls + 1))
+              elif [ "$state" = "CLOSED" ] || printf ',%s,' "$labels" | grep -q ',stage:stalled,'; then
                 terminal=true
                 break
               fi
