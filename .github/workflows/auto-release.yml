@@ -1496,6 +1496,57 @@ jobs:
           rate_limited=""
           rate_limit_hits=0
           MAX_RATE_LIMIT_POLLS=3
+          # cleanup.yml closes the lifecycle issue (close-with-comment) and only
+          # then swaps its last stage label for stage:done, so a poll can read
+          # it CLOSED with neither stage:done nor stage:stalled for a few
+          # seconds (#1083, 2026-11-04: closed 09:31:20, stage:done 09:31:22).
+          # A closed issue in that state is re-read for up to this many more
+          # polls before it counts as terminal.
+          closed_settle_polls=0
+          MAX_CLOSED_SETTLE_POLLS=4
+          # The stderr of the last settle re-read when every re-read so far
+          # failed: a window none of whose re-reads succeeded never looked at
+          # the issue after the closed read, so that read is an infrastructure
+          # failure, not fail-incomplete. Once one re-read succeeds, a later
+          # failed one keeps that read, as a failed poll read does.
+          settle_unread=""
+          settle_read_ok=""
+          # One read of the issue's state and labels, shared by the poll
+          # and the settle re-reads. A failed or empty read leaves state and
+          # labels as they were and its stderr in auto-release-poll-err.txt.
+          read_issue() {
+            local info
+            info="$(gh issue view "$ISSUE" --repo "$E2E_REPO" --json state,labels 2>"$RUNNER_TEMP/auto-release-poll-err.txt")" || info=""
+            [ -n "$info" ] || return 1
+            state="$(printf '%s' "$info" | jq -r '.state')"
+            labels="$(printf '%s' "$info" | jq -r '[.labels[].name] | join(",")')"
+          }
+          # A rate limit is an infrastructure condition, not the pipeline
+          # under test taking too long -- reported distinctly rather than
+          # left to exhaust the poll budget and read as fail-timeout
+          # (specs/054 MF1: `report` classifies fail-infra as
+          # infrastructure, never a pipeline defect). It takes
+          # MAX_RATE_LIMIT_POLLS consecutive rate-limited reads to give up,
+          # each followed by a longer back-off, because a secondary rate
+          # limit usually clears within a minute and ending a run that
+          # long-polls for up to POLL_BUDGET_SECONDS on the first hit
+          # would file an infrastructure failure for a blip. A read that
+          # succeeds, or fails for another reason, restarts the count.
+          # Called after a failed read_issue; succeeds once the run should
+          # end fail-infra, with rate_limited set.
+          rate_limit_exhausted() {
+            if grep -qi 'rate limit' "$RUNNER_TEMP/auto-release-poll-err.txt" 2>/dev/null; then
+              rate_limit_hits=$((rate_limit_hits + 1))
+              if [ "$rate_limit_hits" -ge "$MAX_RATE_LIMIT_POLLS" ]; then
+                rate_limited="$(tail -c 500 "$RUNNER_TEMP/auto-release-poll-err.txt")"
+                return 0
+              fi
+              sleep 60
+            else
+              rate_limit_hits=0
+            fi
+            return 1
+          }
           while [ "$SECONDS" -lt "$POLL_BUDGET_SECONDS" ]; do
             # --- Clarification gate (research.md D4, D6, D7, D8) ---
             # author_id is resolved lazily here (not before the loop), so a
@@ -1684,35 +1735,39 @@ jobs:
               done
             fi
 
-            info="$(gh issue view "$ISSUE" --repo "$E2E_REPO" --json state,labels 2>"$RUNNER_TEMP/auto-release-poll-err.txt")" || info=""
-            if [ -n "$info" ]; then
+            if read_issue; then
               rate_limit_hits=0
-              state="$(printf '%s' "$info" | jq -r '.state')"
-              labels="$(printf '%s' "$info" | jq -r '[.labels[].name] | join(",")')"
+              # The settle re-reads run here, not on later loop iterations:
+              # the poll budget's end must not cut them short into a
+              # fail-timeout on a closed issue, and the gates above must
+              # not act on a lifecycle that is already closed. A failed
+              # re-read keeps the last state read, and a rate-limited one
+              # counts toward the same MAX_RATE_LIMIT_POLLS as the read
+              # above. A window none of whose re-reads succeeded ends the
+              # run through settle_unread.
+              while [ "$state" = "CLOSED" ] \
+                 && ! printf ',%s,' "$labels" | grep -qE ',stage:(done|stalled),' \
+                 && [ "$closed_settle_polls" -lt "$MAX_CLOSED_SETTLE_POLLS" ]; do
+                closed_settle_polls=$((closed_settle_polls + 1))
+                sleep 30
+                if read_issue; then
+                  rate_limit_hits=0
+                  settle_unread=""
+                  settle_read_ok=true
+                elif rate_limit_exhausted; then
+                  break 2
+                elif [ -z "$settle_read_ok" ]; then
+                  settle_unread="$(tail -c 500 "$RUNNER_TEMP/auto-release-poll-err.txt")"
+                  [ -n "$settle_unread" ] || settle_unread="gh issue view returned no output"
+                fi
+              done
+              [ -z "$settle_unread" ] || break
               if [ "$state" = "CLOSED" ] || printf ',%s,' "$labels" | grep -q ',stage:stalled,'; then
                 terminal=true
                 break
               fi
-            # A rate limit is an infrastructure condition, not the pipeline
-            # under test taking too long -- reported distinctly rather than
-            # left to exhaust the poll budget and read as fail-timeout
-            # (specs/054 MF1: `report` classifies fail-infra as
-            # infrastructure, never a pipeline defect). It takes
-            # MAX_RATE_LIMIT_POLLS consecutive rate-limited reads to give up,
-            # each followed by a longer back-off, because a secondary rate
-            # limit usually clears within a minute and ending a run that
-            # long-polls for up to POLL_BUDGET_SECONDS on the first hit
-            # would file an infrastructure failure for a blip. A read that
-            # succeeds, or fails for another reason, restarts the count.
-            elif grep -qi 'rate limit' "$RUNNER_TEMP/auto-release-poll-err.txt" 2>/dev/null; then
-              rate_limit_hits=$((rate_limit_hits + 1))
-              if [ "$rate_limit_hits" -ge "$MAX_RATE_LIMIT_POLLS" ]; then
-                rate_limited="$(tail -c 500 "$RUNNER_TEMP/auto-release-poll-err.txt")"
-                break
-              fi
-              sleep 60
-            else
-              rate_limit_hits=0
+            elif rate_limit_exhausted; then
+              break
             fi
             sleep 30
           done
@@ -1721,6 +1776,14 @@ jobs:
             write_verdict "fail-infra" "polling the test repository for a terminal state" \
               "gh issue view succeeds within the poll budget" \
               "GitHub API rate limit encountered while polling: $rate_limited"
+            emit_verdict
+            exit 0
+          fi
+
+          if [ -n "$settle_unread" ]; then
+            write_verdict "fail-infra" "re-reading a closed lifecycle issue for stage:done" \
+              "gh issue view succeeds while a closed issue settles" \
+              "read CLOSED with labels [$labels], then all ${closed_settle_polls} re-reads failed, the last with: $settle_unread"
             emit_verdict
             exit 0
           fi

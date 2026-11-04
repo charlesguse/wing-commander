@@ -54,6 +54,28 @@ few calls:
     WHICH gate fails proves the reads ran under it -- under the App token
     they would keep succeeding and the attempt would end elsewhere.
 
+#1083 (2026-11-04): cleanup.yml closes a finished lifecycle and only then
+swaps its stage label for stage:done, and a container-mode poll read the
+issue in that two-second gap and filed fail-incomplete on a run that had
+succeeded. Three more scenarios replay `gh issue view` answers: closed with
+stage:done (the control), closed with the old label and then stage:done
+(must reach the control's verdict), and closed without stage:done for good
+(must still end fail-incomplete once the settle window is spent). A third
+mutation drops the settle window. A fourth scenario reads the issue closed
+with the old label just as the poll budget runs out: the settle re-reads
+must still run and reach the control's verdict, never fail-timeout's "still
+open" on a closed issue; it waits on the real clock, so it runs only in the
+base suite and under the mutation that lists it. A fifth has every settle
+re-read rate-limited: it must end on the poll's rate-limit fail-infra, not
+fail-incomplete. Two more end the settle window on a failed re-read, one
+on an HTTP 502 and one on rate limits broken up by a 502 (so the
+rate-limit count restarts): neither saw the issue settle, so both must end
+on the settle window's own fail-infra, not fail-incomplete on the stale
+closed read. An eighth sees the issue still closed with the old label on
+every settle re-read but the last, which is rate-limited: having seen it
+unsettled, it must still end fail-incomplete, not the settle window's
+fail-infra.
+
 A second mutation binds the step's GH_TOKEN back to `steps.token`, and each
 mutation lists the scenarios that must break under it (`must_break`), so
 "must fail both" is enforced rather than satisfied by any one failing
@@ -242,6 +264,144 @@ def expiry_stub_script(app_expires_after, harness_expires_after=None):
     ]) + "\n"
 
 
+def view_sequence_stub(views):
+    """A `gh` stub whose every read succeeds under either credential, and
+    whose `gh issue view` answers from `views`, a list of (state, label) or
+    (state, label, delay_seconds) entries 1-indexed by call (state "ERR"
+    fails the call at once with label as its stderr, ignoring any delay); a
+    call beyond
+    the list repeats the last entry. A delay holds that answer back on the
+    real clock (the step's `sleep` is stubbed out), so the step's $SECONDS
+    can pass a small POLL_BUDGET_SECONDS during that read.
+    #1083 (2026-11-04): cleanup.yml closes the issue, then swaps its stage
+    label for stage:done, so the poll can read it CLOSED with the old label
+    in between."""
+    lines = [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "api" ]; then',
+        '  case "$2" in',
+        "    */comments|*/timeline) exit 0 ;;",
+        "    */issues/*) printf '999\\n'; exit 0 ;;",
+        "  esac",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"pr\" ] && [ \"$2\" = \"list\" ]; then printf '[]\\n'; exit 0; fi",
+        'if [ "$1" = "issue" ] && [ "$2" = "view" ]; then',
+        '  v=$(cat "$STUB_VIEW_CALLS" 2>/dev/null || echo 0)',
+        "  v=$((v + 1))",
+        '  echo "$v" > "$STUB_VIEW_CALLS"',
+        '  case "$v" in',
+    ]
+    for i, (state, label, *delay) in enumerate(views, start=1):
+        pat = str(i) if i < len(views) else "*"
+        body = json.dumps({"state": state, "labels": [{"name": label}]})
+        wait = f"{shlex.quote(REAL_SLEEP)} {int(delay[0])}; " if delay else ""
+        if state == "ERR":
+            lines.append(f"    {pat}) printf '%s\\n' {shlex.quote(label)} >&2; exit 1 ;;")
+        else:
+            lines.append(f"    {pat}) {wait}printf '%s\\n' {shlex.quote(body)} ;;")
+    lines += ["  esac", "  exit 0", "fi", "exit 0"]
+    return "\n".join(lines) + "\n"
+
+
+CLOSE_DONE = "a lifecycle closed with stage:done at once (the control for #1083's race)"
+CLOSE_RACE = ("a lifecycle read closed before cleanup swaps its stage label for "
+              "stage:done settles to the same verdict as one closed with stage:done (#1083)")
+CLOSE_NEVER_DONE = "a lifecycle closed without stage:done still ends fail-incomplete after the settle window"
+CLOSE_RACE_AT_BUDGET_END = ("a lifecycle read closed before stage:done just as the poll budget runs "
+                            "out still settles to the control's verdict, not fail-timeout")
+CLOSE_RATE_LIMITED = ("a lifecycle read closed before stage:done whose settle re-reads are "
+                      "rate-limited ends on the poll's rate-limit fail-infra")
+# The budget-end scenario's poll budget, and how long its closed-with-the-
+# old-label read is held back: the read returns after the budget is spent.
+# The step's setup and first iteration must finish inside the budget, and
+# bash's whole-second $SECONDS can read one second high, so leave margin.
+SETTLE_BUDGET_SECONDS = 6
+SETTLE_BUDGET_DELAY = SETTLE_BUDGET_SECONDS + 1
+REAL_SLEEP = shutil.which("sleep") or "/bin/sleep"
+IN_FLIGHT = [("OPEN", "stage:implement")] * 2
+CLOSE_SETTLE_UNREAD = ("a lifecycle read closed before stage:done whose last settle re-read "
+                       "fails ends fail-infra, not fail-incomplete on the stale read")
+CLOSE_SETTLE_MIXED = ("a lifecycle read closed before stage:done whose settle re-reads are "
+                      "rate limits broken up by a 502 ends fail-infra, not fail-incomplete")
+CLOSE_SETTLE_LATE_ERR = ("a lifecycle closed without stage:done whose settle re-reads saw it "
+                         "unsettled before one failed still ends fail-incomplete, not fail-infra")
+SETTLE_UNREAD_CHECK = "re-reading a closed lifecycle issue for stage:done"
+RATE_LIMIT_ERR = "API rate limit exceeded for installation ID 12345678."
+SETTLE_SCENARIOS = (CLOSE_DONE, CLOSE_RACE, CLOSE_NEVER_DONE, CLOSE_RACE_AT_BUDGET_END,
+                    CLOSE_RATE_LIMITED, CLOSE_SETTLE_UNREAD, CLOSE_SETTLE_MIXED,
+                    CLOSE_SETTLE_LATE_ERR)
+
+
+def settle_suite(script, token_env, tmproot, budget_end=True):
+    """#1083: the poll's closed-issue settle window. budget_end=False skips
+    the scenario that waits on the real clock."""
+    failures = []
+    runs = {}
+    for name, views, extra in (
+            (CLOSE_DONE, IN_FLIGHT + [("CLOSED", "stage:done")], {}),
+            (CLOSE_RACE, IN_FLIGHT + [("CLOSED", "stage:review"), ("CLOSED", "stage:done")], {}),
+            (CLOSE_NEVER_DONE, IN_FLIGHT + [("CLOSED", "stage:review")], {}),
+            (CLOSE_RACE_AT_BUDGET_END,
+             [("OPEN", "stage:implement"), ("CLOSED", "stage:review", SETTLE_BUDGET_DELAY),
+              ("CLOSED", "stage:done")],
+             {"POLL_BUDGET_SECONDS": str(SETTLE_BUDGET_SECONDS)}),
+            (CLOSE_RATE_LIMITED,
+             IN_FLIGHT + [("CLOSED", "stage:review"), ("ERR", RATE_LIMIT_ERR)],
+             {}),
+            (CLOSE_SETTLE_UNREAD,
+             IN_FLIGHT + [("CLOSED", "stage:review"), ("ERR", "HTTP 502: Bad Gateway")],
+             {}),
+            (CLOSE_SETTLE_MIXED,
+             IN_FLIGHT + [("CLOSED", "stage:review"), ("ERR", RATE_LIMIT_ERR),
+                          ("ERR", RATE_LIMIT_ERR), ("ERR", "HTTP 502: Bad Gateway"),
+                          ("ERR", RATE_LIMIT_ERR)],
+             {}),
+            (CLOSE_SETTLE_LATE_ERR,
+             IN_FLIGHT + [("CLOSED", "stage:review")] * 4 + [("ERR", RATE_LIMIT_ERR)],
+             {})):
+        if name == CLOSE_RACE_AT_BUDGET_END and not budget_end:
+            continue
+        rc, out, outputs = run_with_stub(script, dict(token_env, **extra),
+                                         view_sequence_stub(views), tmproot)
+        if rc != 0:
+            failures.append(f"{name}: the step exited {rc}, expected 0: {out.strip()}")
+        runs[name] = verdict_of(outputs)
+    control = runs.get(CLOSE_DONE)
+    if not isinstance(control, dict) or control.get("outcome") == "fail-incomplete":
+        failures.append(f"{CLOSE_DONE}: expected a verdict that is not fail-incomplete, got {control!r}")
+    race = runs.get(CLOSE_RACE)
+    if not isinstance(race, dict) or not isinstance(control, dict) or (
+            race.get("outcome"), race.get("failing_check")) != (
+            control.get("outcome"), control.get("failing_check")):
+        failures.append(f"{CLOSE_RACE}: verdict {race!r} differs from the control's {control!r}")
+    limited = runs.get(CLOSE_RATE_LIMITED)
+    if not isinstance(limited, dict) or limited.get("outcome") != "fail-infra" or \
+            limited.get("failing_check") != "polling the test repository for a terminal state":
+        failures.append(f"{CLOSE_RATE_LIMITED}: expected the rate-limit fail-infra, got {limited!r}")
+    for name in (CLOSE_SETTLE_UNREAD, CLOSE_SETTLE_MIXED):
+        unread = runs.get(name)
+        if not isinstance(unread, dict) or unread.get("outcome") != "fail-infra" or \
+                unread.get("failing_check") != SETTLE_UNREAD_CHECK:
+            failures.append(f"{name}: expected the settle window's fail-infra, got {unread!r}")
+    late_err = runs.get(CLOSE_SETTLE_LATE_ERR)
+    if not isinstance(late_err, dict) or late_err.get("outcome") != "fail-incomplete" or \
+            "stage:review" not in str(late_err.get("observed", "")):
+        failures.append(f"{CLOSE_SETTLE_LATE_ERR}: expected fail-incomplete naming stage:review, got {late_err!r}")
+    if not budget_end:
+        return failures
+    late = runs.get(CLOSE_RACE_AT_BUDGET_END)
+    if not isinstance(late, dict) or not isinstance(control, dict) or (
+            late.get("outcome"), late.get("failing_check")) != (
+            control.get("outcome"), control.get("failing_check")):
+        failures.append(f"{CLOSE_RACE_AT_BUDGET_END}: verdict {late!r} differs from the control's {control!r}")
+    never = runs.get(CLOSE_NEVER_DONE)
+    if not isinstance(never, dict) or never.get("outcome") != "fail-incomplete" or \
+            "stage:review" not in str(never.get("observed", "")):
+        failures.append(f"{CLOSE_NEVER_DONE}: expected fail-incomplete naming stage:review, got {never!r}")
+    return failures
+
+
 def verdict_of(outputs):
     raw = outputs.get("verdict")
     if raw is None:
@@ -360,7 +520,7 @@ def check_verdict(name, rc, out, outputs, want_outcome, want_failing_check,
     return failures
 
 
-def suite(script, step_env, tmproot):
+def suite(script, step_env, tmproot, budget_end=True):
     token_env = resolve_token_env(step_env)
     failures = []
     for name, behaviors, want_outcome, want_failing_check, want_in_text in SCENARIOS:
@@ -376,6 +536,7 @@ def suite(script, step_env, tmproot):
         failures += check_verdict(name, rc, out, outputs, want_outcome,
                                   want_failing_check, want_in_text,
                                   want_not_in_text)
+    failures += settle_suite(script, token_env, tmproot, budget_end)
     return failures
 
 
@@ -402,6 +563,15 @@ def mut_reads_under_app_token(script, step_env):
     return script, env
 
 
+def mut_drop_close_settle(script, step_env):
+    """Revert #1083's fix: a closed issue is terminal on the first read,
+    whatever its stage label says."""
+    old = '[ "$closed_settle_polls" -lt "$MAX_CLOSED_SETTLE_POLLS" ]'
+    if old not in script:
+        return script, step_env
+    return script.replace(old, "false", 1), step_env
+
+
 # label, mutation, scenario names each of which must fail under it (empty:
 # any one failing assertion is enough). Every scenario that expects the
 # credential arm's verdict must break when that arm is dropped.
@@ -412,6 +582,10 @@ MUTATIONS = [
     ("the poll step's reads run under the App installation token again (#979)",
      mut_reads_under_app_token,
      (EXPIRY_OUTLIVES_APP_TOKEN, EXPIRY_NAMES_REJECTED_CREDENTIAL)),
+    ("the poll's closed-issue settle window dropped (#1083)",
+     mut_drop_close_settle,
+     (CLOSE_RACE, CLOSE_RACE_AT_BUDGET_END, CLOSE_RATE_LIMITED, CLOSE_SETTLE_UNREAD,
+      CLOSE_SETTLE_MIXED)),
 ]
 
 
@@ -443,7 +617,8 @@ def main():
                       f"proving it can fail.")
                 failures.append(f"mutation inapplicable: {label}")
                 continue
-            broke = suite(m_script, m_env, tmproot)
+            broke = suite(m_script, m_env, tmproot,
+                          budget_end=CLOSE_RACE_AT_BUDGET_END in must_break)
             unbroken = [n for n in must_break
                         if not any(b.startswith(f"{n}:") for b in broke)]
             if unbroken:
@@ -462,7 +637,7 @@ def main():
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 
-    total = len(SCENARIOS) + len(EXPIRY_SCENARIOS)
+    total = len(SCENARIOS) + len(EXPIRY_SCENARIOS) + len(SETTLE_SCENARIOS)
     print(f"Gate 115: {total} scenario(s), {len(MUTATIONS)} mutation(s); "
           f"{len(failures)} failure(s).")
     return 1 if failures else 0
