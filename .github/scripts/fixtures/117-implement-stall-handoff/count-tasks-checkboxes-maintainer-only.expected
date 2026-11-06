@@ -15,3 +15,11 @@ maintainer-items<<WING_COMMANDER_MAINTAINER_ITEMS_EOF
 - [ ] T002 [maintainer] Re-drive one finalize run
 - [ ] T003 [maintainer] Note the release
 WING_COMMANDER_MAINTAINER_ITEMS_EOF
+buildable-checked-count=1
+buildable-unchecked-count=0
+buildable-unchecked-ids=
+buildable-unchecked-items<<WING_COMMANDER_BUILDABLE_ITEMS_EOF
+WING_COMMANDER_BUILDABLE_ITEMS_EOF
+fold-unchecked-count=0
+fold-unchecked-items<<WING_COMMANDER_FOLD_ITEMS_EOF
+WING_COMMANDER_FOLD_ITEMS_EOF

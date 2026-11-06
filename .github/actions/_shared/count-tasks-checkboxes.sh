@@ -63,7 +63,21 @@ if [ "$rc" -ne 0 ]; then
   exit 1
 fi
 
-counts="$(printf '%s\n' "$content" | awk '
+# Class 4 write-boundary verdicts come from the ONE classifier
+# (classify-out-of-boundary-tasks.sh), never a second pattern list here. Only
+# lines naming a backtick-quoted slash path can classify, so only those are
+# offered to it; "\n<line>\n" membership is what the awk pass tests.
+GATE_SUITE_READY="${GATE_SUITE_READY:-true}"
+NO_WRITE_PATHS="${NO_WRITE_PATHS:-.claude/,.git/}"
+CLASSIFIER="$(dirname "${BASH_SOURCE[0]}")/classify-out-of-boundary-tasks.sh"
+oob_lines=$'\n'
+while IFS= read -r cand; do
+  [ -n "$cand" ] || continue
+  verdict="$(bash "$CLASSIFIER" "$cand" "$NO_WRITE_PATHS" "$TASKS_PATH" "$(dirname "$TASKS_PATH")" 2>/dev/null)" || continue
+  case "$verdict" in *$'\n'"out-of-boundary-count=1"*) oob_lines="${oob_lines}${cand}"$'\n' ;; esac
+done < <(printf '%s\n' "$content" | grep -E '^[ 	]*- \[[ xX]\].*`[^` ]*/[^` ]*`' || true)
+
+counts="$(printf '%s\n' "$content" | WC_GATE_READY="$GATE_SUITE_READY" WC_OOB="$oob_lines" awk '
   # Line classes, first match wins (specs/117 data-model.md): standing
   # instruction, then maintainer task, then implementation task.
   # The leading tag run both classes skip: the checkbox, an optional
@@ -129,7 +143,25 @@ counts="$(printf '%s\n' "$content" | awk '
     lead = substr(t, 1, length(t) - length(strip_lead(line)))
     return (lead ~ /\[maintainer\]([ \t]|$)/)
   }
+  # Class 2: a review finding folded into the task list by the review gate.
+  function is_fold(line,    t) {
+    t = tolower(strip_lead(line))
+    return (t ~ /^(recurring )?review finding:/)
+  }
+  # Class 4: work no implement cycle can do. Anchored patterns (post-merge
+  # proof, drill), the write-boundary classifier verdict (oob, computed by
+  # classify-out-of-boundary-tasks.sh before this pass), and a gate-suite run
+  # while the cycle-start gate suite is not ready. Ambiguity stays buildable.
+  function is_unbuildable(line,    t) {
+    t = tolower(strip_lead(line))
+    if (t ~ /^(re-drive|prove after merge|prove-after-merge|post-merge|after (the )?merge|drill)/) return 1
+    if (index(oob, "\n" line "\n") > 0) return 1
+    if (gate_ready == "false" && t ~ /^(run|execute) .*(gate suite|run-local-gates)/) return 1
+    return 0
+  }
   BEGIN {
+    gate_ready = ENVIRON["WC_GATE_READY"]
+    oob = ENVIRON["WC_OOB"]
     nf = split("complete every remaining unchecked task tasks item items in this the file list keep gates green after each cycle phase push pushing commit committing before locally throughout run full gate suite and ci on at all times still until done re read plan tasks", fw, " ")
     for (k = 1; k <= nf; k++) FILLER[fw[k]] = 1
   }
@@ -147,11 +179,26 @@ counts="$(printf '%s\n' "$content" | awk '
       # One classification for both states, so ticking a standing or
       # [maintainer] line never reads as implementation progress and the
       # implementation total (checked + unchecked) is the same at base and tip.
+      # Line-class order (specs/123 data-model.md): standing -> fold ->
+      # maintainer tag -> deterministic-unbuildable -> buildable.
+      fold = is_fold($0)
       if (is_standing($0)) {
         if (!is_checked) standing++
-      } else if (is_maintainer($0)) {
+      } else if (!fold && is_maintainer($0)) {
+        if (!is_checked) maint = maint $0 "\n"
+      } else if (!fold && is_unbuildable($0)) {
         if (!is_checked) maint = maint $0 "\n"
       } else {
+        if (fold) {
+          if (!is_checked) { fold_unchecked++; fold_items = fold_items $0 "\n" }
+        } else if (is_checked) {
+          b_checked++
+        } else {
+          b_unchecked++
+          b_items = b_items $0 "\n"
+          bid = lead_id($0)
+          if (bid != "") b_ids = b_ids (b_ids == "" ? "" : " ") bid
+        }
         id = lead_id($0)
         if (id != "" && !(id in seen_id)) {
           seen_id[id] = 1
@@ -171,7 +218,7 @@ counts="$(printf '%s\n' "$content" | awk '
     }
   }
   END {
-    printf "%d\x1f%d\x1f%d\x1f%d\x1f%d\x1f%s\x1f%s\x1f%s\x1f%s\x1f%s", checked+0, unchecked+0, impl_checked+0, impl_unchecked+0, standing+0, impl_ids, impl_uids, items, impl_items, maint
+    printf "%d\x1f%d\x1f%d\x1f%d\x1f%d\x1f%s\x1f%s\x1f%s\x1f%s\x1f%d\x1f%d\x1f%s\x1f%s\x1f%d\x1f%s\x1f%s", checked+0, unchecked+0, impl_checked+0, impl_unchecked+0, standing+0, impl_ids, impl_uids, items, impl_items, b_checked+0, b_unchecked+0, b_ids, b_items, fold_unchecked+0, fold_items, maint
   }
 ')"
 
@@ -183,7 +230,15 @@ standing_count="${counts%%$'\x1f'*}";        counts="${counts#*$'\x1f'}"
 impl_ids="${counts%%$'\x1f'*}";              counts="${counts#*$'\x1f'}"
 impl_unchecked_ids="${counts%%$'\x1f'*}";    counts="${counts#*$'\x1f'}"
 unchecked_items="${counts%%$'\x1f'*}";       counts="${counts#*$'\x1f'}"
-impl_items="${counts%%$'\x1f'*}";            maint_items="${counts#*$'\x1f'}"
+impl_items="${counts%%$'\x1f'*}";            counts="${counts#*$'\x1f'}"
+buildable_checked="${counts%%$'\x1f'*}";     counts="${counts#*$'\x1f'}"
+buildable_unchecked="${counts%%$'\x1f'*}";   counts="${counts#*$'\x1f'}"
+buildable_ids="${counts%%$'\x1f'*}";         counts="${counts#*$'\x1f'}"
+buildable_items="${counts%%$'\x1f'*}";       counts="${counts#*$'\x1f'}"
+fold_unchecked="${counts%%$'\x1f'*}";        counts="${counts#*$'\x1f'}"
+fold_items="${counts%%$'\x1f'*}";            maint_items="${counts#*$'\x1f'}"
+buildable_items="${buildable_items%$'\n'}"
+fold_items="${fold_items%$'\n'}"
 # Mid-record items keep their trailing newline (only the last field's is
 # stripped by the command substitution); drop it so each heredoc below ends
 # with exactly one.
@@ -216,3 +271,14 @@ printf 'WING_COMMANDER_IMPL_ITEMS_EOF\n'
 printf 'maintainer-items<<WING_COMMANDER_MAINTAINER_ITEMS_EOF\n'
 [ -z "$maint_items" ] || printf '%s\n' "$maint_items"
 printf 'WING_COMMANDER_MAINTAINER_ITEMS_EOF\n'
+# specs/123: the buildable view (class 5 only) and folded review findings.
+printf 'buildable-checked-count=%s\n' "$buildable_checked"
+printf 'buildable-unchecked-count=%s\n' "$buildable_unchecked"
+printf 'buildable-unchecked-ids=%s\n' "$buildable_ids"
+printf 'buildable-unchecked-items<<WING_COMMANDER_BUILDABLE_ITEMS_EOF\n'
+[ -z "$buildable_items" ] || printf '%s\n' "$buildable_items"
+printf 'WING_COMMANDER_BUILDABLE_ITEMS_EOF\n'
+printf 'fold-unchecked-count=%s\n' "$fold_unchecked"
+printf 'fold-unchecked-items<<WING_COMMANDER_FOLD_ITEMS_EOF\n'
+[ -z "$fold_items" ] || printf '%s\n' "$fold_items"
+printf 'WING_COMMANDER_FOLD_ITEMS_EOF\n'

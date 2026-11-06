@@ -622,13 +622,19 @@ def check_write_boundary_input():
                  "implementation-only impl-unchecked-items")
     proc = count_script("- [ ] T001 Edit `.claude/settings.json`\n"
                         "- [ ] T002 [maintainer] Merge the PR\n- [ ] Keep the gates green\n")
-    m = re.search(r"^impl-unchecked-items<<(\S+)\n(.*?)^\1$", proc.stdout, re.M | re.S)
+    # specs/123: a write to a no-write path is deterministically unbuildable,
+    # so the counter lists it with the human work (maintainer-items) and keeps
+    # it out of impl-*; the shipped classifier still recognises it there.
+    m = re.search(r"^maintainer-items<<(\S+)\n(.*?)^\1$", proc.stdout, re.M | re.S)
     items = m.group(2) if m else ""
+    CASES += 1
+    if "impl-unchecked-count=0\n" not in proc.stdout:
+        fail("write boundary: a `.claude/` write must not count as implementation work")
     res = run(["bash", os.path.join(SHARED, "classify-out-of-boundary-tasks.sh"),
                items, ".claude/", "specs/117-x/tasks.md", "specs/117-x"], cwd=ROOT)
     CASES += 1
-    if "all-unchecked-out-of-boundary=true" not in res.stdout:
-        fail(f"write boundary: only out-of-reach implementation work must route; "
+    if "out-of-boundary-count=1" not in res.stdout:
+        fail(f"write boundary: the out-of-reach task must still be recognised; "
              f"items={items!r} stdout={res.stdout!r} stderr={res.stderr}")
 
 
