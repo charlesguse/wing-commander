@@ -58,6 +58,26 @@ it never replaces it. The spec PR merge stays human (constitution V).
   #1086 worked, except that their decisions went to the owner in chat rather
   than on the issue.
 
+### Session 2026-11-06 (owner, after the spec PR review)
+
+- Q: What deterministic check backs the reviewer's "unambiguous" call before
+  it pushes a fix? → A: **(b) Path bound, size cap, and a cited
+  precedent.** The fix diff may touch only the spec's own files (FR-015b),
+  stays under a size cap, and each fix cites a location on main that
+  deterministic code confirms exists. Over any bound, the finding is reported
+  but not pushed. This mirrors constitution X's size-and-path backstop
+  (FR-026).
+- Q: How does a spec PR head that a human pushed (no fresh readiness
+  announcement) become reviewable? → A: **(b) A maintainer's manual dispatch
+  for that one pull request counts as the settling act.** It still checks that
+  the PR is open and carries no open clarification marker. It skips the
+  announcement and unchanged-head conditions, because a maintainer dispatch is
+  authorization under constitution V (FR-027).
+- Q: Do failed rounds (rate limit, timeout, malformed output) count against
+  the round budget? → A: **(b) A separate cap per head on failed attempts
+  (2), then a hand-off to the owner.** Transient failures don't use up review
+  rounds, and retries stay bounded, unlike parked #869 (FR-028).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A settled spec PR is reviewed and the result is on the PR (Priority: P1)
@@ -400,6 +420,24 @@ confirm no review runs and the stand-down is recorded.
   eligibility, verdict, budget, convergence stop) MUST be exercised by a
   checked-in fixture reachable through the gate registry and run identically
   locally and in CI (constitution VIII).
+
+- **FR-026**: Before the reviewer's fix commits are pushed (FR-015a,
+  FR-015b), deterministic code MUST check that the fix diff touches only the
+  spec's own files, stays within a fixed size cap, and that each fix cites a
+  file:line on the default branch that exists. A fix that fails any check
+  MUST be reported as a finding and not pushed (constitution IX; X's
+  size-and-path backstop is the precedent).
+- **FR-027**: A maintainer's manual dispatch naming one spec pull request
+  MUST count as that head's settling act. It still requires the pull request
+  to be open on this repository's `spec-draft/` branch, and requires that
+  clarify's colon-form marker scan finds no open clarification marker. It
+  skips the readiness-announcement and unchanged-since-announcement
+  conditions of FR-002.
+- **FR-028**: Failed rounds (FR-005) MUST be counted per head, separately
+  from the round budget. After 2 failed attempts on one head, the review
+  MUST stop retrying that head and hand off to the owner on the lifecycle
+  issue, naming the failure. It resumes only on a new head or a manual
+  dispatch.
 
 ### Key Entities
 
