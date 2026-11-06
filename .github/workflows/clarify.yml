@@ -1094,12 +1094,9 @@ jobs:
             # spurious mismatch — the cross-check crying wolf about its own
             # inability to read the file.
             if [ -n "$SPEC_DIR" ] && [ -f "$SPEC_DIR/spec.md" ]; then
-              # A marker quoted inside backticks or a fenced code block is a spec
-              # talking about the marker, not an open question (#1099: spec 122
-              # describes the marker itself), so code is stripped before the scan.
-              # Kept byte-identical in intake.yml and clarify.yml
-              # (verify-clarification-gating.py).
-              if sed -e '/^[[:space:]]*```/,/^[[:space:]]*```/d' -e 's/`[^`]*`//g' "$SPEC_DIR/spec.md" | grep -q '\[NEEDS CLARIFICATION:'; then
+              # A marker quoted in code is not an open question (#1099); the scan's
+              # one home, and why, is _shared/open-clarification-marker.sh.
+              if bash .wing-commander-pipeline/.github/actions/_shared/open-clarification-marker.sh "$SPEC_DIR/spec.md"; then
                 marker=true
               else
                 marker=false

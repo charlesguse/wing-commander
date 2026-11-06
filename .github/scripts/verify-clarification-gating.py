@@ -82,7 +82,7 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_gha_expr import evaluate_if as gha_evaluate_if  # noqa: E402
 from wc_shell_harness import (  # noqa: E402
-    ensure_jq, resolve_bash, run_step, use_utf8_stdout)
+    ensure_jq, resolve_bash, run_step, step_shell, use_utf8_stdout)
 
 INTAKE = ".github/workflows/intake.yml"
 CLARIFY = ".github/workflows/clarify.yml"
@@ -700,6 +700,7 @@ def carries_cost_line(steps, step):
 def run_scenario(stage, steps, sc, tmproot):
     failures = []
     workdir = tempfile.mkdtemp(dir=tmproot)
+    link_pipeline(workdir)
     runner_temp = tempfile.mkdtemp(dir=tmproot)
     tag = f"[{stage.name}: {sc['name']}]"
 
@@ -1047,6 +1048,92 @@ def suite(loaded, tmproot):
     for stage, steps, scenarios in loaded:
         for sc in scenarios:
             failures += run_scenario(stage, steps, sc, tmproot)
+        failures += scan_cases(stage, steps, tmproot)
+    return failures
+
+
+# --------------------------------------------------------------------------
+# The marker scan itself, against real spec.md shapes
+# --------------------------------------------------------------------------
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def link_pipeline(workdir):
+    """The jobs run shared scripts from their .wing-commander-pipeline/
+    checkout; a scenario's workdir gets the same path, pointing here."""
+    os.symlink(REPO_ROOT, os.path.join(workdir, ".wing-commander-pipeline"))
+
+
+# A scan line is the `if ...; then` that decides `marker`, whatever its form:
+# the shared script, or a grep/sed pipeline a mutation (or a regression)
+# puts back in its place.
+SCAN_LINE_RE = re.compile(
+    r"^[ \t]*if (?P<cmd>[^\n]*(?:open-clarification-marker\.sh|"
+    r"NEEDS CLARIFICATION:)[^\n]*); then$", re.M)
+
+# (name, spec.md body, whether an OPEN marker is present). The "open" cases
+# are the dangerous direction: a scan that misses one lets readiness be
+# announced over an open question. The quoted cases are #1099's direction.
+SCAN_CASES = [
+    ("template-form marker in a requirement",
+     "- **FR-006**: System MUST authenticate users via "
+     "[NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]\n",
+     True),
+    ("marker in a table cell next to inline code",
+     "| FR-1 | `--force` | [NEEDS CLARIFICATION: skip prompts?] |\n", True),
+    ("marker whose question quotes code",
+     "- FR-2 [NEEDS CLARIFICATION: should `--force` skip prompts?]\n", True),
+    ("marker after a closed fence",
+     "```\n[NEEDS CLARIFICATION: example]\n```\n\n"
+     "- FR-3 [NEEDS CLARIFICATION: retention period?]\n", True),
+    ("marker after a fence that never closes",
+     "```json\n{\"a\": 1}\n\n- FR-4 [NEEDS CLARIFICATION: retention period?]\n",
+     True),
+    ("marker after a one-line ```x``` (inline code, not a fence)",
+     "```json {\"a\": 1}```\n\n- FR-5 [NEEDS CLARIFICATION: retention period?]\n",
+     True),
+    ("marker after a double-backtick span holding a backtick",
+     "Use ``a ` b`` here. [NEEDS CLARIFICATION: retention period?]\n", True),
+    ("marker quoted in an inline span", "no `[NEEDS CLARIFICATION:` marker remains\n",
+     False),
+    ("marker quoted in a double-backtick span",
+     "the ``[NEEDS CLARIFICATION: ...]`` form\n", False),
+    ("marker quoted in a ``` fence inside a list item",
+     "- example:\n  ```\n  [NEEDS CLARIFICATION: x]\n  ```\n", False),
+    ("marker quoted in a ~~~ fence", "~~~markdown\n[NEEDS CLARIFICATION: x]\n~~~\n",
+     False),
+    ("marker quoted in a ```` fence that quotes a ``` fence",
+     "````markdown\n```\n[NEEDS CLARIFICATION: x]\n```\n````\n", False),
+    ("no marker at all", "# Spec\n\nNothing open.\n", False),
+]
+
+
+def scan_cases(stage, steps, tmproot):
+    failures = []
+    scans = [m.group("cmd") for m in SCAN_LINE_RE.finditer(
+        str(steps[stage.decide].get("run") or ""))]
+    if len(scans) != 1:
+        return [f"[{stage.name}] expected exactly one colon-form marker scan "
+                f"in {stage.decide!r}, found {len(scans)}"]
+    for name, body, want in SCAN_CASES:
+        workdir = tempfile.mkdtemp(dir=tmproot)
+        link_pipeline(workdir)
+        os.makedirs(os.path.join(workdir, "specs/042-a"))
+        with open(os.path.join(workdir, "specs/042-a/spec.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(body)
+        rc, out, _, _ = run_step(
+            BASH, f"if {scans[0]}; then echo marker=true; else echo marker=false; fi\n",
+            workdir, {"SPEC_DIR": "specs/042-a"}, workdir,
+            shell=step_shell(stage.path, stage.decide))
+        got = "marker=true" in out
+        if got != want:
+            failures.append(
+                f"[{stage.name}: scan] {name}: the marker scan said "
+                f"marker={str(got).lower()}, want {str(want).lower()}"
+                + (" -- an open question would be announced as ready" if want
+                   else " -- a quoted marker would veto a settled spec (#1099)"))
+        shutil.rmtree(workdir, ignore_errors=True)
     return failures
 
 
@@ -1073,17 +1160,18 @@ def structural_checks(loaded):
     """
     failures = []
 
-    # The colon-form marker scan is one line written twice (#1099).
+    # The colon-form marker scan has one home (#1099, CLAUDE.md "Shared
+    # logic has exactly one home"): each stage calls the shared script once
+    # and carries no scan of its own.
     scans = {}
     for stage, steps, _ in loaded:
-        found = [m.group(0) for step in steps.values()
-                 for m in [MARKER_SCAN_RE.search(str((step or {}).get("run") or ""))] if m]
-        scans[stage.name] = found
-    if any(len(v) != 1 for v in scans.values()) or len({v[0] for v in scans.values() if v}) != 1:
+        scans[stage.name] = [m.group("cmd") for step in steps.values()
+                             for m in SCAN_LINE_RE.finditer(
+                                 str((step or {}).get("run") or ""))]
+    if any(v != [SHARED_SCAN] for v in scans.values()):
         failures.append(
-            "the intake and clarify colon-form marker scans must be one line, "
-            "identical in both stages, that strips code before grepping "
-            f"(#1099); found {scans!r}")
+            "the intake and clarify colon-form marker scans must each be the "
+            f"one call {SHARED_SCAN!r} (#1099); found {scans!r}")
 
     # #1103: before the spec PR merges there is no record to mark, so
     # clarify's stall notice passes an empty spec-dir, as intake's does.
@@ -1328,22 +1416,66 @@ def mut_no_ordinal_fallback(loaded):
             "$letters[.key] // ((.key + 1) | tostring)", "$letters[.key]")
 
 
-MARKER_SCAN_RE = re.compile(r"if sed .*\| grep -q '\\\[NEEDS CLARIFICATION:'; then")
-PLAIN_SCAN = "if grep -q '\\[NEEDS CLARIFICATION:' \"$SPEC_DIR/spec.md\"; then"
+SHARED_SCAN = ('bash .wing-commander-pipeline/.github/actions/_shared/'
+               'open-clarification-marker.sh "$SPEC_DIR/spec.md"')
+PLAIN_SCAN = "grep -q '\\[NEEDS CLARIFICATION:' \"$SPEC_DIR/spec.md\""
+# The first #1099 fix: balanced ``` fences and single-backtick spans only.
+NAIVE_STRIP_SCAN = ("sed -e '/^[[:space:]]*```/,/^[[:space:]]*```/d' "
+                    "-e 's/`[^`]*`//g' \"$SPEC_DIR/spec.md\" | "
+                    "grep -q '\\[NEEDS CLARIFICATION:'")
+
+
+def _replace_scan(loaded, cmd, only=None):
+    for stage, steps, _ in loaded:
+        if only and stage.name != only:
+            continue
+        for step in steps.values():
+            run = (step or {}).get("run")
+            if isinstance(run, str) and SCAN_LINE_RE.search(run):
+                step["run"] = SCAN_LINE_RE.sub(
+                    lambda m: m.group(0).replace(m.group("cmd"), cmd), run)
 
 
 def mut_scan_counts_quoted_markers(loaded):
     """#1099 reverted: the scan counts a marker quoted in code."""
+    _replace_scan(loaded, PLAIN_SCAN)
+
+
+def mut_scan_naive_strip(loaded):
+    """The sed strip: an unclosed or one-line ``` fence deletes every line
+    below it, so a real marker there is never seen."""
+    _replace_scan(loaded, NAIVE_STRIP_SCAN)
+
+
+def smut_intake_inlines_scan(loaded):
+    """intake carries its own copy of the scan instead of the shared one."""
+    _replace_scan(loaded, NAIVE_STRIP_SCAN, only="intake")
+
+
+def smut_clarify_marks_spec_branch(loaded):
+    """#1103 reverted: clarify's stall notice checks out spec/<slug>."""
     for stage, steps, _ in loaded:
-        for step in steps.values():
-            run = (step or {}).get("run")
-            if isinstance(run, str) and MARKER_SCAN_RE.search(run):
-                step["run"] = MARKER_SCAN_RE.sub(lambda m: PLAIN_SCAN, run)
+        if stage.name != "clarify":
+            continue
+        for st in steps.values():
+            if "wing-commander-chain-stop-notice" in str((st or {}).get("uses") or ""):
+                st["with"]["spec-dir"] = "${{ steps.identity-names.outputs.spec-dir }}"
+                st["with"]["spec-branch"] = "spec/${{ steps.identity.outputs.slug }}"
+
+
+# Mutations of what only structural_checks() can see.
+STRUCTURAL_MUTATIONS = [
+    ("intake carrying its own copy of the marker scan", smut_intake_inlines_scan),
+    ("clarify's stall notice marking a spec/<slug> branch that does not "
+     "exist yet (#1103)", smut_clarify_marks_spec_branch),
+]
 
 
 MUTATIONS = [
     ("the marker scan counting a marker quoted in code (#1099)",
      mut_scan_counts_quoted_markers),
+    ("the marker scan's sed strip hiding a marker below an unclosed fence",
+     mut_scan_naive_strip),
     ("the questionnaire arm ignoring `specified` (dead-end callout)",
      mut_drop_specified),
     ("the cross-check logging a mismatch instead of vetoing readiness",
@@ -1408,6 +1540,18 @@ def main():
                 print(f"::error::MUTATION SURVIVED — reintroducing {label} broke "
                       f"nothing in this suite, so the suite is not testing that "
                       f"defect. Fix the scenarios, not the mutation.")
+                failures.append(f"mutation survived: {label}")
+        for label, apply_mutation in STRUCTURAL_MUTATIONS:
+            mutated = [(s, copy.deepcopy(steps), sc) for s, steps, sc in loaded]
+            apply_mutation(mutated)
+            if all(a[1] == b[1] for a, b in zip(loaded, mutated)):
+                print(f"::error::structural mutation {label!r} changed nothing.")
+                failures.append(f"mutation inapplicable: {label}")
+            elif structural_checks(mutated):
+                print(f"Mutation OK — {label}: the structural checks fail.")
+            else:
+                print(f"::error::MUTATION SURVIVED — {label} passed the "
+                      f"structural checks.")
                 failures.append(f"mutation survived: {label}")
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
