@@ -8,6 +8,14 @@
 
 **Input**: User description: "Implement finishes its tasks: cycles stop after one slice, unbuildable tasks block convergence, review folds count as tasks" (issue #1111; companion proposal #1110, the lifecycle review gate convergence proposal)
 
+## Clarifications
+
+### Session 2026-11-06
+
+- Q: Which levers are in scope for the first cut? → A: Levers (a) prompt "keep building" change, (c) unbuildable-task classification, (d) buildable-only counting excluding review folds, (e) finalize waits / review gate does not review a final PR with unchecked buildable tasks, and (f) gate-suite prerequisite check. Lever (b) low-progress escalation is deferred to a follow-up until there is evidence whether (a) alone fixes the one-slice-and-stop pattern. Lever (e) lives in this spec; #1110 drops that part.
+- Q: What is the low-progress response? → A: Re-prompt on the default tier (Sonnet) with a corrective "keep building" instruction; no automatic Opus escalation (that would need a constitution II amendment and is not wanted). Because lever (b) is deferred, this records the intended direction for the follow-up, not first-cut scope.
+- Q: What happens at the iteration cap with buildable tasks unchecked? → A: The lifecycle is handed to a person: held or parked, with the remaining buildable and maintainer-only tasks listed on the lifecycle issue. No final PR is opened (pairs with lever (e)). A lifecycle whose only remaining tasks are maintainer-only counts as converged.
+
 ## Background
 
 About half the lifecycles completed since 2026-09-01 posted "Iteration cap reached" (`WING_COMMANDER_MAX_ITERATIONS`, default 5). The issue's investigation of 75 implement-cycle job logs (#1066, #1055, #1074, #1020, #994, #992, #903, #993) found that cycles are neither out of turns (most used 9–39 of 180 turns; the highest raw count was 301 of 450) nor failing (every agent step ended `success`, no 429s). Cycles **stop on their own**. The ranked causes are:
@@ -35,7 +43,7 @@ As the maintainer who labelled a spec, I want each implement cycle to keep build
 
 1. **Given** a tasks.md with three phases of buildable unchecked tasks and a cycle with ample turn budget, **When** the cycle completes phase 1, **Then** it pushes its work and continues into phase 2 rather than ending the run.
 2. **Given** a cycle that has ticked every buildable task, **When** only `[maintainer]` or otherwise unbuildable tasks remain, **Then** the cycle ends and reports that no buildable work remains.
-3. **Given** a cycle that ticks 2 or fewer buildable tasks while buildable tasks remain and budget was left over, **When** the cycle ends, **Then** the pipeline applies the low-progress response (Story 4) instead of silently starting an identical next cycle.
+3. **Given** a cycle that ticks 2 or fewer buildable tasks while buildable tasks remain and budget was left over, **When** the cycle ends, **Then** its cycle outcome records the tasks ticked, buildable tasks remaining and turns used (FR-003), so the evidence for the deferred low-progress follow-up (Story 4) is collected; the first cut does not change the next cycle's dispatch.
 
 ---
 
@@ -63,19 +71,22 @@ As the maintainer, I want folded review findings tracked separately from the spe
 
 **Why this priority**: On #1066 and #1055 every post-cap cycle was spent on review fixes and no spec task was built. It matters only once Stories 1–2 let cycles reach the review gate with work left.
 
-**Independent Test**: Fold review findings into a lifecycle with buildable tasks outstanding; confirm the findings are not counted toward the convergence count or the cap, and that the cycle that addresses them also works on outstanding buildable tasks (or finalize waits — see FR-010).
+**Independent Test**: Fold review findings into a lifecycle with buildable tasks outstanding; confirm the findings are not counted toward the convergence count or the cap, that finalize does not open the final PR, and that the review gate does not review a final PR, while buildable tasks remain (FR-010).
 
 **Acceptance Scenarios**:
 
 1. **Given** a lifecycle with in-scope review findings folded into tasks.md, **When** buildable-task progress is computed for convergence and the cap, **Then** folded findings are excluded from that count.
 2. **Given** a review-fix cycle on a lifecycle that still has buildable spec tasks, **When** the cycle runs, **Then** it also works on those outstanding tasks rather than ending after the fixes.
 3. **Given** buildable spec tasks remain unchecked, **When** finalize would open the final PR, **Then** it does not open it until those tasks are done or handed off.
+4. **Given** a final PR whose lifecycle still has unchecked buildable tasks, **When** the lifecycle review gate would review it, **Then** the review gate does not review it.
 
 ---
 
-### User Story 4 - A low-progress cycle gets a different next step (Priority: P2)
+### User Story 4 - A low-progress cycle gets a different next step (Priority: P2, deferred follow-up)
 
-As the maintainer, I want a cycle that made little progress while buildable work remained to trigger a different response — a corrective re-prompt, a model escalation, or both, as clarify decides — rather than an identical next cycle that is likely to stop the same way.
+> **Deferred (clarify 2026-11-06)**: lever (b) is out of the first cut and recorded as a follow-up on the Roadmap, pending evidence on whether Story 1's prompt change alone fixes the one-slice-and-stop pattern. This story records the intended direction for that follow-up; FR-011–FR-013 are not implemented in the first cut.
+
+As the maintainer, I want a cycle that made little progress while buildable work remained to trigger a corrective re-prompt on the default tier rather than an identical next cycle that is likely to stop the same way.
 
 **Why this priority**: It is the backstop for Story 1: if the prompt change alone does not keep a cycle going, the pipeline should notice and respond deterministically rather than burn the cap.
 
@@ -83,7 +94,7 @@ As the maintainer, I want a cycle that made little progress while buildable work
 
 **Acceptance Scenarios**:
 
-1. **Given** a cycle that ticked 2 or fewer buildable tasks, ended `success`, left buildable tasks unchecked and used less than its turn budget, **When** the next cycle is decided, **Then** the low-progress response is applied [NEEDS CLARIFICATION: re-prompt on the default tier first, escalate to Opus automatically, or re-prompt then escalate? Constitution II allows Opus for implement only by explicit opt-in].
+1. **Given** a cycle that ticked 2 or fewer buildable tasks, ended `success`, left buildable tasks unchecked and used less than its turn budget, **When** the next cycle is decided, **Then** the next cycle is dispatched on the default tier (Sonnet) with a corrective "keep building" instruction; the model is not escalated to Opus automatically (constitution II allows Opus for implement only by explicit opt-in).
 2. **Given** a cycle that ticked 2 or fewer tasks because it ran out of turns or failed, **When** the next cycle is decided, **Then** the low-progress response is not applied (existing truncation and failure handling apply).
 3. **Given** a low-progress response was applied, **When** the lifecycle issue is read, **Then** it states which cycle triggered it, the tasks-ticked count, and the response taken.
 
@@ -99,7 +110,7 @@ As the maintainer, I want a lifecycle that reaches the iteration cap with builda
 
 **Acceptance Scenarios**:
 
-1. **Given** a lifecycle at the iteration cap with buildable tasks unchecked, **When** the cap is evaluated, **Then** the lifecycle [NEEDS CLARIFICATION: resumes automatically under a bounded extension, is handed to a person (parked/held with the remaining work listed), or is extended once by a fixed number of cycles?].
+1. **Given** a lifecycle at the iteration cap with buildable tasks unchecked, **When** the cap is evaluated, **Then** the lifecycle is handed to a person: it is held or parked, the remaining buildable and maintainer-only tasks are listed on the lifecycle issue, and no final PR is opened (FR-010).
 2. **Given** a lifecycle at the cap with only maintainer-only tasks unchecked, **When** the cap is evaluated, **Then** it is treated as converged (Story 2), not as cap-reached.
 
 ---
@@ -112,8 +123,8 @@ As the maintainer, I want a lifecycle that reaches the iteration cap with builda
 - The gate suite becomes runnable in implement jobs (the issue asks to check whether `job_workflow_sha` is still empty after #1077): a "run the gate suite" task is then buildable, and classification must follow the job's actual capability, not a fixed assumption.
 - A folded review finding duplicates an existing spec task: it is counted once, as the spec task.
 - A spec whose every task is maintainer-only: implement converges immediately and reports all tasks as human work.
-- Low-progress response triggered on a lifecycle already running on Opus (`model:opus` or repo opt-in): no further escalation; only the re-prompt part (if any) applies.
-- `model:haiku` trial lifecycles: the low-progress response must respect the trial's existing one-tier-up rule rather than skipping straight to Opus.
+- (Deferred follow-up) Low-progress response on a lifecycle already running on Opus (`model:opus` or repo opt-in): the re-prompt applies on the lifecycle's existing tier; the response never changes the model.
+- (Deferred follow-up) `model:haiku` trial lifecycles: the low-progress re-prompt stays on the trial's tier and respects its existing one-tier-up rule; it never skips to Opus.
 
 ## Requirements *(mandatory)*
 
@@ -136,23 +147,23 @@ As the maintainer, I want a lifecycle that reaches the iteration cap with builda
 **Review folds (Story 3)**
 
 - **FR-009**: Folded review findings MUST be distinguishable from spec tasks in tasks.md by deterministic code and MUST NOT count toward the buildable count used for convergence or the iteration cap.
-- **FR-010**: While buildable spec tasks remain unchecked, either the review-fix cycle MUST also work on them, or finalize MUST NOT open the final PR; the plan MUST place this behaviour in exactly one of this spec or #1110, not both.
+- **FR-010**: While buildable spec tasks remain unchecked, finalize MUST NOT open the final PR, and the lifecycle review gate MUST NOT review a final PR whose lifecycle still has unchecked buildable tasks. This behaviour lives in this spec only; companion proposal #1110 does not implement it.
 
-**Low progress (Story 4)**
+**Low progress (Story 4) — deferred follow-up, not in the first cut (FR-016)**
 
 - **FR-011**: A cycle MUST be classified as low-progress when it ended successfully, ticked 2 or fewer buildable tasks, left buildable tasks unchecked, and did not exhaust its turn budget.
-- **FR-012**: After a low-progress cycle, the next cycle MUST be dispatched with the low-progress response chosen in clarify (see Story 4), decided by deterministic code; every agent step MUST still declare an explicit model and turn budget (constitution II).
+- **FR-012**: After a low-progress cycle, the next cycle MUST be dispatched on the default tier (Sonnet), or the lifecycle's existing tier if it already differs, with a corrective "keep building" instruction, decided by deterministic code; the response MUST NOT escalate the model (automatic Opus escalation would need a constitution II amendment), and every agent step MUST still declare an explicit model and turn budget (constitution II).
 - **FR-013**: Every low-progress response MUST be announced on the lifecycle issue with the triggering cycle, its tasks-ticked count and the response taken.
 
 **Cap outcome (Story 5)**
 
 - **FR-014**: A lifecycle at the iteration cap with only maintainer-only tasks unchecked MUST be reported as converged, not as cap-reached.
-- **FR-015**: A lifecycle at the iteration cap with buildable tasks unchecked MUST reach the single defined outcome chosen in clarify (see Story 5), announced on the lifecycle issue with the remaining buildable and maintainer-only tasks listed.
+- **FR-015**: A lifecycle at the iteration cap with buildable tasks unchecked MUST be handed to a person: held or parked, with no final PR opened, and announced on the lifecycle issue with the remaining buildable and maintainer-only tasks listed.
 
 **Scope (all stories)**
 
-- **FR-016**: The first cut MUST implement the levers selected in clarify [NEEDS CLARIFICATION: which levers are in scope for the first cut — (a) prompt "keep building" change, (b) low-progress escalation, (c) unbuildable-task classification, (d) buildable-only counting excluding review folds, (e) finalize waits / review cycles build outstanding tasks, (f) gate-suite prerequisite check — all six, or a subset?]. Levers not selected are recorded on the Roadmap as follow-ups, not dropped.
-- **FR-017**: Every new deterministic check this feature adds (classification, low-progress, buildable counting) MUST be exercised by checked-in fixtures covering each failure branch (constitution VIII), and MUST extend the existing single home for tasks.md counting rather than add a second counter.
+- **FR-016**: The first cut MUST implement levers (a) prompt "keep building" change (FR-001–FR-003), (c) unbuildable-task classification (FR-004–FR-007), (d) buildable-only counting excluding review folds (FR-009), (e) finalize waits and the review gate skips a final PR with unchecked buildable tasks (FR-010), and (f) gate-suite prerequisite check (FR-008), plus the cap outcome (FR-014–FR-015). Lever (b) low-progress handling (FR-011–FR-013) is out of the first cut and MUST be recorded on the Roadmap as a follow-up, not dropped.
+- **FR-017**: Every new deterministic check this feature adds (classification, buildable counting, finalize/review-gate wait) MUST be exercised by checked-in fixtures covering each failure branch (constitution VIII), and MUST extend the existing single home for tasks.md counting rather than add a second counter.
 
 ### Key Entities
 
@@ -160,7 +171,7 @@ As the maintainer, I want a lifecycle that reaches the iteration cap with builda
 - **Maintainer-only task**: a line tagged `[maintainer]` or matching a deterministic unbuildable class; listed as human work, never counted as outstanding.
 - **Standing instruction**: an existing (spec 117) line class such as "run the gate suite before pushing"; counted in neither total.
 - **Folded review finding**: a tasks.md line added by the lifecycle review gate from an in-scope finding; tracked separately from spec tasks.
-- **Cycle outcome**: per-cycle record of buildable tasks ticked, buildable remaining, turns used, and whether the cycle was low-progress.
+- **Cycle outcome**: per-cycle record of buildable tasks ticked, buildable remaining and turns used (the low-progress flag arrives with the deferred lever (b) follow-up).
 
 ## Success Criteria *(mandatory)*
 
@@ -170,7 +181,7 @@ As the maintainer, I want a lifecycle that reaches the iteration cap with builda
 - **SC-002**: The median number of buildable tasks ticked per default-tier cycle that has buildable work and budget left is at least twice the investigated baseline of about 2.6 tasks per cycle.
 - **SC-003**: Zero cycles end with zero buildable progress solely because the only remaining tasks are maintainer-only.
 - **SC-004**: In 100% of lifecycles that reach a review gate, folded review findings do not appear in the convergence or cap count.
-- **SC-005**: Every low-progress response and every cap outcome is visible on the lifecycle issue alone, without opening job logs.
+- **SC-005**: Every cap outcome (and, once the lever (b) follow-up lands, every low-progress response) is visible on the lifecycle issue alone, without opening job logs.
 
 ## Assumptions
 
@@ -179,5 +190,5 @@ As the maintainer, I want a lifecycle that reaches the iteration cap with builda
 - Who classifies: the tasks stage and converge propose `[maintainer]` tags, and a deterministic pattern list is the backstop that decides (constitution IX precedent; spec 117's tag is already applied by agents and read by code). Clarify may revisit this.
 - "Low progress" uses the issue's threshold of 2 or fewer buildable tasks ticked; it is a tunable default, not a contract.
 - Cycles running the gate suite themselves (cause 4) is addressed only through FR-008's classification; reducing suite run time is out of scope.
-- #1110 (lifecycle review gate convergence) proceeds in parallel; where both touch finalize's wait condition, the plan picks one home (FR-010).
-- The causal claim about phase checkpoints is inferred, not proven; SC-002 is how the prompt change is judged.
+- #1110 (lifecycle review gate convergence) proceeds in parallel; finalize's wait condition and the review gate's skip of a final PR with unchecked buildable tasks live in this spec only (FR-010), and #1110 drops that part.
+- The causal claim about phase checkpoints is inferred, not proven; SC-002 is how the prompt change is judged, and its result decides whether the deferred lever (b) follow-up is needed.
