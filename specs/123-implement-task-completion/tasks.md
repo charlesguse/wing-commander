@@ -98,10 +98,10 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 
 **Goal**: Lifecycles already stranded at `review` with buildable tasks are handed off once.
 
-- [ ] T031 Add migration fixtures in `.github/scripts/fixtures/123-implement-task-completion/migration/`: qualifying lifecycle, only folds or maintainer-only left (untouched), already migrated (idempotent: no second commit or comment), closed issue (untouched)
-- [ ] T032 Create `.github/actions/_shared/migrate-stranded-review-lifecycles.sh` (inputs `repo`, optional `dry-run`): for each open lifecycle issue at spec-meta stage `review` with `buildable-unchecked-count` > 0 at the spec branch tip, commit `stage: stalled` (iteration preserved) through the pipeline's hardened push path, add `stage:stalled`, and post one comment listing remaining buildable and maintainer-only tasks and the resuming dispatch (`spec_dir`, `issue`, `iteration`); idempotency marker is stage already `stalled` plus the hand-off comment marker
+- [x] T031 Add migration fixtures in `.github/scripts/fixtures/123-implement-task-completion/migration/`: qualifying lifecycle, only folds or maintainer-only left (untouched), already migrated (idempotent: no second commit or comment), closed issue (untouched)
+- [x] T032 Create `.github/actions/_shared/migrate-stranded-review-lifecycles.sh` (inputs `repo`, optional `dry-run`): for each open lifecycle issue at spec-meta stage `review` with `buildable-unchecked-count` > 0 at the spec branch tip, commit `stage: stalled` (iteration preserved) through the pipeline's hardened push path, add `stage:stalled`, and post one comment listing remaining buildable and maintainer-only tasks and the resuming dispatch (`spec_dir`, `issue`, `iteration`); idempotency marker is stage already `stalled` plus the hand-off comment marker
 - [ ] T033 Add a manually dispatched `workflow_dispatch` workflow `.github/workflows/migrate-stranded-review-lifecycles.yml` that calls the T032 script with a `dry-run` input; least-privilege permissions, explicit shell on any container job (`container-shell-safety` skill if a `container:` block is used)
-- [ ] T034 [P] Create `.github/scripts/verify-migrate-stranded-review-lifecycles.py` (gate) that runs the T031 fixtures against the script in dry-run/stubbed mode and register it
+- [x] T034 [P] Create `.github/scripts/verify-migrate-stranded-review-lifecycles.py` (gate) that runs the T031 fixtures against the script in dry-run/stubbed mode and register it
 
 ---
 
