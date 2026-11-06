@@ -77,11 +77,11 @@ As the maintainer, I want folded review findings tracked separately from the spe
 
 **Why this priority**: On #1066 and #1055 every post-cap cycle was spent on review fixes and no spec task was built. It matters only once Stories 1–2 let cycles reach the review gate with work left.
 
-**Independent Test**: Fold review findings into a lifecycle with buildable tasks outstanding; confirm the findings are not counted toward the convergence count or the cap, that finalize does not open the final PR, and that the review gate does not review a final PR, while buildable tasks remain (FR-010).
+**Independent Test**: Fold review findings into a lifecycle with buildable tasks outstanding; confirm the findings are not counted in the buildable, progress or cap counts but still have to be ticked before implement reports convergence (FR-009), that finalize does not open the final PR, and that the review gate does not review a final PR, while buildable tasks remain (FR-010).
 
 **Acceptance Scenarios**:
 
-1. **Given** a lifecycle with in-scope review findings folded into tasks.md, **When** buildable-task progress is computed for convergence and the cap, **Then** folded findings are excluded from that count.
+1. **Given** a lifecycle with in-scope review findings folded into tasks.md, **When** the buildable count, the cycle's progress and the cap outcome are computed, **Then** folded findings are excluded from those counts, and implement still does not report convergence until every folded finding is ticked (FR-009).
 2. **Given** a review-fix cycle on a lifecycle that still has buildable spec tasks, **When** the cycle runs, **Then** it also works on those outstanding tasks rather than ending after the fixes.
 3. **Given** buildable spec tasks remain unchecked, **When** finalize would open the final PR, **Then** it does not open it until those tasks are done or handed off.
 4. **Given** a final PR whose lifecycle still has unchecked buildable tasks, **When** the lifecycle review gate would review it, **Then** the review gate does not review it.
@@ -116,8 +116,10 @@ As the maintainer, I want a lifecycle that reaches the iteration cap with builda
 
 **Acceptance Scenarios**:
 
-1. **Given** a lifecycle at the iteration cap with buildable tasks unchecked, **When** the cap is evaluated, **Then** the lifecycle is handed to a person: it is held or parked, the remaining buildable and maintainer-only tasks are listed on the lifecycle issue, and no final PR is opened (FR-010).
+1. **Given** a lifecycle at the iteration cap with buildable tasks unchecked, **When** the cap is evaluated, **Then** the lifecycle is handed to a person: it gets the `stage:stalled` hand-off (`lifecycle:held` once spec 119 merges), nothing is dispatched, the remaining buildable and maintainer-only tasks are listed on the lifecycle issue, and no final PR is opened (FR-010, FR-015).
 2. **Given** a lifecycle at the cap with only maintainer-only tasks unchecked, **When** the cap is evaluated, **Then** it is treated as converged (Story 2), not as cap-reached.
+3. **Given** a lifecycle handed off at the cap, **When** a person resumes it, **Then** exactly one more cycle runs, the hand-off label is lifted while it runs, and the cap is evaluated again at its end (FR-015).
+4. **Given** a cycle that ends with a validated agent blocker while buildable tasks remain, **When** the outcome is decided, **Then** it gets the same hand-off as the cap and finalize is not dispatched (FR-015a).
 
 ---
 
@@ -127,7 +129,10 @@ As the maintainer, I want a lifecycle that reaches the iteration cap with builda
 - A task already in tasks.md is re-tagged `[maintainer]` mid-lifecycle: converge cannot do this (the vendored converge skill is append-only and never rewrites an existing line, `.claude/skills/speckit-converge/SKILL.md`), and an implement agent's retag of an unchecked id does not take it out of the outstanding count: owner decision C on #992 keeps such an id outstanding, persisted in `spec-meta.json`'s `dropped_task_ids`, until a maintainer removes it there (`specs/117-implement-stall-handoff/contracts/shared-scripts.md`). This feature keeps that rule. An existing task leaves the buildable count without that maintainer step only through FR-004's deterministic classes, which classify the same line the same way at every ref, so the base and the tip agree and nothing is dropped.
 - Converge adds new buildable tasks: they join the buildable count; the cycle that added them is not judged low-progress solely because the total grew.
 - The gate suite's runnability in implement jobs (the issue asked whether `job_workflow_sha` is still empty after #1077): on `main` since #1077 (2026-10-22) the implement wrapper passes `pipeline-ref`, and the cycle-start gate suite runs (for example run 41636838701 on 2026-11-03, whose `gate-suite-implement-cycle` job ran the suite), so the "cannot run in this job" prompts in the investigated logs came from older cycles. A gate-suite task is therefore buildable while the cycle's suite is ready; classification must follow the cycle's own readiness (FR-008), not a fixed assumption. A bare "run the gate suite" line is already a standing instruction (spec 117) and counts in neither total.
-- A folded review finding duplicates an existing spec task: it is counted once, as the spec task.
+- A folded review finding duplicates an existing spec task: it is counted once in the buildable count, as the spec task, because FR-009 keeps every fold line out of that count; no duplicate detection is needed. The fold line still has to be ticked before implement reports convergence.
+- At the iteration cap (or on a fold cycle past it) the only unchecked lines are folded review findings, with or without maintainer-only tasks: this is not an FR-015 hand-off, because folds are out of the cap count (FR-009). The lifecycle continues to finalize as today, and further fix cycles are bounded by the review gate's round budget, which a self-dispatched implement cycle would bypass.
+- Maintainer Feedback tasks that the PR-conversation stage folds into tasks.md are not review-gate folds: FR-009 covers only the gate's `Review finding:` and `Recurring review finding:` lines, so feedback tasks count as buildable like spec tasks.
+- A person who decides that remaining buildable tasks are out of scope cannot force the final PR open (FR-010 has no override, including a hand-dispatched finalize). They tick the tasks, or retag or remove them and then remove the ids from `spec-meta.json`'s `dropped_task_ids` (the spec 117 acceptance route above), and resume implement, which then converges.
 - A spec whose every task is maintainer-only: implement converges immediately and reports all tasks as human work.
 - (Deferred follow-up) Low-progress response on a lifecycle already running on Opus (`model:opus` or repo opt-in): the re-prompt applies on the lifecycle's existing tier; the response never changes the model.
 - (Deferred follow-up) `model:haiku` trial lifecycles: the low-progress re-prompt stays on the trial's tier and respects its existing one-tier-up rule; it never skips to Opus.
@@ -164,7 +169,7 @@ As the maintainer, I want a lifecycle that reaches the iteration cap with builda
 **Cap outcome (Story 5)**
 
 - **FR-014**: A lifecycle at the iteration cap with only maintainer-only tasks unchecked MUST be reported as converged, not as cap-reached.
-- **FR-015**: A lifecycle at the iteration cap with buildable tasks unchecked MUST be handed to a person. It gets the existing `stage:stalled` hand-off (spec 119's `lifecycle:held` once #1102 merges), nothing is dispatched, no final PR is opened, and the lifecycle issue lists the remaining buildable and maintainer-only tasks. A person resumes with a manual implement dispatch; the cap does not reset.
+- **FR-015**: A lifecycle at the iteration cap with buildable tasks unchecked MUST be handed to a person. It gets the existing `stage:stalled` hand-off (spec 119's `lifecycle:held` once #1102 merges), nothing is dispatched, no final PR is opened, and the lifecycle issue lists the remaining buildable and maintainer-only tasks. A person resumes with a manual implement dispatch (under `lifecycle:held`, by removing the label, which dispatches the next cycle through spec 119's FR-007 trigger); the cap does not reset. The resumed cycle MUST lift the `stage:stalled` label (today implement removes it only on cycle 1, `implement.yml`'s "Flip stage label (first cycle)"), so the board and the watchdog do not read a running lifecycle as stalled. The hand-off is a designed outcome, not a defect: the watchdog MUST NOT report it as one (no `stage-mismatch` or `lost-progress` finding), as spec 119 FR-021 requires for a held cycle, and a fixture MUST show this.
 - **FR-015a**: A validated agent-blocker hand-off (spec 117) that leaves buildable tasks unchecked MUST be treated like FR-015: no finalize dispatch, no final PR, and the same hand-off and listing.
 
 **Scope (all stories)**
@@ -174,10 +179,10 @@ As the maintainer, I want a lifecycle that reaches the iteration cap with builda
 
 ### Key Entities
 
-- **Buildable task**: an unchecked tasks.md line that an automated implement cycle can complete; the only line class that counts toward convergence, the cap and low-progress.
+- **Buildable task**: an unchecked tasks.md line that an automated implement cycle can complete; the only line class that counts toward the cap outcome, the progress count, low-progress and FR-010's check. Convergence needs every buildable task and every folded review finding ticked (FR-009).
 - **Maintainer-only task**: a line tagged `[maintainer]` or matching a deterministic unbuildable class; listed as human work, never counted as outstanding.
 - **Standing instruction**: an existing (spec 117) line class such as "run the gate suite before pushing"; counted in neither total.
-- **Folded review finding**: a tasks.md line added by the lifecycle review gate from an in-scope finding; tracked separately from spec tasks.
+- **Folded review finding**: a tasks.md line added by the lifecycle review gate from an in-scope finding; tracked separately from spec tasks, out of the buildable, progress and cap counts, but must be ticked before implement converges (FR-009).
 - **Cycle outcome**: per-cycle record of buildable tasks ticked, buildable remaining and turns used (the low-progress flag arrives with the deferred lever (b) follow-up).
 
 ## Success Criteria *(mandatory)*
@@ -187,7 +192,7 @@ As the maintainer, I want a lifecycle that reaches the iteration cap with builda
 - **SC-001**: Across the first 10 lifecycles completed after this feature merges, fewer than 20% post "Iteration cap reached" with buildable tasks remaining (baseline: about 50% since 2026-09-01).
 - **SC-002**: The median number of buildable tasks ticked per default-tier cycle that has buildable work and budget left is at least twice the investigated baseline of about 2.6 tasks per cycle.
 - **SC-003**: Zero cycles end with zero buildable progress solely because the only remaining tasks are maintainer-only.
-- **SC-004**: In 100% of lifecycles that reach a review gate, folded review findings do not appear in the convergence or cap count.
+- **SC-004**: In 100% of lifecycles that reach a review gate, folded review findings do not appear in the buildable, progress or cap count.
 - **SC-005**: Every cap outcome (and, once the lever (b) follow-up lands, every low-progress response) is visible on the lifecycle issue alone, without opening job logs.
 
 ## Assumptions
