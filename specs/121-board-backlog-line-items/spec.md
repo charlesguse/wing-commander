@@ -67,7 +67,7 @@ When the loop cannot finish a line — it touches a workflow file the loop's cre
 
 ### User Story 4 - Concurrent writers to the backlog never lose each other's edits (Priority: P1)
 
-The backlog issue has other writers: local sessions add and tick lines, and the stage-findings composite appends lines. Every edit the loop makes to the backlog changes only the one line it is working on, re-reads the current body immediately before writing, and if the body changed in between, re-applies its one-line change to the newer body rather than overwriting it.
+The backlog issue has other writers: maintainers and local sessions add, edit and tick lines by hand. (No pipeline step writes the body today; the stage-findings composite files issues, not lines.) Every edit the loop makes to the backlog changes only the one line it is working on, re-reads the current body immediately before writing, and if the body changed in between, re-applies its one-line change to the newer body rather than overwriting it.
 
 **Why this priority**: A lost edit on #889 silently deletes recorded defects — worse than the loop doing nothing. This is a precondition for enabling the feature at all.
 
@@ -83,12 +83,12 @@ The backlog issue has other writers: local sessions add and tick lines, and the 
 
 ### Edge Cases
 
-- A line is ticked by a human while the loop holds it: the loop stands down from that line at its next re-derivation, leaves any open fix PR for a maintainer, and says so.
-- A line's text is edited by a human while the loop holds it: its identity (the id written into the line, FR-003) still matches as long as the id is kept; the loop continues from the line's current text only at its next triage, never mid-fix.
+- A line is ticked by a human while the loop has it claimed: the loop stands down from that line at its next re-derivation, leaves any open fix PR for a maintainer, and says so.
+- A line's text is edited by a human while the loop has it claimed: its identity (the id written into the line, FR-003) still matches as long as the id is kept; the loop continues from the line's current text only at its next triage, never mid-fix.
 - Two lines with identical text: oldest-first order (FR-004) picks the topmost; claiming writes a distinct id into that line only, so the two stay apart from then on, and only one is claimed per run.
 - A line bundles two defects or cites several files: worked as one item while its fix fits the size-and-path backstop; a fix that breaches the backstop holds the line with the backstop reason, and route may classify a line whose parts need different decisions as spec-shaped.
 - A fix PR for a line must never carry a closing keyword for the backlog issue; merging it must never close the backlog issue.
-- The backlog issue is closed, renamed, loses `disposition:tracking`, or a second open issue carries the same title: the loop takes no line and reports why (no guessing which issue is the backlog).
+- The backlog issue is closed, renamed, loses `disposition:tracking`, or a second open `disposition:tracking` issue's title also begins with "Maintenance backlog": the loop takes no line and reports why (no guessing which issue is the backlog).
 - The backlog body is empty or has no unchecked lines: the loop is idle, as today.
 - Lines inside a fenced code block, quoted text, or prose that merely looks like a checkbox are not work items; only top-level checklist lines in the issue body are.
 - Comments on the backlog issue are never a source of lines, whoever wrote them.
@@ -101,29 +101,30 @@ The backlog issue has other writers: local sessions add and tick lines, and the 
 ### Functional Requirements
 
 - **FR-001**: The board loop MUST take a Maintenance backlog line as its work item only when no eligible issue is waiting; while any eligible issue is waiting, issues take precedence. *(Default from the proposal's "when no eligible issue is waiting"; interleaving is out of scope.)*
-- **FR-002**: The loop MUST identify the Maintenance backlog by deterministic signals — exactly one open issue carrying `disposition:tracking` and titled "Maintenance backlog", authored by a maintainer or the pipeline's own App — and MUST take no line when that resolution is ambiguous or fails.
+- **FR-002**: The loop MUST identify the Maintenance backlog by deterministic signals — exactly one open issue carrying `disposition:tracking` whose title begins with "Maintenance backlog" (the rule Board status already uses; #889's title is "Maintenance backlog (one tracking issue for small defects)"), authored by a maintainer or the pipeline's own App — and MUST take no line when that resolution is ambiguous or fails.
 - **FR-003**: Each claimed line MUST have a stable identity that survives edits to every other line of the issue, survives a human editing the line's own text, and distinguishes lines with identical text: a short id the loop writes into the line when it claims it. Writing the id is part of the claim and costs one read-modify-write of the backlog issue (FR-015). A line nobody has claimed carries no id; before its claim, a line is located only by its position in the body as read.
-- **FR-004**: Line selection MUST be deterministic over the issue body as read and MUST skip lines that are ticked, claimed, held, or routed to a `spec-proposal`, choosing among the rest oldest first — the topmost (first-appended) eligible line. No priority marker is honoured; one may be added later if steering turns out to be needed.
+- **FR-004**: Line selection MUST be deterministic over the issue body as read and MUST skip lines that are ticked, claimed, held, or routed to a `spec-proposal`, choosing among the rest oldest first — the topmost eligible line in the body as read. Lines are filed under section headings, so body order is the only order the body records and stands in for append order. No priority marker is honoured; one may be added later if steering turns out to be needed.
 - **FR-005**: Only top-level unchecked checklist lines in the backlog issue's body MUST be candidates; comments, quoted text and fenced blocks MUST NOT be.
-- **FR-006**: The loop MUST work at most one line per run, under the same global concurrency group, kill switch and one-item-at-a-time rule as issues, and a held line MUST count as the loop's current item exactly as a claimed issue does.
+- **FR-006**: The loop MUST work at most one line per run, under the same global concurrency group, kill switch and one-item-at-a-time rule as issues, and a claimed (in-progress) line MUST count as the loop's current item exactly as a claimed issue does. A line held under FR-014 does not; like a `board:stalled` issue, it releases the board.
 - **FR-007**: A line MUST pass through the same triage, route, fix, review, readiness and (under spec 115) merge steps, with the same deterministic gates, backstop and authorization checks as an issue, with the line's text in the role of the issue body.
 - **FR-008**: The line's text MUST be framed as untrusted defect-description data in every agent prompt, never as instructions.
 - **FR-009**: The loop's board state for a line (the board item marker and its re-derivation inputs) MUST be keyed by the line's identity and stored in a loop-authored comment on the backlog issue, keyed by the line's id and read by the existing board item marker reader, so the state lives beside the line; only comments the loop itself authored are read as board state (comments are never a source of lines, FR-005), and every field MUST be re-derived from live state before any durable action, as for issues.
-- **FR-010**: While the loop holds a line, the line MUST visibly show it is in progress (and by which fix PR once one exists).
+- **FR-010**: While the loop has a line claimed, the line MUST visibly show it is in progress (and by which fix PR once one exists).
 - **FR-011**: When the line's fix PR merges, the line MUST be ticked and carry "(fixed by #PR)".
-- **FR-012**: When triage finds the defect already fixed on evidence deterministic code read, the line MUST be ticked with that evidence quoted, and no PR opened.
-- **FR-013**: When route classifies a line as spec-shaped, the loop MUST file a `spec-proposal` (never apply `spec-request`), annotate the line with a pointer to it, leave the line unticked, and skip it in later selection.
-- **FR-014**: When the loop holds a line for any reason a `board:stalled` issue would be held, the line MUST carry that same reason and be skipped by selection until a maintainer removes the hold annotation.
-- **FR-015**: Every edit the loop makes to the backlog body MUST be a read-modify-write that changes only the one line it works, re-reads the body immediately before writing, re-applies its change to any newer body, and preserves every other writer's concurrent change; after a bounded number of conflicting attempts it MUST leave the body unchanged and report the failure.
+- **FR-012**: Wherever triage would close an issue on evidence deterministic code read (Principle X: an API 429 in the cited run, an upstream action bump, the fixing commit already on `main`), the line MUST instead be ticked with that evidence quoted, and no PR opened.
+- **FR-013**: When route classifies a line as spec-shaped, the loop MUST file a `spec-proposal` (never apply `spec-request`), annotate the line with a pointer to it, leave the line unticked, and skip it in later selection. The issue path's duplicate disposition of the originating issue (spec 108) MUST NOT run for a line, since its originating issue is the backlog (FR-017); the line annotation and a cross-link on the proposal take its place.
+- **FR-014**: When the loop holds a line for any reason a `board:stalled` issue would be held, the line MUST carry that same reason and be skipped by selection until a maintainer removes the hold annotation. This covers every site that today adds `board:stalled` to the item issue: the workflow-scope hold, the backstop, an exhausted review budget, and a maintainer stop request recorded on the backlog issue. For a line, the annotation takes the label's place; the backlog issue is never labelled (FR-017).
+- **FR-015**: Every edit the loop makes to the backlog body MUST be a read-modify-write that changes only the one line it works, re-reads the body immediately before writing, re-applies its change to any newer body, preserves every other writer's change that landed before that re-read, and reads the body back after writing to confirm its change landed (re-applying it if a later writer dropped it). GitHub's issue-update API offers no conditional write, so an edit landing between the re-read and the write cannot be detected; this requirement narrows that window, it does not close it. After a bounded number of conflicting attempts it MUST leave the body unchanged and report the failure.
 - **FR-016**: If the worked line is ticked, deleted, or no longer matches its identity, the loop MUST stand down from it without writing it back and report this on the backlog issue.
 - **FR-017**: A fix PR for a line MUST reference the backlog issue without a closing keyword, and no step of this feature may close, relabel or retitle the backlog issue.
 - **FR-018**: Board status and run reporting that today names the current issue MUST name the current line (backlog issue plus line identity) when a line is the work item.
-- **FR-019**: Each new branch — selection, skip conditions, the read-modify-write conflict path, the stand-down path, the ambiguous-backlog path, and every line annotation — MUST be covered by a checked-in fixture a gate exercises.
+- **FR-019**: Each new branch — selection, skip conditions, the read-modify-write conflict path, the stand-down path, the ambiguous-backlog path, the backlog-reference item resolution (FR-021), and every line annotation — MUST be covered by a checked-in fixture a gate exercises.
 - **FR-020**: With the backlog empty of candidate lines, or the feature's lines unreachable, the loop's behaviour MUST be exactly today's.
+- **FR-021**: Every path that today finds a fix PR's item from the PR body's `Fixes #N` (the `pull_request: closed` prove entry, and the detection of a merge whose proof run never started) MUST find a line-born PR's item from the non-closing backlog reference FR-017 requires (backlog issue plus line id) together with the loop's own board state for that line, so a human merge still reaches FR-011's tick and the prove-after-merge entry.
 
 ### Key Entities
 
-- **Maintenance backlog**: The single open `disposition:tracking` issue titled "Maintenance backlog" (#889 at the 2026-10-01 reset). Never closed or relabelled by this feature.
+- **Maintenance backlog**: The single open `disposition:tracking` issue whose title begins with "Maintenance backlog" (#889 at the 2026-10-01 reset). Never closed or relabelled by this feature.
 - **Backlog line**: One top-level checklist line in the backlog body. Attributes: identity, text, state (unchecked, in progress, held with reason, routed to a proposal, ticked with fix or evidence).
 - **Line identity**: The short id the loop writes into a line when it claims it; names that line across edits to the rest of the body and to the line's own text (FR-003). Unclaimed lines carry none.
 - **Line board state**: The board item marker and progress for a line, held in a loop-authored comment on the backlog issue keyed by the line's id (FR-009).
@@ -135,8 +136,8 @@ The backlog issue has other writers: local sessions add and tick lines, and the 
 
 - **SC-001**: With no eligible issue waiting and at least one candidate line, every board-loop run that has capacity takes a line — the backlog moves without a local session.
 - **SC-002**: 100% of lines the loop finishes end in exactly one visible terminal state on the line: ticked with "(fixed by #PR)", ticked with already-fixed evidence, pointing at a `spec-proposal`, or held with a reason.
-- **SC-003**: 0 concurrent edits by other writers are lost across the loop's backlog edits, demonstrated by a fixture that interleaves a concurrent write.
-- **SC-004**: 0 runs in which the loop works a line while an eligible issue was waiting.
+- **SC-003**: 0 concurrent edits by other writers that land before the loop's pre-write re-read are lost, demonstrated by a fixture that interleaves a concurrent write between the loop's first read and its re-read; a fixture where a later writer drops the loop's change shows the read-back re-applying it (FR-015).
+- **SC-004**: 0 runs in which the loop claims a new line while an eligible issue was waiting. A line already claimed keeps the board until it finishes or is held (FR-006).
 - **SC-005**: The backlog issue is never closed, relabelled or retitled by the loop, and no merged line fix closes it.
 - **SC-006**: Over the first 30 days enabled, the count of open backlog lines falls, with no line selected again after reaching a terminal state.
 
@@ -146,6 +147,6 @@ The backlog issue has other writers: local sessions add and tick lines, and the 
 - A bundled or multi-file line is worked as one item bounded by the existing size-and-path backstop; it is not split by the loop.
 - Authorization: lines come only from the body of a backlog issue a maintainer or the App authored; GitHub restricts editing an issue body to its author and collaborators with write access, so every body line was written by a maintainer, a collaborator, or the pipeline. Whether constitution Principle X's entry rule ("an issue a maintainer authored or labeled") already covers a line on such an issue, or needs a clarifying amendment, is for plan to confirm; an amendment would be its own human-merged PR.
 - Workflow-touching line fixes stay held under the existing `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` rule until the App gets the Workflows permission; autonomous merge stays governed by `WING_COMMANDER_BOARD_AUTO_MERGE` (spec 115). Neither switch is changed here.
-- Existing triage evidence rules (API 429, upstream action bump, fixing commit on `main`), route classification, the independent review, the readiness evaluation and the prove-after-merge entry (spec 096) are reused unchanged.
+- Existing triage evidence rules (API 429, upstream action bump, fixing commit on `main`), route classification, the independent review, the readiness evaluation and the prove-after-merge entry (spec 096) are reused, except that a line-born PR's item is found from the backlog reference instead of `Fixes #N` (FR-021).
 - The Roadmap issue's "Proposed" list is updated for a line-born `spec-proposal` the same way it is for an issue-born one.
 - No new opt-in switch is added; the feature runs whenever the board loop runs. If plan finds a separate switch is needed for safe rollout, it should mirror the `WING_COMMANDER_BOARD_*` family and default to off.
