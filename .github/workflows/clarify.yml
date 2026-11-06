@@ -1101,10 +1101,10 @@ jobs:
             # checkout already reflects.
             #
             # The existence guard matches intake's. Without it a missing or
-            # unresolvable spec.md makes grep fail, marker=false, and every
-            # run that legitimately still has open questions reports a
-            # spurious mismatch — the cross-check crying wolf about its own
-            # inability to read the file.
+            # unresolvable spec.md (the scan step's open="") reads as
+            # marker=false, and every run that legitimately still has open
+            # questions reports a spurious mismatch — the cross-check crying
+            # wolf about its own inability to read the file.
             if [ -n "$SPEC_DIR" ] && [ -f "$SPEC_DIR/spec.md" ]; then
               if [ "$OPEN_MARKER" = "true" ]; then
                 marker=true

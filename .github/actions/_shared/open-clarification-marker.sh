@@ -13,8 +13,9 @@
 # from a composite only; wing-commander-clarification-marker is the front
 # door the published stages use (Gate 60).
 # -- `bash file`, never the file itself (count-tasks-checkboxes.sh: same
-# reason). Exit 0: an open marker is present. Exit 1: none. Exit 2: the file
-# could not be read (the callers' existence guard runs first).
+# reason). Exit 0: an open marker is present. Exit 1: none. Any other exit
+# (2: the file could not be read; awk missing or failing) is no answer, and
+# the composite fails its step on it rather than read it as "none".
 #
 # What counts as code, and why each rule leans toward FINDING a marker:
 # a false "no marker" lets "Review the spec PR" be announced over an open

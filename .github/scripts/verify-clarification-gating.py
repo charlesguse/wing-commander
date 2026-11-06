@@ -796,7 +796,10 @@ def run_scenario(stage, steps, sc, tmproot):
         spec_dir = str((scan.get("with") or {}).get("spec-dir", ""))
         for expr, value in subs.items():
             spec_dir = spec_dir.replace(expr, value)
-        subs[MARKER_OUTPUT_REF] = run_marker_scan(steps, workdir, spec_dir)
+        scan_rc, subs[MARKER_OUTPUT_REF] = run_marker_scan(steps, workdir, spec_dir)
+        if scan_rc != 0:
+            failures.append(f"{tag} the marker scan step failed (exit {scan_rc}).")
+            job_failed = True
 
     # --- decision step ----------------------------------------------------
     decide_out = ""
@@ -1066,12 +1069,19 @@ def run_scenario(stage, steps, sc, tmproot):
     return failures
 
 
-def suite(loaded, tmproot):
+def suite(loaded, tmproot, scans=True):
+    """`scans`: also run SCAN_CASES against the composite. Both stages load
+    the same composite, so its cases run once per distinct copy of it; a
+    mutation that leaves the composite alone skips them (main())."""
     failures = []
+    seen = set()
     for stage, steps, scenarios in loaded:
         for sc in scenarios:
             failures += run_scenario(stage, steps, sc, tmproot)
-        failures += scan_cases(stage, steps, tmproot)
+        run = str(steps[MARKER_PSEUDO].get("run") or "")
+        if scans and run not in seen:
+            seen.add(run)
+            failures += scan_cases(stage, steps, tmproot)
     return failures
 
 
@@ -1087,24 +1097,36 @@ def link_pipeline(workdir):
     os.symlink(REPO_ROOT, os.path.join(workdir, ".wing-commander-pipeline"))
 
 
-def run_marker_scan(steps, workdir, spec_dir):
-    """The composite's scan step, as the runner runs it; returns `open`."""
+def run_marker_scan(steps, workdir, spec_dir, bindir=None):
+    """The composite's scan step, as the runner runs it; returns
+    (exit status, `open`). `bindir`, if given, is put ahead on PATH."""
     step = steps[MARKER_PSEUDO]
     action_path = os.path.join(workdir, ".wing-commander-pipeline",
                                os.path.dirname(MARKER_COMPOSITE))
-    _, _, outputs, _ = run_step(
-        BASH, str(step["run"]), workdir,
-        {"SPEC_DIR": spec_dir, "GITHUB_ACTION_PATH": action_path}, workdir,
+    env = {"SPEC_DIR": spec_dir, "GITHUB_ACTION_PATH": action_path}
+    if bindir:
+        env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+    rc, _, outputs, _ = run_step(
+        BASH, str(step["run"]), workdir, env, workdir,
         shell=step_shell(MARKER_COMPOSITE, MARKER_COMPOSITE_STEP))
-    return outputs.get("open", "")
+    return rc, outputs.get("open", "")
 
 
-# A scan line is the `if ...; then` that decides `marker`, whatever its form:
-# the shared script, or a grep/sed pipeline a mutation (or a regression)
-# puts back in its place.
+# The composite's scan line: `<cmd> || rc=$?`, where <cmd> is the shared
+# script, or a grep/sed pipeline a mutation (or a regression) puts back in
+# its place.
 SCAN_LINE_RE = re.compile(
-    r"^[ \t]*(?:el)?if (?P<cmd>[^\n]*(?:open-clarification-marker\.sh|"
-    r"NEEDS CLARIFICATION:)[^\n]*); then$", re.M)
+    r"^[ \t]*(?P<cmd>[^\n]*(?:open-clarification-marker\.sh|"
+    r"NEEDS CLARIFICATION:)[^\n]*) \|\| rc=\$\?$", re.M)
+
+# A copy of the scan anywhere else, in whatever shell form it is pasted
+# back: `if grep ...; then`, `grep ... && marker=true`, `n=$(grep -c ...)`.
+# Any line (comments and echo'd messages aside) that runs the shared script
+# or hands the marker to a text tool is one.
+OWN_SCAN_RE = re.compile(
+    r"^(?![ \t]*(?:#|echo\b))[^\n]*(?:open-clarification-marker\.sh|"
+    r"\b(?:grep|egrep|fgrep|rg|awk|sed|perl)\b[^\n]*NEEDS CLARIFICATION:)[^\n]*$",
+    re.M)
 
 # (name, spec.md body, whether an OPEN marker is present). The "open" cases
 # are the dangerous direction: a scan that misses one lets readiness be
@@ -1152,7 +1174,7 @@ def scan_cases(stage, steps, tmproot):
         with open(os.path.join(workdir, "specs/042-a/spec.md"), "w",
                   encoding="utf-8") as fh:
             fh.write(body)
-        got = run_marker_scan(steps, workdir, "specs/042-a") == "true"
+        got = run_marker_scan(steps, workdir, "specs/042-a")[1] == "true"
         if got != want:
             failures.append(
                 f"[{stage.name}: scan] {name}: the marker scan said "
@@ -1160,6 +1182,29 @@ def scan_cases(stage, steps, tmproot):
                 + (" -- an open question would be announced as ready" if want
                    else " -- a quoted marker would veto a settled spec (#1099)"))
         shutil.rmtree(workdir, ignore_errors=True)
+
+    # A scan that could not run (an image whose awk is missing or rejects the
+    # program, an unreadable spec.md) is no answer: the composite must fail
+    # its step, never report open=false and let readiness be announced over
+    # the marker it never looked for.
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    link_pipeline(workdir)
+    os.makedirs(os.path.join(workdir, "specs/042-a"))
+    with open(os.path.join(workdir, "specs/042-a/spec.md"), "w",
+              encoding="utf-8") as fh:
+        fh.write(SCAN_CASES[0][1])
+    bindir = os.path.join(workdir, "bin")
+    os.makedirs(bindir)
+    with open(os.path.join(bindir, "awk"), "w", encoding="utf-8") as fh:
+        fh.write("#!/bin/sh\necho 'awk: syntax error' >&2\nexit 2\n")
+    os.chmod(os.path.join(bindir, "awk"), 0o755)
+    rc, got = run_marker_scan(steps, workdir, "specs/042-a", bindir)
+    if rc == 0 or got == "false":
+        failures.append(
+            f"[{stage.name}: scan] an awk that fails: the composite exited "
+            f"{rc} with open={got!r} -- a scan that never ran would read as "
+            f"\"no marker\" and readiness would be announced over one")
+    shutil.rmtree(workdir, ignore_errors=True)
     return failures
 
 
@@ -1192,8 +1237,8 @@ def structural_checks(loaded):
     # output (a skipped scan reads as "no marker", the dangerous direction),
     # and no stage carries a scan of its own.
     for stage, steps, _ in loaded:
-        own = [m.group("cmd") for name, step in steps.items() if name != MARKER_PSEUDO
-               for m in SCAN_LINE_RE.finditer(str((step or {}).get("run") or ""))]
+        own = [m.group(0).strip() for name, step in steps.items() if name != MARKER_PSEUDO
+               for m in OWN_SCAN_RE.finditer(str((step or {}).get("run") or ""))]
         composite = [m.group("cmd") for m in SCAN_LINE_RE.finditer(
             str(steps[MARKER_PSEUDO].get("run") or ""))]
         scan = steps.get(MARKER_STEP) or {}
@@ -1312,7 +1357,7 @@ def mut_drop_veto(loaded):
 
 
 def mut_drop_existence_guard(loaded):
-    """Defect (c): clarify greps spec.md with no existence guard."""
+    """Defect (c): clarify reads the scan with no existence guard."""
     for stage, steps, _ in loaded:
         if stage.name != "clarify":
             continue
@@ -1488,6 +1533,15 @@ def mut_scan_naive_strip(loaded):
     _replace_scan(loaded, NAIVE_STRIP_SCAN)
 
 
+def mut_scan_failure_reads_clear(loaded):
+    """The composite reads every non-zero exit of the script as "no marker":
+    an awk that is missing or rejects the program clears the spec."""
+    for stage, steps, _ in loaded:
+        run = steps[MARKER_PSEUDO]["run"]
+        steps[MARKER_PSEUDO]["run"] = run.replace(
+            '1) echo "open=false"', '*) echo "open=false"')
+
+
 def mut_scan_step_skipped(loaded):
     """The scan step is gated so it skips while the decision runs: its empty
     output reads as "no marker" and readiness is announced over one."""
@@ -1502,6 +1556,17 @@ def smut_intake_inlines_scan(loaded):
             d = steps[stage.decide]
             d["run"] = d["run"].replace('if [ "$OPEN_MARKER" = "true" ]; then',
                                         f"if {NAIVE_STRIP_SCAN}; then")
+
+
+def smut_clarify_pastes_scan_unconditionally(loaded):
+    """clarify re-pastes the bare grep as `grep ... && marker=true`, the
+    form an `if ...; then`-only check never saw."""
+    for stage, steps, _ in loaded:
+        if stage.name == "clarify":
+            d = steps[stage.decide]
+            d["run"] = d["run"].replace(
+                "marker=false\n",
+                f"marker=false\n{PLAIN_SCAN} && marker=true\n", 1)
 
 
 def smut_scan_gated_differently(loaded):
@@ -1525,6 +1590,8 @@ def smut_clarify_marks_spec_branch(loaded):
 # Mutations of what only structural_checks() can see.
 STRUCTURAL_MUTATIONS = [
     ("intake carrying its own copy of the marker scan", smut_intake_inlines_scan),
+    ("clarify re-pasting the bare grep as `grep ... && marker=true`",
+     smut_clarify_pastes_scan_unconditionally),
     ("clarify's scan gated differently from the decision that reads it",
      smut_scan_gated_differently),
     ("clarify's stall notice marking a spec/<slug> branch that does not "
@@ -1537,13 +1604,15 @@ MUTATIONS = [
      mut_scan_counts_quoted_markers),
     ("the marker scan's sed strip hiding a marker below an unclosed fence",
      mut_scan_naive_strip),
+    ("the marker composite reading a scan that failed as open=false",
+     mut_scan_failure_reads_clear),
     ("the marker scan step skipped while the decision that reads it runs",
      mut_scan_step_skipped),
     ("the questionnaire arm ignoring `specified` (dead-end callout)",
      mut_drop_specified),
     ("the cross-check logging a mismatch instead of vetoing readiness",
      mut_drop_veto),
-    ("clarify grepping spec.md with no existence guard", mut_drop_existence_guard),
+    ("clarify reading OPEN_MARKER with no existence guard", mut_drop_existence_guard),
     ("jq's // treating an empty string as a present value", mut_blank_strings),
     ("a veto that posts nothing and still finishes the run green",
      mut_fail_step_never_fires),
@@ -1596,7 +1665,9 @@ def main():
                       f"harness keeps proving it can fail.")
                 failures.append(f"mutation inapplicable: {label}")
                 continue
-            broke = suite(mutated, tmproot)
+            broke = suite(mutated, tmproot, scans=any(
+                a[1][MARKER_PSEUDO] != b[1][MARKER_PSEUDO]
+                for a, b in zip(loaded, mutated)))
             if broke:
                 print(f"Mutation OK — {label}: {len(broke)} assertion(s) fail.")
             else:
