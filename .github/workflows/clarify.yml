@@ -1046,6 +1046,17 @@ jobs:
           echo "::error::wing-commander clarify stage: agent step rejected — verdict=$VERDICT: $REASON"
           exit 1
 
+      # The colon-form marker scan's one home (#1099): a marker quoted in
+      # code is not an open question. Gated exactly as the step that reads it,
+      # so a run that decides is never one whose scan was skipped
+      # (verify-clarification-gating.py).
+      - name: Scan spec.md for an open clarification marker
+        id: marker-scan
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-clarification-marker
+        with:
+          spec-dir: ${{ steps.ctx.outputs.spec-dir }}
+
       # Deterministic kind decision (contracts/callout-points.md rows 3/4).
       # outcome=none covers the agent's early-STOP path (step 2: the reply
       # didn't answer any open question) — the agent's own gh issue comment
@@ -1056,6 +1067,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy'
         env:
           SPEC_DIR: ${{ steps.ctx.outputs.spec-dir }}
+          OPEN_MARKER: ${{ steps.marker-scan.outputs.open }}
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
           raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
@@ -1089,12 +1101,12 @@ jobs:
             # checkout already reflects.
             #
             # The existence guard matches intake's. Without it a missing or
-            # unresolvable spec.md makes grep fail, marker=false, and every
-            # run that legitimately still has open questions reports a
-            # spurious mismatch — the cross-check crying wolf about its own
-            # inability to read the file.
+            # unresolvable spec.md (the scan step's open="") reads as
+            # marker=false, and every run that legitimately still has open
+            # questions reports a spurious mismatch — the cross-check crying
+            # wolf about its own inability to read the file.
             if [ -n "$SPEC_DIR" ] && [ -f "$SPEC_DIR/spec.md" ]; then
-              if grep -q '\[NEEDS CLARIFICATION:' "$SPEC_DIR/spec.md"; then
+              if [ "$OPEN_MARKER" = "true" ]; then
                 marker=true
               else
                 marker=false
@@ -1388,6 +1400,7 @@ jobs:
               {"name": "Check agent changes stay inside the project folder", "conclusion": "${{ steps.containment.conclusion }}"},
               {"name": "Fail on agent API error", "conclusion": "${{ steps.api-error.conclusion }}"},
               {"name": "Fail loud on non-healthy agent verdict", "conclusion": "${{ steps.verdict-fail.conclusion }}"},
+              {"name": "Scan spec.md for an open clarification marker", "conclusion": "${{ steps.marker-scan.conclusion }}"},
               {"name": "Fail on unresolved clarification markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"}
             ]
 
@@ -1474,39 +1487,6 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
-      # Independent identity re-derivation (research.md D6, clarify row):
-      # never trust needs.clarify.outputs.* for identity, only for
-      # refusal-reason (D3) — the job that would have resolved it may have
-      # failed before doing so. Same spec:* label lookup
-      # wing-commander-context's own resolve step performs, run again here.
-      # The persistent spec branch prefix ("spec/") is this pipeline's fixed
-      # convention (intake.yml's spec-prefix default) — clarify itself has
-      # no configurable input for it, since it never writes there today.
-      - name: Resolve spec identity independently
-        id: identity
-        if: needs.clarify.outputs.refusal-reason == ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ISSUE: ${{ inputs.issue-number }}
-        run: |
-          spec_slug="$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name | select(startswith("spec:"))][0] // "" | sub("^spec:"; "")')"
-          echo "slug=$spec_slug" >> "$GITHUB_OUTPUT"
-
-      # The label's [P/]NNN-slug names its spec dir [P/]specs/NNN-slug
-      # through the shared parser (spec 114, FR-013). Best-effort: this job
-      # reports a stall, so a name it cannot read leaves the dir empty
-      # rather than failing the report.
-      - name: Resolve spec dir independently
-        id: identity-names
-        if: needs.clarify.outputs.refusal-reason == '' && steps.identity.outputs.slug != ''
-        continue-on-error: true
-        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
-        with:
-          identity: ${{ steps.identity.outputs.slug }}
-          identity-kind: slug
-          token: ${{ github.token }}
-          check-folder: 'false'
-
       # (canonical copy: failed-step-naming; do not condense)
       # FR-004/FR-011 (spec 052, maintainer review of PR #407): a credential
       # re-establishment failure is named as such, ahead of the generic
@@ -1536,8 +1516,12 @@ jobs:
         with:
           token: ${{ steps.ctx.outputs.token }}
           issue-number: ${{ inputs.issue-number }}
-          spec-dir: ${{ steps.identity-names.outputs.spec-dir }}
-          spec-branch: spec/${{ steps.identity.outputs.slug }}
+          # No record to mark before the spec PR merges: the spec lives on its
+          # spec-draft/ branch until then, and spec/<slug> does not exist yet
+          # (#1103), so clarify passes an empty spec-dir as intake does
+          # (research.md D5). Marking the draft's record would also carry
+          # stage=stalled into the spec when its PR merges.
+          spec-dir: ""
           stage-label: "stage:clarify"
           reason: ${{ steps.reason.outputs.reason }}
           # FR-015: resume-oriented wording when the agent ran and a step

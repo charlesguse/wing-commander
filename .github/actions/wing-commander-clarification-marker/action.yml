@@ -1,0 +1,53 @@
+# #1099 (CLAUDE.md single-home rule): a published stage may not resolve
+# `.github/actions/_shared/` directly (Gate 60's promotion check) -- only a
+# composite may. This is the one front door onto
+# `_shared/open-clarification-marker.sh` for intake.yml's and clarify.yml's
+# colon-form marker cross-check; the script's header says what counts as
+# code and why every rule leans toward finding a marker.
+name: wing-commander-clarification-marker
+description: >
+  Reports whether a spec.md still carries an open colon-form
+  [NEEDS CLARIFICATION: marker, ignoring markers quoted in code.
+
+inputs:
+  spec-dir:
+    description: >
+      Repository-relative [P/]specs/NNN-slug whose spec.md to scan. Empty,
+      or a directory with no spec.md, reports open="" (nothing to scan).
+    required: false
+    default: ""
+
+outputs:
+  open:
+    description: >
+      "true" when an open marker is present, "false" when none is, "" when
+      there was no spec.md to scan (the caller says the cross-check was
+      skipped).
+    value: ${{ steps.scan.outputs.open }}
+
+runs:
+  using: composite
+  steps:
+    - name: Scan spec.md for an open clarification marker
+      id: scan
+      shell: bash
+      env:
+        SPEC_DIR: ${{ inputs.spec-dir }}
+      run: |
+        set -uo pipefail
+        if [ -z "$SPEC_DIR" ] || [ ! -f "$SPEC_DIR/spec.md" ]; then
+          echo "open=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        # Only exit 1 means "no marker". Any other failure (an unreadable
+        # spec.md, an image with no awk or one that rejects the program) is a
+        # scan that did not happen, and reading it as "false" would announce
+        # readiness over an open question -- so it fails the step instead.
+        rc=0
+        bash "$GITHUB_ACTION_PATH/../_shared/open-clarification-marker.sh" "$SPEC_DIR/spec.md" || rc=$?
+        case "$rc" in
+          0) echo "open=true" >> "$GITHUB_OUTPUT" ;;
+          1) echo "open=false" >> "$GITHUB_OUTPUT" ;;
+          *) echo "::error::wing-commander-clarification-marker: could not scan $SPEC_DIR/spec.md for an open [NEEDS CLARIFICATION: marker (exit $rc); refusing to report it clear."
+             exit 1 ;;
+        esac

@@ -1429,6 +1429,14 @@ jobs:
           cost-line: ${{ steps.cost-line.outputs.line }}
           stage-label: Intake
 
+      # The colon-form marker scan -- see clarify.yml.
+      - name: Scan spec.md for an open clarification marker
+        id: marker-scan
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-result.outputs.valid == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-clarification-marker
+        with:
+          spec-dir: ${{ steps.created.outputs.spec-dir }}
+
       # Deterministic kind decision (contracts/callout-points.md rows 1/2):
       # the agent never decides whether to post an action-required callout,
       # it only authors the clarification-question content when needed.
@@ -1462,6 +1470,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-result.outputs.valid == 'true'
         env:
           SPEC_DIR: ${{ steps.created.outputs.spec-dir }}
+          OPEN_MARKER: ${{ steps.marker-scan.outputs.open }}
           SPEC_DRAFT_PREFIX: ${{ inputs.spec-draft-prefix }}
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
@@ -1540,7 +1549,7 @@ jobs:
           # while the path it guards is not the path that ran. So the skip
           # is always SAID, matching clarify.yml.
           if [ -n "$SPEC_DIR" ] && [ -f "$SPEC_DIR/spec.md" ]; then
-            if grep -q '\[NEEDS CLARIFICATION:' "$SPEC_DIR/spec.md"; then
+            if [ "$OPEN_MARKER" = "true" ]; then
               marker=true
             else
               marker=false
@@ -1901,6 +1910,7 @@ jobs:
               {"name": "Remove the agent-writable pipeline checkout (post-agent)", "conclusion": "${{ steps.pipeline-rm.conclusion }}"},
               {"name": "Re-checkout pipeline repository (post-agent)", "conclusion": "${{ steps.pipeline-recheckout.conclusion }}"},
               {"name": "Check agent changes stay inside the project folder", "conclusion": "${{ steps.containment.conclusion }}"},
+              {"name": "Scan spec.md for an open clarification marker", "conclusion": "${{ steps.marker-scan.conclusion }}"},
               {"name": "Fail loud on non-healthy agent verdict", "conclusion": "${{ steps.verdict-fail.conclusion }}"},
               {"name": "Fail on invalid agent result", "conclusion": "${{ steps.invalid-result.conclusion }}"},
               {"name": "Fail on unresolved clarification markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"},

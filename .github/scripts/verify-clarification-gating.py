@@ -82,10 +82,18 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_gha_expr import evaluate_if as gha_evaluate_if  # noqa: E402
 from wc_shell_harness import (  # noqa: E402
-    ensure_jq, resolve_bash, run_step, use_utf8_stdout)
+    ensure_jq, resolve_bash, run_step, step_shell, use_utf8_stdout)
 
 INTAKE = ".github/workflows/intake.yml"
 CLARIFY = ".github/workflows/clarify.yml"
+MARKER_COMPOSITE = ".github/actions/wing-commander-clarification-marker/action.yml"
+MARKER_COMPOSITE_STEP = "Scan spec.md for an open clarification marker"
+MARKER_STEP = "Scan spec.md for an open clarification marker"   # in each stage
+MARKER_PSEUDO = "<composite: wing-commander-clarification-marker>"
+MARKER_OUTPUT_REF = "${{ steps.marker-scan.outputs.open }}"
+FAILED_STEP = "Determine failed post-agent step"
+MARKER_CANDIDATE = ('{"name": "%s", "conclusion": '
+                    '"${{ steps.marker-scan.conclusion }}"}' % MARKER_STEP)
 
 # The literal token prefix the watchdog's collector scans for. Emitting a
 # bare word instead put these signals behind the collector's first-match-wins
@@ -204,6 +212,15 @@ def load_steps(stage):
             f"'Fail on ...' step is how a vetoed run goes green with nothing "
             f"posted, so its absence is a hard error here, not a skipped check."
         )
+    # The marker scan runs in the shared composite, not in the stage file;
+    # it rides along as a pseudo step so mutations can edit it like any other.
+    composite = yaml.safe_load(open(MARKER_COMPOSITE, encoding="utf-8")) or {}
+    for step in (composite.get("runs") or {}).get("steps") or []:
+        if (step or {}).get("name") == MARKER_COMPOSITE_STEP:
+            steps[MARKER_PSEUDO] = dict(step)
+    if MARKER_PSEUDO not in steps:
+        sys.exit(f"::error file={MARKER_COMPOSITE}::no step named "
+                 f"{MARKER_COMPOSITE_STEP!r}; update this harness with it.")
     return steps
 
 
@@ -378,6 +395,18 @@ INTAKE_SCENARIOS = [
         why="The happy spec-PR path.",
         result={"specified": True, "clarifications": []},
         spec_dir="specs/042-a-feature", expect_valid=True, expect_needed="false",
+        expect_fires={"resolve_pr", "announce_pr"}, expect_run_red=False,
+        expect_cost_report=True,
+    ),
+    dict(
+        name="spec only quotes the marker in code, no open questions (#1099)",
+        why="#1099: spec 122 is about the clarification marker, so its text "
+            "quotes it in backticks and a fenced block. A scan that counts "
+            "quoted markers vetoes a spec with no open question and stalls "
+            "the lifecycle after the owner has answered everything.",
+        result={"specified": True, "clarifications": []},
+        spec_dir="specs/042-a-feature", markers="quoted",
+        expect_valid=True, expect_needed="false",
         expect_fires={"resolve_pr", "announce_pr"}, expect_run_red=False,
         expect_cost_report=True,
     ),
@@ -598,6 +627,17 @@ CLARIFY_SCENARIOS = [
         expect_run_red=False, expect_cost_report=True,
     ),
     dict(
+        name="reply resolved everything; the spec only quotes the marker in code (#1099)",
+        why="#1099: spec 122 is about the clarification marker, so its text "
+            "quotes it in backticks and a fenced block. A scan that counts "
+            "quoted markers vetoes a spec with no open question and stalls "
+            "the lifecycle after the owner has answered everything.",
+        result={"answered": True, "clarifications": []},
+        spec_dir="specs/042-a-feature", markers="quoted", expect_valid=True,
+        expect_outcome="ready", expect_fires={"resolve_pr", "announce_pr"},
+        expect_run_red=False, expect_cost_report=True,
+    ),
+    dict(
         name="no questions returned but the spec still has markers (defect b)",
         why="Same veto as intake's: announcing readiness here merges the "
             "markers. And the same second half — blocking the callout without "
@@ -677,6 +717,7 @@ def carries_cost_line(steps, step):
 def run_scenario(stage, steps, sc, tmproot):
     failures = []
     workdir = tempfile.mkdtemp(dir=tmproot)
+    link_pipeline(workdir)
     runner_temp = tempfile.mkdtemp(dir=tmproot)
     tag = f"[{stage.name}: {sc['name']}]"
 
@@ -693,7 +734,12 @@ def run_scenario(stage, steps, sc, tmproot):
             res = sc.get("result") or {}
             markers = bool(res.get("clarifications"))
         body = "# Spec\n"
-        if markers:
+        if markers == "quoted":
+            # #1099: a spec that talks ABOUT the marker (spec 122 describes
+            # it) quotes it in code, never as an open question.
+            body += ("\nSettled means no `[NEEDS CLARIFICATION:` marker remains.\n"
+                     "\n```\n[NEEDS CLARIFICATION: example]\n```\n")
+        elif markers:
             body += "\n[NEEDS CLARIFICATION: which auth provider?]\n"
         with open(os.path.join(workdir, sc["spec_dir"], "spec.md"),
                   "w", encoding="utf-8") as fh:
@@ -745,6 +791,18 @@ def run_scenario(stage, steps, sc, tmproot):
     if got_valid != want_valid:
         failures.append(f"{tag} expected the validation gate to say "
                         f"{want_valid!r}, got {got_valid!r}. {sc['why']}")
+
+    # --- marker scan (the composite step the decision reads) --------------
+    scan = steps.get(MARKER_STEP) or {}
+    subs[MARKER_OUTPUT_REF] = ""
+    if not job_failed and evaluate_if(scan.get("if"), ctx, MARKER_STEP, stage.path):
+        spec_dir = str((scan.get("with") or {}).get("spec-dir", ""))
+        for expr, value in subs.items():
+            spec_dir = spec_dir.replace(expr, value)
+        scan_rc, subs[MARKER_OUTPUT_REF] = run_marker_scan(steps, workdir, spec_dir)
+        if scan_rc != 0:
+            failures.append(f"{tag} the marker scan step failed (exit {scan_rc}).")
+            job_failed = True
 
     # --- decision step ----------------------------------------------------
     decide_out = ""
@@ -1014,11 +1072,142 @@ def run_scenario(stage, steps, sc, tmproot):
     return failures
 
 
-def suite(loaded, tmproot):
+def suite(loaded, tmproot, scans=True):
+    """`scans`: also run SCAN_CASES against the composite. Both stages load
+    the same composite, so its cases run once per distinct copy of it; a
+    mutation that leaves the composite alone skips them (main())."""
     failures = []
+    seen = set()
     for stage, steps, scenarios in loaded:
         for sc in scenarios:
             failures += run_scenario(stage, steps, sc, tmproot)
+        run = str(steps[MARKER_PSEUDO].get("run") or "")
+        if scans and run not in seen:
+            seen.add(run)
+            failures += scan_cases(stage, steps, tmproot)
+    return failures
+
+
+# --------------------------------------------------------------------------
+# The marker scan itself, against real spec.md shapes
+# --------------------------------------------------------------------------
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def link_pipeline(workdir):
+    """The jobs run shared scripts from their .wing-commander-pipeline/
+    checkout; a scenario's workdir gets the same path, pointing here."""
+    os.symlink(REPO_ROOT, os.path.join(workdir, ".wing-commander-pipeline"))
+
+
+def run_marker_scan(steps, workdir, spec_dir, bindir=None):
+    """The composite's scan step, as the runner runs it; returns
+    (exit status, `open`). `bindir`, if given, is put ahead on PATH."""
+    step = steps[MARKER_PSEUDO]
+    action_path = os.path.join(workdir, ".wing-commander-pipeline",
+                               os.path.dirname(MARKER_COMPOSITE))
+    env = {"SPEC_DIR": spec_dir, "GITHUB_ACTION_PATH": action_path}
+    if bindir:
+        env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
+    rc, _, outputs, _ = run_step(
+        BASH, str(step["run"]), workdir, env, workdir,
+        shell=step_shell(MARKER_COMPOSITE, MARKER_COMPOSITE_STEP))
+    return rc, outputs.get("open", "")
+
+
+# The composite's scan line: `<cmd> || rc=$?`, where <cmd> is the shared
+# script, or a grep/sed pipeline a mutation (or a regression) puts back in
+# its place.
+SCAN_LINE_RE = re.compile(
+    r"^[ \t]*(?P<cmd>[^\n]*(?:open-clarification-marker\.sh|"
+    r"NEEDS CLARIFICATION:)[^\n]*) \|\| rc=\$\?$", re.M)
+
+# A copy of the scan anywhere else, in whatever shell form it is pasted
+# back: `if grep ...; then`, `grep ... && marker=true`, `n=$(grep -c ...)`.
+# Any line (comments and echo'd messages aside) that runs the shared script
+# or hands the marker to a text tool is one.
+OWN_SCAN_RE = re.compile(
+    r"^(?![ \t]*(?:#|echo\b))[^\n]*(?:open-clarification-marker\.sh|"
+    r"\b(?:grep|egrep|fgrep|rg|awk|sed|perl)\b[^\n]*NEEDS CLARIFICATION:)[^\n]*$",
+    re.M)
+
+# (name, spec.md body, whether an OPEN marker is present). The "open" cases
+# are the dangerous direction: a scan that misses one lets readiness be
+# announced over an open question. The quoted cases are #1099's direction.
+SCAN_CASES = [
+    ("template-form marker in a requirement",
+     "- **FR-006**: System MUST authenticate users via "
+     "[NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]\n",
+     True),
+    ("marker in a table cell next to inline code",
+     "| FR-1 | `--force` | [NEEDS CLARIFICATION: skip prompts?] |\n", True),
+    ("marker whose question quotes code",
+     "- FR-2 [NEEDS CLARIFICATION: should `--force` skip prompts?]\n", True),
+    ("marker after a closed fence",
+     "```\n[NEEDS CLARIFICATION: example]\n```\n\n"
+     "- FR-3 [NEEDS CLARIFICATION: retention period?]\n", True),
+    ("marker after a fence that never closes",
+     "```json\n{\"a\": 1}\n\n- FR-4 [NEEDS CLARIFICATION: retention period?]\n",
+     True),
+    ("marker after a one-line ```x``` (inline code, not a fence)",
+     "```json {\"a\": 1}```\n\n- FR-5 [NEEDS CLARIFICATION: retention period?]\n",
+     True),
+    ("marker after a double-backtick span holding a backtick",
+     "Use ``a ` b`` here. [NEEDS CLARIFICATION: retention period?]\n", True),
+    ("marker quoted in an inline span", "no `[NEEDS CLARIFICATION:` marker remains\n",
+     False),
+    ("marker quoted in a double-backtick span",
+     "the ``[NEEDS CLARIFICATION: ...]`` form\n", False),
+    ("marker quoted in a ``` fence inside a list item",
+     "- example:\n  ```\n  [NEEDS CLARIFICATION: x]\n  ```\n", False),
+    ("marker quoted in a ~~~ fence", "~~~markdown\n[NEEDS CLARIFICATION: x]\n~~~\n",
+     False),
+    ("marker quoted in a ```` fence that quotes a ``` fence",
+     "````markdown\n```\n[NEEDS CLARIFICATION: x]\n```\n````\n", False),
+    ("no marker at all", "# Spec\n\nNothing open.\n", False),
+]
+
+
+def scan_cases(stage, steps, tmproot):
+    failures = []
+    for name, body, want in SCAN_CASES:
+        workdir = tempfile.mkdtemp(dir=tmproot)
+        link_pipeline(workdir)
+        os.makedirs(os.path.join(workdir, "specs/042-a"))
+        with open(os.path.join(workdir, "specs/042-a/spec.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(body)
+        got = run_marker_scan(steps, workdir, "specs/042-a")[1] == "true"
+        if got != want:
+            failures.append(
+                f"[{stage.name}: scan] {name}: the marker scan said "
+                f"marker={str(got).lower()}, want {str(want).lower()}"
+                + (" -- an open question would be announced as ready" if want
+                   else " -- a quoted marker would veto a settled spec (#1099)"))
+        shutil.rmtree(workdir, ignore_errors=True)
+
+    # A scan that could not run (an image whose awk is missing or rejects the
+    # program, an unreadable spec.md) is no answer: the composite must fail
+    # its step, never report open=false and let readiness be announced over
+    # the marker it never looked for.
+    workdir = tempfile.mkdtemp(dir=tmproot)
+    link_pipeline(workdir)
+    os.makedirs(os.path.join(workdir, "specs/042-a"))
+    with open(os.path.join(workdir, "specs/042-a/spec.md"), "w",
+              encoding="utf-8") as fh:
+        fh.write(SCAN_CASES[0][1])
+    bindir = os.path.join(workdir, "bin")
+    os.makedirs(bindir)
+    with open(os.path.join(bindir, "awk"), "w", encoding="utf-8") as fh:
+        fh.write("#!/bin/sh\necho 'awk: syntax error' >&2\nexit 2\n")
+    os.chmod(os.path.join(bindir, "awk"), 0o755)
+    rc, got = run_marker_scan(steps, workdir, "specs/042-a", bindir)
+    if rc == 0 or got == "false":
+        failures.append(
+            f"[{stage.name}: scan] an awk that fails: the composite exited "
+            f"{rc} with open={got!r} -- a scan that never ran would read as "
+            f"\"no marker\" and readiness would be announced over one")
+    shutil.rmtree(workdir, ignore_errors=True)
     return failures
 
 
@@ -1045,6 +1234,61 @@ def structural_checks(loaded):
     """
     failures = []
 
+    # The colon-form marker scan has one home (#1099, CLAUDE.md "Shared
+    # logic has exactly one home"): the composite calls the shared script,
+    # each stage runs the composite gated exactly as the step that reads its
+    # output (a skipped scan reads as "no marker", the dangerous direction),
+    # and no stage carries a scan of its own.
+    for stage, steps, _ in loaded:
+        own = [m.group(0).strip() for name, step in steps.items() if name != MARKER_PSEUDO
+               for m in OWN_SCAN_RE.finditer(str((step or {}).get("run") or ""))]
+        composite = [m.group("cmd") for m in SCAN_LINE_RE.finditer(
+            str(steps[MARKER_PSEUDO].get("run") or ""))]
+        scan = steps.get(MARKER_STEP) or {}
+        decide = steps[stage.decide]
+        problems = []
+        if own:
+            problems.append(f"carries its own scan {own!r}")
+        if composite != [SHARED_SCAN]:
+            problems.append(f"the composite's scan is {composite!r}, not {SHARED_SCAN!r}")
+        if "wing-commander-clarification-marker" not in str(scan.get("uses") or ""):
+            problems.append(f"has no {MARKER_STEP!r} step using the composite")
+        elif scan.get("id") != "marker-scan":
+            problems.append(f"{MARKER_STEP!r} is not id marker-scan")
+        if scan.get("if") != decide.get("if"):
+            problems.append(f"gates the scan ({scan.get('if')!r}) differently from "
+                            f"{stage.decide!r} ({decide.get('if')!r})")
+        if str((scan.get("with") or {}).get("spec-dir")) != str((decide.get("env") or {}).get("SPEC_DIR")):
+            problems.append("scans a different spec-dir from the one the decision names")
+        if (decide.get("env") or {}).get("OPEN_MARKER") != MARKER_OUTPUT_REF:
+            problems.append(f"{stage.decide!r} does not read OPEN_MARKER from {MARKER_OUTPUT_REF}")
+        # The scan fails its step when it cannot run; the stall notice names
+        # that step only if it is among the failed-step candidates.
+        cands = str(((steps.get(FAILED_STEP) or {}).get("with") or {}).get(
+            "candidates-json") or "")
+        if MARKER_CANDIDATE not in cands:
+            problems.append(f"{FAILED_STEP!r} does not list {MARKER_CANDIDATE!r}, so "
+                            f"a scan that fails stalls with no step named")
+        if problems:
+            failures.append(f"{stage.name}'s colon-form marker scan (#1099): "
+                            + "; ".join(problems))
+
+    # #1103: before the spec PR merges there is no record to mark, so
+    # clarify's stall notice passes an empty spec-dir, as intake's does.
+    for stage, steps, _ in loaded:
+        if stage.name != "clarify":
+            continue
+        notice = [st for st in steps.values()
+                  if "wing-commander-chain-stop-notice" in str((st or {}).get("uses") or "")]
+        bad = [st.get("name") for st in notice
+               if str((st.get("with") or {}).get("spec-dir", "<unset>")) != ""
+               or (st.get("with") or {}).get("spec-branch")]
+        if not notice or bad:
+            failures.append(
+                "clarify's chain-stop-notice call must pass spec-dir \"\" and no "
+                "spec-branch: the spec/<slug> branch does not exist before the "
+                f"spec PR merges (#1103); offending step(s): {bad or 'none found'}")
+
     # 1. The two render blocks are one algorithm.
     renders = {}
     for stage, steps, _ in loaded:
@@ -1067,6 +1311,17 @@ def structural_checks(loaded):
         failures.append(f"cannot read {SCHEMA_CONTRACT} ({exc}); the schemas "
                         f"below have nothing to be checked against.")
         return failures
+    # The contract is live (CLAUDE.md): its marker cross-check section must
+    # describe the composite the stages run, not the bare grep #1099 removed,
+    # or a re-implementation from the contract brings the false veto back.
+    xcheck = contract.split("## Marker cross-check", 1)[-1].split("\n## ", 1)[0]
+    if ("wing-commander-clarification-marker" not in xcheck
+            or OWN_SCAN_RE.search(xcheck)):
+        failures.append(
+            f"{SCHEMA_CONTRACT}'s 'Marker cross-check' section does not describe "
+            f"the scan the stages run: it must name the "
+            f"wing-commander-clarification-marker composite and carry no scan "
+            f"of its own (#1099)")
     published = re.findall(r"^\{\"type\":\"object\".*\}$", contract, re.M)
     for stage, _, _ in loaded:
         wf = open(stage.path, encoding="utf-8").read()
@@ -1123,7 +1378,7 @@ def mut_drop_veto(loaded):
 
 
 def mut_drop_existence_guard(loaded):
-    """Defect (c): clarify greps spec.md with no existence guard."""
+    """Defect (c): clarify reads the scan with no existence guard."""
     for stage, steps, _ in loaded:
         if stage.name != "clarify":
             continue
@@ -1272,12 +1527,123 @@ def mut_no_ordinal_fallback(loaded):
             "$letters[.key] // ((.key + 1) | tostring)", "$letters[.key]")
 
 
+SHARED_SCAN = ('bash "$GITHUB_ACTION_PATH/../_shared/'
+               'open-clarification-marker.sh" "$SPEC_DIR/spec.md"')
+PLAIN_SCAN = "grep -q '\\[NEEDS CLARIFICATION:' \"$SPEC_DIR/spec.md\""
+# The first #1099 fix: balanced ``` fences and single-backtick spans only.
+NAIVE_STRIP_SCAN = ("sed -e '/^[[:space:]]*```/,/^[[:space:]]*```/d' "
+                    "-e 's/`[^`]*`//g' \"$SPEC_DIR/spec.md\" | "
+                    "grep -q '\\[NEEDS CLARIFICATION:'")
+
+
+def _replace_scan(loaded, cmd):
+    for stage, steps, _ in loaded:
+        run = steps[MARKER_PSEUDO]["run"]
+        steps[MARKER_PSEUDO]["run"] = SCAN_LINE_RE.sub(
+            lambda m: m.group(0).replace(m.group("cmd"), cmd), run)
+
+
+def mut_scan_counts_quoted_markers(loaded):
+    """#1099 reverted: the scan counts a marker quoted in code."""
+    _replace_scan(loaded, PLAIN_SCAN)
+
+
+def mut_scan_naive_strip(loaded):
+    """The sed strip: an unclosed or one-line ``` fence deletes every line
+    below it, so a real marker there is never seen."""
+    _replace_scan(loaded, NAIVE_STRIP_SCAN)
+
+
+def mut_scan_failure_reads_clear(loaded):
+    """The composite reads every non-zero exit of the script as "no marker":
+    an awk that is missing or rejects the program clears the spec."""
+    for stage, steps, _ in loaded:
+        run = steps[MARKER_PSEUDO]["run"]
+        steps[MARKER_PSEUDO]["run"] = run.replace(
+            '1) echo "open=false"', '*) echo "open=false"')
+
+
+def mut_scan_step_skipped(loaded):
+    """The scan step is gated so it skips while the decision runs: its empty
+    output reads as "no marker" and readiness is announced over one."""
+    for stage, steps, _ in loaded:
+        steps[MARKER_STEP]["if"] = "false"
+
+
+def smut_intake_inlines_scan(loaded):
+    """intake carries its own copy of the scan instead of the composite."""
+    for stage, steps, _ in loaded:
+        if stage.name == "intake":
+            d = steps[stage.decide]
+            d["run"] = d["run"].replace('if [ "$OPEN_MARKER" = "true" ]; then',
+                                        f"if {NAIVE_STRIP_SCAN}; then")
+
+
+def smut_clarify_pastes_scan_unconditionally(loaded):
+    """clarify re-pastes the bare grep as `grep ... && marker=true`, the
+    form an `if ...; then`-only check never saw."""
+    for stage, steps, _ in loaded:
+        if stage.name == "clarify":
+            d = steps[stage.decide]
+            d["run"] = d["run"].replace(
+                "marker=false\n",
+                f"marker=false\n{PLAIN_SCAN} && marker=true\n", 1)
+
+
+def smut_scan_not_a_failed_step_candidate(loaded):
+    """intake's failed-step candidates forget the scan step that can fail."""
+    for stage, steps, _ in loaded:
+        if stage.name == "intake":
+            w = steps[FAILED_STEP]["with"]
+            w["candidates-json"] = w["candidates-json"].replace(MARKER_CANDIDATE, "")
+
+
+def smut_scan_gated_differently(loaded):
+    """clarify's scan step loses the verdict conjunct its decision has."""
+    for stage, steps, _ in loaded:
+        if stage.name == "clarify":
+            steps[MARKER_STEP]["if"] = "steps.lifecycle-gate.outputs.is-open == 'true'"
+
+
+def smut_clarify_marks_spec_branch(loaded):
+    """#1103 reverted: clarify's stall notice checks out spec/<slug>."""
+    for stage, steps, _ in loaded:
+        if stage.name != "clarify":
+            continue
+        for st in steps.values():
+            if "wing-commander-chain-stop-notice" in str((st or {}).get("uses") or ""):
+                st["with"]["spec-dir"] = "${{ steps.identity-names.outputs.spec-dir }}"
+                st["with"]["spec-branch"] = "spec/${{ steps.identity.outputs.slug }}"
+
+
+# Mutations of what only structural_checks() can see.
+STRUCTURAL_MUTATIONS = [
+    ("intake carrying its own copy of the marker scan", smut_intake_inlines_scan),
+    ("clarify re-pasting the bare grep as `grep ... && marker=true`",
+     smut_clarify_pastes_scan_unconditionally),
+    ("clarify's scan gated differently from the decision that reads it",
+     smut_scan_gated_differently),
+    ("intake's failed-step candidates omitting the marker scan",
+     smut_scan_not_a_failed_step_candidate),
+    ("clarify's stall notice marking a spec/<slug> branch that does not "
+     "exist yet (#1103)", smut_clarify_marks_spec_branch),
+]
+
+
 MUTATIONS = [
+    ("the marker scan counting a marker quoted in code (#1099)",
+     mut_scan_counts_quoted_markers),
+    ("the marker scan's sed strip hiding a marker below an unclosed fence",
+     mut_scan_naive_strip),
+    ("the marker composite reading a scan that failed as open=false",
+     mut_scan_failure_reads_clear),
+    ("the marker scan step skipped while the decision that reads it runs",
+     mut_scan_step_skipped),
     ("the questionnaire arm ignoring `specified` (dead-end callout)",
      mut_drop_specified),
     ("the cross-check logging a mismatch instead of vetoing readiness",
      mut_drop_veto),
-    ("clarify grepping spec.md with no existence guard", mut_drop_existence_guard),
+    ("clarify reading OPEN_MARKER with no existence guard", mut_drop_existence_guard),
     ("jq's // treating an empty string as a present value", mut_blank_strings),
     ("a veto that posts nothing and still finishes the run green",
      mut_fail_step_never_fires),
@@ -1330,13 +1696,27 @@ def main():
                       f"harness keeps proving it can fail.")
                 failures.append(f"mutation inapplicable: {label}")
                 continue
-            broke = suite(mutated, tmproot)
+            broke = suite(mutated, tmproot, scans=any(
+                a[1][MARKER_PSEUDO] != b[1][MARKER_PSEUDO]
+                for a, b in zip(loaded, mutated)))
             if broke:
                 print(f"Mutation OK — {label}: {len(broke)} assertion(s) fail.")
             else:
                 print(f"::error::MUTATION SURVIVED — reintroducing {label} broke "
                       f"nothing in this suite, so the suite is not testing that "
                       f"defect. Fix the scenarios, not the mutation.")
+                failures.append(f"mutation survived: {label}")
+        for label, apply_mutation in STRUCTURAL_MUTATIONS:
+            mutated = [(s, copy.deepcopy(steps), sc) for s, steps, sc in loaded]
+            apply_mutation(mutated)
+            if all(a[1] == b[1] for a, b in zip(loaded, mutated)):
+                print(f"::error::structural mutation {label!r} changed nothing.")
+                failures.append(f"mutation inapplicable: {label}")
+            elif structural_checks(mutated):
+                print(f"Mutation OK — {label}: the structural checks fail.")
+            else:
+                print(f"::error::MUTATION SURVIVED — {label} passed the "
+                      f"structural checks.")
                 failures.append(f"mutation survived: {label}")
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
