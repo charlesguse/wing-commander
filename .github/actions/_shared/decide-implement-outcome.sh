@@ -17,6 +17,10 @@
 #   IMPL_UNCHECKED_IDS_BASE IMPL_IDS_TIP CARRIED_DROPPED_IDS (space-separated
 #   task ids) WRITE_BOUNDARY_ALL_OOB (the write-boundary classifier's
 #   all-unchecked-out-of-boundary, already in both read-back arms' env)
+# specs/123 adds BUILDABLE_CHECKED_BASE BUILDABLE_CHECKED_TIP
+# BUILDABLE_UNCHECKED_TIP (the buildable view): progress uses the buildable
+# checked delta, and a cap or blocker hands off only while buildable work
+# (plus dropped ids) remains. Unset, they fall back to the IMPL_* values.
 # Task identity (owner decisions A and C on #992, option (a)): an id that was
 # unchecked implementation work at base, or that an earlier cycle dropped
 # (CARRIED_DROPPED_IDS, spec-meta.json's dropped_task_ids at the cycle base),
@@ -65,6 +69,14 @@ for id in ${IMPL_UNCHECKED_IDS_BASE:-} ${CARRIED_DROPPED_IDS:-}; do
   dropped_count=$((dropped_count + 1))
 done
 unchecked=$((unchecked + dropped_count))
+# specs/123: progress and the cap/blocker hand-off key on BUILDABLE tasks (a
+# folded review finding or a human-only line must not consume the budget or
+# hold a hand-off open). Unset means a caller that predates the buildable
+# view: fall back to the implementation counts, the old behaviour.
+b_base="$(num "${BUILDABLE_CHECKED_BASE:-$base}" 0)"
+b_tip="$(num "${BUILDABLE_CHECKED_TIP:-$tip}" 0)"
+b_unchecked="$(num "${BUILDABLE_UNCHECKED_TIP:-$unchecked}" 1)"
+if [ -n "${BUILDABLE_UNCHECKED_TIP:-}" ]; then b_unchecked=$((b_unchecked + dropped_count)); fi
 iteration="$(num "$iteration" 0)"
 max="$(num "$max" 0)"
 
@@ -77,12 +89,16 @@ stall_comment=""
 if [ "$ok" = "true" ] && [ "$truncated" = "true" ]; then
   converged=false
 elif [ "$ok" = "true" ]; then
-  if [ "$tip" -gt "$base" ]; then progressed=true; else progressed=false; fi
+  if [ "$b_tip" -gt "$b_base" ]; then progressed=true; else progressed=false; fi
   if [ "$unchecked" -eq 0 ]; then
     converged=true
   else
     converged=false
     if [ "$progressed" = "true" ] || [ -n "$converge_sha" ]; then
+      :
+    elif [ "$b_unchecked" -eq 0 ]; then
+      # Only folded review findings remain: nothing buildable is stuck, so
+      # neither a blocker nor the cap is a hand-off; finalize proceeds.
       :
     elif [ "$blocker_valid" = "true" ]; then
       handoff=true
@@ -106,7 +122,7 @@ fi
 if [ "$ok" = "true" ] && [ "$converged" != "true" ] && [ "$unchecked" -gt 0 ]; then
   if [ "$handoff" = "true" ]; then
     stall_comment="Implement stopped with $unchecked implementation task(s) still unchecked$dropped_note: $stall_reason."
-  elif [ "$max" -gt 0 ] && [ "$iteration" -ge "$max" ]; then
+  elif [ "$max" -gt 0 ] && [ "$iteration" -ge "$max" ] && [ "$b_unchecked" -gt 0 ]; then
     stall_reason="the iteration cap ($max) was reached"
     if [ "$blocker_valid" = "true" ]; then
       stall_reason="$stall_reason; the agent also reported a blocker: $blocker_text"
