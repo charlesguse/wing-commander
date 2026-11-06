@@ -406,7 +406,13 @@ confirm no review runs and the stand-down is recorded.
   check blocks them, or the push is refused), the round MUST NOT move the
   label, and states the questions on the lifecycle issue as a hand-off to
   the owner (FR-017) and in the result comment, as FR-015 does for a blocked
-  fix. Clarify can fold only questions that exist as markers.
+  fix. Clarify can fold only questions that exist as markers, and it still
+  runs on a reply while the issue is at `stage:spec`
+  (`wing-commander-2-clarify.yml`), where it finds no open marker and asks
+  for a clearer answer (`clarify.yml`'s prompt, step 2). So the hand-off MUST
+  say that a reply on the issue will not be folded, and that the owner
+  answers by editing the spec on the branch, which is then settled by a
+  maintainer's dispatch (FR-027) or a later stage's announcement (FR-015d).
 - **FR-015d**: A head the round itself pushed MUST settle again under
   FR-002 before another round reviews it. When the round raised owner
   decisions, clarify's ready announcement after folding in the answers
