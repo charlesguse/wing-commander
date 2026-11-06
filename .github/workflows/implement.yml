@@ -1358,7 +1358,9 @@ jobs:
                each task phase completes (commit messages prefixed
                "implement:"); push after every phase — do not defer all
                pushes to the end, so partial work survives if this run is
-               interrupted (e.g. by the turn budget).
+               interrupted (e.g. by the turn budget). Keep building every
+               buildable unchecked task across phases in this one run: a
+               phase checkpoint is a place to push, not a stopping point.
             2. Update ${{ steps.spec.outputs.spec-dir }}/spec-meta.json to
                "stage": "implement" and
                "iteration": ${{ inputs.iteration }},
@@ -2379,7 +2381,9 @@ jobs:
                each task phase completes (commit messages prefixed
                "implement:"); push after every phase — do not defer all
                pushes to the end, so partial work survives if this run is
-               interrupted (e.g. by the turn budget).
+               interrupted (e.g. by the turn budget). Keep building every
+               buildable unchecked task across phases in this one run: a
+               phase checkpoint is a place to push, not a stopping point.
             3. Update ${{ steps.spec.outputs.spec-dir }}/spec-meta.json to
                "stage": "implement" and
                "iteration": ${{ inputs.iteration }},
