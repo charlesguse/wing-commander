@@ -134,6 +134,16 @@ if [ "$ok" = "true" ] && [ "$converged" != "true" ] && [ "$unchecked" -gt 0 ]; t
   fi
 fi
 
+# specs/123 FR-003: the one-line cycle outcome. Callers append it to the
+# lifecycle comment and the metrics record verbatim (single home). TURNS_USED
+# and TURN_BUDGET come from the run's execution record; unknown renders "?".
+ticked=$((b_tip > b_base ? b_tip - b_base : 0))
+turns_used="${TURNS_USED:-}"; turn_budget="${TURN_BUDGET:-}"
+case "$turns_used" in ''|*[!0-9]*) turns_used="?" ;; esac
+case "$turn_budget" in ''|*[!0-9]*) turn_budget="?" ;; esac
+cycle_outcome="Cycle $iteration: ticked $ticked buildable task(s), $b_unchecked buildable remaining, used $turns_used of $turn_budget turns."
+
+printf 'cycle-outcome=%s\n' "$cycle_outcome"
 printf 'converged=%s\n' "$converged"
 printf 'progressed=%s\n' "$progressed"
 printf 'handoff=%s\n' "$handoff"
