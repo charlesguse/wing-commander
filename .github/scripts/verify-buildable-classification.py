@@ -138,6 +138,22 @@ def check_prompt(failures):
             failures.append(f"implement.yml: both prompts must carry {needle!r}")
 
 
+def check_cycle_outcome_wiring(failures):
+    """FR-003 / single home: implement.yml picks the cycle-outcome line from
+    decide-implement-outcome.sh in both arms and never formats it itself."""
+    text = open(os.path.join(ROOT, ".github", "workflows", "implement.yml")).read()
+    if text.count('cycle_outcome="$(pick cycle-outcome)"') < 2:
+        failures.append("implement.yml: both read-back arms must pick cycle-outcome")
+    if "CYCLE_OUTCOME" not in text:
+        failures.append("implement.yml: the progress comment must carry CYCLE_OUTCOME")
+    if re.search(r"buildable task\(s\)", text):
+        failures.append("implement.yml: a copy of the cycle-outcome formatter "
+                        "must live only in decide-implement-outcome.sh")
+    src = open(DECIDE).read()
+    if "buildable task(s)" not in src:
+        failures.append("decide-implement-outcome.sh lost the cycle-outcome formatter")
+
+
 def check_unreadable(failures):
     with tempfile.TemporaryDirectory() as tmp:
         git(tmp, "init", "-q")
@@ -166,6 +182,7 @@ def main():
     check_classification(failures)
     check_cap_outcome(failures)
     check_prompt(failures)
+    check_cycle_outcome_wiring(failures)
     check_unreadable(failures)
     check_single_home(failures)
     if failures:

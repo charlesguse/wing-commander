@@ -40,12 +40,12 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 
 **Independent Test**: The implement prompt states a checkpoint is not a stopping point while push-per-phase remains; the cycle-outcome line shows ticked, remaining and turns from tasks.md base/tip and the execution record.
 
-- [ ] T009 [US1] Add cycle-outcome fixtures in `.github/scripts/fixtures/123-implement-task-completion/cycle-outcome/` (base/tip tasks.md pairs plus a sample execution record giving turns used and budget; include a case where converge appended tasks)
+- [x] T009 [US1] Add cycle-outcome fixtures in `.github/scripts/fixtures/123-implement-task-completion/cycle-outcome/` (base/tip tasks.md pairs plus a sample execution record giving turns used and budget; include a case where converge appended tasks)
 - [x] T010 [US1] Edit the implement prompt in `.github/workflows/implement.yml` (both copies, near the two existing prompt blocks) to direct the agent to keep building every buildable unchecked task across phases, state that a phase checkpoint is not a stopping point, and keep "push at each phase boundary" (FR-001, FR-002); if the copies are byte-compared by an existing gate, update that gate's expectation in the same change
-- [ ] T011 [US1] In `.github/actions/wing-commander-implement-outcome/action.yml` (and `.github/actions/_shared/decide-implement-outcome.sh` if the arithmetic belongs there) compute `buildable_ticked` (tip minus base `buildable-checked-count`), `buildable_remaining` (tip `buildable-unchecked-count` plus dropped ids) and `turns_used`/`turn_budget` from the run's execution record, and emit a single cycle-outcome line output (FR-003)
-- [ ] T012 [US1] Append the cycle-outcome line to the lifecycle issue comment and the metrics record in `.github/workflows/implement.yml`, consuming the composite output only (no formatter pasted into the workflow; single-home rule)
+- [x] T011 [US1] In `.github/actions/wing-commander-implement-outcome/action.yml` (and `.github/actions/_shared/decide-implement-outcome.sh` if the arithmetic belongs there) compute `buildable_ticked` (tip minus base `buildable-checked-count`), `buildable_remaining` (tip `buildable-unchecked-count` plus dropped ids) and `turns_used`/`turn_budget` from the run's execution record, and emit a single cycle-outcome line output (FR-003)
+- [x] T012 [US1] Append the cycle-outcome line to the lifecycle issue comment and the metrics record in `.github/workflows/implement.yml`, consuming the composite output only (no formatter pasted into the workflow; single-home rule)
 - [x] T013 [US1] Pass the cycle-start gate-suite job's readiness as `GATE_SUITE_READY` into the base and tip counter calls in `.github/workflows/implement.yml` (same value for both, FR-008)
-- [ ] T014 [US1] Extend `.github/scripts/verify-buildable-classification.py` (or add a sibling `.github/scripts/verify-cycle-outcome.py`) to check the T009 fixtures and that the implement prompt contains the "not a stopping point" and push-per-phase statements
+- [x] T014 [US1] Extend `.github/scripts/verify-buildable-classification.py` (or add a sibling `.github/scripts/verify-cycle-outcome.py`) to check the T009 fixtures and that the implement prompt contains the "not a stopping point" and push-per-phase statements
 
 **Checkpoint**: US1 independently verifiable via gates.
 
@@ -107,7 +107,7 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 
 ## Phase 8: Polish & Cross-Cutting
 
-- [ ] T035 [P] Add the "single home" check for the cycle-outcome formatter and counting to the nearest existing gate (e.g. `verify-metrics-summary-record-emission.py`) so a pasted copy in a workflow fails
+- [x] T035 [P] Add the "single home" check for the cycle-outcome formatter and counting to the nearest existing gate (e.g. `verify-metrics-summary-record-emission.py`) so a pasted copy in a workflow fails
 - [ ] T036 [P] Update `specs/123-implement-task-completion/quickstart.md` only if the shipped fixture names or commands differ from it
 - [ ] T037 Run `python .github/scripts/run-local-gates.py` and confirm every gate, including all new ones, passes
 
