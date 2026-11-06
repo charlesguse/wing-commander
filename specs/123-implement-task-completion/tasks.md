@@ -75,7 +75,7 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 - [x] T021 [US3] Wire the new inputs through `.github/actions/wing-commander-implement-outcome/action.yml` and the call site in `.github/workflows/implement.yml`
 - [x] T022 [US3] In `.github/workflows/finalize.yml` add a refusal step before PR creation that reads `buildable-unchecked-count` from `wing-commander-tasks-checkbox-count` at the spec-branch tip and, when > 0, comments the remaining list on the lifecycle issue and fails closed with no PR; no override input; give it a one-line fallback if the composite did not run (FR-010)
 - [x] T023 [US3] In `.github/workflows/lifecycle-review-gate.yml` make the select step read the same composite at the PR head and skip a final PR with `buildable-unchecked-count` > 0, logging the reason (FR-010)
-- [ ] T024 [US3] Run the `review-step-gating` skill over the T022/T023 `if:`/exit-code changes and fix findings in `.github/workflows/finalize.yml` and `.github/workflows/lifecycle-review-gate.yml`
+- [x] T024 [US3] Run the `review-step-gating` skill over the T022/T023 `if:`/exit-code changes and fix findings in `.github/workflows/finalize.yml` and `.github/workflows/lifecycle-review-gate.yml`
 - [x] T025 [P] [US3] Create `.github/scripts/verify-finalize-buildable-wait.py` (gate) that drives the T019 fixtures through the decision logic and asserts finalize and the review gate both consume the composite's `buildable-unchecked-count` (no second counter), and register it in `run-local-gates.py`'s derivation
 
 ---
@@ -89,7 +89,7 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 - [x] T026 [US5] Add hand-off fixtures in `.github/scripts/fixtures/123-implement-task-completion/cap-outcome/`: cap with buildable left (hand-off), validated blocker with buildable left (FR-015a), blocker with only folds/maintainer-only left, resumed cycle at recorded+1
 - [x] T027 [US5] Ensure `.github/actions/_shared/decide-implement-outcome.sh` sets `handoff=true` for the cap and for a validated blocker only when buildable unchecked (plus dropped ids) > 0, with no finalize dispatch and the remaining buildable and maintainer-only tasks listed on the lifecycle issue via the remaining-work composite (FR-015, FR-015a)
 - [x] T028 [US5] Extend "Flip stage label (first cycle)" in `.github/workflows/implement.yml` so a resumed cycle (iteration recorded+1 after a stalled hand-off) also removes `stage:stalled`; leave the idempotency guard unchanged
-- [ ] T029 [US5] Add a watchdog fixture showing the FR-015 hand-off (stage `stalled`, label, hand-off comment) yields no `stage-mismatch` or `lost-progress` finding; adjust the watchdog's classification in `.github/workflows/watchdog.yml` or its script only if the fixture fails, and add the fixture check to the gate from T025
+- [x] T029 [US5] Add a watchdog fixture showing the FR-015 hand-off (stage `stalled`, label, hand-off comment) yields no `stage-mismatch` or `lost-progress` finding; adjust the watchdog's classification in `.github/workflows/watchdog.yml` or its script only if the fixture fails, and add the fixture check to the gate from T025
 - [ ] T030 [US5] Run `python .github/scripts/run-local-gates.py` and fix failures introduced by Phases 2–6
 
 ---
