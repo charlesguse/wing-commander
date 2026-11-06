@@ -529,8 +529,11 @@ confirm no review runs and the stand-down is recorded.
   logs.
 - **SC-003**: No head SHA is reviewed more than once by a completed round.
 - **SC-004**: Replaying the spec PRs of #1078 and #1086 at the heads the
-  manual reviews saw produces a "not ready" verdict with a finding naming
-  the same requirement (spec 119 FR-022; spec 120 FR-002).
+  manual reviews saw, each checked against `main` as it stood when that
+  manual review ran, produces a "not ready" verdict with a finding naming
+  the same requirement (spec 119 FR-022; spec 120 FR-002). Current `main`
+  no longer carries spec 119's conflict: constitution v2.7.0 (#1114) made
+  the hold label constitution X's ninth gate.
 - **SC-005**: The pipeline never approves, requests changes on, or merges a
   spec PR — zero such events attributable to this feature.
 - **SC-006**: Setting the kill switch stops all new rounds from the next
