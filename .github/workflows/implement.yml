@@ -3830,6 +3830,25 @@ jobs:
           gh issue edit "$ISSUE" --remove-label "stage:tasks"   2>/dev/null || true
           gh issue edit "$ISSUE" --remove-label "stage:stalled" 2>/dev/null || true
 
+      # specs/123 FR-015: a stalled hand-off is resumed one cycle at a time
+      # (iteration recorded+1), so a completed later cycle lifts the
+      # `stage:stalled` label the first-cycle flip above never reaches.
+      # Removing an absent label is a no-op, so ordinary later cycles
+      # change nothing.
+      - name: Lift stalled label (resumed cycle)
+        id: lift-stalled
+        if: >-
+          steps.lifecycle-gate.outputs.is-open == 'true' &&
+          steps.guard.outputs.skip != 'true' &&
+          steps.final.outputs.ok == 'true' &&
+          inputs.iteration > 1
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE: ${{ inputs.issue-number }}
+        run: |
+          gh issue edit "$ISSUE" --remove-label "stage:stalled" 2>/dev/null || true
+
       # Exactly one outbound hand-off per completed cycle — finalize
       # (converged), the next iteration (below the cap), or, at the cap, the
       # remaining-work report plus a non-converged finalize. Deterministic; no
