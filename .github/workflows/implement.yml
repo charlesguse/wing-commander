@@ -1729,6 +1729,7 @@ jobs:
         with:
           ref: ${{ steps.base.outputs.base-sha }}
           path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+          gate-suite-ready: ${{ needs.gate-suite-implement-cycle.outputs.ready == 'true' && 'true' || 'false' }}
 
       - name: Count tasks.md checkboxes at tip (cycle)
         id: checkbox-tip-cycle
@@ -1737,6 +1738,7 @@ jobs:
         with:
           ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+          gate-suite-ready: ${{ needs.gate-suite-implement-cycle.outputs.ready == 'true' && 'true' || 'false' }}
 
       # specs/090-stage-write-boundary (FR-006): classifies the tip's own
       # unchecked items (checkbox-tip-cycle's own text, never a second read
@@ -1815,6 +1817,9 @@ jobs:
           IMPL_CHECKED_BASE: ${{ steps.checkbox-base-cycle.outputs.impl-checked-count }}
           IMPL_CHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-checked-count }}
           IMPL_UNCHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-unchecked-count }}
+          BUILDABLE_CHECKED_BASE: ${{ steps.checkbox-base-cycle.outputs.buildable-checked-count }}
+          BUILDABLE_CHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.buildable-checked-count }}
+          BUILDABLE_UNCHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.buildable-unchecked-count }}
           IMPL_UNCHECKED_IDS_BASE: ${{ steps.checkbox-base-cycle.outputs.impl-unchecked-ids }}
           IMPL_IDS_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-ids }}
           # Ids earlier cycles dropped (spec-meta.json's dropped_task_ids at
@@ -2708,6 +2713,7 @@ jobs:
         with:
           ref: ${{ steps.retry-base.outputs.base-sha }}
           path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+          gate-suite-ready: ${{ needs.gate-suite-implement-cycle.outputs.ready == 'true' && 'true' || 'false' }}
 
       - name: Count tasks.md checkboxes at tip (retry)
         id: checkbox-tip-retry
@@ -2716,6 +2722,7 @@ jobs:
         with:
           ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+          gate-suite-ready: ${{ needs.gate-suite-implement-cycle.outputs.ready == 'true' && 'true' || 'false' }}
 
       # specs/090-stage-write-boundary (FR-006): mirrors the cycle arm's
       # identical classification step above.
@@ -2773,6 +2780,9 @@ jobs:
           IMPL_CHECKED_BASE: ${{ steps.checkbox-base-retry.outputs.impl-checked-count }}
           IMPL_CHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-checked-count }}
           IMPL_UNCHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-unchecked-count }}
+          BUILDABLE_CHECKED_BASE: ${{ steps.checkbox-base-retry.outputs.buildable-checked-count }}
+          BUILDABLE_CHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.buildable-checked-count }}
+          BUILDABLE_UNCHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.buildable-unchecked-count }}
           IMPL_UNCHECKED_IDS_BASE: ${{ steps.checkbox-base-retry.outputs.impl-unchecked-ids }}
           IMPL_IDS_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-ids }}
           # The retry's base already carries the primary attempt's tasks.md

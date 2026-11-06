@@ -97,6 +97,36 @@ def check_classification(failures):
                 failures.append(f"{name}: {k} expected {v!r}, got {got.get(k)!r}")
 
 
+DECIDE = os.path.join(ROOT, ".github", "actions", "_shared", "decide-implement-outcome.sh")
+
+
+def check_cap_outcome(failures):
+    """Each `<name>.env` is the stop rule's input; `<name>.expected` pins
+    output keys (FR-006, FR-014, FR-015, FR-015a)."""
+    d = os.path.join(FIXTURES, "cap-outcome")
+    names = sorted(f[: -len(".env")] for f in os.listdir(d) if f.endswith(".env"))
+    if not names:
+        failures.append("no cap-outcome fixtures found")
+    for name in names:
+        exp = os.path.join(d, name + ".expected")
+        if not os.path.exists(exp):
+            failures.append(f"cap-outcome/{name}: missing .expected file")
+            continue
+        env = {"PATH": os.environ.get("PATH", "")}
+        for line in open(os.path.join(d, name + ".env")).read().splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                env[k] = v
+        proc = subprocess.run(["bash", DECIDE], env=env, capture_output=True, text=True)
+        got = parse_outputs(proc.stdout)
+        for line in open(exp).read().splitlines():
+            if "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if got.get(k) != v:
+                failures.append(f"cap-outcome/{name}: {k} expected {v!r}, got {got.get(k)!r}")
+
+
 def check_unreadable(failures):
     with tempfile.TemporaryDirectory() as tmp:
         git(tmp, "init", "-q")
@@ -123,6 +153,7 @@ def check_single_home(failures):
 def main():
     failures = []
     check_classification(failures)
+    check_cap_outcome(failures)
     check_unreadable(failures)
     check_single_home(failures)
     if failures:
