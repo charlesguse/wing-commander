@@ -55,8 +55,25 @@ def check_wiring(failures):
             failures.append(f"{name} holds a second unchecked-task counter")
 
 
+def check_watchdog_handoff(failures):
+    """FR-015 hand-off (stage stalled + stalled label) yields no stage-mismatch."""
+    fx = os.path.join(vbc.FIXTURES, "watchdog-handoff", "stalled-handoff.expected")
+    if not os.path.exists(fx):
+        failures.append("watchdog-handoff fixture missing")
+        return
+    state = dict(l.split("=", 1) for l in open(fx).read().splitlines() if "=" in l)
+    wd = open(os.path.join(ROOT, ".github", "workflows", "watchdog.yml")).read()
+    m = re.search(r'id: collect-spec-meta\n.*?(?=\n      - name:)', wd, re.S)
+    body = m.group(0) if m else ""
+    skips = ('"$META_STAGE" = "stalled"' in body and '"$STALLED_LABEL" = "true"' in body
+             and "exit 0" in body.split('"$STALLED_LABEL" = "true"', 1)[-1][:400])
+    if state.get("meta-stage") == "stalled" and state.get("stalled-label") == "true" and not skips:
+        failures.append("watchdog collect-spec-meta must skip a stalled hand-off (stage stalled + label)")
+
+
 def main():
     failures = []
+    check_watchdog_handoff(failures)
     check_fixtures(failures)
     check_wiring(failures)
     if failures:
