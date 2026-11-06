@@ -382,6 +382,18 @@ INTAKE_SCENARIOS = [
         expect_cost_report=True,
     ),
     dict(
+        name="spec only quotes the marker in code, no open questions (#1099)",
+        why="#1099: spec 122 is about the clarification marker, so its text "
+            "quotes it in backticks and a fenced block. A scan that counts "
+            "quoted markers vetoes a spec with no open question and stalls "
+            "the lifecycle after the owner has answered everything.",
+        result={"specified": True, "clarifications": []},
+        spec_dir="specs/042-a-feature", markers="quoted",
+        expect_valid=True, expect_needed="false",
+        expect_fires={"resolve_pr", "announce_pr"}, expect_run_red=False,
+        expect_cost_report=True,
+    ),
+    dict(
         name="no questions returned but the spec still has markers (defect b)",
         why="The agent left colon-form markers in the committed spec.md (which "
             "prompt step 3 tells it to do) but returned clarifications: []. "
@@ -598,6 +610,17 @@ CLARIFY_SCENARIOS = [
         expect_run_red=False, expect_cost_report=True,
     ),
     dict(
+        name="reply resolved everything; the spec only quotes the marker in code (#1099)",
+        why="#1099: spec 122 is about the clarification marker, so its text "
+            "quotes it in backticks and a fenced block. A scan that counts "
+            "quoted markers vetoes a spec with no open question and stalls "
+            "the lifecycle after the owner has answered everything.",
+        result={"answered": True, "clarifications": []},
+        spec_dir="specs/042-a-feature", markers="quoted", expect_valid=True,
+        expect_outcome="ready", expect_fires={"resolve_pr", "announce_pr"},
+        expect_run_red=False, expect_cost_report=True,
+    ),
+    dict(
         name="no questions returned but the spec still has markers (defect b)",
         why="Same veto as intake's: announcing readiness here merges the "
             "markers. And the same second half — blocking the callout without "
@@ -693,7 +716,12 @@ def run_scenario(stage, steps, sc, tmproot):
             res = sc.get("result") or {}
             markers = bool(res.get("clarifications"))
         body = "# Spec\n"
-        if markers:
+        if markers == "quoted":
+            # #1099: a spec that talks ABOUT the marker (spec 122 describes
+            # it) quotes it in code, never as an open question.
+            body += ("\nSettled means no `[NEEDS CLARIFICATION:` marker remains.\n"
+                     "\n```\n[NEEDS CLARIFICATION: example]\n```\n")
+        elif markers:
             body += "\n[NEEDS CLARIFICATION: which auth provider?]\n"
         with open(os.path.join(workdir, sc["spec_dir"], "spec.md"),
                   "w", encoding="utf-8") as fh:
@@ -1045,6 +1073,34 @@ def structural_checks(loaded):
     """
     failures = []
 
+    # The colon-form marker scan is one line written twice (#1099).
+    scans = {}
+    for stage, steps, _ in loaded:
+        found = [m.group(0) for step in steps.values()
+                 for m in [MARKER_SCAN_RE.search(str((step or {}).get("run") or ""))] if m]
+        scans[stage.name] = found
+    if any(len(v) != 1 for v in scans.values()) or len({v[0] for v in scans.values() if v}) != 1:
+        failures.append(
+            "the intake and clarify colon-form marker scans must be one line, "
+            "identical in both stages, that strips code before grepping "
+            f"(#1099); found {scans!r}")
+
+    # #1103: before the spec PR merges there is no record to mark, so
+    # clarify's stall notice passes an empty spec-dir, as intake's does.
+    for stage, steps, _ in loaded:
+        if stage.name != "clarify":
+            continue
+        notice = [st for st in steps.values()
+                  if "wing-commander-chain-stop-notice" in str((st or {}).get("uses") or "")]
+        bad = [st.get("name") for st in notice
+               if str((st.get("with") or {}).get("spec-dir", "<unset>")) != ""
+               or (st.get("with") or {}).get("spec-branch")]
+        if not notice or bad:
+            failures.append(
+                "clarify's chain-stop-notice call must pass spec-dir \"\" and no "
+                "spec-branch: the spec/<slug> branch does not exist before the "
+                f"spec PR merges (#1103); offending step(s): {bad or 'none found'}")
+
     # 1. The two render blocks are one algorithm.
     renders = {}
     for stage, steps, _ in loaded:
@@ -1272,7 +1328,22 @@ def mut_no_ordinal_fallback(loaded):
             "$letters[.key] // ((.key + 1) | tostring)", "$letters[.key]")
 
 
+MARKER_SCAN_RE = re.compile(r"if sed .*\| grep -q '\\\[NEEDS CLARIFICATION:'; then")
+PLAIN_SCAN = "if grep -q '\\[NEEDS CLARIFICATION:' \"$SPEC_DIR/spec.md\"; then"
+
+
+def mut_scan_counts_quoted_markers(loaded):
+    """#1099 reverted: the scan counts a marker quoted in code."""
+    for stage, steps, _ in loaded:
+        for step in steps.values():
+            run = (step or {}).get("run")
+            if isinstance(run, str) and MARKER_SCAN_RE.search(run):
+                step["run"] = MARKER_SCAN_RE.sub(lambda m: PLAIN_SCAN, run)
+
+
 MUTATIONS = [
+    ("the marker scan counting a marker quoted in code (#1099)",
+     mut_scan_counts_quoted_markers),
     ("the questionnaire arm ignoring `specified` (dead-end callout)",
      mut_drop_specified),
     ("the cross-check logging a mismatch instead of vetoing readiness",

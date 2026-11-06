@@ -1540,7 +1540,12 @@ jobs:
           # while the path it guards is not the path that ran. So the skip
           # is always SAID, matching clarify.yml.
           if [ -n "$SPEC_DIR" ] && [ -f "$SPEC_DIR/spec.md" ]; then
-            if grep -q '\[NEEDS CLARIFICATION:' "$SPEC_DIR/spec.md"; then
+            # A marker quoted inside backticks or a fenced code block is a spec
+            # talking about the marker, not an open question (#1099: spec 122
+            # describes the marker itself), so code is stripped before the scan.
+            # Kept byte-identical in intake.yml and clarify.yml
+            # (verify-clarification-gating.py).
+            if sed -e '/^[[:space:]]*```/,/^[[:space:]]*```/d' -e 's/`[^`]*`//g' "$SPEC_DIR/spec.md" | grep -q '\[NEEDS CLARIFICATION:'; then
               marker=true
             else
               marker=false
