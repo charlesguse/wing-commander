@@ -276,18 +276,28 @@ rendering-location decision).
 
 ## Marker cross-check (FR-004–FR-008)
 
-Both decision steps additionally run, against the **post-edit** `spec.md`
+Both decision steps additionally read, for the **post-edit** `spec.md`
 (for `clarify.yml`, after the agent's file edits — matching spec 019's
 existing ordering discipline, `specs/019-next-step-callouts/contracts/
-callout-points.md`):
+callout-points.md`), the `open` output of a "Scan spec.md for an open
+clarification marker" step (`id: marker-scan`) that runs the
+`wing-commander-clarification-marker` composite, gated exactly as the
+decision step:
 
 ```bash
-if grep -q '\[NEEDS CLARIFICATION:' "$SPEC_DIR/spec.md"; then
+if [ "$OPEN_MARKER" = "true" ]; then
   marker=true
 else
   marker=false
 fi
 ```
+
+The composite is the scan's one home (#1099): it runs the shared script
+under `.github/actions/_shared/` (its header is the rule), which ignores a
+colon-form marker quoted in a fenced block or an inline code span, so a
+spec that describes the marker is not read as one that carries it. A scan
+that cannot run fails its step rather than report "no marker". No decision
+step carries a scan of its own (`verify-clarification-gating.py`).
 
 The cross-check needs a `spec.md` on disk, so it is skipped entirely when
 the stage resolved no spec directory (intake's no-spec path) — it never

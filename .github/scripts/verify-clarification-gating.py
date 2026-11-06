@@ -1311,6 +1311,17 @@ def structural_checks(loaded):
         failures.append(f"cannot read {SCHEMA_CONTRACT} ({exc}); the schemas "
                         f"below have nothing to be checked against.")
         return failures
+    # The contract is live (CLAUDE.md): its marker cross-check section must
+    # describe the composite the stages run, not the bare grep #1099 removed,
+    # or a re-implementation from the contract brings the false veto back.
+    xcheck = contract.split("## Marker cross-check", 1)[-1].split("\n## ", 1)[0]
+    if ("wing-commander-clarification-marker" not in xcheck
+            or OWN_SCAN_RE.search(xcheck)):
+        failures.append(
+            f"{SCHEMA_CONTRACT}'s 'Marker cross-check' section does not describe "
+            f"the scan the stages run: it must name the "
+            f"wing-commander-clarification-marker composite and carry no scan "
+            f"of its own (#1099)")
     published = re.findall(r"^\{\"type\":\"object\".*\}$", contract, re.M)
     for stage, _, _ in loaded:
         wf = open(stage.path, encoding="utf-8").read()
