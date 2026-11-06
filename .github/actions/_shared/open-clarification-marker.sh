@@ -9,7 +9,9 @@
 # a spec that had none.
 #
 # Invoke with
-#   bash .wing-commander-pipeline/.github/actions/_shared/open-clarification-marker.sh <spec.md>
+#   bash "$GITHUB_ACTION_PATH/../_shared/open-clarification-marker.sh" <spec.md>
+# from a composite only; wing-commander-clarification-marker is the front
+# door the published stages use (Gate 60).
 # -- `bash file`, never the file itself (count-tasks-checkboxes.sh: same
 # reason). Exit 0: an open marker is present. Exit 1: none. Exit 2: the file
 # could not be read (the callers' existence guard runs first).

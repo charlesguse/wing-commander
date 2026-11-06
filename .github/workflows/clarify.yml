@@ -1046,6 +1046,17 @@ jobs:
           echo "::error::wing-commander clarify stage: agent step rejected — verdict=$VERDICT: $REASON"
           exit 1
 
+      # The colon-form marker scan's one home (#1099): a marker quoted in
+      # code is not an open question. Gated exactly as the step that reads it,
+      # so a run that decides is never one whose scan was skipped
+      # (verify-clarification-gating.py).
+      - name: Scan spec.md for an open clarification marker
+        id: marker-scan
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-clarification-marker
+        with:
+          spec-dir: ${{ steps.ctx.outputs.spec-dir }}
+
       # Deterministic kind decision (contracts/callout-points.md rows 3/4).
       # outcome=none covers the agent's early-STOP path (step 2: the reply
       # didn't answer any open question) — the agent's own gh issue comment
@@ -1056,6 +1067,7 @@ jobs:
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.agent-verdict.outputs.verdict == 'healthy'
         env:
           SPEC_DIR: ${{ steps.ctx.outputs.spec-dir }}
+          OPEN_MARKER: ${{ steps.marker-scan.outputs.open }}
         run: |
           f="$RUNNER_TEMP/claude-execution-output.json"
           raw="$(jq -r '[.[] | select(.type=="result")] | last | .result // empty' "$f" 2>/dev/null || true)"
@@ -1094,9 +1106,7 @@ jobs:
             # spurious mismatch — the cross-check crying wolf about its own
             # inability to read the file.
             if [ -n "$SPEC_DIR" ] && [ -f "$SPEC_DIR/spec.md" ]; then
-              # A marker quoted in code is not an open question (#1099); the scan's
-              # one home, and why, is _shared/open-clarification-marker.sh.
-              if bash .wing-commander-pipeline/.github/actions/_shared/open-clarification-marker.sh "$SPEC_DIR/spec.md"; then
+              if [ "$OPEN_MARKER" = "true" ]; then
                 marker=true
               else
                 marker=false
