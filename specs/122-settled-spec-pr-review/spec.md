@@ -78,6 +78,26 @@ it never replaces it. The spec PR merge stays human (constitution V).
   (2), then a hand-off to the owner.** Transient failures don't use up review
   rounds, and retries stay bounded, unlike parked #869 (FR-028).
 
+### Session 2026-11-06 (owner, after spec review 2)
+
+- Q: How do the review's owner-decision questions reach clarify, which reads
+  only open clarification markers in spec.md? → A: **A. Write markers too.**
+  In the same path-bounded push, the round writes each question into spec.md
+  as a colon-form clarification marker and also posts it on the issue, as
+  intake does. The marker check in FR-002(b) then blocks a re-review until
+  clarify folds the answers. No published stage changes. Marker lines are
+  not fixes and are exempt from FR-026's citation check (FR-015c, FR-026).
+- Q: Where may a fix's cited precedent live? → A: **A. Where it actually
+  is.** A line on the default branch for the constitution, merged specs and
+  workflow facts; a line in the spec's own files on the reviewed head for its
+  recorded answers; an issue comment in this repository, confirmed through
+  the API, for recorded owner decisions (FR-026).
+- Q: Does a maintainer's dispatch still require `stage:spec`? → A: **Yes**,
+  answered from the spec itself: FR-027 lists only the announcement and
+  unchanged-head conditions as skipped, so the stage check stands. The
+  maintainer clears `stage:clarify`, or lets clarify finish, before
+  dispatching (FR-027).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A settled spec PR is reviewed and the result is on the PR (Priority: P1)
@@ -373,7 +393,11 @@ confirm no review runs and the stand-down is recorded.
   lifecycle issue as new clarification questions — each with at least two
   options and a recommendation (FR-014) — and move the lifecycle issue from
   `stage:spec` back to `stage:clarify`, so the answers are taken and folded
-  into the spec by the clarify stage, not in chat.
+  into the spec by the clarify stage, not in chat. In the same path-bounded
+  push (FR-015b), the round MUST also write each question into the spec's
+  spec.md as a colon-form clarification marker, so clarify, which works from
+  open markers, can fold the answers, and FR-002(b)'s marker scan blocks a
+  re-review until it has (owner decision 2026-11-06, after spec review 2).
 - **FR-015d**: A head the round itself pushed MUST settle again under
   FR-002 before another round reviews it. When the round raised owner
   decisions, clarify's ready announcement after folding in the answers
@@ -434,13 +458,19 @@ confirm no review runs and the stand-down is recorded.
 - **FR-026**: Before the reviewer's fix commits are pushed (FR-015a,
   FR-015b), deterministic code MUST check that the fix diff touches only the
   spec's own files, stays within a fixed size cap, and that each fix cites a
-  file:line on the default branch that exists. A fix that fails any check
+  precedent that exists where it lives: a file:line on the default branch for
+  the constitution, a merged spec or a workflow fact; a file:line in the
+  spec's own files on the reviewed head for its recorded answers; or an issue
+  comment in this repository, confirmed through the API, for a recorded owner
+  decision. FR-015c's clarification marker lines are not fixes and are exempt
+  from the citation check, but not from the path and size checks. A fix that fails any check
   MUST be reported as a finding and not pushed (constitution IX; X's
   size-and-path backstop is the precedent).
 - **FR-027**: A maintainer's manual dispatch naming one spec pull request
   MUST count as that head's settling act; a dispatch whose triggering actor
   is a bot is not a maintainer's. It still requires the pull request
-  to be open on this repository's `spec-draft/` branch, and requires that
+  to be open on this repository's `spec-draft/` branch, requires that the
+  lifecycle issue carries `stage:spec`, and requires that
   FR-002(b)'s colon-form marker scan finds no open clarification marker. It
   skips the readiness-announcement and unchanged-since-announcement
   conditions of FR-002.
