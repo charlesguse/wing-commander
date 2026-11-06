@@ -208,8 +208,8 @@ carries options and a recommendation.
    owner decision).
 2. **Given** a finding requiring an owner trade-off, **Then** it is phrased
    as a question with at least two options and one recommendation, posted on
-   the lifecycle issue, and the issue moves from `stage:spec` to
-   `stage:clarify`.
+   the lifecycle issue and written into spec.md as a clarification marker
+   (FR-015c), and the issue moves from `stage:spec` to `stage:clarify`.
 3. **Given** a finding that is an unambiguous error (FR-015a), **Then** the
    fix is pushed to the `spec-draft/` branch, the result comment lists the
    fixing commit SHA, and the pushed head is not reviewed until it settles
@@ -253,8 +253,9 @@ confirm no review runs and the stand-down is recorded.
 - The head moves while the review is running: the result is posted against
   the SHA actually reviewed and states it is stale; the new head is eligible
   once it settles. The round MUST NOT push fixes onto a head it did not
-  review; its unambiguous fixes are then reported as findings only. The
-  round's own fix commits (FR-015b) are not a moved head.
+  review; its unambiguous fixes are then reported as findings only, and its
+  owner decisions are handed to the owner without markers or a label move
+  (FR-015c). The round's own fix commits (FR-015b) are not a moved head.
 - The lifecycle issue flips back to `stage:clarify` while the review is
   running: same as a moved head — the result names the reviewed SHA and the
   new state wins on the next selection.
@@ -294,7 +295,8 @@ confirm no review runs and the stand-down is recorded.
   phrase in prose is not a marker);
   (c) intake, clarify, or a review round that pushed only unambiguous fixes
   (FR-015d) has posted its ready-for-review announcement on the
-  lifecycle issue; and (d) the head commit is not newer than that announcement.
+  lifecycle issue, authored by the pipeline's App (a lookalike comment by
+  anyone else is data, constitution V); and (d) the head commit is not newer than that announcement.
   No fixed quiet period is added beyond (d).
 - **FR-003**: The review MUST be started by a scheduled selection over open
   spec pull requests, in the manner of `lifecycle-review-gate.yml`'s
@@ -335,7 +337,8 @@ confirm no review runs and the stand-down is recorded.
   instructions (constitution V).
 - **FR-010**: The review MUST NOT approve the pull request, request changes,
   merge it, or alter its labels' merge-relevant state. Pushing unambiguous
-  fixes to the `spec-draft/` branch (FR-015b) and moving the lifecycle issue
+  fixes to the `spec-draft/` branch (FR-015b), pushing FR-015c's
+  clarification marker lines to that branch, and moving the lifecycle issue
   back to `stage:clarify` (FR-015c) are the only writes it makes beyond its
   comments, reviews and commit status. Merge of a spec pull request stays
   human (constitution V). Nothing it posts may start pr-conversation or
@@ -398,13 +401,22 @@ confirm no review runs and the stand-down is recorded.
   spec.md as a colon-form clarification marker, so clarify, which works from
   open markers, can fold the answers, and FR-002(b)'s marker scan blocks a
   re-review until it has (owner decision 2026-11-06, after spec review 2).
+  The issue moves to `stage:clarify` only once the marker lines are on the
+  branch: when they cannot be pushed (the head moved, FR-026's path or size
+  check blocks them, or the push is refused), the round MUST NOT move the
+  label, and states the questions on the lifecycle issue as a hand-off to
+  the owner (FR-017) and in the result comment, as FR-015 does for a blocked
+  fix. Clarify can fold only questions that exist as markers.
 - **FR-015d**: A head the round itself pushed MUST settle again under
   FR-002 before another round reviews it. When the round raised owner
   decisions, clarify's ready announcement after folding in the answers
   settles it. When the round raised only unambiguous errors and pushed a
   fix for every one of them (none blocked by FR-026), the round MUST
   post a ready announcement naming the pushed head after its push, which
-  makes that head eligible at the next selection. Either way the following
+  makes that head eligible at the next selection. Otherwise (a fix blocked
+  by FR-026, or decisions handed to the owner without markers) the round
+  posts no announcement, and the head settles only by a later stage's
+  announcement or a maintainer's dispatch (FR-027). Either way the following
   review is a new round that counts against the round budget (FR-018) and
   the convergence check (FR-019).
 - **FR-016**: Each round MUST post a commit status on the reviewed head
@@ -450,8 +462,9 @@ confirm no review runs and the stand-down is recorded.
   cost-line single home.
 - **FR-025**: Every deterministic decision the feature makes (settledness,
   including a dispatch's (FR-027), eligibility, verdict, budget,
-  convergence stop, the fix checks (FR-026), the failed-attempt cap
-  (FR-028)) MUST be exercised by a
+  convergence stop, the fix checks (FR-026), whether the label moves to
+  `stage:clarify` (FR-015c) and whether a post-push ready announcement is
+  posted (FR-015d), the failed-attempt cap (FR-028)) MUST be exercised by a
   checked-in fixture reachable through the gate registry and run identically
   locally and in CI (constitution VIII).
 
