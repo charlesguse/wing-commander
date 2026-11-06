@@ -91,6 +91,9 @@ MARKER_COMPOSITE_STEP = "Scan spec.md for an open clarification marker"
 MARKER_STEP = "Scan spec.md for an open clarification marker"   # in each stage
 MARKER_PSEUDO = "<composite: wing-commander-clarification-marker>"
 MARKER_OUTPUT_REF = "${{ steps.marker-scan.outputs.open }}"
+FAILED_STEP = "Determine failed post-agent step"
+MARKER_CANDIDATE = ('{"name": "%s", "conclusion": '
+                    '"${{ steps.marker-scan.conclusion }}"}' % MARKER_STEP)
 
 # The literal token prefix the watchdog's collector scans for. Emitting a
 # bare word instead put these signals behind the collector's first-match-wins
@@ -1259,6 +1262,13 @@ def structural_checks(loaded):
             problems.append("scans a different spec-dir from the one the decision names")
         if (decide.get("env") or {}).get("OPEN_MARKER") != MARKER_OUTPUT_REF:
             problems.append(f"{stage.decide!r} does not read OPEN_MARKER from {MARKER_OUTPUT_REF}")
+        # The scan fails its step when it cannot run; the stall notice names
+        # that step only if it is among the failed-step candidates.
+        cands = str(((steps.get(FAILED_STEP) or {}).get("with") or {}).get(
+            "candidates-json") or "")
+        if MARKER_CANDIDATE not in cands:
+            problems.append(f"{FAILED_STEP!r} does not list {MARKER_CANDIDATE!r}, so "
+                            f"a scan that fails stalls with no step named")
         if problems:
             failures.append(f"{stage.name}'s colon-form marker scan (#1099): "
                             + "; ".join(problems))
@@ -1569,6 +1579,14 @@ def smut_clarify_pastes_scan_unconditionally(loaded):
                 f"marker=false\n{PLAIN_SCAN} && marker=true\n", 1)
 
 
+def smut_scan_not_a_failed_step_candidate(loaded):
+    """intake's failed-step candidates forget the scan step that can fail."""
+    for stage, steps, _ in loaded:
+        if stage.name == "intake":
+            w = steps[FAILED_STEP]["with"]
+            w["candidates-json"] = w["candidates-json"].replace(MARKER_CANDIDATE, "")
+
+
 def smut_scan_gated_differently(loaded):
     """clarify's scan step loses the verdict conjunct its decision has."""
     for stage, steps, _ in loaded:
@@ -1594,6 +1612,8 @@ STRUCTURAL_MUTATIONS = [
      smut_clarify_pastes_scan_unconditionally),
     ("clarify's scan gated differently from the decision that reads it",
      smut_scan_gated_differently),
+    ("intake's failed-step candidates omitting the marker scan",
+     smut_scan_not_a_failed_step_candidate),
     ("clarify's stall notice marking a spec/<slug> branch that does not "
      "exist yet (#1103)", smut_clarify_marks_spec_branch),
 ]

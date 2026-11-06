@@ -1910,6 +1910,7 @@ jobs:
               {"name": "Remove the agent-writable pipeline checkout (post-agent)", "conclusion": "${{ steps.pipeline-rm.conclusion }}"},
               {"name": "Re-checkout pipeline repository (post-agent)", "conclusion": "${{ steps.pipeline-recheckout.conclusion }}"},
               {"name": "Check agent changes stay inside the project folder", "conclusion": "${{ steps.containment.conclusion }}"},
+              {"name": "Scan spec.md for an open clarification marker", "conclusion": "${{ steps.marker-scan.conclusion }}"},
               {"name": "Fail loud on non-healthy agent verdict", "conclusion": "${{ steps.verdict-fail.conclusion }}"},
               {"name": "Fail on invalid agent result", "conclusion": "${{ steps.invalid-result.conclusion }}"},
               {"name": "Fail on unresolved clarification markers", "conclusion": "${{ steps.unresolved-markers.conclusion }}"},
