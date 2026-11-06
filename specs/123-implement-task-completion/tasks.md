@@ -59,7 +59,7 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 
 - [x] T015 [US2] Add cap-outcome fixtures in `.github/scripts/fixtures/123-implement-task-completion/cap-outcome/`: only-maintainer-only left at cap (converged, FR-014), all tasks maintainer-only (converges immediately), ambiguous task (buildable)
 - [x] T016 [US2] Update `.github/actions/_shared/decide-implement-outcome.sh` so convergence keys on `impl-unchecked` (folds included) and maintainer-only/unbuildable lines never count, and the cap with only maintainer-only unchecked reports converged, not cap-reached (FR-006, FR-014)
-- [ ] T017 [P] [US2] Update `.github/actions/_shared/render-remaining-work.sh` and `.github/actions/wing-commander-remaining-work/action.yml` to list buildable remaining and maintainer-only (including deterministic-unbuildable) tasks as human work
+- [x] T017 [P] [US2] Update `.github/actions/_shared/render-remaining-work.sh` and `.github/actions/wing-commander-remaining-work/action.yml` to list buildable remaining and maintainer-only (including deterministic-unbuildable) tasks as human work
 - [x] T018 [US2] Extend the gate from T008 (or `.github/scripts/verify-buildable-classification.py`) to run the T015 fixtures through `decide-implement-outcome.sh` and the remaining-work renderer
 
 ---
@@ -70,13 +70,13 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 
 **Independent Test**: With folds plus buildable tasks outstanding, finalize opens no PR and the review gate skips a final PR; with only folds left, neither refuses.
 
-- [ ] T019 [US3] Add fixtures in `.github/scripts/fixtures/123-implement-task-completion/finalize-wait/` and `.../review-gate-skip/`: buildable unchecked (refuse/skip), only folds unchecked (proceed), only maintainer-only unchecked (proceed), duplicate fold of a spec task
+- [x] T019 [US3] Add fixtures in `.github/scripts/fixtures/123-implement-task-completion/finalize-wait/` and `.../review-gate-skip/`: buildable unchecked (refuse/skip), only folds unchecked (proceed), only maintainer-only unchecked (proceed), duplicate fold of a spec task
 - [x] T020 [US3] In `.github/actions/_shared/decide-implement-outcome.sh` take new env `BUILDABLE_UNCHECKED_TIP`, `BUILDABLE_CHECKED_BASE`, `BUILDABLE_CHECKED_TIP`; `progressed` uses the buildable checked delta; the cap/blocker hand-off keys on buildable unchecked (plus dropped ids) > 0; cap with only folds left proceeds to finalize (no hand-off)
 - [x] T021 [US3] Wire the new inputs through `.github/actions/wing-commander-implement-outcome/action.yml` and the call site in `.github/workflows/implement.yml`
-- [ ] T022 [US3] In `.github/workflows/finalize.yml` add a refusal step before PR creation that reads `buildable-unchecked-count` from `wing-commander-tasks-checkbox-count` at the spec-branch tip and, when > 0, comments the remaining list on the lifecycle issue and fails closed with no PR; no override input; give it a one-line fallback if the composite did not run (FR-010)
-- [ ] T023 [US3] In `.github/workflows/lifecycle-review-gate.yml` make the select step read the same composite at the PR head and skip a final PR with `buildable-unchecked-count` > 0, logging the reason (FR-010)
+- [x] T022 [US3] In `.github/workflows/finalize.yml` add a refusal step before PR creation that reads `buildable-unchecked-count` from `wing-commander-tasks-checkbox-count` at the spec-branch tip and, when > 0, comments the remaining list on the lifecycle issue and fails closed with no PR; no override input; give it a one-line fallback if the composite did not run (FR-010)
+- [x] T023 [US3] In `.github/workflows/lifecycle-review-gate.yml` make the select step read the same composite at the PR head and skip a final PR with `buildable-unchecked-count` > 0, logging the reason (FR-010)
 - [ ] T024 [US3] Run the `review-step-gating` skill over the T022/T023 `if:`/exit-code changes and fix findings in `.github/workflows/finalize.yml` and `.github/workflows/lifecycle-review-gate.yml`
-- [ ] T025 [P] [US3] Create `.github/scripts/verify-finalize-buildable-wait.py` (gate) that drives the T019 fixtures through the decision logic and asserts finalize and the review gate both consume the composite's `buildable-unchecked-count` (no second counter), and register it in `run-local-gates.py`'s derivation
+- [x] T025 [P] [US3] Create `.github/scripts/verify-finalize-buildable-wait.py` (gate) that drives the T019 fixtures through the decision logic and asserts finalize and the review gate both consume the composite's `buildable-unchecked-count` (no second counter), and register it in `run-local-gates.py`'s derivation
 
 ---
 

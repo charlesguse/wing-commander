@@ -4691,6 +4691,9 @@ jobs:
       - name: Gate 166 — buildable classification of tasks.md lines (specs/123)
         if: "!cancelled()"
         run: python3 .github/scripts/verify-buildable-classification.py
+      - name: Gate 167 — finalize and the review gate wait on buildable tasks (specs/123)
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-finalize-buildable-wait.py
       # Gate 165 — specs/116-review-convergence-analyze. It keeps the review
       # loops' convergence arithmetic and thresholds in wc_convergence.py
       # alone (FR-010, FR-018, FR-019); its fixtures run the rules, the

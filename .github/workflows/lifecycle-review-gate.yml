@@ -175,6 +175,22 @@ jobs:
             [ "$meta_identity_ok" = "true" ] || continue
             [ "$meta_stage" = "review" ] || continue
 
+            # specs/123-implement-task-completion FR-010: a final PR with
+            # buildable tasks still unchecked is not ready for review -- it
+            # needs another implement run. Same counter as finalize's
+            # refusal (count-tasks-checkboxes.sh, the one classification
+            # home); an unreadable count does not skip the PR.
+            if buildable_out="$(bash .wc-pristine-repo/.github/actions/_shared/count-tasks-checkboxes.sh "refs/remotes/origin/$head_ref" "specs/$slug/tasks.md" 2>/dev/null)"; then
+              buildable_left="$(printf '%s\n' "$buildable_out" | sed -n 's/^buildable-unchecked-count=//p' | head -n 1)"
+              case "$buildable_left" in
+                ''|0|*[!0-9]*) ;;
+                *)
+                  echo "lifecycle-review-gate: PR #$number skipped -- $buildable_left buildable task(s) still unchecked in specs/$slug/tasks.md." >> "$GITHUB_STEP_SUMMARY"
+                  continue
+                  ;;
+              esac
+            fi
+
             # T074/F3: review_gate no longer lives in spec-meta.json -- it
             # is this App's own marker on the lifecycle issue's comments
             # (wc_lifecycle_review_marker.py), never a value committed to
