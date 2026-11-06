@@ -16,6 +16,12 @@
 - Q: What is the low-progress response? → A: Re-prompt on the default tier (Sonnet) with a corrective "keep building" instruction; no automatic Opus escalation (that would need a constitution II amendment and is not wanted). Because lever (b) is deferred, this records the intended direction for the follow-up, not first-cut scope.
 - Q: What happens at the iteration cap with buildable tasks unchecked? → A: The lifecycle is handed to a person: held or parked, with the remaining buildable and maintainer-only tasks listed on the lifecycle issue. No final PR is opened (pairs with lever (e)). A lifecycle whose only remaining tasks are maintainer-only counts as converged.
 
+### Session 2026-11-06 (owner, after the spec PR review)
+
+- Q: What role do folded review-finding tasks play in convergence? → A: **(a) Implement must still tick them before it can converge, but they are left out of the cap count, the progress count and FR-010's buildable check.** Fix cycles are bounded by the review gate's round budget instead. This fits #1110's wording and spec 116 FR-003 (FR-009).
+- Q: What does "held or parked" at the cap mean today, and how does a person resume? → A: **(a) Apply the existing `stage:stalled` hand-off and dispatch nothing; switch to spec 119's `lifecycle:held` once #1102 merges.** A person resumes with a manual dispatch, and the cap does not reset: each resume past the cap buys one cycle, and a lower iteration on the dispatch buys more (FR-015).
+- Q: Does a validated-blocker hand-off with buildable tasks left get the same treatment as the cap? → A: **Yes. The lifecycle is handed to a person and no final PR is opened.** This is settled by the owner's Q3 A of 2026-11-06 on #1111, whose reasoning applies to any stop that leaves buildable work, and it is consistent with FR-010 (FR-015a).
+
 ## Background
 
 About half the lifecycles completed since 2026-09-01 posted "Iteration cap reached" (`WING_COMMANDER_MAX_ITERATIONS`, default 5). The issue's investigation of 75 implement-cycle job logs (#1066, #1055, #1074, #1020, #994, #992, #903, #993) found that cycles are neither out of turns (most used 9–39 of 180 turns; the highest raw count was 301 of 450) nor failing (every agent step ended `success`, no 429s). Cycles **stop on their own**. The ranked causes are:
@@ -146,7 +152,7 @@ As the maintainer, I want a lifecycle that reaches the iteration cap with builda
 
 **Review folds (Story 3)**
 
-- **FR-009**: Folded review findings MUST be distinguishable from spec tasks in tasks.md by deterministic code and MUST NOT count toward the buildable count used for convergence or the iteration cap.
+- **FR-009**: Folded review findings MUST be distinguishable from spec tasks in tasks.md by deterministic code. They MUST NOT count toward the iteration cap, the per-cycle progress count, or FR-010's buildable check, but implement MUST still tick them before it can report convergence. Their fix cycles are bounded by the lifecycle review gate's round budget.
 - **FR-010**: While buildable spec tasks remain unchecked, finalize MUST NOT open the final PR, and the lifecycle review gate MUST NOT review a final PR whose lifecycle still has unchecked buildable tasks. Finalize and the review gate MUST read the same buildable classification that implement's convergence decision used, so a lifecycle implement reports as converged is never refused by finalize or skipped by the gate. This behaviour lives in this spec only; companion proposal #1110 does not implement it.
 
 **Low progress (Story 4) — deferred follow-up, not in the first cut (FR-016)**
@@ -158,7 +164,8 @@ As the maintainer, I want a lifecycle that reaches the iteration cap with builda
 **Cap outcome (Story 5)**
 
 - **FR-014**: A lifecycle at the iteration cap with only maintainer-only tasks unchecked MUST be reported as converged, not as cap-reached.
-- **FR-015**: A lifecycle at the iteration cap with buildable tasks unchecked MUST be handed to a person: held or parked, with no final PR opened, and announced on the lifecycle issue with the remaining buildable and maintainer-only tasks listed.
+- **FR-015**: A lifecycle at the iteration cap with buildable tasks unchecked MUST be handed to a person. It gets the existing `stage:stalled` hand-off (spec 119's `lifecycle:held` once #1102 merges), nothing is dispatched, no final PR is opened, and the lifecycle issue lists the remaining buildable and maintainer-only tasks. A person resumes with a manual implement dispatch; the cap does not reset.
+- **FR-015a**: A validated agent-blocker hand-off (spec 117) that leaves buildable tasks unchecked MUST be treated like FR-015: no finalize dispatch, no final PR, and the same hand-off and listing.
 
 **Scope (all stories)**
 
