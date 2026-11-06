@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,6 +31,6 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain (FR-003 line identity, FR-004 selection order, FR-009 board-state location); they are posted to lifecycle issue #1080 for the clarify stage.
+- All three clarifications were resolved from the reply on lifecycle issue #1080 (2026-11-06): FR-003 a short id written into the line on claim, FR-004 oldest first, FR-009 a loop-authored comment on the backlog issue keyed by the line's id. See the spec's Clarifications section.
 - The issue's other two questions were given documented defaults in Assumptions: lines only when the issue queue is empty (the proposal's own wording), and bundled lines worked as one item bounded by the backstop.
 - Repository-specific names (`WING_COMMANDER_*` variables, labels, the board loop's step names) appear because they are the domain vocabulary of this pipeline, not implementation choices.

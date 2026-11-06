@@ -8,6 +8,14 @@
 
 **Input**: User description: "Board loop works Maintenance backlog lines, one unchecked #889 line per item (#1080). Problem: the board loop (`board-loop.yml`) works open defect issues on its own through triage, route, fix, review and readiness, and under spec 115 merges them too. But CLAUDE.md keeps small defects out of issues: stages, reviews and the watchdog record each one as a checklist line on the Maintenance backlog, the open `disposition:tracking` issue titled 'Maintenance backlog' (#889). `board_eligibility.is_excluded()` skips every `disposition:*` issue, so the loop never touches those lines; about 140 were open on 2026-10-22 and move only when a local session takes a batch by hand. Proposal: let the board loop take one unchecked Maintenance backlog line as its work item when no eligible issue is waiting, using the same pipeline and safety checks as an issue. Each tick would select one unchecked line by a deterministic order, skipping lines already claimed or held; give the line a stable identity that survives edits to the rest of the issue (a content hash, or a short id the loop writes into the line when it claims it); work it by treating the line's text as the issue body for triage, route, fix, review and readiness, with board state kept on #889 or another surface clarify should choose; mark progress on the line (in progress while held by the loop, ticked with '(fixed by #PR)' when the fix merges, the same reason a `board:stalled` issue would get when held); route spec-shaped lines to a `spec-proposal` that the line points at; and edit #889 only by read-modify-write that tolerates its other writers (local sessions, stage findings). Questions for clarify: line identity; order (oldest first, priority marker, or the 'Before enabling …' lines first); where the board item marker for a line lives; whether lines are taken only when the issue queue is empty or interleaved; how a line that cites several files or bundles two defects is handled. Dependencies: most useful once the App has the Workflows permission and `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS=true`; merging without a human also needs `WING_COMMANDER_BOARD_AUTO_MERGE`, after the 'Before enabling' lines on #889 are fixed. Requested by the owner on 2026-10-22 as option (a) of three; the others were a scheduled session routine and splitting the backlog lines into issues."
 
+## Clarifications
+
+### Session 2026-11-06
+
+- Q: Line identity — a content hash of the line text, or a short id the loop writes into the line when it claims it? → A: A short id the loop writes into the line on claim; it survives edits to the line's text and keeps identical lines apart; the claim costs one read-modify-write; unclaimed lines carry no id (FR-003).
+- Q: Selection order — oldest first, an explicit priority marker, or the "Before enabling …" lines first? → A: Oldest first (topmost/first-appended eligible line). The "Before enabling" lines were all cleared by #1084 on 2026-10-22; a priority marker may be added later if steering is needed (FR-004).
+- Q: Where does a line's board item marker live? → A: A loop-authored comment on the backlog issue, keyed by the line's id, read by the existing board item marker reader (FR-009).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - An idle board loop fixes one backlog line (Priority: P1)
@@ -76,8 +84,8 @@ The backlog issue has other writers: local sessions add and tick lines, and the 
 ### Edge Cases
 
 - A line is ticked by a human while the loop holds it: the loop stands down from that line at its next re-derivation, leaves any open fix PR for a maintainer, and says so.
-- A line's text is edited by a human while the loop holds it: its identity (FR-003) still matches; the loop continues from the line's current text only at its next triage, never mid-fix.
-- Two lines with identical text: each has a distinct identity, and only one is claimed per run.
+- A line's text is edited by a human while the loop holds it: its identity (the id written into the line, FR-003) still matches as long as the id is kept; the loop continues from the line's current text only at its next triage, never mid-fix.
+- Two lines with identical text: oldest-first order (FR-004) picks the topmost; claiming writes a distinct id into that line only, so the two stay apart from then on, and only one is claimed per run.
 - A line bundles two defects or cites several files: worked as one item while its fix fits the size-and-path backstop; a fix that breaches the backstop holds the line with the backstop reason, and route may classify a line whose parts need different decisions as spec-shaped.
 - A fix PR for a line must never carry a closing keyword for the backlog issue; merging it must never close the backlog issue.
 - The backlog issue is closed, renamed, loses `disposition:tracking`, or a second open issue carries the same title: the loop takes no line and reports why (no guessing which issue is the backlog).
@@ -94,13 +102,13 @@ The backlog issue has other writers: local sessions add and tick lines, and the 
 
 - **FR-001**: The board loop MUST take a Maintenance backlog line as its work item only when no eligible issue is waiting; while any eligible issue is waiting, issues take precedence. *(Default from the proposal's "when no eligible issue is waiting"; interleaving is out of scope.)*
 - **FR-002**: The loop MUST identify the Maintenance backlog by deterministic signals — exactly one open issue carrying `disposition:tracking` and titled "Maintenance backlog", authored by a maintainer or the pipeline's own App — and MUST take no line when that resolution is ambiguous or fails.
-- **FR-003**: Each line MUST have a stable identity that survives edits to every other line of the issue and distinguishes lines with identical text, by [NEEDS CLARIFICATION: line identity — a content hash of the line text, or a short id the loop writes into the line when it claims it?].
-- **FR-004**: Line selection MUST be deterministic over the issue body as read and MUST skip lines that are ticked, claimed, held, or routed to a `spec-proposal`, choosing among the rest by [NEEDS CLARIFICATION: order — oldest (topmost/first-appended) first, an explicit priority marker, or the "Before enabling …" lines first?].
+- **FR-003**: Each claimed line MUST have a stable identity that survives edits to every other line of the issue, survives a human editing the line's own text, and distinguishes lines with identical text: a short id the loop writes into the line when it claims it. Writing the id is part of the claim and costs one read-modify-write of the backlog issue (FR-015). A line nobody has claimed carries no id; before its claim, a line is located only by its position in the body as read.
+- **FR-004**: Line selection MUST be deterministic over the issue body as read and MUST skip lines that are ticked, claimed, held, or routed to a `spec-proposal`, choosing among the rest oldest first — the topmost (first-appended) eligible line. No priority marker is honoured; one may be added later if steering turns out to be needed.
 - **FR-005**: Only top-level unchecked checklist lines in the backlog issue's body MUST be candidates; comments, quoted text and fenced blocks MUST NOT be.
 - **FR-006**: The loop MUST work at most one line per run, under the same global concurrency group, kill switch and one-item-at-a-time rule as issues, and a held line MUST count as the loop's current item exactly as a claimed issue does.
 - **FR-007**: A line MUST pass through the same triage, route, fix, review, readiness and (under spec 115) merge steps, with the same deterministic gates, backstop and authorization checks as an issue, with the line's text in the role of the issue body.
 - **FR-008**: The line's text MUST be framed as untrusted defect-description data in every agent prompt, never as instructions.
-- **FR-009**: The loop's board state for a line (the board item marker and its re-derivation inputs) MUST be keyed by the line's identity and stored on [NEEDS CLARIFICATION: where the board item marker for a line lives — a loop-authored comment on the backlog issue, a dedicated loop-owned board-state issue, or another surface?], and every field MUST be re-derived from live state before any durable action, as for issues.
+- **FR-009**: The loop's board state for a line (the board item marker and its re-derivation inputs) MUST be keyed by the line's identity and stored in a loop-authored comment on the backlog issue, keyed by the line's id and read by the existing board item marker reader, so the state lives beside the line; only comments the loop itself authored are read as board state (comments are never a source of lines, FR-005), and every field MUST be re-derived from live state before any durable action, as for issues.
 - **FR-010**: While the loop holds a line, the line MUST visibly show it is in progress (and by which fix PR once one exists).
 - **FR-011**: When the line's fix PR merges, the line MUST be ticked and carry "(fixed by #PR)".
 - **FR-012**: When triage finds the defect already fixed on evidence deterministic code read, the line MUST be ticked with that evidence quoted, and no PR opened.
@@ -117,8 +125,8 @@ The backlog issue has other writers: local sessions add and tick lines, and the 
 
 - **Maintenance backlog**: The single open `disposition:tracking` issue titled "Maintenance backlog" (#889 at the 2026-10-01 reset). Never closed or relabelled by this feature.
 - **Backlog line**: One top-level checklist line in the backlog body. Attributes: identity, text, state (unchecked, in progress, held with reason, routed to a proposal, ticked with fix or evidence).
-- **Line identity**: The stable key that names one line across edits to the rest of the body (FR-003).
-- **Line board state**: The board item marker and progress for a line, keyed by its identity (FR-009).
+- **Line identity**: The short id the loop writes into a line when it claims it; names that line across edits to the rest of the body and to the line's own text (FR-003). Unclaimed lines carry none.
+- **Line board state**: The board item marker and progress for a line, held in a loop-authored comment on the backlog issue keyed by the line's id (FR-009).
 - **Line annotation**: The visible text the loop adds to a line to show in-progress, held (with reason), routed (with proposal link), or fixed (with PR or evidence).
 
 ## Success Criteria *(mandatory)*
