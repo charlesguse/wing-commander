@@ -16,6 +16,12 @@
 - Q: Selection order — oldest first, an explicit priority marker, or the "Before enabling …" lines first? → A: Oldest first (topmost/first-appended eligible line). The "Before enabling" lines were all cleared by #1084 on 2026-10-22; a priority marker may be added later if steering is needed (FR-004).
 - Q: Where does a line's board item marker live? → A: A loop-authored comment on the backlog issue, keyed by the line's id, read by the existing board item marker reader (FR-009).
 
+### Session 2026-11-06 (owner, after the spec PR review)
+
+- Q: Does constitution Principle X need an amendment for holding a line with an annotation instead of `board:stalled`, and for acting on lines others add to a maintainer-authored backlog issue? → A: Yes. A PATCH amendment to X names Maintenance backlog lines as a board-loop entry and the line annotation as the hold for a line. It is a separate human-merged PR that merges before this feature's final PR, the same arrangement the owner chose for spec 119 on 2026-10-26 (FR-022).
+- Q: Does the feature get its own switch? → A: Yes. A `WING_COMMANDER_BOARD_BACKLOG_LINES` repository variable, default off, gates line selection. Board auto-merge and workflow-file fixes are already on, so without it the loop would start working the backlog the moment this merges (FR-023).
+- Q: How is the backlog body protected from a writer that rewrites it from a stale copy? → A: Every pipeline and session edit to the backlog body goes through one shared helper that re-reads the body, re-applies only its own change, and reads it back; a CLAUDE.md "Working the issue board" rule requires sessions to use it, never a blind whole-body write. The loop's own read-back and stand-down (FR-015, FR-016) stay as the backstop (FR-024).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - An idle board loop fixes one backlog line (Priority: P1)
@@ -118,9 +124,12 @@ The backlog issue has other writers: maintainers and local sessions add, edit an
 - **FR-016**: If the worked line is ticked, deleted, or no longer matches its identity, the loop MUST stand down from it without writing it back and report this on the backlog issue.
 - **FR-017**: A fix PR for a line MUST reference the backlog issue without a closing keyword, and no step of this feature may close, relabel or retitle the backlog issue.
 - **FR-018**: Board status and run reporting that today names the current issue MUST name the current line (backlog issue plus line identity) when a line is the work item.
-- **FR-019**: Each new branch — selection, skip conditions, the read-modify-write conflict path, the stand-down path, the ambiguous-backlog path, the backlog-reference item resolution (FR-021), and every line annotation — MUST be covered by a checked-in fixture a gate exercises.
+- **FR-019**: Each new branch — selection, skip conditions, the read-modify-write conflict path, the stand-down path, the ambiguous-backlog path, the backlog-reference item resolution (FR-021), the switch-off path (FR-023), the shared backlog-edit helper (FR-024), and every line annotation — MUST be covered by a checked-in fixture a gate exercises.
 - **FR-020**: With the backlog empty of candidate lines, or the feature's lines unreachable, the loop's behaviour MUST be exactly today's.
 - **FR-021**: Every path that today finds a fix PR's item from the PR body's `Fixes #N` (the `pull_request: closed` prove entry, and the detection of a merge whose proof run never started) MUST find a line-born PR's item from the non-closing backlog reference FR-017 requires (backlog issue plus line id) together with the loop's own board state for that line, so a human merge still reaches FR-011's tick and the prove-after-merge entry.
+- **FR-022**: This feature MUST NOT be merged before a human-merged constitution amendment to Principle X that names Maintenance backlog lines as a board-loop entry and the line annotation as a line's hold. The amendment moves its Sync Impact Report to the top of `.specify/memory/constitution-history.md` in the same commit (CLAUDE.md).
+- **FR-023**: Line selection MUST run only while the repository variable `WING_COMMANDER_BOARD_BACKLOG_LINES` is exactly `true`. It defaults to off, and with it off the loop's behaviour MUST be exactly today's (FR-020). Board status (#914) MUST show the switch beside the other board switches.
+- **FR-024**: Every write to the backlog body, by the loop and by local sessions, MUST go through one shared helper that re-reads the body, applies only the caller's own change to the newest body, and reads the result back, re-applying once if the change was dropped. A CLAUDE.md "Working the issue board" rule MUST require sessions to edit the backlog only through this helper, and the helper MUST be the only home of that logic (CLAUDE.md "Shared logic has exactly one home"), enforced by a gate. FR-015 and FR-016 remain the loop's backstop for writers that bypass it.
 
 ### Key Entities
 
@@ -145,8 +154,8 @@ The backlog issue has other writers: maintainers and local sessions add, edit an
 
 - Lines are taken only when the issue queue is empty (FR-001) — the proposal's own wording; interleaving is a later decision.
 - A bundled or multi-file line is worked as one item bounded by the existing size-and-path backstop; it is not split by the loop.
-- Authorization: lines come only from the body of a backlog issue a maintainer or the App authored; GitHub restricts editing an issue body to its author and collaborators with write access, so every body line was written by a maintainer, a collaborator, or the pipeline. Whether constitution Principle X's entry rule ("an issue a maintainer authored or labeled") already covers a line on such an issue, or needs a clarifying amendment, is for plan to confirm; an amendment would be its own human-merged PR.
+- Authorization: lines come only from the body of a backlog issue a maintainer or the App authored; GitHub restricts editing an issue body to its author and collaborators with write access, so every body line was written by a maintainer, a collaborator, or the pipeline. Constitution Principle X is amended to name these lines and the line annotation explicitly (FR-022, owner decision 2026-11-06).
 - Workflow-touching line fixes follow the existing `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` rule, and autonomous merge stays governed by `WING_COMMANDER_BOARD_AUTO_MERGE` (spec 115). Both are on since 2026-11-03 (#890, Owner decisions; the App holds Workflows: Read and write), so a workflow-touching line is pushed and, once ready, merged without a human; the FR-014 workflow-scope hold applies only while the switch is off. Neither switch is changed here.
 - Existing triage evidence rules (API 429, upstream action bump, fixing commit on `main`), route classification, the independent review, the readiness evaluation and the prove-after-merge entry (spec 096) are reused, except that a line-born PR's item is found from the backlog reference instead of `Fixes #N` (FR-021).
 - The Roadmap issue's "Proposed" list is updated for a line-born `spec-proposal` the same way it is for an issue-born one.
-- No new opt-in switch is added; the feature runs whenever the board loop runs. If plan finds a separate switch is needed for safe rollout, it should mirror the `WING_COMMANDER_BOARD_*` family and default to off.
+- The feature has its own switch, `WING_COMMANDER_BOARD_BACKLOG_LINES`, default off (FR-023, owner decision 2026-11-06); the owner turns it on after merge.
