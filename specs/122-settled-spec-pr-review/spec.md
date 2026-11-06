@@ -240,11 +240,13 @@ confirm no review runs and the stand-down is recorded.
   new state wins on the next selection.
 - The review invocation itself fails (rate limit, timeout, malformed output):
   no verdict is posted as "ready"; the failure is reported as a failure and
-  the head remains eligible for a retry (constitution VIII).
+  the head remains eligible for a retry, up to FR-028's cap of failed
+  attempts per head (constitution VIII).
 - A spec PR with no lifecycle issue, or with more than one: the PR is skipped
   with the reason recorded.
-- The `spec-draft/` branch was opened by a human rather than intake: it is
-  eligible only if it meets the same settledness conditions.
+- The `spec-draft/` branch was opened, or its head pushed, by a human rather
+  than a stage: it is eligible only if it meets the same settledness
+  conditions, or once a maintainer's dispatch settles it (FR-027).
 - A spec PR that was merged by the owner before the review ran: nothing is
   posted, pushed or relabelled.
 - Text in the spec, PR body or comments that reads as instructions to the
@@ -266,8 +268,10 @@ confirm no review runs and the stand-down is recorded.
   pull request's current head SHA at selection time:
   (a) the lifecycle issue carries `stage:spec` and not `stage:clarify`;
   (b) the spec.md on the head contains no `NEEDS CLARIFICATION` marker in
-  its colon form, by the same scan `clarify.yml` runs before it announces a
-  spec PR ready (the bare phrase in prose is not a marker);
+  its colon form, by the same scan intake and clarify run before they
+  announce a spec PR ready, consumed from its single home
+  (`.github/actions/wing-commander-clarification-marker`, #1112; the bare
+  phrase in prose is not a marker);
   (c) intake, clarify, or a review round that pushed only unambiguous fixes
   (FR-015d) has posted its ready-for-review announcement on the
   lifecycle issue; and (d) the head commit is not newer than that announcement.
@@ -275,7 +279,8 @@ confirm no review runs and the stand-down is recorded.
 - **FR-003**: The review MUST be started by a scheduled selection over open
   spec pull requests, in the manner of `lifecycle-review-gate.yml`'s
   selection, with a manual dispatch entry point that targets one pull
-  request and applies the same settledness and eligibility checks.
+  request. The dispatch applies the same eligibility checks (FR-001,
+  FR-004, FR-018–FR-020); its settledness is FR-027's, not FR-002's.
 - **FR-004**: The feature MUST record the head SHA a completed round
   reviewed and MUST NOT review a head SHA a completed round already covered
   (as spec 062 FR-004). A new head becomes eligible once it is settled.
@@ -342,7 +347,9 @@ confirm no review runs and the stand-down is recorded.
 - **FR-015**: Every finding MUST be reported in the round's result comment
   (FR-011). Beyond the report, each finding MUST be classified as either an
   **unambiguous error** (FR-015a), which the round fixes on the branch
-  (FR-015b), or an **owner decision**, which re-enters clarify (FR-015c).
+  (FR-015b) unless FR-026's checks block the fix, in which case it is
+  reported only and left to the owner, or an **owner decision**, which
+  re-enters clarify (FR-015c).
 - **FR-015a**: A finding is an unambiguous error only when exactly one
   correction is consistent with what is already decided, and that correction
   introduces no new behaviour, scope or trade-off. "Already decided" means
@@ -370,7 +377,8 @@ confirm no review runs and the stand-down is recorded.
 - **FR-015d**: A head the round itself pushed MUST settle again under
   FR-002 before another round reviews it. When the round raised owner
   decisions, clarify's ready announcement after folding in the answers
-  settles it. When the round raised only unambiguous errors, the round MUST
+  settles it. When the round raised only unambiguous errors and pushed a
+  fix for every one of them (none blocked by FR-026), the round MUST
   post a ready announcement naming the pushed head after its push, which
   makes that head eligible at the next selection. Either way the following
   review is a new round that counts against the round budget (FR-018) and
@@ -417,7 +425,9 @@ confirm no review runs and the stand-down is recorded.
 - **FR-024**: The per-round cost MUST be reported through the existing
   cost-line single home.
 - **FR-025**: Every deterministic decision the feature makes (settledness,
-  eligibility, verdict, budget, convergence stop) MUST be exercised by a
+  including a dispatch's (FR-027), eligibility, verdict, budget,
+  convergence stop, the fix checks (FR-026), the failed-attempt cap
+  (FR-028)) MUST be exercised by a
   checked-in fixture reachable through the gate registry and run identically
   locally and in CI (constitution VIII).
 
@@ -428,9 +438,10 @@ confirm no review runs and the stand-down is recorded.
   MUST be reported as a finding and not pushed (constitution IX; X's
   size-and-path backstop is the precedent).
 - **FR-027**: A maintainer's manual dispatch naming one spec pull request
-  MUST count as that head's settling act. It still requires the pull request
+  MUST count as that head's settling act; a dispatch whose triggering actor
+  is a bot is not a maintainer's. It still requires the pull request
   to be open on this repository's `spec-draft/` branch, and requires that
-  clarify's colon-form marker scan finds no open clarification marker. It
+  FR-002(b)'s colon-form marker scan finds no open clarification marker. It
   skips the readiness-announcement and unchanged-since-announcement
   conditions of FR-002.
 - **FR-028**: Failed rounds (FR-005) MUST be counted per head, separately
@@ -464,8 +475,9 @@ confirm no review runs and the stand-down is recorded.
   involved — 100% of settled heads over the first five lifecycles after
   release.
 - **SC-002**: Zero reviews run on unsettled heads (clarify in progress,
-  markers present, head newer than the ready announcement) across the same
-  period, verified from run logs.
+  markers present, head newer than the ready announcement and not settled by
+  a maintainer's dispatch, FR-027) across the same period, verified from run
+  logs.
 - **SC-003**: No head SHA is reviewed more than once by a completed round.
 - **SC-004**: Replaying the spec PRs of #1078 and #1086 at the heads the
   manual reviews saw produces a "not ready" verdict with a finding naming
