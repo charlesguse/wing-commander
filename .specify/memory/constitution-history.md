@@ -7,6 +7,25 @@ header), not to `constitution.md` -- see CLAUDE.md.
 
 <!--
 Sync Impact Report — 2026-11-06
+Version change: 2.7.0 → 2.8.0 (MINOR: Principle X's board loop gains a second kind of entry, the Maintenance backlog line, with its own hold (the line annotation) and its own switch. A new entry kind materially expands the guidance that bounds the board loop, so this is MINOR, not PATCH, under the speckit-constitution versioning rule -- the same reasoning as 2.6.0 and 2.7.0. No merge class is added or widened: a line's fix PR is a fix PR under the existing bounded fix-PR merge, with every gate it already required.)
+Modified principles:
+  X. Bounded Autonomy — The Pipeline Works Its Own Board: one passage added after the entry-authorization sentence. The loop's second entry is a Maintenance backlog line: a top-level unchecked checklist line in the body of the single open `disposition:tracking` issue titled "Maintenance backlog" (#889), authored by a maintainer or the pipeline's App. A line is authorized by where it stands (only the issue's author and write collaborators can edit the body), so the loop may act on lines others add. Lines are taken only while `WING_COMMANDER_BOARD_BACKLOG_LINES` is `true` (default off; spec 121 FR-023) and no eligible issue is waiting, and are worked through the same steps, gates, backstop and kill switches as an issue, the line's text standing in for the issue body as untrusted data; the backlog issue is never closed, relabelled or retitled. A line's hold is its line annotation, carrying the reason `board:stalled` would carry on an issue, skipped by selection until a maintainer removes it. Triage evidence ticks the line instead of closing an issue, a spec-shaped line points at its `spec-proposal`, and a fixed line is ticked with its PR. The literal "Maintenance backlog line" appears exactly once in X, for spec 121's merge-order check. The rest of X is unchanged, including "one item at a time", which a line now satisfies as an item.
+Modified sections:
+  Development Workflow: the board loop runs "one item at a time, where an item is an issue or a backlog line X names" (was "one issue at a time"), and its exits toward the lifecycle are a `spec-proposal` issue, a closed issue, or a ticked backlog line (was "or a closed issue"), so the section no longer contradicts X.
+Added sections: none
+Removed sections: none
+Templates requiring updates:
+  ✅ .specify/templates/plan-template.md — no change needed (Constitution Check is generic)
+  ✅ .specify/templates/spec-template.md — no change needed (no principle references)
+  ✅ .specify/templates/tasks-template.md — no change needed (no principle references)
+  ⚠ CLAUDE.md "Working the issue board" — spec 121 FR-024 adds the rule that sessions edit the backlog body only through the shared helper; that lands with the feature, not in this amendment, which carries only `.specify/memory/` edits.
+  ✅ .specify/extensions.yml — absent, so no before/after_constitution hooks apply
+Motivation: spec 121 (`specs/121-board-backlog-line-items`, lifecycle #1080) lets the board loop work Maintenance backlog lines. The owner decided on 2026-11-06, after the spec PR review, that Principle X must name backlog lines as a board-loop entry and the line annotation as a line's hold, in a separate human-merged amendment that merges before the feature's final PR -- the arrangement chosen for spec 119 on 2026-10-26 (FR-022).
+Worked example: spec 121's line selection refuses while Principle X on the default branch does not contain the literal "Maintenance backlog line", so this amendment merges first, the same order-enforcement the owner chose for spec 119 (option (b), 2026-10-30).
+Follow-up TODOs: none
+-->
+<!--
+Sync Impact Report — 2026-11-06
 Version change: 2.6.0 → 2.7.0 (MINOR: Principle X's lifecycle pull request merge gains a ninth merge condition, so the list of gates that bound an existing class is materially expanded. No class is added, removed or widened; the new condition only narrows when the bot may merge. Materially expanding the guidance that bounds an existing class is MINOR, not PATCH, under the speckit-constitution versioning rule -- the same reasoning as 2.6.0.)
 Modified principles:
   X. Bounded Autonomy — The Pipeline Works Its Own Board: the lifecycle pull request merge's "all eight of its gates" becomes "all nine of its gates", and the list gains its ninth: the lifecycle issue carries no hold label (the label `vars.WING_COMMANDER_HOLD_LABEL` names, `lifecycle:held` by default), read from labels fetched fresh at merge time, and labels that cannot be read fail the gate (spec 119 FR-022). The rest of X is unchanged: the other eight gates, the switch, the kill switch, the announcement, the hand-off and the "What stays human" list.
