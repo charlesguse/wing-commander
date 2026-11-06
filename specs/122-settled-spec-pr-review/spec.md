@@ -74,7 +74,7 @@ GitHub rather than in a transcript.
 **Independent Test**: Take a spec PR whose lifecycle issue is at
 `stage:spec`, with no `NEEDS CLARIFICATION` markers and a ready
 announcement newer than its head commit. Run the review once. A single
-review-result comment appears on the PR naming the reviewed head SHA, a
+review result appears on the PR naming the reviewed head SHA, a
 verdict, and zero or more structured findings.
 
 **Acceptance Scenarios**:
@@ -208,7 +208,8 @@ confirm no review runs and the stand-down is recorded.
 ### Edge Cases
 
 - The spec PR is closed or merged between selection and review: the review
-  does not post, and records why.
+  does not post, push or move a label, and records why. Each write
+  re-checks the PR's state first.
 - The head moves while the review is running: the result is posted against
   the SHA actually reviewed and states it is stale; the new head is eligible
   once it settles. The round MUST NOT push fixes onto a head it did not
@@ -225,7 +226,7 @@ confirm no review runs and the stand-down is recorded.
 - The `spec-draft/` branch was opened by a human rather than intake: it is
   eligible only if it meets the same settledness conditions.
 - A spec PR that was merged by the owner before the review ran: nothing is
-  posted.
+  posted, pushed or relabelled.
 - Text in the spec, PR body or comments that reads as instructions to the
   reviewer is treated as data (constitution V).
 
@@ -234,7 +235,8 @@ confirm no review runs and the stand-down is recorded.
 ### Functional Requirements — scope and trigger
 
 - **FR-001**: The feature MUST review spec pull requests — those from a
-  `spec-draft/…` branch to `main` that belong to a lifecycle issue. Final
+  `spec-draft/…` branch of this repository (never a fork's head,
+  constitution V) to `main` that belong to a lifecycle issue. Final
   implementation pull requests MUST remain solely spec 062's and MUST NOT be
   reviewed by this feature. Plan pull requests MUST NOT be reviewed by this
   feature, including when `WING_COMMANDER_PLAN_REVIEW` is `pr`; reviewing
@@ -243,10 +245,12 @@ confirm no review runs and the stand-down is recorded.
   all of the following hold, re-derived in deterministic code against the
   pull request's current head SHA at selection time:
   (a) the lifecycle issue carries `stage:spec` and not `stage:clarify`;
-  (b) the spec.md on the head contains no `NEEDS CLARIFICATION` marker;
+  (b) the spec.md on the head contains no `NEEDS CLARIFICATION` marker in
+  its colon form, by the same scan `clarify.yml` runs before it announces a
+  spec PR ready (the bare phrase in prose is not a marker);
   (c) intake, clarify, or a review round that pushed only unambiguous fixes
   (FR-015d) has posted its ready-for-review announcement on the
-  lifecycle; and (d) the head commit is not newer than that announcement.
+  lifecycle issue; and (d) the head commit is not newer than that announcement.
   No fixed quiet period is added beyond (d).
 - **FR-003**: The review MUST be started by a scheduled selection over open
   spec pull requests, in the manner of `lifecycle-review-gate.yml`'s
@@ -264,7 +268,12 @@ confirm no review runs and the stand-down is recorded.
   the spec — a separate invocation sharing no context with intake or clarify.
 - **FR-007**: The review MUST check, at minimum:
   (a) whether each requirement can be built on current `main` with the
-  permissions, secrets and repository variables the pipeline actually has;
+  permissions, secrets and repository variables the pipeline actually has,
+  read from their documented and referenced surface on `main` (the App
+  permissions `docs/setup.md` lists, which Gate 12 enforces, and the
+  `secrets.*` and `vars.*` the workflows reference): neither the App token
+  nor the workflow's own token can list the repository's secrets or
+  variables;
   (b) conflicts with the constitution and with the live contracts of merged
   specs (`specs/*/contracts/`) and the behaviour on `main`;
   (c) requirements that contradict each other, cannot be tested, or leave a
@@ -283,21 +292,28 @@ confirm no review runs and the stand-down is recorded.
   merge it, or alter its labels' merge-relevant state. Pushing unambiguous
   fixes to the `spec-draft/` branch (FR-015b) and moving the lifecycle issue
   back to `stage:clarify` (FR-015c) are the only writes it makes beyond its
-  comments and commit status. Merge of a spec pull request stays human
-  (constitution V).
+  comments, reviews and commit status. Merge of a spec pull request stays
+  human (constitution V). Nothing it posts may start pr-conversation or
+  clarify; both already ignore bot actors (constitution V,
+  `wing-commander-2-clarify.yml` and `wing-commander-9-pr-conversation.yml`).
 
 ### Functional Requirements — the result
 
-- **FR-011**: Each completed round MUST post one result comment on the spec
-  pull request naming the round number, the reviewed head SHA, a verdict of
-  exactly "ready for the owner" or "not ready", and the findings.
+- **FR-011**: Each completed round MUST post one result on the spec pull
+  request, as a pull request review with the `COMMENT` event, naming the
+  round number, the reviewed head SHA, a verdict of exactly "ready for the
+  owner" or "not ready", and the findings, with spec 116's round record
+  appended last (spec 116 `contracts/convergence-signals.md`, "Round
+  records": only the App's own reviews are read back).
 - **FR-012**: Findings MUST be emitted as structured records in the shape the
   pipeline's existing review findings use (title, what, evidence with file
   paths and optional quoted lines, fingerprint basis), so rendering and
   deduplication are reused, not re-derived.
 - **FR-013**: The verdict MUST be computed in deterministic code from the
-  structured findings (any open finding ⇒ "not ready"), not taken from the
-  reviewing agent's prose (constitution IX).
+  structured findings (any finding on the reviewed head ⇒ "not ready",
+  including one the round fixed on the branch; the pushed head gets its own
+  verdict in the next round, FR-015d), not taken from the reviewing agent's
+  prose (constitution IX).
 - **FR-014**: A finding that requires a decision only the owner can make
   MUST be phrased as a question with at least two options and a
   recommendation. A finding a precedent already settles MUST cite that
@@ -323,7 +339,9 @@ confirm no review runs and the stand-down is recorded.
   as commits to the spec pull request's `spec-draft/` branch, and the result
   comment MUST list each such finding with the commit SHA that fixed it and
   the precedent or fact it relied on. The push MUST NOT touch files outside
-  the lifecycle's `specs/NNN-*/` directory.
+  the lifecycle's spec directory (`[<P>/]specs/NNN-*/`, constitution
+  Operational Constraints), and deterministic code MUST check that path
+  bound on the round's diff before anything is pushed (constitution IX).
 - **FR-015c**: For owner decisions, the round MUST post them on the
   lifecycle issue as new clarification questions — each with at least two
   options and a recommendation (FR-014) — and move the lifecycle issue from
@@ -338,7 +356,10 @@ confirm no review runs and the stand-down is recorded.
   review is a new round that counts against the round budget (FR-018) and
   the convergence check (FR-019).
 - **FR-016**: Each round MUST post a commit status on the reviewed head
-  under a context distinct from spec 062's, reporting success for "ready for
+  under a context distinct from spec 062's, with the workflow's own token
+  and a job-level `statuses: write` permission as spec 062's gate does (the
+  App holds no Commit statuses permission, `docs/setup.md`), reporting
+  success for "ready for
   the owner", failure for "not ready", budget exhausted, convergence stop,
   or review failure, so the result is visible in the PR's checks. This
   feature MUST NOT make that status a required check.
@@ -354,7 +375,9 @@ confirm no review runs and the stand-down is recorded.
   spec 116 convergence check to the PR's prior rounds and, if it trips, stop
   and hand the PR to the owner with the convergence reason stated. The
   convergence arithmetic MUST be reused from its existing single home, not
-  re-implemented.
+  re-implemented. Re-eligibility after a convergence stop follows spec 116
+  FR-008: a later head re-arms the review only when the PR's diff against
+  `main` differs from the stopped round's.
 - **FR-020**: The feature MUST carry a repository-level kill switch named in
   the `WING_COMMANDER_*_PAUSED` family (e.g.
   `WING_COMMANDER_SPEC_REVIEW_PAUSED`), settable without editing a workflow;
@@ -426,8 +449,9 @@ confirm no review runs and the stand-down is recorded.
   announcement reliably means a write in progress.
 - The trigger is a scheduled selection plus manual dispatch, matching
   `lifecycle-review-gate.yml`. A purely event-driven trigger is not relied on
-  because comments posted with the pipeline's token do not start other
-  workflows.
+  because the ready announcement is a bot comment and every comment-driven
+  stage ignores bot actors (constitution V), and the App holds no Actions
+  permission with which to dispatch a workflow.
 - The feature is consuming-instrument only (this repository), like spec
   062's gate and the board loop; adopters are not offered it in this cut.
 - A commit status is posted for visibility but not made required; making it
