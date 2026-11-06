@@ -14,7 +14,19 @@ without an id appear in neither), and heredocs `impl-unchecked-items` (delimiter
 `WING_COMMANDER_IMPL_ITEMS_EOF`) and `maintainer-items` (delimiter
 `WING_COMMANDER_MAINTAINER_ITEMS_EOF`). Still exits non-zero with no stdout
 when `ref:path` is unreadable. A file with no markers classifies every
-non-standing line as implementation.
+non-standing line as implementation, except the lines specs/123 (FR-004)
+classifies as deterministically unbuildable (post-merge proof, drill,
+write to a no-write path, a gate-suite run while `GATE_SUITE_READY=false`):
+those move to `maintainer-items` and out of `impl-*`. Folded review
+findings stay in `impl-*`. specs/123 adds `buildable-*` and `fold-*`
+outputs (see `specs/123-implement-task-completion/contracts/buildable-classification.md`).
+
+**Changed output meaning (constitution VII announcement):** in the published
+`wing-commander-tasks-checkbox-count` composite, `maintainer-items` now also
+lists deterministically-unbuildable lines, and `impl-*` no longer counts them.
+The composite gains a `gate-suite-ready` input (default `true`) and the
+`buildable-*` / `fold-*` outputs; this is a minor-version change at the next
+release.
 
 ## validate-implement-blocker.sh `<blocker-json-path> <tasks-ref> <tasks-path>`
 

@@ -24,3 +24,17 @@ impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF
 WING_COMMANDER_IMPL_ITEMS_EOF
 maintainer-items<<WING_COMMANDER_MAINTAINER_ITEMS_EOF
 WING_COMMANDER_MAINTAINER_ITEMS_EOF
+buildable-checked-count=0
+buildable-unchecked-count=6
+buildable-unchecked-ids=T016
+buildable-unchecked-items<<WING_COMMANDER_BUILDABLE_ITEMS_EOF
+- [ ] Keep the gates green by fixing `verify-x.py`
+- [ ] After each cycle, update `.github/scripts/y.sh`
+- [ ] Complete every remaining step in docs/guide.md
+- [ ] Keep the gates green for the new parser
+- [ ] Complete every remaining step in docs/tasks.md
+- [ ] T016 [P] Keep the gates green for the new parser
+WING_COMMANDER_BUILDABLE_ITEMS_EOF
+fold-unchecked-count=0
+fold-unchecked-items<<WING_COMMANDER_FOLD_ITEMS_EOF
+WING_COMMANDER_FOLD_ITEMS_EOF

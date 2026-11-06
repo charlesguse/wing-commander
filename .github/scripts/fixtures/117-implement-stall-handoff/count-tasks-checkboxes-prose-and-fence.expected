@@ -17,3 +17,13 @@ WING_COMMANDER_IMPL_ITEMS_EOF
 maintainer-items<<WING_COMMANDER_MAINTAINER_ITEMS_EOF
 - [ ] T003 [P] [maintainer] after other tag within window
 WING_COMMANDER_MAINTAINER_ITEMS_EOF
+buildable-checked-count=1
+buildable-unchecked-count=2
+buildable-unchecked-ids=T001 T002
+buildable-unchecked-items<<WING_COMMANDER_BUILDABLE_ITEMS_EOF
+- [ ] T001 Document the maintainer role
+- [ ] T002 A long description padding past forty chars [maintainer] late token
+WING_COMMANDER_BUILDABLE_ITEMS_EOF
+fold-unchecked-count=0
+fold-unchecked-items<<WING_COMMANDER_FOLD_ITEMS_EOF
+WING_COMMANDER_FOLD_ITEMS_EOF
