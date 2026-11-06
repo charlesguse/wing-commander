@@ -127,6 +127,17 @@ def check_cap_outcome(failures):
                 failures.append(f"cap-outcome/{name}: {k} expected {v!r}, got {got.get(k)!r}")
 
 
+def check_prompt(failures):
+    """FR-001/FR-002: both implement prompts say a checkpoint is not a
+    stopping point and keep the push-per-phase rule."""
+    text = open(os.path.join(ROOT, ".github", "workflows", "implement.yml")).read()
+    flat = re.sub(r"\s+", " ", text)
+    for needle in ("a phase checkpoint is a place to push, not a stopping point",
+                   "push after every phase"):
+        if flat.count(needle) < 2:
+            failures.append(f"implement.yml: both prompts must carry {needle!r}")
+
+
 def check_unreadable(failures):
     with tempfile.TemporaryDirectory() as tmp:
         git(tmp, "init", "-q")
@@ -154,6 +165,7 @@ def main():
     failures = []
     check_classification(failures)
     check_cap_outcome(failures)
+    check_prompt(failures)
     check_unreadable(failures)
     check_single_home(failures)
     if failures:

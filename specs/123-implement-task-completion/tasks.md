@@ -14,8 +14,8 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the fixture directory `.github/scripts/fixtures/123-implement-task-completion/` with a README.md listing the fixture families (classification, cap-outcome, finalize-wait, review-gate-skip, cycle-outcome, migration, watchdog-handoff)
-- [ ] T002 [P] Read `specs/117-implement-stall-handoff/contracts/shared-scripts.md` and `.github/actions/_shared/count-tasks-checkboxes.sh`, `decide-implement-outcome.sh`, `classify-out-of-boundary-tasks.sh`, `render-remaining-work.sh` to confirm the current line-class order and output names before editing (no file change; note findings in the T004 commit message)
+- [x] T001 Create the fixture directory `.github/scripts/fixtures/123-implement-task-completion/` with a README.md listing the fixture families (classification, cap-outcome, finalize-wait, review-gate-skip, cycle-outcome, migration, watchdog-handoff)
+- [x] T002 [P] Read `specs/117-implement-stall-handoff/contracts/shared-scripts.md` and `.github/actions/_shared/count-tasks-checkboxes.sh`, `decide-implement-outcome.sh`, `classify-out-of-boundary-tasks.sh`, `render-remaining-work.sh` to confirm the current line-class order and output names before editing (no file change; note findings in the T004 commit message)
 
 ---
 
@@ -23,12 +23,12 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 
 **Purpose**: Extend the single counter (research D1/D2/D3/D4); every story reads its outputs.
 
-- [ ] T003 Add classification fixtures in `.github/scripts/fixtures/123-implement-task-completion/classification/`: tasks.md files covering standing line, `Review finding:` fold, `Recurring review finding:` fold, `[maintainer]` tag, post-merge proof, drill, `.claude/` write, gate-suite run with `GATE_SUITE_READY=false` and `true`, ambiguous line (must be buildable), checked and unchecked variants, each with an expected-output file
-- [ ] T004 Extend `.github/actions/_shared/count-tasks-checkboxes.sh` with line-class order standing → fold → maintainer tag → deterministic-unbuildable → buildable; emit `buildable-checked-count`, `buildable-unchecked-count`, `buildable-unchecked-ids`, `buildable-unchecked-items`, `fold-unchecked-count`, `fold-unchecked-items`; `maintainer-items` includes deterministic-unbuildable lines; `impl-*` = buildable + folds; read env `GATE_SUITE_READY` (default `true`) and `NO_WRITE_PATHS` (default `.claude/,.git/`); post-merge-proof and drill patterns anchored (e.g. "re-drive", "prove after merge", "post-merge", "drill") applied after the tag run; an unreadable ref:path still exits non-zero with empty stdout
-- [ ] T005 Make the write-boundary class in `.github/actions/_shared/count-tasks-checkboxes.sh` call `.github/actions/_shared/classify-out-of-boundary-tasks.sh` (no second pattern list); extend the classifier only if a `.claude/` write fixture from T003 is missed
-- [ ] T006 [P] Expose the new outputs and a `gate-suite-ready` input in `.github/actions/wing-commander-tasks-checkbox-count/action.yml`
-- [ ] T007 [P] Amend the live contract `specs/117-implement-stall-handoff/contracts/shared-scripts.md` (the tasks.md-with-no-markers rule now excludes the FR-004 classes and folds from the buildable view) and add the announcement of the changed output meanings required by constitution VII
-- [ ] T008 Create `.github/scripts/verify-buildable-classification.py` (gate) that runs `count-tasks-checkboxes.sh` over every T003 fixture and fails on any mismatch, and fails if a second classification pattern list for the write-boundary class appears outside `classify-out-of-boundary-tasks.sh` ("single home" check, FR-017); register it so `run-local-gates.py` runs it
+- [x] T003 Add classification fixtures in `.github/scripts/fixtures/123-implement-task-completion/classification/`: tasks.md files covering standing line, `Review finding:` fold, `Recurring review finding:` fold, `[maintainer]` tag, post-merge proof, drill, `.claude/` write, gate-suite run with `GATE_SUITE_READY=false` and `true`, ambiguous line (must be buildable), checked and unchecked variants, each with an expected-output file
+- [x] T004 Extend `.github/actions/_shared/count-tasks-checkboxes.sh` with line-class order standing → fold → maintainer tag → deterministic-unbuildable → buildable; emit `buildable-checked-count`, `buildable-unchecked-count`, `buildable-unchecked-ids`, `buildable-unchecked-items`, `fold-unchecked-count`, `fold-unchecked-items`; `maintainer-items` includes deterministic-unbuildable lines; `impl-*` = buildable + folds; read env `GATE_SUITE_READY` (default `true`) and `NO_WRITE_PATHS` (default `.claude/,.git/`); post-merge-proof and drill patterns anchored (e.g. "re-drive", "prove after merge", "post-merge", "drill") applied after the tag run; an unreadable ref:path still exits non-zero with empty stdout
+- [x] T005 Make the write-boundary class in `.github/actions/_shared/count-tasks-checkboxes.sh` call `.github/actions/_shared/classify-out-of-boundary-tasks.sh` (no second pattern list); extend the classifier only if a `.claude/` write fixture from T003 is missed
+- [x] T006 [P] Expose the new outputs and a `gate-suite-ready` input in `.github/actions/wing-commander-tasks-checkbox-count/action.yml`
+- [x] T007 [P] Amend the live contract `specs/117-implement-stall-handoff/contracts/shared-scripts.md` (the tasks.md-with-no-markers rule now excludes the FR-004 classes and folds from the buildable view) and add the announcement of the changed output meanings required by constitution VII
+- [x] T008 Create `.github/scripts/verify-buildable-classification.py` (gate) that runs `count-tasks-checkboxes.sh` over every T003 fixture and fails on any mismatch, and fails if a second classification pattern list for the write-boundary class appears outside `classify-out-of-boundary-tasks.sh` ("single home" check, FR-017); register it so `run-local-gates.py` runs it
 
 **Checkpoint**: classification fixtures and gate pass; consumers can now read `buildable-*`.
 
@@ -41,10 +41,10 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 **Independent Test**: The implement prompt states a checkpoint is not a stopping point while push-per-phase remains; the cycle-outcome line shows ticked, remaining and turns from tasks.md base/tip and the execution record.
 
 - [ ] T009 [US1] Add cycle-outcome fixtures in `.github/scripts/fixtures/123-implement-task-completion/cycle-outcome/` (base/tip tasks.md pairs plus a sample execution record giving turns used and budget; include a case where converge appended tasks)
-- [ ] T010 [US1] Edit the implement prompt in `.github/workflows/implement.yml` (both copies, near the two existing prompt blocks) to direct the agent to keep building every buildable unchecked task across phases, state that a phase checkpoint is not a stopping point, and keep "push at each phase boundary" (FR-001, FR-002); if the copies are byte-compared by an existing gate, update that gate's expectation in the same change
+- [x] T010 [US1] Edit the implement prompt in `.github/workflows/implement.yml` (both copies, near the two existing prompt blocks) to direct the agent to keep building every buildable unchecked task across phases, state that a phase checkpoint is not a stopping point, and keep "push at each phase boundary" (FR-001, FR-002); if the copies are byte-compared by an existing gate, update that gate's expectation in the same change
 - [ ] T011 [US1] In `.github/actions/wing-commander-implement-outcome/action.yml` (and `.github/actions/_shared/decide-implement-outcome.sh` if the arithmetic belongs there) compute `buildable_ticked` (tip minus base `buildable-checked-count`), `buildable_remaining` (tip `buildable-unchecked-count` plus dropped ids) and `turns_used`/`turn_budget` from the run's execution record, and emit a single cycle-outcome line output (FR-003)
 - [ ] T012 [US1] Append the cycle-outcome line to the lifecycle issue comment and the metrics record in `.github/workflows/implement.yml`, consuming the composite output only (no formatter pasted into the workflow; single-home rule)
-- [ ] T013 [US1] Pass the cycle-start gate-suite job's readiness as `GATE_SUITE_READY` into the base and tip counter calls in `.github/workflows/implement.yml` (same value for both, FR-008)
+- [x] T013 [US1] Pass the cycle-start gate-suite job's readiness as `GATE_SUITE_READY` into the base and tip counter calls in `.github/workflows/implement.yml` (same value for both, FR-008)
 - [ ] T014 [US1] Extend `.github/scripts/verify-buildable-classification.py` (or add a sibling `.github/scripts/verify-cycle-outcome.py`) to check the T009 fixtures and that the implement prompt contains the "not a stopping point" and push-per-phase statements
 
 **Checkpoint**: US1 independently verifiable via gates.
@@ -57,10 +57,10 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 
 **Independent Test**: A tasks.md with only maintainer-only/unbuildable unchecked lines yields `impl-unchecked`=0, converged, and the remaining-work report lists them.
 
-- [ ] T015 [US2] Add cap-outcome fixtures in `.github/scripts/fixtures/123-implement-task-completion/cap-outcome/`: only-maintainer-only left at cap (converged, FR-014), all tasks maintainer-only (converges immediately), ambiguous task (buildable)
-- [ ] T016 [US2] Update `.github/actions/_shared/decide-implement-outcome.sh` so convergence keys on `impl-unchecked` (folds included) and maintainer-only/unbuildable lines never count, and the cap with only maintainer-only unchecked reports converged, not cap-reached (FR-006, FR-014)
+- [x] T015 [US2] Add cap-outcome fixtures in `.github/scripts/fixtures/123-implement-task-completion/cap-outcome/`: only-maintainer-only left at cap (converged, FR-014), all tasks maintainer-only (converges immediately), ambiguous task (buildable)
+- [x] T016 [US2] Update `.github/actions/_shared/decide-implement-outcome.sh` so convergence keys on `impl-unchecked` (folds included) and maintainer-only/unbuildable lines never count, and the cap with only maintainer-only unchecked reports converged, not cap-reached (FR-006, FR-014)
 - [ ] T017 [P] [US2] Update `.github/actions/_shared/render-remaining-work.sh` and `.github/actions/wing-commander-remaining-work/action.yml` to list buildable remaining and maintainer-only (including deterministic-unbuildable) tasks as human work
-- [ ] T018 [US2] Extend the gate from T008 (or `.github/scripts/verify-buildable-classification.py`) to run the T015 fixtures through `decide-implement-outcome.sh` and the remaining-work renderer
+- [x] T018 [US2] Extend the gate from T008 (or `.github/scripts/verify-buildable-classification.py`) to run the T015 fixtures through `decide-implement-outcome.sh` and the remaining-work renderer
 
 ---
 
@@ -71,8 +71,8 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 **Independent Test**: With folds plus buildable tasks outstanding, finalize opens no PR and the review gate skips a final PR; with only folds left, neither refuses.
 
 - [ ] T019 [US3] Add fixtures in `.github/scripts/fixtures/123-implement-task-completion/finalize-wait/` and `.../review-gate-skip/`: buildable unchecked (refuse/skip), only folds unchecked (proceed), only maintainer-only unchecked (proceed), duplicate fold of a spec task
-- [ ] T020 [US3] In `.github/actions/_shared/decide-implement-outcome.sh` take new env `BUILDABLE_UNCHECKED_TIP`, `BUILDABLE_CHECKED_BASE`, `BUILDABLE_CHECKED_TIP`; `progressed` uses the buildable checked delta; the cap/blocker hand-off keys on buildable unchecked (plus dropped ids) > 0; cap with only folds left proceeds to finalize (no hand-off)
-- [ ] T021 [US3] Wire the new inputs through `.github/actions/wing-commander-implement-outcome/action.yml` and the call site in `.github/workflows/implement.yml`
+- [x] T020 [US3] In `.github/actions/_shared/decide-implement-outcome.sh` take new env `BUILDABLE_UNCHECKED_TIP`, `BUILDABLE_CHECKED_BASE`, `BUILDABLE_CHECKED_TIP`; `progressed` uses the buildable checked delta; the cap/blocker hand-off keys on buildable unchecked (plus dropped ids) > 0; cap with only folds left proceeds to finalize (no hand-off)
+- [x] T021 [US3] Wire the new inputs through `.github/actions/wing-commander-implement-outcome/action.yml` and the call site in `.github/workflows/implement.yml`
 - [ ] T022 [US3] In `.github/workflows/finalize.yml` add a refusal step before PR creation that reads `buildable-unchecked-count` from `wing-commander-tasks-checkbox-count` at the spec-branch tip and, when > 0, comments the remaining list on the lifecycle issue and fails closed with no PR; no override input; give it a one-line fallback if the composite did not run (FR-010)
 - [ ] T023 [US3] In `.github/workflows/lifecycle-review-gate.yml` make the select step read the same composite at the PR head and skip a final PR with `buildable-unchecked-count` > 0, logging the reason (FR-010)
 - [ ] T024 [US3] Run the `review-step-gating` skill over the T022/T023 `if:`/exit-code changes and fix findings in `.github/workflows/finalize.yml` and `.github/workflows/lifecycle-review-gate.yml`
