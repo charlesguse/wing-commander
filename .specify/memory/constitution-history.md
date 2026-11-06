@@ -6,6 +6,24 @@ A new amendment adds its report to the top of this list (below this
 header), not to `constitution.md` -- see CLAUDE.md.
 
 <!--
+Sync Impact Report — 2026-11-06
+Version change: 2.6.0 → 2.7.0 (MINOR: Principle X's lifecycle pull request merge gains a ninth merge condition, so the list of gates that bound an existing class is materially expanded. No class is added, removed or widened; the new condition only narrows when the bot may merge. Materially expanding the guidance that bounds an existing class is MINOR, not PATCH, under the speckit-constitution versioning rule -- the same reasoning as 2.6.0.)
+Modified principles:
+  X. Bounded Autonomy — The Pipeline Works Its Own Board: the lifecycle pull request merge's "all eight of its gates" becomes "all nine of its gates", and the list gains its ninth: the lifecycle issue carries no hold label (the label `vars.WING_COMMANDER_HOLD_LABEL` names, `lifecycle:held` by default), read from labels fetched fresh at merge time, and labels that cannot be read fail the gate (spec 119 FR-022). The rest of X is unchanged: the other eight gates, the switch, the kill switch, the announcement, the hand-off and the "What stays human" list.
+Modified sections: none
+Added sections: none
+Removed sections: none
+Templates requiring updates:
+  ✅ .specify/templates/plan-template.md — no change needed (Constitution Check is generic)
+  ✅ .specify/templates/spec-template.md — no change needed (no principle references)
+  ✅ .specify/templates/tasks-template.md — no change needed (no principle references)
+  ⚠ specs/062-lifecycle-review-gate/contracts/readiness-and-merge.md — `may_merge` becomes the conjunction of nine conditions in spec 119's final PR (#1102), not in this amendment, which is human-merged on its own and carries only `.specify/memory/` edits.
+  ✅ .specify/extensions.yml — absent, so no before/after_constitution hooks apply
+Motivation: spec 119 (`specs/119-lifecycle-hold-label`, lifecycle #1066) adds a lifecycle hold label, and FR-022 makes "no hold label" a merge precondition of the lifecycle review gate. The owner decided on 2026-10-26 that a constitution X amendment lands alongside the feature so the gate count stays exact, and on 2026-10-30 that the order is enforced: the merge check reads constitution X from the default branch at merge time and refuses while X does not name the hold condition.
+Worked example: this PR is spec 119's task T047. The final PR (#1102) carries the label checks and T023's `wc_lifecycle_hold.py constitution-names-hold`, which requires the literal "no hold label" in Principle X on the default branch. That check refuses every lifecycle merge until this amendment is on `main`, so this amendment merges first.
+Follow-up TODOs: none
+-->
+<!--
 Sync Impact Report — 2026-10-18
 Version change: 2.5.0 → 2.6.0 (MINOR: Principle X gains the switch that governs the board loop's two existing merge classes. No class is added or widened; each class keeps the conditions it already required and gains the switch, its named kill switch, re-deriving those conditions from a fresh snapshot of the exact head SHA, and the hand-off of a merge GitHub refuses. Materially expanding the guidance that bounds an existing class is MINOR, not PATCH, under the speckit-constitution versioning rule.)
 Modified principles:
