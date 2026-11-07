@@ -79,8 +79,9 @@ jobs:
           if gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json comments --jq '.comments[].body' | grep -qF '<!-- wing-commander-migrate-stranded-review -->'; then marker=true; fi
           verdict="$(bash .github/actions/_shared/migrate-stranded-review-lifecycles.sh decide "$state" "$stage" "$marker" "$count")"
           echo "#$ISSUE: $verdict"
-          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
           {
+            echo "verdict=$verdict"
+            echo "tip=$(git rev-parse "origin/$BRANCH")"
             echo "items<<WC_EOF"
             printf '%s\n' "$out" | sed -n '/^buildable-unchecked-items<</,/^[A-Za-z_]*EOF/p' | sed '1d;$d'
             echo "WC_EOF"
@@ -96,11 +97,25 @@ jobs:
           SPEC_DIR: ${{ inputs.spec-dir }}
           COUNT: ${{ steps.decide.outputs.count }}
           ITEMS: ${{ steps.decide.outputs.items }}
+          DECIDED_TIP: ${{ steps.decide.outputs.tip }}
         run: |
           set -uo pipefail
           git config user.name "wing-commander[bot]"
           git config user.email "wing-commander@users.noreply.github.com"
+          # Re-check what Decide saw: a branch that moved since, or one no
+          # longer at review, is not stranded and must not be stalled. (A push
+          # with github.token starts no downstream workflow; none is needed
+          # for a stalled hand-off.)
+          git fetch origin "$BRANCH"
+          if [ "$(git rev-parse "origin/$BRANCH")" != "$DECIDED_TIP" ]; then
+            echo "::warning::$BRANCH moved since Decide; not handing off"
+            exit 0
+          fi
           git checkout -B "$BRANCH" "origin/$BRANCH"
+          if [ "$(jq -r '.stage // ""' "$SPEC_DIR/spec-meta.json")" != "review" ]; then
+            echo "::warning::$SPEC_DIR is no longer at stage review; not handing off"
+            exit 0
+          fi
           jq '.stage = "stalled"' "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/spec-meta.json" && cp "$RUNNER_TEMP/spec-meta.json" "$SPEC_DIR/spec-meta.json"
           git add "$SPEC_DIR/spec-meta.json"
           git commit -m "implement: hand off stranded review lifecycle (stage stalled)"

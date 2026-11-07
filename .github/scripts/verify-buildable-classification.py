@@ -149,6 +149,16 @@ def check_cycle_outcome_wiring(failures):
     if re.search(r"buildable task\(s\)", text):
         failures.append("implement.yml: a copy of the cycle-outcome formatter "
                         "must live only in decide-implement-outcome.sh")
+    # Env assignments on the inline decide command must be separate words:
+    # a closing quote glued to the next NAME= makes one garbled assignment.
+    glued = re.findall(r'"(?:TURN_BUDGET|IMPL_CHECKED_BASE)=[^"]*"[A-Z_]+=', text)
+    glued += re.findall(r'TURN_BUDGET="[^"]*"IMPL_CHECKED_BASE=', text)
+    if glued:
+        failures.append("implement.yml: TURN_BUDGET and IMPL_CHECKED_BASE must be "
+                        "separate env assignments (missing space)")
+    if len(re.findall(r'TURN_BUDGET="\$\{INTENDED_TURNS:-\}" IMPL_CHECKED_BASE=', text)) < 2:
+        failures.append("implement.yml: both arms must pass TURN_BUDGET and "
+                        "IMPL_CHECKED_BASE as separate assignments")
     src = open(DECIDE).read()
     if "buildable task(s)" not in src:
         failures.append("decide-implement-outcome.sh lost the cycle-outcome formatter")

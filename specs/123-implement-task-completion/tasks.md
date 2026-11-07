@@ -147,7 +147,7 @@ Phases 1–2, then US1 and US2 (the two P1 stories): the classification home, th
 
 ## Review Gate Round 1 Findings
 
-- [ ] Review finding: Missing space glues TURN_BUDGET and IMPL_CHECKED_BASE assignments in implement.yml
+- [x] Review finding: Missing space glues TURN_BUDGET and IMPL_CHECKED_BASE assignments in implement.yml
 
   `TURN_BUDGET="${INTENDED_TURNS:-}"IMPL_CHECKED_BASE=...` is read as one assignment in both the cycle and retry arms, so TURN_BUDGET is garbled and the cycle outcome line shows `?` for the turn budget.
 
@@ -155,49 +155,49 @@ Phases 1–2, then US1 and US2 (the two P1 stories): the classification home, th
 
   Detail: Glued text appears in two places in the diff, at diff lines 1272 and 1337. Gate 166 only counts substrings and never exercises the inline command, so it cannot catch this.
 
-- [ ] Review finding: Resumed-cycle step lifts stage:stalled even when the cycle hands off again
+- [x] Review finding: Resumed-cycle step lifts stage:stalled even when the cycle hands off again
 
   The `if:` removes the stage:stalled label whenever final.ok is true and iteration > 1, without requiring handoff != 'true', so a re-stalled lifecycle ends up with no label.
 
   - .github/workflows/implement.yml
 
-- [ ] Review finding: Unbuildable prefix regex has no word boundary
+- [x] Review finding: Unbuildable prefix regex has no word boundary
 
   The anchored prefix regex (drill, post-merge, re-drive, ...) matches ordinary build tasks such as 'Drilldown view', so they are classified as human-only and never built.
 
   - .github/actions/_shared/count-tasks-checkboxes.sh
 
-- [ ] Review finding: Out-of-boundary verdict match requires a preceding newline and exactly =1
+- [x] Review finding: Out-of-boundary verdict match requires a preceding newline and exactly =1
 
   The pattern `*$'\n'"out-of-boundary-count=1"*` misses a verdict that is the first output line, and errors are swallowed by `2>/dev/null || continue`, so such lines silently count as buildable.
 
   - .github/actions/_shared/count-tasks-checkboxes.sh
 
-- [ ] Review finding: Counter forks the classifier once per candidate line
+- [x] Review finding: Counter forks the classifier once per candidate line
 
   count-tasks-checkboxes.sh spawns a separate bash process per backtick-path line, and the counter runs several times per cycle.
 
   - .github/actions/_shared/count-tasks-checkboxes.sh
 
-- [ ] Review finding: Migration hand-off writes spec-meta without re-checking branch tip or stage
+- [x] Review finding: Migration hand-off writes spec-meta without re-checking branch tip or stage
 
   The hand-off step pushes with github.token after Decide, with no check that the branch has not moved or left review, so it can stall an advanced lifecycle or have the push rejected. Pushes made with github.token also do not trigger downstream workflows.
 
   - .github/workflows/migrate-stranded-review-lifecycles.yml
 
-- [ ] Review finding: Migrate verifier decision comparison is a no-op replace and fixtures have doubled key
+- [x] Review finding: Migrate verifier decision comparison is a no-op replace and fixtures have doubled key
 
   `replace("decision=", "decision=", 1)` does nothing and the fixtures store `decision=decision=skip`, so the check accepts either form and can miss a regression in the output prefix.
 
   - .github/scripts/verify-migrate-stranded-review-lifecycles.py
 
-- [ ] Review finding: decide-implement-outcome fallback mixes impl and buildable bases when counter output is empty
+- [x] Review finding: decide-implement-outcome fallback mixes impl and buildable bases when counter output is empty
 
   When BUILDABLE_UNCHECKED_TIP is empty, unchecked falls back to the impl-based value and progress is computed on a different base than the normal path, and no fixture covers this fallback.
 
   - .github/actions/_shared/decide-implement-outcome.sh
 
-- [ ] Review finding: Gate 166 wiring checks are substring counts and miss the broken inline decide command
+- [x] Review finding: Gate 166 wiring checks are substring counts and miss the broken inline decide command
 
   check_cycle_outcome_wiring only counts occurrences and never checks that the TURN_BUDGET and IMPL_CHECKED_BASE env names are separate assignments, so the glued typo passes.
 

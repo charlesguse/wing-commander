@@ -1,4 +1,4 @@
 issue-state=open
 stage=review
 marker=false
-decision=decision=skip reason=no-buildable-left
+decision=skip reason=no-buildable-left

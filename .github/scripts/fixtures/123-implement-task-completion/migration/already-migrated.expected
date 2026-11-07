@@ -1,4 +1,4 @@
 issue-state=open
 stage=stalled
 marker=true
-decision=decision=skip reason=already-migrated
+decision=skip reason=already-migrated

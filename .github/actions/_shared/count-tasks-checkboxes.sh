@@ -71,11 +71,21 @@ GATE_SUITE_READY="${GATE_SUITE_READY:-true}"
 NO_WRITE_PATHS="${NO_WRITE_PATHS:-.claude/,.git/}"
 CLASSIFIER="$(dirname "${BASH_SOURCE[0]}")/classify-out-of-boundary-tasks.sh"
 oob_lines=$'\n'
-while IFS= read -r cand; do
-  [ -n "$cand" ] || continue
-  verdict="$(bash "$CLASSIFIER" "$cand" "$NO_WRITE_PATHS" "$TASKS_PATH" "$(dirname "$TASKS_PATH")" 2>/dev/null)" || continue
-  case "$verdict" in *$'\n'"out-of-boundary-count=1"*) oob_lines="${oob_lines}${cand}"$'\n' ;; esac
-done < <(printf '%s\n' "$content" | grep -E '^[ 	]*- \[[ xX]\].*`[^` ]*/[^` ]*`' || true)
+# One classifier call for every candidate line (it classifies line by line, so
+# batching changes no verdict); its findings JSON names each out-of-boundary
+# line verbatim in fingerprint_basis.gate_or_artifact. Any failure leaves the
+# lines buildable (ambiguity stays buildable).
+candidates="$(printf '%s\n' "$content" | grep -E '^[ 	]*- \[[ xX]\].*`[^` ]*/[^` ]*`' || true)"
+if [ -n "$candidates" ]; then
+  verdict="$(bash "$CLASSIFIER" "$candidates" "$NO_WRITE_PATHS" "$TASKS_PATH" "$(dirname "$TASKS_PATH")" 2>/dev/null)" || verdict=""
+  findings_line="$(printf '%s\n' "$verdict" | sed -n '2p')"
+  if [ -n "$findings_line" ]; then
+    oob_found="$(printf '%s\n' "$findings_line" | jq -r '.[].fingerprint_basis.gate_or_artifact' 2>/dev/null)" || oob_found=""
+    if [ -n "$oob_found" ]; then
+      oob_lines="${oob_lines}${oob_found}"$'\n'
+    fi
+  fi
+fi
 
 counts="$(printf '%s\n' "$content" | WC_GATE_READY="$GATE_SUITE_READY" WC_OOB="$oob_lines" awk '
   # Line classes, first match wins (specs/117 data-model.md): standing
@@ -154,7 +164,7 @@ counts="$(printf '%s\n' "$content" | WC_GATE_READY="$GATE_SUITE_READY" WC_OOB="$
   # while the cycle-start gate suite is not ready. Ambiguity stays buildable.
   function is_unbuildable(line,    t) {
     t = tolower(strip_lead(line))
-    if (t ~ /^(re-drive|prove after merge|prove-after-merge|post-merge|after (the )?merge|drill)/) return 1
+    if (t ~ /^(re-drive|prove after merge|prove-after-merge|post-merge|after (the )?merge|drill)([^a-z0-9-]|$)/) return 1
     if (index(oob, "\n" line "\n") > 0) return 1
     if (gate_ready == "false" && t ~ /^(run|execute) .*(gate suite|run-local-gates)/) return 1
     return 0

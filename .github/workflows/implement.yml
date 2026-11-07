@@ -1939,7 +1939,7 @@ jobs:
           # the budget is the intended-turns input; the line itself is
           # formatted solely by decide-implement-outcome.sh.
           turns_used="$(jq -r 'if type=="array" then . else [.] end | map(select(.type=="result")) | last | .num_turns // empty' "$RUNNER_TEMP/claude-execution-output.json" 2>/dev/null)" || turns_used=""
-          decision="$(OK="$ok" TRUNCATED="$truncated" TURNS_USED="$turns_used" TURN_BUDGET="${INTENDED_TURNS:-}"IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "$ok" != true ] || { [ "$truncated" != true ] && [ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false; })")"; }
+          decision="$(OK="$ok" TRUNCATED="$truncated" TURNS_USED="$turns_used" TURN_BUDGET="${INTENDED_TURNS:-}" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "$ok" != true ] || { [ "$truncated" != true ] && [ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false; })")"; }
           pick() { printf '%s\n' "$decision" | grep -m1 "^$1=" | cut -d= -f2- || true; }
           converged="$(pick converged)"
           progressed="$(pick progressed)"
@@ -2895,7 +2895,7 @@ jobs:
           # measured from the RETRY's own base -- see "Read back cycle
           # outcome" above.
           turns_used="$(jq -r 'if type=="array" then . else [.] end | map(select(.type=="result")) | last | .num_turns // empty' "$RUNNER_TEMP/claude-execution-output.json" 2>/dev/null)" || turns_used=""
-          decision="$(OK="$ok" TRUNCATED="$truncated" TURNS_USED="$turns_used" TURN_BUDGET="${INTENDED_TURNS:-}"IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "$ok" != true ] || { [ "$truncated" != true ] && [ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false; })")"; }
+          decision="$(OK="$ok" TRUNCATED="$truncated" TURNS_USED="$turns_used" TURN_BUDGET="${INTENDED_TURNS:-}" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "$ok" != true ] || { [ "$truncated" != true ] && [ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false; })")"; }
           pick() { printf '%s\n' "$decision" | grep -m1 "^$1=" | cut -d= -f2- || true; }
           converged="$(pick converged)"
           progressed="$(pick progressed)"
@@ -3857,6 +3857,7 @@ jobs:
           steps.lifecycle-gate.outputs.is-open == 'true' &&
           steps.guard.outputs.skip != 'true' &&
           steps.final.outputs.ok == 'true' &&
+          steps.final.outputs.handoff != 'true' &&
           inputs.iteration > 1
         continue-on-error: true
         env:

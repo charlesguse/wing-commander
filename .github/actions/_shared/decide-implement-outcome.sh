@@ -73,10 +73,21 @@ unchecked=$((unchecked + dropped_count))
 # folded review finding or a human-only line must not consume the budget or
 # hold a hand-off open). Unset means a caller that predates the buildable
 # view: fall back to the implementation counts, the old behaviour.
-b_base="$(num "${BUILDABLE_CHECKED_BASE:-$base}" 0)"
-b_tip="$(num "${BUILDABLE_CHECKED_TIP:-$tip}" 0)"
-b_unchecked="$(num "${BUILDABLE_UNCHECKED_TIP:-$unchecked}" 1)"
-if [ -n "${BUILDABLE_UNCHECKED_TIP:-}" ]; then b_unchecked=$((b_unchecked + dropped_count)); fi
+#
+# All-or-nothing: the buildable view is used only when the counter's
+# BUILDABLE_UNCHECKED_TIP is present. If it is empty (the counter output was
+# lost), base, tip and unchecked ALL come from the implementation counts, so
+# progress is never computed across two different bases.
+if [ -n "${BUILDABLE_UNCHECKED_TIP:-}" ]; then
+  b_base="$(num "${BUILDABLE_CHECKED_BASE:-}" 0)"
+  b_tip="$(num "${BUILDABLE_CHECKED_TIP:-}" 0)"
+  b_unchecked="$(num "$BUILDABLE_UNCHECKED_TIP" 1)"
+  b_unchecked=$((b_unchecked + dropped_count))
+else
+  b_base="$base"
+  b_tip="$tip"
+  b_unchecked="$unchecked"
+fi
 iteration="$(num "$iteration" 0)"
 max="$(num "$max" 0)"
 

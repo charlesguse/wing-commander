@@ -37,7 +37,9 @@ def main():
             ["bash", SCRIPT, "decide", exp["issue-state"], exp["stage"], exp["marker"], count],
             capture_output=True, text=True)
         got = out.stdout.strip()
-        if got != exp["decision"].replace("decision=", "decision=", 1) and got != exp["decision"][len("decision="):]:
+        # The script prints `decision=<verdict>`; the fixture key carries the
+        # bare verdict, so the prefix is asserted exactly once here.
+        if got != "decision=" + exp["decision"]:
             failures.append(f"migration/{name}: expected {exp['decision']!r}, got {got!r}")
     text = open(SCRIPT).read()
     if "grep -c" in text:
