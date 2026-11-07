@@ -1,0 +1,1 @@
+{"op": "select", "body": "- [ ] same\n- [ ] same", "expect": {"text": "same", "index": 0}}
