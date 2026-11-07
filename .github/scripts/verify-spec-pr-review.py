@@ -54,6 +54,26 @@ def main():
         if not subset(case["expect"], got):
             failures.append("%s: expected %s, got %s" % (
                 name, json.dumps(case["expect"]), json.dumps(got)))
+    sys.path.insert(0, HERE)
+    import spec_pr_review_actions as act
+    trusted = json.dumps({"author_association": "OWNER",
+                          "issue_url": "https://x/issues/7"})
+    untrusted = json.dumps({"author_association": "NONE",
+                            "issue_url": "https://x/issues/7"})
+    os.environ.pop("SPEC_LIFECYCLE_ISSUE", None)
+    if not act._trusted_comment(trusted):
+        failures.append("precedent: an owner-authored comment was rejected")
+    if act._trusted_comment(untrusted):
+        failures.append("precedent: an untrusted author's comment was accepted")
+    if act._trusted_comment("not json"):
+        failures.append("precedent: unparseable comment was accepted")
+    os.environ["SPEC_LIFECYCLE_ISSUE"] = "8"
+    if act._trusted_comment(trusted):
+        failures.append("precedent: a comment on another issue was accepted")
+    os.environ["SPEC_LIFECYCLE_ISSUE"] = "7"
+    if not act._trusted_comment(trusted):
+        failures.append("precedent: a comment on the lifecycle issue was rejected")
+    os.environ.pop("SPEC_LIFECYCLE_ISSUE", None)
     for cmd in SUBCOMMANDS:
         if cmd not in seen:
             failures.append("subcommand %s has no fixture" % cmd)

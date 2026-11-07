@@ -301,7 +301,7 @@ Task: "Add plan-actions-never-approve.json in .github/scripts/spec-pr-review-fix
 
   Detail: handoff is only set when decisions exist.
 
-- [ ] Review finding: Precedent citation check is trivially satisfiable
+- [x] Review finding: Precedent citation check is trivially satisfiable
 
   A cited file:line only has to exist and an issue-comment ID only has to exist, with no check on author, issue or content, so the FR-026 backstop does not actually constrain fixes.
 

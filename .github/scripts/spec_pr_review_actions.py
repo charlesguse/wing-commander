@@ -43,6 +43,23 @@ def _lines(path, ref=None):
         return None
 
 
+TRUSTED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
+
+
+def _trusted_comment(raw):
+    """An issue-comment precedent counts only when a trusted author wrote it
+    on the lifecycle issue (SPEC_LIFECYCLE_ISSUE, when the workflow sets it)."""
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return False
+    if not isinstance(data, dict) or \
+            data.get("author_association") not in TRUSTED_ASSOCIATIONS:
+        return False
+    issue = os.environ.get("SPEC_LIFECYCLE_ISSUE", "")
+    return not issue or str(data.get("issue_url", "")).endswith("/issues/" + issue)
+
+
 def resolve_precedent(prec):
     if not isinstance(prec, dict):
         return {}
@@ -58,7 +75,11 @@ def resolve_precedent(prec):
             ["gh", "api", "repos/%s/issues/comments/%s" % (
                 os.environ.get("GITHUB_REPOSITORY", ""), ref)],
             capture_output=True, text=True)
-        out["resolved"] = res.returncode == 0
+        out["resolved"] = res.returncode == 0 and _trusted_comment(res.stdout)
+    if out["resolved"] and kind in ("default-branch", "head"):
+        # The cited line must carry content, not be blank.
+        lines = _lines(path, "origin/main" if kind == "default-branch" else None)
+        out["resolved"] = bool(lines[int(line) - 1].strip())
     return out
 
 
