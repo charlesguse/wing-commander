@@ -44,6 +44,7 @@ def _operations(op, line_id, detail):
         return hits[0] if len(hits) == 1 else None
 
     table = {
+        "claim": (lambda b: bbl.claim(b, line_id, detail), "in-progress", False),
         "progress": (lambda b: bbl.annotate(b, line_id, "in-progress", detail), "in-progress", False),
         "hold": (lambda b: bbl.annotate(b, line_id, "held", detail), "held", False),
         "route-proposal": (lambda b: bbl.annotate(b, line_id, "proposal", detail), "proposal", False),
@@ -70,6 +71,18 @@ def _gh(args, stdin=None):
     if proc.returncode != 0:
         raise RuntimeError("gh {0} failed: {1}".format(" ".join(args[:2]), proc.stderr.strip()))
     return proc.stdout
+
+
+def gh_fetch(issue):
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    repo_args = ["-R", repo] if repo else []
+    return _gh(["issue", "view", str(issue)] + repo_args + ["--json", "body", "--jq", ".body"]).rstrip("\n")
+
+
+def gh_write(issue, body):
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    repo_args = ["-R", repo] if repo else []
+    _gh(["issue", "edit", str(issue)] + repo_args + ["--body-file", "-"], stdin=body)
 
 
 def main():
