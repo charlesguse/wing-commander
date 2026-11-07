@@ -238,7 +238,7 @@ Phases 1–2, then US1 and US2 (the two P1 stories): the classification home, th
 
   Detail: The idempotency check keys on the committed spec-meta stage, not on the label or comment.
 
-- [ ] Review finding: Classifier input passed as a single argv string, failures swallowed
+- [x] Review finding: Classifier input passed as a single argv string, failures swallowed
 
   All candidate lines go to the classifier as one argument. A large tasks.md can hit the per-argument limit (E2BIG), and '2>/dev/null || verdict=""' makes every write-boundary task silently buildable.
 
@@ -246,7 +246,7 @@ Phases 1–2, then US1 and US2 (the two P1 stories): the classification home, th
 
   Detail: Pass the text via the environment or a file, and log failures instead of swallowing them.
 
-- [ ] Review finding: Unbuildable prefix regex over-matches ordinary build tasks
+- [x] Review finding: Unbuildable prefix regex over-matches ordinary build tasks
 
   Tasks starting with 'Post-merge', 'After merge' or 'Drill ' match the human-only prefix, are dropped from the buildable counts, and the lifecycle finalizes without them being built.
 

@@ -1,3 +1,4 @@
 - [ ] T001 Drilldown view for the report page
-- [ ] T002 Drill the failover path after the release
+- [ ] T002 Drill: dispatch the failover path after the release
 - [ ] T003 Postmerge cleanup helper
+- [ ] T004 Post-merge cache warmer for the report page

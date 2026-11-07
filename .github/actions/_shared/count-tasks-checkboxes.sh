@@ -77,7 +77,16 @@ oob_lines=$'\n'
 # lines buildable (ambiguity stays buildable).
 candidates="$(printf '%s\n' "$content" | grep -E '^[ 	]*- \[[ xX]\].*`[^` ]*/[^` ]*`' || true)"
 if [ -n "$candidates" ]; then
-  verdict="$(bash "$CLASSIFIER" "$candidates" "$NO_WRITE_PATHS" "$TASKS_PATH" "$(dirname "$TASKS_PATH")" 2>/dev/null)" || verdict=""
+  # The lines go via a file (UNCHECKED_ITEMS_FILE), never one argv string, so a
+  # large tasks.md cannot hit E2BIG; a classifier failure is logged, and the
+  # lines then stay buildable.
+  cand_file="$(mktemp)"
+  printf '%s\n' "$candidates" > "$cand_file"
+  if ! verdict="$(UNCHECKED_ITEMS_FILE="$cand_file" bash "$CLASSIFIER" "" "$NO_WRITE_PATHS" "$TASKS_PATH" "$(dirname "$TASKS_PATH")")"; then
+    echo "count-tasks-checkboxes.sh: classifier failed; write-boundary tasks stay buildable" >&2
+    verdict=""
+  fi
+  rm -f "$cand_file"
   findings_line="$(printf '%s\n' "$verdict" | sed -n '2p')"
   if [ -n "$findings_line" ]; then
     oob_found="$(printf '%s\n' "$findings_line" | jq -r '.[].fingerprint_basis.gate_or_artifact' 2>/dev/null)" || oob_found=""
@@ -164,7 +173,11 @@ counts="$(printf '%s\n' "$content" | WC_GATE_READY="$GATE_SUITE_READY" WC_OOB="$
   # while the cycle-start gate suite is not ready. Ambiguity stays buildable.
   function is_unbuildable(line,    t) {
     t = tolower(strip_lead(line))
-    if (t ~ /^(re-drive|prove after merge|prove-after-merge|post-merge|after (the )?merge|drill)([^a-z0-9-]|$)/) return 1
+    if (t ~ /^(re-drive|prove after merge|prove-after-merge)([^a-z0-9-]|$)/) return 1
+    # "Post-merge", "After merge" and "Drill" also open ordinary build tasks,
+    # so they are human-only only when a proof/dispatch verb follows; anything
+    # else stays buildable (ambiguity stays buildable).
+    if (t ~ /^(post-merge|after (the )?merge|drill)[ ,:-]+(the |a |one )?(prove|proof|verify|re-?drive|dispatch|confirm|record|check)([^a-z0-9-]|$)/) return 1
     if (index(oob, "\n" line "\n") > 0) return 1
     if (gate_ready == "false" && t ~ /^(run|execute) .*(gate suite|run-local-gates)/) return 1
     return 0

@@ -5,7 +5,7 @@
 - [x] T003 Recurring review finding: Fix the lexer
 - [ ] T004 [maintainer] Merge the PR
 - [ ] T005 Prove after merge with the skill
-- [ ] T006 Drill the cap hand-off on a scratch issue
+- [ ] T006 Drill: dispatch the cap hand-off on a scratch issue
 - [ ] T007 Edit `.claude/skills/x/SKILL.md` to mention it
 - [ ] T008 Run `python .github/scripts/run-local-gates.py` and fix failures
 - [ ] T009 Do something vague
