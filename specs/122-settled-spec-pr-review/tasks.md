@@ -269,7 +269,7 @@ Task: "Add plan-actions-never-approve.json in .github/scripts/spec-pr-review-fix
 
   Detail: FR-021/T015 require the eligible subcommand on a fresh snapshot; the step comment claims it does.
 
-- [ ] Review finding: Open-marker scan fails open on git fetch/show failure
+- [x] Review finding: Open-marker scan fails open on git fetch/show failure
 
   If fetching or showing spec.md fails, open_marker stays false and a PR with unresolved clarification markers is treated as settled.
 
@@ -277,7 +277,7 @@ Task: "Add plan-actions-never-approve.json in .github/scripts/spec-pr-review-fix
 
   Detail: Select checks out with persist-credentials false, so the fetch can fail; only the scan script's exit codes are treated as errors.
 
-- [ ] Review finding: Fixes are joined to findings by title, so duplicate titles bypass the blocked-fix backstop
+- [x] Review finding: Fixes are joined to findings by title, so duplicate titles bypass the blocked-fix backstop
 
   With two findings sharing a title, a fix blocked by the precedent check is pushed because the other fix with the same title passed.
 
@@ -285,7 +285,7 @@ Task: "Add plan-actions-never-approve.json in .github/scripts/spec-pr-review-fix
 
   Detail: pushable and ok are keyed on title; use a unique key such as the finding index. This defeats FR-026.
 
-- [ ] Review finding: prepare and apply validate fix uniqueness differently, so apply can skip a fix silently
+- [x] Review finding: prepare and apply validate fix uniqueness differently, so apply can skip a fix silently
 
   prepare checks old-text uniqueness against a normalized copy of the file and apply checks the raw text, then skips silently on failure, so the PR can be announced as ready with an unfixed error.
 
@@ -293,7 +293,7 @@ Task: "Add plan-actions-never-approve.json in .github/scripts/spec-pr-review-fix
 
   Detail: CRLF or multi-line old text; the apply count is never reconciled with the number of pushable fixes.
 
-- [ ] Review finding: Blocked-only fix outcomes leave the PR stuck with no hand-off
+- [x] Review finding: Blocked-only fix outcomes leave the PR stuck with no hand-off
 
   When all findings are errors but every fix is blocked, the plan has no announcement, marker or label move, so the PR is skipped forever and the owner is never told.
 
@@ -309,7 +309,7 @@ Task: "Add plan-actions-never-approve.json in .github/scripts/spec-pr-review-fix
 
   Detail: issue-comment accepts untrusted authors.
 
-- [ ] Review finding: Owner-decision questions can be posted with no options or recommendation
+- [x] Review finding: Owner-decision questions can be posted with no options or recommendation
 
   A downgraded fix with no agent-supplied question or options produces a marker and a comment with empty options and an empty Recommendation line, then moves the issue to stage:clarify.
 
@@ -317,7 +317,7 @@ Task: "Add plan-actions-never-approve.json in .github/scripts/spec-pr-review-fix
 
   Detail: The contract requires at least two options and a recommendation.
 
-- [ ] Review finding: Label moves to stage:clarify even when the questions comment fails
+- [x] Review finding: Label moves to stage:clarify even when the questions comment fails
 
   The step has no set -e, so gh issue edit runs after a failed gh issue comment and clarify starts with no questions.
 
@@ -325,7 +325,7 @@ Task: "Add plan-actions-never-approve.json in .github/scripts/spec-pr-review-fix
 
   Detail: FR-015c ties the label move to the questions and markers being written.
 
-- [ ] Review finding: Dispatch settledness path does not reject stage:clarify
+- [x] Review finding: Dispatch settledness path does not reject stage:clarify
 
   Under maintainer dispatch an issue labelled both stage:spec and stage:clarify counts as settled, while the scheduled path skips it.
 

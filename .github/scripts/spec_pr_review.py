@@ -72,7 +72,7 @@ def settledness(snap):
         if dispatch.get("association") not in MAINTAINER_ASSOCIATIONS:
             return {"settled": False,
                     "reason": "unsettled:dispatch-not-maintainer"}
-        if "stage:spec" not in labels:
+        if "stage:spec" not in labels or "stage:clarify" in labels:
             return {"settled": False, "reason": "unsettled:stage"}
         if snap.get("open_marker"):
             return {"settled": False, "reason": "unsettled:open-marker"}
@@ -172,9 +172,15 @@ def check_fixes(data):
     fixes = _need(data, "fixes", list)
     pushable, blocked = [], []
     for fx in fixes:
-        finding = fx.get("finding")
+        # A fix's unique key is its `id` (the finding index) when given: two
+        # findings may share a title, and a title join would let a passing fix
+        # release a blocked one (FR-026).
+        finding = fx.get("id", fx.get("finding"))
         reason = None
-        if not all(_in_spec_dir(p, spec_dir, project_dir)
+        if fx.get("kind") == "marker" and (
+                fx.get("options_count", 2) < 2 or not fx.get("has_recommendation", True)):
+            reason = "question-incomplete"
+        elif not all(_in_spec_dir(p, spec_dir, project_dir)
                    for p in fx.get("paths", [])) or not fx.get("paths"):
             reason = "path-outside-spec-dir"
         elif fx.get("lines_changed", 0) > cap:
@@ -222,7 +228,17 @@ def plan_actions(data):
     else:
         plan["issue_line"] = "Reviewed: not ready (%d finding%s)." % (
             len(findings), "" if len(findings) == 1 else "s")
-    if decisions and not plan["move_label"]:
+    if (decisions or errors) and not plan["move_label"] \
+            and not plan["post_announcement"] and writable:
+        # Blocked-only (or push-failed) outcomes must still reach the owner.
+        plan["handoff"] = ("Owner decisions could not be written as markers; "
+                           "a reply on the issue will not be folded. Answer by "
+                           "editing the spec on the branch, then a maintainer "
+                           "dispatches the review.") if decisions else (
+            "Fixes for the review findings could not be pushed; the PR is with "
+            "the owner. Correct the spec on the branch, then a maintainer "
+            "dispatches the review.")
+    elif decisions and not plan["move_label"]:
         plan["handoff"] = ("Owner decisions could not be written as markers; "
                            "a reply on the issue will not be folded. Answer by "
                            "editing the spec on the branch, then a maintainer "

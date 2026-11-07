@@ -78,14 +78,18 @@ def prepare(findings_path, actions_path, spec_dir, out_path):
             path = fx.get("path") or ""
             old, new = fx.get("old"), fx.get("new")
             text = None
-            lines = _lines(path)
-            if lines is not None:
-                text = "\n".join(lines) + "\n"
+            try:
+                # Raw text, exactly as `apply` reads it, so both agree on
+                # uniqueness (CRLF and multi-line old text included).
+                with open(path, encoding="utf-8", newline="") as fh:
+                    text = fh.read()
+            except OSError:
+                text = None
             if isinstance(old, str) and isinstance(new, str) and old \
                     and text is not None and text.count(old) == 1:
                 item["fix"] = {"path": path, "old": old, "new": new}
                 fixes.append({
-                    "finding": f.get("title"), "paths": [path], "kind": "fix",
+                    "id": i, "finding": f.get("title"), "paths": [path], "kind": "fix",
                     "lines_changed": len(old.splitlines()) + len(new.splitlines()),
                     "precedent": resolve_precedent(act.get("precedent"))})
             else:
@@ -95,7 +99,9 @@ def prepare(findings_path, actions_path, spec_dir, out_path):
             item["question"] = q.replace("\n", " ").replace("]", ")")
             item["options"] = [str(o) for o in act.get("options", [])][:4]
             item["recommendation"] = str(act.get("recommendation") or "")
-            fixes.append({"finding": f.get("title"),
+            fixes.append({"id": i, "finding": f.get("title"),
+                          "options_count": len(item["options"]),
+                          "has_recommendation": bool(item["recommendation"].strip()),
                           "paths": [os.path.join(spec_dir, "spec.md")],
                           "kind": "marker",
                           "lines_changed": 1})
@@ -112,17 +118,20 @@ def apply(checked_path, items_path, spec_dir):
     ok = set(checked.get("pushable", []))
     n_fix = n_marker = 0
     marker_lines = []
-    for item in _load(items_path):
-        title = item["finding"].get("title")
-        if title not in ok:
+    for idx, item in enumerate(_load(items_path)):
+        if idx not in ok:
             continue
         if item["class"] == "unambiguous-error":
             path = item["fix"]["path"]
-            with open(path, encoding="utf-8") as fh:
+            with open(path, encoding="utf-8", newline="") as fh:
                 text = fh.read()
             if text.count(item["fix"]["old"]) != 1:
-                continue
-            with open(path, "w", encoding="utf-8") as fh:
+                # A pushable fix that cannot be applied must fail loud, not be
+                # skipped and then announced as ready.
+                sys.stderr.write("spec_pr_review_actions: fix for %r no longer "
+                                 "matches exactly once\n" % item["finding"].get("title"))
+                return 1
+            with open(path, "w", encoding="utf-8", newline="") as fh:
                 fh.write(text.replace(item["fix"]["old"], item["fix"]["new"]))
             n_fix += 1
         else:

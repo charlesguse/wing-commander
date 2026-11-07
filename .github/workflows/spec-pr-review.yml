@@ -177,16 +177,20 @@ jobs:
               # branch tip's spec.md fetched into a scratch directory.
               scratch="$RUNNER_TEMP/spec-scan-$number"
               mkdir -p "$scratch"
-              if git fetch --no-tags --quiet origin "+refs/heads/$head_ref:refs/remotes/origin/$head_ref" \
-                && git show "origin/$head_ref:specs/$slug/spec.md" > "$scratch/spec.md" 2>/dev/null; then
-                rc=0
-                bash .wc-pristine-repo/.github/actions/_shared/open-clarification-marker.sh "$scratch/spec.md" || rc=$?
-                case "$rc" in
-                  0) open_marker=true ;;
-                  1) open_marker=false ;;
-                  *) echo "::error::spec-pr-review select: marker scan of PR #$number failed (exit $rc)."; exit 1 ;;
-                esac
+              # Fail closed: an unreadable spec.md must never read as "no open
+              # marker" (that would treat an unsettled PR as settled).
+              if ! git fetch --no-tags --quiet origin "+refs/heads/$head_ref:refs/remotes/origin/$head_ref" \
+                || ! git show "origin/$head_ref:specs/$slug/spec.md" > "$scratch/spec.md" 2>/dev/null; then
+                echo "::error::spec-pr-review select: could not read specs/$slug/spec.md on PR #$number's branch; not treating it as settled."
+                exit 1
               fi
+              rc=0
+              bash .wc-pristine-repo/.github/actions/_shared/open-clarification-marker.sh "$scratch/spec.md" || rc=$?
+              case "$rc" in
+                0) open_marker=true ;;
+                1) open_marker=false ;;
+                *) echo "::error::spec-pr-review select: marker scan of PR #$number failed (exit $rc)."; exit 1 ;;
+              esac
               gh api "repos/$GITHUB_REPOSITORY/pulls/$number/reviews" --paginate --jq '.[]' | jq -s '.' > "$RUNNER_TEMP/pr-$number-reviews.json" || {
                 echo "::error::spec-pr-review select: could not read PR #$number's reviews."
                 exit 1
@@ -350,6 +354,7 @@ jobs:
           HEAD_REF: ${{ needs.select.outputs.head-ref }}
           SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
           ISSUE: ${{ needs.select.outputs.issue }}
+          PAUSED: ${{ vars.WING_COMMANDER_SPEC_REVIEW_PAUSED }}
         run: |
           set -uo pipefail
           if ! fresh="$(gh pr view "$PR_NUMBER" --json state,headRefName,headRefOid,isCrossRepository)"; then
@@ -363,6 +368,22 @@ jobs:
           [ "$(printf '%s' "$fresh" | jq -r '.isCrossRepository')" = "false" ] || { echo "::error::spec-pr-review review: PR #$PR_NUMBER is a fork PR."; exit 1; }
           case "$HEAD_REF" in spec-draft/*) ;; *) echo "::error::spec-pr-review review: head ref $HEAD_REF is not a spec-draft/ ref."; exit 1 ;; esac
           [ -f "$SPEC_DIR/spec.md" ] || { echo "::error::spec-pr-review review: $SPEC_DIR/spec.md is unreadable."; exit 1; }
+          # Settledness re-check on fresh state: kill switch, stage labels and
+          # the open-marker scan (select's snapshot is not trusted).
+          [ "${PAUSED:-}" != "true" ] || { echo "::error::spec-pr-review review: WING_COMMANDER_SPEC_REVIEW_PAUSED is set; standing down."; exit 1; }
+          if ! labels="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE" --jq '[.labels[].name] | join(" ")')"; then
+            echo "::error::spec-pr-review review: could not re-read lifecycle issue #$ISSUE's labels."
+            exit 1
+          fi
+          case " $labels " in *" stage:spec "*) ;; *) echo "::error::spec-pr-review review: issue #$ISSUE is no longer stage:spec."; exit 1 ;; esac
+          case " $labels " in *" stage:clarify "*) echo "::error::spec-pr-review review: issue #$ISSUE is now stage:clarify."; exit 1 ;; *) ;; esac
+          rc=0
+          bash .wc-pristine-repo/.github/actions/_shared/open-clarification-marker.sh "$SPEC_DIR/spec.md" || rc=$?
+          case "$rc" in
+            1) ;;
+            0) echo "::error::spec-pr-review review: spec.md has an open clarification marker; not settled."; exit 1 ;;
+            *) echo "::error::spec-pr-review review: marker scan failed (exit $rc)."; exit 1 ;;
+          esac
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" --paginate --jq '.[]' | jq -s '.' > "$RUNNER_TEMP/spec-review-reviews.json" || {
             echo "::error::spec-pr-review review: could not read PR #$PR_NUMBER's reviews."
             exit 1
@@ -966,7 +987,11 @@ jobs:
           jq -r '.[] | select(.class == "owner-decision") |
             "**\(.finding.title)**\n\n\(.question)\n\n" + ((.options // []) | to_entries | map("- Option \(.key + 1): \(.value)") | join("\n")) + "\n\nRecommendation: \(.recommendation)\n"' \
             "$RUNNER_TEMP/round/spec-review-check-in.json.items" > "$RUNNER_TEMP/spec-review-questions.md"
-          gh issue comment "$ISSUE" --body-file "$RUNNER_TEMP/spec-review-questions.md"
+          # The label moves only once the questions are on the issue (FR-015c).
+          gh issue comment "$ISSUE" --body-file "$RUNNER_TEMP/spec-review-questions.md" || {
+            echo "::error::spec-pr-review act: could not post the questions; not moving the issue to stage:clarify."
+            exit 1
+          }
           gh issue edit "$ISSUE" --remove-label "stage:spec" --add-label "stage:clarify"
 
       - name: Post the hand-off when the markers could not be written
