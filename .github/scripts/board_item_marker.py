@@ -92,7 +92,8 @@ def is_loop_branch(branch, issue_number):
     return re.fullmatch(pattern, branch) is not None
 
 
-def find_latest_marker(issue_comments, bot_login, marker_re=MARKER_RE, open_re=MARKER_OPEN_RE):
+def find_latest_marker(issue_comments, bot_login, marker_re=MARKER_RE, open_re=MARKER_OPEN_RE,
+                       skip_line=False):
     """issue_comments: a list of {"created_at": "...", "body": "...",
     "user": {"login": "...", "type": "..."}} dicts (an issue's own
     comments, any order). bot_login: the loop's own App login
@@ -117,6 +118,12 @@ def find_latest_marker(issue_comments, bot_login, marker_re=MARKER_RE, open_re=M
         match = last_marker_match(body, marker_re, open_re)
         if not match:
             continue
+        if skip_line:
+            try:
+                if is_line_marker(json.loads(match.group(1))):
+                    continue
+            except ValueError:
+                pass
         dated_matches.append((comment.get("created_at") or "", match.group(1)))
     if not dated_matches:
         return None
@@ -133,8 +140,9 @@ def find_latest_marker(issue_comments, bot_login, marker_re=MARKER_RE, open_re=M
 
 def read_marker_with_timestamp(issue_comments, bot_login):
     """As find_latest_marker(), specialized to this module's own board-item
-    marker shape (MARKER_RE/MARKER_OPEN_RE)."""
-    return find_latest_marker(issue_comments, bot_login)
+    marker shape (MARKER_RE/MARKER_OPEN_RE). Issue-path reader: a marker
+    carrying a backlog `line` id is ignored (specs/121, is_line_marker())."""
+    return find_latest_marker(issue_comments, bot_login, skip_line=True)
 
 
 def find_markers_matching(issue_comments, bot_login, predicate,
@@ -231,7 +239,7 @@ def read_marker(issue_comments, bot_login):
 def write_marker(step, round, pr, branch, base_sha, spec_request=None,
                  outcome_reason=None, recovery_attempted=False,
                  nr_count=None, nr_head_sha=None, nr_class=None, nr_reason=None,
-                 merge_sha=None):
+                 merge_sha=None, line=None):
     """Renders the run announcement plus the HTML-comment marker line.
     Appended to the loop's own human-legible status comment -- never the
     comment's only content (FR-044) -- by the caller.
@@ -280,6 +288,10 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None,
         payload_dict["nr_reason"] = nr_reason
     if merge_sha is not None:
         payload_dict["merge_sha"] = merge_sha
+    # specs/121-board-backlog-line-items: the backlog line id a marker belongs
+    # to; issue-path readers skip markers carrying it (is_line_marker()).
+    if line is not None:
+        payload_dict["line"] = line
     payload = json.dumps(payload_dict, sort_keys=True)
     marker = "<!-- wing-commander-board-item: {0} -->".format(payload)
 
@@ -290,6 +302,12 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None,
         run_url = "{0}/{1}/actions/runs/{2}".format(server_url, repository, run_id)
         return "**Run:** {0}\n\n{1}".format(run_url, marker)
     return marker
+
+
+def is_line_marker(marker):
+    """True when `marker` belongs to a Maintenance backlog line (carries a
+    `line` id), not to an issue; the issue path ignores such markers."""
+    return isinstance(marker, dict) and bool(marker.get("line"))
 
 
 STALLED_STEP = "stalled"
@@ -552,6 +570,8 @@ def main():
                         help="spec 115: take --round from the newest marker in this issue-comments "
                              "JSON array (needs --bot-login), so a merged/handed-over marker does "
                              "not reset the review round budget")
+    parser.add_argument("--line", default=None,
+                        help="specs/121-board-backlog-line-items: the backlog line id this marker belongs to")
     parser.add_argument("--bot-login", default=None)
     args = parser.parse_args()
     if args.carry_round_from:
@@ -583,7 +603,7 @@ def main():
                        recovery_attempted=args.recovery_attempted,
                        nr_count=args.nr_count, nr_head_sha=args.nr_head_sha,
                        nr_class=args.nr_class, nr_reason=args.nr_reason,
-                       merge_sha=args.merge_sha or None))
+                       merge_sha=args.merge_sha or None, line=args.line or None))
 
 
 if __name__ == "__main__":

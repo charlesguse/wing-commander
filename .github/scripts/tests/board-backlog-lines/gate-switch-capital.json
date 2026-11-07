@@ -1,0 +1,3 @@
+{"op": "gate",
+ "env": {"backlog_lines_switch": "True", "loop_paused": false, "constitution_text": null},
+ "expect": [false, "backlog lines switch is not true"]}

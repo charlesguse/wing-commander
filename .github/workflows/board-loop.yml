@@ -226,6 +226,20 @@ jobs:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
           private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
 
+      # specs/121-board-backlog-line-items FR-020: the Maintenance backlog
+      # line switch, dark by default. This step only records the switch and
+      # proves the two line helpers load; claiming a line (T021) is not wired
+      # yet, so a switch set to true changes nothing a run does.
+      - name: Record the backlog-line switch (FR-020)
+        if: steps.killswitch.outputs.status != 'paused' && steps.stand-down.outputs.status != 'in-flight'
+        env:
+          BACKLOG_LINES_SWITCH: ${{ vars.WING_COMMANDER_BOARD_BACKLOG_LINES }}
+        run: |
+          set -uo pipefail
+          python3 .github/scripts/board_backlog_edit.py --help > /dev/null
+          echo '{"op":"parse","body":""}' | python3 .github/scripts/board_backlog_lines.py > /dev/null
+          echo "board-loop: Maintenance backlog lines switch = ${BACKLOG_LINES_SWITCH:-unset} (claims not wired yet)." >> "$GITHUB_STEP_SUMMARY"
+
       # research.md D8, FR-010b: select is the one job structurally
       # guaranteed to run on every non-pull_request trigger, so it is the
       # natural periodic check point for a merge whose OWN pull_request:
