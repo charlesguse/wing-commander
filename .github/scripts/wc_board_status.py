@@ -220,11 +220,12 @@ def render(snap):
     # workflow-file fix at all (docs/setup.md), and the lifecycle merge
     # switch. A paused loop merges nothing whatever its merge switch says.
     lines.append("- **board loop:** {0}; board auto-merge {1}; workflow-file fixes {2}; "
-                 "lifecycle auto-merge {3}".format(
+                 "lifecycle auto-merge {3}; backlog lines {4}".format(
                      state("board_loop_paused", "**paused**", "running"),
                      state("board_auto_merge", "on", "off"),
                      state("board_can_push_workflows", "allowed", "held for a maintainer"),
-                     state("lifecycle_auto_merge", "on", "off")))
+                     state("lifecycle_auto_merge", "on", "off"),
+                     state("board_backlog_lines", "on", "off")))
     lines.append("")
 
     def table(title, header, items):
@@ -369,6 +370,7 @@ def publish(repo, body):
 SWITCH_ENV = {
     "auto_release_paused": "AUTO_RELEASE_PAUSED",
     "board_auto_merge": "BOARD_AUTO_MERGE",
+    "board_backlog_lines": "BOARD_BACKLOG_LINES",
     "board_can_push_workflows": "BOARD_CAN_PUSH_WORKFLOWS",
     "board_loop_paused": "BOARD_LOOP_PAUSED",
     "lifecycle_auto_merge": "LIFECYCLE_AUTO_MERGE",
