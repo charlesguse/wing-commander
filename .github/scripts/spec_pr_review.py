@@ -122,6 +122,14 @@ def eligible(snap):
     hist = snap.get("convergence_history")
     if hist and wc_convergence.decide(hist, budget=ROUND_BUDGET)["stop"]:
         return {"eligible": False, "reason": "convergence-stop"}
+    # FR-018/FR-019: a persisted stop note (the App's durable note on the
+    # lifecycle issue) holds until the diff against main moves; `rearmed` is
+    # the select step's wc_convergence.py `rearmed` answer for the current head.
+    note = snap.get("stop_note")
+    if note and not note.get("rearmed"):
+        return {"eligible": False,
+                "reason": "budget-exhausted" if note.get("reason") == "budget-exhausted"
+                else "convergence-stop"}
     failures = snap.get("failed_attempts", {}).get(snap.get("head_sha"), 0)
     if failures >= FAILED_ATTEMPT_CAP and not snap.get("dispatch"):
         return {"eligible": False, "reason": "failed-cap"}

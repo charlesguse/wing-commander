@@ -155,6 +155,7 @@ jobs:
             rounds='[]'
             failed='{}'
             announcements='[]'
+            stop_note='null'
             committed_at=""
             if [ -n "$issue" ] && [ "$cross" = "false" ] && [ -n "$slug" ]; then
               labels="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue" --jq '[.labels[].name]')" || labels='[]'
@@ -206,6 +207,28 @@ jobs:
           print(json.dumps([{"round": r["round"], "sha": r["head_sha"], "outcome": "reviewed"} for r in recs]))
           PYEOF
               )" || { echo "::error::spec-pr-review select: could not read PR #$number's round records."; exit 1; }
+              # FR-018/FR-019: a convergence or budget stop persists as the
+              # App's marker note on the lifecycle issue (posted by the act
+              # job's "Record the stop note" step). The newest note holds
+              # for the stopped head and, once the head moves, until the
+              # diff against main changes (wc_convergence.py rearmed).
+              stop_note="$(printf '%s' "$comments" | jq -c --arg bot "$BOT_LOGIN" \
+                '[.[] | select(.user.login == $bot)
+                  | .body | capture("<!-- spec-pr-review-stopped head=(?<sha>[0-9a-f]{7,40}) round=(?<round>[0-9]+) reason=(?<reason>[a-z-]+) -->")?]
+                 | last // null')"
+              if [ "$stop_note" != "null" ]; then
+                note_sha="$(printf '%s' "$stop_note" | jq -r '.sha')"
+                note_round="$(printf '%s' "$stop_note" | jq -r '.round')"
+                rearmed=false
+                if [ "$note_sha" != "$head_sha" ]; then
+                  git fetch --no-tags --quiet origin "+refs/heads/main:refs/remotes/origin/main" || true
+                  rearmed="$(python3 -I .wc-pristine-repo/.github/scripts/wc_convergence.py rearmed \
+                    --reviews "$RUNNER_TEMP/pr-$number-reviews.json" --bot-login "$BOT_LOGIN" \
+                    --round "$note_round" --head-sha "$head_sha" --base origin/main)" || rearmed=true
+                fi
+                stop_note="$(printf '%s' "$stop_note" | jq -c --argjson r "$rearmed" \
+                  '{head_sha: .sha, round: (.round | tonumber), reason: .reason, rearmed: $r}')"
+              fi
             fi
 
             stage_labels="$(printf '%s' "$labels" | jq -c '[.[] | select(startswith("stage:"))]')"
@@ -214,11 +237,12 @@ jobs:
               --argjson issues "$(cat "$RUNNER_TEMP/pr-$number-issues.json")" \
               --argjson labels "$stage_labels" --argjson marker "$open_marker" \
               --argjson ann "$announcements" --argjson rounds "$rounds" --argjson failed "$failed" \
-              --argjson dispatch "$dispatch" --arg paused "false" \
+              --argjson dispatch "$dispatch" --argjson stop_note "$stop_note" --arg paused "false" \
               '{pr: $pr, repo: $repo, head_repo: $head_repo, head_ref: $head_ref, head_sha: $head_sha,
                 head_committed_at: $committed, issues: $issues, stage_labels: $labels, open_marker: $marker,
                 announcements: $ann, rounds: $rounds, failed_attempts: $failed, state: "open"}
-               + (if $dispatch == null then {} else {dispatch: $dispatch} end)')"
+               + (if $dispatch == null then {} else {dispatch: $dispatch} end)
+               + (if $stop_note == null then {} else {stop_note: $stop_note} end)')"
             jq --argjson s "$snap" '. + [$s]' "$snaps" > "$snaps.tmp" && mv "$snaps.tmp" "$snaps"
             if [ -n "$slug" ]; then
               echo "$number|$slug|$issue|$head_ref" >> "$RUNNER_TEMP/spec-pr-meta.txt"
@@ -979,6 +1003,18 @@ jobs:
           kind: info
           summary: "spec-pr-review stopped on PR #${{ needs.select.outputs.pr-number }} (${{ needs.review.outputs.stop-reason }}): the PR is with the owner."
           body-file: ${{ needs.review.outputs.stop-reason == 'convergence-stop' && format('{0}/round/spec-review-handoff.md', runner.temp) || '' }}
+
+      # Durable stop note read by the select job (FR-018/FR-019): a hidden
+      # marker naming the stopped head, round and reason.
+      - name: Record the stop note
+        if: always() && needs.review.outputs.stop-reason != ''
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ needs.select.outputs.issue }}
+          kind: info
+          summary: "spec-pr-review will not review PR #${{ needs.select.outputs.pr-number }} again until its diff against main changes."
+          body: ${{ format('<!-- spec-pr-review-stopped head={0} round={1} reason={2} -->', needs.select.outputs.head-sha, needs.review.outputs.round, needs.review.outputs.stop-reason) }}
 
       - name: Record the one-line outcome on the lifecycle issue
         if: always() && steps.fresh.outcome != 'skipped'

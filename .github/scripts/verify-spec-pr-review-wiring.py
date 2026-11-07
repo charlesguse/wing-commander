@@ -86,6 +86,18 @@ def check(text):
     select = jobs.get("select", {})
     if "WING_COMMANDER_SPEC_REVIEW_PAUSED" not in str(select):
         problems.append("FR-020: the kill switch is not read in the select job")
+    # FR-018/FR-019: select reads the persisted stop note and the snapshot
+    # carries it, so a stopped PR is skipped before any billable step.
+    select_run = "\n".join(s.get("run") or "" for s in select.get("steps", []))
+    if "spec-pr-review-stopped" not in select_run or "stop_note" not in select_run:
+        problems.append("FR-018: the select job does not read the stop note")
+    if "wc_convergence.py rearmed" not in select_run:
+        problems.append("FR-019: select does not re-arm through wc_convergence.py rearmed")
+    for s in act_steps:
+        if "spec-pr-review-stopped" in str(s.get("with", {}).get("body", "")):
+            break
+    else:
+        problems.append("FR-018: no act step records the stop note")
     if "claude-opus-5-5" not in text or "WING_COMMANDER_SPEC_REVIEW_MODEL" not in text:
         problems.append("FR-008: reviewer model is not the variable with its default")
     if "WING_COMMANDER_SPEC_REVIEW_EFFORT" not in text or ":-high" not in text:
@@ -102,6 +114,11 @@ def self_test(text):
         "an ungated label move": text.replace("steps.plan.outputs.move_label == 'true'", "always()", 1),
         "the other status context": text.replace('context="spec-pr-review"', 'context="lifecycle-review-gate"', 1),
         "no kill switch read": text.replace("WING_COMMANDER_SPEC_REVIEW_PAUSED", "SOMETHING_ELSE"),
+        "select ignoring the stop note": text.replace("<!-- spec-pr-review-stopped head=(?<sha>",
+                                                      "<!-- spec-pr-review-other head=(?<sha>", 1),
+        "select without the rearm check": text.replace("wc_convergence.py rearmed", "wc_convergence.py other"),
+        "no act step recording the stop note": text.replace("<!-- spec-pr-review-stopped head={0}",
+                                                            "<!-- spec-pr-review-x head={0}", 1),
     }
     bad = 0
     for label, mutated in mutations.items():
