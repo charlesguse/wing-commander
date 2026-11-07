@@ -258,3 +258,89 @@ Task: "Add plan-actions-never-approve.json in .github/scripts/spec-pr-review-fix
 
 - [x] T056 In `.github/workflows/spec-pr-review.yml` job `select`, persist a convergence or budget stop (a durable App-authored note on the lifecycle issue naming the stopped head) when `review` reports `stop-reason`, and feed it into each snapshot's `convergence_history` / stop state so a rebase-moved head does not re-arm the loop unless the diff against `main` changed (`wc_convergence.py rearmed`); add the matching `eligible-*` fixture if the snapshot shape changes per FR-018, FR-019 (partial)
 - [x] T057 Add the wiring assertions to `.github/scripts/verify-spec-pr-review-wiring.py` that `select` reads the stop note and that a stopped PR is skipped before any billable step, with a mutation in its `--self-test` per FR-025 (missing)
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Review job eligibility re-check never runs the eligible subcommand
+
+  The 'Re-check eligibility on a fresh snapshot' step only checks head SHA, fork flag, ref prefix, spec.md and round count, so a PR that became unsettled (stage:clarify, open marker, kill switch) still gets a billable review round.
+
+  - .github/workflows/spec-pr-review.yml
+
+  Detail: FR-021/T015 require the eligible subcommand on a fresh snapshot; the step comment claims it does.
+
+- [ ] Review finding: Open-marker scan fails open on git fetch/show failure
+
+  If fetching or showing spec.md fails, open_marker stays false and a PR with unresolved clarification markers is treated as settled.
+
+  - .github/workflows/spec-pr-review.yml
+
+  Detail: Select checks out with persist-credentials false, so the fetch can fail; only the scan script's exit codes are treated as errors.
+
+- [ ] Review finding: Fixes are joined to findings by title, so duplicate titles bypass the blocked-fix backstop
+
+  With two findings sharing a title, a fix blocked by the precedent check is pushed because the other fix with the same title passed.
+
+  - .github/scripts/spec_pr_review_actions.py
+
+  Detail: pushable and ok are keyed on title; use a unique key such as the finding index. This defeats FR-026.
+
+- [ ] Review finding: prepare and apply validate fix uniqueness differently, so apply can skip a fix silently
+
+  prepare checks old-text uniqueness against a normalized copy of the file and apply checks the raw text, then skips silently on failure, so the PR can be announced as ready with an unfixed error.
+
+  - .github/scripts/spec_pr_review_actions.py
+
+  Detail: CRLF or multi-line old text; the apply count is never reconciled with the number of pushable fixes.
+
+- [ ] Review finding: Blocked-only fix outcomes leave the PR stuck with no hand-off
+
+  When all findings are errors but every fix is blocked, the plan has no announcement, marker or label move, so the PR is skipped forever and the owner is never told.
+
+  - .github/scripts/spec_pr_review.py
+
+  Detail: handoff is only set when decisions exist.
+
+- [ ] Review finding: Precedent citation check is trivially satisfiable
+
+  A cited file:line only has to exist and an issue-comment ID only has to exist, with no check on author, issue or content, so the FR-026 backstop does not actually constrain fixes.
+
+  - .github/scripts/spec_pr_review_actions.py
+
+  Detail: issue-comment accepts untrusted authors.
+
+- [ ] Review finding: Owner-decision questions can be posted with no options or recommendation
+
+  A downgraded fix with no agent-supplied question or options produces a marker and a comment with empty options and an empty Recommendation line, then moves the issue to stage:clarify.
+
+  - .github/scripts/spec_pr_review_actions.py
+
+  Detail: The contract requires at least two options and a recommendation.
+
+- [ ] Review finding: Label moves to stage:clarify even when the questions comment fails
+
+  The step has no set -e, so gh issue edit runs after a failed gh issue comment and clarify starts with no questions.
+
+  - .github/workflows/spec-pr-review.yml
+
+  Detail: FR-015c ties the label move to the questions and markers being written.
+
+- [ ] Review finding: Dispatch settledness path does not reject stage:clarify
+
+  Under maintainer dispatch an issue labelled both stage:spec and stage:clarify counts as settled, while the scheduled path skips it.
+
+  - .github/scripts/spec_pr_review.py
+
+- [ ] Review finding: Snapshot/trusted-copy block and round-record reader are pasted across workflows
+
+  The helper-script snapshot and write-protect block exists in about nine copies across workflows, and the round-record reader is duplicated, against the repo's single-home rule.
+
+  - .github/workflows/spec-pr-review.yml
+
+  Detail: CLAUDE.md requires moving shared shell into a composite action and adding a single-home check to a gate.
+
+- [ ] Review finding: SC-004 replay fixtures are tautological
+
+  The replay fixtures feed one hard-coded finding to the verdict subcommand and assert not-ready, so SC-004 detection of the spec 119 and 120 conflicts is never exercised.
+
+  - .github/scripts/spec-pr-review-fixtures/replay-spec119-fr022.json
