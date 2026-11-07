@@ -407,17 +407,72 @@ runs:
           else
             : > "$existing_keys"
           fi
+          # specs/120-dispatched-run-metrics (FR-004): the job id inside
+          # record_key changes when a re-run attempt gives the same job a
+          # new id, so a run met again by a later path would append a
+          # second copy. The attempt-independent identity of a record is
+          # its whole content minus the two fields that change with the job
+          # id (run.job_id, run.record_key); skip on either form. Content,
+          # not a field tuple: two distinct records of one step can share a
+          # second-resolution emitted_at, while the same record met again is
+          # identical in everything else.
+          stable_keys="$dir/existing-stable-keys.txt"
+          stable_expr='select(.run.job_key != null) | del(.run.job_id, .run.record_key) | tojson'
+          # Wrapped in [..] | @tsv so a stored key is escaped exactly as the
+          # batch column below is (a backslash in the content doubles in both).
+          if [ -f "$DEST_PATH" ]; then
+            jq -r "[($stable_expr)] | @tsv" "$DEST_PATH" 2>/dev/null > "$stable_keys" || : > "$stable_keys"
+          else
+            : > "$stable_keys"
+          fi
 
           to_append="$dir/to-append.jsonl"
           : > "$to_append"
+          # One jq pass derives both keys for every batch line; a line's
+          # stable key is added to the in-memory list as it is appended, so
+          # two lines of one batch sharing a stable key land only once.
+          pairs="$dir/batch-keys.tsv"
+          jq -r "[(.run.record_key // \"\"), ($stable_expr // \"\")] | @tsv" "$batch" > "$pairs" 2>/dev/null || : > "$pairs"
+          n_lines="$(wc -l < "$batch" | tr -d ' ')"
+          n_pairs="$(wc -l < "$pairs" | tr -d ' ')"
+          if [ "$n_lines" != "$n_pairs" ]; then
+            echo "::warning::wing-commander-metrics-persist: batch key derivation produced $n_pairs of $n_lines expected line(s); deriving keys per line instead."
+            : > "$pairs"
+          fi
+          # Membership is an associative-array lookup (bash 4+), loaded once
+          # per attempt, so the batch loop does no per-line process spawn.
+          # Fail loudly rather than degrade on an older bash.
+          if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
+            echo "::error::wing-commander-metrics-persist: bash 4+ is required for the dedup lookup (found ${BASH_VERSION:-unknown})."
+            exit 1
+          fi
+          declare -A seen_key=() seen_stable=()
+          while IFS= read -r k; do [ -z "$k" ] || seen_key["$k"]=1; done < "$existing_keys"
+          while IFS= read -r k; do [ -z "$k" ] || seen_stable["$k"]=1; done < "$stable_keys"
+          exec 3< "$pairs"
           while IFS= read -r line; do
             [ -n "$line" ] || continue
-            key="$(printf '%s' "$line" | jq -r '.run.record_key // empty')"
-            if [ -n "$key" ] && grep -qxF "$key" "$existing_keys" 2>/dev/null; then
+            pair=""
+            IFS= read -r pair <&3 || pair=""
+            if [ "$n_lines" = "$n_pairs" ]; then
+              key="${pair%%$'\t'*}"
+              stable=""
+              case "$pair" in *$'\t'*) stable="${pair#*$'\t'}" ;; esac
+            else
+              key="$(printf '%s' "$line" | jq -r '.run.record_key // empty')"
+              stable="$(printf '%s' "$line" | jq -r "[($stable_expr)] | @tsv" 2>/dev/null || true)"
+            fi
+            if [ -n "$key" ] && [ -n "${seen_key[$key]:-}" ]; then
               continue
             fi
+            if [ -n "$stable" ] && [ -n "${seen_stable[$stable]:-}" ]; then
+              continue
+            fi
+            [ -z "$stable" ] || seen_stable["$stable"]=1
+            [ -z "$key" ] || seen_key["$key"]=1
             printf '%s\n' "$line" >> "$to_append"
           done < "$batch"
+          exec 3<&-
 
           # specs/058-per-job-minute-floor (research.md R-C2): a sweep's two
           # bookkeeping files are staged HERE, inside the contention loop and
@@ -559,6 +614,12 @@ runs:
         BEGIN_MARKER="<!-- wing-commander-metrics-rollup:begin -->"
         END_MARKER="<!-- wing-commander-metrics-rollup:end -->"
 
+        # DEST_PATH and sweep-state.json are read from the worktree, so make
+        # sure it is on the destination branch the append step wrote them to.
+        if ! git checkout -q "$BRANCH" >/dev/null 2>&1; then
+          echo "::warning::wing-commander-metrics-persist: could not check out $BRANCH for the rollup; the last-sweep line may read 'unknown'."
+        fi
+
         for spec_dir in $SPEC_DIRS; do
           [ -n "$spec_dir" ] || continue
 
@@ -606,6 +667,11 @@ runs:
             total_records="$(printf '%s' "$totals" | jq -r '.total_records // 0')"
             incomplete="$(printf '%s' "$totals" | jq -r '.incomplete // 0')"
             printf '**Total**: $%s across %s agent run(s) (as of %s)\n' "$total_cost" "$total_records" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            # specs/120-dispatched-run-metrics FR-006: the total is only as
+            # fresh as the last sweep for runs no persisting job covers.
+            # This is the one home of this sentence.
+            last_sweep="$(jq -r '.high_water_mark // empty' sweep-state.json 2>/dev/null || true)"
+            printf '\n_Last daily sweep: `%s` — runs completed since then may be missing from the total._\n' "${last_sweep:-unknown}"
             if [ "$incomplete" != "0" ]; then
               printf '\n_Incomplete: %s of %s run(s) have unavailable metrics and are excluded from the total above._\n' "$incomplete" "$total_records"
             fi
