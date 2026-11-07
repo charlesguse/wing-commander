@@ -967,6 +967,19 @@ jobs:
           pr-url: ${{ format('{0}/{1}/pull/{2}', github.server_url, github.repository, needs.select.outputs.pr-number) }}
           pr-label: "the spec PR"
 
+      # FR-018/FR-019: a budget or convergence stop states the reason and that
+      # the PR is with the owner, on the lifecycle issue (the outcome line
+      # below carries the same on the issue; this adds the evidence).
+      - name: Post the stop hand-off
+        if: always() && needs.review.outputs.stop-reason != ''
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ needs.select.outputs.issue }}
+          kind: info
+          summary: "spec-pr-review stopped on PR #${{ needs.select.outputs.pr-number }} (${{ needs.review.outputs.stop-reason }}): the PR is with the owner."
+          body-file: ${{ needs.review.outputs.stop-reason == 'convergence-stop' && format('{0}/round/spec-review-handoff.md', runner.temp) || '' }}
+
       - name: Record the one-line outcome on the lifecycle issue
         if: always() && steps.fresh.outcome != 'skipped'
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
