@@ -2,8 +2,10 @@
   "issue": 1111,
   "spec_dir": "specs/123-implement-task-completion",
   "feature_num": "123",
-  "stage": "review",
+  "stage": "implement",
   "iteration": 5,
   "spec_branch": "spec/123-implement-task-completion",
-  "pending_re_review_from": []
+  "pending_re_review_from": [
+    "charlesguse"
+  ]
 }
