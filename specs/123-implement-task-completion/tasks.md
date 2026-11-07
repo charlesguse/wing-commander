@@ -90,7 +90,7 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 - [x] T027 [US5] Ensure `.github/actions/_shared/decide-implement-outcome.sh` sets `handoff=true` for the cap and for a validated blocker only when buildable unchecked (plus dropped ids) > 0, with no finalize dispatch and the remaining buildable and maintainer-only tasks listed on the lifecycle issue via the remaining-work composite (FR-015, FR-015a)
 - [x] T028 [US5] Extend "Flip stage label (first cycle)" in `.github/workflows/implement.yml` so a resumed cycle (iteration recorded+1 after a stalled hand-off) also removes `stage:stalled`; leave the idempotency guard unchanged
 - [x] T029 [US5] Add a watchdog fixture showing the FR-015 hand-off (stage `stalled`, label, hand-off comment) yields no `stage-mismatch` or `lost-progress` finding; adjust the watchdog's classification in `.github/workflows/watchdog.yml` or its script only if the fixture fails, and add the fixture check to the gate from T025
-- [ ] T030 [US5] Run `python .github/scripts/run-local-gates.py` and fix failures introduced by Phases 2–6
+- [x] T030 [US5] Run `python .github/scripts/run-local-gates.py` and fix failures introduced by Phases 2–6
 
 ---
 
@@ -108,8 +108,8 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 ## Phase 8: Polish & Cross-Cutting
 
 - [x] T035 [P] Add the "single home" check for the cycle-outcome formatter and counting to the nearest existing gate (e.g. `verify-metrics-summary-record-emission.py`) so a pasted copy in a workflow fails
-- [ ] T036 [P] Update `specs/123-implement-task-completion/quickstart.md` only if the shipped fixture names or commands differ from it
-- [ ] T037 Run `python .github/scripts/run-local-gates.py` and confirm every gate, including all new ones, passes
+- [x] T036 [P] Update `specs/123-implement-task-completion/quickstart.md` only if the shipped fixture names or commands differ from it
+- [x] T037 Run `python .github/scripts/run-local-gates.py` and confirm every gate, including all new ones, passes
 
 ---
 
@@ -142,5 +142,5 @@ Phases 1–2, then US1 and US2 (the two P1 stories): the classification home, th
 
 ## Maintainer Feedback
 
-- [ ] TF001 Replace the inline `git show` read of a spec branch's `spec-meta.json` at `.github/workflows/migrate-stranded-review-lifecycles.yml:55` with the single shared reader: the `wing-commander-spec-meta` composite, or `.github/actions/_shared/read-spec-meta.sh` sourced from a composite. Keep at most a one-line fallback at the call site (source: maintainer comment on PR #1119, Gate 61 failure on `lint`, head eea92254).
-- [ ] TF002 Run `python .github/scripts/run-local-gates.py` and confirm Gate 61 and its self-test pass, with no other gate regressions. Treat comment edits as code edits.
+- [x] TF001 Replace the inline `git show` read of a spec branch's `spec-meta.json` at `.github/workflows/migrate-stranded-review-lifecycles.yml:55` with the single shared reader: the `wing-commander-spec-meta` composite, or `.github/actions/_shared/read-spec-meta.sh` sourced from a composite. Keep at most a one-line fallback at the call site (source: maintainer comment on PR #1119, Gate 61 failure on `lint`, head eea92254).
+- [x] TF002 Run `python .github/scripts/run-local-gates.py` and confirm Gate 61 and its self-test pass, with no other gate regressions. Treat comment edits as code edits.
