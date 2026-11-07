@@ -1,0 +1,16 @@
+{
+  "initial": "- [ ] a [wc:bl-1 in-progress]",
+  "op": "hold",
+  "line_id": "bl-1",
+  "detail": "r",
+  "after_write": [
+    "- [ ] a [wc:bl-1 in-progress]\n- [ ] x1",
+    "- [ ] a [wc:bl-1 in-progress]\n- [ ] x2",
+    "- [ ] a [wc:bl-1 in-progress]\n- [ ] x3",
+    "- [ ] a [wc:bl-1 in-progress]\n- [ ] x4",
+    "- [ ] a [wc:bl-1 in-progress]\n- [ ] x5"
+  ],
+  "expect": "failed",
+  "expect_writes": 5,
+  "final_equals": "- [ ] a [wc:bl-1 in-progress]\n- [ ] x5"
+}

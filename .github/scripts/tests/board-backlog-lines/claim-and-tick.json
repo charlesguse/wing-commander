@@ -1,0 +1,24 @@
+{
+  "op": "chain",
+  "body": "- [ ] same\n- [ ] same\n- [ ] other",
+  "steps": [
+    {"op": "claim", "args": ["bl-aaaa1111", "same"]},
+    {"op": "annotate", "args": ["bl-aaaa1111", "held", "needs workflow scope"]},
+    {"op": "clear", "args": ["bl-aaaa1111"]},
+    {"op": "claim", "args": ["bl-aaaa1111", "same"]},
+    {"op": "annotate", "args": ["bl-aaaa1111", "in-progress", "PR #7"]},
+    {"op": "tick", "args": ["bl-aaaa1111", "fixed", "PR #7"]},
+    {"op": "note_proof", "args": ["bl-aaaa1111", "no run", "https://example.test/run/1"]},
+    {"op": "note_proof", "args": ["bl-aaaa1111", "still no run", "https://example.test/run/2"]}
+  ],
+  "expect_after": [
+    "- [ ] same [wc:bl-aaaa1111 in-progress]\n- [ ] same\n- [ ] other",
+    "- [ ] same [wc:bl-aaaa1111 held needs workflow scope]\n- [ ] same\n- [ ] other",
+    "- [ ] same\n- [ ] same\n- [ ] other",
+    "- [ ] same [wc:bl-aaaa1111 in-progress]\n- [ ] same\n- [ ] other",
+    "- [ ] same [wc:bl-aaaa1111 in-progress PR #7]\n- [ ] same\n- [ ] other",
+    "- [x] same [wc:bl-aaaa1111 fixed PR #7]\n- [ ] same\n- [ ] other",
+    "- [x] same [wc:bl-aaaa1111 fixed not-proven: no run] [run](https://example.test/run/1)\n- [ ] same\n- [ ] other",
+    "- [x] same [wc:bl-aaaa1111 fixed not-proven: still no run] [run](https://example.test/run/2)\n- [ ] same\n- [ ] other"
+  ]
+}

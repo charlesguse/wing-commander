@@ -27,8 +27,8 @@ Scripts in `.github/scripts/`, fixtures in `.github/scripts/tests/board-backlog-
 ## Phase 1: Setup
 
 - [ ] T001 Read `.github/scripts/board_item_marker.py`, `board_eligibility.py`, `board_merge.py` (`FIX_BRANCH_RE`), `board_triage.py`, `board_duplicate_disposition.py` and the hold/route/close/prove sites in `.github/workflows/board-loop.yml`; list each site in a scratch note inside the PR description (no file written) so later tasks cite them.
-- [ ] T002 [P] Create empty fixture directories with a `README.md` each: `.github/scripts/tests/board-backlog-lines/README.md` and `.github/scripts/tests/board-backlog-edit/README.md`.
-- [ ] T003 Find how existing `verify-*.py` gates are registered (gate registry used by `.github/scripts/run-local-gates.py` and `.github/workflows/lint-workflows.yml`) and note the registration pattern to follow in T006 and T011.
+- [x] T002 [P] Create empty fixture directories with a `README.md` each: `.github/scripts/tests/board-backlog-lines/README.md` and `.github/scripts/tests/board-backlog-edit/README.md`.
+- [x] T003 Find how existing `verify-*.py` gates are registered (gate registry used by `.github/scripts/run-local-gates.py` and `.github/workflows/lint-workflows.yml`) and note the registration pattern to follow in T006 and T011.
 
 ---
 
@@ -36,12 +36,12 @@ Scripts in `.github/scripts/`, fixtures in `.github/scripts/tests/board-backlog-
 
 **Purpose**: the pure line module, the single-home edit helper, and the marker `line` key.
 
-- [ ] T004 Create `.github/scripts/board_backlog_lines.py` with `parse_lines(body)` per data-model.md: only column-0 `- [ ] `/`- [x] ` lines outside fenced blocks, blockquotes and nested/indented checkboxes; annotation grammar `[wc:<id> <state>( <detail>)?]` parsed into `id`, `state`, `text` (text excludes the token). Stdlib only; CLI reads JSON on stdin and prints JSON (exit 0 on a decision, 2 on malformed input).
-- [ ] T005 [P] Add fixtures under `.github/scripts/tests/board-backlog-lines/` for parsing: fenced block, blockquote, nested checkbox, indented checkbox, ticked line, annotated line, empty body, comment-looking text.
-- [ ] T006 Create `.github/scripts/verify-board-backlog-lines.py` that loads every fixture in `.github/scripts/tests/board-backlog-lines/` and asserts expected output; register it in the gate registry per T003 and in its trigger paths.
-- [ ] T007 Create `.github/scripts/board_backlog_edit.py` with `edit(issue, apply_fn, verify_fn, *, fetch, write, max_attempts=5) -> Result` per contracts/backlog-lines.md: fetch, apply (`None` → `stand_down`), write, re-fetch and `verify_fn`; loop on a dropped change; on exhaustion leave the body as last fetched and return `failed` (never a forced write). Add the CLI `--issue N --op <name> --line-id ID [--detail TEXT]` using `gh`.
-- [ ] T008 [P] Add fixtures under `.github/scripts/tests/board-backlog-edit/` with injected `fetch`/`write` scenarios: concurrent append plus unrelated tick between read and re-read (both survive, SC-003), later writer drops the change (read-back re-applies), line ticked/deleted (stand down, no write), retries exhausted (body unchanged, `failed`).
-- [ ] T009 Create `.github/scripts/verify-board-backlog-edit.py` running the T008 fixtures, plus a single-home scan failing if any other script or workflow under `.github/` runs `gh issue edit` with a body for the backlog issue (FR-024); register it per T003.
+- [x] T004 Create `.github/scripts/board_backlog_lines.py` with `parse_lines(body)` per data-model.md: only column-0 `- [ ] `/`- [x] ` lines outside fenced blocks, blockquotes and nested/indented checkboxes; annotation grammar `[wc:<id> <state>( <detail>)?]` parsed into `id`, `state`, `text` (text excludes the token). Stdlib only; CLI reads JSON on stdin and prints JSON (exit 0 on a decision, 2 on malformed input).
+- [x] T005 [P] Add fixtures under `.github/scripts/tests/board-backlog-lines/` for parsing: fenced block, blockquote, nested checkbox, indented checkbox, ticked line, annotated line, empty body, comment-looking text.
+- [x] T006 Create `.github/scripts/verify-board-backlog-lines.py` that loads every fixture in `.github/scripts/tests/board-backlog-lines/` and asserts expected output; register it in the gate registry per T003 and in its trigger paths.
+- [x] T007 Create `.github/scripts/board_backlog_edit.py` with `edit(issue, apply_fn, verify_fn, *, fetch, write, max_attempts=5) -> Result` per contracts/backlog-lines.md: fetch, apply (`None` → `stand_down`), write, re-fetch and `verify_fn`; loop on a dropped change; on exhaustion leave the body as last fetched and return `failed` (never a forced write). Add the CLI `--issue N --op <name> --line-id ID [--detail TEXT]` using `gh`.
+- [x] T008 [P] Add fixtures under `.github/scripts/tests/board-backlog-edit/` with injected `fetch`/`write` scenarios: concurrent append plus unrelated tick between read and re-read (both survive, SC-003), later writer drops the change (read-back re-applies), line ticked/deleted (stand down, no write), retries exhausted (body unchanged, `failed`).
+- [x] T009 Create `.github/scripts/verify-board-backlog-edit.py` running the T008 fixtures, plus a single-home scan failing if any other script or workflow under `.github/` runs `gh issue edit` with a body for the backlog issue (FR-024); register it per T003.
 - [ ] T010 Edit `.github/scripts/board_item_marker.py` to read and write an optional `line` key; edit `.github/scripts/board_eligibility.py` so issue-path readers ignore markers carrying `line`, and only App-authored markers are read. Add fixtures to `.github/scripts/tests/board-backlog-lines/` for a line-keyed marker round trip and the issue-path ignoring it.
 - [ ] T011 Run `python .github/scripts/run-local-gates.py` and fix failures in the above.
 
@@ -55,10 +55,10 @@ Scripts in `.github/scripts/`, fixtures in `.github/scripts/tests/board-backlog-
 
 **Independent Test**: the T008 fixtures plus a CLI run of `board_backlog_edit.py` against stubbed fetch/write shows the other writer's changes survive.
 
-- [ ] T012 [US4] Implement in `.github/scripts/board_backlog_lines.py` the annotation functions `annotate(body, line_id, state, detail)`, `tick(body, line_id, annotation)`, `clear_note(...)` returning `None` for a missing, duplicated or already-ticked id (FR-016, duplicate-id edge case); detail sanitised to one line.
+- [x] T012 [US4] Implement in `.github/scripts/board_backlog_lines.py` the annotation functions `annotate(body, line_id, state, detail)`, `tick(body, line_id, annotation)`, `clear_note(...)` returning `None` for a missing, duplicated or already-ticked id (FR-016, duplicate-id edge case); detail sanitised to one line.
 - [ ] T013 [P] [US4] Add fixtures for each annotation state (`in-progress`, `in-progress PR #N`, `held`, `proposal`, `fixed`, `evidence`, `fixed` with `not-proven: <reason> [run](url)` and its later replacement), duplicate id, missing id, already ticked.
 - [ ] T014 [US4] Wire the CLI edit subcommands `claim`, `progress`, `hold`, `route-proposal`, `tick-evidence`, `tick-fixed`, `note-proof` in `board_backlog_lines.py` so each goes through `board_backlog_edit.edit()`; report a stand-down or failure as a comment on the backlog issue (FR-016, FR-015).
-- [ ] T015 [US4] Edit `CLAUDE.md` section "Working the issue board": add the rule that sessions edit the Maintenance backlog body only through `python .github/scripts/board_backlog_edit.py`, never a blind whole-body write.
+- [x] T015 [US4] Edit `CLAUDE.md` section "Working the issue board": add the rule that sessions edit the Maintenance backlog body only through `python .github/scripts/board_backlog_edit.py`, never a blind whole-body write.
 
 **Checkpoint**: US4 independently verifiable by the gates.
 
