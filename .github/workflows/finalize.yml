@@ -1344,6 +1344,29 @@ jobs:
           } > "$body_file"
           echo "body-file=$body_file" >> "$GITHUB_OUTPUT"
 
+      # specs/123-implement-task-completion FR-010: finalize does not open a
+      # final PR while buildable tasks are unchecked at the spec-branch tip.
+      # The count is wing-commander-tasks-checkbox-count's buildable view (the
+      # one classification home); folded review findings and maintainer-only
+      # lines never hold this back. Fails closed before any PR step, with no
+      # override. Deferred to here so the counter's other readers above keep
+      # their degradation path; an empty count (the counter crashed) does not
+      # refuse, its own failure is already visible on its step.
+      - name: Refuse to finalize while buildable tasks remain
+        id: buildable-wait
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && steps.checkbox-tip-finalize.outputs.buildable-unchecked-count != '' && steps.checkbox-tip-finalize.outputs.buildable-unchecked-count != '0'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE: ${{ inputs.issue-number }}
+          BUILDABLE_COUNT: ${{ steps.checkbox-tip-finalize.outputs.buildable-unchecked-count }}
+          BUILDABLE_ITEMS: ${{ steps.checkbox-tip-finalize.outputs.buildable-unchecked-items }}
+        run: |
+          set -uo pipefail
+          body="wing-commander finalize stage: $BUILDABLE_COUNT buildable task(s) are still unchecked in tasks.md, so no final pull request was opened. Another implement run must build them:"$'\n\n'"$BUILDABLE_ITEMS"
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "$body" || true
+          echo "::error::finalize refused: $BUILDABLE_COUNT buildable task(s) unchecked"
+          exit 1
+
       # The feature name for the PR title, from spec.md's title heading.
       - name: Determine feature title
         id: title
@@ -1658,6 +1681,7 @@ jobs:
               {"name": "Render remaining work", "conclusion": "${{ steps.remaining-work.conclusion }}"},
               {"name": "Verify agent output", "conclusion": "${{ steps.verify-agent-output.conclusion }}"},
               {"name": "Assemble PR body", "conclusion": "${{ steps.body.conclusion }}"},
+              {"name": "Refuse to finalize while buildable tasks remain", "conclusion": "${{ steps.buildable-wait.conclusion }}"},
               {"name": "Determine feature title", "conclusion": "${{ steps.title.conclusion }}"},
               {"name": "Verify the final pull request was created", "conclusion": "${{ steps.verify-pr.conclusion }}"},
               {"name": "Flip stage label", "conclusion": "${{ steps.flip-label.conclusion }}"},
