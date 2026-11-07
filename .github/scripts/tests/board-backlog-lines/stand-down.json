@@ -1,0 +1,11 @@
+{
+  "op": "chain",
+  "body": "- [x] ticked [wc:bl-t fixed]\n- [ ] dup a [wc:bl-d in-progress]\n- [ ] dup b [wc:bl-d in-progress]",
+  "steps": [
+    {"op": "tick", "args": ["bl-t", "fixed", ""]},
+    {"op": "annotate", "args": ["bl-missing", "held", "x"]},
+    {"op": "tick", "args": ["bl-d", "fixed", ""]},
+    {"op": "clear", "args": ["bl-d"]}
+  ],
+  "expect_after": [null, null, null, null]
+}
