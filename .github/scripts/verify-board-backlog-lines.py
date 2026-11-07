@@ -40,13 +40,33 @@ def _subset(expected, actual):
 def run_case(case):
     """Returns an error string or None."""
     op = case["op"]
-    body = case["body"]
+    body = case.get("body", "")
     if op == "parse":
         actual = bbl.parse_lines(body)
         return None if _subset(case["expect"], actual) else "parse: got {0!r}".format(actual)
     if op == "select":
         actual = bbl.select_line(body)
         return None if _subset(case["expect"], actual) else "select: got {0!r}".format(actual)
+    if op == "resolve":
+        actual = list(bbl.resolve_backlog(case["issues"], case["bot"], case.get("maintainers", ())))
+        return None if actual == case["expect"] else "resolve: got {0!r}".format(actual)
+    if op == "gate":
+        actual = list(bbl.selection_gate(case["env"]))
+        return None if actual == case["expect"] else "gate: got {0!r}".format(actual)
+    if op == "title":
+        actual = bbl.title_for(case["text"])
+        if len(actual) > 200 or ("max_len" in case and len(actual) > case["max_len"]):
+            return "title too long: {0}".format(len(actual))
+        return None if actual.startswith(case["expect_prefix"]) else "title: got {0!r}".format(actual)
+    if op == "branch":
+        actual = bbl.branch_for(case["issue"], case["line_id"])
+        return None if actual == case["expect"] else "branch: got {0!r}".format(actual)
+    if op == "closing":
+        actual = bbl.closing_keyword_hits(case["title"], case["body"], case["commits"])
+        return None if bool(actual) == case["expect_hit"] else "closing: got {0!r}".format(actual)
+    if op == "render":
+        actual = bbl.render_line_text_for_body(case["text"])
+        return None if not bbl.closing_keyword_hits("", actual, []) else "render: keyword survived {0!r}".format(actual)
     if op == "chain":
         for number, step in enumerate(case["steps"]):
             new_body = OPS[step["op"]](body, *step["args"])

@@ -136,6 +136,95 @@ def select_line(body, *, claimed_ids=()):
     return None
 
 
+def resolve_backlog(open_issues, bot_login, maintainer_logins=()):
+    """FR-002: exactly one open `disposition:tracking` issue titled
+    "Maintenance backlog…", authored by a maintainer or the App. Returns
+    (issue_number, None) or (None, reason)."""
+    allowed = set(maintainer_logins) | {bot_login}
+    hits = []
+    for issue in open_issues:
+        labels = [l if isinstance(l, str) else l.get("name") for l in issue.get("labels", [])]
+        if issue.get("state", "open") != "open" or "disposition:tracking" not in labels:
+            continue
+        if not str(issue.get("title", "")).startswith("Maintenance backlog"):
+            continue
+        hits.append(issue)
+    if not hits:
+        return None, "no open Maintenance backlog issue"
+    if len(hits) > 1:
+        return None, "ambiguous: {0} Maintenance backlog candidates".format(len(hits))
+    author = hits[0].get("author")
+    if allowed and author not in allowed:
+        return None, "backlog issue author {0!r} is not a maintainer or the App".format(author)
+    return hits[0]["number"], None
+
+
+def selection_gate(env):
+    """FR-023/FR-025: (True, None) or (False, reason). `env` carries
+    backlog_lines_switch, loop_paused and constitution_text (None when
+    unreadable)."""
+    if env.get("backlog_lines_switch") != "true":
+        return False, "backlog lines switch is not true"
+    if env.get("loop_paused"):
+        return False, "board loop is paused"
+    text = env.get("constitution_text")
+    if text is None:
+        return False, "constitution unreadable"
+    match = re.search(r"^### X\..*?(?=^### |\Z)", text, re.S | re.M)
+    if not match or "Maintenance backlog line" not in match.group(0):
+        return False, "constitution Principle X does not authorise backlog lines"
+    return True, None
+
+
+def mint_id(body):
+    """`bl-` + 8 hex, never present in `body`."""
+    import secrets
+    while True:
+        candidate = "bl-" + secrets.token_hex(4)
+        if candidate not in (body or ""):
+            return candidate
+
+
+def branch_for(issue, line_id):
+    """Fix branch for a line; asserts the shape board_merge accepts."""
+    from board_merge import FIX_BRANCH_RE
+    branch = "fix/{0}-{1}".format(issue, line_id)
+    if FIX_BRANCH_RE.fullmatch(branch) is None:
+        raise ValueError("branch {0!r} does not match FIX_BRANCH_RE".format(branch))
+    return branch
+
+
+def title_for(text, prefix="Fix: "):
+    """PR/proposal title: annotation stripped, whitespace collapsed,
+    truncated with an ellipsis so the whole title is at most 200 chars."""
+    text = re.sub(r"\s+", " ", ANNOTATION_RE.sub("", text or "")).strip()
+    if len(prefix + text) > 200:
+        text = text[:200 - len(prefix) - 1].rstrip() + "…"
+    return prefix + text
+
+
+CLOSING_RE = re.compile(
+    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[:\s]+"
+    r"(?:https?://github\.com/[\w.-]+/[\w.-]+/issues/\d+|[\w.-]+/[\w.-]+#\d+|#\d+)",
+    re.I)
+
+
+def closing_keyword_hits(title, body, commit_messages):
+    """Returns the list of (where, match) closing-keyword hits."""
+    hits = []
+    for where, text in [("title", title), ("body", body)] + [
+            ("commit", m) for m in (commit_messages or [])]:
+        for match in CLOSING_RE.finditer(text or ""):
+            hits.append((where, match.group(0)))
+    return hits
+
+
+def render_line_text_for_body(text):
+    """Code span with `#` references defanged so no closing keyword forms."""
+    safe = (text or "").replace("`", "'").replace("#", "#​").replace("/issues/", "/issues​/")
+    return "`{0}`".format(re.sub(r"\s+", " ", safe).strip())
+
+
 def main():
     try:
         request = json.load(sys.stdin)
@@ -144,7 +233,16 @@ def main():
         if op == "parse":
             result = parse_lines(body)
         elif op == "select":
-            result = select_line(body)
+            result = select_line(body, claimed_ids=request.get("claimed_ids", ()))
+        elif op == "check-closing-keywords":
+            result = closing_keyword_hits(request.get("title", ""), body,
+                                          request.get("commits", []))
+        elif op in ("claim", "progress", "hold", "route-proposal", "tick-evidence",
+                    "tick-fixed", "note-proof"):
+            import board_backlog_edit as bbe
+            apply_fn, verify = bbe._operations(op, request["line_id"], request.get("detail", ""))
+            result = bbe.edit(request["issue"], apply_fn, verify,
+                              fetch=bbe.gh_fetch, write=bbe.gh_write)
         else:
             raise ValueError("unknown op {0!r}".format(op))
     except (ValueError, KeyError) as exc:
