@@ -253,3 +253,8 @@ Task: "Add plan-actions-never-approve.json in .github/scripts/spec-pr-review-fix
 - Never push a fix outside the spec directory, never approve, request changes or merge (FR-010, FR-015b).
 - Commit after each task or logical group; keep the gate suite green before pushing.
 - Tasks T053–T055 need the repository owner (variables, workflow run, post-merge proof) and are the only `[maintainer]` tasks.
+
+## Phase 11: Convergence
+
+- [ ] T056 In `.github/workflows/spec-pr-review.yml` job `select`, persist a convergence or budget stop (a durable App-authored note on the lifecycle issue naming the stopped head) when `review` reports `stop-reason`, and feed it into each snapshot's `convergence_history` / stop state so a rebase-moved head does not re-arm the loop unless the diff against `main` changed (`wc_convergence.py rearmed`); add the matching `eligible-*` fixture if the snapshot shape changes per FR-018, FR-019 (partial)
+- [ ] T057 Add the wiring assertions to `.github/scripts/verify-spec-pr-review-wiring.py` that `select` reads the stop note and that a stopped PR is skipped before any billable step, with a mutation in its `--self-test` per FR-025 (missing)
