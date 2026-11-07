@@ -1,0 +1,1 @@
+{"input": [{"pr": 1, "pause": true, "repo": "o/r", "head_repo": "o/r", "head_ref": "spec-draft/x"}, {"pr": 2, "repo": "o/r", "head_repo": "o/r", "head_ref": "feature/y"}], "expect": {"selected": null, "skips": [{"pr": 1, "reason": "paused"}, {"pr": 2, "reason": "not-spec-pr"}]}}

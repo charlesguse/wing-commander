@@ -4559,6 +4559,18 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-reference-image-pin-sync.py
 
+      # Gate 157 — specs/122-settled-spec-pr-review FR-025: every
+      # deterministic decision spec-pr-review.yml acts on (settledness,
+      # one review per head, budget, fix backstop, action plan, failed-
+      # attempt cap) is made by .github/scripts/spec_pr_review.py and is
+      # exercised by a checked-in fixture in
+      # .github/scripts/spec-pr-review-fixtures/. A subcommand with no
+      # fixture, or a fixture the module disagrees with, fails. Path
+      # triggers: .github/scripts/** above.
+      - name: "Gate 157 — every spec-pr-review decision subcommand is exercised by a checked-in fixture that the module agrees with"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-spec-pr-review.py
+
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate

@@ -1,0 +1,1 @@
+{"input": {"findings": [{"class": "owner-decision"}], "push_results": {"markers_pushed": true}, "freshness": {}}, "expect": {"push_markers": true, "move_label": true, "post_announcement": false, "status": "failure", "review_event": "COMMENT"}}
