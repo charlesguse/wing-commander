@@ -17,7 +17,7 @@ on:
         description: "Spec branch (spec/NNN-slug)"
         required: true
         type: string
-      spec_dir:
+      spec-dir:
         description: "Spec directory (specs/NNN-slug)"
         required: true
         type: string
@@ -35,24 +35,45 @@ jobs:
   migrate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Pushes to a spec branch, so it joins the per-spec group every
+    # spec-branch writer shares (specs/013 contract, Gate 80).
+    concurrency:
+      group: wing-commander-${{ inputs.spec-dir }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Derive slug
+        id: slug
+        shell: bash
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: echo "slug=${BRANCH#spec/}" >> "$GITHUB_OUTPUT"
+      # The spec-meta.json read has one home, the wing-commander-spec-meta
+      # composite (#340, Gate 61).
+      - name: Read spec-meta.json from the spec branch
+        id: meta
+        uses: ./.github/actions/wing-commander-spec-meta
+        with:
+          spec-prefix: spec/
+          slug: ${{ steps.slug.outputs.slug }}
+          spec-dir: ${{ inputs.spec-dir }}
       - name: Decide
         id: decide
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          STAGE: ${{ steps.meta.outputs.stage }}
           ISSUE: ${{ inputs.issue }}
           BRANCH: ${{ inputs.branch }}
-          SPEC_DIR: ${{ inputs.spec_dir }}
+          SPEC_DIR: ${{ inputs.spec-dir }}
         run: |
           set -uo pipefail
           git fetch origin "$BRANCH"
           out="$(bash .github/actions/_shared/count-tasks-checkboxes.sh "origin/$BRANCH" "$SPEC_DIR/tasks.md")" || exit 1
           count="$(printf '%s\n' "$out" | sed -n 's/^buildable-unchecked-count=//p')"
-          stage="$(git show "origin/$BRANCH:$SPEC_DIR/spec-meta.json" | jq -r '.stage // ""')"
+          stage="${STAGE:-}"
           state="$(gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json state --jq '.state | ascii_downcase')"
           marker=false
           if gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json comments --jq '.comments[].body' | grep -qF '<!-- wing-commander-migrate-stranded-review -->'; then marker=true; fi
@@ -72,7 +93,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ inputs.issue }}
           BRANCH: ${{ inputs.branch }}
-          SPEC_DIR: ${{ inputs.spec_dir }}
+          SPEC_DIR: ${{ inputs.spec-dir }}
           COUNT: ${{ steps.decide.outputs.count }}
           ITEMS: ${{ steps.decide.outputs.items }}
         run: |
