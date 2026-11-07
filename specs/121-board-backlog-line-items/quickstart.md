@@ -4,7 +4,7 @@
 
 1. Run the full gate suite: `python .github/scripts/run-local-gates.py`. It must include `verify-board-backlog-lines.py` and `verify-board-backlog-edit.py`, and pass.
 2. Each of those gates runs its fixtures under `.github/scripts/tests/board-backlog-lines/` and `.../board-backlog-edit/`. Expected: every branch in `contracts/backlog-lines.md` has a passing fixture, and removing a branch's code makes its fixture fail.
-3. Spot-check selection: feed a sample body to `board_backlog_lines.py select`. Expected: the topmost unchecked, unannotated, top-level line; a fenced or nested checkbox is not chosen.
+3. Spot-check selection: feed `{"op":"select","body":"<sample body>"}` as JSON on stdin to `python .github/scripts/board_backlog_lines.py`. Expected: the topmost unchecked, unannotated, top-level line; a fenced or nested checkbox is not chosen.
 
 ## Interleaving check
 

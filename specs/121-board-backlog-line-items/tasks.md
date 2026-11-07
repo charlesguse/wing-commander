@@ -118,9 +118,9 @@ Scripts in `.github/scripts/`, fixtures in `.github/scripts/tests/board-backlog-
 
 ## Phase 7: Polish & Cross-Cutting
 
-- [ ] T035 [P] Walk through `specs/121-board-backlog-line-items/quickstart.md` against the fixtures and correct any command that no longer matches the implemented CLI.
+- [x] T035 [P] Walk through `specs/121-board-backlog-line-items/quickstart.md` against the fixtures and correct any command that no longer matches the implemented CLI.
 - [ ] T036 Run `python .github/scripts/run-local-gates.py` to green; perform `review-step-gating` (and `container-shell-safety` if a `container:` job was touched) over all `.github/workflows/` changes; confirm no private downstream names appear anywhere.
-- [ ] T037 Confirm `.specify/memory/constitution.md` is not edited by this PR (FR-022; the amendment is the separate PR #1115).
+- [x] T037 Confirm `.specify/memory/constitution.md` is not edited by this PR (FR-022; the amendment is the separate PR #1115).
 
 ---
 
