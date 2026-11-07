@@ -202,3 +202,87 @@ Phases 1–2, then US1 and US2 (the two P1 stories): the classification home, th
   check_cycle_outcome_wiring only counts occurrences and never checks that the TURN_BUDGET and IMPL_CHECKED_BASE env names are separate assignments, so the glued typo passes.
 
   - .github/scripts/verify-buildable-classification.py
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: Gate-suite readiness is not shared across counter consumers
+
+  finalize, the review gate and the migration call the counter without gate-suite-ready, so a gate-suite-run task counts as buildable there but not in implement, which can strand a lifecycle.
+
+  - specs/117-implement-stall-handoff/contracts/shared-scripts.md
+  - .github/actions/_shared/count-tasks-checkboxes.sh
+
+  Detail: Implement passes gate-suite-ready=false; the other callers default to GATE_SUITE_READY=true. finalize then fails closed on a task no cycle can tick.
+
+- [ ] Review finding: Counter hardcodes NO_WRITE_PATHS instead of the configured write boundary
+
+  The counter classifies against '.claude/,.git/' and never receives the consumer's configured write boundary, so it can disagree with the write-boundary step.
+
+  - .github/actions/_shared/count-tasks-checkboxes.sh
+
+  Detail: A task naming an extra no-write path is routed by one component and counted buildable by the other.
+
+- [ ] Review finding: Review gate buildable check fails open on counter failure
+
+  If the counter exits non-zero (unfetched ref, fork PR), the 'if buildable_out=...' branch is skipped silently with stderr discarded, so a final PR with unchecked buildable tasks proceeds to review.
+
+  - .github/workflows/lifecycle-review-gate.yml
+
+  Detail: The skip case writes a step-summary line; the failure case writes nothing.
+
+- [ ] Review finding: Migration leaves stage:review and is not recoverable after a partial run
+
+  The migration adds stage:stalled without removing stage:review, and it commits before the label and comment succeed. A re-run then skips as already-migrated, so the hand-off stays half done.
+
+  - .github/workflows/migrate-stranded-review-lifecycles.yml
+
+  Detail: The idempotency check keys on the committed spec-meta stage, not on the label or comment.
+
+- [ ] Review finding: Classifier input passed as a single argv string, failures swallowed
+
+  All candidate lines go to the classifier as one argument. A large tasks.md can hit the per-argument limit (E2BIG), and '2>/dev/null || verdict=""' makes every write-boundary task silently buildable.
+
+  - .github/actions/_shared/count-tasks-checkboxes.sh
+
+  Detail: Pass the text via the environment or a file, and log failures instead of swallowing them.
+
+- [ ] Review finding: Unbuildable prefix regex over-matches ordinary build tasks
+
+  Tasks starting with 'Post-merge', 'After merge' or 'Drill ' match the human-only prefix, are dropped from the buildable counts, and the lifecycle finalizes without them being built.
+
+  - .github/actions/_shared/count-tasks-checkboxes.sh
+
+  Detail: The word-boundary fix covered only 'Drilldown' and 'Postmerge'. The spec says ambiguity should stay buildable.
+
+- [ ] Review finding: No stall detection when only folded findings remain
+
+  With only 'Review finding:' lines unchecked and no progress, b_unchecked is 0 so no blocker or no-progress hand-off fires, and cycles redispatch until the cap.
+
+  - .github/actions/_shared/decide-implement-outcome.sh
+
+  Detail: The old stall rule stopped this after one idle cycle; the new branch does not cover it.
+
+- [ ] Review finding: finalize refusal step comments on every refusal without idempotency
+
+  Each refusal posts the full buildable-item list as a new issue comment with no marker, so repeated dispatches or re-runs spam the lifecycle issue.
+
+  - .github/workflows/finalize.yml
+
+  Detail: The migration uses a marker comment for idempotency; this step does not.
+
+- [ ] Review finding: Lift stalled label step runs on every non-handoff cycle
+
+  With iteration > 1 true on every ordinary cycle, the step removes stage:stalled each time without checking that a stalled hand-off was resolved. It adds an API call per cycle, and continue-on-error plus '|| true' hide real label failures.
+
+  - .github/workflows/implement.yml
+
+  Detail: It is correct only because removing an absent label is a no-op.
+
+- [ ] Review finding: Claimed fixture families missing; review-gate skip logic untested beyond substring checks
+
+  The README and tasks.md claim review-gate-skip and cycle-outcome fixtures, but those directories are not in the diff. verify-finalize-buildable-wait.py only greps for 'buildable-unchecked-count', so a regression in the skip logic passes every gate.
+
+  - .github/scripts/fixtures/123-implement-task-completion/README.md
+  - .github/scripts/verify-finalize-buildable-wait.py
+
+  Detail: T019 and T009 are marked done. Constitution VIII and FR-017 require a fixture per failure branch.
