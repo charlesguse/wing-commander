@@ -92,7 +92,8 @@ def is_loop_branch(branch, issue_number):
     return re.fullmatch(pattern, branch) is not None
 
 
-def find_latest_marker(issue_comments, bot_login, marker_re=MARKER_RE, open_re=MARKER_OPEN_RE):
+def find_latest_marker(issue_comments, bot_login, marker_re=MARKER_RE, open_re=MARKER_OPEN_RE,
+                       skip_line=False):
     """issue_comments: a list of {"created_at": "...", "body": "...",
     "user": {"login": "...", "type": "..."}} dicts (an issue's own
     comments, any order). bot_login: the loop's own App login
@@ -117,6 +118,12 @@ def find_latest_marker(issue_comments, bot_login, marker_re=MARKER_RE, open_re=M
         match = last_marker_match(body, marker_re, open_re)
         if not match:
             continue
+        if skip_line:
+            try:
+                if is_line_marker(json.loads(match.group(1))):
+                    continue
+            except ValueError:
+                pass
         dated_matches.append((comment.get("created_at") or "", match.group(1)))
     if not dated_matches:
         return None
@@ -133,8 +140,9 @@ def find_latest_marker(issue_comments, bot_login, marker_re=MARKER_RE, open_re=M
 
 def read_marker_with_timestamp(issue_comments, bot_login):
     """As find_latest_marker(), specialized to this module's own board-item
-    marker shape (MARKER_RE/MARKER_OPEN_RE)."""
-    return find_latest_marker(issue_comments, bot_login)
+    marker shape (MARKER_RE/MARKER_OPEN_RE). Issue-path reader: a marker
+    carrying a backlog `line` id is ignored (specs/121, is_line_marker())."""
+    return find_latest_marker(issue_comments, bot_login, skip_line=True)
 
 
 def find_markers_matching(issue_comments, bot_login, predicate,

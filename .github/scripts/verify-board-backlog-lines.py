@@ -67,6 +67,19 @@ def run_case(case):
     if op == "render":
         actual = bbl.render_line_text_for_body(case["text"])
         return None if not bbl.closing_keyword_hits("", actual, []) else "render: keyword survived {0!r}".format(actual)
+    if op == "marker":
+        import board_item_marker as bim
+        text = bim.write_marker("fix", 1, None, case["branch"], "abc", line=case.get("line"))
+        comments = [{"created_at": "2026-01-01T00:00:00Z", "body": text,
+                     "user": {"login": case["bot"], "type": "Bot"}}]
+        found = bim.find_latest_marker(comments, case["bot"])
+        read_back = found[1].get("line") if found else None
+        issue_path = bim.read_marker(comments, case["bot"])
+        if read_back != case.get("line"):
+            return "marker: line round trip got {0!r}".format(read_back)
+        if (issue_path is None) != case["issue_path_ignores"]:
+            return "marker: issue path read {0!r}".format(issue_path)
+        return None
     if op == "chain":
         for number, step in enumerate(case["steps"]):
             new_body = OPS[step["op"]](body, *step["args"])

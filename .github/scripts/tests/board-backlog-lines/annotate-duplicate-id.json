@@ -1,0 +1,9 @@
+{
+  "op": "chain",
+  "body": "- [ ] a [wc:bl-dddd4444 in-progress]\n- [ ] b [wc:bl-dddd4444 in-progress]",
+  "steps": [
+    {"op": "annotate", "args": ["bl-dddd4444", "held", "x"]},
+    {"op": "tick", "args": ["bl-dddd4444", "fixed", "PR #2"]}
+  ],
+  "expect_after": [null, null]
+}
