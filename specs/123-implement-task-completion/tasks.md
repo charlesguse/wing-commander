@@ -139,3 +139,8 @@ Before pushing, run `python .github/scripts/run-local-gates.py` (see CLAUDE.md).
 ### MVP First
 
 Phases 1–2, then US1 and US2 (the two P1 stories): the classification home, the "keep building" prompt, the cycle-outcome record and convergence that ignores unbuildable work. Validate with the gates, then add US3, US5, the migration and the polish phase. Maintainer follow-up runs after merge.
+
+## Maintainer Feedback
+
+- [ ] TF001 Replace the inline `git show` read of a spec branch's `spec-meta.json` at `.github/workflows/migrate-stranded-review-lifecycles.yml:55` with the single shared reader: the `wing-commander-spec-meta` composite, or `.github/actions/_shared/read-spec-meta.sh` sourced from a composite. Keep at most a one-line fallback at the call site (source: maintainer comment on PR #1119, Gate 61 failure on `lint`, head eea92254).
+- [ ] TF002 Run `python .github/scripts/run-local-gates.py` and confirm Gate 61 and its self-test pass, with no other gate regressions. Treat comment edits as code edits.
