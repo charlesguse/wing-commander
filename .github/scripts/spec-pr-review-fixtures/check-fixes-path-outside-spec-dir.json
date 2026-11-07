@@ -1,0 +1,1 @@
+{"input": {"spec_dir": "specs/122-x", "fixes": [{"finding": "f1", "paths": ["specs/122-x/spec.md", ".github/workflows/a.yml"], "lines_changed": 4, "precedent": {"kind": "head", "ref": "specs/122-x/plan.md:3", "resolved": true}}]}, "expect": {"pushable": [], "blocked": [{"finding": "f1", "reason": "path-outside-spec-dir"}]}}

@@ -1,0 +1,1 @@
+{"input": {"findings": [{"class": "unambiguous-error"}], "push_results": {"fixes_pushed": true}, "freshness": {"closed": true}}, "expect": {"push_fixes": false, "post_announcement": false}}

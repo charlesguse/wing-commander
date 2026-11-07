@@ -491,6 +491,13 @@ LIFECYCLE_REVIEW_GATE_GIT_GRANTS = {
     None: GIT_READ_GRANT,
     "lifecycle-review-gate.reviewer": SNAPSHOT_GIT_READ_GRANT,
 }
+# specs/122-settled-spec-pr-review: the spec PR reviewer checks out the PR's
+# own head, so it runs the wrapper from the same `wc-pristine` snapshot.
+SPEC_PR_REVIEW = ".github/workflows/spec-pr-review.yml"
+SPEC_PR_REVIEW_GIT_GRANTS = {
+    None: GIT_READ_GRANT,
+    "spec-pr-review.reviewer": SNAPSHOT_GIT_READ_GRANT,
+}
 # Check 4b (#518): the read-only agent steps outside board-loop.yml that
 # read git, by workflow. Each must grant the wrapper. Any other site
 # whose shipped allowed list has neither Write nor Edit is checked too.
@@ -499,6 +506,7 @@ FLEET_READ_ONLY_STEP_LABELS = {
     ".github/workflows/pr-conversation.yml": ("pr-conversation.classify",),
     ".github/workflows/watchdog.yml": ("watchdog.diagnose",),
     LIFECYCLE_REVIEW_GATE: ("lifecycle-review-gate.reviewer",),
+    SPEC_PR_REVIEW: ("spec-pr-review.reviewer",),
 }
 
 
@@ -858,6 +866,8 @@ def fleet_git_grant(path, published):
     agent-written (LIFECYCLE_REVIEW_GATE_GIT_GRANTS)."""
     if path == LIFECYCLE_REVIEW_GATE:
         return LIFECYCLE_REVIEW_GATE_GIT_GRANTS
+    if path == SPEC_PR_REVIEW:
+        return SPEC_PR_REVIEW_GIT_GRANTS
     return PUBLISHED_GIT_READ_GRANT if path in published else GIT_READ_GRANT
 
 

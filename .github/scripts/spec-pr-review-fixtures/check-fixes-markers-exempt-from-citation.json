@@ -1,0 +1,1 @@
+{"input": {"spec_dir": "specs/122-x", "fixes": [{"finding": "m1", "kind": "marker", "paths": ["specs/122-x/spec.md"], "lines_changed": 1}]}, "expect": {"pushable": ["m1"], "blocked": []}}
