@@ -3042,6 +3042,19 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-spec-meta-single-home.py --self-test
 
+      # specs/119-lifecycle-hold-label (FR-019): the hold label is read and
+      # set only through the wing-commander-lifecycle-hold composite and
+      # wc_lifecycle_hold.py, never inline in a workflow.
+      - name: Lifecycle hold label — one home for the check and the set
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-hold-single-home.py
+      - name: Lifecycle hold label self-test — an inline copy and a missing shell each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-hold-single-home.py --self-test
+      - name: Fold analyze and drop — every decide and drop branch behaves as specified
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-analyze-drop.py
+
       # Gate 62 — specs/054-e2e-container-coverage (research.md D6, FR-019):
       # Gate 23's drift check is purely textual (it compares the embedded
       # REQUIRED_TOOLS= literal against required-tools.txt) and cannot fail

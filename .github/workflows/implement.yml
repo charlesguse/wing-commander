@@ -83,6 +83,11 @@ on:
         type: number
         required: false
         default: 5
+      hold-label:
+        description: "Name of the lifecycle hold label (specs/119-lifecycle-hold-label); a lifecycle carrying it is not built until the label is removed"
+        type: string
+        required: false
+        default: lifecycle:held
       self-workflow:
         description: >
           Filename of the CONSUMER wrapper workflow to dispatch for iteration
@@ -776,6 +781,9 @@ jobs:
       agent-any-failure: ${{ (steps.agent-ran-progress.outputs.conclusion == 'failure' || steps.agent-ran-retry.outputs.conclusion == 'failure' || steps.agent-ran-cycle.outputs.conclusion == 'failure') && 'true' || 'false' }}
       credential-any-refresh-failure: ${{ (steps.credential-status-progress.outputs.ok == 'false' || steps.credential-status-retry.outputs.ok == 'false' || steps.credential-status-cycle.outputs.ok == 'false') && 'true' || 'false' }}
       failed-post-agent-step: ${{ steps.failed-step.outputs.step }}
+      # 'true' when the lifecycle hold withheld this cycle (held or labels
+      # unreadable); final-ok stays empty, so the stalled job never fires.
+      held: ${{ steps.guard.outputs.held }}
     steps:
       - name: Checkout consumer repository (bootstrap, default token)
         uses: actions/checkout@v5
@@ -1019,6 +1027,30 @@ jobs:
           kind: action
           summary: "This stage could not start — ${{ steps.meta.outputs.reason }}"
 
+      # Lifecycle hold (specs/119-lifecycle-hold-label, FR-002, FR-004): a
+      # fresh read of the issue's labels before any agent or write step. Held
+      # or unreadable makes the idempotency guard below skip the whole cycle
+      # (no stall, no next-iteration dispatch); the one check and set home is
+      # the wing-commander-lifecycle-hold composite.
+      - name: Check lifecycle hold
+        id: hold
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.meta.outputs.refused != 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-lifecycle-hold
+        with:
+          mode: check
+          issue: ${{ inputs.issue-number }}
+          hold-label: ${{ inputs.hold-label }}
+          token: ${{ github.token }}
+
+      - name: Post lifecycle hold status line
+        if: steps.hold.outputs.state == 'held' || steps.hold.outputs.state == 'unreadable'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ github.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "Implement did nothing: ${{ steps.hold.outputs.state == 'held' && format('this lifecycle carries the `{0}` label. Remove the label to resume.', inputs.hold-label) || 'the lifecycle labels could not be read; dispatch implement by hand once readable.' }}"
+
       # (stage, iteration) in spec-meta.json is the idempotency guard.
       # A cycle runs only as the next expected step; "stalled" admits the
       # recorded+1 iteration because manual re-dispatch of the failed
@@ -1032,9 +1064,14 @@ jobs:
           STAGE: ${{ steps.meta.outputs.stage }}
           RECORDED: ${{ steps.meta.outputs.recorded-iteration }}
           ITERATION: ${{ inputs.iteration }}
+          HOLD_STATE: ${{ steps.hold.outputs.state }}
         run: |
           next=$((RECORDED + 1))
-          if { [ "$STAGE" = "tasks" ] && [ "$ITERATION" -eq 1 ]; } \
+          if [ "$HOLD_STATE" = "held" ] || [ "$HOLD_STATE" = "unreadable" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "held=true" >> "$GITHUB_OUTPUT"
+            echo "Lifecycle hold check returned '${HOLD_STATE:-none}'; the cycle is withheld, not stalled." >> "$GITHUB_STEP_SUMMARY"
+          elif { [ "$STAGE" = "tasks" ] && [ "$ITERATION" -eq 1 ]; } \
              || { [ "$STAGE" = "implement" ] && [ "$ITERATION" -eq "$next" ]; } \
              || { [ "$STAGE" = "stalled" ] && [ "$ITERATION" -eq "$next" ]; }; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -1058,7 +1095,7 @@ jobs:
       # repeated line beats a silent skip).
       - name: Check for an earlier review-stage explanation
         id: review-explained
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip == 'true' && steps.meta.outputs.stage == 'review'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip == 'true' && steps.guard.outputs.held != 'true' && steps.meta.outputs.stage == 'review'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
@@ -1077,7 +1114,7 @@ jobs:
           fi
 
       - name: Explain skipped dispatch at review stage
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip == 'true' && steps.meta.outputs.stage == 'review' && steps.review-explained.outputs.explained != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip == 'true' && steps.guard.outputs.held != 'true' && steps.meta.outputs.stage == 'review' && steps.review-explained.outputs.explained != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ env.WC_BOT_TOKEN }}
