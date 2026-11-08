@@ -11,7 +11,11 @@ Present in `wing-commander-5-implement.yml` and `wing-commander-6-finalize.yml`:
 - `needs` includes the stage call job (and `resolve-model` for implement).
 - `if` contains `always()`, the `WING_COMMANDER_METRICS_PAUSED != 'true'`
   kill switch, a "something started" clause, and excludes a `skipped` stage
-  result. It MUST NOT be `success()`/`!cancelled()` alone.
+  result. It MUST NOT be `success()`/`!cancelled()` alone. Exception:
+  finalize carries no "something started" clause (owner decision
+  2026-11-08, T017; research R2's fallback). Its job starts as a
+  zero-record no-op in a run cancelled while queued, a measured exception
+  to FR-011 recorded in the finalize wrapper's comment.
 - `with`: `run-id: ${{ github.run_id }}` (string-formatted), destination branch
   and path from `vars.WING_COMMANDER_METRICS_*` with the same defaults as
   `wing-commander-metrics-persist.yml`, runner, container-image,
@@ -27,7 +31,7 @@ Present in `wing-commander-5-implement.yml` and `wing-commander-6-finalize.yml`:
 | Input | Type | Default | Semantics |
 |---|---|---|---|
 | `run-in-cancelled-run` | boolean | `false` | `true`: `persist` uses `always()` gating so it runs in a cancelled run. `verify-image-prerequisites` keeps its Gate 22-pinned `if: inputs.container-image != ''` (skipped in a cancelled run); `persist` only stops on a `failure` result of that check, so it tolerates the skip. `false`: today's gating bit for bit. |
-| `tolerate-failure` | boolean | `false` | `true`: `continue-on-error` on both jobs; a failing `persist` ends with a `::warning::` and step-summary line naming the sweep as backstop. `false`: today's fail-loud. |
+| `tolerate-failure` | boolean | `false` | `true`: `continue-on-error` on both jobs; a failing `persist` ends with a `::warning::` and step-summary line naming the sweep as backstop, from a separate `warn-sweep-backstop` job that carries no `container:` so it still warns when the caller's image fails to pull or start. `false`: today's fail-loud. |
 
 `persisted-count` and `unpersisted-record-keys` outputs unchanged.
 

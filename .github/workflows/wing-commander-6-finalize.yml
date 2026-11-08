@@ -54,10 +54,15 @@ jobs:
       container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
 
   # specs/120-dispatched-run-metrics -- see wing-commander-5-implement.yml.
-  # No "something started" signal exists yet for finalize (T017 waits on the
-  # maintainer drill T023), so this job may start in a run cancelled while
-  # queued; it then finds no artifact and is the zero-record no-op (spec 043
-  # FR-021). That is the recorded, measured-pending exception to FR-011.
+  # Measured exception to FR-011 (owner decision 2026-11-08, T017): finalize
+  # has no "something started" clause. Its call result is 'cancelled' both
+  # for a run cancelled mid-cycle and one cancelled while queued, and the
+  # `started`-output gate (research R2) was not built because drill D2 (T023)
+  # was waived, so readability of that output from a cancelled call was never
+  # shown. This is research R2's fallback: in a run cancelled while queued
+  # this job starts, finds no artifact and is the zero-record no-op (spec 043
+  # FR-021), and the fold-cycle guard's never-started classification may see
+  # it as a started job.
   persist-metrics:
     needs: [finalize]
     if: >-

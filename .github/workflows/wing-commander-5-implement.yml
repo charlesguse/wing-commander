@@ -162,7 +162,11 @@ jobs:
   # It needs the whole implement call on purpose: the records it collects are
   # emitted by jobs throughout that call, so persisting any earlier would miss
   # them. The cost is that this run (and its workflow_run consumers) completes
-  # after persist, a minute or so later; tolerate-failure bounds it.
+  # after persist, a minute or so later; tolerate-failure bounds it. The call
+  # also holds `stalled`, which is in the per-spec concurrency group: when the
+  # stage fails after dispatching the next cycle, `stalled` and so this job
+  # wait behind that cycle. That is the measured exception to SC-001 (research
+  # R4, drill D3); the daily sweep and the rollup's FR-006 line cover it.
   persist-metrics:
     needs: [resolve-model, implement]
     if: >-

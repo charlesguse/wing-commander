@@ -489,31 +489,21 @@ jobs:
   # and it reads persist's `completed` output rather than a result, which
   # continue-on-error turns into 'success'. Callers that do not tolerate
   # failure fail loudly instead and get no warning.
+  # It carries no container: (a registered Gate 22 exception): an unpullable
+  # image or rejected registry credentials fail container init, and a warning
+  # job inside that image would fail with persist and warn about nothing.
+  # Gate 79 holds it bare.
   warn-sweep-backstop:
     needs: [verify-image-prerequisites, persist]
     # The image check is required to be 'success' (Gate 23: a status-check
     # function must not run past a real prerequisite failure). With
     # tolerate-failure a failed check also reports 'success', so a broken
-    # image reaches this job too; its own container init then fails, and
-    # continue-on-error keeps that from reddening the run -- the image
-    # check's ::error:: annotation is the visible signal in that case.
+    # image reaches this job too, and because this job runs on the bare
+    # runner it still emits the warning.
     if: "always() && inputs.tolerate-failure && needs.verify-image-prerequisites.result != 'failure' && needs.persist.result != 'skipped' && needs.persist.outputs.completed != 'true'"
     continue-on-error: true
     permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
-    container:
-      image: ${{ inputs.container-image }}
-      credentials: >-
-        ${{
-          (secrets.container-registry-username != '' && secrets.container-registry-password != '')
-            && fromJSON(format('{{"username":{0},"password":{1}}}', toJSON(secrets.container-registry-username), toJSON(secrets.container-registry-password)))
-            || fromJSON('{}')
-        }}
-      # Git safe.directory for the caller's container image -- see clarify.yml.
-      env:
-        GIT_CONFIG_COUNT: "1"
-        GIT_CONFIG_KEY_0: safe.directory
-        GIT_CONFIG_VALUE_0: "*"
     environment:
       name: ${{ inputs.environment }}
       deployment: ${{ inputs.environment-deployment }}

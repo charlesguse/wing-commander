@@ -50,9 +50,11 @@ gate, the kill switch, the stage in `needs`, no App secret, no
 `concurrency:` and no inline shell, and passing both new inputs as true;
 and the stage's two new inputs exist
 with `default: false` and are passed by neither the `workflow_run` job nor
-the `sweep` job.
+the `sweep` job. The stage's `warn-sweep-backstop` job carries no
+`container:`: FR-007's warning must survive the caller's image failing to
+pull or start, which a job inside that image cannot.
 
-30 subject mutations and two discovery mutations must each break an
+31 subject mutations and two discovery mutations must each break an
 assertion. Each check in suite() is the only one some mutation trips --
 a mutation that a second check also catches would keep passing with its
 target check deleted -- except the missing-`if:` check, which the
@@ -105,6 +107,7 @@ PERSISTING_WRAPPERS = {
     os.path.join(WORKFLOWS, "wing-commander-6-finalize.yml"): "finalize",
 }
 NEW_INPUTS = ("run-in-cancelled-run", "tolerate-failure")
+WARN_JOB = "warn-sweep-backstop"
 
 
 def persisting_subject():
@@ -191,6 +194,19 @@ def stage_input_failures(subject):
                 broke.append(f"{WRAPPER} job {job_id!r} passes {name!r} -- "
                              f"only the persisting jobs may opt in")
     return broke
+
+
+def warn_job_failures(subject):
+    job = subject["stage-jobs"].get(WARN_JOB)
+    if not isinstance(job, dict):
+        return [f"{STAGE} has no `{WARN_JOB}` job -- a tolerated persist "
+                f"failure ends green with no warning (FR-007)"]
+    if "container" in job:
+        return [f"{STAGE}: `{WARN_JOB}` carries a `container:` -- an "
+                f"unpullable image or rejected registry credentials fail its "
+                f"container init along with persist's, so the run ends green "
+                f"with no warning (FR-007)"]
+    return []
 
 
 def triggers(doc):
@@ -526,6 +542,7 @@ def load_subject():
         "stage-inputs": dict(((load(STAGE).get("on") or load(STAGE).get(True)
                                or {}).get("workflow_call") or {}).get("inputs")
                              or {}),
+        "stage-jobs": dict(load(STAGE).get("jobs") or {}),
         "wrapper-with": {j: dict((spec or {}).get("with") or {})
                          for j, spec in dict(doc.get("jobs") or {}).items()},
     }
@@ -655,6 +672,7 @@ def suite(subject):
                          f"and a job it does not cover cannot be paused")
     broke += persisting_failures(subject)
     broke += stage_input_failures(subject)
+    broke += warn_job_failures(subject)
     return broke
 
 
@@ -903,6 +921,14 @@ def mut_persisting_drops_opt_in(subject):
     return _persisting(subject, "implement", edit)
 
 
+def mut_warn_job_in_image(subject):
+    s = dict(subject)
+    s["stage-jobs"] = copy.deepcopy(subject["stage-jobs"])
+    s["stage-jobs"].setdefault(WARN_JOB, {})["container"] = {
+        "image": "${{ inputs.container-image }}"}
+    return s
+
+
 DISCOVERY_MUTATIONS = [
     ("discovery stops following local composites",
      {"follow_composites": False}),
@@ -964,6 +990,8 @@ MUTATIONS = [
      mut_workflow_run_persist_job_opts_in),
     ("a persisting job stops passing run-in-cancelled-run",
      mut_persisting_drops_opt_in),
+    ("the sweep-backstop warning runs inside the caller's image",
+     mut_warn_job_in_image),
 ]
 
 

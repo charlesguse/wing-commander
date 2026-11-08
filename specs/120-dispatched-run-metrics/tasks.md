@@ -68,7 +68,8 @@
 
 - [x] T015 [US3] Review the `if:` and `continue-on-error:` lines added in T005, T007, T008 with the `review-step-gating` skill (`always()` vs `!cancelled()`, outputs readable from an always-gated job, teardown not stranded); fix findings in `.github/workflows/metrics-persist.yml` and both wrappers.
 - [x] T016 [US3] Review the added `persist-metrics` job and the `run-in-cancelled-run` gating with the `container-shell-safety` skill (the stage's `run:` steps run inside a caller-supplied container); fix any step lacking an effective `shell: bash` in `.github/workflows/metrics-persist.yml`.
-- [ ] T017 [US3] Add an optional `started` output to `.github/workflows/finalize.yml` published by an early record-free job, and gate finalize's `persist-metrics` on it in `.github/workflows/wing-commander-6-finalize.yml` (research R2) — only after the maintainer drill (T022) shows the output is readable from the wrapper when a later job was cancelled; if the drill fails, keep the T008 fallback and record it as a measured exception to FR-011 in the wrapper comment. Update Gate 79 and its fixtures (T009, T011) if the gate text changes.
+- [x] T017 [US3] Add an optional `started` output to `.github/workflows/finalize.yml` published by an early record-free job, and gate finalize's `persist-metrics` on it in `.github/workflows/wing-commander-6-finalize.yml` (research R2) — only after the maintainer drill (T022) shows the output is readable from the wrapper when a later job was cancelled; if the drill fails, keep the T008 fallback and record it as a measured exception to FR-011 in the wrapper comment. Update Gate 79 and its fixtures (T009, T011) if the gate text changes.
+  **Done 2026-11-08 by the fallback (owner decision 2026-11-08):** no `started` output was added; drill T023 was waived. The finalize wrapper comment in `.github/workflows/wing-commander-6-finalize.yml` records the T008 fallback as a measured exception to FR-011, and `contracts/persisting-job.md` section 1 names it. Gate 79 and its fixtures do not read the wrapper comment and check the started clause for implement only, so they are unchanged.
 
 ---
 
@@ -95,7 +96,7 @@
 
 **Purpose**: Real dispatches, re-drives and post-merge proof that only the repository owner can do. Use the `prove-after-merge` skill; record evidence on the PR or lifecycle issue.
 
-- [ ] T023 [maintainer] Drill D2 for finalize before T017 is merged: dispatch a finalize run, cancel it while queued, and report whether the `started` output was readable from the wrapper and `persist-metrics` stayed unstarted; hand the result to the implement stage to decide T017 versus the fallback.
+- [x] T023 [maintainer] **WAIVED (owner decision 2026-11-08: T017 takes the T008 fallback, so the drill informs nothing).** Drill D2 for finalize before T017 is merged: dispatch a finalize run, cancel it while queued, and report whether the `started` output was readable from the wrapper and `persist-metrics` stayed unstarted; hand the result to the implement stage to decide T017 versus the fallback.
 - [ ] T024 [maintainer] After merge, drill D1: let tasks or a fold re-drive dispatch an implement cycle, then confirm `persist-metrics` is green, the record is in `records.jsonl` within 15 minutes and the rollup updated; repeat for finalize.
 - [ ] T025 [maintainer] After merge, drill D2 (implement): cancel a run after the agent step emitted a record and confirm `persist-metrics` persisted it; cancel another while queued and confirm the job did not start.
 - [ ] T026 [maintainer] After merge, drill D3: measure the `stalled` queueing delay for a stage failure after next-cycle dispatch and record it as evidence for the SC-001 exception.
@@ -186,7 +187,7 @@ MVP is Phase 1-2 plus US1: stage inputs, both wrapper jobs, extended Gate 79 wit
 
 ## Review Gate Round 2 Findings
 
-- [ ] Review finding: persist-metrics gate lacks the required 'something started' clause
+- [x] Review finding: persist-metrics gate lacks the required 'something started' clause
 
   The finalize persist-metrics `if` is `always() && finalize.result != 'skipped'` with no started clause, contradicting contracts/persisting-job.md section 1 and the round-1 finding marked fixed; a run cancelled while queued still spins up a runner.
 
@@ -194,13 +195,17 @@ MVP is Phase 1-2 plus US1: stage inputs, both wrapper jobs, extended Gate 79 wit
 
   Detail: Wrapper comment documents the gap as an exception rather than adding the clause.
 
-- [ ] Review finding: warn-sweep-backstop cannot warn on image-check or container-init failure
+  Resolution (2026-11-08): accepted exception, no code change. Owner decision 2026-11-08 takes research R2's fallback for T017: finalize has no record-free early job whose output is proven readable from a cancelled call, so it cannot carry a sound started clause. The finalize wrapper comment and contracts/persisting-job.md section 1 now record it as a measured exception to FR-011. Ticked with its twin in the other round.
+
+- [x] Review finding: warn-sweep-backstop cannot warn on image-check or container-init failure
 
   With tolerate-failure set, an unpullable image or bad registry credentials fails container init for both persist and the warning job, so no ::warning:: is emitted and the run ends green with records silently waiting for the sweep.
 
   - .github/workflows/metrics-persist.yml
 
   Detail: The in-file comment admits the limitation, so the warning is unreliable for the failures it targets.
+
+  Resolution (2026-11-08): real, fixed. `warn-sweep-backstop` no longer carries a `container:` (registered Gate 22 exception, like spec 112's classify-startup), so it runs on the bare runner and warns when the caller's image fails to pull or start. Gate 79 now fails if the job is missing or runs inside the image (mutation: the sweep-backstop warning runs inside the caller's image). Ticked with its twin in the other round.
 
 - [x] Review finding: Stable dedup key depends on emitted_at and can drop distinct records
 
@@ -222,13 +227,15 @@ MVP is Phase 1-2 plus US1: stage inputs, both wrapper jobs, extended Gate 79 wit
 
   - .github/actions/_shared/pin-e2e-wrapper.sh
 
-- [ ] Review finding: implement persist-metrics delays the implement run's conclusion
+- [x] Review finding: implement persist-metrics delays the implement run's conclusion
 
   persist-metrics waits on the whole implement call, so the run stays in progress while a queued `stalled` job waits, delaying workflow_run consumers and exposing records to cancellation.
 
   - .github/workflows/wing-commander-5-implement.yml
 
   Detail: The spec records this as an accepted exception.
+
+  Resolution (2026-11-08): refuted. The spec's edge case allows this as a measured exception to SC-001, and research R4 decided it that way: a wrapper can only depend on the whole reusable call, `stalled` included. FR-007 is not breached: the stage job and the next-stage dispatch both finish inside the implement call before persist-metrics starts. Drill D3 (T026) measures the delay. The implement wrapper comment now names the exception. Ticked with its twin in the other round.
 
 - [x] Review finding: Test case directories derived from len(label) can collide
 
@@ -244,7 +251,7 @@ MVP is Phase 1-2 plus US1: stage inputs, both wrapper jobs, extended Gate 79 wit
 
 ## Review Gate Round 3 Findings
 
-- [ ] Review finding: Finalize persist-metrics lacks 'something started' clause
+- [x] Review finding: Finalize persist-metrics lacks 'something started' clause
 
   persist-metrics `always()` gate in finalize starts on a run cancelled while queued (finalize result 'cancelled'), spinning up a runner/container for a run with no records, contrary to persisting-job.md section 1 and FR-011.
 
@@ -252,7 +259,9 @@ MVP is Phase 1-2 plus US1: stage inputs, both wrapper jobs, extended Gate 79 wit
 
   Detail: Implement gates on resolve-model; finalize has no equivalent.
 
-- [ ] Review finding: Content-based dedup key drops distinct matrix-leg records
+  Resolution (2026-11-08): accepted exception, no code change. Owner decision 2026-11-08 takes research R2's fallback for T017: finalize has no record-free early job whose output is proven readable from a cancelled call, so it cannot carry a sound started clause. The finalize wrapper comment and contracts/persisting-job.md section 1 now record it as a measured exception to FR-011. Ticked with its twin in the other round.
+
+- [x] Review finding: Content-based dedup key drops distinct matrix-leg records
 
   Dedup key excludes job_id and record_key, so two matrix legs with the same job_key, step_index, timestamp, cost and tokens collapse to one record and spend is lost.
 
@@ -260,17 +269,23 @@ MVP is Phase 1-2 plus US1: stage inputs, both wrapper jobs, extended Gate 79 wit
 
   Detail: rebase.yml and pr-conversation act matrix legs share job_key; zero-cost 429/error records are identical apart from job_id/record_key.
 
-- [ ] Review finding: warn-sweep-backstop cannot warn on image-check/container-init failure
+  Resolution (2026-11-08): refuted for this change. Matrix legs carry the same emission-time `record_key` (`run_id:job_key:step_index`, wing-commander-metrics-summary), and the persist composite deliberately leaves an ambiguous job_key unresolved (no single job name matches `act (x)`). So the existing record_key de-duplication (FR-004: the only scheme allowed) drops the second leg before the content key is checked. The content key cannot drop a record the record_key check would keep. The loss of matrix-leg records predates spec 120 (a known spec 043 limitation, documented at the composite's job_key map) and belongs on the Maintenance backlog, not in this PR.
+
+- [x] Review finding: warn-sweep-backstop cannot warn on image-check/container-init failure
 
   With tolerate-failure, an unpullable image makes the image check report success and both persist and warn-sweep-backstop fail at container init under continue-on-error, so no warning is emitted and the run is green (the loud case FR-007 requires).
 
   - .github/workflows/metrics-persist.yml
 
-- [ ] Review finding: Implement persist-metrics waits on the whole implement call incl. stalled
+  Resolution (2026-11-08): real, fixed. `warn-sweep-backstop` no longer carries a `container:` (registered Gate 22 exception, like spec 112's classify-startup), so it runs on the bare runner and warns when the caller's image fails to pull or start. Gate 79 now fails if the job is missing or runs inside the image (mutation: the sweep-backstop warning runs inside the caller's image). Ticked with its twin in the other round.
+
+- [x] Review finding: Implement persist-metrics waits on the whole implement call incl. stalled
 
   persist-metrics needs the entire implement call, so a stalled job queued behind the next cycle delays persistence and exposes it to cancellation, falling back to the daily sweep and contradicting SC-001.
 
   - .github/workflows/wing-commander-5-implement.yml
+
+  Resolution (2026-11-08): refuted. The spec's edge case allows this as a measured exception to SC-001, and research R4 decided it that way: a wrapper can only depend on the whole reusable call, `stalled` included. FR-007 is not breached: the stage job and the next-stage dispatch both finish inside the implement call before persist-metrics starts. Drill D3 (T026) measures the delay. The implement wrapper comment now names the exception. Ticked with its twin in the other round.
 
 - [x] Review finding: Dedup code uses bash 4 declare -A and silently degrades
 
