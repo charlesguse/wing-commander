@@ -94,6 +94,10 @@ def check_review_gate_skip(failures):
                 os.makedirs(os.path.join(tmp, "specs", "999-x"))
                 with open(os.path.join(tmp, "specs", "999-x", "tasks.md"), "w") as fh:
                     fh.write(open(tasks).read())
+                meta = os.path.join(d, name + ".spec-meta.json")
+                if os.path.exists(meta):
+                    with open(os.path.join(tmp, "specs", "999-x", "spec-meta.json"), "w") as fh:
+                        fh.write(open(meta).read())
                 vbc.git(tmp, "add", "specs")
             vbc.git(tmp, "commit", "-q", "--allow-empty", "-m", "x")
             vbc.git(tmp, "update-ref", "refs/remotes/origin/spec/999-x", "HEAD")

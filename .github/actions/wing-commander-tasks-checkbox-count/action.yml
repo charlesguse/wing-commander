@@ -41,9 +41,12 @@ inputs:
     description: >-
       "false" when the cycle-start gate suite is not ready, which makes a task
       that only runs the gate suite deterministically unbuildable (specs/123
-      FR-004). Defaults to "true".
+      FR-004). Empty (the default) reads the readiness implement recorded in
+      spec-meta.json's `gate_suite_ready` at the same ref, and "true" when
+      none is recorded -- so every caller classifies a task the way the
+      cycle that left it did (FR-010).
     required: false
-    default: "true"
+    default: ""
 outputs:
   checked-count:
     description: "Count of - [x]/- [X] task-list lines outside fenced code blocks."

@@ -15,10 +15,14 @@ Checked-in inputs for the failure branches of the buildable classification
 A classification case is `<name>.tasks.md` plus `<name>.expected`: one
 `key=value` per line, naming the `count-tasks-checkboxes.sh` outputs the case
 pins, and an optional `env:KEY=value` line (for example
-`env:GATE_SUITE_READY=false`).
+`env:GATE_SUITE_READY=false`). An optional `<name>.spec-meta.json` is
+committed beside tasks.md: with no env passed, the counter reads its
+recorded `gate_suite_ready`, as finalize, the review gate and the migration
+do.
 
 A review-gate-skip case is `<name>.tasks.md` (absent for an unreadable
-count) plus `<name>.expected` pinning `skip=true|false`; the gate runs
+count), an optional `<name>.spec-meta.json`, plus `<name>.expected` pinning
+`skip=true|false`; the gate runs
 lifecycle-review-gate.yml's own skip block against it.
 
 Every row above must name a directory that exists, holds fixtures, and is

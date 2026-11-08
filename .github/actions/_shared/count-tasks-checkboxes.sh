@@ -67,7 +67,18 @@ fi
 # (classify-out-of-boundary-tasks.sh), never a second pattern list here. Only
 # lines naming a backtick-quoted slash path can classify, so only those are
 # offered to it; "\n<line>\n" membership is what the awk pass tests.
-GATE_SUITE_READY="${GATE_SUITE_READY:-true}"
+# Gate-suite readiness (specs/123 FR-004/FR-010): an explicit
+# GATE_SUITE_READY (implement passes its own cycle's) wins; otherwise the
+# value implement recorded in spec-meta.json beside tasks.md at the same ref
+# (`gate_suite_ready`, written by implement's "Record truncated-cycle count"
+# bookkeeping commit), so finalize, the review gate and the migration
+# classify a "run the gate suite" task exactly as the cycle that left it
+# did. No record (or an unreadable one) is "true", the pre-123 default.
+if [ -z "${GATE_SUITE_READY:-}" ]; then
+  GATE_SUITE_READY="$(git show "${REF}:$(dirname "$TASKS_PATH")/spec-meta.json" 2>/dev/null \
+    | jq -r 'if .gate_suite_ready == false then "false" else "true" end' 2>/dev/null)" || GATE_SUITE_READY=""
+  [ "$GATE_SUITE_READY" = "false" ] || GATE_SUITE_READY="true"
+fi
 NO_WRITE_PATHS="${NO_WRITE_PATHS:-.claude/,.git/}"
 CLASSIFIER="$(dirname "${BASH_SOURCE[0]}")/classify-out-of-boundary-tasks.sh"
 oob_lines=$'\n'

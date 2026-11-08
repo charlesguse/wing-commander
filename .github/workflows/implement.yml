@@ -3656,6 +3656,11 @@ jobs:
       # maintainer accepts a retag by removing the id from dropped_task_ids
       # in spec-meta.json on the branch between cycles. Left as it stands
       # when no stop-rule decision ran (DROPPED_KNOWN != true).
+      # It also records this cycle's gate-suite readiness as
+      # gate_suite_ready (specs/123 FR-010): count-tasks-checkboxes.sh reads
+      # it back for every caller that passes none (finalize, the review
+      # gate, the migration), so they classify a "run the gate suite" task
+      # the way this cycle did.
       - name: Record truncated-cycle count
         id: record-truncation-commit
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
@@ -3667,6 +3672,7 @@ jobs:
           TIER: ${{ steps.final.outputs.tier }}
           DROPPED_IDS: ${{ steps.final.outputs.dropped-ids }}
           DROPPED_KNOWN: ${{ steps.final.outputs.dropped-known }}
+          GATE_READY_NOW: ${{ needs.gate-suite-implement-cycle.outputs.ready == 'true' && 'true' || 'false' }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         continue-on-error: true
         run: |
@@ -3691,14 +3697,17 @@ jobs:
           if [ "${DROPPED_KNOWN:-}" = "true" ]; then
             new_dropped=$(jq -cn --arg ids "${DROPPED_IDS:-}" '$ids | split(" ") | map(select(. != ""))')
           fi
-          if [ "$new_count" = "$current" ] && [ "$new_tier" = "$current_tier" ] && [ "$new_dropped" = "$current_dropped" ]; then
+          current_ready=$(jq -r 'if .gate_suite_ready == false then "false" elif .gate_suite_ready == true then "true" else "" end' "$SPEC_DIR/spec-meta.json")
+          if [ "$new_count" = "$current" ] && [ "$new_tier" = "$current_tier" ] && [ "$new_dropped" = "$current_dropped" ] && { [ -z "${GATE_READY_NOW:-}" ] || [ "$GATE_READY_NOW" = "$current_ready" ]; }; then
             # Nothing to persist — the value already on the branch is
             # current, so the count reported here is trustworthy as-is.
             echo "count=$new_count" >> "$GITHUB_OUTPUT"
           else
             jq --argjson n "$new_count" --arg tier "$new_tier" --argjson dropped "$new_dropped" \
+              --arg ready "${GATE_READY_NOW:-}" \
               '.truncated_count = $n | .truncated_tier = (if $tier == "" then null else $tier end)
-               | if ($dropped | length) == 0 then del(.dropped_task_ids) else .dropped_task_ids = $dropped end' \
+               | if ($dropped | length) == 0 then del(.dropped_task_ids) else .dropped_task_ids = $dropped end
+               | if $ready == "" then . else .gate_suite_ready = ($ready == "true") end' \
               "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/meta.json"
             mv "$RUNNER_TEMP/meta.json" "$SPEC_DIR/spec-meta.json"
             git config user.name  "${BOT_SLUG}[bot]"
@@ -3708,8 +3717,10 @@ jobs:
               git commit -q -m "implement: record truncated cycle (consecutive count=$new_count, tier=$new_tier)"
             elif [ "$new_count" != "$current" ] || [ "$new_tier" != "$current_tier" ]; then
               git commit -q -m "implement: reset truncated-cycle count"
-            else
+            elif [ "$new_dropped" != "$current_dropped" ]; then
               git commit -q -m "implement: record dropped task ids ($(printf '%s' "$new_dropped" | jq -r 'join(" ")'))"
+            else
+              git commit -q -m "implement: record gate-suite readiness ($GATE_READY_NOW)"
             fi
             # The count is reported ONLY once the push below actually lands
             # (see "Report the truncated-cycle count").

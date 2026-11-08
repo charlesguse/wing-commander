@@ -48,12 +48,17 @@ def parse_outputs(text):
     return out
 
 
-def run_counter(tasks_text, env_extra=None, rel="specs/999-x/tasks.md"):
+def run_counter(tasks_text, env_extra=None, rel="specs/999-x/tasks.md", spec_meta=None):
+    """spec_meta, when given, is committed as spec-meta.json beside tasks.md:
+    the counter reads its recorded gate_suite_ready when no env is passed."""
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, rel)
         os.makedirs(os.path.dirname(path))
         with open(path, "w") as fh:
             fh.write(tasks_text)
+        if spec_meta is not None:
+            with open(os.path.join(os.path.dirname(path), "spec-meta.json"), "w") as fh:
+                fh.write(spec_meta)
         git(tmp, "init", "-q")
         git(tmp, "add", "-A")
         git(tmp, "commit", "-q", "-m", "x")
@@ -87,7 +92,9 @@ def check_classification(failures):
             else:
                 k, v = line.split("=", 1)
                 expected[k] = v
-        proc = run_counter(open(os.path.join(d, name + ".tasks.md")).read(), env)
+        meta = os.path.join(d, name + ".spec-meta.json")
+        proc = run_counter(open(os.path.join(d, name + ".tasks.md")).read(), env,
+                           spec_meta=open(meta).read() if os.path.exists(meta) else None)
         if proc.returncode != 0:
             failures.append(f"{name}: counter exited {proc.returncode}: {proc.stderr.strip()}")
             continue
@@ -187,6 +194,30 @@ def check_single_home(failures):
         failures.append("counter holds a second write-boundary pattern list")
 
 
+def check_gate_ready_plumbing(failures):
+    """FR-010 consistency: implement records its cycle's readiness in
+    spec-meta, and no other caller overrides the counter's read of it."""
+    wf = os.path.join(ROOT, ".github", "workflows")
+    imp = open(os.path.join(wf, "implement.yml")).read()
+    m = re.search(r"id: record-truncation-commit\n.*?(?=\n      - name:)", imp, re.S)
+    step = m.group(0) if m else ""
+    if "GATE_READY_NOW: ${{ needs.gate-suite-implement-cycle.outputs.ready" not in step \
+            or '.gate_suite_ready = ($ready == "true")' not in step:
+        failures.append("implement.yml record-truncation-commit must record the cycle's gate-suite readiness as gate_suite_ready")
+    comp = open(os.path.join(ROOT, ".github", "actions", "wing-commander-tasks-checkbox-count", "action.yml")).read()
+    m2 = re.search(r"  gate-suite-ready:\n(?:    .*\n)*?    default: (\S+)", comp)
+    if not m2 or m2.group(1) != '""':
+        failures.append("wing-commander-tasks-checkbox-count gate-suite-ready must default to \"\" "
+                        "(a literal default would override the recorded readiness)")
+    for name in ("finalize.yml", "lifecycle-review-gate.yml", "migrate-stranded-review-lifecycles.yml"):
+        text = open(os.path.join(wf, name)).read()
+        if re.search(r"gate-suite-ready:|GATE_SUITE_READY", text):
+            failures.append(f"{name} must not pass gate-suite readiness: the counter reads the cycle's recorded value")
+    src = open(COUNTER).read()
+    if "gate_suite_ready" not in src:
+        failures.append("count-tasks-checkboxes.sh must read the recorded gate_suite_ready when none is passed")
+
+
 def check_fixture_readme(failures):
     """Every family the fixture README lists is a real, non-empty directory
     that the gate it names reads -- a row for fixtures nobody wrote reads as
@@ -213,6 +244,7 @@ def check_fixture_readme(failures):
 def main():
     failures = []
     check_fixture_readme(failures)
+    check_gate_ready_plumbing(failures)
     check_classification(failures)
     check_cap_outcome(failures)
     check_prompt(failures)
