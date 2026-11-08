@@ -110,6 +110,14 @@ prove. Each step has a rule.
   The stage-findings composite drops findings that cite only those files
   for the same reason. Contracts under `specs/*/contracts/` are the
   exception: they are live and fixed like code.
+- A spec PR gets at most three review rounds before the owner decides to
+  merge it. A finding that only names a file, a literal, a regex or a
+  step's shape is a plan-level finding. Record it on the lifecycle issue
+  for the plan stage instead of spending another spec round on it. Prefer
+  smaller specs: when a spec needs more rounds than that, it is usually
+  carrying a plan, or two features, and should be split. Spec PR #1091
+  took eight rounds, each finding a narrower build detail, and its
+  feature still could not be built in five implement cycles.
 - A review of a PR whose changed files a `specs/NNN-*/` spec references
   should also get a pass from the `spec-cross-reference` skill, which can
   elevate a finding into a named-requirement violation or refute one
