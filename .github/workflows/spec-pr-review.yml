@@ -548,7 +548,7 @@ jobs:
 
       - name: Agent run metrics summary (reviewer)
         id: metrics-summary-review
-        if: always() && steps.reviewer.outcome != 'skipped'
+        if: "!cancelled() && steps.reviewer.outcome != 'skipped'"
         continue-on-error: true
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-metrics-summary
         with:
@@ -576,7 +576,7 @@ jobs:
 
       - name: Extract and validate the findings
         id: extract
-        if: always() && steps.eligible.outcome == 'success'
+        if: "!cancelled() && steps.eligible.outcome == 'success'"
         env:
           REVIEW_VERDICT: ${{ steps.review-verdict.outputs.verdict }}
         run: |
@@ -644,7 +644,7 @@ jobs:
 
       - name: Compute the deterministic verdict and the fix plan
         id: verdict
-        if: always() && steps.eligible.outcome == 'success'
+        if: "!cancelled() && steps.eligible.outcome == 'success'"
         env:
           FAILED: ${{ steps.extract.outputs.failed }}
           SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
@@ -682,7 +682,7 @@ jobs:
       # a not-converging loop or an exhausted budget stops here with a hand-off.
       - name: Evaluate the loop's convergence and budget
         id: stop
-        if: always() && steps.verdict.outputs.outcome == 'reviewed'
+        if: "!cancelled() && steps.verdict.outputs.outcome == 'reviewed'"
         env:
           BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
           ROUND: ${{ steps.eligible.outputs.round }}
@@ -709,7 +709,7 @@ jobs:
 
       - name: Compose the review body
         id: compose-review
-        if: always() && steps.verdict.outputs.outcome == 'reviewed'
+        if: "!cancelled() && steps.verdict.outputs.outcome == 'reviewed'"
         env:
           ROUND: ${{ steps.eligible.outputs.round }}
           HEAD_SHA: ${{ needs.select.outputs.head-sha }}
@@ -765,7 +765,7 @@ jobs:
       # actually reviewed, and the review says the result is stale.
       - name: Detect a head that moved during the round
         id: stale
-        if: always() && steps.verdict.outputs.outcome == 'reviewed'
+        if: "!cancelled() && steps.verdict.outputs.outcome == 'reviewed'"
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           PR_NUMBER: ${{ needs.select.outputs.pr-number }}
@@ -781,7 +781,7 @@ jobs:
           fi
 
       - name: Post the review on the PR
-        if: always() && steps.verdict.outputs.outcome == 'reviewed'
+        if: "!cancelled() && steps.verdict.outputs.outcome == 'reviewed'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-review-comment
         with:
           token: ${{ env.WC_BOT_TOKEN }}
@@ -789,7 +789,7 @@ jobs:
           body-file: ${{ runner.temp }}/spec-review-body.md
 
       - name: Upload the round's artifacts
-        if: always()
+        if: "!cancelled()"
         uses: actions/upload-artifact@v6
         with:
           name: spec-pr-review-round
@@ -804,14 +804,14 @@ jobs:
           retention-days: 30
 
       - name: Fail the job when the round failed
-        if: always() && (steps.verdict.outputs.outcome != 'reviewed' || steps.eligible.outcome != 'success')
+        if: "!cancelled() && (steps.verdict.outputs.outcome != 'reviewed' || steps.eligible.outcome != 'success')"
         run: |
           echo "::error::spec-pr-review: the review round failed; it is reported as a failure, never as ready for the owner."
           exit 1
 
   act:
     needs: [select, review]
-    if: always() && !cancelled() && needs.select.outputs.pr-number != ''
+    if: "!cancelled() && needs.select.outputs.pr-number != ''"
     # Pushes onto the spec branch, so it joins the per-spec group every
     # spec-branch writer shares (rebase.yml's `rebase` job, same group).
     concurrency:
@@ -945,7 +945,7 @@ jobs:
 
       - name: Plan the remaining actions
         id: plan
-        if: always() && needs.review.outputs.outcome == 'reviewed'
+        if: "!cancelled() && needs.review.outputs.outcome == 'reviewed'"
         env:
           PUSHED: ${{ steps.push.outcome == 'success' }}
           FIXES: ${{ steps.apply.outputs.fixes }}
@@ -977,7 +977,7 @@ jobs:
       # FR-015c: each owner-decision question goes on the lifecycle issue; the
       # stage moves to clarify only after the marker push succeeded.
       - name: Post owner-decision questions on the lifecycle issue
-        if: always() && steps.plan.outputs.move_label == 'true'
+        if: "!cancelled() && steps.plan.outputs.move_label == 'true'"
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE: ${{ needs.select.outputs.issue }}
@@ -995,7 +995,7 @@ jobs:
           gh issue edit "$ISSUE" --remove-label "stage:spec" --add-label "stage:clarify"
 
       - name: Post the hand-off when the markers could not be written
-        if: always() && steps.plan.outputs.handoff != ''
+        if: "!cancelled() && steps.plan.outputs.handoff != ''"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -1006,7 +1006,7 @@ jobs:
       # FR-015d: the ready announcement, in the format intake and clarify use,
       # only when every finding was an error and every fix was pushed.
       - name: Announce the spec PR ready for review
-        if: always() && steps.plan.outputs.post_announcement == 'true'
+        if: "!cancelled() && steps.plan.outputs.post_announcement == 'true'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -1020,7 +1020,7 @@ jobs:
       # the PR is with the owner, on the lifecycle issue (the outcome line
       # below carries the same on the issue; this adds the evidence).
       - name: Post the stop hand-off
-        if: always() && needs.review.outputs.stop-reason != ''
+        if: "!cancelled() && needs.review.outputs.stop-reason != ''"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -1032,7 +1032,7 @@ jobs:
       # Durable stop note read by the select job (FR-018/FR-019): a hidden
       # marker naming the stopped head, round and reason.
       - name: Record the stop note
-        if: always() && needs.review.outputs.stop-reason != ''
+        if: "!cancelled() && needs.review.outputs.stop-reason != ''"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -1042,7 +1042,7 @@ jobs:
           body: ${{ format('<!-- spec-pr-review-stopped head={0} round={1} reason={2} -->', needs.select.outputs.head-sha, needs.review.outputs.round, needs.review.outputs.stop-reason) }}
 
       - name: Record the one-line outcome on the lifecycle issue
-        if: always() && steps.fresh.outcome != 'skipped'
+        if: "!cancelled() && steps.fresh.outcome != 'skipped'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -1058,7 +1058,7 @@ jobs:
       # ready" and for every failed, stopped or stale outcome. Its own context,
       # not spec 062's, and never made a required check.
       - name: Post the commit status
-        if: always() && needs.select.outputs.head-sha != ''
+        if: "!cancelled() && needs.select.outputs.head-sha != ''"
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ needs.select.outputs.head-sha }}

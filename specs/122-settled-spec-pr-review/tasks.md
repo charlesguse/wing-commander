@@ -370,7 +370,7 @@ Task: "Add plan-actions-never-approve.json in .github/scripts/spec-pr-review-fix
 
   - .github/scripts/spec_pr_review.py
 
-- [ ] Review finding: Writing steps use always() instead of !cancelled()
+- [x] Review finding: Writing steps use always() instead of !cancelled()
 
   Post-review, questions, status, outcome and stop-note steps run on cancellation and can leave stop notes or failed-attempt markers that count toward the failed-cap.
 

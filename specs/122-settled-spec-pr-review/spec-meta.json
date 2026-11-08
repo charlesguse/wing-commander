@@ -3,7 +3,7 @@
   "spec_dir": "specs/122-settled-spec-pr-review",
   "feature_num": "122",
   "stage": "implement",
-  "iteration": 5,
+  "iteration": 6,
   "spec_branch": "spec/122-settled-spec-pr-review",
   "pending_re_review_from": []
 }
