@@ -77,6 +77,24 @@ def _find(body, line_id):
     return hits[0] if len(hits) == 1 else None
 
 
+def _rewrite(line, mark, token, drop_run_link=False):
+    """Rebuilds `line` with checkbox `mark` and `token` in place of its
+    annotation, leaving every other character (spacing, token position) as
+    the human wrote it. An un-annotated line gets the token appended. With
+    `drop_run_link`, a `[run](...)` link directly after the old token (ours)
+    is removed; a link elsewhere is the maintainer's and stays."""
+    rest = line["raw"][6:]
+    match = ANNOTATION_RE.search(rest)
+    if match is None:
+        return "- [{0}] {1}".format(mark, (rest.rstrip() + " " + token) if token else rest)
+    end = match.end()
+    if drop_run_link:
+        link = re.match(r" \[run\]\([^)]*\)", rest[end:])
+        if link:
+            end += link.end()
+    return "- [{0}] {1}{2}{3}".format(mark, rest[:match.start()], token, rest[end:])
+
+
 def _replace(body, index, new_raw):
     parts = body.split("\n")
     if parts[index].endswith("\r"):
@@ -107,8 +125,7 @@ def annotate(body, line_id, state, detail=""):
     if line["state"] not in ANNOTATE_FROM.get(state, (line["state"],)):
         return None
     token = "[wc:{0} {1}{2}]".format(line_id, state, " " + _sanitise(detail) if _sanitise(detail) else "")
-    prefix = "- [ ] "
-    return _replace(body, line["index"], prefix + (line["text"] + " " + token).strip())
+    return _replace(body, line["index"], _rewrite(line, " ", token))
 
 
 def claim(body, line_id, text):
@@ -120,7 +137,7 @@ def claim(body, line_id, text):
     for line in parse_lines(body):
         if not line["checked"] and line["id"] is None and line["text"] == text:
             return _replace(body, line["index"],
-                            "- [ ] {0} [wc:{1} in-progress]".format(line["text"], line_id))
+                            _rewrite(line, " ", "[wc:{0} in-progress]".format(line_id)))
     return None
 
 
@@ -132,7 +149,7 @@ def tick(body, line_id, annotation_state, detail=""):
         return None
     token = "[wc:{0} {1}{2}]".format(
         line_id, annotation_state, " " + _sanitise(detail) if _sanitise(detail) else "")
-    return _replace(body, line["index"], "- [x] " + (line["text"] + " " + token).strip())
+    return _replace(body, line["index"], _rewrite(line, "x", token))
 
 
 def clear_note(body, line_id):
@@ -141,20 +158,25 @@ def clear_note(body, line_id):
     line = _find(body, line_id)
     if line is None or line["checked"] or line["state"] != "held":
         return None
-    return _replace(body, line["index"], "- [ ] " + line["text"])
+    rest = line["raw"][6:]
+    match = ANNOTATION_RE.search(rest)
+    return _replace(body, line["index"],
+                    "- [ ] " + (rest[:match.start()].rstrip() + rest[match.end():]).rstrip())
 
 
 def note_proof(body, line_id, reason, url=""):
-    """Replaces any earlier not-proven note on a ticked `fixed` line."""
+    """Replaces any earlier not-proven note on a ticked `fixed` line; an
+    empty `reason` clears it back to a plain `fixed` token. Only a link our
+    own earlier note put right after its token is replaced."""
     line = _find(body, line_id)
-    if line is None or not line["checked"]:
+    if line is None or not line["checked"] or line["state"] != "fixed":
         return None
-    # The link stays outside the token (a `]` or `)` would end it) and any
-    # earlier note's link is dropped, so a later note replaces the earlier.
-    text = re.sub(r"\s*\[run\]\([^)]*\)", "", line["text"]).strip()
-    token = "[wc:{0} fixed not-proven: {1}]".format(line_id, _sanitise(reason))
-    suffix = " [run]({0})".format(re.sub(r"[\s)\]]", "", url)) if url else ""
-    return _replace(body, line["index"], "- [x] " + text + " " + token + suffix)
+    if not _sanitise(reason):
+        token, suffix = "[wc:{0} fixed]".format(line_id), ""
+    else:
+        token = "[wc:{0} fixed not-proven: {1}]".format(line_id, _sanitise(reason))
+        suffix = " [run]({0})".format(re.sub(r"[\s)\]]", "", url)) if url else ""
+    return _replace(body, line["index"], _rewrite(line, "x", token + suffix, drop_run_link=True))
 
 
 def select_line(body):

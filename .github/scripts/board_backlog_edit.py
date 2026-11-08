@@ -68,7 +68,8 @@ def _operations(op, line_id, detail, url=""):
         if op in ("progress", "hold", "route-proposal", "tick-evidence", "tick-fixed"):
             return (line["detail"] or "") == bbl._sanitise(detail)
         if op == "note-proof":
-            return (line["detail"] or "") == "not-proven: " + bbl._sanitise(detail)
+            reason = bbl._sanitise(detail)
+            return (line["detail"] or "") == ("not-proven: " + reason if reason else "")
         return True
 
     return apply_fn, verify

@@ -2,8 +2,8 @@
   "issue": 1080,
   "spec_dir": "specs/121-board-backlog-line-items",
   "feature_num": "121",
-  "stage": "stalled",
-  "iteration": 7,
+  "stage": "implement",
+  "iteration": 8,
   "spec_branch": "spec/121-board-backlog-line-items",
   "pending_re_review_from": []
 }

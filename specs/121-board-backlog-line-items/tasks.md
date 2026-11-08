@@ -225,7 +225,7 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
 ## Review Gate Round 2 Findings
 
-- [ ] Review finding: Read-back verify ignores detail/note text
+- [x] Review finding: Read-back verify ignores detail/note text
 
   verify() checks only state and checked flag, so progress/hold/route-proposal/note-proof/repeated tick pass read-back even when a concurrent writer dropped the written text.
 
@@ -233,7 +233,7 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
   Detail: A line already in-progress annotated with PR #7 is restored by a concurrent whole-body write; verify still returns True and edit() returns APPLIED.
 
-- [ ] Review finding: resolve_backlog compares state to lowercase 'open'
+- [x] Review finding: resolve_backlog compares state to lowercase 'open'
 
   gh returns state OPEN/CLOSED, so against real gh JSON every issue is skipped and no backlog is ever resolved; fixtures use lowercase so gates stay green.
 
@@ -241,7 +241,7 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
   Detail: issue.get('state','open') != 'open' rejects 'OPEN'; the result is 'no open Maintenance backlog issue'.
 
-- [ ] Review finding: CLI edit path exits 0 on failed and misses gh errors
+- [x] Review finding: CLI edit path exits 0 on failed and misses gh errors
 
   board_backlog_lines.py CLI prints the edit() result and exits 0 even for 'failed', and does not catch the RuntimeError that _gh raises; board_backlog_edit.py exits 1 for the same result.
 
@@ -250,7 +250,7 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
   Detail: A workflow step piping an op into the CLI passes when retries are exhausted, so the tick is silently lost. The contract's 'release' subcommand is also rejected as an unknown op.
 
-- [ ] Review finding: Maintainer author check is login-set only
+- [x] Review finding: Maintainer author check is login-set only
 
   resolve_backlog accepts the author only if it is in maintainer_logins (default empty) or is the bot; author_association is never checked, so the default two-arg call rejects the human-owned backlog.
 
@@ -258,7 +258,7 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
   Detail: resolve_backlog(open_issues, bot_login) rejects issue #889 authored by the owner.
 
-- [ ] Review finding: Line markers still visible to matching marker readers
+- [x] Review finding: Line markers still visible to matching marker readers
 
   Only find_latest_marker skips line-keyed markers; find_markers_matching and find_latest_marker_matching still return them, so issue-path readers such as board_eligibility can read a backlog line marker as an issue marker.
 
@@ -266,7 +266,7 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
   Detail: board_eligibility.py:255 uses find_latest_marker_matching with a predicate that does not test 'line'; the fixture tests cover only read_marker.
 
-- [ ] Review finding: Line rewrites normalize whitespace and move tokens
+- [x] Review finding: Line rewrites normalize whitespace and move tokens
 
   annotate/claim/tick rebuild the line from whitespace-collapsed text, so user-owned content is altered and the token moves to the end, which clobbers concurrent human edits.
 
@@ -274,7 +274,7 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
   Detail: Double spaces are collapsed and a mid-line token moves to the end after clear_note or annotate.
 
-- [ ] Review finding: note_proof strips maintainer's own [run] link
+- [x] Review finding: note_proof strips maintainer's own [run] link
 
   note_proof removes any [run](...) link from the line text, including one the maintainer wrote, and no op clears the not-proven note once a later proof succeeds.
 
@@ -282,7 +282,7 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
   Detail: The data-model's 'fixed + not-proven -> fixed' transition has no implementing op; tick refuses a checked line.
 
-- [ ] Review finding: Closing-keyword defang misses GH-N references
+- [x] Review finding: Closing-keyword defang misses GH-N references
 
   title_for inserts U+200B after '#' before a digit, but CLOSING_RE and the defang do not cover GH-N, which GitHub also treats as an issue reference, so FR-017 can be bypassed.
 
@@ -290,7 +290,7 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
   Detail: A line saying 'Fixes GH-747' passes through unchanged and can close issue 747 on merge.
 
-- [ ] Review finding: Single-home scan for backlog body edits is easy to evade
+- [x] Review finding: Single-home scan for backlog body edits is easy to evade
 
   The scan matches only a single-line 'gh issue edit ... --body' that contains the word 'backlog', so multi-line run blocks, gh api PATCH, or --body-file on a line without 'backlog' evade it.
 

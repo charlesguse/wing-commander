@@ -55,21 +55,45 @@ def run_case(case, max_attempts=5):
     return "; ".join(errors) or None
 
 
-EDIT_RE = re.compile(r"gh\s+issue\s+edit[^\n]*--body")
+EDIT_RE = re.compile(
+    r"gh\s+issue\s+edit\b[^\n]*--body"
+    r"|gh\s+api\b[^\n]*(?:-X|--method)[\s=]+PATCH"
+    r"|gh\s+api\b[^\n]*PATCH", re.I)
+BACKLOG_RE = re.compile(r"backlog", re.I)
+
+
+def statements(text):
+    """(line number, joined text) per statement: backslash-continued lines
+    are joined so a multi-line `gh issue edit ... \\ --body-file` is one."""
+    out, buf, start = [], [], 1
+    for number, line in enumerate(text.split("\n"), 1):
+        if not buf:
+            start = number
+        if line.rstrip().endswith("\\"):
+            buf.append(line.rstrip()[:-1])
+            continue
+        buf.append(line)
+        out.append((start, " ".join(buf)))
+        buf = []
+    if buf:
+        out.append((start, " ".join(buf)))
+    return out
 
 
 def single_home_violations(root):
-    """Files other than board_backlog_edit.py that edit an issue body on a
-    line that names the maintenance backlog."""
+    """Files other than board_backlog_edit.py that edit an issue body in a
+    statement that names the maintenance backlog (a continued line counts as
+    one statement; `gh api ... PATCH` and `--body-file` forms included)."""
     hits = []
     for pattern in ("scripts/*.py", "scripts/*.sh", "workflows/*.yml", "actions/**/*.yml", "actions/**/*.sh"):
         for path in glob.glob(os.path.join(root, pattern), recursive=True):
             if os.path.basename(path) in ("board_backlog_edit.py", "verify-board-backlog-edit.py"):
                 continue
             with open(path, encoding="utf-8") as fh:
-                for number, line in enumerate(fh, 1):
-                    if EDIT_RE.search(line) and "backlog" in line.lower():
-                        hits.append("{0}:{1}".format(os.path.relpath(path, root), number))
+                text = fh.read()
+            for number, stmt in statements(text):
+                if EDIT_RE.search(stmt) and BACKLOG_RE.search(stmt):
+                    hits.append("{0}:{1}".format(os.path.relpath(path, root), number))
     return hits
 
 

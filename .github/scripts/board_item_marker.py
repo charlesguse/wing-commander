@@ -146,7 +146,7 @@ def read_marker_with_timestamp(issue_comments, bot_login):
 
 
 def find_markers_matching(issue_comments, bot_login, predicate,
-                          marker_re=MARKER_RE, open_re=MARKER_OPEN_RE):
+                          marker_re=MARKER_RE, open_re=MARKER_OPEN_RE, include_line=False):
     """Every loop-authored marker satisfying `predicate(marker_dict)`, as
     (created_at, marker) pairs, oldest first: each comment's own last
     marker, unparsable ones skipped. find_latest_marker_matching() is the
@@ -167,13 +167,15 @@ def find_markers_matching(issue_comments, bot_login, predicate,
             continue
         if not isinstance(marker, dict) or not predicate(marker):
             continue
+        if not include_line and is_line_marker(marker):
+            continue  # a backlog-line marker is not an issue marker (specs/121)
         dated_matches.append((comment.get("created_at") or "", marker))
     dated_matches.sort(key=lambda pair: pair[0])
     return dated_matches
 
 
 def find_latest_marker_matching(issue_comments, bot_login, predicate,
-                                marker_re=MARKER_RE, open_re=MARKER_OPEN_RE):
+                                marker_re=MARKER_RE, open_re=MARKER_OPEN_RE, include_line=False):
     """As find_latest_marker(), but returns the newest loop-authored marker
     satisfying `predicate(marker_dict)`, scanning every comment rather than
     stopping at the single overall-newest one -- a later marker of a
@@ -186,7 +188,7 @@ def find_latest_marker_matching(issue_comments, bot_login, predicate,
     "trust the single newest, even if unparsable" contract to preserve
     here. Returns (created_at, marker) or None."""
     dated_matches = find_markers_matching(issue_comments, bot_login, predicate,
-                                          marker_re, open_re)
+                                          marker_re, open_re, include_line)
     return dated_matches[-1] if dated_matches else None
 
 

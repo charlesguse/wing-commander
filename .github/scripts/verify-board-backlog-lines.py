@@ -81,6 +81,9 @@ def run_case(case):
             return "marker: line round trip got {0!r}".format(read_back)
         if (issue_path is None) != case["issue_path_ignores"]:
             return "marker: issue path read {0!r}".format(issue_path)
+        matching = bim.find_latest_marker_matching(comments, case["bot"], lambda m: True)
+        if (matching is None) != case["issue_path_ignores"]:
+            return "marker: matching reader read {0!r}".format(matching)
         return None
     if op == "chain":
         for number, step in enumerate(case["steps"]):
