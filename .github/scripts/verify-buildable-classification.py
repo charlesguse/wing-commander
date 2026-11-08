@@ -187,8 +187,32 @@ def check_single_home(failures):
         failures.append("counter holds a second write-boundary pattern list")
 
 
+def check_fixture_readme(failures):
+    """Every family the fixture README lists is a real, non-empty directory
+    that the gate it names reads -- a row for fixtures nobody wrote reads as
+    coverage that does not exist."""
+    readme = open(os.path.join(FIXTURES, "README.md")).read()
+    rows = re.findall(r"^\|[^|\n]*\|\s*`([^`/]+)/`\s*\|\s*`([^`]+\.py)`\s*\|\s*$", readme, re.M)
+    if not rows:
+        failures.append("fixture README lists no families")
+    for dirname, gate in rows:
+        d = os.path.join(FIXTURES, dirname)
+        if not os.path.isdir(d) or not os.listdir(d):
+            failures.append(f"fixture README lists {dirname}/ but no such fixture directory exists")
+            continue
+        gp = os.path.join(ROOT, ".github", "scripts", gate)
+        if not os.path.exists(gp):
+            failures.append(f"fixture README names {gate} for {dirname}/, which does not exist")
+        elif f'"{dirname}"' not in open(gp).read():
+            failures.append(f"fixture README says {gate} drives {dirname}/, but {gate} never reads it")
+    for entry in sorted(os.listdir(FIXTURES)):
+        if os.path.isdir(os.path.join(FIXTURES, entry)) and entry not in {r[0] for r in rows}:
+            failures.append(f"fixture directory {entry}/ is missing from the fixture README")
+
+
 def main():
     failures = []
+    check_fixture_readme(failures)
     check_classification(failures)
     check_cap_outcome(failures)
     check_prompt(failures)

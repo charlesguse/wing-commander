@@ -6,11 +6,19 @@ of `key=value` lines) through count-tasks-checkboxes.sh, derives the
 refuse/proceed decision the two consumers make (refuse iff the buildable
 unchecked count is above zero), and checks that finalize.yml and
 lifecycle-review-gate.yml read the shared counter -- no second counter.
+
+Drives `review-gate-skip/` fixtures through lifecycle-review-gate.yml's own
+skip block, extracted verbatim from the workflow and run in bash against a
+throwaway repo whose `refs/remotes/origin/spec/999-x` holds the fixture's
+tasks.md (none when the fixture has no `.tasks.md`: an unreadable count
+must not skip the PR). `<name>.expected` pins `skip=true|false`.
 """
 import importlib.util
 import os
 import re
+import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -38,6 +46,66 @@ def check_fixtures(failures):
                 k, v = line.split("=", 1)
                 if got.get(k) != v:
                     failures.append(f"finalize-wait/{name}: {k} expected {v!r}, got {got.get(k)!r}")
+
+
+SKIP_BLOCK_RE = re.compile(
+    r"^( *)if buildable_out=\"\$\(bash \.wc-pristine-repo/\.github/actions/_shared/"
+    r"count-tasks-checkboxes\.sh .*?^\1fi$", re.S | re.M)
+
+
+def review_gate_skip_block():
+    gate = open(os.path.join(ROOT, ".github", "workflows", "lifecycle-review-gate.yml")).read()
+    m = SKIP_BLOCK_RE.search(gate)
+    return m.group(0) if m else None
+
+
+def check_review_gate_skip(failures):
+    block = review_gate_skip_block()
+    if block is None:
+        failures.append("lifecycle-review-gate.yml lost its buildable-task skip block "
+                        "(if buildable_out=\"$(bash .wc-pristine-repo/.../count-tasks-checkboxes.sh ...) ... fi)")
+        return
+    d = os.path.join(vbc.FIXTURES, "review-gate-skip")
+    if not os.path.isdir(d):
+        failures.append("review-gate-skip fixture directory missing")
+        return
+    names = sorted(f[: -len(".expected")] for f in os.listdir(d) if f.endswith(".expected"))
+    if not names:
+        failures.append("no review-gate-skip fixtures found")
+    script = ("set -uo pipefail\nfor _ in once; do\n" + block +
+              "\necho selected\ndone\n")
+    for name in names:
+        expected = {}
+        env = dict(os.environ, head_ref="spec/999-x", slug="999-x", number="1",
+                   GITHUB_STEP_SUMMARY=os.devnull)
+        env.pop("GATE_SUITE_READY", None)
+        for line in open(os.path.join(d, name + ".expected")).read().splitlines():
+            if line.startswith("env:") and "=" in line:
+                k, v = line[4:].split("=", 1)
+                env[k] = v
+            elif "=" in line:
+                k, v = line.split("=", 1)
+                expected[k] = v
+        tasks = os.path.join(d, name + ".tasks.md")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.symlink(ROOT, os.path.join(tmp, ".wc-pristine-repo"))
+            vbc.git(tmp, "init", "-q")
+            if os.path.exists(tasks):
+                os.makedirs(os.path.join(tmp, "specs", "999-x"))
+                with open(os.path.join(tmp, "specs", "999-x", "tasks.md"), "w") as fh:
+                    fh.write(open(tasks).read())
+                vbc.git(tmp, "add", "specs")
+            vbc.git(tmp, "commit", "-q", "--allow-empty", "-m", "x")
+            vbc.git(tmp, "update-ref", "refs/remotes/origin/spec/999-x", "HEAD")
+            proc = subprocess.run(["bash", "-c", script], cwd=tmp, env=env,
+                                  capture_output=True, text=True)
+        if proc.returncode != 0:
+            failures.append(f"review-gate-skip/{name}: skip block exited {proc.returncode}: {proc.stderr.strip()}")
+            continue
+        got = {"skip": "false" if "selected" in proc.stdout.split() else "true"}
+        for k, v in expected.items():
+            if got.get(k) != v:
+                failures.append(f"review-gate-skip/{name}: {k} expected {v!r}, got {got.get(k)!r}")
 
 
 def check_wiring(failures):
@@ -144,6 +212,7 @@ def main():
     failures = []
     check_watchdog_handoff(failures)
     check_fixtures(failures)
+    check_review_gate_skip(failures)
     check_wiring(failures)
     if failures:
         for f in failures:
