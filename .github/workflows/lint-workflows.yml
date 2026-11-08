@@ -1522,6 +1522,11 @@ jobs:
                   "reads startup-agent's log through the API; inside the image "
                   "under test it could not report on the images the prerequisite "
                   "check rejects (spec 112 edge case)",
+              ("metrics-persist.yml", "warn-sweep-backstop"):
+                  "warns that a tolerated persist failure left the run's records "
+                  "to the daily sweep; inside the caller's image it could not "
+                  "warn when that image fails to pull or start, the failure it "
+                  "exists to report (specs/120-dispatched-run-metrics FR-007)",
           }
 
           def norm_expr(s):

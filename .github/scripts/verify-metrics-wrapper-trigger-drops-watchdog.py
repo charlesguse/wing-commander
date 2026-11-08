@@ -43,7 +43,18 @@ trigger list must match the shipped one too, as the 058 delta's must, and
 a spelled-out count of the completion path's workflows in the live docs
 must equal the shipped list's length.
 
-Seventeen subject mutations and two discovery mutations must each break an
+Spec 120 adds the persisting-job contract (specs/120-dispatched-run-metrics/
+contracts/persisting-job.md): the implement and finalize wrappers each carry
+a `persist-metrics` job that calls metrics-persist.yml with an always()
+gate, the kill switch, the stage in `needs`, no App secret, no
+`concurrency:` and no inline shell, and passing both new inputs as true;
+and the stage's two new inputs exist
+with `default: false` and are passed by neither the `workflow_run` job nor
+the `sweep` job. The stage's `warn-sweep-backstop` job carries no
+`container:`: FR-007's warning must survive the caller's image failing to
+pull or start, which a job inside that image cannot.
+
+31 subject mutations and two discovery mutations must each break an
 assertion. Each check in suite() is the only one some mutation trips --
 a mutation that a second check also catches would keep passing with its
 target check deleted -- except the missing-`if:` check, which the
@@ -52,6 +63,7 @@ pause variable) and which exists to name the cause.
 
 Wiring: lint-workflows.yml, Gate 79.
 """
+import copy
 import glob
 import json
 import os
@@ -86,6 +98,115 @@ SWEEP_ONLY = {WATCHDOG_NAME, BOARD_LOOP_NAME}
 RECORD_PREFIX = "metrics-record"
 SWEEP_JOB = "sweep"
 PERSIST_JOB = "persist"
+# specs/120-dispatched-run-metrics: the persisting job each of these
+# wrappers carries, and the stage job it must wait for.
+STAGE = os.path.join(WORKFLOWS, "metrics-persist.yml")
+PERSISTING_JOB = "persist-metrics"
+PERSISTING_WRAPPERS = {
+    os.path.join(WORKFLOWS, "wing-commander-5-implement.yml"): "implement",
+    os.path.join(WORKFLOWS, "wing-commander-6-finalize.yml"): "finalize",
+}
+NEW_INPUTS = ("run-in-cancelled-run", "tolerate-failure")
+WARN_JOB = "warn-sweep-backstop"
+
+
+def persisting_subject():
+    out = {}
+    for path, stage_job in PERSISTING_WRAPPERS.items():
+        jobs = dict(load(path).get("jobs") or {})
+        out[path] = {"stage-job": stage_job,
+                     "job": jobs.get(PERSISTING_JOB)}
+    return out
+
+
+def persisting_failures(subject):
+    broke = []
+    for path, info in sorted(subject["persisting"].items()):
+        job, stage_job = info["job"], info["stage-job"]
+        if not isinstance(job, dict):
+            broke.append(f"{path} has no `{PERSISTING_JOB}` job -- a "
+                         f"dispatched run's records wait for the daily sweep")
+            continue
+        if not str(job.get("uses") or "").endswith("/metrics-persist.yml"):
+            broke.append(f"{path}: `{PERSISTING_JOB}` does not call "
+                         f"metrics-persist.yml")
+        needs = job.get("needs") or []
+        needs = [needs] if isinstance(needs, str) else list(needs)
+        if stage_job not in needs:
+            broke.append(f"{path}: `{PERSISTING_JOB}` does not list "
+                         f"{stage_job!r} in `needs`")
+        expr = str(job.get("if") or "")
+        # The clauses must be top-level conjuncts: a substring test passes
+        # an always() that sits in an `||` branch, and a clause that only
+        # appears inside another conjunct.
+        if "||" in expr:
+            broke.append(f"{path}: `{PERSISTING_JOB}`'s `if:` uses `||` -- "
+                         f"every clause must be a top-level `&&` conjunct")
+        conjuncts = [" ".join(c.split()) for c in expr.split("&&")]
+        if "always()" not in conjuncts:
+            broke.append(f"{path}: `{PERSISTING_JOB}`'s `if:` lacks always() "
+                         f"-- success()/!cancelled() alone skips it exactly "
+                         f"when the run failed or was cancelled")
+        if not any(c.startswith(f"{PAUSE_VAR} !=") for c in conjuncts):
+            broke.append(f"{path}: `{PERSISTING_JOB}`'s `if:` does not read "
+                         f"{PAUSE_VAR}")
+        if f"needs.{stage_job}.result != 'skipped'" not in conjuncts:
+            broke.append(f"{path}: `{PERSISTING_JOB}`'s `if:` does not "
+                         f"exclude a skipped {stage_job!r}")
+        if stage_job == "implement" and \
+                "needs.resolve-model.result == 'success'" not in conjuncts:
+            broke.append(f"{path}: `{PERSISTING_JOB}`'s `if:` lacks the "
+                         f"resolve-model 'something started' clause")
+        passed = dict(job.get("with") or {})
+        for name in NEW_INPUTS:
+            if passed.get(name) is not True:
+                broke.append(f"{path}: `{PERSISTING_JOB}` does not pass "
+                             f"{name}: true to the persist stage -- without "
+                             f"it the stage keeps its fail-loud, "
+                             f"success()-gated default")
+        secrets = " ".join(f"{k} {v}" for k, v in
+                           dict(job.get("secrets") or {}).items())
+        if "APP_TOKEN" in secrets or "speckit-app" in secrets \
+                or "_APP_" in secrets:
+            broke.append(f"{path}: `{PERSISTING_JOB}` hands an App secret to "
+                         f"the persist stage")
+        if "concurrency" in job:
+            broke.append(f"{path}: `{PERSISTING_JOB}` carries a "
+                         f"`concurrency:` key")
+        if "steps" in job or "runs-on" in job:
+            broke.append(f"{path}: `{PERSISTING_JOB}` carries inline steps -- "
+                         f"the persist logic has one home, metrics-persist.yml")
+    return broke
+
+
+def stage_input_failures(subject):
+    broke = []
+    declared = subject["stage-inputs"]
+    for name in NEW_INPUTS:
+        spec = declared.get(name)
+        if not isinstance(spec, dict) or spec.get("default") is not False:
+            broke.append(f"{STAGE} input {name!r} is missing or its default "
+                         f"is not false")
+    for job_id in (PERSIST_JOB, SWEEP_JOB):
+        passed = subject["wrapper-with"].get(job_id) or {}
+        for name in NEW_INPUTS:
+            if name in passed:
+                broke.append(f"{WRAPPER} job {job_id!r} passes {name!r} -- "
+                             f"only the persisting jobs may opt in")
+    return broke
+
+
+def warn_job_failures(subject):
+    job = subject["stage-jobs"].get(WARN_JOB)
+    if not isinstance(job, dict):
+        return [f"{STAGE} has no `{WARN_JOB}` job -- a tolerated persist "
+                f"failure ends green with no warning (FR-007)"]
+    if "container" in job:
+        return [f"{STAGE}: `{WARN_JOB}` carries a `container:` -- an "
+                f"unpullable image or rejected registry credentials fail its "
+                f"container init along with persist's, so the run ends green "
+                f"with no warning (FR-007)"]
+    return []
 
 
 def triggers(doc):
@@ -417,6 +538,13 @@ def load_subject():
         "record-owners": record_owners(),
         "wrapper-contract-workflows": wrapper_contract_workflows(),
         "count-claims": count_claims(),
+        "persisting": persisting_subject(),
+        "stage-inputs": dict(((load(STAGE).get("on") or load(STAGE).get(True)
+                               or {}).get("workflow_call") or {}).get("inputs")
+                             or {}),
+        "stage-jobs": dict(load(STAGE).get("jobs") or {}),
+        "wrapper-with": {j: dict((spec or {}).get("with") or {})
+                         for j, spec in dict(doc.get("jobs") or {}).items()},
     }
 
 
@@ -542,6 +670,9 @@ def suite(subject):
             broke.append(f"job {job_id!r}'s `if:` does not read {PAUSE_VAR} -- "
                          f"the wrapper owns the pause switch (constitution VII) "
                          f"and a job it does not cover cannot be paused")
+    broke += persisting_failures(subject)
+    broke += stage_input_failures(subject)
+    broke += warn_job_failures(subject)
     return broke
 
 
@@ -694,6 +825,110 @@ def mut_stale_count_claim(subject):
     return s
 
 
+def _persisting(subject, which, edit):
+    """The subject with one persisting job rewritten by edit(job) -- or
+    removed when edit returns None. which is 'implement' or 'finalize'."""
+    s = dict(subject)
+    s["persisting"] = {}
+    for path, info in subject["persisting"].items():
+        info = dict(info)
+        if info["stage-job"] == which:
+            job = copy.deepcopy(info["job"])
+            info["job"] = edit(job)
+        s["persisting"][path] = info
+    return s
+
+
+def _set(key, value):
+    def edit(job):
+        job[key] = value
+        return job
+    return edit
+
+
+def mut_persisting_missing_implement(subject):
+    return _persisting(subject, "implement", lambda job: None)
+
+
+def mut_persisting_missing_finalize(subject):
+    return _persisting(subject, "finalize", lambda job: None)
+
+
+def mut_persisting_no_always(subject):
+    return _persisting(subject, "implement", _set(
+        "if", "vars.WING_COMMANDER_METRICS_PAUSED != 'true' && "
+              "needs.implement.result != 'skipped'"))
+
+
+def mut_persisting_always_in_or_branch(subject):
+    return _persisting(subject, "implement", _set(
+        "if", "vars.WING_COMMANDER_METRICS_PAUSED != 'true' && "
+              "needs.resolve-model.result == 'success' && "
+              "needs.implement.result != 'skipped' || always()"))
+
+
+def mut_persisting_no_started_clause(subject):
+    return _persisting(subject, "implement", _set(
+        "if", "always() && vars.WING_COMMANDER_METRICS_PAUSED != 'true' && "
+              "needs.implement.result != 'skipped'"))
+
+
+def mut_persisting_no_needs(subject):
+    return _persisting(subject, "finalize", _set("needs", []))
+
+
+def mut_persisting_wrong_callee(subject):
+    return _persisting(subject, "implement", _set(
+        "uses", "./.github/workflows/other.yml"))
+
+
+def mut_persisting_app_secret(subject):
+    return _persisting(subject, "finalize", _set(
+        "secrets", {"speckit-app-private-key": "${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}"}))
+
+
+def mut_persisting_concurrency(subject):
+    return _persisting(subject, "implement", _set(
+        "concurrency", {"group": "metrics"}))
+
+
+def mut_input_default_true(subject):
+    s = dict(subject)
+    s["stage-inputs"] = dict(subject["stage-inputs"])
+    s["stage-inputs"]["tolerate-failure"] = {"type": "boolean", "default": True}
+    return s
+
+
+def mut_workflow_run_job_opts_in(subject):
+    s = dict(subject)
+    s["wrapper-with"] = copy.deepcopy(subject["wrapper-with"])
+    s["wrapper-with"].setdefault(SWEEP_JOB, {})["run-in-cancelled-run"] = True
+    return s
+
+
+def mut_workflow_run_persist_job_opts_in(subject):
+    s = dict(subject)
+    s["wrapper-with"] = copy.deepcopy(subject["wrapper-with"])
+    s["wrapper-with"].setdefault(PERSIST_JOB, {})["tolerate-failure"] = True
+    return s
+
+
+def mut_persisting_drops_opt_in(subject):
+    def edit(job):
+        job["with"] = {k: v for k, v in dict(job.get("with") or {}).items()
+                       if k != "run-in-cancelled-run"}
+        return job
+    return _persisting(subject, "implement", edit)
+
+
+def mut_warn_job_in_image(subject):
+    s = dict(subject)
+    s["stage-jobs"] = copy.deepcopy(subject["stage-jobs"])
+    s["stage-jobs"].setdefault(WARN_JOB, {})["container"] = {
+        "image": "${{ inputs.container-image }}"}
+    return s
+
+
 DISCOVERY_MUTATIONS = [
     ("discovery stops following local composites",
      {"follow_composites": False}),
@@ -734,6 +969,29 @@ MUTATIONS = [
     ("workflow_dispatch loses its `since` input", mut_since_input_dropped),
     ("the schedule also reaches the single-run job", mut_schedule_reaches_persist),
     ("the sweep job stops honouring the pause switch", mut_sweep_unpausable),
+    ("the implement wrapper loses its persisting job",
+     mut_persisting_missing_implement),
+    ("the finalize wrapper loses its persisting job",
+     mut_persisting_missing_finalize),
+    ("a persisting job's `if:` drops always()", mut_persisting_no_always),
+    ("a persisting job's always() sits only in an `||` branch",
+     mut_persisting_always_in_or_branch),
+    ("the implement persisting job loses its resolve-model started clause",
+     mut_persisting_no_started_clause),
+    ("a persisting job stops waiting for its stage", mut_persisting_no_needs),
+    ("a persisting job calls something other than metrics-persist.yml",
+     mut_persisting_wrong_callee),
+    ("a persisting job is handed an App secret", mut_persisting_app_secret),
+    ("a persisting job gains a concurrency key", mut_persisting_concurrency),
+    ("a new stage input's default is not false", mut_input_default_true),
+    ("the sweep job opts in to a persisting-job input",
+     mut_workflow_run_job_opts_in),
+    ("the workflow_run persist job opts in to a persisting-job input",
+     mut_workflow_run_persist_job_opts_in),
+    ("a persisting job stops passing run-in-cancelled-run",
+     mut_persisting_drops_opt_in),
+    ("the sweep-backstop warning runs inside the caller's image",
+     mut_warn_job_in_image),
 ]
 
 

@@ -52,3 +52,38 @@ jobs:
       speckit-app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}
       container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
       container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
+
+  # specs/120-dispatched-run-metrics -- see wing-commander-5-implement.yml.
+  # Measured exception to FR-011 (owner decision 2026-11-08, T017): finalize
+  # has no "something started" clause. Its call result is 'cancelled' both
+  # for a run cancelled mid-cycle and one cancelled while queued, and the
+  # `started`-output gate (research R2) was not built because drill D2 (T023)
+  # was waived, so readability of that output from a cancelled call was never
+  # shown. This is research R2's fallback: in a run cancelled while queued
+  # this job starts, finds no artifact and is the zero-record no-op (spec 043
+  # FR-021), and the fold-cycle guard's never-started classification may see
+  # it as a started job.
+  persist-metrics:
+    needs: [finalize]
+    if: >-
+      always() &&
+      vars.WING_COMMANDER_METRICS_PAUSED != 'true' &&
+      needs.finalize.result != 'skipped'
+    permissions:
+      contents: write
+      issues: write
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/metrics-persist.yml
+    with:
+      run-id: ${{ format('{0}', github.run_id) }}
+      destination-branch: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
+      destination-path: ${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
+      runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
+      container-image: ${{ vars.WING_COMMANDER_CONTAINER_IMAGE || '' }}
+      run-in-cancelled-run: true
+      tolerate-failure: true
+    secrets:
+      pipeline-repo-token: ${{ secrets.PIPELINE_REPO_TOKEN }}
+      container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
+      container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}
