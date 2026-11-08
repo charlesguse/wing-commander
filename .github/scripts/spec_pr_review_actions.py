@@ -48,7 +48,7 @@ TRUSTED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
 
 def _trusted_comment(raw):
     """An issue-comment precedent counts only when a trusted author wrote it
-    on the lifecycle issue (SPEC_LIFECYCLE_ISSUE, when the workflow sets it)."""
+    on the lifecycle issue (SPEC_LIFECYCLE_ISSUE). Fails closed when unset."""
     try:
         data = json.loads(raw)
     except ValueError:
@@ -57,7 +57,9 @@ def _trusted_comment(raw):
             data.get("author_association") not in TRUSTED_ASSOCIATIONS:
         return False
     issue = os.environ.get("SPEC_LIFECYCLE_ISSUE", "")
-    return not issue or str(data.get("issue_url", "")).endswith("/issues/" + issue)
+    if not issue:
+        return False
+    return str(data.get("issue_url", "")).endswith("/issues/" + issue)
 
 
 def resolve_precedent(prec):

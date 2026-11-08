@@ -60,9 +60,22 @@ def main():
                           "issue_url": "https://x/issues/7"})
     untrusted = json.dumps({"author_association": "NONE",
                             "issue_url": "https://x/issues/7"})
+    # The workflow must hand the verdict step the lifecycle issue; the value
+    # the test then uses is the one that expression resolves to.
+    wf = os.path.join(HERE, "..", "workflows", "spec-pr-review.yml")
+    with open(wf, encoding="utf-8") as fh:
+        wf_text = fh.read()
+    step = wf_text.split("id: verdict", 1)[-1].split("run: |", 1)[0]
+    if "SPEC_LIFECYCLE_ISSUE: ${{ needs.select.outputs.issue }}" not in step:
+        failures.append("precedent: the verdict step does not set "
+                        "SPEC_LIFECYCLE_ISSUE from needs.select.outputs.issue")
     os.environ.pop("SPEC_LIFECYCLE_ISSUE", None)
-    if not act._trusted_comment(trusted):
-        failures.append("precedent: an owner-authored comment was rejected")
+    if act._trusted_comment(trusted):
+        failures.append("precedent: an unset lifecycle issue did not fail closed")
+    os.environ["SPEC_LIFECYCLE_ISSUE"] = ""
+    if act._trusted_comment(trusted):
+        failures.append("precedent: an empty lifecycle issue did not fail closed")
+    os.environ["SPEC_LIFECYCLE_ISSUE"] = "7"
     if act._trusted_comment(untrusted):
         failures.append("precedent: an untrusted author's comment was accepted")
     if act._trusted_comment("not json"):

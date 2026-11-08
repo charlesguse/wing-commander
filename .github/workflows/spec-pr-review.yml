@@ -648,6 +648,7 @@ jobs:
         env:
           FAILED: ${{ steps.extract.outputs.failed }}
           SPEC_DIR: ${{ needs.select.outputs.spec-dir }}
+          SPEC_LIFECYCLE_ISSUE: ${{ needs.select.outputs.issue }}
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
         run: |
           set -uo pipefail

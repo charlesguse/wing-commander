@@ -416,7 +416,7 @@ Task: "Add plan-actions-never-approve.json in .github/scripts/spec-pr-review-fix
 ## Maintainer Feedback
 
 ### Scope recorded-decision precedents to the lifecycle issue (review of head 79573a11, item 2)
-- [ ] MF-004 In `.github/workflows/spec-pr-review.yml` (verdict step env, ~:651), add `SPEC_LIFECYCLE_ISSUE: ${{ needs.select.outputs.issue }}`.
-- [ ] MF-005 In `spec_pr_review_actions.py` (~:50), make `_trusted_comment` fail closed (reject every comment) when `SPEC_LIFECYCLE_ISSUE` is empty or unset.
-- [ ] MF-006 Update the unit test so it exercises the value the workflow provides (read from the workflow env or a fixture derived from it) instead of setting `SPEC_LIFECYCLE_ISSUE` itself. Add cases for an empty variable and for a collaborator comment on a different issue; confirm they fail without MF-004 and MF-005.
-- [ ] MF-007 Re-run `python .github/scripts/run-local-gates.py`.
+- [x] MF-004 In `.github/workflows/spec-pr-review.yml` (verdict step env, ~:651), add `SPEC_LIFECYCLE_ISSUE: ${{ needs.select.outputs.issue }}`.
+- [x] MF-005 In `spec_pr_review_actions.py` (~:50), make `_trusted_comment` fail closed (reject every comment) when `SPEC_LIFECYCLE_ISSUE` is empty or unset.
+- [x] MF-006 Update the unit test so it exercises the value the workflow provides (read from the workflow env or a fixture derived from it) instead of setting `SPEC_LIFECYCLE_ISSUE` itself. Add cases for an empty variable and for a collaborator comment on a different issue; confirm they fail without MF-004 and MF-005.
+- [x] MF-007 Re-run `python .github/scripts/run-local-gates.py`.
