@@ -1,0 +1,16 @@
+{
+  "op": "line-item",
+  "body": "- [ ] a released by a maintainer\n- [ ] b\n",
+  "markers": [
+    [
+      "stalled",
+      "bl-33333333"
+    ]
+  ],
+  "expect": {
+    "action": "claim",
+    "text": "a released by a maintainer",
+    "stand_down": [],
+    "line_id_minted": true
+  }
+}

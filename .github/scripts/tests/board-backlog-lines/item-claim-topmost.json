@@ -1,0 +1,10 @@
+{
+  "body": "- [x] done\n- [ ] held one [wc:bl-11111111 held red gate]\n- [ ] first defect\n- [ ] second defect\n",
+  "expect": {
+    "action": "claim",
+    "issue": 889,
+    "text": "first defect",
+    "line_id_minted": true
+  },
+  "op": "line-item"
+}

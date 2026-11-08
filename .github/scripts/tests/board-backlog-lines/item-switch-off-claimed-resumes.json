@@ -1,0 +1,21 @@
+{
+  "body": "- [ ] first [wc:bl-0a1b2c3d in-progress PR #7]\n- [ ] second\n",
+  "request": {
+    "switch": ""
+  },
+  "markers": [
+    [
+      "review",
+      "bl-0a1b2c3d",
+      7
+    ]
+  ],
+  "expect": {
+    "action": "resume",
+    "issue": 889,
+    "line_id": "bl-0a1b2c3d",
+    "text": "first",
+    "pr": 7
+  },
+  "op": "line-item"
+}

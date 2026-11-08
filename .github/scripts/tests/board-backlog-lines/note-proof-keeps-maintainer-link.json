@@ -6,7 +6,7 @@
     {"op": "note_proof", "args": ["bl-cccc3333", "", ""]}
   ],
   "expect_after": [
-    "- [x] see [run](https://example.test/mine) [wc:bl-cccc3333 fixed not-proven: no run found] [run](https://example.test/run/1)",
-    "- [x] see [run](https://example.test/mine) [wc:bl-cccc3333 fixed]"
+    "- [x] see [run](https://example.test/mine) [wc:bl-cccc3333 fixed PR #5 not-proven: no run found] [run](https://example.test/run/1)",
+    "- [x] see [run](https://example.test/mine) [wc:bl-cccc3333 fixed PR #5]"
   ]
 }

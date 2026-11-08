@@ -1,0 +1,12 @@
+{
+  "body": "- [ ] first defect\n- [ ] second defect\n",
+  "request": {
+    "switch": ""
+  },
+  "expect": {
+    "action": "none",
+    "reason": "backlog lines switch is not true",
+    "stand_down": []
+  },
+  "op": "line-item"
+}

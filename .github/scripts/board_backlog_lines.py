@@ -145,6 +145,12 @@ def tick(body, line_id, annotation_state, detail=""):
     """Ticks the line and replaces its annotation with `annotation_state`
     (`fixed` or `evidence`). None for a missing, duplicated or ticked line."""
     line = _find(body, line_id)
+    existing = (line or {}).get("detail") or ""
+    if annotation_state == "fixed":
+        existing = fixed_detail(existing, "")  # a proof note is not part of the tick
+    if (line is not None and line["checked"] and line["state"] == annotation_state
+            and existing == _sanitise(detail)):
+        return body  # already ticked this way: a re-run is a no-op, never a stand-down
     if line is None or line["checked"]:
         return None
     token = "[wc:{0} {1}{2}]".format(
@@ -164,18 +170,36 @@ def clear_note(body, line_id):
                     "- [ ] " + (rest[:match.start()].rstrip() + rest[match.end():]).rstrip())
 
 
+NOT_PROVEN = " not-proven: "
+
+
+def fixed_detail(detail, reason):
+    """A `fixed` token's detail with its not-proven note replaced: the
+    `by #PR` part stays (FR-011: the ticked line *also* carries the note);
+    an empty `reason` leaves that part alone."""
+    base = (detail or "")
+    if base.startswith(NOT_PROVEN.lstrip()):
+        base = ""
+    base = base.split(NOT_PROVEN, 1)[0].strip()
+    reason = _sanitise(reason)
+    if not reason:
+        return base
+    return (base + NOT_PROVEN if base else NOT_PROVEN.lstrip()) + reason
+
+
 def note_proof(body, line_id, reason, url=""):
     """Replaces any earlier not-proven note on a ticked `fixed` line; an
-    empty `reason` clears it back to a plain `fixed` token. Only a link our
-    own earlier note put right after its token is replaced."""
+    empty `reason` clears it back to the plain `fixed` token (a later
+    successful proof, FR-011). Only a link our own earlier note put right
+    after its token is replaced."""
     line = _find(body, line_id)
     if line is None or not line["checked"] or line["state"] != "fixed":
         return None
-    if not _sanitise(reason):
-        token, suffix = "[wc:{0} fixed]".format(line_id), ""
-    else:
-        token = "[wc:{0} fixed not-proven: {1}]".format(line_id, _sanitise(reason))
-        suffix = " [run]({0})".format(re.sub(r"[\s)\]]", "", url)) if url else ""
+    detail = fixed_detail(line["detail"], reason)
+    token = "[wc:{0} fixed{1}]".format(line_id, " " + detail if detail else "")
+    suffix = ""
+    if _sanitise(reason) and url:
+        suffix = " [run]({0})".format(re.sub(r"[\s)\]]", "", url))
     return _replace(body, line["index"], _rewrite(line, "x", token + suffix, drop_run_link=True))
 
 
@@ -311,7 +335,286 @@ def line_context(body, issue, line_id):
     return lead + fenced_section("Line text:", line["text"], 8000) + "\n"
 
 
+PR_REFERENCE_RE = re.compile(r"^Backlog line: #(\d+) (bl-[0-9a-f]{8})$", re.M)
+
+
+def pr_reference(issue, line_id):
+    """The non-closing reference a line-born PR body carries in place of
+    `Fixes #N` (contracts/backlog-lines.md "PR body reference", FR-017)."""
+    return "Backlog line: #{0} {1}".format(issue, line_id)
+
+
+def pr_line(body):
+    """(issue, line_id) a PR body's backlog reference names, or None. The
+    paths that find a PR's item from `Fixes #N` read this instead for a
+    line-born PR (FR-021)."""
+    match = PR_REFERENCE_RE.search(body or "")
+    return (int(match.group(1)), match.group(2)) if match else None
+
+
+def pr_cites_line(body, issue, line_id):
+    """True when the PR body's backlog reference names exactly this line."""
+    return pr_line(body) == (int(issue), line_id)
+
+
+def pr_body(issue, line_id, text, branch, base_sha):
+    """A line-born fix PR's body: the reference, the line text rendered so
+    it carries no closing keyword, and nothing that closes an issue."""
+    return ("{0}\n\nWorks the Maintenance backlog line below; the line is ticked when this "
+            "merges, and no issue is closed.\n\n{1}\n\nOpened by board-loop.yml on branch {2} "
+            "(base {3}).".format(pr_reference(issue, line_id), render_line_text_for_body(text),
+                                 branch, base_sha))
+
+
+# Marker steps a line is still being worked at. A newest line marker at one
+# of these whose line is no longer in progress was taken from the loop
+# (FR-016); every other step (stalled, closed, merged, prove, the stand-down
+# record itself) already let go of the line.
+ACTIVE_STEPS = ("triage", "route", "fix", "review", "readiness", "breach")
+STOOD_DOWN_STEP = "stood-down"
+
+
+def _line_markers(comments, bot_login):
+    """{line_id: newest loop-authored line marker} on the backlog issue."""
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import board_item_marker as bim
+    newest = {}
+    for created_at, marker in bim.find_markers_matching(
+            comments, bot_login, bim.is_line_marker, include_line=True):
+        newest[marker["line"]] = marker  # oldest first, so the last wins
+    return newest
+
+
+def decide_line_item(request):
+    """The select job's line decision (FR-001, FR-002, FR-006, FR-016,
+    FR-020, FR-023, FR-025), pure over what the job read. `request`:
+    tracking_issues (open `disposition:tracking` issues with title, body,
+    author, authorAssociation, labels, state), comments (the backlog
+    issue's comments), bot_login, issue_selected (an eligible issue was
+    selected), switch, paused, constitution_text (None when unreadable).
+
+    Returns {"action", "issue", "line_id", "text", "reason", "stand_down",
+    "pr", "awaiting"} (`pr`: the PR a resumed line's newest marker names;
+    `awaiting`: [line_id, pr] for each line whose ready PR waits on a human
+    merge -- so the caller can tick a line whose merge's own run never
+    ticked it, FR-021):
+    "resume" a line already claimed (whatever the switch says, FR-023 --
+    it keeps the board even when an issue is waiting, FR-006); "claim" the
+    topmost candidate (only when no issue was selected and the selection
+    gate passes); "none" otherwise, with `reason` the one-line refusal when
+    there is one. `stand_down` lists line ids whose newest marker is still
+    active but whose line is ticked by hand, deleted or duplicated -- each
+    gets one stand-down record (FR-016)."""
+    out = {"action": "none", "issue": None, "line_id": None, "text": None,
+           "reason": None, "stand_down": [], "pr": None, "awaiting": []}
+    issue, reason = resolve_backlog(request.get("tracking_issues") or [],
+                                    request.get("bot_login") or "")
+    if issue is None:
+        out["reason"] = reason
+        return out
+    out["issue"] = issue
+    body = next(i.get("body") or "" for i in request["tracking_issues"] if i.get("number") == issue)
+    lines = parse_lines(body)
+    by_id = {}
+    for line in lines:
+        if line["id"]:
+            by_id.setdefault(line["id"], []).append(line)
+    markers = _line_markers(request.get("comments") or [], request.get("bot_login") or "")
+    for line_id, marker in sorted(markers.items()):
+        if marker.get("step") not in ACTIVE_STEPS:
+            continue
+        hits = by_id.get(line_id, [])
+        # Gone, duplicated, or ticked by someone other than the loop (the
+        # loop's own ticks carry `fixed` or `evidence`).
+        if len(hits) != 1 or (hits[0]["checked"] and hits[0]["state"] not in ("fixed", "evidence")):
+            out["stand_down"].append(line_id)
+    # A line whose ready PR waits on a human merge releases the board, as
+    # an awaiting-merge issue does (board_eligibility._awaiting_merge_holds);
+    # its PR's merge still ticks it (FR-011, FR-020).
+    from board_eligibility import AWAITING_MERGE_STEP, HANDED_OVER_STEP
+    out["awaiting"] = [
+        [line["id"], (markers.get(line["id"]) or {}).get("pr")] for line in lines
+        if not line["checked"] and line["state"] == "in-progress"
+        and (markers.get(line["id"]) or {}).get("step") in (AWAITING_MERGE_STEP, HANDED_OVER_STEP)
+        and (markers.get(line["id"]) or {}).get("pr")]
+    claimed = [line for line in lines
+               if not line["checked"] and line["state"] == "in-progress"
+               and len(by_id.get(line["id"], [])) == 1 and line["id"] not in out["stand_down"]
+               and (markers.get(line["id"]) or {}).get("step") not in (AWAITING_MERGE_STEP, HANDED_OVER_STEP)]
+    if claimed:
+        out.update(action="resume", line_id=claimed[0]["id"], text=claimed[0]["text"],
+                   pr=(markers.get(claimed[0]["id"]) or {}).get("pr"))
+        return out
+    if request.get("issue_selected"):
+        return out
+    ok, reason = selection_gate({"backlog_lines_switch": request.get("switch"),
+                                 "loop_paused": request.get("paused"),
+                                 "constitution_text": request.get("constitution_text")})
+    if not ok:
+        out["reason"] = reason
+        return out
+    line = select_line(body)
+    if line is None:
+        out["reason"] = "no unchecked, unclaimed backlog line on #{0}".format(issue)
+        return out
+    out.update(action="claim", line_id=mint_id(body), text=line["text"])
+    return out
+
+
+def pre_push_check(issue, line_id, body, commit_messages):
+    """FR-017 before a push to a line's branch: the PR title the line
+    derives and the branch's commit messages carry no closing keyword.
+    Returns {"title", "hits"}; any hit refuses the push."""
+    line = find_line(body, line_id)
+    if line is None:
+        return {"title": None, "hits": [["line", "backlog line {0} is gone (FR-016)".format(line_id)]]}
+    title = title_for(line["text"])
+    return {"title": title,
+            "hits": [list(hit) for hit in closing_keyword_hits(title, "", commit_messages)]}
+
+
+def keyword_hold_comment(line_id, site, branch, hits):
+    """The backlog-issue comment a closing-keyword refusal posts (FR-017)."""
+    listed = "\n".join("- {0}: `{1}`".format(where, str(text).replace("`", "'")) for where, text in hits)
+    return ("Backlog line `{0}`: the {1} step on {2} was refused -- its PR title, body or a commit "
+            "message carries a closing keyword, and a line fix must close no issue "
+            "(specs/121 FR-017):\n\n{3}\n\nThe line is held; removing its hold annotation is "
+            "the sole re-eligibility condition.".format(line_id, site, branch, listed))
+
+
+def keyword_hold(issue, line_id, site, branch, base_sha, run=None, fetch=None, commits=None):
+    """FR-017 before every push to a line's branch (fix and review-fixup):
+    "clear" when the PR title the line derives and the commits since
+    `base_sha` carry no closing keyword; otherwise the line is held (see
+    hold_for_keywords()) and "held" is returned. None when the hold itself
+    could not be recorded (the caller fails its step)."""
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import board_backlog_edit as bbe
+    check = pre_push_check(issue, line_id, (fetch or bbe.gh_fetch)(issue),
+                           commits if commits is not None else _commit_messages(base_sha))
+    if not check["hits"]:
+        return "clear"
+    return hold_for_keywords(issue, line_id, site, branch, base_sha, check["hits"], run=run)
+
+
+def merge_keyword_hold(issue, line_id, pr, run=None):
+    """FR-017 before a merge: the PR's live title, body and every commit
+    message on it. "clear", "held", or None as keyword_hold()."""
+    import subprocess
+    run = run or subprocess.run
+    import os
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    proc = run(["gh", "pr", "view", str(pr), "-R", repo, "--json", "title,body,commits,headRefName"],
+               capture_output=True, text=True)
+    if proc.returncode != 0:
+        print("::error::board_backlog_lines: could not read PR #{0} -- {1}".format(
+            pr, (proc.stderr or "").strip()), file=sys.stderr)
+        return None
+    data = json.loads(proc.stdout)
+    commits = ["{0}\n\n{1}".format(c.get("messageHeadline") or "", c.get("messageBody") or "")
+               for c in data.get("commits") or []]
+    hits = [list(h) for h in closing_keyword_hits(data.get("title"), data.get("body"), commits)]
+    if not hits:
+        return "clear"
+    return hold_for_keywords(issue, line_id, "merge", data.get("headRefName") or "", None, hits, run=run)
+
+
+def hold_for_keywords(issue, line_id, site, branch, base_sha, hits, run=None):
+    """Holds the line through the stall rule (board_item_marker, FR-014)
+    and posts the refusal on the backlog issue; "held", or None when the
+    hold could not be recorded."""
+    import os
+    import subprocess
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import board_item_marker as bim
+    run = run or subprocess.run
+    if not bim.add_stalled_label(issue, "board:stalled", run=run):
+        return None
+    marker = bim.write_marker(bim.STALLED_STEP, 0, None, branch or None, base_sha)
+    body = "{0}\n\n{1}".format(keyword_hold_comment(line_id, site, branch, hits), marker)
+    proc = run(["gh", "issue", "comment", str(issue), "-R", os.environ.get("GITHUB_REPOSITORY", ""),
+                "--body", body], stdout=sys.stderr)
+    if proc.returncode != 0:
+        print("::error::board_backlog_lines: backlog line {0} is held, but its stalled-marker "
+              "comment could not be posted.".format(line_id), file=sys.stderr)
+        return None
+    bim.record_stall_summary(issue, "{0} (closing keyword)".format(site))
+    return "held"
+
+
+def _commit_messages(base_sha):
+    import subprocess
+    out = subprocess.run(["git", "log", "--format=%B%x00", "{0}..HEAD".format(base_sha)],
+                         capture_output=True, text=True, check=True).stdout
+    return [m.strip() for m in out.split("\0") if m.strip()]
+
+
 def main():
+    # `python3 -I` (board-loop's pristine-snapshot invocation) leaves this
+    # script's own directory off sys.path; the snapshot is trusted (Gate 98).
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    if sys.argv[1:2] == ["--branch"]:
+        print(branch_for(int(sys.argv[2]), sys.argv[3]))
+        return
+    if sys.argv[1:2] == ["--keyword-hold"]:
+        # `--keyword-hold ISSUE LINE_ID SITE BRANCH BASE_SHA`: prints
+        # clear|held; exit 1 when the hold could not be recorded.
+        _flag, issue, line_id, site, branch, base_sha = sys.argv[1:7]
+        result = keyword_hold(int(issue), line_id, site, branch, base_sha)
+        if result is None:
+            sys.exit(1)
+        print(result)
+        return
+    if sys.argv[1:2] == ["--merge-keyword-hold"]:
+        # `--merge-keyword-hold ISSUE LINE_ID PR`: prints clear|held.
+        _flag, issue, line_id, pr = sys.argv[1:5]
+        result = merge_keyword_hold(int(issue), line_id, int(pr))
+        if result is None:
+            sys.exit(1)
+        print(result)
+        return
+    if sys.argv[1:2] == ["--pre-push-check"]:
+        # `--pre-push-check ISSUE LINE_ID BASE_SHA`, run in the checkout of
+        # the line's branch: JSON {"title", "hits"} (FR-017).
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import board_backlog_edit as bbe
+        _flag, issue, line_id, base_sha = sys.argv[1:5]
+        print(json.dumps(pre_push_check(int(issue), line_id, bbe.gh_fetch(int(issue)),
+                                        _commit_messages(base_sha))))
+        return
+    if sys.argv[1:2] == ["--pr-body"]:
+        # `--pr-body ISSUE LINE_ID BRANCH BASE_SHA`: the line-born PR body.
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import board_backlog_edit as bbe
+        _flag, issue, line_id, branch, base_sha = sys.argv[1:6]
+        line = find_line(bbe.gh_fetch(int(issue)), line_id)
+        if line is None:
+            sys.exit(3)
+        sys.stdout.write(pr_body(int(issue), line_id, line["text"], branch, base_sha))
+        return
+    if sys.argv[1:2] == ["--line-title"]:
+        # The title a site copies from the item issue's title, taken from
+        # the line for a line item (FR-007): `--line-title ISSUE LINE_ID`.
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import board_backlog_edit as bbe
+        _flag, issue, line_id = sys.argv[1:4]
+        try:
+            line = find_line(bbe.gh_fetch(int(issue)), line_id)
+        except RuntimeError as exc:
+            print("::error::board_backlog_lines: {0}".format(exc), file=sys.stderr)
+            sys.exit(1)
+        if line is None:
+            print("::error::board_backlog_lines: backlog line {0} is not on #{1} exactly once "
+                  "(FR-016).".format(line_id, issue), file=sys.stderr)
+            sys.exit(3)
+        print(title_for(line["text"], prefix=""))
+        return
     if sys.argv[1:2] == ["--line-context"]:
         # board-loop's issue-context composite: raw backlog body on stdin,
         # the framed line on stdout; exit 3 when the line is not there.
@@ -331,6 +634,8 @@ def main():
             result = parse_lines(body)
         elif op == "select":
             result = select_line(body)
+        elif op == "line-item":
+            result = decide_line_item(request)
         elif op == "check-closing-keywords":
             result = closing_keyword_hits(request.get("title", ""), body,
                                           request.get("commits", []))

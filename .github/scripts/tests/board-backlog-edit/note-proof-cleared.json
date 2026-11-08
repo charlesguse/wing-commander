@@ -1,0 +1,10 @@
+{
+  "initial": "- [x] a [wc:bl-1 fixed by #7 not-proven: failure]\n- [ ] b",
+  "op": "note-proof",
+  "line_id": "bl-1",
+  "detail": "",
+  "after_write": [],
+  "expect": "applied",
+  "expect_writes": 1,
+  "final_equals": "- [x] a [wc:bl-1 fixed by #7]\n- [ ] b"
+}

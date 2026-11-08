@@ -1,0 +1,7 @@
+{
+  "op": "route-line",
+  "line_id": "bl-0a1b2c3d",
+  "body": "- [x] needs a design call [wc:bl-0a1b2c3d fixed by #3]\n",
+  "expect_ok": false,
+  "expect_body": "- [x] needs a design call [wc:bl-0a1b2c3d fixed by #3]\n"
+}

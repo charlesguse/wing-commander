@@ -68,8 +68,10 @@ def _operations(op, line_id, detail, url=""):
         if op in ("progress", "hold", "route-proposal", "tick-evidence", "tick-fixed"):
             return (line["detail"] or "") == bbl._sanitise(detail)
         if op == "note-proof":
+            # Only the note is ours to check; the `by #PR` part is kept.
             reason = bbl._sanitise(detail)
-            return (line["detail"] or "") == ("not-proven: " + reason if reason else "")
+            note = (line["detail"] or "").partition("not-proven: ")
+            return (note[2] == reason) if reason else not note[1]
         return True
 
     return apply_fn, verify
@@ -137,7 +139,12 @@ def main():
     parser.add_argument("--line-id", required=True)
     parser.add_argument("--detail", default="")
     parser.add_argument("--url", default="")
+    parser.add_argument("--report-text", default=None, metavar="RESULT",
+                        help="print report_text() for RESULT (stand_down or failed) and edit nothing")
     args = parser.parse_args()
+    if args.report_text is not None:
+        print(report_text(args.op, args.line_id, args.report_text) or "")
+        return
     apply_fn, verify = _operations(args.op, args.line_id, args.detail, args.url)
     result = edit(args.issue, apply_fn, verify, fetch=gh_fetch, write=gh_write)
     report(args.issue, args.op, args.line_id, result)

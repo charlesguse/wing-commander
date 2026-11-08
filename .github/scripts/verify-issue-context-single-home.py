@@ -2253,9 +2253,9 @@ SPEC_REQUEST_MUTATIONS = (
      "        if: false\n"),
     ("route title read widened to the body",
      'issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" '
-     '--json title --jq .title)"\n\n          spec_title=',
+     '--json title --jq .title)"\n          fi\n\n          spec_title=',
      'issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" '
-     '--json title,body --jq .title)"\n\n          spec_title='),
+     '--json title,body --jq .title)"\n          fi\n\n          spec_title='),
     # #514: the create guard at each site.
     ("route create guard reduced to an echo",
      '[[ "$spec_url" =~ ^https?://[^[:space:]]+/issues/[0-9]+$ ]] || '

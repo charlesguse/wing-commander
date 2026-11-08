@@ -4561,8 +4561,11 @@ jobs:
 
       # Gate 166 — specs/121-board-backlog-line-items FR-019: the backlog
       # line parser, selector and annotator behave as the fixtures under
-      # .github/scripts/tests/board-backlog-lines/ say. Path triggers:
-      # .github/scripts/** above.
+      # .github/scripts/tests/board-backlog-lines/ say, and board-loop.yml
+      # and wing-commander-issue-context are wired to them (T034: no step
+      # closes, labels or retitles the backlog issue for a line). Path
+      # triggers: .github/scripts/**, .github/workflows/** and
+      # .github/actions/** above.
       - name: "Gate 166 — Maintenance backlog lines parse, select and annotate as the fixtures say"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-backlog-lines.py

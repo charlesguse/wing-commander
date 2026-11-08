@@ -1,5 +1,5 @@
 {
-  "initial": "- [x] a [wc:bl-1 fixed]\n- [ ] b",
+  "initial": "- [x] a [wc:bl-1 evidence triage: 429]\n- [ ] b",
   "op": "tick-fixed",
   "line_id": "bl-1",
   "detail": "",

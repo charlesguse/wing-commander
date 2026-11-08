@@ -18,7 +18,7 @@
     "- [ ] same [wc:bl-aaaa1111 in-progress]\n- [ ] same\n- [ ] other",
     "- [ ] same [wc:bl-aaaa1111 in-progress PR #7]\n- [ ] same\n- [ ] other",
     "- [x] same [wc:bl-aaaa1111 fixed PR #7]\n- [ ] same\n- [ ] other",
-    "- [x] same [wc:bl-aaaa1111 fixed not-proven: no run] [run](https://example.test/run/1)\n- [ ] same\n- [ ] other",
-    "- [x] same [wc:bl-aaaa1111 fixed not-proven: still no run] [run](https://example.test/run/2)\n- [ ] same\n- [ ] other"
+    "- [x] same [wc:bl-aaaa1111 fixed PR #7 not-proven: no run] [run](https://example.test/run/1)\n- [ ] same\n- [ ] other",
+    "- [x] same [wc:bl-aaaa1111 fixed PR #7 not-proven: still no run] [run](https://example.test/run/2)\n- [ ] same\n- [ ] other"
   ]
 }

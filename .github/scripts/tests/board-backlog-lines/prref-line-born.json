@@ -1,0 +1,9 @@
+{
+  "op": "pr-ref",
+  "pr_body": "Backlog line: #889 bl-0a1b2c3d\n\nWorks the line.",
+  "expect": [
+    889,
+    "bl-0a1b2c3d"
+  ],
+  "text": "Fix #747's flaky gate; closes owner/repo#3 and GH-9"
+}

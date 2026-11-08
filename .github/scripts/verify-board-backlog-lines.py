@@ -10,6 +10,7 @@ FR-019).
 import glob
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -94,6 +95,16 @@ def run_case(case):
         errors = ["context lacks {0!r}".format(n) for n in case["contains"] if n not in (actual or "")]
         errors += ["context carries {0!r}".format(n) for n in case.get("absent", []) if n in (actual or "")]
         return "; ".join(errors) or None
+    if op == "pr-ref":
+        return run_pr_ref(case)
+    if op == "pre-push":
+        return run_pre_push(case)
+    if op == "keyword-hold":
+        return run_keyword_hold(case)
+    if op == "route-line":
+        return run_route_line(case)
+    if op == "line-item":
+        return run_line_item(case)
     if op == "stall":
         return run_stall(case)
     if op == "line-readers":
@@ -190,6 +201,170 @@ def run_stall(case):
     return "; ".join(errors) or None
 
 
+def run_pr_ref(case):
+    """FR-017/FR-021: a line-born PR's body names its line by the
+    non-closing reference; an issue-born `Fixes #N` body names none."""
+    fn = getattr(bbl, "pr_line", None)
+    if fn is None:
+        return "no pr_line()"
+    errors = []
+    got = fn(case["pr_body"])
+    want = tuple(case["expect"]) if case["expect"] else None
+    if got != want:
+        errors.append("pr_line: got {0!r}, want {1!r}".format(got, want))
+    if "text" in case:
+        body = bbl.pr_body(889, "bl-0a1b2c3d", case["text"], "fix/889-bl-0a1b2c3d", "abc")
+        if bbl.closing_keyword_hits("", body, []):
+            errors.append("pr_body carries a closing keyword: {0!r}".format(body))
+        if bbl.pr_line(body) != (889, "bl-0a1b2c3d"):
+            errors.append("pr_body does not name its line: {0!r}".format(body))
+    return "; ".join(errors) or None
+
+
+def run_pre_push(case):
+    """FR-017 before a push: the line's PR title and the branch's commits."""
+    fn = getattr(bbl, "pre_push_check", None)
+    if fn is None:
+        return "no pre_push_check()"
+    got = fn(889, case["line_id"], case["body"], case["commits"])
+    errors = []
+    if bool(got["hits"]) != case["expect_hit"]:
+        errors.append("hits {0!r}".format(got["hits"]))
+    if "title_prefix" in case and not (got["title"] or "").startswith(case["title_prefix"]):
+        errors.append("title {0!r}".format(got["title"]))
+    return "; ".join(errors) or None
+
+
+class _Proc:
+    def __init__(self, rc=0, out=""):
+        self.returncode, self.stdout, self.stderr = rc, out, ""
+
+
+def _stub_backlog(store, comments):
+    import board_backlog_edit as bbe
+    saved = (bbe.gh_fetch, bbe.gh_write, getattr(bbe, "gh_comment", None))
+    bbe.gh_fetch = lambda _issue: store["body"]
+    bbe.gh_write = lambda _issue, body: store.__setitem__("body", body)
+    bbe.gh_comment = lambda issue, body: comments.append(body)
+    return saved
+
+
+def _unstub_backlog(saved):
+    import board_backlog_edit as bbe
+    bbe.gh_fetch, bbe.gh_write, bbe.gh_comment = saved
+
+
+def run_keyword_hold(case):
+    """FR-017 refusal: a hit holds the line through the stall rule (never a
+    label on the backlog issue) and posts the refusal; a clean branch is
+    "clear" with nothing written."""
+    import contextlib
+    import io
+    fn = getattr(bbl, "keyword_hold", None)
+    if fn is None:
+        return "no keyword_hold()"
+    store, notes, calls = {"body": case["body"]}, [], []
+
+    def run(cmd, **_kw):
+        calls.append(cmd)
+        return _Proc()
+
+    saved = _stub_backlog(store, notes)
+    try:
+        with _Env(case["line_id"]), contextlib.redirect_stderr(io.StringIO()):
+            got = fn(889, case["line_id"], "fix", "fix/889-" + case["line_id"], "abc",
+                     run=run, commits=case["commits"])
+    finally:
+        _unstub_backlog(saved)
+    errors = []
+    if got != case["expect"]:
+        errors.append("result {0!r}".format(got))
+    if any("--add-label" in cmd for cmd in calls):
+        errors.append("labelled the backlog issue: {0!r}".format(calls))
+    if "expect_body" in case and store["body"] != case["expect_body"]:
+        errors.append("body {0!r}".format(store["body"]))
+    posted = [cmd for cmd in calls if cmd[:3] == ["gh", "issue", "comment"]]
+    if bool(posted) != (case["expect"] == "held"):
+        errors.append("refusal comment {0!r}".format(posted))
+    return "; ".join(errors) or None
+
+
+def run_route_line(case):
+    """FR-013: a spec-shaped line points at its proposal; the backlog issue
+    is never closed or labelled, and a gone line refuses."""
+    import contextlib
+    import io
+    import board_backlog_edit as bbe
+    import board_duplicate_disposition as bdd
+    if not hasattr(bdd, "route_line"):
+        return "no board_duplicate_disposition.route_line()"
+    store, notes, calls = {"body": case["body"]}, [], []
+
+    def run(cmd, **_kw):
+        calls.append(cmd)
+        return _Proc()
+
+    def edit(issue, apply_fn, verify):
+        return bbe.edit(issue, apply_fn, verify, fetch=lambda _i: store["body"],
+                        write=lambda _i, b: store.__setitem__("body", b))
+
+    saved = _stub_backlog(store, notes)
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            ok = bdd.route_line(889, case["line_id"], 1210, "https://example.test/issues/1210",
+                                "Routed", repository="o/r", run=run, edit=edit)
+    finally:
+        _unstub_backlog(saved)
+    errors = []
+    if ok != case["expect_ok"]:
+        errors.append("route_line returned {0!r}".format(ok))
+    if store["body"] != case["expect_body"]:
+        errors.append("body {0!r}".format(store["body"]))
+    if any("close" in cmd or "--add-label" in cmd or "PATCH" in cmd for cmd in calls):
+        errors.append("touched the backlog issue's state or labels: {0!r}".format(calls))
+    if ok and not any('"line": "{0}"'.format(case["line_id"]) in " ".join(cmd) for cmd in calls):
+        errors.append("no line-keyed record comment: {0!r}".format(calls))
+    if bool(notes) != (not case["expect_ok"]):
+        errors.append("backlog report {0!r}".format(notes))
+    return "; ".join(errors) or None
+
+
+def run_line_item(case):
+    """board_backlog_lines.decide_line_item() over a fixture request; the
+    backlog comments are built from (step, line) pairs as loop markers."""
+    import board_item_marker as bim
+    fn = getattr(bbl, "decide_line_item", None)
+    if fn is None:
+        return "no decide_line_item()"
+    base = {
+        "tracking_issues": [{"number": 889, "title": "Maintenance backlog (one tracking issue)",
+                             "labels": [{"name": "disposition:tracking"}], "state": "OPEN",
+                             "author": {"login": "owner"}, "authorAssociation": "OWNER",
+                             "body": case["body"]}],
+        "bot_login": "bot[bot]", "issue_selected": False, "switch": "true", "paused": "false",
+        "constitution_text": "### X. Bounded autonomy\nA Maintenance backlog line is an entry.\n### XI. Next\n",
+    }
+    base.update(case.get("request", {}))
+    base["tracking_issues"] = base["tracking_issues"] + case.get("extra_issues", [])
+    base["comments"] = [
+        {"created_at": "2026-01-0{0}T00:00:00Z".format(n + 1),
+         "body": bim.write_marker(entry[0], 0, entry[2] if len(entry) > 2 else None, None, None,
+                                  line=entry[1]),
+         "user": {"login": base["bot_login"], "type": "Bot"}}
+        for n, entry in enumerate(case.get("markers", []))]
+    actual = fn(base)
+    want = dict(case["expect"])
+    errors = []
+    if want.pop("line_id_minted", False):
+        if not re.fullmatch(r"bl-[0-9a-f]{8}", actual.get("line_id") or ""):
+            errors.append("minted id {0!r}".format(actual.get("line_id")))
+        actual = dict(actual, line_id=None)
+    for key, value in want.items():
+        if actual.get(key) != value:
+            errors.append("{0}: got {1!r}, want {2!r}".format(key, actual.get(key), value))
+    return "; ".join(errors) or None
+
+
 def run_line_readers(case):
     """Issue-path marker readers under BOARD_LINE_ID read only that line's
     markers; with it unset they skip every line marker (specs/121 D5)."""
@@ -236,6 +411,104 @@ def issue_context_wiring():
     return errors
 
 
+BOARD_LOOP = os.path.join(os.path.dirname(HERE), "workflows", "board-loop.yml")
+LINE_JOB_ENV = "${{ needs.select.outputs.line-id }}"
+LINE_JOBS = ("triage", "route", "fix-agent", "fix", "review", "review-fixup-publish", "readiness", "merge")
+LINE_GUARD = 'if [ -n "${BOARD_LINE_ID:-}" ]'
+
+
+def unguarded_closes(run_text):
+    """Lines of a run: block that close the item issue without a backlog
+    line guard (FR-017, SC-005): a close must sit in the `else` arm of
+    `if [ -n "${BOARD_LINE_ID:-}" ]`, after such a block that exits, or
+    behind `[ -n "${BOARD_LINE_ID:-}" ] ||` on its own line."""
+    lines = run_text.split("\n")
+    bad = []
+    for number, line in enumerate(lines):
+        if "gh issue close" not in line or line.lstrip().startswith("#"):
+            continue
+        if line.lstrip().startswith('[ -n "${BOARD_LINE_ID:-}" ] ||'):
+            continue
+        indent = len(line) - len(line.lstrip())
+        guarded = False
+        depth_else = None
+        for back in range(number - 1, -1, -1):
+            text = lines[back]
+            stripped = text.strip()
+            ind = len(text) - len(text.lstrip())
+            if ind < indent and stripped == "else":
+                depth_else = ind
+            if stripped.startswith(LINE_GUARD):
+                if depth_else is not None and ind == depth_else:
+                    guarded = True
+                    break
+                block = "\n".join(lines[back:number])
+                if ind <= indent and "exit 0" in block and "\n" + " " * ind + "fi" in block:
+                    guarded = True
+                    break
+        if not guarded:
+            bad.append(line.strip())
+    return bad
+
+
+def board_loop_wiring(path=BOARD_LOOP):
+    """specs/121 T034 and FR-020's gating, over board-loop.yml itself."""
+    import yaml
+    with open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    jobs = doc.get("jobs") or {}
+    errors = []
+    for name in LINE_JOBS:
+        if (jobs.get(name, {}).get("env") or {}).get("BOARD_LINE_ID") != LINE_JOB_ENV:
+            errors.append("job {0} does not carry BOARD_LINE_ID from select's line-id".format(name))
+    if (jobs.get("prove", {}).get("env") or {}).get("BOARD_LINE_ID") != "${{ needs.prove-gate.outputs.line-id }}":
+        errors.append("job prove does not carry BOARD_LINE_ID from prove-gate's line-id")
+    if "line-id" not in (jobs.get("select", {}).get("outputs") or {}):
+        errors.append("select has no line-id output")
+    for job_name, job in jobs.items():
+        for step in job.get("steps") or []:
+            where = "{0}/{1}".format(job_name, step.get("name") or step.get("id"))
+            run = step.get("run") or ""
+            for line in unguarded_closes(run):
+                errors.append("{0} closes the item issue with no backlog-line guard: {1}".format(where, line))
+            for line in run.split("\n"):
+                code = line.split(" #", 1)[0]
+                if "gh issue edit" in code and not line.strip().startswith("#"):
+                    errors.append("{0} edits an issue directly -- a line's backlog issue must never be "
+                                  "labelled or retitled (FR-017): {1}".format(where, line.strip()))
+                if '--add-label "board:stalled"' in code and not any(
+                        helper in code for helper in ("board_item_marker.py", "board_workflow_scope_hold.py", "stall_args=")):
+                    errors.append("{0} labels board:stalled outside the line-aware stall rule: {1}".format(
+                        where, line.strip()))
+                if '"Fix #$ISSUE_NUMBER: ' in code and LINE_GUARD not in run:
+                    errors.append("{0} titles a PR from the item issue with no line branch".format(where))
+            uses = step.get("uses") or ""
+            with_ = step.get("with") or {}
+            if (uses.endswith("wing-commander-issue-context")
+                    and "needs.select.outputs.issue-number" in str(with_.get("issue-number"))
+                    and with_.get("line-id") != LINE_JOB_ENV):
+                errors.append("{0} reads the item through issue-context without its line-id".format(where))
+            if step.get("id") == "keyword-hold" and "env.BOARD_LINE_ID != ''" not in str(step.get("if")):
+                errors.append("{0} is not gated on a line item (FR-020)".format(where))
+    decide = next((st for st in jobs.get("prove", {}).get("steps") or [] if st.get("id") == "decide"), {})
+    if 'if target == "board-loop.yml" and not os.environ.get("BOARD_LINE_ID"):' not in (decide.get("run") or ""):
+        errors.append("prove's decide step can aim a directed run at the backlog issue for a line")
+    # FR-020/FR-023: the switch gates new claims only -- select's line step
+    # is its one reader, so a merge's tick and prove entry never wait on it.
+    for job_name, job in jobs.items():
+        for step in job.get("steps") or []:
+            if "WING_COMMANDER_BOARD_BACKLOG_LINES" in json.dumps(step) and not (
+                    job_name == "select" and step.get("id") == "line"):
+                errors.append("{0}/{1} reads the backlog-lines switch; only select's line step "
+                              "may (FR-020)".format(job_name, step.get("name")))
+    line_step = next((st for st in jobs.get("select", {}).get("steps") or [] if st.get("id") == "line"), None)
+    if line_step is None:
+        errors.append("select has no `line` step")
+    elif line_step.get("continue-on-error") is not True:
+        errors.append("select's line step can fail the select job while the feature is dark (FR-020)")
+    return errors
+
+
 def run(fixtures=None, verbose=True):
     failures = 0
     paths = sorted(glob.glob(FIXTURES)) if fixtures is None else fixtures
@@ -243,6 +516,9 @@ def run(fixtures=None, verbose=True):
         print("::error::verify-board-backlog-lines: no fixtures found")
         return 1
     if fixtures is None:
+        for error in board_loop_wiring():
+            failures += 1
+            print("::error::verify-board-backlog-lines: board-loop.yml: {0}".format(error))
         for error in issue_context_wiring():
             failures += 1
             print("::error::verify-board-backlog-lines: wing-commander-issue-context: {0}".format(error))
@@ -260,7 +536,16 @@ def run(fixtures=None, verbose=True):
 
 
 def self_test():
-    """A parser that ignores fences must fail the structure fixture."""
+    """A parser that ignores fences must fail the structure fixture, and the
+    close-guard check must catch an unguarded close (T034)."""
+    unguarded = 'set -uo pipefail\ngh issue comment "$N" --body x\ngh issue close "$N" -R "$R"\n'
+    guarded = ('if [ -n "${BOARD_LINE_ID:-}" ]; then\n  echo line\nelse\n'
+               '  gh issue close "$N" -R "$R"\nfi\n')
+    exits = ('if [ -n "${BOARD_LINE_ID:-}" ]; then\n  echo line\n  exit 0\nfi\n'
+             'gh issue close "$N" -R "$R"\n')
+    if not unguarded_closes(unguarded) or unguarded_closes(guarded) or unguarded_closes(exits):
+        print("::error::verify-board-backlog-lines --self-test: the close-guard check misreads a run block")
+        return 1
     original = bbl.FENCE_RE
     try:
         import re
