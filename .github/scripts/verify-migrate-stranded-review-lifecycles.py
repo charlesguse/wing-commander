@@ -44,6 +44,18 @@ def main():
     text = open(SCRIPT).read()
     if "grep -c" in text:
         failures.append("migration script holds its own task counter")
+    wf = open(os.path.join(ROOT, ".github", "workflows", "migrate-stranded-review-lifecycles.yml")).read()
+    for needle, why in (
+        ('git commit -m "implement: hand off stranded review lifecycle (stage stalled)" || exit 1', "commit must abort the hand-off"),
+        ('git push origin "$BRANCH" || exit 1', "push must abort the hand-off"),
+        ('--remove-label "stage:review"', "hand-off must drop stage:review"),
+        ("iteration=$next_iter", "iteration must be computed"),
+        ("decision=comment-only", "partial run must be recoverable"),
+    ):
+        if needle not in wf:
+            failures.append(f"migrate workflow: {why} (missing {needle!r})")
+    if "iteration=recorded+1" in wf:
+        failures.append("migrate workflow: literal recorded+1 iteration")
     if failures:
         for f in failures:
             print(f"FAIL: {f}")

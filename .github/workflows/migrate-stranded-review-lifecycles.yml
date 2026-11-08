@@ -85,10 +85,13 @@ jobs:
             echo "items<<WC_EOF"
             printf '%s\n' "$out" | sed -n '/^buildable-unchecked-items<</,/^[A-Za-z_]*EOF/p' | sed '1d;$d'
             echo "WC_EOF"
+            echo "maint<<WC_EOF"
+            printf '%s\n' "$out" | sed -n '/^maintainer-items<</,/^[A-Za-z_]*EOF/p' | sed '1d;$d'
+            echo "WC_EOF"
             echo "count=$count"
           } >> "$GITHUB_OUTPUT"
       - name: Hand off
-        if: steps.decide.outputs.verdict == 'decision=migrate' && !inputs.dry-run
+        if: (steps.decide.outputs.verdict == 'decision=migrate' || steps.decide.outputs.verdict == 'decision=comment-only') && !inputs.dry-run
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -97,6 +100,8 @@ jobs:
           SPEC_DIR: ${{ inputs.spec-dir }}
           COUNT: ${{ steps.decide.outputs.count }}
           ITEMS: ${{ steps.decide.outputs.items }}
+          MAINT: ${{ steps.decide.outputs.maint }}
+          VERDICT: ${{ steps.decide.outputs.verdict }}
           DECIDED_TIP: ${{ steps.decide.outputs.tip }}
         run: |
           set -uo pipefail
@@ -112,14 +117,23 @@ jobs:
             exit 0
           fi
           git checkout -B "$BRANCH" "origin/$BRANCH"
-          if [ "$(jq -r '.stage // ""' "$SPEC_DIR/spec-meta.json")" != "review" ]; then
-            echo "::warning::$SPEC_DIR is no longer at stage review; not handing off"
+          stage_now="$(jq -r '.stage // ""' "$SPEC_DIR/spec-meta.json")"
+          want=review
+          if [ "$VERDICT" = "decision=comment-only" ]; then want=stalled; fi
+          if [ "$stage_now" != "$want" ]; then
+            echo "::warning::$SPEC_DIR is at stage $stage_now, not $want; not handing off"
             exit 0
           fi
-          jq '.stage = "stalled"' "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/spec-meta.json" && cp "$RUNNER_TEMP/spec-meta.json" "$SPEC_DIR/spec-meta.json"
-          git add "$SPEC_DIR/spec-meta.json"
-          git commit -m "implement: hand off stranded review lifecycle (stage stalled)"
-          git push origin "$BRANCH"
-          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --add-label "stage:stalled"
-          body="<!-- wing-commander-migrate-stranded-review -->"$'\n'"wing-commander: this lifecycle reached review with $COUNT buildable task(s) unchecked, so it is handed off. Remaining buildable tasks:"$'\n\n'"$ITEMS"$'\n\n'"Resume with an implement dispatch (spec_dir=$SPEC_DIR, issue=$ISSUE, iteration=recorded+1)."
+          # Commit, push, label and comment in that order; each must succeed
+          # before the next, and the marker comment is the last write.
+          if [ "$VERDICT" = "decision=migrate" ]; then
+            jq '.stage = "stalled"' "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/spec-meta.json" || exit 1
+            cp "$RUNNER_TEMP/spec-meta.json" "$SPEC_DIR/spec-meta.json" || exit 1
+            git add "$SPEC_DIR/spec-meta.json" || exit 1
+            git commit -m "implement: hand off stranded review lifecycle (stage stalled)" || exit 1
+            git push origin "$BRANCH" || exit 1
+          fi
+          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --add-label "stage:stalled" --remove-label "stage:review" || exit 1
+          next_iter="$(( $(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json") + 1 ))"
+          body="<!-- wing-commander-migrate-stranded-review -->"$'\n'"wing-commander: this lifecycle reached review with $COUNT buildable task(s) unchecked, so it is handed off. Remaining buildable tasks:"$'\n\n'"$ITEMS"$'\n\n'"Maintainer-only tasks (not built by the pipeline):"$'\n\n'"$MAINT"$'\n\n'"Resume with an implement dispatch (spec_dir=$SPEC_DIR, issue=$ISSUE, iteration=$next_iter)."
           gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "$body"

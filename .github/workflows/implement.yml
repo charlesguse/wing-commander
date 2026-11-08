@@ -3890,6 +3890,8 @@ jobs:
           REASON: ${{ steps.final.outputs.reason }}
           STALL_COMMENT: ${{ steps.final.outputs.stall-comment }}
           CYCLE_OUTCOME: ${{ steps.final.outputs.cycle-outcome }}
+          BUILDABLE_RETRY: ${{ steps.checkbox-tip-retry.outputs.buildable-unchecked-count }}
+          BUILDABLE_CYCLE: ${{ steps.checkbox-tip-cycle.outputs.buildable-unchecked-count }}
           TIER: ${{ steps.final.outputs.tier }}
           REMAINING: ${{ steps.final.outputs.remaining }}
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
@@ -3907,6 +3909,8 @@ jobs:
           # convergence-signal.md §4). One home for that body (CLAUDE.md
           # "Shared logic has exactly one home" applies within a single
           # script too); only the heading and step-summary line differ.
+          # The retry arm's count wins when that arm ran (empty otherwise).
+          BUILDABLE_LEFT="${BUILDABLE_RETRY:-$BUILDABLE_CYCLE}"
           post_handoff_remaining_work() {
             fence='```'
             reason_line=""
@@ -3944,7 +3948,11 @@ jobs:
               "" \
               "$COST_LINE")
             GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
-            if [ -n "$NEXT_WORKFLOW" ]; then
+            if [ -n "$NEXT_WORKFLOW" ] && [ -n "$BUILDABLE_LEFT" ] && [ "$BUILDABLE_LEFT" != "0" ]; then
+              # FR-015: buildable tasks remain, so finalize would refuse;
+              # dispatch nothing and leave the lifecycle for an implement run.
+              echo "$2 — reported remaining work; $BUILDABLE_LEFT buildable item(s) remain, so $NEXT_WORKFLOW was not dispatched." >> "$GITHUB_STEP_SUMMARY"
+            elif [ -n "$NEXT_WORKFLOW" ]; then
               GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$NEXT_WORKFLOW" \
                 -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f converged=false
               echo "$2 — reported remaining work and dispatched $NEXT_WORKFLOW (converged=false)." >> "$GITHUB_STEP_SUMMARY"

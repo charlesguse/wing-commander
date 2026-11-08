@@ -290,17 +290,17 @@ Phases 1–2, then US1 and US2 (the two P1 stories): the classification home, th
 ## Maintainer Feedback
 
 ### Fix 1: finalize.yml buildable refusal as clean hand-off (FR-015, FR-015a)
-- [ ] MF001 In finalize.yml (~:1355), replace the refusal's `exit 1` with a clean hand-off: expose the refusal through `refusal-reason` so the survivor `stalled` job's generic notice is skipped.
-- [ ] MF002 On the refusal, add label `stage:stalled` and set spec-meta stage to `stalled`.
-- [ ] MF003 Post exactly ONE comment carrying an idempotency marker that names the implement dispatch at the computed recorded+1 iteration; end the job without failing.
-- [ ] MF004 In implement's `post_handoff_remaining_work`, skip the finalize dispatch when buildable tasks remain (FR-015: nothing is dispatched).
-- [ ] MF005 Add a fixture or gate case that fails without MF001-MF004; run `python .github/scripts/run-local-gates.py`.
+- [x] MF001 In finalize.yml (~:1355), replace the refusal's `exit 1` with a clean hand-off: expose the refusal through `refusal-reason` so the survivor `stalled` job's generic notice is skipped.
+- [x] MF002 On the refusal, add label `stage:stalled` and set spec-meta stage to `stalled`.
+- [x] MF003 Post exactly ONE comment carrying an idempotency marker that names the implement dispatch at the computed recorded+1 iteration; end the job without failing.
+- [x] MF004 In implement's `post_handoff_remaining_work`, skip the finalize dispatch when buildable tasks remain (FR-015: nothing is dispatched).
+- [x] MF005 Add a fixture or gate case that fails without MF001-MF004; run `python .github/scripts/run-local-gates.py`.
 
 ## Maintainer Feedback
 
 ### Fix 2: migrate-stranded-review-lifecycles.yml atomic hand-off (FR-018)
-- [ ] MF006 In migrate-stranded-review-lifecycles.yml (~:117-125), end `git commit` and `git push` with `|| exit 1` so the label and marker comment happen only after both succeed.
-- [ ] MF007 Add `--remove-label stage:review` when applying the hand-off label.
-- [ ] MF008 Skip a lifecycle on the marker alone; a lifecycle already at `stalled` without the marker gets only the comment.
-- [ ] MF009 In the comment, list the maintainer-only tasks and compute the iteration number instead of the literal `recorded+1`.
-- [ ] MF010 Add a fixture or gate case that fails without MF006-MF009; run `python .github/scripts/run-local-gates.py`.
+- [x] MF006 In migrate-stranded-review-lifecycles.yml (~:117-125), end `git commit` and `git push` with `|| exit 1` so the label and marker comment happen only after both succeed.
+- [x] MF007 Add `--remove-label stage:review` when applying the hand-off label.
+- [x] MF008 Skip a lifecycle on the marker alone; a lifecycle already at `stalled` without the marker gets only the comment.
+- [x] MF009 In the comment, list the maintainer-only tasks and compute the iteration number instead of the literal `recorded+1`.
+- [x] MF010 Add a fixture or gate case that fails without MF006-MF009; run `python .github/scripts/run-local-gates.py`.
