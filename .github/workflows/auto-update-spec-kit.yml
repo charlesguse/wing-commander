@@ -2426,7 +2426,7 @@ jobs:
           private-key: ${{ secrets.speckit-app-private-key }}
 
       - name: Download prepared branch bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: auto-update-spec-kit-prepare-bundle
           path: ${{ runner.temp }}/prepare-bundle
@@ -2601,7 +2601,7 @@ jobs:
       - name: Download e2e-stage diagnostics
         if: needs.e2e-stage.outputs.passed == 'false'
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: e2e-stage-diagnostics
           path: ${{ runner.temp }}/e2e-stage-diagnostics
@@ -2986,7 +2986,7 @@ jobs:
       # verify verdict to report.
       - name: Download prepared branch bundle
         if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: auto-update-spec-kit-prepare-bundle
           path: ${{ runner.temp }}/prepare-bundle
@@ -3000,7 +3000,7 @@ jobs:
       - name: Download verify diagnostics
         if: needs.health-check.outputs.pinned-ok != 'false' && needs.prepare.result == 'success'
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: verify-diagnostics
           path: ${{ runner.temp }}/verify-diagnostics

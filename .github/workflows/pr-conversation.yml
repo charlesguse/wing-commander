@@ -1915,7 +1915,7 @@ jobs:
       # above in this file. A missing artifact fails this leg here, before
       # anything is mutated, rather than acting on an empty body.
       - name: Download classification bodies
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: pr-conversation-classifications
           path: ${{ runner.temp }}/classifications
@@ -3796,7 +3796,7 @@ jobs:
       # variable it always did -- see the classify-and-announce outputs:
       # block above in this file.
       - name: Download classification bodies
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: pr-conversation-classifications
           path: ${{ runner.temp }}/classifications

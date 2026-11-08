@@ -51,7 +51,7 @@ runs:
     - name: Download workspace bundle
       if: inputs.head-ref == ''
       continue-on-error: true
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v6
       with:
         name: ${{ inputs.bundle-artifact || format('wc-gate-bundle-{0}', inputs.site) }}
         path: ${{ runner.temp }}/wc-gate-bundle

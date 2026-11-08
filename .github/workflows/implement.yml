@@ -4281,7 +4281,7 @@ jobs:
       - name: Download stall diagnostics
         if: needs.implement.outputs.final-ok == 'false'
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: implement-stall-diagnostics
           path: ${{ runner.temp }}/stall-diagnostics
