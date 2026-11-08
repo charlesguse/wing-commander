@@ -1,0 +1,1 @@
+{"input": {"findings": [{"class": "doubtful"}], "push_results": {"fixes_pushed": true}, "freshness": {}}, "expect": {"push_fixes": false, "push_markers": true, "post_announcement": false}}
