@@ -248,6 +248,13 @@ def render(snap):
     lines.append("")
     if maint:
         lines.append("{0} open, {1} done on #{2}.".format(maint["open"], maint["done"], maint["number"]))
+        # specs/121-board-backlog-line-items FR-018: the line the board loop
+        # holds, named by the backlog issue and its line id.
+        for line in maint.get("current") or []:
+            lines.append("")
+            lines.append("The board loop is working line `{0}` on #{1}{2}: {3}".format(
+                line["id"], maint["number"],
+                " ({0})".format(line["detail"]) if line.get("detail") else "", line["text"]))
     else:
         lines.append("No open Maintenance backlog issue.")
     lines.append("")
@@ -294,6 +301,17 @@ def _gh_json(path):
     return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
 
 
+def current_lines(body):
+    """The backlog lines the board loop has claimed (annotation state
+    `in-progress`), parsed by board_backlog_lines -- the single home of the
+    line grammar (specs/121-board-backlog-line-items FR-018)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import board_backlog_lines as bbl
+    return [{"id": line["id"], "text": line["text"], "detail": line["detail"] or ""}
+            for line in bbl.parse_lines(body)
+            if not line["checked"] and line["state"] == "in-progress"]
+
+
 def snapshot(repo, switches):
     item_jq = ('.[] | {number, title, created_at, pull_request: (.pull_request != null), '
                'labels: [.labels[].name], body: (.body // ""), user_type: .user.type, '
@@ -310,7 +328,8 @@ def snapshot(repo, switches):
             body = issue["body"].splitlines()
             maintenance = {"number": issue["number"],
                            "open": sum(1 for l in body if l.lstrip().startswith("- [ ]")),
-                           "done": sum(1 for l in body if l.lstrip().lower().startswith("- [x]"))}
+                           "done": sum(1 for l in body if l.lstrip().lower().startswith("- [x]")),
+                           "current": current_lines(issue["body"])}
         elif issue["title"].startswith("Roadmap") and roadmap is None:
             roadmap = issue["number"]
     for issue in issues:

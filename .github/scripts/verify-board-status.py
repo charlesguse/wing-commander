@@ -167,12 +167,20 @@ def render_half():
     check("the release line names the tag, its age and the paused switch",
           "v2.7.3, 15d ago; auto-release **paused**" in body, body)
     check("the maintenance count is shown", "30 open, 1 done on #889." in body, body)
+    check("no current line is named while the loop holds none (specs/121 FR-018)",
+          "is working line" not in body, body)
+    held = bs.render(dict(SNAP, maintenance=dict(SNAP["maintenance"], current=[
+        {"id": "bl-0a1b2c3d", "text": "flaky gate", "detail": "PR #7"}])))
+    check("the line the board loop holds is named by backlog issue and line id (specs/121 FR-018)",
+          "The board loop is working line `bl-0a1b2c3d` on #889 (PR #7): flaky gate" in held, held)
     check("the waiting-on-you count is in its heading", "### Waiting on you (9)" in body, body)
     check("PRs outside any lifecycle are named", "not part of a lifecycle: #909" in body, body)
     check("the roadmap is linked", "Roadmap issue, #890" in body, body)
     check("the board loop line names every merge switch, all off by default",
           "- **board loop:** running; board auto-merge off; workflow-file fixes held for a maintainer; "
           "lifecycle auto-merge off" in body, body)
+    check("the board loop line shows the backlog-lines switch, off by default (specs/121 FR-023)",
+          "lifecycle auto-merge off; backlog lines off" in body, body)
     merging = bs.render(dict(SNAP, switches=dict(SNAP["switches"], board_auto_merge="true",
                                                   board_can_push_workflows="true")))
     check("board auto-merge and workflow-file fixes read on when their switches are true",
@@ -253,7 +261,8 @@ def runtime_half():
 
     status_body = bs.MARKER + "\nold"
     page("repos/o/r/issues?state=open&per_page=100", [
-        gh_issue(889, ["disposition:tracking"], "Maintenance backlog", "- [ ] a\n- [x] b\n  - [ ] c\n"),
+        gh_issue(889, ["disposition:tracking"], "Maintenance backlog",
+                 "- [ ] a\n- [x] b\n  - [ ] c\n- [ ] d [wc:bl-0a1b2c3d in-progress PR #7]\n"),
         gh_issue(890, ["disposition:tracking"], "Roadmap"),
         gh_issue(920, ["disposition:tracking"], "Board status", status_body, "Bot"),
     ], [
@@ -301,7 +310,11 @@ def runtime_half():
               [i["number"] for i in snap["prs"]] == [821]
               and 741 in [i["number"] for i in snap["issues"]], snap)
         check("snapshot counts the maintenance checklist, nested lines included",
-              snap["maintenance"] == {"number": 889, "open": 2, "done": 1}, snap["maintenance"])
+              {k: snap["maintenance"][k] for k in ("number", "open", "done")}
+              == {"number": 889, "open": 3, "done": 1}, snap["maintenance"])
+        check("snapshot names the line the board loop holds (specs/121 FR-018)",
+              snap["maintenance"].get("current") == [
+                  {"id": "bl-0a1b2c3d", "text": "d", "detail": "PR #7"}], snap["maintenance"])
         check("snapshot finds the roadmap", snap["roadmap_number"] == 890, snap["roadmap_number"])
         clar = {i["number"]: i for i in snap["issues"] if i["number"] in (741, 742)}
         check("a passer-by's comment after the bot's questions answers nothing",
