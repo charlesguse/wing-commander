@@ -63,7 +63,13 @@ def _operations(op, line_id, detail, url=""):
         line = state_of(body)
         if state is None:
             return line is not None and line["state"] is None
-        return line is not None and line["state"] == state and line["checked"] == checked
+        if line is None or line["state"] != state or line["checked"] != checked:
+            return False
+        if op in ("progress", "hold", "route-proposal", "tick-evidence", "tick-fixed"):
+            return (line["detail"] or "") == bbl._sanitise(detail)
+        if op == "note-proof":
+            return (line["detail"] or "") == "not-proven: " + bbl._sanitise(detail)
+        return True
 
     return apply_fn, verify
 

@@ -173,7 +173,7 @@ def resolve_backlog(open_issues, bot_login, maintainer_logins=()):
     hits = []
     for issue in open_issues:
         labels = [l if isinstance(l, str) else l.get("name") for l in issue.get("labels", [])]
-        if issue.get("state", "open") != "open" or "disposition:tracking" not in labels:
+        if str(issue.get("state", "open")).lower() != "open" or "disposition:tracking" not in labels:
             continue
         if not str(issue.get("title", "")).startswith("Maintenance backlog"):
             continue
@@ -185,7 +185,10 @@ def resolve_backlog(open_issues, bot_login, maintainer_logins=()):
     author = hits[0].get("author")
     if isinstance(author, dict):
         author = author.get("login")
-    if allowed and author not in allowed:
+    assoc = str(hits[0].get("authorAssociation") or hits[0].get("author_association") or "").upper()
+    if assoc in ("OWNER", "MEMBER"):
+        return hits[0]["number"], None
+    if author not in allowed:
         return None, "backlog issue author {0!r} is not a maintainer or the App".format(author)
     return hits[0]["number"], None
 
@@ -230,6 +233,7 @@ def title_for(text, prefix="Fix: "):
     truncated with an ellipsis so the whole title is at most 200 chars."""
     text = re.sub(r"\s+", " ", ANNOTATION_RE.sub("", text or "")).strip()
     text = re.sub(r"#(?=\d)", "#​", text).replace("/issues/", "/issues​/")
+    text = re.sub(r"(?i)\bGH-(?=\d)", "GH-​", text)
     if len(prefix + text) > 200:
         text = text[:200 - len(prefix) - 1].rstrip() + "…"
     return prefix + text
@@ -237,7 +241,7 @@ def title_for(text, prefix="Fix: "):
 
 CLOSING_RE = re.compile(
     r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[:\s]+"
-    r"(?:https?://github\.com/[\w.-]+/[\w.-]+/issues/\d+|[\w.-]+/[\w.-]+#\d+|#\d+)",
+    r"(?:https?://github\.com/[\w.-]+/[\w.-]+/issues/\d+|[\w.-]+/[\w.-]+#\d+|#\d+|GH-\d+)",
     re.I)
 
 
@@ -254,6 +258,7 @@ def closing_keyword_hits(title, body, commit_messages):
 def render_line_text_for_body(text):
     """Code span with `#` references defanged so no closing keyword forms."""
     safe = (text or "").replace("`", "'").replace("#", "#​").replace("/issues/", "/issues​/")
+    safe = re.sub(r"(?i)\bGH-(?=\d)", "GH-​", safe)
     return "`{0}`".format(re.sub(r"\s+", " ", safe).strip())
 
 
@@ -269,8 +274,8 @@ def main():
         elif op == "check-closing-keywords":
             result = closing_keyword_hits(request.get("title", ""), body,
                                           request.get("commits", []))
-        elif op in ("claim", "progress", "hold", "route-proposal", "tick-evidence",
-                    "tick-fixed", "note-proof"):
+        elif op in ("claim", "progress", "hold", "release", "route-proposal",
+                    "tick-evidence", "tick-fixed", "note-proof"):
             import board_backlog_edit as bbe
             apply_fn, verify = bbe._operations(op, request["line_id"], request.get("detail", ""),
                                                request.get("url", ""))
@@ -281,7 +286,12 @@ def main():
     except (ValueError, KeyError) as exc:
         print("::error::board_backlog_lines: {0}".format(exc), file=sys.stderr)
         sys.exit(2)
+    except RuntimeError as exc:
+        print("::error::board_backlog_lines: {0}".format(exc), file=sys.stderr)
+        sys.exit(1)
     print(json.dumps(result, sort_keys=True))
+    if result == "failed":
+        sys.exit(1)
 
 
 if __name__ == "__main__":
