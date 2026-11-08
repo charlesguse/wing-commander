@@ -1,10 +1,17 @@
 # wing-commander-stalled-handoff — the FR-015/FR-015a stalled hand-off.
 #
-# The front door to `_shared/stalled-handoff.sh`, the one home of the
-# hand-off a lifecycle takes when buildable tasks remain and nothing may be
-# dispatched (specs/123-implement-task-completion). finalize's refusal step
-# and implement's skip branch both call this composite; neither keeps an
-# inline copy. A published stage may not resolve `_shared/` itself (Gate 60).
+# The ONE home of the hand-off a lifecycle takes when buildable tasks
+# remain and nothing may be dispatched (specs/123-implement-task-completion
+# FR-015/FR-015a). finalize's refusal step and implement's skip branch both
+# call this composite; neither keeps an inline copy.
+#
+# Order: spec-meta stage -> stalled (commit and push), then the label, then
+# ONE comment carrying an idempotency marker. Each is its own step with no
+# continue-on-error and no if:, so a failure in one skips every step below
+# it (a composite step's implicit success()). The gh calls sit in this
+# file's own steps, not in a `_shared/` script: Gate 12 resolves a
+# composite step's GH_TOKEN through each caller's `with:` and cannot
+# resolve one exported into a sourced script.
 #
 # Constitution VII: part of the published surface; adding it is a
 # minor-version change at the next release.
@@ -47,16 +54,58 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Stalled hand-off
+    - name: Record spec-meta stage stalled (commit and push)
+      id: meta
+      shell: bash
+      env:
+        ISSUE: ${{ inputs.issue-number }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
+        SLUG: ${{ inputs.slug }}
+        BOT_SLUG: ${{ inputs.bot-slug }}
+        COMMIT_STAGE: ${{ inputs.commit-stage }}
+        COMMIT_REASON: ${{ inputs.commit-reason }}
+      run: |
+        set -uo pipefail
+        meta="$SPEC_DIR/spec-meta.json"
+        next_iter="$(( $(jq -r '.iteration // 0' "$meta") + 1 ))" || exit 1
+        if [ "$(jq -r '.stage // ""' "$meta")" != "stalled" ]; then
+          jq '.stage = "stalled"' "$meta" > "$RUNNER_TEMP/stalled-meta.json" || exit 1
+          mv "$RUNNER_TEMP/stalled-meta.json" "$meta" || exit 1
+          git add "$meta" || exit 1
+          git config user.name  "${BOT_SLUG}[bot]"
+          git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
+          git commit -m "$COMMIT_STAGE: $SLUG -> stalled (#$ISSUE, $COMMIT_REASON)" || exit 1
+          git push || exit 1
+        fi
+        echo "next-iteration=$next_iter" >> "$GITHUB_OUTPUT"
+
+    - name: Add the stage:stalled label
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ISSUE: ${{ inputs.issue-number }}
+      run: |
+        set -uo pipefail
+        gh label create "stage:stalled" --repo "$GITHUB_REPOSITORY" --color B60205 --description "Lifecycle waiting for an implement dispatch" --force || true
+        gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --add-label "stage:stalled" --remove-label "stage:review" 2>/dev/null \
+          || gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --add-label "stage:stalled" || exit 1
+
+    - name: Post the one hand-off comment
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
         ISSUE: ${{ inputs.issue-number }}
         SPEC_DIR: ${{ inputs.spec-dir }}
-        SLUG: ${{ inputs.slug }}
-        BOT_SLUG: ${{ inputs.bot-slug }}
         BODY_FILE: ${{ inputs.body-file }}
         MARKER_KIND: ${{ inputs.marker-kind }}
-        COMMIT_STAGE: ${{ inputs.commit-stage }}
-        COMMIT_REASON: ${{ inputs.commit-reason }}
-      run: bash "$GITHUB_ACTION_PATH/../_shared/stalled-handoff.sh"
+        NEXT_ITER: ${{ steps.meta.outputs.next-iteration }}
+      run: |
+        set -uo pipefail
+        marker="<!-- wing-commander-${MARKER_KIND} iteration=${NEXT_ITER} -->"
+        existing="$(gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json comments --jq '.comments[].body')" || exit 1
+        if printf '%s\n' "$existing" | grep -qF "$marker"; then
+          echo "stalled hand-off comment for iteration $NEXT_ITER already posted" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        body="$marker"$'\n'"$(cat "$BODY_FILE")"$'\n\n'"Resume with an implement dispatch (spec_dir=$SPEC_DIR, issue=$ISSUE, iteration=$NEXT_ITER)."
+        gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "$body"

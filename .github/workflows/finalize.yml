@@ -1706,6 +1706,7 @@ jobs:
               {"name": "Verify agent output", "conclusion": "${{ steps.verify-agent-output.conclusion }}"},
               {"name": "Assemble PR body", "conclusion": "${{ steps.body.conclusion }}"},
               {"name": "Refuse to finalize while buildable tasks remain", "conclusion": "${{ steps.buildable-wait.conclusion }}"},
+              {"name": "Hand off to stalled (buildable tasks remain)", "conclusion": "${{ steps.buildable-handoff.conclusion }}"},
               {"name": "Determine feature title", "conclusion": "${{ steps.title.conclusion }}"},
               {"name": "Verify the final pull request was created", "conclusion": "${{ steps.verify-pr.conclusion }}"},
               {"name": "Flip stage label", "conclusion": "${{ steps.flip-label.conclusion }}"},

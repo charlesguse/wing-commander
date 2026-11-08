@@ -62,13 +62,7 @@ def check_wiring(failures):
             failures.append(f"finalize.yml buildable-wait step holds an inline copy of the stalled hand-off ({needle!r})")
     if "wing-commander-stalled-handoff" not in fin:
         failures.append("finalize.yml must call the wing-commander-stalled-handoff composite")
-    helper = open(os.path.join(ROOT, ".github", "actions", "_shared", "stalled-handoff.sh")).read()
-    for needle in ("stage:stalled", '.stage = "stalled"', "iteration=${next_iter}",
-                   "git push || exit 1", "gh issue comment", "grep -qF"):
-        if needle not in helper:
-            failures.append(f"_shared/stalled-handoff.sh missing {needle!r}")
-    if helper.index("git push || exit 1") > helper.index("gh issue edit"):
-        failures.append("stalled-handoff.sh must push spec-meta before the label and comment")
+    check_handoff_composite(failures)
     if "steps.buildable-wait.outputs.reason" not in fin:
         failures.append("finalize.yml refusal-reason output must include the buildable-wait reason")
     for sid in ("title", "pr", "verify-pr", "flip-label", "announce-summary",
@@ -97,6 +91,37 @@ def check_wiring(failures):
     for name, text in (("finalize.yml", fin), ("lifecycle-review-gate.yml", gate)):
         if re.search(r"grep[^\n]*-c[^\n]*\[ \]", text):
             failures.append(f"{name} holds a second unchecked-task counter")
+
+
+HANDOFF = os.path.join(ROOT, ".github", "actions", "wing-commander-stalled-handoff", "action.yml")
+
+
+def check_handoff_composite(failures, path=HANDOFF):
+    """The hand-off's one home: the composite's own steps, in order -- the
+    spec-meta commit and push, then the label, then the marker comment --
+    each a separate step with no if:/continue-on-error, so a failure skips
+    the rest. No `_shared/` script may hold it: Gate 12 cannot resolve the
+    token of a gh call inside one."""
+    import yaml
+    act = yaml.safe_load(open(path)) or {}
+    steps = [st or {} for st in ((act.get("runs") or {}).get("steps") or [])]
+    if any("_shared/" in str(st.get("run", "")) + str(st.get("uses", "")) for st in steps):
+        failures.append("wing-commander-stalled-handoff must hold the hand-off in its own steps, not a _shared/ script")
+
+    def first(needle):
+        return next((i for i, st in enumerate(steps) if needle in str(st.get("run", ""))), None)
+    push, label, comment = first("git push || exit 1"), first("gh issue edit"), first("gh issue comment")
+    if None in (push, label, comment) or not push < label < comment:
+        failures.append("wing-commander-stalled-handoff must run the spec-meta push, the label and the comment "
+                        f"as separate steps in that order (found push={push}, label={label}, comment={comment})")
+    for i, st in enumerate(steps):
+        if "if" in st or st.get("continue-on-error"):
+            failures.append(f"wing-commander-stalled-handoff step {i} must not carry if:/continue-on-error "
+                            "(a failure must skip every later write)")
+    code = "\n".join(str(st.get("run", "")) for st in steps)
+    for needle in ('.stage = "stalled"', "stage:stalled", "iteration=${NEXT_ITER}", "grep -qF"):
+        if needle not in code:
+            failures.append(f"wing-commander-stalled-handoff missing {needle!r}")
 
 
 def check_watchdog_handoff(failures):
