@@ -2,7 +2,7 @@
   "issue": 1055,
   "spec_dir": "specs/120-dispatched-run-metrics",
   "feature_num": "120",
-  "stage": "implement",
+  "stage": "stalled",
   "iteration": 9,
   "spec_branch": "spec/120-dispatched-run-metrics",
   "pending_re_review_from": [],
