@@ -349,7 +349,7 @@ jobs:
       pr-number: ${{ steps.verify-pr.outputs.pr-number }}
       # internal job-to-job wiring only, never a workflow_call output (research.md D3) -- see
       # specs/041-implement-stall-notice/research.md D3.
-      refusal-reason: ${{ steps.preflight.outputs.reason || steps.spec.outputs.reason || steps.meta.outputs.reason }}
+      refusal-reason: ${{ steps.preflight.outputs.reason || steps.spec.outputs.reason || steps.meta.outputs.reason || steps.buildable-wait.outputs.reason }}
       agent-ran: ${{ steps.agent-ran.outputs.ran }}
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
       agent-started: ${{ steps.agent-ran.outputs.started }}
@@ -1344,10 +1344,57 @@ jobs:
           } > "$body_file"
           echo "body-file=$body_file" >> "$GITHUB_OUTPUT"
 
+      # specs/123-implement-task-completion FR-010: finalize does not open a
+      # final PR while buildable tasks are unchecked at the spec-branch tip.
+      # The count is wing-commander-tasks-checkbox-count's buildable view (the
+      # one classification home); folded review findings and maintainer-only
+      # lines never hold this back. Fails closed before any PR step, with no
+      # override. Deferred to here so the counter's other readers above keep
+      # their degradation path; an empty count (the counter crashed) does not
+      # refuse, its own failure is already visible on its step.
+      - name: Refuse to finalize while buildable tasks remain
+        id: buildable-wait
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && steps.checkbox-tip-finalize.outputs.buildable-unchecked-count != '' && steps.checkbox-tip-finalize.outputs.buildable-unchecked-count != '0'
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE: ${{ inputs.issue-number }}
+          BUILDABLE_COUNT: ${{ steps.checkbox-tip-finalize.outputs.buildable-unchecked-count }}
+          BUILDABLE_ITEMS: ${{ steps.checkbox-tip-finalize.outputs.buildable-unchecked-items }}
+          SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
+          SLUG: ${{ steps.spec.outputs.slug }}
+          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
+        run: |
+          set -uo pipefail
+          # FR-015/FR-015a: a clean hand-off, not a failure. Nothing is
+          # dispatched; the lifecycle waits at stage:stalled for an implement
+          # dispatch at the recorded iteration + 1, and every later step is
+          # gated on this step's `refused` output.
+          # Later steps gate on env.WC_BUILDABLE_REFUSED, not on this step's
+          # outputs (Gate 24 reads a step reference in an if: as a guard).
+          echo "WC_BUILDABLE_REFUSED=true" >> "$GITHUB_ENV"
+          echo "reason=buildable tasks remain ($BUILDABLE_COUNT unchecked)" >> "$GITHUB_OUTPUT"
+          # The hand-off itself (spec-meta stalled, label, marker comment)
+          # has one home -- see wing-commander-stalled-handoff.
+          printf '%s\n\n%s\n' "wing-commander finalize stage: $BUILDABLE_COUNT buildable task(s) are still unchecked in tasks.md, so no final pull request was opened. Another implement run must build them:" "$BUILDABLE_ITEMS" > "$RUNNER_TEMP/stalled-body.md"
+
+      - name: Hand off to stalled (buildable tasks remain)
+        id: buildable-handoff
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && env.WC_BUILDABLE_REFUSED == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stalled-handoff
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ inputs.issue-number }}
+          spec-dir: ${{ steps.spec.outputs.spec-dir }}
+          slug: ${{ steps.spec.outputs.slug }}
+          bot-slug: ${{ steps.ctx.outputs.bot-slug }}
+          body-file: ${{ runner.temp }}/stalled-body.md
+          marker-kind: finalize-buildable-refusal
+          commit-stage: finalize
+
       # The feature name for the PR title, from spec.md's title heading.
       - name: Determine feature title
         id: title
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && env.WC_BUILDABLE_REFUSED != 'true'
         env:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
         run: |
@@ -1360,7 +1407,7 @@ jobs:
       # holds because only `none` ever reaches `gh pr create`.
       - name: Open or update the final pull request
         id: pr
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && env.WC_BUILDABLE_REFUSED != 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
@@ -1384,7 +1431,7 @@ jobs:
       # on failure so a later dispatch still retries the whole thing.
       - name: Verify the final pull request was created
         id: verify-pr
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && env.WC_BUILDABLE_REFUSED != 'true'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           SLUG: ${{ steps.spec.outputs.slug }}
@@ -1422,7 +1469,7 @@ jobs:
       # below may fail the job: the stage's real work is already done.
       - name: Flip stage label
         id: flip-label
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && env.WC_BUILDABLE_REFUSED != 'true'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE: ${{ inputs.issue-number }}
@@ -1500,7 +1547,7 @@ jobs:
       # rather than as a nested workflow-expression ternary.
       - name: Compose review-announcement summary
         id: announce-summary
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && env.WC_BUILDABLE_REFUSED != 'true'
         env:
           PR_STATE: ${{ steps.diff.outputs.pr-state }}
           LOGINS: ${{ steps.re-review.outputs.logins }}
@@ -1523,7 +1570,7 @@ jobs:
       # the lifecycle.
       - name: Announce the implementation PR for review
         id: announce-pr
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && env.WC_BUILDABLE_REFUSED != 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ env.WC_BOT_TOKEN }}
@@ -1544,7 +1591,7 @@ jobs:
       # the field is already absent/empty.
       - name: Commit metadata (stage -> review)
         id: commit-metadata
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && env.WC_BUILDABLE_REFUSED != 'true'
         env:
           SPEC_DIR: ${{ steps.spec.outputs.spec-dir }}
           SLUG: ${{ steps.spec.outputs.slug }}
@@ -1571,7 +1618,7 @@ jobs:
       # guarantees the PR and the issue never disagree.
       - name: Check for remaining manual work
         id: remaining
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && env.WC_BUILDABLE_REFUSED != 'true'
         env:
           RENDERED_HAS_REMAINING: ${{ steps.remaining-work.outputs.has-remaining }}
           RENDERED_STALLED: ${{ steps.remaining-work.outputs.stalled }}
@@ -1658,6 +1705,8 @@ jobs:
               {"name": "Render remaining work", "conclusion": "${{ steps.remaining-work.conclusion }}"},
               {"name": "Verify agent output", "conclusion": "${{ steps.verify-agent-output.conclusion }}"},
               {"name": "Assemble PR body", "conclusion": "${{ steps.body.conclusion }}"},
+              {"name": "Refuse to finalize while buildable tasks remain", "conclusion": "${{ steps.buildable-wait.conclusion }}"},
+              {"name": "Hand off to stalled (buildable tasks remain)", "conclusion": "${{ steps.buildable-handoff.conclusion }}"},
               {"name": "Determine feature title", "conclusion": "${{ steps.title.conclusion }}"},
               {"name": "Verify the final pull request was created", "conclusion": "${{ steps.verify-pr.conclusion }}"},
               {"name": "Flip stage label", "conclusion": "${{ steps.flip-label.conclusion }}"},

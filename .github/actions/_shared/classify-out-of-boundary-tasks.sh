@@ -74,6 +74,11 @@ UNCHECKED_ITEMS="${1-}"
 NO_WRITE_PATHS="${2-}"
 TASKS_PATH="${3-}"
 SPEC_DIR="${4-}"
+# A large task list can exceed the per-argument limit (E2BIG); a caller may
+# instead name a file holding the lines in UNCHECKED_ITEMS_FILE, which wins.
+if [ -n "${UNCHECKED_ITEMS_FILE:-}" ] && [ -r "$UNCHECKED_ITEMS_FILE" ]; then
+  UNCHECKED_ITEMS="$(cat "$UNCHECKED_ITEMS_FILE")"
+fi
 
 if [ $# -lt 4 ]; then
   echo "classify-out-of-boundary-tasks.sh: usage: classify-out-of-boundary-tasks.sh <unchecked-items> <no-write-paths> <tasks-path> <spec-dir>" >&2

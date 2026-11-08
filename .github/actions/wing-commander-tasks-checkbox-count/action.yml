@@ -37,6 +37,16 @@ inputs:
       specs/NNN-slug/tasks.md, or P/specs/NNN-slug/tasks.md for a subfolder
       project).
     required: true
+  gate-suite-ready:
+    description: >-
+      "false" when the cycle-start gate suite is not ready, which makes a task
+      that only runs the gate suite deterministically unbuildable (specs/123
+      FR-004). Empty (the default) reads the readiness implement recorded in
+      spec-meta.json's `gate_suite_ready` at the same ref, and "true" when
+      none is recorded -- so every caller classifies a task the way the
+      cycle that left it did (FR-010).
+    required: false
+    default: ""
 outputs:
   checked-count:
     description: "Count of - [x]/- [X] task-list lines outside fenced code blocks."
@@ -68,6 +78,24 @@ outputs:
   impl-unchecked-ids:
     description: "Space-separated task ids of the unchecked implementation lines."
     value: ${{ steps.read.outputs.impl-unchecked-ids }}
+  buildable-checked-count:
+    description: "Count of checked buildable tasks (standing, folded-finding, [maintainer] and deterministic-unbuildable lines excluded)."
+    value: ${{ steps.read.outputs.buildable-checked-count }}
+  buildable-unchecked-count:
+    description: "Count of unchecked buildable tasks (standing, folded-finding, [maintainer] and deterministic-unbuildable lines excluded)."
+    value: ${{ steps.read.outputs.buildable-unchecked-count }}
+  buildable-unchecked-ids:
+    description: "Space-separated task ids of the unchecked buildable lines."
+    value: ${{ steps.read.outputs.buildable-unchecked-ids }}
+  buildable-unchecked-items:
+    description: "The literal text of each unchecked buildable task, in file order."
+    value: ${{ steps.read.outputs.buildable-unchecked-items }}
+  fold-unchecked-count:
+    description: "Count of unchecked folded review findings (Review finding: / Recurring review finding:)."
+    value: ${{ steps.read.outputs.fold-unchecked-count }}
+  fold-unchecked-items:
+    description: "The literal text of each unchecked folded review finding, in file order."
+    value: ${{ steps.read.outputs.fold-unchecked-items }}
 runs:
   using: composite
   steps:
@@ -77,5 +105,6 @@ runs:
       env:
         REF: ${{ inputs.ref }}
         TASKS_PATH: ${{ inputs.path }}
+        GATE_SUITE_READY: ${{ inputs.gate-suite-ready }}
       run: |
         bash "$GITHUB_ACTION_PATH/../_shared/count-tasks-checkboxes.sh" "$REF" "$TASKS_PATH" >> "$GITHUB_OUTPUT"

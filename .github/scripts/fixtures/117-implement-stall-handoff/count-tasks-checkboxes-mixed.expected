@@ -22,3 +22,13 @@ maintainer-items<<WING_COMMANDER_MAINTAINER_ITEMS_EOF
 - [ ] T005a [maintainer] Re-drive one suffixed run
 - [ ] T006 [P] [maintainer] Read the repository variable
 WING_COMMANDER_MAINTAINER_ITEMS_EOF
+buildable-checked-count=1
+buildable-unchecked-count=2
+buildable-unchecked-ids=T002 T007
+buildable-unchecked-items<<WING_COMMANDER_BUILDABLE_ITEMS_EOF
+- [ ] T002 Unchecked code in `b.sh`
+- [ ] T007 Merge it [maintainer] later
+WING_COMMANDER_BUILDABLE_ITEMS_EOF
+fold-unchecked-count=0
+fold-unchecked-items<<WING_COMMANDER_FOLD_ITEMS_EOF
+WING_COMMANDER_FOLD_ITEMS_EOF

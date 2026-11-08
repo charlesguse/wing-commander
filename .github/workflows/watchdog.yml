@@ -1186,8 +1186,16 @@ jobs:
           RUN_CONCLUSION: ${{ steps.run-meta.outputs.conclusion }}
           META_STAGE: ${{ steps.spec-slug.outputs.meta-stage }}
           SLUG: ${{ steps.spec-slug.outputs.slug }}
+          STALLED_LABEL: ${{ steps.spec-slug.outputs.stalled-label }}
         run: |
           set -uo pipefail
+          # specs/123-implement-task-completion FR-015: a stalled hand-off
+          # (stage `stalled` plus the stalled label) is a deliberate state,
+          # not a missed stage transition.
+          if [ "$META_STAGE" = "stalled" ] && [ "$STALLED_LABEL" = "true" ]; then
+            echo "spec-meta: stage 'stalled' with the stalled label is a deliberate hand-off — no mismatch." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           # This collector performs no gh/git read of its own — it only
           # compares already-resolved step outputs — so it is always
           # trustworthy for this run (FR-010; never invent a read here).

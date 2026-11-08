@@ -1,0 +1,139 @@
+name: Migrate stranded review lifecycles
+
+# specs/123-implement-task-completion FR-018: one-shot, manually dispatched.
+# Hands off a lifecycle stranded at stage `review` with buildable tasks still
+# unchecked. The decision lives in
+# .github/actions/_shared/migrate-stranded-review-lifecycles.sh and the count
+# in count-tasks-checkboxes.sh; the writes stay in this workflow's own steps.
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: "Lifecycle issue number"
+        required: true
+        type: string
+      branch:
+        description: "Spec branch (spec/NNN-slug)"
+        required: true
+        type: string
+      spec-dir:
+        description: "Spec directory (specs/NNN-slug)"
+        required: true
+        type: string
+      dry-run:
+        description: "Report the decision without changing anything"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Pushes to a spec branch, so it joins the per-spec group every
+    # spec-branch writer shares (specs/013 contract, Gate 80).
+    concurrency:
+      group: wing-commander-${{ inputs.spec-dir }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Derive slug
+        id: slug
+        shell: bash
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: echo "slug=${BRANCH#spec/}" >> "$GITHUB_OUTPUT"
+      # The spec-meta.json read has one home, the wing-commander-spec-meta
+      # composite (#340, Gate 61).
+      - name: Read spec-meta.json from the spec branch
+        id: meta
+        uses: ./.github/actions/wing-commander-spec-meta
+        with:
+          spec-prefix: spec/
+          slug: ${{ steps.slug.outputs.slug }}
+          spec-dir: ${{ inputs.spec-dir }}
+      - name: Decide
+        id: decide
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGE: ${{ steps.meta.outputs.stage }}
+          ISSUE: ${{ inputs.issue }}
+          BRANCH: ${{ inputs.branch }}
+          SPEC_DIR: ${{ inputs.spec-dir }}
+        run: |
+          set -uo pipefail
+          git fetch origin "$BRANCH"
+          out="$(bash .github/actions/_shared/count-tasks-checkboxes.sh "origin/$BRANCH" "$SPEC_DIR/tasks.md")" || exit 1
+          count="$(printf '%s\n' "$out" | sed -n 's/^buildable-unchecked-count=//p')"
+          stage="${STAGE:-}"
+          state="$(gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json state --jq '.state | ascii_downcase')"
+          marker=false
+          if gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json comments --jq '.comments[].body' | grep -qF '<!-- wing-commander-migrate-stranded-review -->'; then marker=true; fi
+          verdict="$(bash .github/actions/_shared/migrate-stranded-review-lifecycles.sh decide "$state" "$stage" "$marker" "$count")"
+          echo "#$ISSUE: $verdict"
+          {
+            echo "verdict=$verdict"
+            echo "tip=$(git rev-parse "origin/$BRANCH")"
+            echo "items<<WC_EOF"
+            printf '%s\n' "$out" | sed -n '/^buildable-unchecked-items<</,/^[A-Za-z_]*EOF/p' | sed '1d;$d'
+            echo "WC_EOF"
+            echo "maint<<WC_EOF"
+            printf '%s\n' "$out" | sed -n '/^maintainer-items<</,/^[A-Za-z_]*EOF/p' | sed '1d;$d'
+            echo "WC_EOF"
+            echo "count=$count"
+          } >> "$GITHUB_OUTPUT"
+      - name: Hand off
+        if: (steps.decide.outputs.verdict == 'decision=migrate' || steps.decide.outputs.verdict == 'decision=comment-only') && !inputs.dry-run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ inputs.issue }}
+          BRANCH: ${{ inputs.branch }}
+          SPEC_DIR: ${{ inputs.spec-dir }}
+          COUNT: ${{ steps.decide.outputs.count }}
+          ITEMS: ${{ steps.decide.outputs.items }}
+          MAINT: ${{ steps.decide.outputs.maint }}
+          VERDICT: ${{ steps.decide.outputs.verdict }}
+          DECIDED_TIP: ${{ steps.decide.outputs.tip }}
+        run: |
+          set -uo pipefail
+          git config user.name "wing-commander[bot]"
+          git config user.email "wing-commander@users.noreply.github.com"
+          # Re-check what Decide saw: a branch that moved since, or one no
+          # longer at review, is not stranded and must not be stalled. (A push
+          # with github.token starts no downstream workflow; none is needed
+          # for a stalled hand-off.)
+          git fetch origin "$BRANCH"
+          if [ "$(git rev-parse "origin/$BRANCH")" != "$DECIDED_TIP" ]; then
+            echo "::warning::$BRANCH moved since Decide; not handing off"
+            exit 0
+          fi
+          git checkout -B "$BRANCH" "origin/$BRANCH"
+          stage_now="$(jq -r '.stage // ""' "$SPEC_DIR/spec-meta.json")"
+          want=review
+          if [ "$VERDICT" = "decision=comment-only" ]; then want=stalled; fi
+          if [ "$stage_now" != "$want" ]; then
+            echo "::warning::$SPEC_DIR is at stage $stage_now, not $want; not handing off"
+            exit 0
+          fi
+          # Commit, push, label and comment in that order; each must succeed
+          # before the next, and the marker comment is the last write.
+          if [ "$VERDICT" = "decision=migrate" ]; then
+            jq '.stage = "stalled"' "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/spec-meta.json" || exit 1
+            cp "$RUNNER_TEMP/spec-meta.json" "$SPEC_DIR/spec-meta.json" || exit 1
+            git add "$SPEC_DIR/spec-meta.json" || exit 1
+            git commit -m "implement: hand off stranded review lifecycle (stage stalled)" || exit 1
+            git push origin "$BRANCH" || exit 1
+          fi
+          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --add-label "stage:stalled" --remove-label "stage:review" || exit 1
+          next_iter="$(( $(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json") + 1 ))"
+          body="<!-- wing-commander-migrate-stranded-review -->"$'\n'"wing-commander: this lifecycle reached review with $COUNT buildable task(s) unchecked, so it is handed off. Remaining buildable tasks:"$'\n\n'"$ITEMS"$'\n\n'"Maintainer-only tasks (not built by the pipeline):"$'\n\n'"$MAINT"$'\n\n'"Resume with an implement dispatch (spec_dir=$SPEC_DIR, issue=$ISSUE, iteration=$next_iter)."
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "$body"

@@ -28,3 +28,14 @@ impl-unchecked-items<<WING_COMMANDER_IMPL_ITEMS_EOF
 WING_COMMANDER_IMPL_ITEMS_EOF
 maintainer-items<<WING_COMMANDER_MAINTAINER_ITEMS_EOF
 WING_COMMANDER_MAINTAINER_ITEMS_EOF
+buildable-checked-count=0
+buildable-unchecked-count=3
+buildable-unchecked-ids=T010 T011 T012
+buildable-unchecked-items<<WING_COMMANDER_BUILDABLE_ITEMS_EOF
+- [ ] T010 Run the gate suite and fix the fallout
+- [ ] T011 Run the full gate suite on `.github/scripts/x.py`
+- [ ] T012 Run the gate suite, then fix fallout
+WING_COMMANDER_BUILDABLE_ITEMS_EOF
+fold-unchecked-count=0
+fold-unchecked-items<<WING_COMMANDER_FOLD_ITEMS_EOF
+WING_COMMANDER_FOLD_ITEMS_EOF

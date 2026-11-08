@@ -1358,7 +1358,9 @@ jobs:
                each task phase completes (commit messages prefixed
                "implement:"); push after every phase — do not defer all
                pushes to the end, so partial work survives if this run is
-               interrupted (e.g. by the turn budget).
+               interrupted (e.g. by the turn budget). Keep building every
+               buildable unchecked task across phases in this one run: a
+               phase checkpoint is a place to push, not a stopping point.
             2. Update ${{ steps.spec.outputs.spec-dir }}/spec-meta.json to
                "stage": "implement" and
                "iteration": ${{ inputs.iteration }},
@@ -1729,6 +1731,7 @@ jobs:
         with:
           ref: ${{ steps.base.outputs.base-sha }}
           path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+          gate-suite-ready: ${{ needs.gate-suite-implement-cycle.outputs.ready == 'true' && 'true' || 'false' }}
 
       - name: Count tasks.md checkboxes at tip (cycle)
         id: checkbox-tip-cycle
@@ -1737,6 +1740,7 @@ jobs:
         with:
           ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+          gate-suite-ready: ${{ needs.gate-suite-implement-cycle.outputs.ready == 'true' && 'true' || 'false' }}
 
       # specs/090-stage-write-boundary (FR-006): classifies the tip's own
       # unchecked items (checkbox-tip-cycle's own text, never a second read
@@ -1815,6 +1819,10 @@ jobs:
           IMPL_CHECKED_BASE: ${{ steps.checkbox-base-cycle.outputs.impl-checked-count }}
           IMPL_CHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-checked-count }}
           IMPL_UNCHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-unchecked-count }}
+          BUILDABLE_CHECKED_BASE: ${{ steps.checkbox-base-cycle.outputs.buildable-checked-count }}
+          BUILDABLE_CHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.buildable-checked-count }}
+          BUILDABLE_UNCHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.buildable-unchecked-count }}
+          INTENDED_TURNS: ${{ inputs.max-turns }}
           IMPL_UNCHECKED_IDS_BASE: ${{ steps.checkbox-base-cycle.outputs.impl-unchecked-ids }}
           IMPL_IDS_TIP: ${{ steps.checkbox-tip-cycle.outputs.impl-ids }}
           # Ids earlier cycles dropped (spec-meta.json's dropped_task_ids at
@@ -1927,7 +1935,11 @@ jobs:
           # neither hold the loop open nor count as progress, and a healthy
           # cycle that checked nothing new now hands off only on a validated
           # blocker or the iteration cap.
-          decision="$(OK="$ok" TRUNCATED="$truncated" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "$ok" != true ] || { [ "$truncated" != true ] && [ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false; })")"; }
+          # specs/123 FR-003: turns used come from the run's execution record,
+          # the budget is the intended-turns input; the line itself is
+          # formatted solely by decide-implement-outcome.sh.
+          turns_used="$(jq -r 'if type=="array" then . else [.] end | map(select(.type=="result")) | last | .num_turns // empty' "$RUNNER_TEMP/claude-execution-output.json" 2>/dev/null)" || turns_used=""
+          decision="$(OK="$ok" TRUNCATED="$truncated" TURNS_USED="$turns_used" TURN_BUDGET="${INTENDED_TURNS:-}" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "$ok" != true ] || { [ "$truncated" != true ] && [ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false; })")"; }
           pick() { printf '%s\n' "$decision" | grep -m1 "^$1=" | cut -d= -f2- || true; }
           converged="$(pick converged)"
           progressed="$(pick progressed)"
@@ -1935,6 +1947,7 @@ jobs:
           stall_reason="$(pick stall-reason)"
           stall_comment="$(pick stall-comment)"
           dropped_ids="$(pick dropped-ids)"
+          cycle_outcome="$(pick cycle-outcome)"
           # Only a decision the script made says which ids to persist; the
           # fallback above leaves dropped_task_ids as it stands.
           dropped_known=false
@@ -2005,6 +2018,8 @@ jobs:
           echo "dropped-known=$dropped_known" >> "$GITHUB_OUTPUT"
           echo "routed=$routed" >> "$GITHUB_OUTPUT"
           echo "write-boundary-findings-json=$WRITE_BOUNDARY_FINDINGS_JSON" >> "$GITHUB_OUTPUT"
+          echo "cycle-outcome=$cycle_outcome" >> "$GITHUB_OUTPUT"
+          [ -z "$cycle_outcome" ] || echo "$cycle_outcome" >> "$GITHUB_STEP_SUMMARY"
           echo "Cycle: tasks.md unchecked-count at tip = ${UNCHECKED_TIP:-0}, progressed=${progressed:-n/a}." >> "$GITHUB_STEP_SUMMARY"
           {
             echo "remaining<<WING_COMMANDER_REMAINING_EOF"
@@ -2374,7 +2389,9 @@ jobs:
                each task phase completes (commit messages prefixed
                "implement:"); push after every phase — do not defer all
                pushes to the end, so partial work survives if this run is
-               interrupted (e.g. by the turn budget).
+               interrupted (e.g. by the turn budget). Keep building every
+               buildable unchecked task across phases in this one run: a
+               phase checkpoint is a place to push, not a stopping point.
             3. Update ${{ steps.spec.outputs.spec-dir }}/spec-meta.json to
                "stage": "implement" and
                "iteration": ${{ inputs.iteration }},
@@ -2708,6 +2725,7 @@ jobs:
         with:
           ref: ${{ steps.retry-base.outputs.base-sha }}
           path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+          gate-suite-ready: ${{ needs.gate-suite-implement-cycle.outputs.ready == 'true' && 'true' || 'false' }}
 
       - name: Count tasks.md checkboxes at tip (retry)
         id: checkbox-tip-retry
@@ -2716,6 +2734,7 @@ jobs:
         with:
           ref: origin/${{ inputs.spec-prefix }}${{ steps.spec.outputs.slug }}
           path: ${{ steps.spec.outputs.spec-dir }}/tasks.md
+          gate-suite-ready: ${{ needs.gate-suite-implement-cycle.outputs.ready == 'true' && 'true' || 'false' }}
 
       # specs/090-stage-write-boundary (FR-006): mirrors the cycle arm's
       # identical classification step above.
@@ -2773,6 +2792,10 @@ jobs:
           IMPL_CHECKED_BASE: ${{ steps.checkbox-base-retry.outputs.impl-checked-count }}
           IMPL_CHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-checked-count }}
           IMPL_UNCHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-unchecked-count }}
+          BUILDABLE_CHECKED_BASE: ${{ steps.checkbox-base-retry.outputs.buildable-checked-count }}
+          BUILDABLE_CHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.buildable-checked-count }}
+          BUILDABLE_UNCHECKED_TIP: ${{ steps.checkbox-tip-retry.outputs.buildable-unchecked-count }}
+          INTENDED_TURNS: ${{ inputs.max-turns }}
           IMPL_UNCHECKED_IDS_BASE: ${{ steps.checkbox-base-retry.outputs.impl-unchecked-ids }}
           IMPL_IDS_TIP: ${{ steps.checkbox-tip-retry.outputs.impl-ids }}
           # The retry's base already carries the primary attempt's tasks.md
@@ -2871,7 +2894,8 @@ jobs:
           # specs/117-implement-stall-handoff: the one shared stop rule,
           # measured from the RETRY's own base -- see "Read back cycle
           # outcome" above.
-          decision="$(OK="$ok" TRUNCATED="$truncated" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "$ok" != true ] || { [ "$truncated" != true ] && [ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false; })")"; }
+          turns_used="$(jq -r 'if type=="array" then . else [.] end | map(select(.type=="result")) | last | .num_turns // empty' "$RUNNER_TEMP/claude-execution-output.json" 2>/dev/null)" || turns_used=""
+          decision="$(OK="$ok" TRUNCATED="$truncated" TURNS_USED="$turns_used" TURN_BUDGET="${INTENDED_TURNS:-}" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "$ok" != true ] || { [ "$truncated" != true ] && [ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false; })")"; }
           pick() { printf '%s\n' "$decision" | grep -m1 "^$1=" | cut -d= -f2- || true; }
           converged="$(pick converged)"
           progressed="$(pick progressed)"
@@ -2879,6 +2903,7 @@ jobs:
           stall_reason="$(pick stall-reason)"
           stall_comment="$(pick stall-comment)"
           dropped_ids="$(pick dropped-ids)"
+          cycle_outcome="$(pick cycle-outcome)"
           # Only a decision the script made says which ids to persist; the
           # fallback above leaves dropped_task_ids as it stands.
           dropped_known=false
@@ -2932,6 +2957,8 @@ jobs:
           echo "dropped-known=$dropped_known" >> "$GITHUB_OUTPUT"
           echo "routed=$routed" >> "$GITHUB_OUTPUT"
           echo "write-boundary-findings-json=$WRITE_BOUNDARY_FINDINGS_JSON" >> "$GITHUB_OUTPUT"
+          echo "cycle-outcome=$cycle_outcome" >> "$GITHUB_OUTPUT"
+          [ -z "$cycle_outcome" ] || echo "$cycle_outcome" >> "$GITHUB_STEP_SUMMARY"
           echo "Retry: tasks.md unchecked-count at tip = ${UNCHECKED_TIP:-0}, progressed=${progressed:-n/a}." >> "$GITHUB_STEP_SUMMARY"
           {
             echo "remaining<<WING_COMMANDER_REMAINING_EOF"
@@ -3038,6 +3065,8 @@ jobs:
           RETRY_REASON: ${{ steps.retry-outcome.outputs.reason }}
           PRIMARY_STALL_COMMENT: ${{ steps.outcome.outputs.stall-comment }}
           RETRY_STALL_COMMENT: ${{ steps.retry-outcome.outputs.stall-comment }}
+          PRIMARY_CYCLE_OUTCOME: ${{ steps.outcome.outputs.cycle-outcome }}
+          RETRY_CYCLE_OUTCOME: ${{ steps.retry-outcome.outputs.cycle-outcome }}
           PRIMARY_DROPPED_IDS: ${{ steps.outcome.outputs.dropped-ids }}
           PRIMARY_DROPPED_KNOWN: ${{ steps.outcome.outputs.dropped-known }}
           RETRY_DROPPED_IDS: ${{ steps.retry-outcome.outputs.dropped-ids }}
@@ -3046,9 +3075,9 @@ jobs:
           RETRY_NORMALISED: ${{ steps.retry-verdict.outputs.normalised-transcript }}
         run: |
           if [ "$RETRY_RAN" = "true" ]; then
-            ok="$RETRY_OK"; truncated="$RETRY_TRUNCATED"; converged="$RETRY_CONVERGED"; progressed="$RETRY_PROGRESSED"; handoff="$RETRY_HANDOFF"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"; routed="$RETRY_ROUTED"; write_boundary_findings_json="$RETRY_WRITE_BOUNDARY_FINDINGS_JSON"; stall_comment="$RETRY_STALL_COMMENT"; dropped_ids="$RETRY_DROPPED_IDS"; dropped_known="$RETRY_DROPPED_KNOWN"
+            ok="$RETRY_OK"; truncated="$RETRY_TRUNCATED"; converged="$RETRY_CONVERGED"; progressed="$RETRY_PROGRESSED"; handoff="$RETRY_HANDOFF"; remaining="$RETRY_REMAINING"; tier="$ESCALATION_MODEL"; reason="$RETRY_REASON"; routed="$RETRY_ROUTED"; write_boundary_findings_json="$RETRY_WRITE_BOUNDARY_FINDINGS_JSON"; stall_comment="$RETRY_STALL_COMMENT"; cycle_outcome="$RETRY_CYCLE_OUTCOME"; dropped_ids="$RETRY_DROPPED_IDS"; dropped_known="$RETRY_DROPPED_KNOWN"
           else
-            ok="$PRIMARY_OK"; truncated="$PRIMARY_TRUNCATED"; converged="$PRIMARY_CONVERGED"; progressed="$PRIMARY_PROGRESSED"; handoff="$PRIMARY_HANDOFF"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"; routed="$PRIMARY_ROUTED"; write_boundary_findings_json="$PRIMARY_WRITE_BOUNDARY_FINDINGS_JSON"; stall_comment="$PRIMARY_STALL_COMMENT"; dropped_ids="$PRIMARY_DROPPED_IDS"; dropped_known="$PRIMARY_DROPPED_KNOWN"
+            ok="$PRIMARY_OK"; truncated="$PRIMARY_TRUNCATED"; converged="$PRIMARY_CONVERGED"; progressed="$PRIMARY_PROGRESSED"; handoff="$PRIMARY_HANDOFF"; remaining="$PRIMARY_REMAINING"; tier="$PRIMARY_TIER"; reason="$PRIMARY_REASON"; routed="$PRIMARY_ROUTED"; write_boundary_findings_json="$PRIMARY_WRITE_BOUNDARY_FINDINGS_JSON"; stall_comment="$PRIMARY_STALL_COMMENT"; cycle_outcome="$PRIMARY_CYCLE_OUTCOME"; dropped_ids="$PRIMARY_DROPPED_IDS"; dropped_known="$PRIMARY_DROPPED_KNOWN"
           fi
           # A retry the API refused before its first model response — e.g. a
           # spend/rate-limit kill, observed live on issue #231's stall notice —
@@ -3097,6 +3126,7 @@ jobs:
             echo "progressed=$progressed"
             echo "handoff=$handoff"
             echo "stall-comment=$stall_comment"
+            echo "cycle-outcome=$cycle_outcome"
             echo "dropped-ids=$dropped_ids"
             echo "dropped-known=$dropped_known"
             echo "tier=$tier"
@@ -3626,6 +3656,11 @@ jobs:
       # maintainer accepts a retag by removing the id from dropped_task_ids
       # in spec-meta.json on the branch between cycles. Left as it stands
       # when no stop-rule decision ran (DROPPED_KNOWN != true).
+      # It also records this cycle's gate-suite readiness as
+      # gate_suite_ready (specs/123 FR-010): count-tasks-checkboxes.sh reads
+      # it back for every caller that passes none (finalize, the review
+      # gate, the migration), so they classify a "run the gate suite" task
+      # the way this cycle did.
       - name: Record truncated-cycle count
         id: record-truncation-commit
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true'
@@ -3637,6 +3672,7 @@ jobs:
           TIER: ${{ steps.final.outputs.tier }}
           DROPPED_IDS: ${{ steps.final.outputs.dropped-ids }}
           DROPPED_KNOWN: ${{ steps.final.outputs.dropped-known }}
+          GATE_READY_NOW: ${{ needs.gate-suite-implement-cycle.outputs.ready == 'true' && 'true' || 'false' }}
           BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
         continue-on-error: true
         run: |
@@ -3661,14 +3697,17 @@ jobs:
           if [ "${DROPPED_KNOWN:-}" = "true" ]; then
             new_dropped=$(jq -cn --arg ids "${DROPPED_IDS:-}" '$ids | split(" ") | map(select(. != ""))')
           fi
-          if [ "$new_count" = "$current" ] && [ "$new_tier" = "$current_tier" ] && [ "$new_dropped" = "$current_dropped" ]; then
+          current_ready=$(jq -r 'if .gate_suite_ready == false then "false" elif .gate_suite_ready == true then "true" else "" end' "$SPEC_DIR/spec-meta.json")
+          if [ "$new_count" = "$current" ] && [ "$new_tier" = "$current_tier" ] && [ "$new_dropped" = "$current_dropped" ] && { [ -z "${GATE_READY_NOW:-}" ] || [ "$GATE_READY_NOW" = "$current_ready" ]; }; then
             # Nothing to persist — the value already on the branch is
             # current, so the count reported here is trustworthy as-is.
             echo "count=$new_count" >> "$GITHUB_OUTPUT"
           else
             jq --argjson n "$new_count" --arg tier "$new_tier" --argjson dropped "$new_dropped" \
+              --arg ready "${GATE_READY_NOW:-}" \
               '.truncated_count = $n | .truncated_tier = (if $tier == "" then null else $tier end)
-               | if ($dropped | length) == 0 then del(.dropped_task_ids) else .dropped_task_ids = $dropped end' \
+               | if ($dropped | length) == 0 then del(.dropped_task_ids) else .dropped_task_ids = $dropped end
+               | if $ready == "" then . else .gate_suite_ready = ($ready == "true") end' \
               "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/meta.json"
             mv "$RUNNER_TEMP/meta.json" "$SPEC_DIR/spec-meta.json"
             git config user.name  "${BOT_SLUG}[bot]"
@@ -3678,8 +3717,10 @@ jobs:
               git commit -q -m "implement: record truncated cycle (consecutive count=$new_count, tier=$new_tier)"
             elif [ "$new_count" != "$current" ] || [ "$new_tier" != "$current_tier" ]; then
               git commit -q -m "implement: reset truncated-cycle count"
-            else
+            elif [ "$new_dropped" != "$current_dropped" ]; then
               git commit -q -m "implement: record dropped task ids ($(printf '%s' "$new_dropped" | jq -r 'join(" ")'))"
+            else
+              git commit -q -m "implement: record gate-suite readiness ($GATE_READY_NOW)"
             fi
             # The count is reported ONLY once the push below actually lands
             # (see "Report the truncated-cycle count").
@@ -3816,6 +3857,26 @@ jobs:
           gh issue edit "$ISSUE" --remove-label "stage:tasks"   2>/dev/null || true
           gh issue edit "$ISSUE" --remove-label "stage:stalled" 2>/dev/null || true
 
+      # specs/123 FR-015: a stalled hand-off is resumed one cycle at a time
+      # (iteration recorded+1), so a completed later cycle lifts the
+      # `stage:stalled` label the first-cycle flip above never reaches.
+      # Removing an absent label is a no-op, so ordinary later cycles
+      # change nothing.
+      - name: Lift stalled label (resumed cycle)
+        id: lift-stalled
+        if: >-
+          steps.lifecycle-gate.outputs.is-open == 'true' &&
+          steps.guard.outputs.skip != 'true' &&
+          steps.final.outputs.ok == 'true' &&
+          steps.final.outputs.handoff != 'true' &&
+          inputs.iteration > 1
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE: ${{ inputs.issue-number }}
+        run: |
+          gh issue edit "$ISSUE" --remove-label "stage:stalled" 2>/dev/null || true
+
       # Exactly one outbound hand-off per completed cycle — finalize
       # (converged), the next iteration (below the cap), or, at the cap, the
       # remaining-work report plus a non-converged finalize. Deterministic; no
@@ -3839,6 +3900,9 @@ jobs:
           ROUTED: ${{ steps.final.outputs.routed }}
           REASON: ${{ steps.final.outputs.reason }}
           STALL_COMMENT: ${{ steps.final.outputs.stall-comment }}
+          CYCLE_OUTCOME: ${{ steps.final.outputs.cycle-outcome }}
+          BUILDABLE_RETRY: ${{ steps.checkbox-tip-retry.outputs.buildable-unchecked-count }}
+          BUILDABLE_CYCLE: ${{ steps.checkbox-tip-cycle.outputs.buildable-unchecked-count }}
           TIER: ${{ steps.final.outputs.tier }}
           REMAINING: ${{ steps.final.outputs.remaining }}
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
@@ -3856,6 +3920,8 @@ jobs:
           # convergence-signal.md §4). One home for that body (CLAUDE.md
           # "Shared logic has exactly one home" applies within a single
           # script too); only the heading and step-summary line differ.
+          # The retry arm's count wins when that arm ran (empty otherwise).
+          BUILDABLE_LEFT="${BUILDABLE_RETRY:-$BUILDABLE_CYCLE}"
           post_handoff_remaining_work() {
             fence='```'
             reason_line=""
@@ -3877,6 +3943,15 @@ jobs:
                 reason_line="$STALL_COMMENT"
               fi
             fi
+            skip_finalize=false
+            if [ -n "$NEXT_WORKFLOW" ] && [ -n "$BUILDABLE_LEFT" ] && [ "$BUILDABLE_LEFT" != "0" ]; then
+              skip_finalize=true
+            fi
+            if [ "$skip_finalize" = "true" ]; then
+              closing="$BUILDABLE_LEFT buildable item(s) remain, so finalization was not dispatched and the lifecycle is **stalled** until another implement run builds them."
+            else
+              closing="Handing off to finalization flagged **converged=false**; the final PR will carry this remaining work for human review."
+            fi
             body=$(printf '%s\n' \
               "$1" \
               "" \
@@ -3885,11 +3960,23 @@ jobs:
               "$REMAINING" \
               "$fence" \
               "" \
-              "Handing off to finalization flagged **converged=false**; the final PR will carry this remaining work for human review." \
+              "$closing" \
               "" \
               "_[Final cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_" \
               "" \
+              "$CYCLE_OUTCOME" \
+              "" \
               "$COST_LINE")
+            if [ "$skip_finalize" = "true" ]; then
+              # FR-015/FR-015a: buildable tasks remain, so finalize would
+              # refuse; dispatch nothing. The comment, spec-meta stalled and
+              # the label are written by the next step through the one
+              # shared hand-off -- see wing-commander-stalled-handoff.
+              printf '%s\n' "$body" > "$RUNNER_TEMP/stalled-body.md"
+              echo "WC_STALLED_HANDOFF=true" >> "$GITHUB_ENV"
+              echo "$2 — reported remaining work; $BUILDABLE_LEFT buildable item(s) remain, so $NEXT_WORKFLOW was not dispatched." >> "$GITHUB_STEP_SUMMARY"
+              return 0
+            fi
             GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
             if [ -n "$NEXT_WORKFLOW" ]; then
               GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$NEXT_WORKFLOW" \
@@ -3905,8 +3992,9 @@ jobs:
                 -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f converged=true
               echo "Converged after iteration $ITERATION — dispatched $NEXT_WORKFLOW (converged=true)." >> "$GITHUB_STEP_SUMMARY"
             else
-              body=$(printf '%s\n\n%s' \
+              body=$(printf '%s\n\n%s\n\n%s' \
                 "✅ **Implementation converged** after cycle $ITERATION. No finalize workflow is configured for automatic hand-off — dispatch one manually with \`spec_dir=$SPEC_DIR\`, \`issue=$ISSUE\`, \`converged=true\` when ready." \
+                "$CYCLE_OUTCOME" \
                 "$COST_LINE")
               GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
               echo "Converged after iteration $ITERATION — no next-workflow configured; reported to the issue and stopped (standalone mode)." >> "$GITHUB_STEP_SUMMARY"
@@ -4014,6 +4102,25 @@ jobs:
               "⚠️ **Iteration cap reached** — cycle $ITERATION of $MAX completed without converging. Remaining work identified by the last convergence pass:" \
               "Iteration cap ($MAX) reached without convergence"
           fi
+
+      # specs/123 FR-015/FR-015a: "Dispatch next step" skipped the finalize
+      # dispatch because buildable tasks remain; end the cycle in
+      # stage:stalled with spec-meta `stalled` and the one marker comment,
+      # all through the shared hand-off -- see wing-commander-stalled-handoff.
+      # Gated on env, not a step output (Gate 24 reads a step reference in
+      # an if: as a guard).
+      - name: Hand off to stalled (buildable tasks remain)
+        id: stalled-handoff
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true' && env.WC_STALLED_HANDOFF == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stalled-handoff
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ inputs.issue-number }}
+          spec-dir: ${{ steps.spec.outputs.spec-dir }}
+          slug: ${{ steps.spec.outputs.slug }}
+          bot-slug: ${{ steps.ctx.outputs.bot-slug }}
+          body-file: ${{ runner.temp }}/stalled-body.md
+          marker-kind: implement-buildable-handoff
 
       # Deferred to the job's last steps, one per agent-step chain -- see
       # clarify.yml's copy of this note (review-step-gating skill, spec 052

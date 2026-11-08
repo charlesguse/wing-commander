@@ -1,0 +1,2 @@
+- [ ] T001 Edit `.claude/settings.json` to allow the new command
+- [ ] T002 Add `src/app.py` handler
