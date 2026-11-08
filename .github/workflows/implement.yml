@@ -3932,6 +3932,15 @@ jobs:
                 reason_line="$STALL_COMMENT"
               fi
             fi
+            skip_finalize=false
+            if [ -n "$NEXT_WORKFLOW" ] && [ -n "$BUILDABLE_LEFT" ] && [ "$BUILDABLE_LEFT" != "0" ]; then
+              skip_finalize=true
+            fi
+            if [ "$skip_finalize" = "true" ]; then
+              closing="$BUILDABLE_LEFT buildable item(s) remain, so finalization was not dispatched and the lifecycle is **stalled** until another implement run builds them."
+            else
+              closing="Handing off to finalization flagged **converged=false**; the final PR will carry this remaining work for human review."
+            fi
             body=$(printf '%s\n' \
               "$1" \
               "" \
@@ -3940,19 +3949,25 @@ jobs:
               "$REMAINING" \
               "$fence" \
               "" \
-              "Handing off to finalization flagged **converged=false**; the final PR will carry this remaining work for human review." \
+              "$closing" \
               "" \
               "_[Final cycle run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})_" \
               "" \
               "$CYCLE_OUTCOME" \
               "" \
               "$COST_LINE")
-            GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
-            if [ -n "$NEXT_WORKFLOW" ] && [ -n "$BUILDABLE_LEFT" ] && [ "$BUILDABLE_LEFT" != "0" ]; then
-              # FR-015: buildable tasks remain, so finalize would refuse;
-              # dispatch nothing and leave the lifecycle for an implement run.
+            if [ "$skip_finalize" = "true" ]; then
+              # FR-015/FR-015a: buildable tasks remain, so finalize would
+              # refuse; dispatch nothing. The comment, spec-meta stalled and
+              # the label are written by the next step through the one
+              # shared hand-off -- see wing-commander-stalled-handoff.
+              printf '%s\n' "$body" > "$RUNNER_TEMP/stalled-body.md"
+              echo "WC_STALLED_HANDOFF=true" >> "$GITHUB_ENV"
               echo "$2 — reported remaining work; $BUILDABLE_LEFT buildable item(s) remain, so $NEXT_WORKFLOW was not dispatched." >> "$GITHUB_STEP_SUMMARY"
-            elif [ -n "$NEXT_WORKFLOW" ]; then
+              return 0
+            fi
+            GH_TOKEN="$APP_TOKEN" gh issue comment "$ISSUE" --body "$body"
+            if [ -n "$NEXT_WORKFLOW" ]; then
               GH_TOKEN="$DISPATCH_TOKEN" gh workflow run "$NEXT_WORKFLOW" \
                 -f spec_dir="$SPEC_DIR" -f issue="$ISSUE" -f converged=false
               echo "$2 — reported remaining work and dispatched $NEXT_WORKFLOW (converged=false)." >> "$GITHUB_STEP_SUMMARY"
@@ -4076,6 +4091,25 @@ jobs:
               "⚠️ **Iteration cap reached** — cycle $ITERATION of $MAX completed without converging. Remaining work identified by the last convergence pass:" \
               "Iteration cap ($MAX) reached without convergence"
           fi
+
+      # specs/123 FR-015/FR-015a: "Dispatch next step" skipped the finalize
+      # dispatch because buildable tasks remain; end the cycle in
+      # stage:stalled with spec-meta `stalled` and the one marker comment,
+      # all through the shared hand-off -- see wing-commander-stalled-handoff.
+      # Gated on env, not a step output (Gate 24 reads a step reference in
+      # an if: as a guard).
+      - name: Hand off to stalled (buildable tasks remain)
+        id: stalled-handoff
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.final.outputs.ok == 'true' && env.WC_STALLED_HANDOFF == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stalled-handoff
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ inputs.issue-number }}
+          spec-dir: ${{ steps.spec.outputs.spec-dir }}
+          slug: ${{ steps.spec.outputs.slug }}
+          bot-slug: ${{ steps.ctx.outputs.bot-slug }}
+          body-file: ${{ runner.temp }}/stalled-body.md
+          marker-kind: implement-buildable-handoff
 
       # Deferred to the job's last steps, one per agent-step chain -- see
       # clarify.yml's copy of this note (review-step-gating skill, spec 052

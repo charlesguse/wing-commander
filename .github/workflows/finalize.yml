@@ -1373,25 +1373,23 @@ jobs:
           # outputs (Gate 24 reads a step reference in an if: as a guard).
           echo "WC_BUILDABLE_REFUSED=true" >> "$GITHUB_ENV"
           echo "reason=buildable tasks remain ($BUILDABLE_COUNT unchecked)" >> "$GITHUB_OUTPUT"
-          next_iter="$(( $(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json") + 1 ))"
-          marker="<!-- wing-commander-finalize-buildable-refusal iteration=$next_iter -->"
-          if [ "$(jq -r '.stage // ""' "$SPEC_DIR/spec-meta.json")" != "stalled" ]; then
-            jq '.stage = "stalled"' "$SPEC_DIR/spec-meta.json" > "$RUNNER_TEMP/meta.json" && mv "$RUNNER_TEMP/meta.json" "$SPEC_DIR/spec-meta.json"
-            git add "$SPEC_DIR/spec-meta.json"
-            git config user.name  "${BOT_SLUG}[bot]"
-            git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
-            git commit -m "finalize: $SLUG -> stalled (#$ISSUE, buildable tasks remain)" || exit 1
-            git push || exit 1
-          fi
-          gh label create "stage:stalled" --color B60205 --description "Lifecycle waiting for an implement dispatch" --force || true
-          gh issue edit "$ISSUE" --add-label "stage:stalled" --remove-label "stage:review" 2>/dev/null \
-            || gh issue edit "$ISSUE" --add-label "stage:stalled" || exit 1
-          if gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json comments --jq '.comments[].body' | grep -qF "$marker"; then
-            echo "refusal comment for iteration $next_iter already posted" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          body="$marker"$'\n'"wing-commander finalize stage: $BUILDABLE_COUNT buildable task(s) are still unchecked in tasks.md, so no final pull request was opened. Another implement run must build them:"$'\n\n'"$BUILDABLE_ITEMS"$'\n\n'"Resume with an implement dispatch (spec_dir=$SPEC_DIR, issue=$ISSUE, iteration=$next_iter)."
-          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "$body"
+          # The hand-off itself (spec-meta stalled, label, marker comment)
+          # has one home -- see wing-commander-stalled-handoff.
+          printf '%s\n\n%s\n' "wing-commander finalize stage: $BUILDABLE_COUNT buildable task(s) are still unchecked in tasks.md, so no final pull request was opened. Another implement run must build them:" "$BUILDABLE_ITEMS" > "$RUNNER_TEMP/stalled-body.md"
+
+      - name: Hand off to stalled (buildable tasks remain)
+        id: buildable-handoff
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && env.WC_BUILDABLE_REFUSED == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-stalled-handoff
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+          issue-number: ${{ inputs.issue-number }}
+          spec-dir: ${{ steps.spec.outputs.spec-dir }}
+          slug: ${{ steps.spec.outputs.slug }}
+          bot-slug: ${{ steps.ctx.outputs.bot-slug }}
+          body-file: ${{ runner.temp }}/stalled-body.md
+          marker-kind: finalize-buildable-refusal
+          commit-stage: finalize
 
       # The feature name for the PR title, from spec.md's title heading.
       - name: Determine feature title

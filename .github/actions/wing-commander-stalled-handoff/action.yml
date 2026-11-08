@@ -1,0 +1,62 @@
+# wing-commander-stalled-handoff — the FR-015/FR-015a stalled hand-off.
+#
+# The front door to `_shared/stalled-handoff.sh`, the one home of the
+# hand-off a lifecycle takes when buildable tasks remain and nothing may be
+# dispatched (specs/123-implement-task-completion). finalize's refusal step
+# and implement's skip branch both call this composite; neither keeps an
+# inline copy. A published stage may not resolve `_shared/` itself (Gate 60).
+#
+# Constitution VII: part of the published surface; adding it is a
+# minor-version change at the next release.
+name: wing-commander-stalled-handoff
+description: >-
+  Sets spec-meta stage to stalled (commit and push), adds the stage:stalled
+  label and posts one marker comment naming the implement dispatch at the
+  recorded iteration + 1. Fails before the label and comment when the
+  commit or push fails. Idempotent on the marker.
+inputs:
+  token:
+    description: "Token for git pushes and gh writes."
+    required: true
+  issue-number:
+    description: "Lifecycle issue number."
+    required: true
+  spec-dir:
+    description: "Repository-relative spec directory."
+    required: true
+  slug:
+    description: "Spec slug, for the commit subject."
+    required: true
+  bot-slug:
+    description: "Bot app slug used as the commit identity."
+    required: true
+  body-file:
+    description: "File holding the comment prose (marker and resume line are added)."
+    required: true
+  marker-kind:
+    description: "Marker name, e.g. finalize-buildable-refusal."
+    required: true
+  commit-stage:
+    description: "Commit-subject prefix (the calling stage)."
+    required: false
+    default: "implement"
+  commit-reason:
+    description: "Short reason for the commit subject."
+    required: false
+    default: "buildable tasks remain"
+runs:
+  using: composite
+  steps:
+    - name: Stalled hand-off
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ISSUE: ${{ inputs.issue-number }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
+        SLUG: ${{ inputs.slug }}
+        BOT_SLUG: ${{ inputs.bot-slug }}
+        BODY_FILE: ${{ inputs.body-file }}
+        MARKER_KIND: ${{ inputs.marker-kind }}
+        COMMIT_STAGE: ${{ inputs.commit-stage }}
+        COMMIT_REASON: ${{ inputs.commit-reason }}
+      run: bash "$GITHUB_ACTION_PATH/../_shared/stalled-handoff.sh"

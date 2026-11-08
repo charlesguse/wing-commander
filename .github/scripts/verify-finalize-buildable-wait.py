@@ -52,10 +52,23 @@ def check_wiring(failures):
     step = m.group(0) if m else ""
     if re.search(r"^\s*exit 1\s*$", step, re.M):
         failures.append("finalize.yml buildable-wait refusal must not end with a bare `exit 1`")
-    for needle in ("WC_BUILDABLE_REFUSED=true", "reason=", "stage:stalled", '.stage = "stalled"',
-                   "wing-commander-finalize-buildable-refusal iteration=", "iteration=$next_iter"):
+    for needle in ("WC_BUILDABLE_REFUSED=true", "reason="):
         if needle not in step:
             failures.append(f"finalize.yml buildable-wait refusal missing {needle!r}")
+    # Single home: the hand-off lives in the shared helper, not inline.
+    code = "\n".join(l for l in step.splitlines() if not l.lstrip().startswith("#"))
+    for needle in ("stage:stalled", '.stage = "stalled"', "gh issue comment", "git push"):
+        if needle in code:
+            failures.append(f"finalize.yml buildable-wait step holds an inline copy of the stalled hand-off ({needle!r})")
+    if "wing-commander-stalled-handoff" not in fin:
+        failures.append("finalize.yml must call the wing-commander-stalled-handoff composite")
+    helper = open(os.path.join(ROOT, ".github", "actions", "_shared", "stalled-handoff.sh")).read()
+    for needle in ("stage:stalled", '.stage = "stalled"', "iteration=${next_iter}",
+                   "git push || exit 1", "gh issue comment", "grep -qF"):
+        if needle not in helper:
+            failures.append(f"_shared/stalled-handoff.sh missing {needle!r}")
+    if helper.index("git push || exit 1") > helper.index("gh issue edit"):
+        failures.append("stalled-handoff.sh must push spec-meta before the label and comment")
     if "steps.buildable-wait.outputs.reason" not in fin:
         failures.append("finalize.yml refusal-reason output must include the buildable-wait reason")
     for sid in ("title", "pr", "verify-pr", "flip-label", "announce-summary",
@@ -64,8 +77,20 @@ def check_wiring(failures):
         if not m2 or "env.WC_BUILDABLE_REFUSED != 'true'" not in m2.group(1):
             failures.append(f"finalize.yml step {sid} must be gated on the buildable-wait refusal")
     imp = open(os.path.join(wf, "implement.yml")).read()
-    if 'elif [ -n "$NEXT_WORKFLOW" ]; then' not in imp or "buildable item(s) remain, so $NEXT_WORKFLOW was not dispatched" not in imp:
+    if "buildable item(s) remain, so $NEXT_WORKFLOW was not dispatched" not in imp:
         failures.append("implement.yml post_handoff_remaining_work must skip the finalize dispatch while buildable tasks remain")
+    # FR-015a: the skip branch ends in stalled through the shared helper and
+    # never promises finalization.
+    m3 = re.search(r"skip_finalize=false\n.*?return 0\n", imp, re.S)
+    skip = m3.group(0) if m3 else ""
+    if not skip or "WC_STALLED_HANDOFF=true" not in skip:
+        failures.append("implement.yml skip branch must request the stalled hand-off (WC_STALLED_HANDOFF=true)")
+    if "the final PR will carry this remaining work" in skip.split('else\n', 1)[0]:
+        failures.append("implement.yml skip branch must not promise finalization")
+    if "wing-commander-stalled-handoff" not in imp or "env.WC_STALLED_HANDOFF == 'true'" not in imp:
+        failures.append("implement.yml must call wing-commander-stalled-handoff when the skip branch fires")
+    if re.search(r'"\$closing"', imp) is None or "the lifecycle is **stalled**" not in imp:
+        failures.append("implement.yml skip-branch comment must say the lifecycle is stalled")
     gate = open(os.path.join(wf, "lifecycle-review-gate.yml")).read()
     if "_shared/count-tasks-checkboxes.sh" not in gate or "buildable-unchecked-count" not in gate:
         failures.append("lifecycle-review-gate.yml select must read the shared counter's buildable-unchecked-count")
