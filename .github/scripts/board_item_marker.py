@@ -92,6 +92,44 @@ def is_loop_branch(branch, issue_number):
     return re.fullmatch(pattern, branch) is not None
 
 
+# specs/121-board-backlog-line-items (research.md D5/D7): the canonical
+# statement of how a board-loop job works a Maintenance backlog line rather
+# than an issue. The select job's `line-id` output reaches every later job
+# as BOARD_LINE_ID (job-level env). Set, it makes this module's issue-path
+# readers read only the markers keyed to that line, every marker written
+# carry it, and the stall rule hold the line (an annotation through
+# board_backlog_edit) where it would add board:stalled to the item issue --
+# the backlog issue is never labelled (FR-014, FR-017). Unset or empty --
+# every issue item, and every run while the feature is dark -- nothing here
+# behaves differently (FR-020). Other sites point here: -- see
+# board_item_marker.current_line_id().
+LINE_ENV = "BOARD_LINE_ID"
+
+
+def current_line_id():
+    """The backlog line id this job works (BOARD_LINE_ID), or None."""
+    return (os.environ.get(LINE_ENV) or "").strip() or None
+
+
+def _keep_marker(marker, include_line):
+    """Whether an issue-path reader keeps `marker`: a line job keeps only
+    its own line's markers; an issue job skips every line marker."""
+    if include_line:
+        return True
+    line_id = current_line_id()
+    if line_id:
+        return isinstance(marker, dict) and marker.get("line") == line_id
+    return not is_line_marker(marker)
+
+
+def is_line_branch(branch, issue_number, line_id):
+    """True when `branch` is exactly the fix branch for backlog line
+    `line_id` on `issue_number` (board_backlog_lines.branch_for()), the
+    line's counterpart of is_loop_branch(): every line lives on the one
+    backlog issue, so its slug alone cannot tell two lines apart (FR-007)."""
+    return bool(branch) and bool(line_id) and branch == "fix/{0}-{1}".format(issue_number, line_id)
+
+
 def find_latest_marker(issue_comments, bot_login, marker_re=MARKER_RE, open_re=MARKER_OPEN_RE,
                        skip_line=False):
     """issue_comments: a list of {"created_at": "...", "body": "...",
@@ -120,9 +158,11 @@ def find_latest_marker(issue_comments, bot_login, marker_re=MARKER_RE, open_re=M
             continue
         if skip_line:
             try:
-                if is_line_marker(json.loads(match.group(1))):
+                if not _keep_marker(json.loads(match.group(1)), False):
                     continue
             except ValueError:
+                if current_line_id():
+                    continue  # an unparsable marker names no line
                 pass
         dated_matches.append((comment.get("created_at") or "", match.group(1)))
     if not dated_matches:
@@ -167,7 +207,7 @@ def find_markers_matching(issue_comments, bot_login, predicate,
             continue
         if not isinstance(marker, dict) or not predicate(marker):
             continue
-        if not include_line and is_line_marker(marker):
+        if not _keep_marker(marker, include_line):
             continue  # a backlog-line marker is not an issue marker (specs/121)
         dated_matches.append((comment.get("created_at") or "", marker))
     dated_matches.sort(key=lambda pair: pair[0])
@@ -292,6 +332,8 @@ def write_marker(step, round, pr, branch, base_sha, spec_request=None,
         payload_dict["merge_sha"] = merge_sha
     # specs/121-board-backlog-line-items: the backlog line id a marker belongs
     # to; issue-path readers skip markers carrying it (is_line_marker()).
+    if line is None:
+        line = current_line_id()
     if line is not None:
         payload_dict["line"] = line
     payload = json.dumps(payload_dict, sort_keys=True)
@@ -452,10 +494,21 @@ def record_stall_summary(issue_number, from_step):
     this, each stall call site pasted its own copy of this
     line BEFORE that post, so a failed post still left the line's claim
     standing (maintainer review of #885)."""
+    line_id = current_line_id()
+    if line_id:
+        # The hold went on before the marker with a generic reason; this
+        # names the stall site on the line (FR-014). A failure leaves the
+        # line held, only less specific, so it never fails the stall.
+        _hold_line(issue_number, line_id, "board:stalled from {0}".format(from_step))
     path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not path:
         return
     with open(path, "a", encoding="utf-8") as fh:
+        if line_id:
+            fh.write(
+                "board-loop: backlog line {0} on #{1} -- stalled from {2} with the line held "
+                "and a stalled marker recorded.\n".format(line_id, issue_number, from_step))
+            return
         fh.write(
             "board-loop: issue #{0} -- stalled from {1} with board:stalled applied "
             "and a stalled marker recorded.\n".format(issue_number, from_step))
@@ -493,6 +546,11 @@ def add_stalled_label(issue_number, label, run=None):
     label-creation gate (verify-board-label-creation.py) still sees each
     job's apply. gh's own stdout (the issue URL) goes to stderr: stdout
     carries the marker alone."""
+    line_id = current_line_id()
+    if line_id:
+        # A line is held by its annotation, never by labelling the backlog
+        # issue (FR-014, FR-017) -- see current_line_id().
+        return _hold_line(issue_number, line_id, "board:stalled")
     run = run or subprocess.run
     repository = os.environ.get("GITHUB_REPOSITORY")
     if not repository:
@@ -511,6 +569,29 @@ def add_stalled_label(issue_number, label, run=None):
               "rendered, so the item is never left stalled without its label (#604).".format(
                   label, issue_number), file=sys.stderr)
     return ok
+
+
+def _hold_line(issue_number, line_id, reason):
+    """Holds backlog line `line_id` on `issue_number` with `reason`
+    through board_backlog_edit (FR-014, FR-024). True once the hold is on
+    the line; False, with `::error::` on stderr, otherwise -- a line that
+    is gone, ticked or duplicated (stand down, FR-016) or a write that
+    never landed (FR-015)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import board_backlog_edit as bbe
+    try:
+        apply_fn, verify = bbe._operations("hold", line_id, reason)
+        result = bbe.edit(issue_number, apply_fn, verify, fetch=bbe.gh_fetch, write=bbe.gh_write)
+    except (RuntimeError, OSError) as exc:
+        print(exc, file=sys.stderr)
+        result = bbe.FAILED
+    if result != bbe.APPLIED:
+        bbe.report(issue_number, "hold", line_id, result)
+        print("::error::board_item_marker: could not hold backlog line {0} on #{1} ({2}) -- no "
+              "stalled marker is rendered (#604, specs/121 FR-014/FR-016).".format(
+                  line_id, issue_number, result), file=sys.stderr)
+        return False
+    return True
 
 
 def _resolve_step(value):

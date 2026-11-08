@@ -96,6 +96,40 @@ def gh_write(issue, body):
     _gh(["issue", "edit", str(issue)] + repo_args + ["--body-file", "-"], stdin=body)
 
 
+def gh_comment(issue, body):
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    repo_args = ["-R", repo] if repo else []
+    _gh(["issue", "comment", str(issue)] + repo_args + ["--body-file", "-"], stdin=body)
+
+
+def report_text(op, line_id, result):
+    """The backlog-issue comment for an edit that did not land: a stand-down
+    (FR-016: the line is ticked, gone, or its id no longer names one line)
+    or exhausted retries (FR-015). None for an applied edit."""
+    if result == STAND_DOWN:
+        return ("Board loop: standing down from backlog line `{0}` ({1}) -- the line is "
+                "ticked, deleted, or its id no longer names exactly one line. Nothing was "
+                "written back; any open fix PR is left for a maintainer.".format(line_id, op))
+    if result == FAILED:
+        return ("Board loop: could not apply `{0}` to backlog line `{1}` -- concurrent edits "
+                "kept dropping it, so the body was left as it is. A maintainer should check "
+                "the line.".format(op, line_id))
+    return None
+
+
+def report(issue, op, line_id, result, comment=None):
+    """Posts report_text() on the backlog issue; never raises (the caller
+    already fails on the result itself)."""
+    text = report_text(op, line_id, result)
+    if text is None:
+        return
+    try:
+        (comment or gh_comment)(issue, text)
+    except (RuntimeError, OSError) as exc:
+        print("::warning::board_backlog_edit: could not report on #{0}: {1}".format(issue, exc),
+              file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--issue", type=int, required=True)
@@ -106,6 +140,7 @@ def main():
     args = parser.parse_args()
     apply_fn, verify = _operations(args.op, args.line_id, args.detail, args.url)
     result = edit(args.issue, apply_fn, verify, fetch=gh_fetch, write=gh_write)
+    report(args.issue, args.op, args.line_id, result)
     print(result)
     sys.exit(1 if result == FAILED else 0)
 

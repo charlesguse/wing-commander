@@ -1,0 +1,9 @@
+{
+  "op": "stall",
+  "line_id": "bl-0a1b2c3d",
+  "body": "- [x] flaky gate [wc:bl-0a1b2c3d fixed by #7]\n",
+  "expect_ok": false,
+  "expect_labelled": false,
+  "expect_body": "- [x] flaky gate [wc:bl-0a1b2c3d fixed by #7]\n",
+  "expect_report": true
+}

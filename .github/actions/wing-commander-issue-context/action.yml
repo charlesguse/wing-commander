@@ -83,6 +83,16 @@ inputs:
     description: "owner/repo to read from. Defaults to the current repository."
     required: false
     default: ${{ github.repository }}
+  line-id:
+    description: >
+      Optional. specs/121-board-backlog-line-items: the Maintenance backlog
+      line id when the board loop's item is a line on issue-number. Set,
+      context-file holds that one line's text, framed as untrusted data
+      (board_backlog_lines.line_context()), and no comment is read: comments
+      on the backlog are never a source of lines (FR-005, FR-007, FR-008).
+      Unset (every other caller), this input changes nothing.
+    required: false
+    default: ""
   occurrence-bot-login:
     description: >
       Optional. The `<slug>[bot]` login of the one App whose comments are
@@ -99,23 +109,23 @@ outputs:
       byte-for-byte intake.yml's own pre-extraction shape
       (contracts/comment-staging-format.md). Empty string when nothing
       qualifies -- no file is written in that case.
-    value: ${{ steps.fetch.outputs.comments-file }}
+    value: ${{ steps.line.outputs.comments-file || steps.fetch.outputs.comments-file }}
   context-file:
     description: >
       Path to a file with a "## Issue" section (title + body) followed by
       every qualifying comment section, same order and format as
       comments-file. Always non-empty -- an issue always has a title, even
       with zero qualifying comments.
-    value: ${{ steps.fetch.outputs.context-file }}
+    value: ${{ steps.line.outputs.context-file || steps.fetch.outputs.context-file }}
   total-count:
     description: Total comments on the issue, qualifying or not, bot or not.
-    value: ${{ steps.fetch.outputs.total-count }}
+    value: ${{ steps.line.outputs.total-count || steps.fetch.outputs.total-count }}
   qualifying-count:
     description: Comments that passed the trust filter. 0 reproduces title+body-only behavior.
-    value: ${{ steps.fetch.outputs.qualifying-count }}
+    value: ${{ steps.line.outputs.qualifying-count || steps.fetch.outputs.qualifying-count }}
   excluded-human-count:
     description: Non-bot comments where the trust filter's association/author-id clause failed.
-    value: ${{ steps.fetch.outputs.excluded-human-count }}
+    value: ${{ steps.line.outputs.excluded-human-count || steps.fetch.outputs.excluded-human-count }}
   bot-occurrences-file:
     description: >
       Path to a JSON array of {created_at, body}, oldest to newest, of the
@@ -123,18 +133,19 @@ outputs:
       no one else, and only when that login filed the issue with
       watchdog's fingerprint marker in its body (#520). Empty string
       otherwise -- no file is written in that case.
-    value: ${{ steps.fetch.outputs.bot-occurrences-file }}
+    value: ${{ steps.line.outputs.bot-occurrences-file || steps.fetch.outputs.bot-occurrences-file }}
   last-reopened-at:
     description: >
       created_at of the issue's newest `reopened` event, or empty when it
       was never reopened or occurrence-bot-login is unset (#520).
-    value: ${{ steps.fetch.outputs.last-reopened-at }}
+    value: ${{ steps.line.outputs.last-reopened-at || steps.fetch.outputs.last-reopened-at }}
 
 runs:
   using: composite
   steps:
     - name: Fetch issue and comments, apply the trust filter
       id: fetch
+      if: inputs.line-id == ''
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
@@ -212,3 +223,33 @@ runs:
         } >> "$GITHUB_OUTPUT"
 
         rm -f "$DIR/comments-raw.json" "$DIR/issue-raw.json"
+
+    # specs/121-board-backlog-line-items: a backlog line's context is that
+    # line alone. The script resolves from this composite's own trusted
+    # directory, as wing-commander-board-stop-check's does.
+    - name: Stage one Maintenance backlog line (specs/121)
+      id: line
+      if: inputs.line-id != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPOSITORY: ${{ inputs.repository }}
+        ISSUE: ${{ inputs.issue-number }}
+        LINE_ID: ${{ inputs.line-id }}
+      run: |
+        set -euo pipefail
+        DIR="/tmp/wing-commander/issue-context-$ISSUE-$LINE_ID"
+        mkdir -p "$DIR"
+        gh api "repos/${REPOSITORY}/issues/${ISSUE}" --jq '.body // ""' > "$DIR/backlog-body.md"
+        python3 -I "$GITHUB_ACTION_PATH/../../scripts/board_backlog_lines.py" --line-context "$ISSUE" "$LINE_ID" \
+          < "$DIR/backlog-body.md" > "$DIR/context.md"
+        rm -f "$DIR/backlog-body.md"
+        {
+          echo "comments-file="
+          echo "context-file=$DIR/context.md"
+          echo "total-count=0"
+          echo "qualifying-count=0"
+          echo "excluded-human-count=0"
+          echo "bot-occurrences-file="
+          echo "last-reopened-at="
+        } >> "$GITHUB_OUTPUT"
