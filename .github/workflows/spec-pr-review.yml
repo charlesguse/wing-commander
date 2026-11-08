@@ -144,9 +144,11 @@ jobs:
             if ! printf '%s' "$slug" | grep -Eq '^[0-9]{3}-[a-z0-9][a-z0-9-]*$'; then
               slug=""
             fi
-            # The lifecycle issue is the one the PR body names with "#N" in
-            # its closing/reference line; zero or several is a skip reason.
-            jq -c '[.body | scan("#([0-9]+)") | .[0] | tonumber] | unique' "$RUNNER_TEMP/pr-$number.json" > "$RUNNER_TEMP/pr-$number-issues.json"
+            # The lifecycle issue is the one intake's own body line names
+            # ("Closes nothing — lifecycle issue: #N", intake.yml); other
+            # "#N" citations in the body are not candidates. Zero or several
+            # such lines is a skip reason.
+            jq -c '[.body | scan("lifecycle issue: #([0-9]+)") | .[0] | tonumber] | unique' "$RUNNER_TEMP/pr-$number.json" > "$RUNNER_TEMP/pr-$number-issues.json"
             issue="$(jq -r 'if length == 1 then .[0] else "" end' "$RUNNER_TEMP/pr-$number-issues.json")"
 
             labels='[]'

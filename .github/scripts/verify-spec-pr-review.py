@@ -27,6 +27,44 @@ def subset(expect, got):
     return expect == got
 
 
+INTAKE_LINE = "Closes nothing — lifecycle issue: #"
+
+
+def check_issue_scan(wf_text):
+    """The select step's lifecycle-issue jq program, run as written in the
+    workflow, must pick intake's line out of a body that cites other issues
+    too (SC-001): spec PR bodies routinely do, and a scan of every "#N"
+    skipped them all as multiple-issues."""
+    out = []
+    intake = os.path.join(HERE, "..", "workflows", "intake.yml")
+    with open(intake, encoding="utf-8") as fh:
+        intake_text = fh.read()
+    if intake_text.count(INTAKE_LINE) < 2:
+        out.append("issue-scan: intake.yml no longer writes %r at both PR-body "
+                   "sites; re-match the select step's scan" % INTAKE_LINE)
+    line = next((l for l in wf_text.splitlines()
+                 if "-issues.json" in l and l.strip().startswith("jq -c '")),
+                None)
+    if line is None:
+        return out + ["issue-scan: select step's lifecycle-issue jq not found"]
+    program = line.strip()[len("jq -c '"):].split("'", 1)[0]
+    body = ("Specification at specs/122-x.\n\nFollows #1078 and #1075; see "
+            "#1058, #1057 and PR #1113.\n\n" + INTAKE_LINE + "1094\n")
+    single = ("Specification at specs/122-x.\n\n" + INTAKE_LINE + "1094\n")
+    none = "Refs #1078 and #1075.\n"
+    for name, text, want in (("cites-others", body, [1094]),
+                             ("single", single, [1094]),
+                             ("no-intake-line", none, [])):
+        proc = subprocess.run(["jq", "-c", program],
+                              input=json.dumps({"body": text}),
+                              capture_output=True, text=True)
+        got = json.loads(proc.stdout) if proc.returncode == 0 else proc.stderr
+        if got != want:
+            out.append("issue-scan %s: expected %s, got %s"
+                       % (name, json.dumps(want), json.dumps(got)))
+    return out
+
+
 def main():
     failures, seen = [], set()
     paths = sorted(glob.glob(os.path.join(FIXTURES, "*.json")))
@@ -87,6 +125,7 @@ def main():
     if not act._trusted_comment(trusted):
         failures.append("precedent: a comment on the lifecycle issue was rejected")
     os.environ.pop("SPEC_LIFECYCLE_ISSUE", None)
+    failures.extend(check_issue_scan(wf_text))
     for cmd in SUBCOMMANDS:
         if cmd not in seen:
             failures.append("subcommand %s has no fixture" % cmd)
