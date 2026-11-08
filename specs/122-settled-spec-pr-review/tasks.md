@@ -344,3 +344,71 @@ Task: "Add plan-actions-never-approve.json in .github/scripts/spec-pr-review-fix
   The replay fixtures feed one hard-coded finding to the verdict subcommand and assert not-ready, so SC-004 detection of the spec 119 and 120 conflicts is never exercised.
 
   - .github/scripts/spec-pr-review-fixtures/replay-spec119-fr022.json
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: Review job's fresh-snapshot eligibility re-check skips spec_pr_review.py eligible
+
+  The re-check step hand-rolls a partial check (head SHA, fork, ref prefix, labels, marker, round count) and omits stop-note, failed-cap, already-reviewed, convergence and dispatch actor rules, so a billable duplicate round can run.
+
+  - .github/workflows/spec-pr-review.yml
+
+  Detail: Comment and FR-021/T015 say the module is run; it is not.
+
+- [ ] Review finding: Precedent trust check never restricted to lifecycle issue because SPEC_LIFECYCLE_ISSUE is never set
+
+  _trusted_comment only scopes issue-comment precedents when SPEC_LIFECYCLE_ISSUE is set, and no workflow step sets it, so any repo comment by an OWNER/MEMBER/COLLABORATOR counts as precedent; the unit test sets the variable itself and masks this.
+
+  - .github/scripts/spec_pr_review_actions.py
+  - .github/workflows/spec-pr-review.yml
+
+  Detail: The prepare step env has only FAILED, SPEC_DIR and GH_TOKEN.
+
+- [ ] Review finding: plan_actions ignores the stop decision
+
+  A round that ends in convergence-stop or budget-exhausted can still move the label to stage:clarify or post the ready announcement, while the stop note says no further review.
+
+  - .github/scripts/spec_pr_review.py
+
+- [ ] Review finding: Writing steps use always() instead of !cancelled()
+
+  Post-review, questions, status, outcome and stop-note steps run on cancellation and can leave stop notes or failed-attempt markers that count toward the failed-cap.
+
+  - .github/workflows/spec-pr-review.yml
+
+- [ ] Review finding: Lifecycle issue derived by scanning every #N in PR body
+
+  Requiring exactly one distinct #N means any extra reference skips the PR forever as multiple-issues, and closingIssuesReferences is fetched but unused.
+
+  - .github/workflows/spec-pr-review.yml
+
+- [ ] Review finding: Pasted snapshot/protect and round-record reader blocks violate single-home rule
+
+  The pristine-script snapshot block is repeated across three jobs and the read_round_records heredoc is duplicated with differing sys.path logic, contrary to CLAUDE.md.
+
+  - .github/workflows/spec-pr-review.yml
+
+- [ ] Review finding: Round budget hard-coded in several places and rounds counted two ways
+
+  Budget 5 appears three times in the workflow plus ROUND_BUDGET in the module, and the workflow uses max record number+1 while the module counts completed rounds, so they can disagree.
+
+  - .github/workflows/spec-pr-review.yml
+  - .github/scripts/spec_pr_review.py
+
+- [ ] Review finding: Blocked-fix list prints b.get('finding') but fixes are keyed by id
+
+  The posted review lists blocked fixes as bare integer ids such as '- 0 (precedent-unresolvable)' without naming the finding.
+
+  - .github/workflows/spec-pr-review.yml
+
+- [ ] Review finding: Stale notice appended after the round-record marker
+
+  The Detect-a-head-that-moved step appends text after the hidden round-record marker that the compose step put last deliberately, which may break marker-last parsing.
+
+  - .github/workflows/spec-pr-review.yml
+
+- [ ] Review finding: SC-004 replay fixtures cannot detect the spec 119/120 conflicts
+
+  The fixtures feed a hand-written non-empty finding to the verdict subcommand, which returns 'not ready' for any non-empty list, so a reviewer regression would leave gate 157 green.
+
+  - .github/scripts/spec-pr-review-fixtures/replay-spec119-fr022.json
