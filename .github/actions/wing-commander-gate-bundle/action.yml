@@ -59,7 +59,7 @@ runs:
         if-no-files-found: error
     - name: Download workspace bundle
       if: inputs.mode == 'restore'
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v6
       with:
         name: wc-gate-bundle-${{ inputs.site }}
         path: ${{ runner.temp }}/wc-gate-bundle-in

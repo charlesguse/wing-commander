@@ -3675,7 +3675,7 @@ jobs:
       # and nothing above it can leave the body unloaded for any other
       # reason (act's report step keys on exactly that, below).
       - name: Download findings
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: watchdog-findings
           path: ${{ runner.temp }}/findings
@@ -4287,7 +4287,7 @@ jobs:
       # fails this leg here, before any write; report-unhandled-failure
       # then names act as the failed job.
       - name: Download findings
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: watchdog-findings
           path: ${{ runner.temp }}/findings
@@ -4380,7 +4380,7 @@ jobs:
       - name: Download triage decision
         id: download-decision
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: watchdog-triage-decision-${{ matrix.index }}
           path: ${{ runner.temp }}/triage
