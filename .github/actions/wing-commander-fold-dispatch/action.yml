@@ -112,13 +112,13 @@ inputs:
 outputs:
   folded:
     description: "'true' if folded-json names at least one of this run's own folds -- whether or not it was dispatched."
-    value: ${{ steps.dispatch.outputs.folded }}
+    value: ${{ steps.dispatch.outputs.folded || 'false' }}
   tip-moved:
     description: "'true' if the spec branch's tip moved past base-sha. With folded 'false', the tip moved but not from this run's own fold (FR-015's declined-dispatch case)."
     value: ${{ steps.dispatch.outputs.tip-moved }}
   dispatched:
     description: "'true' only when an implement-workflow run was actually triggered."
-    value: ${{ steps.dispatch.outputs.dispatched }}
+    value: ${{ steps.dispatch.outputs.dispatched || 'false' }}
   new-iteration:
     description: spec-meta.json's iteration + 1, whenever the tip moved (folded == 'true') -- not only when dispatched, since a standalone-mode caller's reply needs it too. Empty when folded is 'false'.
     value: ${{ steps.dispatch.outputs.new-iteration }}

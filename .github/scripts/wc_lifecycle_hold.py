@@ -146,6 +146,7 @@ def main(argv=None):
         p.add_argument("--hold-label", default=DEFAULT_HOLD_LABEL)
         if name == "set":
             p.add_argument("--reason", required=True)
+    sub.add_parser("unreadable-message")
     rp = sub.add_parser("release-plan")
     rp.add_argument("--issue", required=True)
     rp.add_argument("--issue-state", required=True)
@@ -155,6 +156,9 @@ def main(argv=None):
     rp.add_argument("--recorded-iteration", default="0")
     rp.add_argument("--spec-dir", default="")
     args = parser.parse_args(argv)
+    if args.cmd == "unreadable-message":
+        print(f"unreadable-message={UNREADABLE_MESSAGE}")
+        return 0
     if args.cmd == "release-plan":
         plan = release_plan(
             args.issue_state, [x for x in args.labels.split(",") if x],

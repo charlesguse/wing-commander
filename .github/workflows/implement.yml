@@ -1043,13 +1043,13 @@ jobs:
           token: ${{ github.token }}
 
       - name: Post lifecycle hold status line
-        if: steps.hold.outputs.state == 'held' || steps.hold.outputs.state == 'unreadable'
+        if: steps.hold.outcome != 'skipped' && steps.hold.outputs.state != 'clear'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
         with:
           token: ${{ github.token }}
           issue-number: ${{ inputs.issue-number }}
           kind: info
-          summary: "Implement did nothing: ${{ steps.hold.outputs.state == 'held' && format('this lifecycle carries the `{0}` label. Remove the label to resume.', inputs.hold-label) || 'the lifecycle labels could not be read; dispatch implement by hand once readable.' }}"
+          summary: "Implement did nothing: ${{ steps.hold.outputs.state == 'held' && format('this lifecycle carries the `{0}` label. Remove the label to resume.', inputs.hold-label) || steps.hold.outputs.unreadable-message }}"
 
       # (stage, iteration) in spec-meta.json is the idempotency guard.
       # A cycle runs only as the next expected step; "stalled" admits the
@@ -1065,9 +1065,12 @@ jobs:
           RECORDED: ${{ steps.meta.outputs.recorded-iteration }}
           ITERATION: ${{ inputs.iteration }}
           HOLD_STATE: ${{ steps.hold.outputs.state }}
+          HOLD_OUTCOME: ${{ steps.hold.outcome }}
         run: |
           next=$((RECORDED + 1))
-          if [ "$HOLD_STATE" = "held" ] || [ "$HOLD_STATE" = "unreadable" ]; then
+          # Fail closed (FR-004): once the hold check ran, anything but an
+          # explicit `clear` -- including an empty state -- withholds the cycle.
+          if [ -n "$HOLD_OUTCOME" ] && [ "$HOLD_OUTCOME" != "skipped" ] && [ "$HOLD_STATE" != "clear" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "held=true" >> "$GITHUB_OUTPUT"
             echo "Lifecycle hold check returned '${HOLD_STATE:-none}'; the cycle is withheld, not stalled." >> "$GITHUB_STEP_SUMMARY"

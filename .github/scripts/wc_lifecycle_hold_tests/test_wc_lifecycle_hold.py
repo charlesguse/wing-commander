@@ -117,6 +117,15 @@ class MessageTests(unittest.TestCase):
         self.assertIn("labels could not be read", h.UNREADABLE_MESSAGE)
         self.assertIn("dispatch implement by hand", h.UNREADABLE_MESSAGE)
 
+    def test_unreadable_message_subcommand_emits_output_line(self):
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(h.main(["unreadable-message"]), 0)
+        self.assertEqual(buf.getvalue().strip(),
+                         "unreadable-message=" + h.UNREADABLE_MESSAGE)
+
 
 if __name__ == "__main__":
     unittest.main()

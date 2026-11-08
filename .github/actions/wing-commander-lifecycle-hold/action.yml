@@ -35,6 +35,9 @@ outputs:
   state:
     description: "clear | held | unreadable (check mode)"
     value: ${{ steps.run.outputs.state }}
+  unreadable-message:
+    description: "The canonical text callers post when state is unreadable (check mode; FR-004)"
+    value: ${{ steps.run.outputs.unreadable-message }}
   set:
     description: "true | already (set mode)"
     value: ${{ steps.run.outputs.set }}
@@ -64,6 +67,7 @@ runs:
               echo "::warning::wing-commander-lifecycle-hold: check script failed; reporting unreadable"
               echo "state=unreadable" >> "$GITHUB_OUTPUT"
             fi
+            python3 -I "$script" unreadable-message >> "$GITHUB_OUTPUT"
             ;;
           set)
             python3 -I "$script" set --issue "$ISSUE" --repo "$GITHUB_REPOSITORY" \

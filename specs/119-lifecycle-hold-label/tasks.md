@@ -155,7 +155,7 @@ MVP is Phase 1–3 (US1): the label, implement/fold-dispatch/merge honouring it,
 
   Detail: Spec research D8 and data-model.md specify the already-absent outcome.
 
-- [ ] Review finding: Unreadable-labels wording duplicated inline in implement.yml
+- [x] Review finding: Unreadable-labels wording duplicated inline in implement.yml
 
   The callout summary hard-codes the unreadable wording instead of consuming the canonical UNREADABLE_MESSAGE from wc_lifecycle_hold.py, violating the single-home rule; the gate only checks the constant.
 
@@ -164,7 +164,7 @@ MVP is Phase 1–3 (US1): the label, implement/fold-dispatch/merge honouring it,
 
   Detail: FR-004 / T006 require one canonical string.
 
-- [ ] Review finding: Hold guard proceeds on empty HOLD_STATE and does not fail closed
+- [x] Review finding: Hold guard proceeds on empty HOLD_STATE and does not fail closed
 
   If the hold composite errors or is skipped, a composite error stalls the lifecycle, while an empty HOLD_STATE lets the cycle proceed; only an explicit held/unreadable stops it.
 
@@ -214,7 +214,7 @@ MVP is Phase 1–3 (US1): the label, implement/fold-dispatch/merge honouring it,
 
   Detail: drop_idx holds only title indexes; multi-line fold task blocks are not removed whole.
 
-- [ ] Review finding: Fold-dispatch does not set dispatched=false when hold withholds
+- [x] Review finding: Fold-dispatch does not set dispatched=false when hold withholds
 
   When the hold skips the dispatch step, dispatched/folded/new-iteration/run-url outputs are empty rather than false, and existing callers neither read withheld nor pass hold-label, so they post misleading success replies.
 
@@ -222,7 +222,7 @@ MVP is Phase 1–3 (US1): the label, implement/fold-dispatch/merge honouring it,
 
   Detail: contracts/hold-interfaces.md promises dispatched=false and a withheld line from callers.
 
-- [ ] Review finding: implement.yml hold guard fails open on empty HOLD_STATE
+- [x] Review finding: implement.yml hold guard fails open on empty HOLD_STATE
 
   If the Check lifecycle hold step is skipped or emits no state, HOLD_STATE is empty and the guard only stops on 'held' or 'unreadable', so implement runs on a held lifecycle.
 
