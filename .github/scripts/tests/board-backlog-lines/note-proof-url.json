@@ -1,0 +1,12 @@
+{
+  "op": "chain",
+  "body": "- [x] a [wc:bl-aaaa1111 fixed PR #5]",
+  "steps": [
+    {"op": "note_proof", "args": ["bl-aaaa1111", "no run found", "https://example.test/run/1"]},
+    {"op": "note_proof", "args": ["bl-aaaa1111", "still none", "https://example.test/run/2"]}
+  ],
+  "expect_after": [
+    "- [x] a [wc:bl-aaaa1111 fixed not-proven: no run found] [run](https://example.test/run/1)",
+    "- [x] a [wc:bl-aaaa1111 fixed not-proven: still none] [run](https://example.test/run/2)"
+  ]
+}

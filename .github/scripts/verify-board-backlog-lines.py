@@ -57,6 +57,8 @@ def run_case(case):
         actual = bbl.title_for(case["text"])
         if len(actual) > 200 or ("max_len" in case and len(actual) > case["max_len"]):
             return "title too long: {0}".format(len(actual))
+        if case.get("no_closing") and bbl.closing_keyword_hits(actual, "", []):
+            return "title carries a closing keyword: {0!r}".format(actual)
         return None if actual.startswith(case["expect_prefix"]) else "title: got {0!r}".format(actual)
     if op == "branch":
         actual = bbl.branch_for(case["issue"], case["line_id"])

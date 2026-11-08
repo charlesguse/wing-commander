@@ -24,8 +24,10 @@ FAILED = "failed"
 
 def edit(issue, apply_fn, verify_fn, *, fetch, write, max_attempts=5):
     """Returns APPLIED, STAND_DOWN (apply_fn returned None) or FAILED."""
-    for _ in range(max_attempts):
+    for attempt in range(max_attempts):
         body = fetch(issue)
+        if attempt and verify_fn(body):
+            return APPLIED  # an earlier write of ours landed; the read-back was stale
         new_body = apply_fn(body)
         if new_body is None:
             return STAND_DOWN
@@ -37,7 +39,7 @@ def edit(issue, apply_fn, verify_fn, *, fetch, write, max_attempts=5):
     return FAILED
 
 
-def _operations(op, line_id, detail):
+def _operations(op, line_id, detail, url=""):
     """(apply_fn, verify_fn) for a named CLI operation."""
     def state_of(body):
         hits = [line for line in bbl.parse_lines(body) if line["id"] == line_id]
@@ -50,7 +52,7 @@ def _operations(op, line_id, detail):
         "route-proposal": (lambda b: bbl.annotate(b, line_id, "proposal", detail), "proposal", False),
         "tick-evidence": (lambda b: bbl.tick(b, line_id, "evidence", detail), "evidence", True),
         "tick-fixed": (lambda b: bbl.tick(b, line_id, "fixed", detail), "fixed", True),
-        "note-proof": (lambda b: bbl.note_proof(b, line_id, detail), "fixed", True),
+        "note-proof": (lambda b: bbl.note_proof(b, line_id, detail, url), "fixed", True),
         "release": (lambda b: bbl.clear_note(b, line_id), None, False),
     }
     if op not in table:
@@ -76,7 +78,9 @@ def _gh(args, stdin=None):
 def gh_fetch(issue):
     repo = os.environ.get("GITHUB_REPOSITORY")
     repo_args = ["-R", repo] if repo else []
-    return _gh(["issue", "view", str(issue)] + repo_args + ["--json", "body", "--jq", ".body"]).rstrip("\n")
+    out = _gh(["issue", "view", str(issue)] + repo_args + ["--json", "body", "--jq", ".body"])
+    # --jq appends exactly one newline; strip only that one.
+    return out[:-1] if out.endswith("\n") else out
 
 
 def gh_write(issue, body):
@@ -91,18 +95,10 @@ def main():
     parser.add_argument("--op", required=True)
     parser.add_argument("--line-id", required=True)
     parser.add_argument("--detail", default="")
+    parser.add_argument("--url", default="")
     args = parser.parse_args()
-    apply_fn, verify = _operations(args.op, args.line_id, args.detail)
-    repo = os.environ.get("GITHUB_REPOSITORY")
-    repo_args = ["-R", repo] if repo else []
-
-    def fetch(issue):
-        return _gh(["issue", "view", str(issue)] + repo_args + ["--json", "body", "--jq", ".body"]).rstrip("\n")
-
-    def write(issue, body):
-        _gh(["issue", "edit", str(issue)] + repo_args + ["--body-file", "-"], stdin=body)
-
-    result = edit(args.issue, apply_fn, verify, fetch=fetch, write=write)
+    apply_fn, verify = _operations(args.op, args.line_id, args.detail, args.url)
+    result = edit(args.issue, apply_fn, verify, fetch=gh_fetch, write=gh_write)
     print(result)
     sys.exit(1 if result == FAILED else 0)
 

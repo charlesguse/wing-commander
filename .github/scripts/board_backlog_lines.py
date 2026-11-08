@@ -16,7 +16,7 @@ import sys
 
 LINE_RE = re.compile(r"^- \[( |x|X)\] (.*)$")
 ANNOTATION_RE = re.compile(r"\[wc:([a-z0-9-]{1,40}) ([a-z-]+)(?: ([^\]\n]*))?\]")
-FENCE_RE = re.compile(r"^\s*(```|~~~)")
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 
 STATES = ("in-progress", "held", "proposal", "fixed", "evidence")
 
@@ -31,13 +31,29 @@ def parse_lines(body):
     """Returns a list of {"index", "checked", "raw", "text", "id", "state",
     "detail"} for each line in `body`; `index` is the 0-based line number."""
     lines = []
-    in_fence = False
+    fence = None      # the opening fence marker while inside a fenced block
+    in_comment = False
     for index, raw in enumerate((body or "").split("\n")):
         raw = raw.rstrip("\r")
-        if FENCE_RE.match(raw):
-            in_fence = not in_fence
+        opener = FENCE_RE.match(raw)
+        if fence is not None:
+            # Only a fence of the same character, at least as long, closes it.
+            if (opener and opener.group(1)[0] == fence[0]
+                    and len(opener.group(1)) >= len(fence)
+                    and not raw.strip()[len(opener.group(1)):].strip()):
+                fence = None
             continue
-        if in_fence or raw.startswith(">"):
+        if in_comment:
+            if "-->" in raw:
+                in_comment = False
+            continue
+        if opener:
+            fence = opener.group(1)
+            continue
+        if raw.startswith("<!--") and "-->" not in raw:
+            in_comment = True
+            continue
+        if raw.startswith(">"):
             continue
         match = LINE_RE.match(raw)
         if not match:
@@ -63,11 +79,22 @@ def _find(body, line_id):
 
 def _replace(body, index, new_raw):
     parts = body.split("\n")
+    if parts[index].endswith("\r"):
+        new_raw += "\r"
     parts[index] = new_raw
     return "\n".join(parts)
 
 
-def annotate(body, line_id, state, detail="", *, allow_new=True, only_unannotated=False):
+# Which current states each annotation may replace (None = un-annotated):
+# a stale progress write must not un-hold a held line, nor a proposal.
+ANNOTATE_FROM = {
+    "in-progress": (None, "in-progress"),
+    "held": (None, "in-progress", "held"),
+    "proposal": (None, "in-progress", "proposal"),
+}
+
+
+def annotate(body, line_id, state, detail=""):
     """Annotates the line carrying `line_id` (or, for a claim, the topmost
     unchecked un-annotated line whose text is passed as `detail`'s owner via
     claim()). Returns the new body, or None for a missing, duplicated or
@@ -76,6 +103,8 @@ def annotate(body, line_id, state, detail="", *, allow_new=True, only_unannotate
         raise ValueError("unknown state {0!r}".format(state))
     line = _find(body, line_id)
     if line is None or line["checked"]:
+        return None
+    if line["state"] not in ANNOTATE_FROM.get(state, (line["state"],)):
         return None
     token = "[wc:{0} {1}{2}]".format(line_id, state, " " + _sanitise(detail) if _sanitise(detail) else "")
     prefix = "- [ ] "
@@ -108,9 +137,9 @@ def tick(body, line_id, annotation_state, detail=""):
 
 def clear_note(body, line_id):
     """Removes the line's annotation (releasing a hold). None when the line
-    is missing, duplicated or ticked."""
+    is missing, duplicated, ticked or not held (it never clears a claim)."""
     line = _find(body, line_id)
-    if line is None or line["checked"]:
+    if line is None or line["checked"] or line["state"] != "held":
         return None
     return _replace(body, line["index"], "- [ ] " + line["text"])
 
@@ -128,10 +157,10 @@ def note_proof(body, line_id, reason, url=""):
     return _replace(body, line["index"], "- [x] " + text + " " + token + suffix)
 
 
-def select_line(body, *, claimed_ids=()):
+def select_line(body):
     """The topmost unchecked, un-annotated line, or None."""
     for line in parse_lines(body):
-        if not line["checked"] and line["id"] is None and line["id"] not in claimed_ids:
+        if not line["checked"] and line["id"] is None:
             return line
     return None
 
@@ -154,6 +183,8 @@ def resolve_backlog(open_issues, bot_login, maintainer_logins=()):
     if len(hits) > 1:
         return None, "ambiguous: {0} Maintenance backlog candidates".format(len(hits))
     author = hits[0].get("author")
+    if isinstance(author, dict):
+        author = author.get("login")
     if allowed and author not in allowed:
         return None, "backlog issue author {0!r} is not a maintainer or the App".format(author)
     return hits[0]["number"], None
@@ -165,7 +196,7 @@ def selection_gate(env):
     unreadable)."""
     if env.get("backlog_lines_switch") != "true":
         return False, "backlog lines switch is not true"
-    if env.get("loop_paused"):
+    if env.get("loop_paused") in (True, "true"):
         return False, "board loop is paused"
     text = env.get("constitution_text")
     if text is None:
@@ -198,6 +229,7 @@ def title_for(text, prefix="Fix: "):
     """PR/proposal title: annotation stripped, whitespace collapsed,
     truncated with an ellipsis so the whole title is at most 200 chars."""
     text = re.sub(r"\s+", " ", ANNOTATION_RE.sub("", text or "")).strip()
+    text = re.sub(r"#(?=\d)", "#​", text).replace("/issues/", "/issues​/")
     if len(prefix + text) > 200:
         text = text[:200 - len(prefix) - 1].rstrip() + "…"
     return prefix + text
@@ -233,14 +265,15 @@ def main():
         if op == "parse":
             result = parse_lines(body)
         elif op == "select":
-            result = select_line(body, claimed_ids=request.get("claimed_ids", ()))
+            result = select_line(body)
         elif op == "check-closing-keywords":
             result = closing_keyword_hits(request.get("title", ""), body,
                                           request.get("commits", []))
         elif op in ("claim", "progress", "hold", "route-proposal", "tick-evidence",
                     "tick-fixed", "note-proof"):
             import board_backlog_edit as bbe
-            apply_fn, verify = bbe._operations(op, request["line_id"], request.get("detail", ""))
+            apply_fn, verify = bbe._operations(op, request["line_id"], request.get("detail", ""),
+                                               request.get("url", ""))
             result = bbe.edit(request["issue"], apply_fn, verify,
                               fetch=bbe.gh_fetch, write=bbe.gh_write)
         else:

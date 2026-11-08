@@ -24,7 +24,12 @@ def run_case(case, max_attempts=5):
     pending = list(case.get("after_write", []))
     writes = []
 
+    stale = {"left": 1 if case.get("stale_read_after_write") else 0, "body": case["initial"]}
+
     def fetch(_issue):
+        if writes and stale["left"]:
+            stale["left"] -= 1
+            return stale["body"]
         return store["body"]
 
     def write(_issue, body):

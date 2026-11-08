@@ -151,7 +151,7 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
 ## Review Gate Round 1 Findings
 
-- [ ] Review finding: resolve_backlog crashes on real author shape
+- [x] Review finding: resolve_backlog crashes on real author shape
 
   resolve_backlog tests `author not in allowed` with a string set, but gh issue snapshots carry author as {"login": ...}, so a dict raises TypeError (unhashable) instead of refusing with a reason.
 
@@ -159,7 +159,7 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
   Detail: board_eligibility.py documents author as {login}; fixtures only use string authors.
 
-- [ ] Review finding: Generated title can contain closing keyword
+- [x] Review finding: Generated title can contain closing keyword
 
   title_for builds `Fix: <line text>`; line text starting with #N makes CLOSING_RE match (FR-017 says the title never contains a closing keyword), which would close unrelated issues or cause refusal.
 
@@ -167,7 +167,7 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
   Detail: e.g. line `#747 flaky gate` gives `Fix: #747 flaky gate`; no fixture covers a title built from line text containing a reference.
 
-- [ ] Review finding: edit() reports STAND_DOWN after own write landed
+- [x] Review finding: edit() reports STAND_DOWN after own write landed
 
   If a write landed but the read-back verify was false (stale read), the retry finds the line already changed, apply returns None, and edit reports STAND_DOWN. The caller then wrongly believes another editor made the change.
 
@@ -175,13 +175,13 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
   Detail: The retry loop should check verify on the freshly fetched body before re-applying.
 
-- [ ] Review finding: note-proof cannot carry a run link
+- [x] Review finding: note-proof cannot carry a run link
 
   note_proof takes a url, but the _operations dispatcher and CLI never pass one, so the `[run](url)` suffix required by T024 is never written. No operation clears a not-proven note after a later proof succeeds.
 
   - .github/scripts/board_backlog_edit.py
 
-- [ ] Review finding: annotate/claim lack state preconditions
+- [x] Review finding: annotate/claim lack state preconditions
 
   annotate overwrites any existing annotation, and claim/annotate accept any state. A stale progress op can un-hold a held line, or release can clear another run's claim.
 
@@ -189,13 +189,13 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
   Detail: The unused allow_new and only_unannotated parameters suggest the guards were never implemented.
 
-- [ ] Review finding: select_line claimed_ids filter is dead code
+- [x] Review finding: select_line claimed_ids filter is dead code
 
   `line['id'] is None and line['id'] not in claimed_ids` reduces to `None not in claimed_ids`, so the claimed_ids parameter excludes nothing.
 
   - .github/scripts/board_backlog_lines.py
 
-- [ ] Review finding: loop_paused truthiness vs string env value
+- [x] Review finding: loop_paused truthiness vs string env value
 
   selection_gate treats loop_paused by truthiness, but the pause variable reaches workflows as the string 'true' or 'false'. The string 'false' is truthy, so the gate would report the loop as paused.
 
@@ -203,7 +203,7 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
   Detail: _switch_on uses exact-'true' semantics; fixtures use only Python booleans.
 
-- [ ] Review finding: Multi-line comments and mismatched fences yield phantom lines
+- [x] Review finding: Multi-line comments and mismatched fences yield phantom lines
 
   parse_lines tracks only a single fence toggle, ignoring marker type and length. It also does not handle multi-line HTML comments, so checkboxes inside them become selectable, contradicting 'comments are never read'.
 
@@ -211,13 +211,13 @@ MVP is Phases 1–4 (Foundational, US4 and US1): the shared edit helper protects
 
   Detail: Only the single-line `<!-- -->` form has a fixture.
 
-- [ ] Review finding: New board-loop step can fail select job while feature is dark
+- [x] Review finding: New board-loop step can fail select job while feature is dark
 
   The 'Record the backlog-line switch' step has no continue-on-error, so an import or syntax failure in either helper fails the select job on every run, contradicting FR-020 (a dark switch changes nothing).
 
   - .github/workflows/board-loop.yml
 
-- [ ] Review finding: Duplicated gh closures and aggressive newline stripping
+- [x] Review finding: Duplicated gh closures and aggressive newline stripping
 
   gh_fetch and gh_write are duplicated as closures inside main(), so fixes can drift. The fetch strips all trailing newlines, and CRLF bodies get mixed line endings, which rewrites parts of a body that a concurrent editor may own.
 
