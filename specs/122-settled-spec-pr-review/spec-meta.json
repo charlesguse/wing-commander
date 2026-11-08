@@ -2,7 +2,7 @@
   "issue": 1094,
   "spec_dir": "specs/122-settled-spec-pr-review",
   "feature_num": "122",
-  "stage": "review",
+  "stage": "stalled",
   "iteration": 7,
   "spec_branch": "spec/122-settled-spec-pr-review",
   "pending_re_review_from": []
