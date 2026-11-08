@@ -75,6 +75,12 @@ runs:
           git config user.name  "${BOT_SLUG}[bot]"
           git config user.email "${BOT_SLUG}[bot]@users.noreply.github.com"
           git commit -m "$COMMIT_STAGE: $SLUG -> stalled (#$ISSUE, $COMMIT_REASON)" || exit 1
+          # spec 095 FR-015/FR-016: an agent ran earlier in both calling
+          # jobs, so the push runs with hooks, fsmonitor and global/system
+          # config neutralised -- see _shared/git-push-hardening.sh.
+          # shellcheck source=../_shared/git-push-hardening.sh
+          . "$GITHUB_ACTION_PATH/../_shared/git-push-hardening.sh" || exit 1
+          wc_harden_git_env || exit 1
           git push || exit 1
         fi
         echo "next-iteration=$next_iter" >> "$GITHUB_OUTPUT"

@@ -177,7 +177,11 @@ def check_handoff_composite(failures, path=HANDOFF):
     import yaml
     act = yaml.safe_load(open(path)) or {}
     steps = [st or {} for st in ((act.get("runs") or {}).get("steps") or [])]
-    if any("_shared/" in str(st.get("run", "")) + str(st.get("uses", "")) for st in steps):
+    # Sourcing _shared/git-push-hardening.sh before the push is required
+    # (Gate 150); running a _shared script or composite is the hand-off
+    # moving out of this file again.
+    if any(re.search(r"\bbash\b[^\n]*_shared/", str(st.get("run", ""))) or "_shared/" in str(st.get("uses", ""))
+           for st in steps):
         failures.append("wing-commander-stalled-handoff must hold the hand-off in its own steps, not a _shared/ script")
 
     def first(needle):
