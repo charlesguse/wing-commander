@@ -5,5 +5,8 @@
   "stage": "implement",
   "iteration": 8,
   "spec_branch": "spec/119-lifecycle-hold-label",
-  "pending_re_review_from": []
+  "pending_re_review_from": [],
+  "truncated_count": 0,
+  "truncated_tier": null,
+  "gate_suite_ready": true
 }
