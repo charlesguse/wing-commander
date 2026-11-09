@@ -1,0 +1,15 @@
+{
+  "body": "- [ ] a [wc:bl-0a1b2c3d in-progress PR #7]\n- [ ] b\n",
+  "markers": [
+    [
+      "awaiting-merge",
+      "bl-0a1b2c3d"
+    ]
+  ],
+  "expect": {
+    "action": "claim",
+    "text": "b",
+    "line_id_minted": true
+  },
+  "op": "line-item"
+}

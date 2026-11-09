@@ -1,0 +1,17 @@
+{
+  "body": "- [x] a [wc:bl-0a1b2c3d fixed by #7]\n",
+  "request": {
+    "switch": ""
+  },
+  "markers": [
+    [
+      "readiness",
+      "bl-0a1b2c3d"
+    ]
+  ],
+  "expect": {
+    "action": "none",
+    "stand_down": []
+  },
+  "op": "line-item"
+}

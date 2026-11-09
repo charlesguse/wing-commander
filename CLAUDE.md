@@ -52,6 +52,9 @@ The board has three lanes, and only the first one waits on the owner:
   They are fixed directly, never turned into specs. Collect them as
   checklist lines on the open `disposition:tracking` issue titled
   "Maintenance backlog" (#889 at the reset), not as one issue each.
+  Edit that issue's body only through `python .github/scripts/board_backlog_edit.py`
+  (fetch, apply, write, read back, retry); never a blind whole-body write, which
+  loses a concurrent edit by the board loop or another session.
 - **Signals** — watchdog classes that are recoveries or cosmetic, not
   defects (`denied-tool`, `narrative-drift`). The watchdog reports them
   on the lifecycle issue and files nothing (watchdog.yml's `Determine

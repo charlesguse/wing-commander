@@ -1,0 +1,21 @@
+{
+  "body": "- [ ] first defect\n- [ ] second defect\n",
+  "extra_issues": [
+    {
+      "number": 901,
+      "title": "Maintenance backlog two",
+      "labels": [
+        "disposition:tracking"
+      ],
+      "state": "OPEN",
+      "authorAssociation": "OWNER",
+      "body": "- [ ] first defect\n- [ ] second defect\n"
+    }
+  ],
+  "expect": {
+    "action": "none",
+    "issue": null,
+    "reason": "ambiguous: 2 Maintenance backlog candidates"
+  },
+  "op": "line-item"
+}

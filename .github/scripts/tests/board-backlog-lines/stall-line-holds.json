@@ -1,0 +1,10 @@
+{
+  "op": "stall",
+  "line_id": "bl-0a1b2c3d",
+  "from_step": "fix (gate suite red)",
+  "body": "intro\n- [ ] flaky gate [wc:bl-0a1b2c3d in-progress PR #7]\n- [ ] other\n",
+  "expect_ok": true,
+  "expect_labelled": false,
+  "expect_body": "intro\n- [ ] flaky gate [wc:bl-0a1b2c3d held board:stalled from fix (gate suite red)]\n- [ ] other\n",
+  "summary_contains": ["backlog line bl-0a1b2c3d on #889 -- stalled from fix (gate suite red) with the line held"]
+}

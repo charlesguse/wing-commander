@@ -1,0 +1,9 @@
+{
+  "op": "parse",
+  "body": "intro\n- [ ] real one\n```\n- [ ] fenced\n```\n> - [ ] quoted\n  - [ ] indented\n- [x] done [wc:bl-1 fixed]\n- [ ] busy [wc:bl-2 in-progress PR #5]\n<!-- - [ ] comment -->",
+  "expect": [
+    {"index": 1, "checked": false, "id": null, "state": null, "text": "real one"},
+    {"index": 7, "checked": true, "id": "bl-1", "state": "fixed", "text": "done"},
+    {"index": 8, "checked": false, "id": "bl-2", "state": "in-progress", "text": "busy"}
+  ]
+}

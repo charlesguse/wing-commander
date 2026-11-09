@@ -1,0 +1,7 @@
+{
+  "op": "pre-push",
+  "line_id": "bl-0a1b2c3d",
+  "body": "- [ ] other\n",
+  "commits": [],
+  "expect_hit": true
+}

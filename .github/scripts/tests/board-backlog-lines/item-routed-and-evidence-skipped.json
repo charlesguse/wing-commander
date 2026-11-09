@@ -1,0 +1,24 @@
+{
+  "op": "line-item",
+  "body": "- [ ] a [wc:bl-11111111 proposal #1210]\n- [x] b [wc:bl-22222222 evidence triage: api-429]\n- [ ] c [wc:bl-33333333 held board:stalled from triage (handover)]\n- [ ] d\n",
+  "markers": [
+    [
+      "routed",
+      "bl-11111111"
+    ],
+    [
+      "closed",
+      "bl-22222222"
+    ],
+    [
+      "stalled",
+      "bl-33333333"
+    ]
+  ],
+  "expect": {
+    "action": "claim",
+    "text": "d",
+    "stand_down": [],
+    "line_id_minted": true
+  }
+}

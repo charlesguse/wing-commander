@@ -1,0 +1,18 @@
+{
+  "body": "- [x] first [wc:bl-0a1b2c3d in-progress]\n- [ ] second\n",
+  "markers": [
+    [
+      "fix",
+      "bl-0a1b2c3d"
+    ]
+  ],
+  "expect": {
+    "action": "claim",
+    "stand_down": [
+      "bl-0a1b2c3d"
+    ],
+    "text": "second",
+    "line_id_minted": true
+  },
+  "op": "line-item"
+}

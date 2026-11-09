@@ -1,0 +1,11 @@
+{
+  "body": "- [ ] first defect\n- [ ] second defect\n",
+  "request": {
+    "issue_selected": true
+  },
+  "expect": {
+    "action": "none",
+    "reason": null
+  },
+  "op": "line-item"
+}

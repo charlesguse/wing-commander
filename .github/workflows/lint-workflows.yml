@@ -4587,6 +4587,31 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-spec-pr-review-wiring.py --self-test
 
+      # Gate 166 — specs/121-board-backlog-line-items FR-019: the backlog
+      # line parser, selector and annotator behave as the fixtures under
+      # .github/scripts/tests/board-backlog-lines/ say, and board-loop.yml
+      # and wing-commander-issue-context are wired to them (T034: no step
+      # closes, labels or retitles the backlog issue for a line). Path
+      # triggers: .github/scripts/**, .github/workflows/** and
+      # .github/actions/** above.
+      - name: "Gate 166 — Maintenance backlog lines parse, select and annotate as the fixtures say"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-backlog-lines.py
+      - name: "Gate 166 self-test — a parser that ignores code fences fails the structure fixture"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-backlog-lines.py --self-test
+
+      # Gate 167 — specs/121-board-backlog-line-items SC-003/FR-024: the one
+      # backlog edit helper keeps a concurrent writer's change, never forces a
+      # write, and no other file edits the backlog body. Path triggers:
+      # .github/scripts/** above.
+      - name: "Gate 167 — the backlog edit helper loses no concurrent edit and is the only writer"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-backlog-edit.py
+      - name: "Gate 167 self-test — an editor that skips read-back fails the concurrent-append scenario"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-backlog-edit.py --self-test
+
       # Gate 114 — specs/066-fine-grained-maintainer-token FR-017/FR-018: "a
       # classic PAT, not fine-grained" was asserted in at least four places
       # (docs/setup.md, auto-release.yml's credential-step comment, Gate

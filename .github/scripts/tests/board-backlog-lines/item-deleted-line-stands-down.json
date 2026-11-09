@@ -1,0 +1,19 @@
+{
+  "body": "- [ ] second\n",
+  "request": {
+    "switch": ""
+  },
+  "markers": [
+    [
+      "review",
+      "bl-0a1b2c3d"
+    ]
+  ],
+  "expect": {
+    "action": "none",
+    "stand_down": [
+      "bl-0a1b2c3d"
+    ]
+  },
+  "op": "line-item"
+}

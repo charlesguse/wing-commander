@@ -1,0 +1,10 @@
+{
+  "op": "keyword-hold",
+  "line_id": "bl-0a1b2c3d",
+  "body": "- [ ] flaky [wc:bl-0a1b2c3d in-progress]\n",
+  "commits": [
+    "Repair flaky gate"
+  ],
+  "expect": "clear",
+  "expect_body": "- [ ] flaky [wc:bl-0a1b2c3d in-progress]\n"
+}

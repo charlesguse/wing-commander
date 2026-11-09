@@ -1,0 +1,19 @@
+{
+  "body": "- [ ] a [wc:bl-0a1b2c3d in-progress]\n- [ ] a copy [wc:bl-0a1b2c3d in-progress]\n",
+  "request": {
+    "switch": ""
+  },
+  "markers": [
+    [
+      "fix",
+      "bl-0a1b2c3d"
+    ]
+  ],
+  "expect": {
+    "action": "none",
+    "stand_down": [
+      "bl-0a1b2c3d"
+    ]
+  },
+  "op": "line-item"
+}

@@ -1,0 +1,11 @@
+{
+  "body": "- [ ] first defect\n- [ ] second defect\n",
+  "request": {
+    "constitution_text": null
+  },
+  "expect": {
+    "action": "none",
+    "reason": "constitution unreadable"
+  },
+  "op": "line-item"
+}

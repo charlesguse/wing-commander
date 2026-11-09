@@ -1,0 +1,4 @@
+{"op": "resolve", "bot": "app[bot]", "maintainers": ["owner"],
+ "issues": [
+  {"number": 889, "title": "Maintenance backlog", "state": "open", "labels": [{"name": "disposition:tracking"}], "author": {"login": "owner"}}],
+ "expect": [889, null]}
