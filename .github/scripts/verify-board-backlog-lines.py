@@ -160,7 +160,12 @@ def run_stall(case):
         labelled.append(cmd)
         return _Proc()
 
-    summary = os.path.join(os.environ.get("TMPDIR", "/tmp"), "bbl-stall-summary.txt")
+    # A per-run file, never a fixed path: the gate and its --self-test run
+    # in parallel under run-local-gates.py --jobs, and a shared path let one
+    # truncate the other's summary mid-case.
+    import tempfile
+    fd, summary = tempfile.mkstemp(prefix="bbl-stall-summary-", suffix=".txt")
+    os.close(fd)
     saved_summary = os.environ.get("GITHUB_STEP_SUMMARY")
     os.environ["GITHUB_STEP_SUMMARY"] = summary
     saved_repo = os.environ.get("GITHUB_REPOSITORY")
@@ -195,6 +200,7 @@ def run_stall(case):
         errors.append("marker line key: {0!r}".format(marker))
     with open(summary, encoding="utf-8") as fh:
         text = fh.read()
+    os.unlink(summary)
     for needle in case.get("summary_contains", []):
         if needle not in text:
             errors.append("summary lacks {0!r}: {1!r}".format(needle, text))
