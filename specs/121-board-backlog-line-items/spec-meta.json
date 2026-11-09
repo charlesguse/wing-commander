@@ -2,7 +2,7 @@
   "issue": 1080,
   "spec_dir": "specs/121-board-backlog-line-items",
   "feature_num": "121",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 10,
   "spec_branch": "spec/121-board-backlog-line-items",
   "pending_re_review_from": [],
