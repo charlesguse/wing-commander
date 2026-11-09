@@ -126,6 +126,26 @@ on:
         type: string
         required: false
         default: ""
+      run-in-cancelled-run:
+        description: >
+          specs/120-dispatched-run-metrics — true lets the image check and
+          the persist job run with always() gating, so a caller's persisting
+          job still collects records in a run that was cancelled after it
+          started. false (default) is today's gating bit for bit
+          (success() for the image check, !cancelled() for persist).
+        type: boolean
+        required: false
+        default: false
+      tolerate-failure:
+        description: >
+          specs/120-dispatched-run-metrics — true sets continue-on-error on
+          the image check and the persist job, so a failure here never turns
+          the caller's run red; a failing persist ends with a warning naming
+          the daily sweep as the backstop. false (default) is today's
+          fail-loud behavior.
+        type: boolean
+        required: false
+        default: false
     secrets:
       pipeline-repo-token:
         description: "Token with read access to the pipeline repository — only needed when that repository is private."
@@ -165,7 +185,11 @@ jobs:
     # "must never skip" invariant no longer holds, because every direct
     # dependent's `if:` now tolerates that skip explicitly -- see
     # specs/058-per-job-minute-floor/contracts/image-check-shape-delta.md.
+    # Gate 22 pins this exact `if:`, so run-in-cancelled-run does not touch
+    # it: in a cancelled run this check is skipped, and persist's own gate
+    # tolerates a skipped check (it only stops on 'failure').
     if: inputs.container-image != ''
+    continue-on-error: ${{ inputs.tolerate-failure }}
     permissions: {}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     steps:
@@ -227,7 +251,10 @@ jobs:
     needs: verify-image-prerequisites
     # if: tolerates a skipped image check without widening to run merely
     # because the workflow was not cancelled (#224) -- see clarify.yml.
-    if: "!cancelled() && needs.verify-image-prerequisites.result != 'failure'"
+    # run-in-cancelled-run (specs/120-dispatched-run-metrics) swaps !cancelled()
+    # for always() so a persisting job in a cancelled run still collects.
+    if: "(inputs.run-in-cancelled-run && always() || !cancelled()) && needs.verify-image-prerequisites.result != 'failure'"
+    continue-on-error: ${{ inputs.tolerate-failure }}
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -259,6 +286,7 @@ jobs:
     outputs:
       persisted-count: ${{ steps.persist.outputs.persisted-count }}
       unpersisted-record-keys: ${{ steps.persist.outputs.unpersisted-record-keys }}
+      completed: ${{ steps.complete.outputs.completed }}
     steps:
       # MF-10: a workflow_dispatch with both `run-id` and `since` left blank
       # used to route here anyway (single-run mode, run-id '') and report
@@ -446,3 +474,42 @@ jobs:
           # Empty whenever the step above was skipped — i.e. on every
           # completion-triggered run, which is single-run mode unchanged.
           sweep-runs: ${{ steps.sweep.outputs.sweep-runs }}
+
+      # Last step, success() only: persist's `completed` output is the one
+      # signal that survives continue-on-error (a tolerated job reports
+      # result 'success' whatever failed in it, including container init).
+      - name: Mark persisting complete
+        id: complete
+        run: echo "completed=true" >> "$GITHUB_OUTPUT"
+
+  # specs/120-dispatched-run-metrics FR-007: with tolerate-failure the
+  # persisting jobs end green, so this job says loudly that the run's records
+  # are left to the daily sweep. It is a separate job because a failure in
+  # container init or the image check never reaches a step inside persist,
+  # and it reads persist's `completed` output rather than a result, which
+  # continue-on-error turns into 'success'. Callers that do not tolerate
+  # failure fail loudly instead and get no warning.
+  # It carries no container: (a registered Gate 22 exception): an unpullable
+  # image or rejected registry credentials fail container init, and a warning
+  # job inside that image would fail with persist and warn about nothing.
+  # Gate 79 holds it bare.
+  warn-sweep-backstop:
+    needs: [verify-image-prerequisites, persist]
+    # The image check is required to be 'success' (Gate 23: a status-check
+    # function must not run past a real prerequisite failure). With
+    # tolerate-failure a failed check also reports 'success', so a broken
+    # image reaches this job too, and because this job runs on the bare
+    # runner it still emits the warning.
+    if: "always() && inputs.tolerate-failure && needs.verify-image-prerequisites.result != 'failure' && needs.persist.result != 'skipped' && needs.persist.outputs.completed != 'true'"
+    continue-on-error: true
+    permissions: {}
+    runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: ${{ inputs.environment-deployment }}
+    steps:
+      - name: Warn that the daily sweep is the backstop
+        shell: bash
+        run: |
+          echo "::warning::wing-commander metrics-persist stage: persisting this run's metrics records failed; the daily sweep will collect them."
+          echo "Metrics persisting failed for this run; the daily sweep is the backstop." >> "$GITHUB_STEP_SUMMARY"

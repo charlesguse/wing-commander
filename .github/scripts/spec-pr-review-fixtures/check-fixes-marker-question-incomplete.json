@@ -1,0 +1,1 @@
+{"input": {"spec_dir": "specs/122-x", "fixes": [{"id": 0, "finding": "q", "kind": "marker", "paths": ["specs/122-x/spec.md"], "lines_changed": 1, "options_count": 1, "has_recommendation": false}]}, "expect": {"pushable": [], "blocked": [{"finding": 0, "reason": "question-incomplete"}]}}

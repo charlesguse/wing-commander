@@ -1,0 +1,1 @@
+{"input": {"spec_dir": "specs/122-x", "size_cap": 10, "fixes": [{"finding": "m1", "kind": "marker", "paths": ["README.md"], "lines_changed": 1}, {"finding": "m2", "kind": "marker", "paths": ["specs/122-x/spec.md"], "lines_changed": 11}]}, "expect": {"pushable": [], "blocked": [{"finding": "m1", "reason": "path-outside-spec-dir"}, {"finding": "m2", "reason": "over-size-cap"}]}}

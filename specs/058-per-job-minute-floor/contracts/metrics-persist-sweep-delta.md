@@ -125,6 +125,19 @@ records from (MF-02; owned by the wrapper per constitution VI/VII, not
 hardcoded stage-side). No `concurrency:` group gates either job against
 the other (FR-030(d), research.md R-C7, explicit non-decision).
 
+## Amendment (specs/120-dispatched-run-metrics, FR-008): implement and finalize persist in-run
+
+The completion-triggered path above is restated for two stages. A
+pipeline-dispatched `implement` or `finalize` run persists its own
+records in a last job, `persist-metrics`, in the stage wrapper
+(`wing-commander-5-implement.yml`, `wing-commander-6-finalize.yml`),
+calling `metrics-persist.yml` with `run-in-cancelled-run: true` and
+`tolerate-failure: true` (specs/120-dispatched-run-metrics/contracts/
+persisting-job.md). The `workflow_run` trigger still lists both
+workflows: it covers person-dispatched re-drives and is idempotent with
+the in-run job by `record_key`. `tasks` and `rebase` stay sweep-only
+for pipeline-dispatched runs (owner decision 2026-10-26).
+
 ## What does not change
 
 - `record_key` derivation and idempotence (spec 043).

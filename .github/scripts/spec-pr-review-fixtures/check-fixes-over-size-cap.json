@@ -1,0 +1,1 @@
+{"input": {"spec_dir": "specs/122-x", "size_cap": 50, "fixes": [{"finding": "f1", "paths": ["specs/122-x/spec.md"], "lines_changed": 51, "precedent": {"kind": "head", "ref": "specs/122-x/plan.md:3", "resolved": true}}]}, "expect": {"pushable": [], "blocked": [{"finding": "f1", "reason": "over-size-cap"}]}}

@@ -345,6 +345,11 @@ NO_REMOTE_REFRESH_JOBS = {
     # env.WC_BOT_TOKEN directly), so no step after its agent uses origin's
     # persisted credential either.
     (".github/workflows/lifecycle-review-gate.yml", "review"),
+    # specs/122-settled-spec-pr-review: same shape -- the review job checks
+    # out with persist-credentials: false and its only write is the review
+    # post through env.WC_BOT_TOKEN; the `act` job pushes from its own
+    # checkout through wing-commander-hardened-push.
+    (".github/workflows/spec-pr-review.yml", "review"),
 }
 
 # Third maintainer review of PR #407, Gate 68 hole (a): nothing previously
