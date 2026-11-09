@@ -26,7 +26,7 @@ Scripts in `.github/scripts/`, fixtures in `.github/scripts/tests/board-backlog-
 
 ## Phase 1: Setup
 
-- [ ] T001 Read `.github/scripts/board_item_marker.py`, `board_eligibility.py`, `board_merge.py` (`FIX_BRANCH_RE`), `board_triage.py`, `board_duplicate_disposition.py` and the hold/route/close/prove sites in `.github/workflows/board-loop.yml`; list each site in a scratch note inside the PR description (no file written) so later tasks cite them.
+- [x] T001 Read `.github/scripts/board_item_marker.py`, `board_eligibility.py`, `board_merge.py` (`FIX_BRANCH_RE`), `board_triage.py`, `board_duplicate_disposition.py` and the hold/route/close/prove sites in `.github/workflows/board-loop.yml`; list each site in a scratch note inside the PR description (no file written) so later tasks cite them.
 - [x] T002 [P] Create empty fixture directories with a `README.md` each: `.github/scripts/tests/board-backlog-lines/README.md` and `.github/scripts/tests/board-backlog-edit/README.md`.
 - [x] T003 Find how existing `verify-*.py` gates are registered (gate registry used by `.github/scripts/run-local-gates.py` and `.github/workflows/lint-workflows.yml`) and note the registration pattern to follow in T006 and T011.
 
@@ -81,7 +81,7 @@ Scripts in `.github/scripts/`, fixtures in `.github/scripts/tests/board-backlog-
 - [x] T024 [US1] Edit `board-loop.yml` prove and merge paths (FR-011, FR-021): find a line-born PR's item from the `Backlog line:` reference plus the line-keyed marker (the `pull_request: closed` prove entry, the missed-proof detection, resume recovery of an open `board:owned` PR); on merge call `tick-fixed`; the prove arms that close the item issue must not close the backlog issue and instead record the outcome with `note-proof` ("not proven: <reason>" plus run link when the prove job has one). This handling is not gated by the switch or claim state (FR-020, FR-023).
 - [x] T025 [P] [US1] Add fixtures for the PR-body reference matching (line-born PR found; issue-born PR unaffected; reference present but no marker) and for the switch-off path (no new claim, claimed line still worked, merge still ticked); extend `verify-board-backlog-lines.py` to run them.
 - [x] T026 [P] [US1] Edit `.github/workflows/board-status.yml` to show `WING_COMMANDER_BOARD_BACKLOG_LINES` beside the other board switches and to name the current line (backlog issue plus line id) when a line is the work item (FR-018, FR-023); update any run-summary text in `board-loop.yml` that names the current issue.
-- [ ] T027 [US1] Run `python .github/scripts/run-local-gates.py`; perform a `review-step-gating` pass over the `board-loop.yml` changes.
+- [x] T027 [US1] Run `python .github/scripts/run-local-gates.py`; perform a `review-step-gating` pass over the `board-loop.yml` changes.
 
 **Checkpoint**: MVP — a fix-shaped line goes claim → PR → tick.
 
@@ -119,7 +119,7 @@ Scripts in `.github/scripts/`, fixtures in `.github/scripts/tests/board-backlog-
 ## Phase 7: Polish & Cross-Cutting
 
 - [x] T035 [P] Walk through `specs/121-board-backlog-line-items/quickstart.md` against the fixtures and correct any command that no longer matches the implemented CLI.
-- [ ] T036 Run `python .github/scripts/run-local-gates.py` to green; perform `review-step-gating` (and `container-shell-safety` if a `container:` job was touched) over all `.github/workflows/` changes; confirm no private downstream names appear anywhere.
+- [x] T036 Run `python .github/scripts/run-local-gates.py` to green; perform `review-step-gating` (and `container-shell-safety` if a `container:` job was touched) over all `.github/workflows/` changes; confirm no private downstream names appear anywhere.
 - [x] T037 Confirm `.specify/memory/constitution.md` is not edited by this PR (FR-022; the amendment is the separate PR #1115).
 
 ---
