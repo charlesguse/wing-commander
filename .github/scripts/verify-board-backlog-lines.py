@@ -94,6 +94,19 @@ def run_case(case):
             return None if actual is None else "context: expected None, got {0!r}".format(actual)
         errors = ["context lacks {0!r}".format(n) for n in case["contains"] if n not in (actual or "")]
         errors += ["context carries {0!r}".format(n) for n in case.get("absent", []) if n in (actual or "")]
+        if "cited_run" in case or "unfenced_absent" in case:
+            # FR-012: triage's evidence read sees the line's run; FR-008:
+            # none of the line's prose leaves the fence for it.
+            import board_triage
+            cited = case.get("cited_run")
+            if cited:
+                got = board_triage.find_cited_run(actual or "", cited["repository"])
+                if got != cited["expect"]:
+                    errors.append("triage's find_cited_run() read {0!r} from the line context, "
+                                  "want {1!r}".format(got, cited["expect"]))
+            unfenced = board_triage._unquoted_unfenced(actual or "")
+            errors += ["line prose {0!r} is outside the fence".format(n)
+                       for n in case.get("unfenced_absent", []) if n in unfenced]
         return "; ".join(errors) or None
     if op == "pr-ref":
         return run_pr_ref(case)

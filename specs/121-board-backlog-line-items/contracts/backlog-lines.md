@@ -10,7 +10,7 @@ Pure functions (importable) plus a CLI that reads JSON on stdin and prints JSON 
 Returns candidate-shaped lines per data-model.md. Fenced blocks, blockquotes, indented and nested checkboxes are ignored.
 
 ### `select_line(body, *, claimed_ids) -> Line | None`
-Topmost unchecked line with no annotation. `claimed_ids` is informational; an annotated line is skipped regardless.
+Topmost unchecked line with no annotation, or whose annotation is `released` (a hold a maintainer released). `claimed_ids` is informational; any other annotated line is skipped regardless. A released line is claimed again under its own id, never a newly minted one, so its branch `fix/<issue>-<line_id>` and any PR it left open still name it.
 
 ### `resolve_backlog(open_issues, bot_login) -> (number | None, reason | None)`
 FR-002. Ambiguity or an unmaintained author returns `(None, reason)`.
@@ -33,8 +33,13 @@ Case-insensitive `close[sd]?|fix(e[sd])?|resolve[sd]?` followed by an issue refe
 ### Annotation functions
 `annotate(body, line_id, state, detail) -> body | None`, `tick(body, line_id, annotation) -> body | None`, `clear_note(...)`. `None` when the id is missing or duplicated, or the line is already ticked (stand down).
 
+`clear_note(body, line_id)` releases a held line: its annotation becomes `[wc:<line_id> released]`. The id is kept (FR-014, FR-023): the line's PR, whose body names `Backlog line: #<issue> <line_id>`, still ticks it on merge, and the `release` edit's read-back checks the id is still there in the `released` state.
+
+### `line_context(body, issue, line_id) -> str | None`
+That line's text alone, fenced and framed as untrusted data (FR-007, FR-008). Each GitHub Actions run link in the line (`https://github.com/<owner>/<repo>/actions/runs/<id>`, the bare URL and nothing else of the line) is listed again after the closing fence, because triage's `find_cited_run()` skips fenced code; without it a line could never be ticked on run evidence (FR-012).
+
 ### CLI subcommands
-`select`, `claim`, `progress`, `hold`, `route-proposal`, `tick-evidence`, `tick-fixed`, `note-proof`, `check-closing-keywords`. Each edit subcommand goes through `board_backlog_edit.edit()`.
+`select`, `claim`, `progress`, `hold`, `release`, `route-proposal`, `tick-evidence`, `tick-fixed`, `note-proof`, `check-closing-keywords`. Each edit subcommand goes through `board_backlog_edit.edit()`.
 
 ## `board_backlog_edit.py`
 
