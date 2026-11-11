@@ -46,13 +46,98 @@ formatter reappears in a workflow. When you consolidate something like
 this, add the "single home" check to the nearest existing gate the same
 way — a rule with no gate behind it lasts until the next session.
 
+## Deciding without the owner
+
+This section addresses the owner's own sessions, local and cloud: the ones
+the owner starts and talks to. Stage agents and the board loop's agents are
+not addressed by it; they keep the rules their own stage gives them.
+
+The owner guides this repository and does not gate it (owner decision,
+2026-11-10). Sort every choice by whether it is reversible, not by whether
+it involves a trade-off:
+
+- **Decide and record** a reversible choice: one revert or one switch
+  undoes it, it stays inside the constitution and the published contract,
+  and it needs no new credential, permission, repository setting or model
+  tier. Take the option the evidence favours, write a decision record, and
+  carry on.
+- **Build and compare** when two or three options are each about an hour
+  of agent work or less: one branch each, the same checks on all. Decide
+  when one clearly wins. When none does, bring the owner the comparison.
+- **Ask first** on new ground: no earlier decision of the same shape
+  (`answer-from-precedent` skill), a break in the published contract, a
+  security boundary, a constitution amendment, spend or model tier,
+  deleted history, a reversal of a decision the owner made, or a change to
+  this section or to a list of what is the owner's. Ask with the options,
+  the evidence and a recommendation.
+
+A question blocks only the work that depends on its answer. Keep going on
+the rest.
+
+The owner's word stops any of this: an instruction in the session, a
+changes-requested review, the hold label, or a line under "Owner
+decisions" on the Roadmap issue. Read that list before you merge a spec PR
+or promote a proposal.
+
+A **decision record** is a comment that starts
+`**Session decision (YYYY-MM-DD):**` on the pull request or issue the
+decision governs. It gives what was chosen, the options considered, the
+evidence, and the undo (the revert or the switch).
+`gh search issues "Session decision"` is the log the owner reads
+afterwards. Two places start a pipeline run when commented on: a
+lifecycle issue while its spec is in clarify, and a final PR. A record
+about either goes on the Roadmap issue and names it.
+
+### Merging on evidence
+
+Each condition is a lookup, not a judgment of the work. Read it from
+GitHub at the moment of the merge, post what you read in a decision
+record, then squash-merge pinned to that head.
+
+- **A fix PR that one of the owner's sessions opened** merges without
+  asking when every check run on the exact head SHA has completed
+  successfully (a head with no checks is not green), the latest
+  `review-until-clean` pass reviewed that head and is CLEAN, and the
+  merging session did not review it. When the loop's thrash check stops
+  it, choose one targeted pass with a different method or a smaller scope
+  yourself, and record why. A second stop, or a merge with a finding
+  still open, goes to the owner.
+- **A spec PR** merges without asking under constitution X's spec-merge
+  rule. Read the rule and check every condition it lists. A review pass
+  counts when a fresh session ran it, or it is a round of
+  `spec-pr-review.yml`, and its report on the PR names the head it
+  reviewed and says whether it is clean. The three-round limit below
+  still holds: two clean passes in a row inside three, or the owner
+  decides.
+- **Every other merge waits for the owner's direction for that pull
+  request:** a plan PR, a final PR, a PR the pipeline opened and left
+  open, a PR from outside the owner's sessions, and any PR that touches
+  `.specify/memory/constitution.md`.
+
+### Promoting a proposal
+
+A session applies `spec-request` to a `spec-proposal` under constitution
+X's promotion rule. Read the rule and check every condition it lists.
+
+- Count the lifecycles in flight first:
+  `gh issue list --state open --limit 500 --json number,labels --jq '[.[] | select(any(.labels[].name; . == "spec-request" or startswith("spec:")))] | length'`.
+  Promote only when the count is under three.
+- Take proposals in the order the Roadmap issue lists them, "Queued"
+  before "Proposed".
+- Post the decision record on the proposal, with the count, **before**
+  applying the label. Once intake has labelled the issue, a comment there
+  starts a clarify run.
+- Intake ends in clarification questions. Answer the ones a precedent
+  settles and raise the rest (`answer-from-precedent` skill).
+
 ## Working the issue board
 
-The board has three lanes, and only the first one waits on the owner:
+The board has three lanes, and only the first one can wait on the owner:
 
 - **Roadmap** — specs the owner chose. The open `disposition:tracking`
   issue titled "Roadmap" (#890 at the 2026-10-01 board reset) lists what
-  is in flight, queued and parked. Only the owner applies `spec-request`.
+  is in flight, queued and parked. `spec-request` is applied by the owner,
+  or by a session under "Promoting a proposal" above.
 - **Maintenance** — small defects from stages, reviews and the watchdog.
   They are fixed directly, never turned into specs. Collect them as
   checklist lines on the open `disposition:tracking` issue titled
@@ -94,16 +179,15 @@ prove. Each step has a rule.
   the issue that now tracks the work, usually the Maintenance backlog, in
   the same sitting.
 - Route by shape. A change that is deterministic and gate-shaped (a new
-  `verify-*.py`, a plumbing fix, a comment correction) and carries no
-  design trade-off is a local fix PR, even when it edits a workflow. A
-  change that needs the owner to decide a trade-off, spans several
-  stages, or would benefit from the clarify stage's questions is filed
+  `verify-*.py`, a plumbing fix, a comment correction) is a local fix PR,
+  even when it edits a workflow. A reversible design choice inside it does
+  not change its shape: decide it, or build and compare, under "Deciding
+  without the owner". A change that spans several stages, would benefit
+  from the clarify stage's questions, or turns on new ground is filed
   with the `spec-proposal` label and added to the Roadmap issue's
-  "Proposed" list. Never apply `spec-request` yourself: the owner's label
-  event is what starts intake, and every intake ends in questions only the
-  owner can answer. When the owner asks you to answer them, answer only
-  the ones a precedent already settles and raise the rest
-  (`answer-from-precedent` skill).
+  "Proposed" list. A proposal becomes a spec when `spec-request` is
+  applied to it, which starts intake: by the owner, or by a session under
+  "Promoting a proposal".
 - Every fix PR gets a code review before merge. Fix the findings in the
   same PR. The `review-until-clean` skill is the procedure: every pass
   is a brand-new session that reviews with no findings cap and fixes,
@@ -118,10 +202,12 @@ prove. Each step has a rule.
   The stage-findings composite drops findings that cite only those files
   for the same reason. Contracts under `specs/*/contracts/` are the
   exception: they are live and fixed like code.
-- A spec PR gets at most three review rounds before the owner decides to
-  merge it. A finding that only names a file, a literal, a regex or a
-  step's shape is a plan-level finding. Record it on the lifecycle issue
-  for the plan stage instead of spending another spec round on it. Prefer
+- A spec PR gets at most three review rounds. Two clean rounds in a row
+  inside those three let a session merge it ("Merging on evidence");
+  otherwise the owner decides to merge it. A finding that only names a
+  file, a literal, a regex or a step's shape is a plan-level finding. Record it on the lifecycle issue
+  for the plan stage instead of spending another spec round on it; a
+  round that raises only plan-level findings is clean. Prefer
   smaller specs: when a spec needs more rounds than that, it is usually
   carrying a plan, or two features, and should be split. Spec PR #1091
   took eight rounds, each finding a narrower build detail, and its

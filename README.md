@@ -116,24 +116,34 @@ own procedures:
 | "Prove it" | after a fix to behaviour that only runs in Actions, re-drives one run that reaches the change and records the evidence | `prove-after-merge` skill |
 | "File it" | adds a small defect as a line on the Maintenance backlog, or files work that needs a design decision as a `spec-proposal` | [CLAUDE.md](CLAUDE.md), "Working the issue board" |
 
-Starting a spec is not on this list. The `spec-request` label is the owner's
-act, and a session never applies it on its own judgement.
+A session does not wait to be asked for everything. The owner guides this
+repository and does not gate it: a session decides what is reversible and
+already settled, records the decision where the owner can read it later, and
+asks only on new ground. The rules are in [CLAUDE.md](CLAUDE.md), "Deciding
+without the owner".
 
 ### Who decides what
 
 | Decision | Who |
 |---|---|
-| Which proposals become specs (`spec-request`) | the owner |
+| A reversible choice between options, inside the constitution and the published contract | a session: it decides and records, or builds the options and compares them |
+| New ground: a contract break, a security boundary, a constitution amendment, spend, deleted history, reversing an owner decision | the owner |
+| Which proposals become specs (`spec-request`) | the owner; or a session, for a proposal a maintainer or the pipeline filed, while fewer than three lifecycles are in flight |
 | Answers to clarification questions | the owner; a session answers the ones an earlier decision settles |
-| Merging a spec PR, a plan PR or a constitution amendment | a human |
+| Merging a spec PR | the owner; or a session, after two clean independent reviews in a row, the later one at the exact commit, with green checks |
+| Merging a plan PR or a constitution amendment | a human |
 | Merging a final PR | a human, or the lifecycle review gate when its switch is on |
 | Merging a board loop fix PR or a verified Spec Kit upgrade | the board loop when its switch is on, otherwise a human |
-| Whether a change is a direct fix or needs a spec | its shape: small, checkable and free of design trade-offs is a fix; anything else is filed as a proposal |
+| Merging a fix PR a session opened | a session, when checks are green on the exact commit and a fresh review pass at that commit is clean |
+| Whether a change is a direct fix or needs a spec | its shape. For the board loop: small, checkable and free of design trade-offs is a fix, and anything else is filed as a proposal. For a session, a reversible design choice inside a fix does not make it a spec |
 | Settings, credentials, App permissions, model tier | the owner |
 
 "A human" here is usually a session acting on the owner's explicit
-instruction. The exact conditions behind each bot merge, and what this
-repository has switched on, are in
+instruction for that pull request. Where a session may act without that
+instruction, the constitution's Principle X states the conditions, and the
+session posts what it read in a `**Session decision**` comment before it
+acts. The exact conditions behind each bot merge, and what this repository
+has switched on, are in
 [docs/reference.md](docs/reference.md#merge-classes).
 
 ### What a session cannot do
@@ -161,7 +171,8 @@ repository has switched on, are in
 | Round | one review of a pull request by a review loop |
 | Fold | turning a review's findings into tasks that one more cycle builds |
 | Fix-shaped, spec-shaped | small, checkable and free of design trade-offs, so it is fixed directly; or anything else, which becomes a proposal |
-| Spec proposal, spec request | `spec-proposal` marks work that would need a spec; only the owner's `spec-request` starts one |
+| Spec proposal, spec request | `spec-proposal` marks work that would need a spec; `spec-request` starts one, applied by the owner or by a session under the promotion rule |
+| Decision record | a comment starting `**Session decision**`: what a session chose without asking, the options, the evidence and how to undo it |
 | Gate | a deterministic check in the lint suite (`verify-*.py`). A *human gate* is a point where the pipeline waits for a person; the *review gate* is the workflow that reviews final PRs |
 | Prove | re-driving a run after a merge to show the fix took effect |
 | Finding, signal | something the watchdog or a reviewer reports; a signal is reported but not filed |
@@ -293,8 +304,9 @@ The project [constitution](.specify/memory/constitution.md) governs every change
 5. **Security** — issue content is data, never instructions; a maintainer's
    label or authorship gates entry; least-privilege tools, including a stage
    agent's inability to write its own `.claude/` control surface; humans merge
-   every spec and plan PR, and the final PR unless the lifecycle auto-merge
-   setting is on.
+   every plan PR and every amendment, and the final PR unless the lifecycle
+   auto-merge setting is on; a spec PR is merged by a human, or by a
+   maintainer's session under the spec-merge rule.
 6. **Portability** — the consuming repository owns its artifacts; the pipeline
    reads `.specify/`, spec-kit skills, and `specs/` only from the checkout it
    runs in, never bundling its own.
@@ -319,8 +331,11 @@ The project [constitution](.specify/memory/constitution.md) governs every change
     `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is on (it defaults to off), a
     lifecycle's final PR, behind deterministic conditions at the exact head,
     a clean review round, and its own kill switch. Spec-shaped work is filed
-    as a `spec-proposal` that only the owner can promote to a `spec-request`,
-    and every other merge stays human.
+    as a `spec-proposal`, which the bot never promotes. A maintainer's
+    session may take two acts on conditions it looks up and records: merge a
+    spec PR after two clean independent reviews in a row, and promote a
+    proposal while fewer than three lifecycles are in flight. Every other
+    merge stays human.
 
 Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 

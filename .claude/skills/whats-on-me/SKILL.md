@@ -49,7 +49,9 @@ fall back to the "Board status" issue itself
 - **Roadmap (#890):** the Proposed list, "Owner decisions", and In
   flight / Queued against the three-in-implement limit.
 - **Open PRs:** CI on each head, and whether each needs a human merge:
-  - spec PRs, plan PRs and amendments always do (constitution V);
+  - plan PRs and amendments always do (constitution V);
+  - a spec PR does when it cannot meet the spec-merge rule (constitution
+    X); name the condition that fails;
   - a PR touching `.github/workflows/` does when the token lacks the
     `workflow` scope.
 - **This session's own state:**
@@ -68,8 +70,10 @@ link, the action it needs, a recommendation where there is a choice, and
 its age.
 
 - **Needs you to move.** Only the owner can do these:
-  - merge a spec PR, a plan PR or an amendment;
-  - apply `spec-request`;
+  - merge a plan PR or an amendment, or a spec PR that cannot meet the
+    spec-merge rule;
+  - apply `spec-request` to a proposal that does not meet the promotion
+    rule (constitution X); name the condition that fails;
   - answer an open question that has no precedent;
   - merge a workflow-touching PR GitHub refused for scope;
   - set a variable, secret or App permission;
@@ -78,6 +82,10 @@ its age.
   and do it on a yes.
 - **Older decisions still waiting.** Oldest first, with how long each has
   waited.
+- **Decided without you.** Every `**Session decision**` record since the
+  last report (`gh search issues --repo "$R" "Session decision" --sort updated`,
+  with `R` the repository as `owner/name`): one line each, with what was
+  chosen and its undo.
 - **Moving without you.** What the pipeline and this session are doing,
   and when the next check-in is.
 - **Nothing needed.** One line, so the owner knows the rest was looked

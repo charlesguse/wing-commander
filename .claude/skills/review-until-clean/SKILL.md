@@ -266,7 +266,7 @@ Rules:
 
 - **Continue** while the count falls and the findings are mostly on the
   PR's original lines.
-- **Stop and ask the owner**, from pass 3 on, when any of these holds:
+- **Stop**, from pass 3 on, when any of these holds:
   - the count did not fall;
   - at least half of this pass's real findings are self-inflicted;
   - a fixed finding recurs;
@@ -277,8 +277,11 @@ Rules:
   `LIFECYCLE_REVIEW_ROUND_BUDGET`. At the budget, stop whatever the
   signals say.
 
-Stopping means asking the owner. Give them what is still open, the
-signals that tripped, and these options, recommending one:
+The first stop on a PR is yours to decide when the choice is (b) or (c)
+below: take it, and say why in a decision record (CLAUDE.md, "Deciding
+without the owner"). Option (a), a second stop on the same PR, and the
+budget go to the owner. Give them what is still open, the signals that
+tripped, and these options, recommending one:
 
 - **(a) Merge as is,** with the remaining findings filed as backlog lines.
   This fits when they are edge cases in new code that fails closed.
@@ -349,8 +352,11 @@ it: a specialist skill (that is how `review-step-gating`,
 ## Merge (orchestrator)
 
 Merge only with the owner's permission for this class of PR, given
-explicitly or as a standing instruction. Never merge a spec PR, a plan PR or
-a constitution amendment: those merges stay human (constitution V).
+explicitly or as a standing instruction. CLAUDE.md's "Merging on evidence"
+is that standing instruction for a fix PR one of the owner's sessions
+opened. A plan PR, a final PR and a constitution amendment merge only at
+the owner's direction for that pull request (constitution V); a spec PR
+merges only under the spec-merge rule (constitution X).
 
 When a pass is CLEAN:
 
