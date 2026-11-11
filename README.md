@@ -3,35 +3,170 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **Spec-Driven Development as a GitHub-native pipeline.** Open an issue describing
-what you want; the pipeline turns it into a reviewed specification, a reviewed
-plan, generated tasks, an implementation, and finally a pull request — powered by
-[GitHub spec-kit](https://github.com/github/spec-kit) and
-[Claude Code](https://github.com/anthropics/claude-code-action), with humans
-gating every merge.
+what you want; the pipeline turns it into a reviewed specification, a plan,
+tasks, an implementation and a pull request. It is built so that no single
+agent owns a change end to end: one writes, a different one with no shared
+context reviews, deterministic checks decide what may merge, and a run after
+the merge proves it. It is built on [GitHub spec-kit](https://github.com/github/spec-kit) and
+[Claude Code](https://github.com/anthropics/claude-code-action), and all of it
+runs in GitHub Actions.
 
-This repository **dogfoods itself**: the pipeline is being built through the
+This repository **dogfoods itself**: the pipeline is built through the
 pipeline. The first spec ever produced here is the spec for the intake stage —
 see [`specs/001-spec-intake/`](specs/001-spec-intake/spec.md).
+
+| If you want to | Read |
+|---|---|
+| Understand what happens to an issue | [How it works](#how-it-works) |
+| Know who does what here, and how to drive it from a Claude Code session | [How this repository is operated](#how-this-repository-is-operated) |
+| Look up a loop, a default, a limit or a switch | [docs/reference.md](docs/reference.md) |
+| Use the pipeline in your own repository | [Using this on your own project](#using-this-on-your-own-project) |
+| Work on this repository | [CLAUDE.md](CLAUDE.md) (the board rules), [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ## How it works
 
 ```
 you: open an issue describing a feature
-maintainer: applies the `spec-request` label        ← human gate 1
-  🤖 /speckit-specify → draft spec PR to main
-  🤖 clarification questions posted on your issue — just reply
-maintainer: reviews & merges the spec PR             ← human gate 2
-  🤖 /speckit-plan → plan PR on a dedicated spec branch
-maintainer: reviews & merges the plan PR             ← human gate 3
-  🤖 /speckit-tasks → tasks.md (auto-committed)
-  🤖 /speckit-implement ⟲ /speckit-converge until done (capped)
-  🤖 final PR to main + any remaining manual tasks reported on your issue
-maintainer: reviews & merges the final PR            ← human gate 4
-  🤖 branches deleted, labels flipped, issue closed
+maintainer: applies the `spec-request` label                  ← human gate
+  🤖 intake     /speckit-specify → draft spec PR to main
+  🤖 clarify    questions posted on your issue — just reply   ← your answers
+  🤖 review †   an independent reviewer checks the settled spec
+maintainer: reviews & merges the spec PR                      ← human gate
+  🤖 plan       /speckit-plan (a plan PR only if you ask for one)
+  🤖 tasks      /speckit-tasks → tasks.md
+  🤖 implement  /speckit-implement ⟲ /speckit-converge until done (capped)
+  🤖 finalize   final PR to main + any remaining manual steps on your issue
+  🤖 review †   an independent reviewer; its findings go back for a fix cycle
+maintainer: reviews & merges the final PR                     ← human gate ‡
+  🤖 cleanup    branches deleted, labels flipped, issue closed
+
+† runs only in this repository, not part of the published stages
+‡ the review gate can merge it instead, when that switch is on
 ```
 
-Your issue is the feature's **lifecycle thread**: every stage reports its status
-there, and its labels (`spec:NNN-slug`, `stage:*`) always show where things stand.
+Your issue is the feature's **lifecycle issue**: every stage reports its status
+there, and its labels (`spec:NNN-slug`, `stage:*`) always show where things
+stand. To change course, use ordinary GitHub actions: comment to answer or
+clarify, review the pull request to reshape it, close to cancel.
+
+Beside the lifecycle, this repository runs loops that keep it healthy without
+anyone asking:
+
+| Loop | What it does |
+|---|---|
+| Board loop | Hourly, takes one small open issue from triage to a reviewed fix PR, merges it when its switch is on, and proves the fix with a run. Anything that needs a design decision it files as a `spec-proposal` instead of fixing. |
+| Watchdog | After every stage run, looks for a stage that lost work, drifted or ran out of budget, and files what it finds. It never fixes anything; the board loop picks its issues up. |
+| Review gates | Independent reviewers for settled spec PRs and for final PRs. |
+| Auto-release | Daily, drives a trivial feature through the whole lifecycle in a test repository at the unreleased commit, and tags a release when it passes. |
+| Spec Kit updater | Daily, detects a new Spec Kit release, verifies it and opens the upgrade PR. |
+| Board status | Daily, rewrites one issue with what waits on the owner, what the pipeline is doing, and the state of `main`. |
+
+[docs/reference.md](docs/reference.md) has each loop's schedule, limits and
+switches. [docs/architecture.md](docs/architecture.md) has the design, stage
+by stage.
+
+## How this repository is operated
+
+Three parties work this repository. Knowing which one acts is most of
+understanding it.
+
+- **The owner** sets direction: chooses which proposals become specs, answers
+  the questions no earlier decision settles, and owns credentials, settings
+  and spend.
+- **A Claude Code session** is how the owner works. The owner talks to a
+  session, on a desktop, a phone or in the cloud, and rarely to GitHub
+  directly. The session reads the board, drives the pipeline through issues,
+  labels, comments and dispatches, reviews and fixes pull requests, and
+  reports back. It acts under the owner's GitHub account, so what it posts
+  carries the owner's authority: its comment on a lifecycle issue starts
+  clarify exactly as the owner's would. Its rules are in
+  [CLAUDE.md](CLAUDE.md); its procedures are the skills in
+  [`.claude/skills/`](.claude/skills/).
+- **The pipeline** is the workflows, acting as a GitHub App
+  (`wing-commander-bot`). It does the stage work, works its own board, and
+  merges only the classes of pull request the
+  [constitution](.specify/memory/constitution.md) names.
+
+GitHub is the record. A decision made in a chat is written down on the issue
+or pull request it governs, so the next session finds it.
+
+### Where to look
+
+| For | Look at |
+|---|---|
+| What waits on the owner, what is moving, `main`'s CI, the last release, the merge switches | the open issue titled "Board status", rewritten daily |
+| Which specs are in flight, queued, proposed or parked; goals; owner decisions | the open issue titled "Roadmap" |
+| Small defects waiting for a fix | the open issue titled "Maintenance backlog", one checklist line each |
+| One feature's whole history | its lifecycle issue |
+| What a run cost in turns and tokens | `records.jsonl` on the `metrics` branch |
+
+The three titled issues carry the `disposition:tracking` label. The board
+loop never selects them.
+
+### Asking a session
+
+A session needs no special commands. These requests map onto the repository's
+own procedures:
+
+| Say | The session | Procedure |
+|---|---|---|
+| "What's on me?" | reports what waits on the owner, what is moving without them, and what needs nothing | `whats-on-me` skill |
+| "Review and merge #N" | runs fresh review passes until one comes back clean, fixes each finding with a test that fails without it, and merges when CI is green on that exact commit | `review-until-clean` skill |
+| "Answer them if there's a precedent" | answers each open question an earlier decision already settles, citing it, and brings back only the rest, with options and a recommendation | `answer-from-precedent` skill |
+| "Prove it" | after a fix to behaviour that only runs in Actions, re-drives one run that reaches the change and records the evidence | `prove-after-merge` skill |
+| "File it" | adds a small defect as a line on the Maintenance backlog, or files work that needs a design decision as a `spec-proposal` | [CLAUDE.md](CLAUDE.md), "Working the issue board" |
+
+Starting a spec is not on this list. The `spec-request` label is the owner's
+act, and a session never applies it on its own judgement.
+
+### Who decides what
+
+| Decision | Who |
+|---|---|
+| Which proposals become specs (`spec-request`) | the owner |
+| Answers to clarification questions | the owner; a session answers the ones an earlier decision settles |
+| Merging a spec PR, a plan PR or a constitution amendment | a human |
+| Merging a final PR | a human, or the lifecycle review gate when its switch is on |
+| Merging a board loop fix PR or a verified Spec Kit upgrade | the board loop when its switch is on, otherwise a human |
+| Whether a change is a direct fix or needs a spec | its shape: small, checkable and free of design trade-offs is a fix; anything else is filed as a proposal |
+| Settings, credentials, App permissions, model tier | the owner |
+
+"A human" here is usually a session acting on the owner's explicit
+instruction. The exact conditions behind each bot merge, and what this
+repository has switched on, are in
+[docs/reference.md](docs/reference.md#merge-classes).
+
+### What a session cannot do
+
+- Read or change repository variables and secrets when its token lacks that
+  scope, which a cloud sandbox's token usually does. The session hands the
+  owner the command to run.
+- Grant the App a permission or create a credential. Those are the owner's
+  acts.
+- Push to `main` around a refused merge. A merge GitHub refuses goes back to
+  the owner.
+
+## Vocabulary
+
+| Term | Meaning |
+|---|---|
+| Lifecycle | one feature's trip from issue to merged code |
+| Lifecycle issue | the issue that started it; every stage reports there |
+| Stage | one step of a lifecycle, published as a reusable workflow (`intake.yml` … `cleanup.yml`) |
+| Wrapper | this repository's thin `wing-commander-*.yml` workflow that owns a stage's trigger and its checks |
+| Spec PR, final PR | the draft spec (`spec-draft/NNN-slug` → `main`) and the implementation (`spec/NNN-slug` → `main`) |
+| Cycle | one implement ⟲ converge run; a lifecycle gets a capped number of them |
+| Converged | no buildable task is left unchecked in `tasks.md` |
+| Stalled | a stage or loop stopped and handed the item to a human: `stage:stalled` on a lifecycle, `board:stalled` on a board item |
+| Round | one review of a pull request by a review loop |
+| Fold | turning a review's findings into tasks that one more cycle builds |
+| Fix-shaped, spec-shaped | small, checkable and free of design trade-offs, so it is fixed directly; or anything else, which becomes a proposal |
+| Spec proposal, spec request | `spec-proposal` marks work that would need a spec; only the owner's `spec-request` starts one |
+| Gate | a deterministic check in the lint suite (`verify-*.py`). A *human gate* is a point where the pipeline waits for a person; the *review gate* is the workflow that reviews final PRs |
+| Prove | re-driving a run after a merge to show the fix took effect |
+| Finding, signal | something the watchdog or a reviewer reports; a signal is reported but not filed |
+| Kill switch | a `WING_COMMANDER_*_PAUSED` repository variable that stops one loop |
+| Parked | a lifecycle closed with the `parked` label while it waits on the owner |
 
 ## Status
 
@@ -63,6 +198,19 @@ below are that split, row by row.
 | 5 · Finalize | `finalize.yml` | `wing-commander-6-finalize.yml` | ✅ — [spec](specs/006-finalize-stage/spec.md) |
 | 6 · Cleanup | `cleanup.yml` | `wing-commander-7-cleanup.yml` | ✅ — [spec](specs/007-cleanup-stage/spec.md) |
 | Rebase | `rebase.yml` | `wing-commander-rebase.yml` | ✅ — [spec](specs/008-auto-rebase/spec.md) |
+| Watchdog | `watchdog.yml` | `wing-commander-8-watchdog.yml` | ✅ — [spec](specs/015-pipeline-watchdog/spec.md) |
+| PR conversation | `pr-conversation.yml` | `wing-commander-9-pr-conversation.yml` | ✅ — [spec](specs/033-pr-conversation-commands/spec.md) |
+| Spec Kit updater | `auto-update-spec-kit.yml` | `wing-commander-auto-update-spec-kit.yml` | ✅ — [spec](specs/027-auto-update-spec-kit/spec.md) |
+| Metrics | `metrics-persist.yml` | `wing-commander-metrics-persist.yml` | ✅ — [spec](specs/043-durable-metrics-record/spec.md) |
+
+Workflows that exist only in this repository, with no published stage: the
+board loop (`board-loop.yml`, [spec](specs/057-autonomous-board-loop/spec.md)),
+the lifecycle review gate (`lifecycle-review-gate.yml`,
+[spec](specs/062-lifecycle-review-gate/spec.md)), spec PR review
+(`spec-pr-review.yml`, [spec](specs/122-settled-spec-pr-review/spec.md)),
+board status (`board-status.yml`), auto-release (`auto-release.yml`,
+[spec](specs/045-auto-release-verified-head/spec.md)) and the gate suite
+(`lint-workflows.yml`).
 
 ## Quickstart
 
@@ -105,6 +253,10 @@ Any subset of stages works, with any triggers you choose — this repository's
 own `wing-commander-*.yml` workflows are the same thin wrappers, calling the
 same stages by local path.
 
+What you get by pinning is the feature lifecycle and the published stages in
+the table above. The board loop, the review gates, board status and
+auto-release are this repository's own workflows and are not published.
+
 **"Can I use the `wing-commander-bot`?"** — you create your own. The bot is
 just a GitHub App you register in your own account (any name works; the
 pipeline resolves the App's slug at runtime), so nothing ties your pipeline
@@ -119,17 +271,22 @@ walks through the two-minute setup.
 | 2 · Build stages | implement ⟲ converge, finalize, cleanup, rebase | ✅ done |
 | 3 · Hardening & observability | per-run agent metrics (turns/tokens/cost), failure-mode polish | ✅ done |
 | 4 · Extraction | stages become reusable `workflow_call` workflows; consuming repos keep thin event wrappers + their own `specify init` output | ✅ done — [docs/adoption.md](docs/adoption.md) |
+| 5 · Bounded autonomy | the pipeline works its own board and merges what the constitution lets it: board fixes, verified upgrades, then final PRs | in progress — the open "Roadmap" issue tracks it |
 
 Each milestone is built *through* the pipeline itself (constitution I): open an
 issue, get the `spec-request` label, and the stages above carry it to a PR.
+What is in flight, queued and parked right now is on the "Roadmap" issue, not
+here.
 
 ## Design principles
 
 The project [constitution](.specify/memory/constitution.md) governs every change:
 
 1. **Guide** — the repo is its own first example.
-2. **Cost-conscious model tiering** — Haiku for triage, Sonnet for spec work,
-   Opus only by explicit opt-in for implementation.
+2. **Cost-conscious model tiering** — Opus for specs and clarification, Sonnet
+   for planning, tasks and implementation, Haiku for summaries; Opus for
+   implementation only by explicit opt-in, and every agent step runs under a
+   bounded turn budget.
 3. **Simple, GitHub-native interaction** — issues, comments, PRs; nothing else.
 4. **Automation-first** — describe, clarify, review twice; everything else is
    automated, and surviving manual steps are always reported.
@@ -160,10 +317,10 @@ The project [constitution](.specify/memory/constitution.md) governs every change
     findings, and a kill switch; dependency bumps it opened itself, after
     their own verification passed; and, only while
     `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is on (it defaults to off), a
-    lifecycle's final PR, behind eight deterministic conditions at the exact
-    head, a clean review round, and its own kill switch. Spec-shaped work is
-    filed as a `spec-proposal` that only the owner can promote to a
-    `spec-request`, and every other merge stays human.
+    lifecycle's final PR, behind deterministic conditions at the exact head,
+    a clean review round, and its own kill switch. Spec-shaped work is filed
+    as a `spec-proposal` that only the owner can promote to a `spec-request`,
+    and every other merge stays human.
 
 Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 
@@ -172,17 +329,28 @@ Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 ```
 .github/workflows/<stage>.yml      the published stages (workflow_call; what adopters
                                    pin): intake, clarify, plan, tasks, implement,
-                                   finalize, cleanup, rebase, watchdog
+                                   finalize, cleanup, rebase, pr-conversation,
+                                   watchdog, auto-update-spec-kit, metrics-persist
 .github/workflows/wing-commander-*.yml  this repo's thin wrappers — triggers + gates only
-.github/workflows/release.yml      tag vX.Y.Z, advance the floating major tag
-.github/actions/wing-commander-context/   shared App-token + spec-identity resolution
-.github/actions/wing-commander-preflight/ credential + prerequisite fail-fast checks
-.github/actions/wing-commander-metrics-summary/  per-run agent metrics rendering
+.github/workflows/board-loop.yml   this repo only: the hourly maintenance loop
+.github/workflows/lifecycle-review-gate.yml, spec-pr-review.yml
+                                   this repo only: independent review of final and spec PRs
+.github/workflows/auto-release.yml, release.yml
+                                   this repo only: prove the head end to end, then tag
+                                   vX.Y.Z and advance the floating major tag
+.github/workflows/lint-workflows.yml    the gate suite, run on every pull request
+.github/actions/wing-commander-*/  composite actions the stages share (published)
+.github/actions/_shared/           scripts shared between composites (internal)
+.github/scripts/verify-*.py        the gates; run-local-gates.py runs the same set locally
+.github/scripts/board_*.py, wc_*.py     the deterministic logic behind the loops
 .claude/skills/speckit-*/ spec-kit skills (installed by `specify init`; pin in .specify/init-options.json)
+.claude/skills/<other>/   this repo's own session procedures (review-until-clean,
+                          answer-from-precedent, whats-on-me, prove-after-merge, …)
 .specify/                 spec-kit scripts, templates, memory/constitution.md
 specs/NNN-slug/           one directory per feature: spec.md, plan.md, tasks.md,
-                          spec-meta.json (lifecycle state), checklists/
-docs/                     setup + adoption + architecture
+                          spec-meta.json (lifecycle state), checklists/, contracts/
+docs/                     setup + adoption + architecture + reference
+CLAUDE.md                 the rules a session follows when working this repository
 ```
 
 ## License
