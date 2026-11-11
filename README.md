@@ -32,7 +32,8 @@ maintainer: applies the `spec-request` label                  ← human gate
   🤖 clarify    questions posted on your issue — just reply   ← your answers
   🤖 review †   an independent reviewer checks the settled spec
 maintainer: reviews & merges the spec PR                      ← human gate
-  🤖 plan       /speckit-plan (a plan PR only if you ask for one)
+  🤖 plan       /speckit-plan → plan PR on the spec branch
+maintainer: reviews & merges the plan PR                      ← human gate §
   🤖 tasks      /speckit-tasks → tasks.md
   🤖 implement  /speckit-implement ⟲ /speckit-converge until done (capped)
   🤖 finalize   final PR to main + any remaining manual steps on your issue
@@ -42,6 +43,7 @@ maintainer: reviews & merges the final PR                     ← human gate ‡
 
 † runs only in this repository, not part of the published stages
 ‡ the review gate can merge it instead, when that switch is on
+§ skipped when `WING_COMMANDER_PLAN_REVIEW` is `auto`, as it is in this repository
 ```
 
 Your issue is the feature's **lifecycle issue**: every stage reports its status
@@ -164,7 +166,7 @@ repository has switched on, are in
 | Spec proposal, spec request | `spec-proposal` marks work that would need a spec; only the owner's `spec-request` starts one |
 | Gate | a deterministic check in the lint suite (`verify-*.py`). A *human gate* is a point where the pipeline waits for a person; the *review gate* is the workflow that reviews final PRs |
 | Prove | re-driving a run after a merge to show the fix took effect |
-| Finding, signal | something the watchdog or a reviewer reports; a signal is reported but not filed |
+| Finding, signal | a finding is something the watchdog or a reviewer reports, filed as an issue or posted on the pull request; a signal is a watchdog class (`denied-tool`, `narrative-drift`) that is reported on the lifecycle issue and not filed |
 | Kill switch | a `WING_COMMANDER_*_PAUSED` repository variable that stops one loop |
 | Parked | a lifecycle closed with the `parked` label while it waits on the owner |
 

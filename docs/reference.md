@@ -36,7 +36,7 @@ checks it against the workflows yet (see [Keeping this current](#keeping-this-cu
 | [Watchdog](#watchdog) | inspects every finished stage run and files defects | published stage, this repository's wrapper | after each stage run | yes | no |
 | [Auto-release](#releases-and-upgrades) | proves the unreleased head end to end, then tags a release | this repository | daily | no (it drives the stages, which do) | no (it tags) |
 | [Spec Kit updater](#releases-and-upgrades) | detects, verifies and proposes a Spec Kit upgrade | published stage, this repository's wrapper | daily | yes | no (the board loop merges its PR) |
-| [Housekeeping](#housekeeping-and-observability) | rebase, cleanup, metrics, board status, image checks | mixed | events and daily | rebase only | no |
+| [Housekeeping](#housekeeping-and-observability) | rebase, cleanup, metrics, board status, image checks | mixed | events and daily | rebase and cleanup | no |
 
 ## Feature lifecycle
 
@@ -50,7 +50,7 @@ checks it against the workflows yet (see [Keeping this current](#keeping-this-cu
 | tasks | the plan lands | `claude-sonnet-5-5` | 60 | `tasks.md`, then a dispatch of implement |
 | implement | dispatched by tasks, by itself for the next cycle, or by a review fold | `claude-sonnet-5-5` | 180 | one implement ⟲ converge cycle; then the next cycle or a dispatch of finalize |
 | finalize | dispatched by implement | `claude-haiku-5-5` | 20 | the final PR (`spec/NNN-slug` → `main`), `stage:review`, manual steps reported on the issue |
-| cleanup | a lifecycle PR closes; also daily | `claude-haiku-5-5` | 20 | branches deleted, `stage:done`, issue closed |
+| cleanup | a lifecycle PR closes; also daily | `claude-haiku-5-5` | 20 | when the final PR merges: branches deleted, `stage:done`, issue closed. A draft spec PR closed unmerged: draft branch deleted, issue left open. Any other lifecycle PR closed unmerged: `stage:stalled`, branches kept |
 
 Limits and rules:
 
@@ -82,7 +82,7 @@ clarification questions, merge the spec PR, merge the plan PR when
 
 | Rule | Value |
 |---|---|
-| Reviews | an open draft spec PR (`spec-draft/*`) that is settled: `stage:spec`, no open clarification marker, and the head is no newer than the bot's "ready" announcement. A maintainer's dispatch skips the announcement check |
+| Reviews | an open draft spec PR (`spec-draft/*`) that is settled: `stage:spec` and not `stage:clarify`, no open clarification marker, and the head is no newer than the bot's "ready" announcement. A dispatch by a human maintainer skips the announcement check |
 | Reviewer | `claude-opus-5-5`, effort `high`, turn budget 30 (`WING_COMMANDER_SPEC_REVIEW_MODEL`, `WING_COMMANDER_SPEC_REVIEW_EFFORT`) |
 | Rounds | 5 per spec PR; 2 failed attempts per head, then it stops |
 | May push | fixes and clarification markers inside the spec's own directory, at most 200 changed lines per push |
@@ -130,7 +130,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | Step | What it does | Limit |
 |---|---|---|
 | select | picks an in-flight item first, else the oldest eligible open issue | one item per run |
-| triage | checks the issue against current `main`; closes it only on evidence the code read itself (an API 429 in the cited run, an upstream action bump) | turn budget 15 |
+| triage | checks the issue against current `main`; closes it only on evidence the code read itself (an API 429 that ended the cited run in one turn at zero cost, an upstream action bump) | turn budget 15 |
 | route | decides fix-shaped or spec-shaped. Spec-shaped work is filed as a `spec-proposal` and never fixed | turn budget 25 |
 | fix | writes the fix on `fix/<issue>-<slug>` and opens a PR labelled `board:owned` | turn budget 60; 6 files and 120 changed lines |
 | review | a second agent with no shared context reviews; in-scope findings are fixed in the same PR | 5 rounds; the same `not-converging` rule as the review gate |
@@ -140,7 +140,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | Rule | Value |
 |---|---|
 | Eligible issue | authored by a maintainer, labelled by a maintainer, or filed by the pipeline under its own labels (`pipeline-defect`, `auto-update:*`, `found-by:*`) |
-| Never selected | `board:stalled`, any `disposition:*` label, any `stage:*` or `spec:*` label, `spec-proposal`, `spec-request`, and the two issues their own workflows manage, `auto-update:tracking` and `auto-release:failed` |
+| Never selected | `board:stalled`, any `disposition:*` label (a reopened `disposition:duplicate` issue is re-admitted once the `spec-request` it duplicated has closed), any `stage:*` or `spec:*` label, `spec-proposal`, `spec-request`, and the two issues their own workflows manage, `auto-update:tracking` and `auto-release:failed` |
 | Spec-shaped, whatever its size | a change to a published stage's inputs or a composite's inputs and outputs |
 | Workflow files | a fix that edits `.github/workflows/` is held under `board:stalled` unless `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` is `true` (default off), which also needs the App's Workflows permission |
 | Stalled | `board:stalled` after the round budget is spent, a review that stops converging, a backstop breach, a fix it cannot push, or three not-ready outcomes on one PR. Only a human removing the label re-admits the issue |
@@ -225,8 +225,7 @@ and spend, credentials, App permissions and repository variables.
 ## Kill switches
 
 Each is a repository variable; only the exact value `true` pauses, and unset
-means running. A pause is read when a run starts, so it takes effect on the
-next run.
+means running. A pause takes effect no later than the next run.
 
 | Switch | Stops |
 |---|---|
