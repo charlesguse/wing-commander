@@ -38,8 +38,8 @@ From strongest to weakest:
    actor on a label event). A merge or label that carries a
    `**Session decision**` record was a session's act under a standing rule
    (CLAUDE.md, "Deciding without the owner"), not the owner's. GitHub shows
-   the same account for both, so the record is what tells them apart; such
-   an act is tier 2.
+   the same account for both, so the record is what tells them apart. Such
+   an act is not an owner precedent.
 2. **Owner decisions recorded by a Claude session.** Much of the record is
    written by Claude: a session asks, the owner answers in chat, and the
    session carries on and writes the result down under the owner's account
@@ -60,10 +60,9 @@ From strongest to weakest:
    a decision that was written down wrong.
 
    A `**Session decision**` record is a decision a session made without
-   asking. It is a precedent for a reversible choice of the same shape, and
-   the citation says "decided by a session on #N". It never settles a
-   question on the "always the owner's" list below, and an owner decision
-   that reverses it wins.
+   asking. It is not a precedent and settles no later question. Cite it
+   only as evidence ("decided by a session on #N") when the same
+   reversible choice comes up again.
 
    **Doesn't count:** a Claude-written recommendation, proposal or triage
    the owner never answered or acted on, or a research agent's summary.

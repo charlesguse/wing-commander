@@ -83,7 +83,8 @@ its age.
 - **Older decisions still waiting.** Oldest first, with how long each has
   waited.
 - **Decided without you.** Every `**Session decision**` record since the
-  last report (`gh search issues --repo "$R" "Session decision" --sort updated`,
+  last report
+  (`gh search issues --include-prs --repo "$R" "Session decision" --sort updated`,
   with `R` the repository as `owner/name`): one line each, with what was
   chosen and its undo.
 - **Moving without you.** What the pipeline and this session are doing,
