@@ -36,7 +36,7 @@ checks it against the workflows yet (see [Keeping this current](#keeping-this-cu
 | [Watchdog](#watchdog) | inspects every finished stage run and files defects | published stage, this repository's wrapper | after each stage run | yes | no |
 | [Auto-release](#releases-and-upgrades) | proves the unreleased head end to end, then tags a release | this repository | daily | no (it drives the stages, which do) | no (it tags) |
 | [Spec Kit updater](#releases-and-upgrades) | detects, verifies and proposes a Spec Kit upgrade | published stage, this repository's wrapper | daily | yes | no (the board loop merges its PR) |
-| [Housekeeping](#housekeeping-and-observability) | rebase, cleanup, metrics, board status, image checks | mixed | events and daily | rebase only | no |
+| [Housekeeping](#housekeeping-and-observability) | rebase, cleanup, metrics, board status, image checks | mixed | events and daily | rebase and cleanup | no |
 
 ## Feature lifecycle
 
@@ -50,7 +50,7 @@ checks it against the workflows yet (see [Keeping this current](#keeping-this-cu
 | tasks | the plan lands | `claude-sonnet-5-5` | 60 | `tasks.md`, then a dispatch of implement |
 | implement | dispatched by tasks, by itself for the next cycle, or by a review fold | `claude-sonnet-5-5` | 180 | one implement ⟲ converge cycle; then the next cycle or a dispatch of finalize |
 | finalize | dispatched by implement | `claude-haiku-5-5` | 20 | the final PR (`spec/NNN-slug` → `main`), `stage:review`, manual steps reported on the issue |
-| cleanup | a lifecycle PR closes; also daily | `claude-haiku-5-5` | 20 | branches deleted, `stage:done`, issue closed |
+| cleanup | a lifecycle PR closes; also daily | `claude-haiku-5-5` | 20 | when the final PR merges: branches deleted, `stage:done`, issue closed. A draft spec PR closed unmerged: draft branch deleted, issue left open. Any other lifecycle PR closed unmerged: `stage:stalled`, branches kept |
 
 Limits and rules:
 
@@ -85,7 +85,7 @@ unless a session does them under the two rules in
 
 | Rule | Value |
 |---|---|
-| Reviews | an open draft spec PR (`spec-draft/*`) that is settled: `stage:spec`, no open clarification marker, and the head is no newer than the bot's "ready" announcement. A maintainer's dispatch skips the announcement check |
+| Reviews | an open draft spec PR (`spec-draft/*`) that is settled: `stage:spec` and not `stage:clarify`, no open clarification marker, and the head is no newer than the bot's "ready" announcement. A dispatch by a human maintainer skips the announcement check |
 | Reviewer | `claude-opus-5-5`, effort `high`, turn budget 30 (`WING_COMMANDER_SPEC_REVIEW_MODEL`, `WING_COMMANDER_SPEC_REVIEW_EFFORT`) |
 | Rounds | 5 per spec PR; 2 failed attempts per head, then it stops |
 | May push | fixes and clarification markers inside the spec's own directory, at most 200 changed lines per push |
@@ -133,7 +133,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | Step | What it does | Limit |
 |---|---|---|
 | select | picks an in-flight item first, else the oldest eligible open issue | one item per run |
-| triage | checks the issue against current `main`; closes it only on evidence the code read itself (an API 429 in the cited run, an upstream action bump) | turn budget 15 |
+| triage | checks the issue against current `main`; closes it only on evidence the code read itself (a failed cited run that ended on a rate-limit rejection or an API 429, in one turn at zero cost; or an upstream action bump) | turn budget 15 |
 | route | decides fix-shaped or spec-shaped. Spec-shaped work is filed as a `spec-proposal` and never fixed | turn budget 25 |
 | fix | writes the fix on `fix/<issue>-<slug>` and opens a PR labelled `board:owned` | turn budget 60; 6 files and 120 changed lines |
 | review | a second agent with no shared context reviews; in-scope findings are fixed in the same PR | 5 rounds; the same `not-converging` rule as the review gate |
@@ -143,7 +143,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | Rule | Value |
 |---|---|
 | Eligible issue | authored by a maintainer, labelled by a maintainer, or filed by the pipeline under its own labels (`pipeline-defect`, `auto-update:*`, `found-by:*`) |
-| Never selected | `board:stalled`, any `disposition:*` label, any `stage:*` or `spec:*` label, `spec-proposal`, `spec-request`, and the two issues their own workflows manage, `auto-update:tracking` and `auto-release:failed` |
+| Never selected | `board:stalled`, any `disposition:*` label (a reopened `disposition:duplicate` issue is re-admitted once the `spec-request` it duplicated has closed), any `stage:*` or `spec:*` label, `spec-proposal`, `spec-request`, and the two issues their own workflows manage, `auto-update:tracking` and `auto-release:failed` |
 | Spec-shaped, whatever its size | a change to a published stage's inputs or a composite's inputs and outputs |
 | Workflow files | a fix that edits `.github/workflows/` is held under `board:stalled` unless `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` is `true` (default off), which also needs the App's Workflows permission |
 | Stalled | `board:stalled` after the round budget is spent, a review that stops converging, a backstop breach, a fix it cannot push, or three not-ready outcomes on one PR. Only a human removing the label re-admits the issue |
@@ -165,7 +165,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | Diagnose model | `claude-opus-5-5`, turn budget 30 (`WING_COMMANDER_DIAGNOSE_MODEL`) |
 | Reported but not filed | `denied-tool` and `narrative-drift` |
 | Usage window exhausted | one `usage-limit` issue instead of a finding per stalled run |
-| Turn-budget trend | flags a stage whose runs keep reaching their turn budget. It looks at the stage's last 10 runs, and raises the finding's severity at 3 runs in a row at or over budget, or at a run that used 0.6 of the hard stop (`WING_COMMANDER_TURN_BUDGET_*`) |
+| Turn-budget trend | flags a stage whose runs keep reaching their turn budget. It looks at the stage's last 10 runs and raises a trend finding: `watch` at 3 runs in a row at or over budget, `elevated` when any run in that window used 0.6 or more of the hard stop, `critical` when both hold (`WING_COMMANDER_TURN_BUDGET_*`) |
 | Watching itself | `wing-commander-8b-watchdog-self.yml` checks each watchdog run with no agent; a chain of the watchdog inspecting itself stops writing after 3 (`WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP`) |
 | Haiku shadow trial | off. Setting `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE` runs `claude-haiku-5-5` beside diagnose (turn budget 8) for 60 days or 300 compared runs. It is recorded and acts on nothing |
 | Kill switch | `WING_COMMANDER_WATCHDOG_PAUSED` |
@@ -176,7 +176,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 
 | Workflow | Runs | Does | Limits and switches |
 |---|---|---|---|
-| `auto-release.yml` | daily, 09:09 UTC | if `main` has moved past the last `vX.Y.Z` tag, scaffolds the test repository with the stages at that commit and drives one trivial feature through the whole lifecycle with no human; a pass tags a release | 150-minute cap. Alternates by day between the default runner and the container image. Patch by default; minor when a merged PR carries `release:minor`; never major. Kill switches `WING_COMMANDER_AUTO_RELEASE_PAUSED` (set through `auto-release-switch.yml`) and `WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED`. A failure opens an `auto-release:failed` issue |
+| `auto-release.yml` | daily, 09:09 UTC | if `main` has moved past the last `vX.Y.Z` tag, or that day's mode has an earlier failure to clear, scaffolds the test repository with the stages at that commit and drives one trivial feature through the whole lifecycle with no human; a pass with unreleased work tags a release | 150-minute cap. Alternates by day between the default runner and the container image. Patch by default; minor when a merged PR carries `release:minor`; never major. Kill switches `WING_COMMANDER_AUTO_RELEASE_PAUSED` (set through `auto-release-switch.yml`) and `WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED`. A failure opens an `auto-release:failed` issue |
 | `release.yml` | dispatched by auto-release, or by hand | lints the published stages, creates the exact tag and the GitHub Release, and moves the floating major tag forward | a breaking release must start a new major |
 | Spec Kit updater | daily, 07:13 UTC | re-checks the pinned version, detects a newer upstream release, waits for it to settle, verifies it (minor and major candidates also run in a scratch repository) and opens a bump PR, or a revert PR when the pinned version stops passing | settle window 1 daily check. Models `claude-sonnet-5-5`. Kill switch `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED`. The board loop merges the PR when its merge switch is on; otherwise a human does |
 | `wing-commander-e2e-reference-image.yml` | when the image's files change on `main` | rebuilds the reference container image, checks the agent starts in it, then moves the `WING_COMMANDER_CONTAINER_IMAGE` pin | needs `WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN` |
@@ -186,12 +186,12 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 
 | Workflow | Layer | Runs | Does |
 |---|---|---|---|
-| rebase | published stage, wrapper | every push to `main`; nightly, 04:17 UTC | brings each open spec branch up to date with `main` (`rebase`, or `merge` with `WING_COMMANDER_SPEC_BRANCH_SYNC`); an agent resolves conflicts (`claude-sonnet-5-5`, turn budget 50); one it cannot resolve is left untouched and reported on the lifecycle issue |
+| rebase | published stage, wrapper | every push to `main` by a non-bot actor; nightly, 04:17 UTC | brings each open spec branch up to date with `main` (`rebase`, or `merge` with `WING_COMMANDER_SPEC_BRANCH_SYNC`); an agent resolves conflicts (`claude-sonnet-5-5`, turn budget 50); one it cannot resolve is left untouched and reported on the lifecycle issue |
 | cleanup | published stage, wrapper | a lifecycle PR closes; daily, 06:53 UTC | see the lifecycle table |
-| metrics-persist | published stage, wrapper | after each stage run | appends one record per agent run (turns, tokens and cost, where the run reports them) to `records.jsonl` on the `metrics` branch (`WING_COMMANDER_METRICS_BRANCH`, `_PATH`, `_PAUSED`) |
+| metrics-persist | published stage, wrapper | after each stage run; a daily sweep at 06:37 UTC | appends one record per agent run (turns, tokens and cost, where the run reports them) to `records.jsonl` on the `metrics` branch (`WING_COMMANDER_METRICS_BRANCH`, `_PATH`, `_PAUSED`) |
 | `board-status.yml` | this repository | daily, 07:17 UTC | rewrites the "Board status" issue: what waits on the owner, what is in the pipeline, the backlog's size, `main`'s CI, the last release and the merge switches. No agent. `WING_COMMANDER_BOARD_STATUS_PAUSED` stops it |
 | fold-cycle-guard | published stage, wrapper | after an implement run | re-dispatches, once, an implement run that was cancelled while still queued |
-| `lint-workflows.yml` | this repository | every pull request that touches workflows, actions, scripts, docs or a root Markdown file; pushes to `main`; daily | the gate suite. `python .github/scripts/run-local-gates.py` runs the same set locally |
+| `lint-workflows.yml` | this repository | every pull request that touches workflows, actions, scripts, docs or a root Markdown file; pushes to `main` that touch workflows; daily | the gate suite. `python .github/scripts/run-local-gates.py` runs the same set locally |
 | agent-startup-check | published stage | called by the image workflows | checks that the agent action can start inside a container image |
 
 Dispatch-only helpers in this repository: `wing-commander-trial-summary.yml`
@@ -248,8 +248,7 @@ does not meet the rules above.
 ## Kill switches
 
 Each is a repository variable; only the exact value `true` pauses, and unset
-means running. A pause is read when a run starts, so it takes effect on the
-next run.
+means running. A pause takes effect no later than the next run.
 
 | Switch | Stops |
 |---|---|
@@ -279,6 +278,7 @@ All times UTC.
 | hourly at :41 | spec PR review |
 | 04:17 | rebase |
 | 05:43 | the gate suite on `main` |
+| 06:37 | metrics-persist sweep |
 | 06:53 | cleanup |
 | 07:13 | Spec Kit updater |
 | 07:17 | board status |

@@ -32,7 +32,8 @@ maintainer: applies the `spec-request` label                  ← human gate
   🤖 clarify    questions posted on your issue — just reply   ← your answers
   🤖 review †   an independent reviewer checks the settled spec
 maintainer: reviews & merges the spec PR                      ← human gate
-  🤖 plan       /speckit-plan (a plan PR only if you ask for one)
+  🤖 plan       /speckit-plan → plan PR on the spec branch
+maintainer: reviews & merges the plan PR                      ← human gate §
   🤖 tasks      /speckit-tasks → tasks.md
   🤖 implement  /speckit-implement ⟲ /speckit-converge until done (capped)
   🤖 finalize   final PR to main + any remaining manual steps on your issue
@@ -42,6 +43,7 @@ maintainer: reviews & merges the final PR                     ← human gate ‡
 
 † runs only in this repository, not part of the published stages
 ‡ the review gate can merge it instead, when that switch is on
+§ skipped when `WING_COMMANDER_PLAN_REVIEW` is `auto`, as it is in this repository
 ```
 
 Your issue is the feature's **lifecycle issue**: every stage reports its status
@@ -175,7 +177,7 @@ has switched on, are in
 | Decision record | a comment starting `**Session decision**`: what a session chose without asking, the options, the evidence and how to undo it |
 | Gate | a deterministic check in the lint suite (`verify-*.py`). A *human gate* is a point where the pipeline waits for a person; the *review gate* is the workflow that reviews final PRs |
 | Prove | re-driving a run after a merge to show the fix took effect |
-| Finding, signal | something the watchdog or a reviewer reports; a signal is reported but not filed |
+| Finding, signal | a finding is something the watchdog or a reviewer reports, filed as an issue or posted on the pull request; a signal is a watchdog class (`denied-tool`, `narrative-drift`) that is reported on the lifecycle issue and not filed |
 | Kill switch | a `WING_COMMANDER_*_PAUSED` repository variable that stops one loop |
 | Parked | a lifecycle closed with the `parked` label while it waits on the owner |
 
@@ -213,6 +215,10 @@ below are that split, row by row.
 | PR conversation | `pr-conversation.yml` | `wing-commander-9-pr-conversation.yml` | ✅ — [spec](specs/033-pr-conversation-commands/spec.md) |
 | Spec Kit updater | `auto-update-spec-kit.yml` | `wing-commander-auto-update-spec-kit.yml` | ✅ — [spec](specs/027-auto-update-spec-kit/spec.md) |
 | Metrics | `metrics-persist.yml` | `wing-commander-metrics-persist.yml` | ✅ — [spec](specs/043-durable-metrics-record/spec.md) |
+
+Three more workflows are published for stages and wrappers to call, and are
+not stages of their own: `fold-cycle-guard.yml`, `agent-startup-check.yml` and
+`private-image-dogfood.yml`.
 
 Workflows that exist only in this repository, with no published stage: the
 board loop (`board-loop.yml`, [spec](specs/057-autonomous-board-loop/spec.md)),
@@ -345,7 +351,9 @@ Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 .github/workflows/<stage>.yml      the published stages (workflow_call; what adopters
                                    pin): intake, clarify, plan, tasks, implement,
                                    finalize, cleanup, rebase, pr-conversation,
-                                   watchdog, auto-update-spec-kit, metrics-persist
+                                   watchdog, auto-update-spec-kit, metrics-persist,
+                                   fold-cycle-guard, agent-startup-check,
+                                   private-image-dogfood
 .github/workflows/wing-commander-*.yml  this repo's thin wrappers — triggers + gates only
 .github/workflows/board-loop.yml   this repo only: the hourly maintenance loop
 .github/workflows/lifecycle-review-gate.yml, spec-pr-review.yml
@@ -353,7 +361,8 @@ Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 .github/workflows/auto-release.yml, release.yml
                                    this repo only: prove the head end to end, then tag
                                    vX.Y.Z and advance the floating major tag
-.github/workflows/lint-workflows.yml    the gate suite, run on every pull request
+.github/workflows/lint-workflows.yml    the gate suite, run on pull requests that touch
+                                   workflows, actions, scripts, docs or Markdown
 .github/actions/wing-commander-*/  composite actions the stages share (published)
 .github/actions/_shared/           scripts shared between composites (internal)
 .github/scripts/verify-*.py        the gates; run-local-gates.py runs the same set locally
