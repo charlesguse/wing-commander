@@ -132,15 +132,15 @@ without the owner".
 |---|---|
 | A reversible choice between options, inside the constitution and the published contract | a session: it decides and records, or builds the options and compares them |
 | The owner's by kind: a contract break, a security boundary, a constitution amendment, spend or model tier, a new credential or setting, deleted history, reversing an owner decision, the rules agents run under | the owner |
-| Which proposals become specs (`spec-request`) | the owner; or a session, for a proposal it did not file itself and that asks the owner nothing, while fewer than three lifecycles are in flight |
+| Which proposals become specs (`spec-request`) | the owner; or a session, for a proposal the Roadmap lists, that it did not file itself and that asks the owner nothing, while fewer than three lifecycles are in flight |
 | Answers to clarification questions | the owner; a session answers the ones an earlier decision settles |
-| Merging a spec PR | the owner; or a session that took no part in that spec, after two clean independent reviews of the exact commit, with green checks |
+| Merging a spec PR | the owner; or a session that took no part in that spec, once the automatic spec review reports the exact commit ready and a fresh session's review of that commit is clean. Not while the automatic review is paused |
 | Merging a plan PR or a constitution amendment | a human |
 | Merging a final PR | a human, or the lifecycle review gate when its switch is on |
 | Merging a board loop fix PR or a verified Spec Kit upgrade | the board loop when its switch is on, otherwise a human |
-| Merging a fix PR a session opened | a session, when checks are green on the exact commit and a fresh review pass at that commit is clean. Never one that touches the rules agents run under, a merge gate, a credential or the published contract: those wait for the owner |
+| Merging a fix PR a session opened | a session, when checks are green on the exact commit and a fresh review pass at that commit is clean. Never one that touches the rules agents run under, an agent's tools or prompt, what decides a merge or a review, the gate suite's wiring, a credential or the published contract: those wait for the owner |
 | Whether a change is a direct fix or needs a spec | its shape. For the board loop: small, checkable and free of design trade-offs is a fix, and anything else is filed as a proposal. For a session, a reversible design choice inside a fix does not make it a spec |
-| Settings, credentials, App permissions, model tier | the owner |
+| Settings and switches (every repository variable), credentials, App permissions, model tier | the owner |
 
 "A human" here is usually a session acting on the owner's explicit
 instruction for that pull request. Where a session may act without that
@@ -342,9 +342,10 @@ The project [constitution](.specify/memory/constitution.md) governs every change
     a clean review round, and its own kill switch. Spec-shaped work is filed
     as a `spec-proposal`, which the bot never promotes. The owner's session
     may take two acts on conditions it reads and posts first: merge a spec
-    PR it took no part in, after two clean independent reviews of the exact
-    commit; and promote a proposal it did not file, while fewer than three
-    lifecycles are in flight. Every other merge stays human.
+    PR it took no part in, once the automatic spec review and a fresh
+    session both report the exact commit clean; and promote a proposal it
+    did not file, while fewer than three lifecycles are in flight. Every
+    other merge stays human.
 
 Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 

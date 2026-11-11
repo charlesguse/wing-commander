@@ -57,13 +57,14 @@ The owner guides this repository and does not gate it (owner decision,
 
 1. **Ask first** when it is the owner's by kind: a break in the published
    contract, a security boundary, a constitution amendment, spend or model
-   tier, a new credential, permission or repository setting, deleted
-   history, a reversal of a decision the owner made, or a change to the
+   tier, a credential, a permission, any repository variable or setting,
+   new or existing (a kill switch or a merge switch included), deleted
+   history, a reversal of a decision the owner made, an answer to a
+   clarification question no earlier decision settles, or a change to the
    rules agents run under (this file, `.claude/`, `.specify/memory/`).
    Ask with the options, the evidence and a recommendation.
-2. **Decide and record** when it is reversible (one revert or one switch
-   undoes it) and the evidence favours one option. Write a decision
-   record and carry on.
+2. **Decide and record** when it is reversible (one revert undoes it) and
+   the evidence favours one option. Write a decision record and carry on.
 3. **Build and compare** when it is reversible, no option is clearly
    favoured, and two or three options are each about an hour of agent
    work or less: one branch each, the same checks on all. Decide when one
@@ -75,8 +76,9 @@ A question blocks only the work that depends on its answer. Keep going on
 the rest.
 
 **The owner's word stops any of this:** an instruction in this session's
-own conversation, a changes-requested review, the hold label, or a stop
-line. A stop line starts `- [ ] STOP:` under "Owner decisions" on the
+own conversation, a changes-requested review, the hold label (it arrives
+with spec 119; until then use a stop line), or a stop line. A stop line
+starts `- [ ] STOP:` under "Owner decisions" on the
 Roadmap issue and stops what it names until the owner ticks or removes
 it; read that list before you merge a spec PR or promote a proposal, and
 leave stop lines as they are. Outside the two rules below, only the
@@ -88,9 +90,9 @@ A **decision record** is a comment that starts
 decision governs. It gives what was chosen, the options considered, the
 evidence, and the undo (the revert or the switch). The owner reads them
 afterwards with
-`gh search issues --include-prs --repo <owner>/<name> "Session decision" --sort updated`.
-Three places start a pipeline run when commented on, so a record about
-one of them goes on the Roadmap issue and names it: a lifecycle issue
+`gh search issues --include-prs --repo <owner>/<name> '"Session decision"' --sort updated`.
+Three places act on a comment, so a record about one of them goes on the
+Roadmap issue and names it: a lifecycle issue
 until its spec PR merges (`stage:spec` or `stage:clarify`), a final PR
 (`spec/NNN-slug`), and the Spec Kit `auto-update:tracking` issue.
 
@@ -101,43 +103,56 @@ GitHub at the moment of the merge, post what you read in a decision
 record, then squash-merge pinned to that head.
 
 - **A fix PR that one of the owner's sessions opened** merges without
-  asking when every check run on the exact head SHA has completed
-  successfully (a head with no checks is not green), the latest
-  `review-until-clean` pass reviewed that head and reported CLEAN, and
+  asking when every check run on the exact head SHA has finished as
+  `success`, `skipped` or `neutral`, at least one of them `success` and
+  none pending (a head with no checks is not green); the latest
+  `review-until-clean` pass reviewed that head and reported CLEAN; and
   the merging session did not review it. When the loop's thrash check
   stops it, choose one targeted pass with a different method or a smaller
   scope yourself, and record why. A second stop, or a merge with a
   finding still open, goes to the owner.
 - **A spec PR** merges without asking under constitution X's spec-merge
   rule. Read the rule and check every condition it lists. In practice:
-  - A review pass is a round of `spec-pr-review.yml` or a fresh
-    session's. Read a round from its `spec-pr-review` commit status on
-    the head: `success` is clean, and any other state there stops the
-    merge.
-  - A fresh session is a new session that starts with none of this
-    session's context, never a fork. Brief it with the PR number, the
-    head SHA and how to review, and nothing about what to conclude. It
-    posts its own report on the PR whatever the result: the head it
-    reviewed, CLEAN or NOT CLEAN, and its own session link or id.
-  - The reviewer says whether its pass is clean. Read its verdict; never
-    re-judge a NOT CLEAN report as clean.
-  - Both clean passes reviewed the head you merge, and the PR carries no
-    more than three posted passes in all (the three-round limit below).
+  - The first review is the automatic loop's (`spec-pr-review.yml`). A
+    spec PR runs no other check, so read the loop's status on the head:
+    `gh api repos/<owner>/<name>/commits/<sha>/statuses --jq '[.[] | select(.context == "spec-pr-review")][0] | {state, by: .creator.login}'`.
+    It must be `success`, set by `github-actions[bot]`, and match the
+    loop's review comment on the PR for that head. No status, no merge:
+    the rule is dormant while `WING_COMMANDER_SPEC_REVIEW_PAUSED` is set.
+  - The second review is a fresh session's: a new session that starts
+    with none of this session's context, never a fork. Brief it with the
+    PR number, the head SHA and how to review, and nothing about what to
+    conclude. It posts its own report on the PR whatever the result: the
+    head it reviewed, CLEAN or NOT CLEAN, and its own session link or id.
+  - The reviewer says whether its review is clean. Read the verdict and
+    never re-judge it. One verdict of NOT CLEAN or not ready on the head
+    you would merge stops the merge until a new head is reviewed.
+  - Count the loop's rounds and the sessions' reviews on the PR: no more
+    than three (the three-round limit below). A loop round that failed
+    without a verdict is not one of them.
   - The session that merges took no part in the lifecycle: it did not
     file or promote the proposal, answer a clarification question, or
     write or review the spec. If you did any of those, start a fresh
-    session to check the conditions and merge.
+    session to check the conditions and merge, briefed with the PR number
+    and this rule only.
 - **Every other merge waits for the owner's direction for that pull
   request, given in this conversation:**
   - a plan PR, a final PR, a PR the pipeline opened and left open, and a
     PR from outside the owner's sessions;
   - any PR that touches the rules agents run under: `CLAUDE.md`,
-    `.claude/`, `.specify/memory/`, or a waiver register
-    (`*-waivers.json`, an `EXEMPT_*` table);
+    `.claude/`, `.specify/memory/`, a waiver register (`*-waivers.json`,
+    an `EXEMPT_*` table), or an agent's tool list or prompt in a workflow
+    or action (`allowed-tools`, `disallowed-tools`,
+    `wing-commander-tool-args`, a `prompt:` block);
+  - any PR that touches what decides a merge or a review:
+    `board_merge.py`, `lifecycle_merge_preconditions.py`,
+    `spec_pr_review*.py`, `spec-pr-review.yml`, `wc_convergence.py`, an
+    `if:` on a merge job, or a `*_PAUSED` check;
+  - any PR that deletes or renames a `verify-*` gate or one of its
+    fixtures, or touches the suite's own wiring (`lint-workflows.yml`,
+    `run-local-gates.py`);
   - any PR that touches a credential or token mint, a `permissions:`
-    block, a merge gate or kill switch (`board_merge.py`,
-    `lifecycle_merge_preconditions.py`, a `*_PAUSED` check), or the
-    published `workflow_call` contract.
+    block, or the published `workflow_call` contract.
 
 ### Promoting a proposal
 
@@ -145,14 +160,15 @@ A session applies `spec-request` to a `spec-proposal` under constitution
 X's promotion rule. Read the rule and check every condition it lists. In
 practice:
 
-- Promote only a proposal that the owner's account or the pipeline's App
-  filed, that you did not file yourself, and that does not restate an
-  issue or comment someone else wrote.
+- Promote only a proposal the Roadmap issue lists under "Proposed", that
+  the owner's account or the pipeline's App filed, that you did not file
+  yourself, and that restates nothing written by anyone other than the
+  owner or the App. Triage an unlisted proposal first: it is often a
+  Maintenance backlog line, not a spec.
 - Skip a proposal that still asks the owner something, or that the owner
   deferred in words ("not yet", "stays proposed"). The Roadmap issue's
   lists and its "Owner decisions" say which those are.
-- Take the rest in the Roadmap issue's order: "Queued" first, then
-  "Proposed", each top to bottom.
+- Take the rest top to bottom.
 - Count the lifecycles in flight:
   `gh issue list --state open --limit 500 --json number,labels --jq '[.[] | select(any(.labels[].name; . == "spec-request" or startswith("spec:")))] | length'`.
   Promote only when the count is under three.
@@ -244,9 +260,10 @@ prove. Each step has a rule.
   The stage-findings composite drops findings that cite only those files
   for the same reason. Contracts under `specs/*/contracts/` are the
   exception: they are live and fixed like code.
-- A spec PR gets at most three review rounds. Two clean rounds of the
-  same head inside those three let one of the owner's sessions merge it
-  ("Merging on evidence"); otherwise the owner decides to merge it. A
+- A spec PR gets at most three review rounds. Inside those three, the
+  automatic review's ready verdict and a fresh session's clean review of
+  the same head let one of the owner's sessions merge it ("Merging on
+  evidence"); otherwise the owner decides to merge it. A
   finding that only names a file, a literal, a regex or a step's shape is
   a plan-level finding. Record it on the lifecycle issue
   for the plan stage instead of spending another spec round on it. Prefer

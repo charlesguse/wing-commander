@@ -421,9 +421,9 @@ change to the tiering above.
 - Humans merge every plan PR into main, every constitution amendment, and —
   while `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is off, its default — every
   final PR. A spec PR is merged by a human, or by the owner's session under
-  constitution X's spec-merge rule: two clean independent reviews of the
-  exact head, green checks, and a merging session that took no part in the
-  spec. The bot cannot
+  constitution X's spec-merge rule: the spec PR review loop's ready status on
+  the exact head, a clean review of that head by a fresh session, and a
+  merging session that took no part in the spec. The bot cannot
   approve any of those, and never merges a spec PR, a plan PR or an
   amendment. The bot merges three classes only
   (constitution X). The board loop merges the fix PR and the Spec Kit

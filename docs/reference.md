@@ -93,9 +93,10 @@ unless a session does them under the two rules in
 | Kill switch | `WING_COMMANDER_SPEC_REVIEW_PAUSED` |
 
 [CLAUDE.md](../CLAUDE.md) separately tells sessions to give a spec PR at most
-three review rounds: two clean ones of the same head inside those three let a
-session merge it, and otherwise the owner decides. That is a rule for
-sessions; the 5 above is this workflow's own budget.
+three review rounds: inside those three, this workflow's ready verdict and a
+fresh session's clean review of the same head let a session merge it, and
+otherwise the owner decides. That is a rule for sessions; the 5 above is this
+workflow's own budget.
 
 ### Lifecycle review gate
 
@@ -233,12 +234,13 @@ read in a comment starting `**Session decision**`.
 
 | Act | Conditions | The rule |
 |---|---|---|
-| Merge a spec PR | checks green on the exact head; two independent review passes that each reviewed that head and reported it clean by their own verdict; every pass on the PR posted, and no more than three; the spec PR review loop's verdict on that head, where it has one, is "ready"; no clarification question open; no unresolved changes-requested review; the lifecycle issue not held; the merging session took no part in the lifecycle (it did not file or promote the proposal, answer a clarification question, or write or review the spec) | constitution X, the spec-merge rule |
-| Apply `spec-request` to a `spec-proposal` | the owner's account or the App filed it, the promoting session did not, and it does not restate someone else's issue; fewer than three lifecycles in flight, counted again just before the label; no open question for the owner and nothing the owner wrote defers it; no contract break, moved security boundary, new credential, permission, repository setting or model tier; the owner has not parked, held or declined it; recorded on the Roadmap issue first | constitution X, the promotion rule |
-| Merge a fix PR one of the owner's sessions opened | every check run on the exact head completed successfully; the latest `review-until-clean` pass reviewed that head and reported CLEAN; the merging session did not review it; the PR touches none of: `CLAUDE.md`, `.claude/`, `.specify/memory/`, a waiver register, a credential or token mint, a `permissions:` block, a merge gate or kill switch, the published `workflow_call` contract | [CLAUDE.md](../CLAUDE.md), "Merging on evidence" |
+| Merge a spec PR | the spec PR review loop's own `spec-pr-review` status on the exact head is `success` (the only check a spec PR carries, so the rule is dormant while the loop is paused); a fresh session reviewed that same head and reported it clean by its own verdict; no review of that head reported anything else; every session review posted on the PR, and no more than three rounds and reviews in all; no clarification question open; no unresolved changes-requested review; the lifecycle issue not held; the merging session took no part in the lifecycle (it did not file or promote the proposal, answer a clarification question, or write or review the spec) | constitution X, the spec-merge rule |
+| Apply `spec-request` to a `spec-proposal` | the owner's account or the App filed it, the promoting session did not, and it restates nothing written by anyone other than the owner or the App; the Roadmap issue lists it as proposed; fewer than three lifecycles in flight, counted again just before the label; no open question for the owner and nothing the owner wrote defers it; no contract break, moved security boundary, new credential, permission, repository setting or model tier; the owner has not parked, held or declined it; recorded on the Roadmap issue first | constitution X, the promotion rule |
+| Merge a fix PR one of the owner's sessions opened | every check run on the exact head finished as `success`, `skipped` or `neutral`, at least one `success` and none pending; the latest `review-until-clean` pass reviewed that head and reported CLEAN; the merging session did not review it; the PR touches none of what CLAUDE.md reserves for the owner: the rules agents run under (`CLAUDE.md`, `.claude/`, `.specify/memory/`, a waiver register, an agent's tool list or prompt), what decides a merge or a review, a deleted or renamed gate or the gate suite's wiring, a credential or token mint, a `permissions:` block, the published `workflow_call` contract | [CLAUDE.md](../CLAUDE.md), "Merging on evidence" |
 
 The owner's word stops any of the three: an instruction in the session's own
-conversation, a changes-requested review, the hold label, or a stop line (a
+conversation, a changes-requested review, the hold label (once spec 119
+lands), or a stop line (a
 line starting `- [ ] STOP:` under "Owner decisions" on the Roadmap issue,
 until the owner ticks or removes it).
 
@@ -358,6 +360,9 @@ tables above. No kill switch is set except spec PR review's.
   promotes a proposal or merges its own fix PR. The session's
   `**Session decision**` comment is the record that makes each act checkable
   afterwards.
+- A session cannot merge a spec PR while `WING_COMMANDER_SPEC_REVIEW_PAUSED`
+  is `true`, as it is today: the spec-merge rule needs that loop's status on
+  the head, and a spec PR carries no other check.
 
 ## Keeping this current
 
