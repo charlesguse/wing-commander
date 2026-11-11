@@ -138,7 +138,7 @@ without the owner".
 | Merging a plan PR or a constitution amendment | a human |
 | Merging a final PR | a human, or the lifecycle review gate when its switch is on |
 | Merging a board loop fix PR or a verified Spec Kit upgrade | the board loop when its switch is on, otherwise a human |
-| Merging a fix PR a session opened | a session, when checks are green on the exact commit and a fresh review pass at that commit is clean. Never one that touches the rules agents run under, an agent's tools or prompt, what decides a merge or a review, the gate suite's wiring, a credential or the published contract: those wait for the owner |
+| Merging a fix PR a session opened | a session, when checks are green on the exact commit and a fresh review pass at that commit is clean. Never one that touches the rules agents run under, an agent's tools or prompt, what decides a merge, a review or a fix's shape, a removed, disabled or loosened gate, a credential or the published contract: those wait for the owner |
 | Whether a change is a direct fix or needs a spec | its shape. For the board loop: small, checkable and free of design trade-offs is a fix, and anything else is filed as a proposal. For a session, a reversible design choice inside a fix does not make it a spec |
 | Settings and switches (every repository variable), credentials, App permissions, model tier | the owner |
 
@@ -158,6 +158,8 @@ has switched on, are in
   owner the command to run.
 - Grant the App a permission or create a credential. Those are the owner's
   acts.
+- Change a repository variable or setting. Those are the owner's, whatever
+  the session's token can do.
 - Push to `main` around a refused merge. A merge GitHub refuses goes back to
   the owner.
 

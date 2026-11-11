@@ -52,6 +52,8 @@ fall back to the "Board status" issue itself
   - plan PRs and amendments always do (constitution V);
   - a spec PR does when it cannot meet the spec-merge rule (constitution
     X); name the condition that fails;
+  - a PR on CLAUDE.md's "Every other merge waits for the owner's
+    direction" list does; name the item it hits;
   - a PR touching `.github/workflows/` does when the token lacks the
     `workflow` scope.
 - **This session's own state:**
@@ -70,8 +72,8 @@ link, the action it needs, a recommendation where there is a choice, and
 its age.
 
 - **Needs you to move.** Only the owner can do these:
-  - merge a plan PR or an amendment, or a spec PR that cannot meet the
-    spec-merge rule;
+  - merge a plan PR or an amendment, a spec PR that cannot meet the
+    spec-merge rule, or a PR that CLAUDE.md reserves for the owner;
   - apply `spec-request` to a proposal that does not meet the promotion
     rule (constitution X); name the condition that fails;
   - answer an open question that has no precedent;
