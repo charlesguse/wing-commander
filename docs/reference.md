@@ -130,7 +130,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | Step | What it does | Limit |
 |---|---|---|
 | select | picks an in-flight item first, else the oldest eligible open issue | one item per run |
-| triage | checks the issue against current `main`; closes it only on evidence the code read itself (an API 429 that ended the cited run in one turn at zero cost, an upstream action bump) | turn budget 15 |
+| triage | checks the issue against current `main`; closes it only on evidence the code read itself (a failed cited run that ended on a rate-limit rejection or an API 429, in one turn at zero cost; or an upstream action bump) | turn budget 15 |
 | route | decides fix-shaped or spec-shaped. Spec-shaped work is filed as a `spec-proposal` and never fixed | turn budget 25 |
 | fix | writes the fix on `fix/<issue>-<slug>` and opens a PR labelled `board:owned` | turn budget 60; 6 files and 120 changed lines |
 | review | a second agent with no shared context reviews; in-scope findings are fixed in the same PR | 5 rounds; the same `not-converging` rule as the review gate |
@@ -173,7 +173,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 
 | Workflow | Runs | Does | Limits and switches |
 |---|---|---|---|
-| `auto-release.yml` | daily, 09:09 UTC | if `main` has moved past the last `vX.Y.Z` tag, scaffolds the test repository with the stages at that commit and drives one trivial feature through the whole lifecycle with no human; a pass tags a release | 150-minute cap. Alternates by day between the default runner and the container image. Patch by default; minor when a merged PR carries `release:minor`; never major. Kill switches `WING_COMMANDER_AUTO_RELEASE_PAUSED` (set through `auto-release-switch.yml`) and `WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED`. A failure opens an `auto-release:failed` issue |
+| `auto-release.yml` | daily, 09:09 UTC | if `main` has moved past the last `vX.Y.Z` tag, or that day's mode has an earlier failure to clear, scaffolds the test repository with the stages at that commit and drives one trivial feature through the whole lifecycle with no human; a pass with unreleased work tags a release | 150-minute cap. Alternates by day between the default runner and the container image. Patch by default; minor when a merged PR carries `release:minor`; never major. Kill switches `WING_COMMANDER_AUTO_RELEASE_PAUSED` (set through `auto-release-switch.yml`) and `WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED`. A failure opens an `auto-release:failed` issue |
 | `release.yml` | dispatched by auto-release, or by hand | lints the published stages, creates the exact tag and the GitHub Release, and moves the floating major tag forward | a breaking release must start a new major |
 | Spec Kit updater | daily, 07:13 UTC | re-checks the pinned version, detects a newer upstream release, waits for it to settle, verifies it (minor and major candidates also run in a scratch repository) and opens a bump PR, or a revert PR when the pinned version stops passing | settle window 1 daily check. Models `claude-sonnet-5-5`. Kill switch `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED`. The board loop merges the PR when its merge switch is on; otherwise a human does |
 | `wing-commander-e2e-reference-image.yml` | when the image's files change on `main` | rebuilds the reference container image, checks the agent starts in it, then moves the `WING_COMMANDER_CONTAINER_IMAGE` pin | needs `WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN` |
