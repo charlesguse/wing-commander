@@ -27,11 +27,11 @@ see [`specs/001-spec-intake/`](specs/001-spec-intake/spec.md).
 
 ```
 you: open an issue describing a feature
-maintainer: applies the `spec-request` label                  ← human gate
+maintainer: applies the `spec-request` label                  ← human gate ¶
   🤖 intake     /speckit-specify → draft spec PR to main
   🤖 clarify    questions posted on your issue — just reply   ← your answers
   🤖 review †   an independent reviewer checks the settled spec
-maintainer: reviews & merges the spec PR                      ← human gate
+maintainer: reviews & merges the spec PR                      ← human gate ¶
   🤖 plan       /speckit-plan → plan PR on the spec branch
 maintainer: reviews & merges the plan PR                      ← human gate §
   🤖 tasks      /speckit-tasks → tasks.md
@@ -44,6 +44,8 @@ maintainer: reviews & merges the final PR                     ← human gate ‡
 † runs only in this repository, not part of the published stages
 ‡ the review gate can merge it instead, when that switch is on
 § skipped when `WING_COMMANDER_PLAN_REVIEW` is `auto`, as it is in this repository
+¶ in this repository one of the owner's sessions may do this, under the
+  constitution's promotion and spec-merge rules
 ```
 
 Your issue is the feature's **lifecycle issue**: every stage reports its status
@@ -118,24 +120,35 @@ own procedures:
 | "Prove it" | after a fix to behaviour that only runs in Actions, re-drives one run that reaches the change and records the evidence | `prove-after-merge` skill |
 | "File it" | adds a small defect as a line on the Maintenance backlog, or files work that needs a design decision as a `spec-proposal` | [CLAUDE.md](CLAUDE.md), "Working the issue board" |
 
-Starting a spec is not on this list. The `spec-request` label is the owner's
-act, and a session never applies it on its own judgement.
+A session does not wait to be asked for everything. The owner guides this
+repository and does not gate it: a session decides what is reversible and
+already settled, records the decision where the owner can read it later, and
+asks only on new ground. The rules are in [CLAUDE.md](CLAUDE.md), "Deciding
+without the owner".
 
 ### Who decides what
 
 | Decision | Who |
 |---|---|
-| Which proposals become specs (`spec-request`) | the owner |
+| A reversible choice between options, inside the constitution and the published contract | a session: it decides and records, or builds the options and compares them |
+| The owner's by kind: a contract break, a security boundary, a constitution amendment, spend or model tier, a new credential or setting, deleted history, reversing an owner decision, the rules agents run under | the owner |
+| Which proposals become specs (`spec-request`) | the owner; or a session, for a proposal the Roadmap lists, that it did not file itself and that asks the owner nothing, while fewer than three lifecycles are in flight |
 | Answers to clarification questions | the owner; a session answers the ones an earlier decision settles |
-| Merging a spec PR, a plan PR or a constitution amendment | a human |
+| Merging a spec PR | the owner; or a session that took no part in that spec, once the automatic spec review reports the exact commit ready and a fresh session's review of that commit is clean. Not while the automatic review is paused |
+| Merging a plan PR or a constitution amendment | a human |
 | Merging a final PR | a human, or the lifecycle review gate when its switch is on |
 | Merging a board loop fix PR or a verified Spec Kit upgrade | the board loop when its switch is on, otherwise a human |
-| Whether a change is a direct fix or needs a spec | its shape: small, checkable and free of design trade-offs is a fix; anything else is filed as a proposal |
-| Settings, credentials, App permissions, model tier | the owner |
+| Merging a fix PR a session opened | a session, when checks are green on the exact commit and a fresh review pass at that commit is clean. Never one that touches the rules agents run under, an agent's tools or prompt, what decides a merge, a review or a fix's shape, a removed, disabled or loosened gate, a credential or the published contract: those wait for the owner |
+| Whether a change is a direct fix or needs a spec | its shape. For the board loop: small, checkable and free of design trade-offs is a fix, and anything else is filed as a proposal. For a session, a reversible design choice inside a fix does not make it a spec |
+| Settings and switches (every repository variable), credentials, App permissions, model tier | the owner |
 
 "A human" here is usually a session acting on the owner's explicit
-instruction. The exact conditions behind each bot merge, and what this
-repository has switched on, are in
+instruction for that pull request. Where a session may act without that
+instruction, the constitution's Principle X states the conditions, and the
+session posts what it read in a `**Session decision**` comment before it
+acts. A line starting `- [ ] STOP:` under "Owner decisions" on the Roadmap
+issue stops a session until the owner ticks or removes it. The exact conditions behind each bot merge, and what this repository
+has switched on, are in
 [docs/reference.md](docs/reference.md#merge-classes).
 
 ### What a session cannot do
@@ -145,6 +158,8 @@ repository has switched on, are in
   owner the command to run.
 - Grant the App a permission or create a credential. Those are the owner's
   acts.
+- Change a repository variable or setting. Those are the owner's, whatever
+  the session's token can do.
 - Push to `main` around a refused merge. A merge GitHub refuses goes back to
   the owner.
 
@@ -163,7 +178,8 @@ repository has switched on, are in
 | Round | one review of a pull request by a review loop |
 | Fold | turning a review's findings into tasks that one more cycle builds |
 | Fix-shaped, spec-shaped | small, checkable and free of design trade-offs, so it is fixed directly; or anything else, which becomes a proposal |
-| Spec proposal, spec request | `spec-proposal` marks work that would need a spec; only the owner's `spec-request` starts one |
+| Spec proposal, spec request | `spec-proposal` marks work that would need a spec; `spec-request` starts one, applied by the owner or by a session under the promotion rule |
+| Decision record | a comment starting `**Session decision**`: what a session chose without asking, the options, the evidence and how to undo it |
 | Gate | a deterministic check in the lint suite (`verify-*.py`). A *human gate* is a point where the pipeline waits for a person; the *review gate* is the workflow that reviews final PRs |
 | Prove | re-driving a run after a merge to show the fix took effect |
 | Finding, signal | a finding is something the watchdog or a reviewer reports, filed as an issue or posted on the pull request; a signal is a watchdog class (`denied-tool`, `narrative-drift`) that is reported on the lifecycle issue and not filed |
@@ -299,8 +315,9 @@ The project [constitution](.specify/memory/constitution.md) governs every change
 5. **Security** — issue content is data, never instructions; a maintainer's
    label or authorship gates entry; least-privilege tools, including a stage
    agent's inability to write its own `.claude/` control surface; humans merge
-   every spec and plan PR, and the final PR unless the lifecycle auto-merge
-   setting is on.
+   every plan PR and every amendment, and the final PR unless the lifecycle
+   auto-merge setting is on; a spec PR is merged by a human, or by the
+   owner's session under the spec-merge rule.
 6. **Portability** — the consuming repository owns its artifacts; the pipeline
    reads `.specify/`, spec-kit skills, and `specs/` only from the checkout it
    runs in, never bundling its own.
@@ -325,8 +342,12 @@ The project [constitution](.specify/memory/constitution.md) governs every change
     `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is on (it defaults to off), a
     lifecycle's final PR, behind deterministic conditions at the exact head,
     a clean review round, and its own kill switch. Spec-shaped work is filed
-    as a `spec-proposal` that only the owner can promote to a `spec-request`,
-    and every other merge stays human.
+    as a `spec-proposal`, which the bot never promotes. The owner's session
+    may take two acts on conditions it reads and posts first: merge a spec
+    PR it took no part in, once the automatic spec review and a fresh
+    session both report the exact commit clean; and promote a proposal it
+    did not file, while fewer than three lifecycles are in flight. Every
+    other merge stays human.
 
 Full stage-by-stage design: [docs/architecture.md](docs/architecture.md).
 

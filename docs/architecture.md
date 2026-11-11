@@ -384,7 +384,8 @@ change to the tiering above.
   authored or labeled, or one the pipeline filed under a label only it
   applies; anything else gets a read-only triage proposal. Spec-shaped
   work the loop finds is filed as a `spec-proposal`, which never starts
-  intake: only the owner's own `spec-request` does. A fix-shaped change
+  intake: only `spec-request` does, applied by the owner or by the
+  owner's session under constitution X's promotion rule. A fix-shaped change
   the loop cannot push (a workflow file, while the App holds no Workflows
   permission) is held under `board:stalled` for a maintainer, never filed
   as a spec.
@@ -417,10 +418,14 @@ change to the tiering above.
   [stage-interfaces.md](../specs/010-reusable-pipeline/contracts/stage-interfaces.md#per-stage-default-tool-lists).
 - Only trusted refs are checked out (main, repo-local `spec*/` branches) — never
   fork PR heads.
-- Humans merge every spec and plan PR into main, every constitution
-  amendment, and — while `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is off, its
-  default — every final PR; the bot cannot approve those, and never merges a
-  spec PR, a plan PR or an amendment. The bot merges three classes only
+- Humans merge every plan PR into main, every constitution amendment, and —
+  while `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is off, its default — every
+  final PR. A spec PR is merged by a human, or by the owner's session under
+  constitution X's spec-merge rule: the spec PR review loop's ready status on
+  the exact head, a clean review of that head by a fresh session, and a
+  merging session that took no part in the spec. The bot cannot
+  approve any of those, and never merges a spec PR, a plan PR or an
+  amendment. The bot merges three classes only
   (constitution X). The board loop merges the fix PR and the Spec Kit
   upgrade PR (spec 115) only while `WING_COMMANDER_BOARD_AUTO_MERGE` is on and
   `WING_COMMANDER_BOARD_LOOP_PAUSED` is clear, re-derives every condition

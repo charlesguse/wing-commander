@@ -68,13 +68,16 @@ Limits and rules:
 | Defects a stage files while working | implement and finalize file them, intake, clarify, plan and tasks do not; at most 3 per run, labelled `found-by:<stage>` | `WING_COMMANDER_<STAGE>_FINDINGS_FILING_ENABLED`, `WING_COMMANDER_FINDINGS_CAP`, `WING_COMMANDER_FINDINGS_LABEL_PREFIX` |
 | Concurrency | one spec's stages run one at a time; different specs run in parallel; intake runs one at a time | fixed |
 | Lifecycles in implement at once | three, by convention only ([CLAUDE.md](../CLAUDE.md)); no code enforces it | none |
+| Lifecycles in flight when a session promotes a proposal | fewer than three: open issues carrying `spec-request` or a `spec:` label (constitution X's promotion rule). The session counts them; no code enforces it | none |
 | Runner and container | `ubuntu-latest`, no container | `WING_COMMANDER_RUNNER`, `WING_COMMANDER_CONTAINER_IMAGE` |
 | Project in a subfolder | off; a maintainer routes a lifecycle to a project folder | [adoption.md](adoption.md#multiple-projects-in-one-repository) |
 
-What a human still does in a lifecycle: apply `spec-request`, answer the
-clarification questions, merge the spec PR, merge the plan PR when
-`plan-review` is `pr`, and merge the final PR unless
-[lifecycle auto-merge](#merge-classes) is on.
+What still needs a person in a lifecycle: an answer to any clarification
+question no earlier decision settles, the plan PR merge when `plan-review` is
+`pr`, and the final PR merge unless [lifecycle auto-merge](#merge-classes) is
+on. Applying `spec-request` and merging the spec PR are the owner's too,
+unless a session does them under the two rules in
+[What a session may do without being asked](#what-a-session-may-do-without-being-asked).
 
 ### Spec PR review
 
@@ -90,8 +93,10 @@ clarification questions, merge the spec PR, merge the plan PR when
 | Kill switch | `WING_COMMANDER_SPEC_REVIEW_PAUSED` |
 
 [CLAUDE.md](../CLAUDE.md) separately tells sessions to give a spec PR at most
-three review rounds before the owner decides. That is a rule for sessions; the
-5 above is this workflow's own budget.
+three review rounds: inside those three, this workflow's ready verdict and a
+fresh session's clean review of the same head let a session merge it, and
+otherwise the owner decides. That is a rule for sessions; the 5 above is this
+workflow's own budget.
 
 ### Lifecycle review gate
 
@@ -203,24 +208,47 @@ Who may merge what. The bot is the pipeline's GitHub App.
 
 | Pull request | Default | The bot merges it when | Reverted by |
 |---|---|---|---|
-| Spec PR | a human | never | — |
+| Spec PR | a human, or a session under the spec-merge rule below | never | one revert of the squash commit undoes the merge. The lifecycle it started keeps running (plan, tasks and implement, with no plan PR while `plan-review` is `auto`) until its issue is closed or held |
 | Plan PR (only with `plan-review: pr`) | a human | never | — |
 | Final PR of a lifecycle | a human | `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is `true` and the [review gate's](#lifecycle-review-gate) conditions hold | one revert of the squash commit |
 | Board loop fix PR | a human | `WING_COMMANDER_BOARD_AUTO_MERGE` is `true` and the [board loop's](#board-loop) conditions hold | one revert of the squash commit |
 | Spec Kit bump PR | a human | the same switch, after its verification passed | one revert of the squash commit |
 | Constitution amendment | a human | never | — |
-| Any other PR (a session's or a contributor's) | a human | never | — |
+| A fix PR one of the owner's sessions opened | that session, on the evidence rule below | never | one revert of the squash commit |
+| Any other PR (a contributor's) | a human | never | — |
 
 A merge GitHub refuses, for example a workflow-file change without the
 Workflows permission, goes to a maintainer. Nothing is pushed to `main`
 another way.
 
 "A human" includes a Claude Code session acting on the owner's instruction
-under the owner's GitHub account; see the [README](../README.md#how-this-repository-is-operated).
+for that pull request, under the owner's GitHub account; see the
+[README](../README.md#how-this-repository-is-operated).
 
-Also always the owner's: promoting a `spec-proposal` to `spec-request`,
-answering a clarification question no earlier decision settles, model tier
-and spend, credentials, App permissions and repository variables.
+### What a session may do without being asked
+
+Three acts. The first two are the constitution's (Principle X); the third is
+CLAUDE.md's standing instruction. Each is allowed only when every condition
+holds at the moment the session acts, and the session first posts what it
+read in a comment starting `**Session decision**`.
+
+| Act | Conditions | The rule |
+|---|---|---|
+| Merge a spec PR | the spec PR review loop's own `spec-pr-review` status on the exact head is `success` (the only check a spec PR carries, so the rule is dormant while the loop is paused); a fresh session reviewed that same head and reported it clean by its own verdict; no review of that head reported anything else; every session review posted on the PR, and no more than three rounds and reviews in all; no clarification question open; no unresolved changes-requested review; the lifecycle issue not held; the merging session took no part in the lifecycle (it did not file or promote the proposal, answer a clarification question, or write or review the spec) | constitution X, the spec-merge rule |
+| Apply `spec-request` to a `spec-proposal` | the owner's account or the App filed it, the promoting session did not, and it restates nothing written by anyone other than the owner or the App; the Roadmap issue lists it as proposed; fewer than three lifecycles in flight, counted again just before the label; no open question for the owner and nothing the owner wrote defers it; no contract break, moved security boundary, new credential, permission, repository setting or model tier; the owner has not parked, held or declined it; recorded on the Roadmap issue first | constitution X, the promotion rule |
+| Merge a fix PR one of the owner's sessions opened | every check run on the exact head finished as `success`, `skipped` or `neutral`, at least one `success` and none pending; the latest `review-until-clean` pass reviewed that head and reported CLEAN; the merging session did not review it; the PR touches none of what CLAUDE.md reserves for the owner: the rules agents run under (`CLAUDE.md`, `.claude/`, `.specify/memory/`, a waiver register, an agent's tool list or prompt), what decides a merge, a review or a fix's shape and anything those call, a deleted, renamed or loosened gate, a gate's step removed from `lint-workflows.yml` or made conditional there, a credential or token mint, a `permissions:` block, the published `workflow_call` contract | [CLAUDE.md](../CLAUDE.md), "Merging on evidence" |
+
+The owner's word stops any of the three: an instruction in the session's own
+conversation, a changes-requested review, the hold label (once spec 119
+lands), or a stop line (a
+line starting `- [ ] STOP:` under "Owner decisions" on the Roadmap issue,
+until the owner ticks or removes it).
+
+Always the owner's: a constitution amendment, a plan PR merge, a final PR
+merge while the lifecycle switch is off, an answer to a clarification question
+no earlier decision settles, model tier and spend, credentials, App
+permissions and repository variables, a change to the rules agents run under,
+and any spec PR merge or promotion that does not meet the rules above.
 
 ## Kill switches
 
@@ -240,7 +268,9 @@ means running. A pause takes effect no later than the next run.
 | `WING_COMMANDER_METRICS_PAUSED` | metrics records |
 
 The feature lifecycle has no pause variable. To stop one lifecycle, close its
-issue or its PR; to stop new ones, do not apply `spec-request`.
+issue or its PR; to stop new ones, do not apply `spec-request`, and stop
+sessions promoting proposals or merging spec PRs with a stop line (see
+[What a session may do without being asked](#what-a-session-may-do-without-being-asked)).
 
 ## Schedules
 
@@ -326,6 +356,13 @@ tables above. No kill switch is set except spec PR review's.
 - A session in a sandbox whose token cannot read Actions variables cannot see
   the settings above. The "Board status" issue shows the merge switches only.
 - Nothing enforces the three-lifecycle limit in implement.
+- No code checks the conditions under which a session merges a spec PR,
+  promotes a proposal or merges its own fix PR. The session's
+  `**Session decision**` comment is the record that makes each act checkable
+  afterwards.
+- A session cannot merge a spec PR while `WING_COMMANDER_SPEC_REVIEW_PAUSED`
+  is `true`, as it is today: the spec-merge rule needs that loop's status on
+  the head, and a spec PR carries no other check.
 
 ## Keeping this current
 
