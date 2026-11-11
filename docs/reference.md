@@ -162,7 +162,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | Diagnose model | `claude-opus-5-5`, turn budget 30 (`WING_COMMANDER_DIAGNOSE_MODEL`) |
 | Reported but not filed | `denied-tool` and `narrative-drift` |
 | Usage window exhausted | one `usage-limit` issue instead of a finding per stalled run |
-| Turn-budget trend | flags a stage whose runs keep reaching their turn budget. It looks at the stage's last 10 runs, and raises the finding's severity at 3 runs in a row at or over budget, or at a run that used 0.6 of the hard stop (`WING_COMMANDER_TURN_BUDGET_*`) |
+| Turn-budget trend | flags a stage whose runs keep reaching their turn budget. It looks at the stage's last 10 runs and raises a trend finding: `watch` at 3 runs in a row at or over budget, `elevated` when any run in that window used 0.6 or more of the hard stop, `critical` when both hold (`WING_COMMANDER_TURN_BUDGET_*`) |
 | Watching itself | `wing-commander-8b-watchdog-self.yml` checks each watchdog run with no agent; a chain of the watchdog inspecting itself stops writing after 3 (`WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP`) |
 | Haiku shadow trial | off. Setting `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE` runs `claude-haiku-5-5` beside diagnose (turn budget 8) for 60 days or 300 compared runs. It is recorded and acts on nothing |
 | Kill switch | `WING_COMMANDER_WATCHDOG_PAUSED` |
@@ -183,12 +183,12 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 
 | Workflow | Layer | Runs | Does |
 |---|---|---|---|
-| rebase | published stage, wrapper | every push to `main`; nightly, 04:17 UTC | brings each open spec branch up to date with `main` (`rebase`, or `merge` with `WING_COMMANDER_SPEC_BRANCH_SYNC`); an agent resolves conflicts (`claude-sonnet-5-5`, turn budget 50); one it cannot resolve is left untouched and reported on the lifecycle issue |
+| rebase | published stage, wrapper | every push to `main` by a non-bot actor; nightly, 04:17 UTC | brings each open spec branch up to date with `main` (`rebase`, or `merge` with `WING_COMMANDER_SPEC_BRANCH_SYNC`); an agent resolves conflicts (`claude-sonnet-5-5`, turn budget 50); one it cannot resolve is left untouched and reported on the lifecycle issue |
 | cleanup | published stage, wrapper | a lifecycle PR closes; daily, 06:53 UTC | see the lifecycle table |
-| metrics-persist | published stage, wrapper | after each stage run | appends one record per agent run (turns, tokens and cost, where the run reports them) to `records.jsonl` on the `metrics` branch (`WING_COMMANDER_METRICS_BRANCH`, `_PATH`, `_PAUSED`) |
+| metrics-persist | published stage, wrapper | after each stage run; a daily sweep at 06:37 UTC | appends one record per agent run (turns, tokens and cost, where the run reports them) to `records.jsonl` on the `metrics` branch (`WING_COMMANDER_METRICS_BRANCH`, `_PATH`, `_PAUSED`) |
 | `board-status.yml` | this repository | daily, 07:17 UTC | rewrites the "Board status" issue: what waits on the owner, what is in the pipeline, the backlog's size, `main`'s CI, the last release and the merge switches. No agent. `WING_COMMANDER_BOARD_STATUS_PAUSED` stops it |
 | fold-cycle-guard | published stage, wrapper | after an implement run | re-dispatches, once, an implement run that was cancelled while still queued |
-| `lint-workflows.yml` | this repository | every pull request that touches workflows, actions, scripts, docs or a root Markdown file; pushes to `main`; daily | the gate suite. `python .github/scripts/run-local-gates.py` runs the same set locally |
+| `lint-workflows.yml` | this repository | every pull request that touches workflows, actions, scripts, docs or a root Markdown file; pushes to `main` that touch workflows; daily | the gate suite. `python .github/scripts/run-local-gates.py` runs the same set locally |
 | agent-startup-check | published stage | called by the image workflows | checks that the agent action can start inside a container image |
 
 Dispatch-only helpers in this repository: `wing-commander-trial-summary.yml`
@@ -254,6 +254,7 @@ All times UTC.
 | hourly at :41 | spec PR review |
 | 04:17 | rebase |
 | 05:43 | the gate suite on `main` |
+| 06:37 | metrics-persist sweep |
 | 06:53 | cleanup |
 | 07:13 | Spec Kit updater |
 | 07:17 | board status |
