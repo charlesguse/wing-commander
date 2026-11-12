@@ -13,6 +13,6 @@
     "- [ ] a [wc:bl-aaaa1111 held red gate suite]\n- [ ] b [wc:bl-bbbb2222 in-progress]",
     null,
     null,
-    "- [ ] a [wc:bl-aaaa1111 released]\n- [ ] b [wc:bl-bbbb2222 in-progress]"
+    "- [ ] a\n- [ ] b [wc:bl-bbbb2222 in-progress]"
   ]
 }

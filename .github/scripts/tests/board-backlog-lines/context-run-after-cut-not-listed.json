@@ -1,0 +1,18 @@
+{
+  "op": "context",
+  "issue": 889,
+  "line_id": "bl-0a1b2c3d",
+  "repository": "owner/repo",
+  "pad": 9000,
+  "body": "- [ ] a very long line {PAD} then https://github.com/owner/repo/actions/runs/987654321 [wc:bl-0a1b2c3d in-progress]\n",
+  "contains": [
+    "a very long line"
+  ],
+  "absent": [
+    "actions/runs/987654321"
+  ],
+  "cited_run": {
+    "repository": "owner/repo",
+    "expect": null
+  }
+}

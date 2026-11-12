@@ -14,7 +14,7 @@
   "expect_after": [
     "- [ ] same [wc:bl-aaaa1111 in-progress]\n- [ ] same\n- [ ] other",
     "- [ ] same [wc:bl-aaaa1111 held needs workflow scope]\n- [ ] same\n- [ ] other",
-    "- [ ] same [wc:bl-aaaa1111 released]\n- [ ] same\n- [ ] other",
+    "- [ ] same\n- [ ] same\n- [ ] other",
     "- [ ] same [wc:bl-aaaa1111 in-progress]\n- [ ] same\n- [ ] other",
     "- [ ] same [wc:bl-aaaa1111 in-progress PR #7]\n- [ ] same\n- [ ] other",
     "- [x] same [wc:bl-aaaa1111 fixed PR #7]\n- [ ] same\n- [ ] other",

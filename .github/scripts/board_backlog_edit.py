@@ -53,7 +53,7 @@ def _operations(op, line_id, detail, url=""):
         "tick-evidence": (lambda b: bbl.tick(b, line_id, "evidence", detail), "evidence", True),
         "tick-fixed": (lambda b: bbl.tick(b, line_id, "fixed", detail), "fixed", True),
         "note-proof": (lambda b: bbl.note_proof(b, line_id, detail, url), "fixed", True),
-        "release": (lambda b: bbl.clear_note(b, line_id), bbl.RELEASED, False),
+        "release": (lambda b: bbl.clear_note(b, line_id), None, False),
     }
     if op not in table:
         raise SystemExit("unknown --op {0!r}".format(op))
@@ -61,6 +61,8 @@ def _operations(op, line_id, detail, url=""):
 
     def verify(body):
         line = state_of(body)
+        if state is None:
+            return line is not None and line["state"] is None
         if line is None or line["state"] != state or line["checked"] != checked:
             return False
         if op in ("progress", "hold", "route-proposal", "tick-evidence", "tick-fixed"):
