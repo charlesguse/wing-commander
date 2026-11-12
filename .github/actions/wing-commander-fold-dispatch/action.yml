@@ -95,6 +95,10 @@ inputs:
       Empty (default) preserves every other caller's behavior unchanged.
     required: false
     default: ""
+  hold-label:
+    description: The lifecycle hold label name (specs/119-lifecycle-hold-label).
+    required: false
+    default: lifecycle:held
   fold-queue-token:
     description: >
       The implement-kind ticket token wing-commander-fold-queue-claim-dispatch
@@ -108,13 +112,13 @@ inputs:
 outputs:
   folded:
     description: "'true' if folded-json names at least one of this run's own folds -- whether or not it was dispatched."
-    value: ${{ steps.dispatch.outputs.folded }}
+    value: ${{ steps.dispatch.outputs.folded || 'false' }}
   tip-moved:
     description: "'true' if the spec branch's tip moved past base-sha. With folded 'false', the tip moved but not from this run's own fold (FR-015's declined-dispatch case)."
     value: ${{ steps.dispatch.outputs.tip-moved }}
   dispatched:
     description: "'true' only when an implement-workflow run was actually triggered."
-    value: ${{ steps.dispatch.outputs.dispatched }}
+    value: ${{ steps.dispatch.outputs.dispatched || 'false' }}
   new-iteration:
     description: spec-meta.json's iteration + 1, whenever the tip moved (folded == 'true') -- not only when dispatched, since a standalone-mode caller's reply needs it too. Empty when folded is 'false'.
     value: ${{ steps.dispatch.outputs.new-iteration }}
@@ -133,13 +137,27 @@ outputs:
       released by the caller, which also must not correlate the dispatched
       run to it via record-implement-run. 'false' (or empty) in every other
       case.
-    value: ${{ steps.dispatch.outputs.ticket-unused }}
+    value: ${{ steps.hold.outputs.state != 'clear' && 'true' || steps.dispatch.outputs.ticket-unused }}
+  withheld:
+    description: "'held' or 'unreadable' when the lifecycle hold check withheld the dispatch (nothing dispatched, ticket-unused 'true'); empty otherwise."
+    value: ${{ steps.hold.outputs.state != 'clear' && (steps.hold.outputs.state || 'unreadable') || '' }}
 
 runs:
   using: composite
   steps:
+    # specs/119-lifecycle-hold-label FR-003: a held (or unreadable) lifecycle
+    # is never dispatched. The check lives in wing-commander-lifecycle-hold.
+    - name: Check the lifecycle hold
+      id: hold
+      uses: ./.wing-commander-pipeline/.github/actions/wing-commander-lifecycle-hold
+      with:
+        mode: check
+        issue: ${{ inputs.issue }}
+        hold-label: ${{ inputs.hold-label }}
+        token: ${{ inputs.dispatch-token }}
     - name: Re-read the tip and dispatch this run's own folds
       id: dispatch
+      if: steps.hold.outputs.state == 'clear'
       shell: bash
       env:
         DISPATCH_TOKEN: ${{ inputs.dispatch-token }}
@@ -273,3 +291,12 @@ runs:
           [ -n "$run_url" ] && break
         done
         echo "run-url=$run_url" >> "$GITHUB_OUTPUT"
+
+    - name: Report a withheld dispatch
+      id: withheld
+      if: steps.hold.outputs.state != 'clear'
+      shell: bash
+      env:
+        HOLD_STATE: ${{ steps.hold.outputs.state }}
+      run: |
+        echo "::notice::wing-commander-fold-dispatch: dispatch withheld (lifecycle ${HOLD_STATE:-unreadable})"
