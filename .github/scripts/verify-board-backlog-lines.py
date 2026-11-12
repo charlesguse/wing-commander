@@ -89,11 +89,35 @@ def run_case(case):
         return None
     if op == "context":
         fn = getattr(bbl, "line_context", None)
-        actual = fn(body, case["issue"], case["line_id"]) if fn else "<no line_context()>"
+        # The run list is this repository's ($GITHUB_REPOSITORY) alone: a
+        # case names it, or runs with none (never CI's own value).
+        saved = os.environ.pop("GITHUB_REPOSITORY", None)
+        if case.get("repository"):
+            os.environ["GITHUB_REPOSITORY"] = case["repository"]
+        try:
+            body = body.replace("{PAD}", "x" * case.get("pad", 0))
+            actual = fn(body, case["issue"], case["line_id"]) if fn else "<no line_context()>"
+        finally:
+            os.environ.pop("GITHUB_REPOSITORY", None)
+            if saved is not None:
+                os.environ["GITHUB_REPOSITORY"] = saved
         if case.get("expect_none"):
             return None if actual is None else "context: expected None, got {0!r}".format(actual)
         errors = ["context lacks {0!r}".format(n) for n in case["contains"] if n not in (actual or "")]
         errors += ["context carries {0!r}".format(n) for n in case.get("absent", []) if n in (actual or "")]
+        if "cited_run" in case or "unfenced_absent" in case:
+            # FR-012: triage's evidence read sees the line's run; FR-008:
+            # none of the line's prose leaves the fence for it.
+            import board_triage
+            cited = case.get("cited_run")
+            if cited:
+                got = board_triage.find_cited_run(actual or "", cited["repository"])
+                if got != cited["expect"]:
+                    errors.append("triage's find_cited_run() read {0!r} from the line context, "
+                                  "want {1!r}".format(got, cited["expect"]))
+            unfenced = board_triage._unquoted_unfenced(actual or "")
+            errors += ["line prose {0!r} is outside the fence".format(n)
+                       for n in case.get("unfenced_absent", []) if n in unfenced]
         return "; ".join(errors) or None
     if op == "pr-ref":
         return run_pr_ref(case)
@@ -515,6 +539,18 @@ def board_loop_wiring(path=BOARD_LOOP):
     return errors
 
 
+def run_link_single_home(path=os.path.join(HERE, "board_backlog_lines.py")):
+    """CLAUDE.md "Shared logic has exactly one home": the run-link pattern
+    lives in board_triage.run_url_pattern(); board_backlog_lines.py must
+    not carry a copy of its own (found by the code review of #1131)."""
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    if re.search(r"actions/runs", text):
+        return ["board_backlog_lines.py carries its own run-link pattern -- use "
+                "board_triage.run_url_pattern()"]
+    return []
+
+
 def run(fixtures=None, verbose=True):
     failures = 0
     paths = sorted(glob.glob(FIXTURES)) if fixtures is None else fixtures
@@ -525,6 +561,9 @@ def run(fixtures=None, verbose=True):
         for error in board_loop_wiring():
             failures += 1
             print("::error::verify-board-backlog-lines: board-loop.yml: {0}".format(error))
+        for error in run_link_single_home():
+            failures += 1
+            print("::error::verify-board-backlog-lines: {0}".format(error))
         for error in issue_context_wiring():
             failures += 1
             print("::error::verify-board-backlog-lines: wing-commander-issue-context: {0}".format(error))

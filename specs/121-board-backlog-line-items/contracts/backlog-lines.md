@@ -33,6 +33,9 @@ Case-insensitive `close[sd]?|fix(e[sd])?|resolve[sd]?` followed by an issue refe
 ### Annotation functions
 `annotate(body, line_id, state, detail) -> body | None`, `tick(body, line_id, annotation) -> body | None`, `clear_note(...)`. `None` when the id is missing or duplicated, or the line is already ticked (stand down).
 
+### `line_context(body, issue, line_id, repository=None) -> str | None`
+That line's text alone, fenced and framed as untrusted data (FR-007, FR-008). Triage's `find_cited_run()` skips fenced code, so each run link of `repository` (default `$GITHUB_REPOSITORY`) that the fenced text still carries after its 8000-character cut is listed again after the closing fence: the bare URL and nothing else of the line, matched by `board_triage.run_url_pattern()`, the one home of that pattern. Without it a line could never be ticked on run evidence (FR-012). No other repository's link leaves the fence.
+
 ### CLI subcommands
 `select`, `claim`, `progress`, `hold`, `route-proposal`, `tick-evidence`, `tick-fixed`, `note-proof`, `check-closing-keywords`. Each edit subcommand goes through `board_backlog_edit.edit()`.
 
