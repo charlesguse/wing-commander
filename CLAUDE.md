@@ -1,5 +1,10 @@
 # Working on wing-commander
 
+Orientation, for local and cloud sessions (stage agents can skip it):
+[README.md](README.md) says who acts in this repository and how the owner
+drives it; [docs/reference.md](docs/reference.md) lists every loop, default,
+limit and switch, and says which changes must update it.
+
 ## Before pushing
 
 This section addresses the implement stage agent and human/local sessions
