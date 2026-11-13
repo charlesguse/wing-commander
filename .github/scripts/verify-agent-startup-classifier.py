@@ -351,11 +351,11 @@ def check_wrapper(path=WRAPPER):
     # The wrapper calls agent-startup-check.yml by local path, which leaves
     # github.job_workflow_sha empty, and classify-startup holds no id-token
     # for an OIDC fallback: without pipeline-ref it cannot find the
-    # classifier's commit and fails before it classifies. The wrapper's
-    # nightly run was red from the day the start-up check shipped until
-    # this was passed (#889). github.sha is the commit the wrapper, and so
-    # its local-path callee, runs from: the same pin, for the same reason,
-    # as wing-commander-5-implement.yml's (#1071).
+    # classifier's commit and fails before it classifies. Every run of the
+    # wrapper failed at that step from the day the start-up check shipped
+    # until this was passed (#889). github.sha is the commit the wrapper,
+    # and so its local-path callee, runs from: the same pin, for the same
+    # reason, as wing-commander-5-implement.yml's (#1071).
     if norm((start.get("with") or {}).get("pipeline-ref")) != "${{ github.sha }}":
         errors.append("the wrapper's startup-check job must pass pipeline-ref: ${{ github.sha }} (a "
                       "local-path call leaves github.job_workflow_sha empty and classify-startup has no "
