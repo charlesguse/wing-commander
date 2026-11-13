@@ -127,6 +127,9 @@ Maintenance backlog, add "(proven by run N)" to its line there.
 - Diagnose it from the log.
 - Fix it on a new branch with the `review-until-clean` skill, or add a
   backlog line saying what failed and why it isn't this fix's.
+- When you are proving a merge another session made (CLAUDE.md, "Merging
+  a fix PR"), don't fix it yourself: report the failure on the PR and to
+  that session, which makes the fix.
 - Tell the owner either way.
 
 ## Reporting

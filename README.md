@@ -125,13 +125,13 @@ act, and a session never applies it on its own judgement.
 
 | Decision | Who |
 |---|---|
-| A reversible choice between options, inside the constitution and the published contract | a session: it decides and records, or builds the options and compares them |
+| A reversible choice between options that is not the owner's by kind ([CLAUDE.md](CLAUDE.md), "Deciding without the owner") | a session: it decides and records, or builds the options and compares them |
 | Which proposals become specs (`spec-request`) | the owner |
 | Answers to clarification questions | the owner; a session answers the ones an earlier decision settles |
 | Merging a spec PR, a plan PR or a constitution amendment | a human |
 | Merging a final PR | a human, or the lifecycle review gate when its switch is on |
 | Merging a board loop fix PR or a verified Spec Kit upgrade | the board loop when its switch is on, otherwise a human |
-| Merging a fix PR a session opened | that session, once a separate session has validated the bug and the fix. A fix that can only be verified after it merges is merged first, and the session that made it fixes what the separate session then finds (the owner's standing instruction, 2026-11-13) |
+| Merging a session's own fix PR | that session, once a separate session has validated the bug and the fix. A fix that has to merge before it can be verified may merge first, and the session that made it fixes what the validating session finds. The owner's standing instruction of 2026-11-13 is quoted in [CLAUDE.md](CLAUDE.md), which also says which PRs still wait for the owner; the `review-until-clean` skill holds the conditions |
 | Whether a change is a direct fix or needs a spec | its shape: small, checkable and free of design trade-offs is a fix; anything else is filed as a proposal. For a session, a reversible trade-off it may settle does not make a fix a spec |
 | Settings, credentials, App permissions, model tier | the owner |
 
