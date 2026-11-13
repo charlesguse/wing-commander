@@ -363,9 +363,15 @@ def classify_file(f, deciders):
         for no, line in changed:
             if not line.strip():
                 continue
+            # Inside a prompt or a tool list a `#` line is content. Anywhere
+            # else it is a YAML or shell comment, which runs nothing.
             if _in_blocks(no, prompt_blocks):
                 hit("prompt", "line %d" % no)
-            if _in_blocks(no, tool_blocks) or TOOLS_LINE.search(line):
+            if _in_blocks(no, tool_blocks):
+                hit("tools", "line %d: %s" % (no, line.strip()[:70]))
+            if line.lstrip().startswith("#"):
+                continue
+            if TOOLS_LINE.search(line):
                 hit("tools", "line %d: %s" % (no, line.strip()[:70]))
             if _in_blocks(no, permission_blocks) or PERMISSION_LINE.match(line):
                 hit("permissions", "line %d: %s" % (no, line.strip()[:70]))
@@ -381,6 +387,8 @@ def classify_file(f, deciders):
 
     if path == LINT:
         for no, line in removed:
+            if line.lstrip().startswith("#"):
+                continue  # a comment names a gate without being its step
             if re.match(r"^\s*(- name:|run:)", line) or "verify-" in line:
                 hit("gate-step", "removed line %d: %s" % (no, line.strip()[:70]))
         for no, line in added:
