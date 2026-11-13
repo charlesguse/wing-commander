@@ -138,6 +138,12 @@ and stop.
   single-pass review done without the Agent tool, it did not run its
   checked, multi-finder recipe. Report that and stop: this is not a valid
   pass.
+- **Confirm the problem, not only the fix.** Check that the problem the
+  PR says it fixes is real, from the evidence it cites (a run, a failing
+  test, the code), and that this change is what fixes it. The owner's
+  standing instruction for merging a fix PR rests on a separate session
+  doing both (CLAUDE.md, "Merging a fix PR"). If you cannot confirm the
+  problem, the pass is NOT CLEAN: say what you tried.
 - **Other skills, when the diff calls for them:**
   - `spec-cross-reference`: a spec governs the changed files;
   - `review-step-gating`: the diff touches an `if:`, a
@@ -217,6 +223,8 @@ contains:
 
 - the review's own effort line;
 - the head you started from and the head you pushed;
+- whether you confirmed the problem the PR says it fixes, and from what
+  evidence;
 - every candidate, with its verdict, file:line and one line of why;
 - which test covers each fix;
 - the gate result, naming any failure you waived and why;
@@ -349,8 +357,10 @@ it: a specialist skill (that is how `review-step-gating`,
 ## Merge (orchestrator)
 
 Merge only with the owner's permission for this class of PR, given
-explicitly or as a standing instruction. Never merge a spec PR, a plan PR or
-a constitution amendment: those merges stay human (constitution V).
+explicitly or as a standing instruction. For a fix PR a session made, that
+standing instruction is in CLAUDE.md ("Merging a fix PR"), in the owner's
+words. Never merge a spec PR, a plan PR or a constitution amendment: those
+merges stay human (constitution V).
 
 When a pass is CLEAN:
 
@@ -381,8 +391,9 @@ After merge:
 - tick the PR's backlog line;
 - file the passes' out-of-scope findings as backlog lines carrying
   `(found by the code review of #N)`;
-- if the change runs only in Actions, prove it with the `prove-after-merge`
-  skill.
+- if the change runs only in Actions, have a separate session prove it
+  with the `prove-after-merge` skill, and stay to fix what it finds
+  (CLAUDE.md, "Merging a fix PR").
 
 ## Reporting
 

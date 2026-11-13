@@ -131,7 +131,7 @@ act, and a session never applies it on its own judgement.
 | Merging a spec PR, a plan PR or a constitution amendment | a human |
 | Merging a final PR | a human, or the lifecycle review gate when its switch is on |
 | Merging a board loop fix PR or a verified Spec Kit upgrade | the board loop when its switch is on, otherwise a human |
-| Merging a fix PR a session opened | that session, when `session_merge_check.py` passes it (checks green, nothing reserved for the owner) and a fresh review pass at that commit is clean; otherwise the owner |
+| Merging a fix PR a session opened | that session, once a separate session has validated the bug and the fix. A fix that can only be verified after it merges is merged first, and the session that made it fixes what the separate session then finds (the owner's standing instruction, 2026-11-13) |
 | Whether a change is a direct fix or needs a spec | its shape: small, checkable and free of design trade-offs is a fix; anything else is filed as a proposal. For a session, a reversible trade-off it may settle does not make a fix a spec |
 | Settings, credentials, App permissions, model tier | the owner |
 

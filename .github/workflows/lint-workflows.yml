@@ -4750,22 +4750,6 @@ jobs:
       - name: Gate 168 — stranded-review migration decisions (specs/123)
         if: "!cancelled()"
         run: python3 .github/scripts/verify-migrate-stranded-review-lifecycles.py
-
-      # Gate 169 — CLAUDE.md, "Deciding without the owner": one of the
-      # owner's sessions may merge its own fix PR when
-      # session_merge_check.py exits 0. That script is the one home of what
-      # is reserved for the owner; when the list was prose, three reviews
-      # each found it incomplete. The fixtures hold every rule it ships and
-      # the cases the prose missed, and the plain run checks the script
-      # against the real tree: its decider scripts exist, its path patterns
-      # still match files, and CLAUDE.md still names it. Path triggers:
-      # .github/scripts/**, .github/workflows/** and *.md above.
-      - name: "Gate 169 — the session merge check reserves what CLAUDE.md says it reserves"
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-session-merge-check.py
-      - name: "Gate 169 self-test — a check with one rule switched off fails a fixture"
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-session-merge-check.py --self-test
       # Gate 165 — specs/116-review-convergence-analyze. It keeps the review
       # loops' convergence arithmetic and thresholds in wc_convergence.py
       # alone (FR-010, FR-018, FR-019); its fixtures run the rules, the
