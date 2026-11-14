@@ -709,6 +709,48 @@ def gh_error_stub_arm(match_glob, status, message, stderr_extra=""):
     ).format(match_glob, message, status, extra)
 
 
+# gh's escape-sequence guard on a raw response body, as read from gh 2.100.0's
+# source (pkg/cmd/api/api.go -> pkg/iostreams/content.go
+# CopyGuardedContent): the check is on the content, whether stdout is a
+# terminal, a file or a pipe; it exits 1, writes nothing to stdout, and its
+# stderr carries no `HTTP <code>`. A gh from before the flag (gh 2.89.0 here)
+# rejects it as an unknown flag before making any request.
+GH_ESCAPE_REFUSAL = ("the response contains terminal escape sequences; "
+                     "pass --allow-escape-sequences to output it anyway")
+
+
+def gh_escape_guard_preamble(new_gh):
+    """bash lines to put at the top of a `gh` stub, ahead of its own
+    dispatch, making it behave like a gh with (`new_gh=True`) or without
+    (`False`) `--allow-escape-sequences`: `gh api --help` lists the flag only
+    on the newer one, the older one rejects the flag, and the stub's own
+    arm prints a raw body with `guarded_cat FILE` instead of `cat FILE` so
+    the newer one refuses a body holding an ESC byte unless the flag was
+    passed. agent-startup-check.yml's classify step and the
+    wing-commander-fetch-job-logs composite both read job logs this way, and
+    both harnesses (Gate 147, verify-sentinel-collector.py) stub gh with it."""
+    new = "1" if new_gh else "0"
+    return (
+        f'wc_new_gh={new}\n'
+        'wc_allow=0\n'
+        'for wc_a in "$@"; do [ "$wc_a" = "--allow-escape-sequences" ] && wc_allow=1; done\n'
+        'if [ "$1" = "api" ] && [ "$2" = "--help" ]; then\n'
+        '  echo "Usage:  gh api <endpoint> [flags]"\n'
+        '  echo "      --silent   Do not print the response body"\n'
+        '  [ "$wc_new_gh" = 1 ] && echo "      --allow-escape-sequences   Allow printing terminal escape sequences"\n'
+        '  exit 0\n'
+        'fi\n'
+        'if [ "$wc_allow" = 1 ] && [ "$wc_new_gh" != 1 ]; then\n'
+        '  echo "unknown flag: --allow-escape-sequences" >&2; exit 1\n'
+        'fi\n'
+        'guarded_cat() {\n'
+        '  if [ "$wc_new_gh" = 1 ] && [ "$wc_allow" != 1 ] && grep -q "$(printf \'\\033\')" "$1"; then\n'
+        f'    echo "{GH_ESCAPE_REFUSAL}" >&2; exit 1\n'
+        '  fi\n'
+        '  cat "$1"\n'
+        '}\n')
+
+
 def gh_argv_recording_stub(bin_dir):
     """Write an executable `gh` into `bin_dir` that appends every invocation's
     argv to the file named by $GHLOG and does nothing else, and return the
