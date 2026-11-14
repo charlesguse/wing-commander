@@ -1,6 +1,6 @@
 ---
 name: "prove-after-merge"
-description: "After a fix to behaviour that only runs in GitHub Actions merges, prove it: find the runs that reach the changed path, re-drive one (or wait for the run that is due), check that run took the changed path on the merged code, and record the evidence on the PR or issue. Use right after merging such a fix, or when asked to 'prove it', 're-drive a run', or 'check the run after merge'."
+description: "After a fix to behaviour that only runs in GitHub Actions merges, prove it: find the runs that reach the changed path, re-drive one (or wait for the run that is due), check that run took the changed path on the merged code, and record the evidence on the PR or issue. Use right after such a fix merges, or when asked to 'prove it', 're-drive a run', or 'check the run after merge'."
 compatibility: "Needs git, gh, python3 with PyYAML; send_later or a /loop for the check-in"
 user-invocable: true
 disable-model-invocation: false
@@ -127,6 +127,10 @@ Maintenance backlog, add "(proven by run N)" to its line there.
 - Diagnose it from the log.
 - Fix it on a new branch with the `review-until-clean` skill, or add a
   backlog line saying what failed and why it isn't this fix's.
+- When you are proving a merge another session made (CLAUDE.md, "Merging
+  a fix PR"), don't fix it yourself or rule it out: report the failure on
+  the PR and to that session, which makes the fix or shows that it isn't
+  this fix's.
 - Tell the owner either way.
 
 ## Reporting

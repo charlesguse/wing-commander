@@ -125,16 +125,20 @@ act, and a session never applies it on its own judgement.
 
 | Decision | Who |
 |---|---|
+| A reversible choice between options that is not the owner's by kind ([CLAUDE.md](CLAUDE.md), "Deciding without the owner") | a session: it decides and records, or builds the options and compares them |
 | Which proposals become specs (`spec-request`) | the owner |
 | Answers to clarification questions | the owner; a session answers the ones an earlier decision settles |
 | Merging a spec PR, a plan PR or a constitution amendment | a human |
 | Merging a final PR | a human, or the lifecycle review gate when its switch is on |
 | Merging a board loop fix PR or a verified Spec Kit upgrade | the board loop when its switch is on, otherwise a human |
-| Whether a change is a direct fix or needs a spec | its shape: small, checkable and free of design trade-offs is a fix; anything else is filed as a proposal |
+| Merging a session's own fix PR | that session, once a separate session has validated the bug and the fix. A fix that has to merge before it can be verified may merge first, and the session that made it fixes what the validating session finds. The owner's standing instruction of 2026-11-13 is quoted in [CLAUDE.md](CLAUDE.md), which also says which PRs still wait for the owner; the `review-until-clean` skill holds the conditions |
+| Whether a change is a direct fix or needs a spec | its shape: small, checkable and free of design trade-offs is a fix; anything else is filed as a proposal. For a session, a reversible trade-off it may settle does not make a fix a spec |
 | Settings, credentials, App permissions, model tier | the owner |
 
 "A human" here is usually a session acting on the owner's explicit
-instruction. The exact conditions behind each bot merge, and what this
+instruction. What a session decides without asking, and the
+`**Session decision**` comment it leaves, are in [CLAUDE.md](CLAUDE.md),
+"Deciding without the owner". The exact conditions behind each bot merge, and what this
 repository has switched on, are in
 [docs/reference.md](docs/reference.md#merge-classes).
 
@@ -164,6 +168,7 @@ repository has switched on, are in
 | Fold | turning a review's findings into tasks that one more cycle builds |
 | Fix-shaped, spec-shaped | small, checkable and free of design trade-offs, so it is fixed directly; or anything else, which becomes a proposal |
 | Spec proposal, spec request | `spec-proposal` marks work that would need a spec; only the owner's `spec-request` starts one |
+| Decision record | a comment starting `**Session decision**`: what a session chose without asking, the options, the evidence and how to undo it |
 | Gate | a deterministic check in the lint suite (`verify-*.py`). A *human gate* is a point where the pipeline waits for a person; the *review gate* is the workflow that reviews final PRs |
 | Prove | re-driving a run after a merge to show the fix took effect |
 | Finding, signal | a finding is something the watchdog or a reviewer reports, filed as an issue or posted on the pull request; a signal is a watchdog class (`denied-tool`, `narrative-drift`) that is reported on the lifecycle issue and not filed |

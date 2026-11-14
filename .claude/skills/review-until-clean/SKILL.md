@@ -138,6 +138,16 @@ and stop.
   single-pass review done without the Agent tool, it did not run its
   checked, multi-finder recipe. Report that and stop: this is not a valid
   pass.
+- **Confirm the problem, not only the fix.** Check that the problem the
+  PR says it fixes is real, from the evidence it cites (a run, a failing
+  test, the code), and that this change is what fixes it. The owner's
+  standing instruction for merging a fix PR rests on a separate session
+  doing both (CLAUDE.md, "Merging a fix PR"). If you cannot confirm the
+  problem, or that this change fixes it, the pass is NOT CLEAN: say what
+  you tried. The one exception is the owner's, quoted in that paragraph
+  of CLAUDE.md: a fix that needs to be merged first to be verified. Say
+  why it cannot be verified before the merge, and name the run that will
+  show it.
 - **Other skills, when the diff calls for them:**
   - `spec-cross-reference`: a spec governs the changed files;
   - `review-step-gating`: the diff touches an `if:`, a
@@ -217,11 +227,14 @@ contains:
 
 - the review's own effort line;
 - the head you started from and the head you pushed;
+- whether you confirmed the problem the PR says it fixes and that this
+  change fixes it, and from what evidence;
 - every candidate, with its verdict, file:line and one line of why;
 - which test covers each fix;
 - the gate result, naming any failure you waived and why;
 - the out-of-scope list;
-- **CLEAN** (no real in-scope findings) or **NOT CLEAN**. A commit that
+- **CLEAN** (no real in-scope findings, and the problem and the fix
+  confirmed as step 2 asks) or **NOT CLEAN**. A commit that
   only changes comments or wording no gate reads doesn't make a pass
   NOT CLEAN, as on #984's last pass.
 
@@ -272,6 +285,9 @@ Rules:
   - a fixed finding recurs;
   - two passes in a row churned an earlier pass's lines;
   - the diff has grown by more than half since H0.
+- **Stop and ask the owner at once** after a pass that gave no verdict
+  (it was not a valid pass) or was NOT CLEAN with nothing to fix. Don't
+  run the same pass again: give the owner what it reported.
 - **Budget:** 5 passes, the same as board-loop.yml's
   `BOARD_LOOP_ROUND_BUDGET` and lifecycle-review-gate.yml's
   `LIFECYCLE_REVIEW_ROUND_BUDGET`. At the budget, stop whatever the
@@ -349,8 +365,11 @@ it: a specialist skill (that is how `review-step-gating`,
 ## Merge (orchestrator)
 
 Merge only with the owner's permission for this class of PR, given
-explicitly or as a standing instruction. Never merge a spec PR, a plan PR or
-a constitution amendment: those merges stay human (constitution V).
+explicitly or as a standing instruction. For a session's own fix PR, that
+standing instruction is in CLAUDE.md ("Merging a fix PR"), in the owner's
+words, and the paragraph after it says which other PRs still wait for the
+owner. Never merge a spec PR, a plan PR or a constitution amendment: those
+merges stay human (constitution V).
 
 When a pass is CLEAN:
 
@@ -378,11 +397,15 @@ If it can't merge:
 
 After merge:
 
+- leave the decision record CLAUDE.md asks for ("Merging a fix PR");
 - tick the PR's backlog line;
 - file the passes' out-of-scope findings as backlog lines carrying
   `(found by the code review of #N)`;
-- if the change runs only in Actions, prove it with the `prove-after-merge`
-  skill.
+- if the change runs only in Actions, or the pass named a run that will
+  show the fix after the merge, have a separate session prove it with the
+  `prove-after-merge` skill, started the way a pass session is. The
+  session that made the fix stays ready to repair what the proof finds, in
+  a new PR that goes through this skill (CLAUDE.md, "Merging a fix PR").
 
 ## Reporting
 

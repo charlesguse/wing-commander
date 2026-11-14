@@ -209,7 +209,8 @@ Who may merge what. The bot is the pipeline's GitHub App.
 | Board loop fix PR | a human | `WING_COMMANDER_BOARD_AUTO_MERGE` is `true` and the [board loop's](#board-loop) conditions hold | one revert of the squash commit |
 | Spec Kit bump PR | a human | the same switch, after its verification passed | one revert of the squash commit |
 | Constitution amendment | a human | never | — |
-| Any other PR (a session's or a contributor's) | a human | never | — |
+| A session's own fix PR (one of the owner's sessions) | that session, once a separate session has validated the bug and the fix; a fix that has to merge before it can be verified may merge first, and the session that made it fixes what the validating session finds (the owner's standing instruction of 2026-11-13, quoted in [CLAUDE.md](../CLAUDE.md), which also says which PRs still wait for the owner; the `review-until-clean` skill holds the conditions); otherwise a human | never | one revert of the squash commit |
+| Any other PR (a contributor's, or a session's that the row above does not cover) | a human | never | — |
 
 A merge GitHub refuses, for example a workflow-file change without the
 Workflows permission, goes to a maintainer. Nothing is pushed to `main`
@@ -326,6 +327,9 @@ tables above. No kill switch is set except spec PR review's.
 - A session in a sandbox whose token cannot read Actions variables cannot see
   the settings above. The "Board status" issue shows the merge switches only.
 - Nothing enforces the three-lifecycle limit in implement.
+- Nothing outside a session checks that session's own merge of a fix PR.
+  `main` has no branch protection, and the separate session's validation
+  is a report on the pull request, posted under the owner's account.
 
 ## Keeping this current
 
