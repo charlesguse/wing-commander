@@ -89,12 +89,11 @@ the owner's standing instruction (2026-11-13):
 > long as the fix session is ready to fix any issues the validator
 > session finds.
 
-The `review-until-clean` skill is the procedure and holds the conditions:
-its "Merge" section, and step 2 of a pass for what the separate session
-confirms. A separate session is a brand-new top-level session, never a
-subagent or a fork of the one that made the fix. When you merge, leave a
-decision record on the PR that names the head and the separate session's
-report.
+This is the standing instruction the `review-until-clean` skill's
+"Merge" section asks for. A separate session is a brand-new top-level
+session, never a subagent or a fork of the one that made the fix. When
+you merge, leave a decision record on the PR that names the head and the
+separate session's report.
 
 Every spec PR, plan PR and final PR still waits for the owner's
 direction, given in this conversation, and so does a PR that changes the
