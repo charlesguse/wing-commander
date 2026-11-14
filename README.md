@@ -131,7 +131,7 @@ act, and a session never applies it on its own judgement.
 | Merging a spec PR, a plan PR or a constitution amendment | a human |
 | Merging a final PR | a human, or the lifecycle review gate when its switch is on |
 | Merging a board loop fix PR or a verified Spec Kit upgrade | the board loop when its switch is on, otherwise a human |
-| Merging a session's own fix PR | that session, once a separate session has validated the bug and the fix. A fix that has to merge before it can be verified may merge first, and the session that made it fixes what the validating session finds. The owner's standing instruction of 2026-11-13 is quoted in [CLAUDE.md](CLAUDE.md), which also says which PRs still wait for the owner; the `review-until-clean` skill holds the conditions |
+| Merging a session's own fix PR | that session, once a separate session has validated the bug and the fix. A fix that has to merge before it can be verified may merge first, and the session that made it fixes what the validating session finds. The owner's standing instruction of 2026-11-13 is quoted in [CLAUDE.md](CLAUDE.md), which also says which PRs still wait for the owner; the `review-until-clean` skill is the procedure |
 | Whether a change is a direct fix or needs a spec | its shape: small, checkable and free of design trade-offs is a fix; anything else is filed as a proposal. For a session, a reversible trade-off it may settle does not make a fix a spec |
 | Settings, credentials, App permissions, model tier | the owner |
 
