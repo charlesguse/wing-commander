@@ -58,6 +58,10 @@ import tempfile
 
 import yaml
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_shell_harness import (  # noqa: E402
+    ensure_jq, gh_escape_guard_preamble, resolve_bash, run_step, step_shell)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 CLASSIFIER = os.path.join(HERE, "classify-agent-startup.py")
@@ -198,6 +202,16 @@ def check_workflow(path):
             errors.append("classify-startup must refuse an ambiguous startup-agent lookup, not take the first match")
         if not re.search(r"for attempt in[^\n]*\n(?:.*\n)*?.*actions/jobs/\$job_id/logs(?:.*\n)*?.*sleep ", runs):
             errors.append("classify-startup must retry the job-log fetch (a just-finished job's log can 404)")
+        # The probe is the shared one, read from the pipeline checkout, which
+        # must therefore carry .github/scripts.
+        sparse = "\n".join(str((s.get("with") or {}).get("sparse-checkout", ""))
+                           for s in classify.get("steps") or []
+                           if str(s.get("uses", "")).startswith("actions/checkout"))
+        if ("bash .wing-commander-pipeline/.github/scripts/gh-allows-escape-sequences.sh" not in runs
+                or not re.search(r"actions/jobs/\$job_id/logs\" --allow-escape-sequences ", runs)
+                or ".github/scripts" not in sparse.split()):
+            errors.append("classify-startup must pass --allow-escape-sequences to its job-log fetch when "
+                          "the pipeline checkout's gh-allows-escape-sequences.sh says this gh takes it")
     if re.search(r"AUTH_MARKERS|failed at authentication", text):
         errors.append("agent-startup-check.yml carries an inline copy of the classifier's marker logic")
     # Spec 112's edge case: the tool-list result never gates the start-up
@@ -368,10 +382,94 @@ def check_wrapper(path=WRAPPER):
     return errors
 
 
+CLASSIFY_STEP = "Classify the agent start-up log"
+ESCAPE_PROBE = os.path.join(HERE, "gh-allows-escape-sequences.sh")
+# The fixture the classify step is run against, and an echoed script line in
+# ANSI colour, as a real job log carries (the runner colours echoed `run:`
+# lines): the start-up check's own log fetch has to get past it.
+FETCH_FIXTURE = "setup-failed-install-bun-unzip"
+ANSI_LINE = "2026-10-10T00:00:00.5000000Z \x1b[36;1mecho start\x1b[0m\n"
+
+
+def run_classify_fetch(path, new_gh):
+    """Execute classify-startup's classify step from workflow `path` (the
+    shipped one, or a mutated copy) against a stub gh with (`new_gh`) or
+    without --allow-escape-sequences, whose startup-agent log is
+    FETCH_FIXTURE with an ANSI-coloured line in it. -> (verdict or None,
+    step output)."""
+    with open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    step = [s for s in doc["jobs"]["classify-startup"]["steps"] if s.get("name") == CLASSIFY_STEP]
+    if len(step) != 1:
+        return None, "no step named %r in classify-startup" % CLASSIFY_STEP
+    with tempfile.TemporaryDirectory() as tmp:
+        work = os.path.join(tmp, "work")
+        scripts = os.path.join(work, ".wing-commander-pipeline", ".github", "scripts")
+        os.makedirs(scripts)
+        # What the step's sparse checkout of the pipeline repository carries.
+        for f in (CLASSIFIER, ESCAPE_PROBE):
+            shutil.copy(f, scripts)
+        bindir = os.path.join(tmp, "bin")
+        os.makedirs(bindir)
+        log = os.path.join(tmp, "agent.log")
+        with open(os.path.join(FIXTURES, FETCH_FIXTURE + ".log"), encoding="utf-8") as fh:
+            lines = fh.read().splitlines(True)
+        with open(log, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("".join(lines[:1] + [ANSI_LINE] + lines[1:]))
+        jobs = [{"id": 1, "name": "check / classify-startup", "status": "in_progress",
+                 "runner_name": "runner-1"},
+                {"id": 2, "name": "check / startup-agent", "status": "completed",
+                 "runner_name": "runner-2"}]
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("#!/usr/bin/env bash\n" + gh_escape_guard_preamble(new_gh)
+                     + 'case "$2" in\n'
+                     + "  */actions/runs/*/jobs) printf '%s\\n' "
+                     + " ".join("'%s'" % json.dumps(j) for j in jobs) + " ;;\n"
+                     + '  */actions/jobs/2/logs) guarded_cat "%s" ;;\n' % log.replace("\\", "/")
+                     + '  *) echo "unexpected gh call: $*" >&2; exit 1 ;;\n'
+                     + "esac\n")
+        # The step's retry waits 10s between attempts; nothing here needs it.
+        with open(os.path.join(bindir, "sleep"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("#!/usr/bin/env bash\nexit 0\n")
+        for f in ("gh", "sleep"):
+            os.chmod(os.path.join(bindir, f), 0o755)
+        env = {"PATH": bindir + os.pathsep + os.environ["PATH"], "GH_TOKEN": "x",
+               "REPO": "owner/repo", "RUN_ID": "7", "AGENT_RESULT": "failure",
+               "PREREQ_RESULT": "success", "RUNNER_NAME": "runner-1"}
+        runner_temp = os.path.join(tmp, "rt")
+        os.makedirs(runner_temp)
+        _rc, out, _outs, _summary = run_step(
+            resolve_bash(), str(step[0]["run"]), work, env, runner_temp,
+            shell=step_shell(WORKFLOW, CLASSIFY_STEP))
+        try:
+            with open(os.path.join(work, "verdict.json"), encoding="utf-8") as fh:
+                return json.load(fh).get("verdict"), out
+        except (OSError, ValueError):
+            return None, out
+
+
+def check_classify_fetch(path=WORKFLOW):
+    """classify-startup reads a job log carrying ANSI colour codes on a gh
+    that refuses one without --allow-escape-sequences, and on one that has
+    no such flag (.github/scripts/gh-allows-escape-sequences.sh)."""
+    errors = []
+    with open(os.path.join(FIXTURES, FETCH_FIXTURE + ".expect.json"), encoding="utf-8") as fh:
+        want = json.load(fh)["verdict"]
+    for new_gh, which in ((True, "a gh with --allow-escape-sequences"),
+                          (False, "a gh without --allow-escape-sequences")):
+        verdict, out = run_classify_fetch(path, new_gh)
+        if verdict != want or "could not fetch job" in out:
+            errors.append("classify-startup must fetch a job log carrying ANSI colour codes on %s "
+                          "(probe gh-allows-escape-sequences.sh, pass the flag only when it says so): "
+                          "verdict %r, expected %r; step output tail: %r"
+                          % (which, verdict, want, out[-400:]))
+    return errors
+
+
 def run_checks(classifier=CLASSIFIER, fixtures=FIXTURES, workflow=WORKFLOW):
     mod = load_classifier(classifier)
     return (check_fixtures(mod, fixtures) + check_missing_log(mod) + check_workflow(workflow)
-            + check_dogfood_permissions() + check_wrapper())
+            + check_classify_fetch(workflow) + check_dogfood_permissions() + check_wrapper())
 
 
 def self_test():
@@ -595,6 +693,35 @@ def self_test():
         expect("no allowed_bots", mutated(drop_bots), "allowed_bots")
         expect("always()", mutated(use_always), "always()")
         expect("no retry", mutated(drop_retry), "retry the job-log fetch")
+
+        def never_flag(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
+                    s["run"] = s["run"].replace("gh-allows-escape-sequences.sh 2>/dev/null && esc=1",
+                                                "gh-allows-escape-sequences.sh 2>/dev/null && esc=0")
+
+        def always_flag(jobs):
+            for s in jobs["classify-startup"]["steps"]:
+                if "run" in s:
+                    s["run"] = s["run"].replace("esc=0\n", "esc=1\n")
+
+        def classify_mutated(fn):
+            m = yaml.safe_load(src)
+            fn(m["jobs"])
+            p = os.path.join(tmp, "wf-fetch.yml")
+            with open(p, "w", encoding="utf-8") as fh:
+                yaml.safe_dump(m, fh)
+            return check_classify_fetch(p)
+
+        expect("log fetch never passes --allow-escape-sequences", classify_mutated(never_flag),
+               "on a gh with --allow-escape-sequences")
+        expect("log fetch passes --allow-escape-sequences unprobed", classify_mutated(always_flag),
+               "on a gh without --allow-escape-sequences")
+        expect("log fetch without the shared probe",
+               mutated(lambda j: never_flag(j) or [s.update(run=s["run"].replace(
+                   "bash .wing-commander-pipeline/.github/scripts/gh-allows-escape-sequences.sh", "false"))
+                   for s in j["classify-startup"]["steps"] if "run" in s]),
+               "must pass --allow-escape-sequences")
         expect("no continue-on-error", mutated(drop_coe), "continue-on-error")
         expect("credential input", mutated(add_key), "model credential input")
         expect("no !cancelled", mutated(drop_cancelled), "!cancelled()")
@@ -724,6 +851,7 @@ def self_test():
 
 
 def main(argv):
+    ensure_jq()
     if "--self-test" in argv:
         return self_test()
     errors = run_checks()

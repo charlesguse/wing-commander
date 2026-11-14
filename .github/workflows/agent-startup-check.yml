@@ -349,8 +349,19 @@ jobs:
             # A just-finished job's log can 404 until it is archived; retry
             # before falling back to the empty (unclassified) log.
             if [ -n "$job_id" ]; then
+              # A newer gh refuses a log carrying ANSI colour codes without
+              # --allow-escape-sequences; an older one rejects the flag. See
+              # .github/scripts/gh-allows-escape-sequences.sh.
+              esc=0
+              bash .wing-commander-pipeline/.github/scripts/gh-allows-escape-sequences.sh 2>/dev/null && esc=1
               for attempt in 1 2 3 4 5 6; do
-                if gh api "repos/$REPO/actions/jobs/$job_id/logs" > startup-agent.log 2>job-log-error.log && [ -s startup-agent.log ]; then
+                log_rc=0
+                if [ "$esc" = "1" ]; then
+                  gh api "repos/$REPO/actions/jobs/$job_id/logs" --allow-escape-sequences > startup-agent.log 2>job-log-error.log || log_rc=$?
+                else
+                  gh api "repos/$REPO/actions/jobs/$job_id/logs" > startup-agent.log 2>job-log-error.log || log_rc=$?
+                fi
+                if [ "$log_rc" -eq 0 ] && [ -s startup-agent.log ]; then
                   break
                 fi
                 : > startup-agent.log
