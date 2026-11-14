@@ -935,16 +935,14 @@ def check_transcript_normalise(root="."):
 
 
 # --------------------------------------------------------------------------
-# Check: size-path-backstop (file-wide, the small-change file/line-count
-# formula -- specs/057-autonomous-board-loop research.md D5)
-# --------------------------------------------------------------------------
-# --------------------------------------------------------------------------
 # Check: gh-escape-probe (6b): no copy of the probe, and no job-log read
 # that does not go through it.
 # --------------------------------------------------------------------------
 GH_ESCAPE_PROBE_RE = re.compile(
     r"\bgh\s+api\s+(?:-h|--help)\b|\bgrep\b[^\n]*allow-escape-sequences")
 GH_JOB_LOG_READ_RE = re.compile(r"\bgh\s+api\s+[\"']?repos/\S*actions/jobs/\S+/logs\b")
+GH_FLAGGED_LOG_READ_RE = re.compile(
+    r"\bgh\s+api\s+[\"']?repos/\S*actions/jobs/\S+/logs\b[^\n]*--allow-escape-sequences")
 
 
 def check_gh_escape_probe(root="."):
@@ -958,14 +956,30 @@ def check_gh_escape_probe(root="."):
         for m in GH_ESCAPE_PROBE_RE.finditer(text):
             findings.append(Finding(path, "gh-escape-probe",
                                     line_of(text, m.start()), m.group(0)))
-        read_m = GH_JOB_LOG_READ_RE.search(text)
-        if read_m and probe not in text:
+        reads = list(GH_JOB_LOG_READ_RE.finditer(text))
+        if reads and probe not in text:
             findings.append(Finding(
-                path, "gh-escape-probe", line_of(text, read_m.start()),
+                path, "gh-escape-probe", line_of(text, reads[0].start()),
                 f"a job-log read that does not call {probe}"))
+        # Calling the probe is not enough: each unflagged read (the older-gh
+        # branch) needs its --allow-escape-sequences twin, or a newer gh
+        # still refuses every read the probe was meant to rescue.
+        flagged = [m for m in reads
+                   if GH_FLAGGED_LOG_READ_RE.match(text, m.start())]
+        unflagged = [m for m in reads if m not in flagged]
+        if unflagged and len(flagged) < len(unflagged):
+            findings.append(Finding(
+                path, "gh-escape-probe",
+                line_of(text, unflagged[len(flagged)].start()),
+                "a job-log read with no --allow-escape-sequences form for "
+                f"the gh that {probe} says takes it"))
     return findings
 
 
+# --------------------------------------------------------------------------
+# Check: size-path-backstop (file-wide, the small-change file/line-count
+# formula -- specs/057-autonomous-board-loop research.md D5)
+# --------------------------------------------------------------------------
 def check_size_path_backstop(root="."):
     home = DECLARED_HOMES["size-path-backstop"]
     findings = []
@@ -2926,12 +2940,29 @@ def run_selftest():
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
         "      - shell: bash\n        run: |\n"
         "          gh api \"repos/$REPO/actions/jobs/$id/logs\" > job.log\n")
+    # Code review of #1140: calling the probe but never passing the flag
+    # is the refused read all over again, as is a second read left unpaired.
+    selftest_third_paste_fails(
+        "gh-escape-probe", ".github/workflows/probed-unflagged-read.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          esc=0; bash p/.github/scripts/gh-allows-escape-sequences.sh && esc=1\n"
+        "          gh api \"repos/$REPO/actions/jobs/$id/logs\" > job.log\n")
+    selftest_third_paste_fails(
+        "gh-escape-probe", ".github/workflows/half-paired-reads.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          esc=0; bash p/.github/scripts/gh-allows-escape-sequences.sh && esc=1\n"
+        "          if [ \"$esc\" = 1 ]; then gh api \"repos/$R/actions/jobs/$a/logs\" --allow-escape-sequences > a.log\n"
+        "          else gh api \"repos/$R/actions/jobs/$a/logs\" > a.log; fi\n"
+        "          gh api \"repos/$R/actions/jobs/$b/logs\" > b.log\n")
     selftest_third_paste_passes(
         "gh-escape-probe", ".github/workflows/probed-log-read.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
         "      - shell: bash\n        run: |\n"
         "          esc=0; bash p/.github/scripts/gh-allows-escape-sequences.sh && esc=1\n"
-        "          gh api \"repos/$REPO/actions/jobs/$id/logs\" > job.log\n")
+        "          if [ \"$esc\" = 1 ]; then gh api \"repos/$REPO/actions/jobs/$id/logs\" --allow-escape-sequences > job.log\n"
+        "          else gh api \"repos/$REPO/actions/jobs/$id/logs\" > job.log; fi\n")
     # Code review of #940: each shape the five gate scripts and
     # wc_chain_stop_conditions.py carried before moving onto wc_gha_expr.
     for slug, body in (
