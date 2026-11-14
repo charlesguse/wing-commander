@@ -36,7 +36,9 @@ workflow starts, skipped jobs included. private-image-dogfood.yml must stay
 callable with `permissions: {}`, as it was before spec 112: its top level
 and every job declare `permissions: {}` (or nothing), so a grant there
 fails here. The dogfood wrapper's dogfood call grants nothing, and its
-start-up call carries the same GHCR-namespace guard.
+start-up call carries the same GHCR-namespace guard and passes
+pipeline-ref: ${{ github.sha }} (a local-path call leaves
+github.job_workflow_sha empty, and classify-startup has no OIDC fallback).
 
 NOTE ON GATE NUMBERING: this gate was first registered as Gate 141. It is
 numbered 147, not 141: 141-146 were taken by spec 110's PR #982, which
@@ -346,6 +348,19 @@ def check_wrapper(path=WRAPPER):
             != "${{ github.repository }}":
         errors.append("the wrapper's startup-check job must pass pipeline-repo: ${{ github.repository }} "
                       "(a fork's commit is not in the default pipeline repository)")
+    # The wrapper calls agent-startup-check.yml by local path, which leaves
+    # github.job_workflow_sha empty, and classify-startup holds no id-token
+    # for an OIDC fallback: without pipeline-ref it cannot find the
+    # classifier's commit and fails before it classifies. Every run of the
+    # wrapper failed at that step from the day the start-up check shipped
+    # until this was passed (#889). github.sha is the commit the wrapper,
+    # and so its local-path callee, runs from: the same pin, for the same
+    # reason, as wing-commander-5-implement.yml's (#1071).
+    if norm((start.get("with") or {}).get("pipeline-ref")) != "${{ github.sha }}":
+        errors.append("the wrapper's startup-check job must pass pipeline-ref: ${{ github.sha }} (a "
+                      "local-path call leaves github.job_workflow_sha empty and classify-startup has no "
+                      "OIDC fallback, so it cannot find the classifier's commit; with.pipeline-ref=%r)"
+                      % (start.get("with") or {}).get("pipeline-ref"))
     # The dogfood call is the adopter who never opted in: it grants nothing.
     if (jobs.get("dogfood") or {}).get("permissions") != {}:
         errors.append("the wrapper's dogfood job must call private-image-dogfood.yml with permissions: {} "
@@ -505,6 +520,12 @@ def self_test():
         expect("startup call without pipeline-repo",
                wrapper_jobs(lambda j: j["startup-check"]["with"].pop("pipeline-repo")),
                "pipeline-repo")
+        expect("startup call without pipeline-ref",
+               wrapper_jobs(lambda j: j["startup-check"]["with"].pop("pipeline-ref", None)),
+               "pipeline-ref: ${{ github.sha }}")
+        expect("startup call at a branch, not this run's commit",
+               wrapper_jobs(lambda j: j["startup-check"]["with"].update({"pipeline-ref": "main"})),
+               "pipeline-ref: ${{ github.sha }}")
         read_all = wrapper_jobs(lambda j: j["startup-check"].update({"permissions": "read-all"}))
         if any("actions: read" in e for e in read_all):
             failures.append("startup call with permissions: read-all was refused: %r" % read_all)
