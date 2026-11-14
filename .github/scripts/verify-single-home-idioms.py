@@ -964,18 +964,25 @@ def check_gh_escape_probe(root="."):
                 path, "gh-escape-probe", line_of(text, reads[0].start()),
                 f"a job-log read that does not call {probe}"))
         # Calling the probe is not enough: each read is one half of a pair,
-        # the --allow-escape-sequences form immediately followed by the bare
-        # form of the same endpoint (the if/else on the probe's answer). An
-        # unpaired bare read is refused by a newer gh; an unpaired flagged
-        # read is rejected by an older one. Code review of #1140 (pass 2):
-        # counting the two forms let either half stand alone.
+        # the --allow-escape-sequences form and the bare form of the same
+        # endpoint, adjacent and in either order (the if/else on the probe's
+        # answer). An unpaired bare read is refused by a newer gh; an
+        # unpaired flagged read is rejected by an older one. Code review of
+        # #1140 (pass 2): counting the two forms let either half stand
+        # alone; (pass 3): a bare-first if/else, or a quoting or spacing
+        # difference between the halves, read as two unpaired reads.
+        def endpoint(read):
+            return re.sub(r"\s+", " ", read.group(0)).replace('"', "").replace("'", "")
+
+        def flagged(read):
+            return bool(GH_FLAGGED_LOG_READ_RE.match(text, read.start()))
+
         i = 0
         while i < len(reads):
             m = reads[i]
             nxt = reads[i + 1] if i + 1 < len(reads) else None
-            if (GH_FLAGGED_LOG_READ_RE.match(text, m.start()) and nxt
-                    and not GH_FLAGGED_LOG_READ_RE.match(text, nxt.start())
-                    and nxt.group(0) == m.group(0)):
+            if (nxt and flagged(m) != flagged(nxt)
+                    and endpoint(nxt) == endpoint(m)):
                 i += 2
                 continue
             if GH_FLAGGED_LOG_READ_RE.match(text, m.start()):
@@ -2985,6 +2992,15 @@ def run_selftest():
         "          esc=0; bash p/.github/scripts/gh-allows-escape-sequences.sh && esc=1\n"
         "          gh api \"repos/$R/actions/jobs/$a/logs\" --allow-escape-sequences > a.log\n"
         "          gh api \"repos/$R/actions/jobs/$b/logs\" > b.log\n")
+    # Pass 3: the same if/else written bare-first, with the halves quoted
+    # differently, is a pair.
+    selftest_third_paste_passes(
+        "gh-escape-probe", ".github/workflows/bare-first-pair.yml",
+        "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - shell: bash\n        run: |\n"
+        "          esc=0; bash p/.github/scripts/gh-allows-escape-sequences.sh && esc=1\n"
+        "          if [ \"$esc\" != 1 ]; then gh api repos/$R/actions/jobs/$id/logs > job.log\n"
+        "          else gh  api \"repos/$R/actions/jobs/$id/logs\" --allow-escape-sequences > job.log; fi\n")
     selftest_third_paste_passes(
         "gh-escape-probe", ".github/workflows/probed-log-read.yml",
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"

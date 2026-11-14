@@ -203,13 +203,20 @@ def check_workflow(path):
         if not re.search(r"for attempt in[^\n]*\n(?:.*\n)*?.*actions/jobs/\$job_id/logs(?:.*\n)*?.*sleep ", runs):
             errors.append("classify-startup must retry the job-log fetch (a just-finished job's log can 404)")
         # The probe is the shared one, read from the pipeline checkout, which
-        # must therefore carry .github/scripts.
-        sparse = "\n".join(str((s.get("with") or {}).get("sparse-checkout", ""))
-                           for s in classify.get("steps") or []
-                           if str(s.get("uses", "")).startswith("actions/checkout"))
+        # must therefore carry .github/scripts: a full checkout (no
+        # sparse-checkout) or a sparse entry at or above it. Code review of
+        # #1140 (pass 3): a literal ".github/scripts" entry was required, so
+        # a full or wider checkout failed with the wrong reason.
+        sparse_sets = [str((s.get("with") or {}).get("sparse-checkout") or "").split()
+                       for s in classify.get("steps") or []
+                       if str(s.get("uses", "")).startswith("actions/checkout")]
+        carries_scripts = any(
+            not entries or any(".github/scripts".startswith(e.strip("/") + "/")
+                               or e.strip("/") == ".github/scripts" for e in entries)
+            for entries in sparse_sets)
         if ("bash .wing-commander-pipeline/.github/scripts/gh-allows-escape-sequences.sh" not in runs
                 or not re.search(r"actions/jobs/\$job_id/logs\" --allow-escape-sequences ", runs)
-                or ".github/scripts" not in sparse.split()):
+                or not carries_scripts):
             errors.append("classify-startup must pass --allow-escape-sequences to its job-log fetch when "
                           "the pipeline checkout's gh-allows-escape-sequences.sh says this gh takes it")
     if re.search(r"AUTH_MARKERS|failed at authentication", text):
@@ -722,6 +729,24 @@ def self_test():
                    "bash .wing-commander-pipeline/.github/scripts/gh-allows-escape-sequences.sh", "false"))
                    for s in j["classify-startup"]["steps"] if "run" in s]),
                "must pass --allow-escape-sequences")
+        # Pass 3: the pipeline checkout carries the probe whether it is full,
+        # sparse at .github, or sparse at .github/scripts; not otherwise.
+        def classify_sparse(value):
+            def fn(jobs):
+                for s in jobs["classify-startup"]["steps"]:
+                    if str(s.get("uses", "")).startswith("actions/checkout"):
+                        if value is None:
+                            s["with"].pop("sparse-checkout", None)
+                        else:
+                            s["with"]["sparse-checkout"] = value
+            return fn
+
+        expect_clean("full pipeline checkout", mutated(classify_sparse(None)),
+                     "must pass --allow-escape-sequences")
+        expect_clean("sparse pipeline checkout of .github", mutated(classify_sparse(".github")),
+                     "must pass --allow-escape-sequences")
+        expect("sparse pipeline checkout without .github/scripts",
+               mutated(classify_sparse(".github/actions")), "must pass --allow-escape-sequences")
         expect("no continue-on-error", mutated(drop_coe), "continue-on-error")
         expect("credential input", mutated(add_key), "model credential input")
         expect("no !cancelled", mutated(drop_cancelled), "!cancelled()")
