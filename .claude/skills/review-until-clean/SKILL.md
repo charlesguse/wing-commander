@@ -144,9 +144,10 @@ and stop.
   standing instruction for merging a fix PR rests on a separate session
   doing both (CLAUDE.md, "Merging a fix PR"). If you cannot confirm the
   problem, or that this change fixes it, the pass is NOT CLEAN: say what
-  you tried. The one exception is a fix to behaviour that runs only in
-  Actions, which is proven after merge: say so, and name the run that
-  will show it.
+  you tried. The one exception is the owner's, quoted in that paragraph
+  of CLAUDE.md: a fix that needs to be merged first to be verified. Say
+  why it cannot be verified before the merge, and name the run that will
+  show it.
 - **Other skills, when the diff calls for them:**
   - `spec-cross-reference`: a spec governs the changed files;
   - `review-step-gating`: the diff touches an `if:`, a
@@ -284,6 +285,9 @@ Rules:
   - a fixed finding recurs;
   - two passes in a row churned an earlier pass's lines;
   - the diff has grown by more than half since H0.
+- **Stop and ask the owner at once** after a pass that gave no verdict
+  (it was not a valid pass) or was NOT CLEAN with nothing to fix. Don't
+  run the same pass again: give the owner what it reported.
 - **Budget:** 5 passes, the same as board-loop.yml's
   `BOARD_LOOP_ROUND_BUDGET` and lifecycle-review-gate.yml's
   `LIFECYCLE_REVIEW_ROUND_BUDGET`. At the budget, stop whatever the
@@ -363,7 +367,7 @@ it: a specialist skill (that is how `review-step-gating`,
 Merge only with the owner's permission for this class of PR, given
 explicitly or as a standing instruction. For a session's own fix PR, that
 standing instruction is in CLAUDE.md ("Merging a fix PR"), in the owner's
-words, and the same paragraph says which other PRs still wait for the
+words, and the paragraph after it says which other PRs still wait for the
 owner. Never merge a spec PR, a plan PR or a constitution amendment: those
 merges stay human (constitution V).
 
@@ -397,10 +401,11 @@ After merge:
 - tick the PR's backlog line;
 - file the passes' out-of-scope findings as backlog lines carrying
   `(found by the code review of #N)`;
-- if the change runs only in Actions, have a separate session prove it
-  with the `prove-after-merge` skill, and stay until the proof is in.
-  What it finds is fixed by this session, in a new PR that goes through
-  this skill (CLAUDE.md, "Merging a fix PR").
+- if the change runs only in Actions, or the pass named a run that will
+  show the fix after the merge, have a separate session prove it with the
+  `prove-after-merge` skill, started the way a pass session is. The
+  session that made the fix stays ready to repair what the proof finds, in
+  a new PR that goes through this skill (CLAUDE.md, "Merging a fix PR").
 
 ## Reporting
 

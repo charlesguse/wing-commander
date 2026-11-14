@@ -89,11 +89,12 @@ the owner's standing instruction (2026-11-13):
 > long as the fix session is ready to fix any issues the validator
 > session finds.
 
-The `review-until-clean` skill's "Merge" section is the procedure and
-holds the conditions. A separate session is a brand-new top-level
-session, never a subagent or a fork of the one that made the fix. When
-you merge, leave a decision record on the PR that names the head and the
-separate session's report.
+The `review-until-clean` skill is the procedure and holds the conditions:
+its "Merge" section, and step 2 of a pass for what the separate session
+confirms. A separate session is a brand-new top-level session, never a
+subagent or a fork of the one that made the fix. When you merge, leave a
+decision record on the PR that names the head and the separate session's
+report.
 
 Every spec PR, plan PR and final PR still waits for the owner's
 direction, given in this conversation, and so does a PR that changes the
@@ -155,7 +156,8 @@ prove. Each step has a rule.
   with the `spec-proposal` label and added to the Roadmap issue's
   "Proposed" list. For the owner's own sessions only, never the board
   loop: a trade-off that "Deciding without the owner" lets a session
-  settle does not make a fix spec-shaped. Never apply `spec-request` yourself: the owner's label
+  settle does not make a fix spec-shaped.
+  Never apply `spec-request` yourself: the owner's label
   event is what starts intake, and every intake ends in questions only the
   owner can answer. When the owner asks you to answer them, answer only
   the ones a precedent already settles and raise the rest

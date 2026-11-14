@@ -209,7 +209,7 @@ Who may merge what. The bot is the pipeline's GitHub App.
 | Board loop fix PR | a human | `WING_COMMANDER_BOARD_AUTO_MERGE` is `true` and the [board loop's](#board-loop) conditions hold | one revert of the squash commit |
 | Spec Kit bump PR | a human | the same switch, after its verification passed | one revert of the squash commit |
 | Constitution amendment | a human | never | — |
-| A session's own fix PR (one of the owner's sessions) | that session, once a separate session has validated the bug and the fix (the owner's standing instruction of 2026-11-13, quoted in [CLAUDE.md](../CLAUDE.md), which also says which PRs still wait for the owner; the `review-until-clean` skill's "Merge" section holds the conditions); otherwise a human | never | one revert of the squash commit |
+| A session's own fix PR (one of the owner's sessions) | that session, once a separate session has validated the bug and the fix; a fix that has to merge before it can be verified may merge first, and the session that made it fixes what the validating session finds (the owner's standing instruction of 2026-11-13, quoted in [CLAUDE.md](../CLAUDE.md), which also says which PRs still wait for the owner; the `review-until-clean` skill holds the conditions); otherwise a human | never | one revert of the squash commit |
 | Any other PR (a contributor's, or a session's that the row above does not cover) | a human | never | — |
 
 A merge GitHub refuses, for example a workflow-file change without the
