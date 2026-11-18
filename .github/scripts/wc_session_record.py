@@ -113,14 +113,14 @@ def _trim(text):
 
 def _split_footer(text):
     """(text without its trailing attribution line, that line or None). A
-    `---` rule right above the line goes with it: most posted comments end
-    with the two together."""
+    `---` rule directly above the line goes with it: a posting tool appends
+    the two together. A rule with a blank line under it is the text's own
+    and stays: render() puts a blank line above the footer, so read() takes
+    off what build() put on and no more."""
     lines = _trim(text).split("\n")
     if not FOOTER_RE.search(lines[-1]):
         return "\n".join(lines), None
     footer = lines.pop().strip()
-    while lines and not lines[-1].strip():
-        lines.pop()
     if lines and lines[-1].strip() == "---":
         lines.pop()
     return "\n".join(lines).rstrip(), footer

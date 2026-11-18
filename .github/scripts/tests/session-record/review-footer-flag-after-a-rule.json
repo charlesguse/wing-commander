@@ -1,0 +1,24 @@
+{
+  "what": "a rule that ends the report is the report's own when --footer gives the attribution line: it stays, and reads back",
+  "build": "review",
+  "fields": {
+    "pass": 2,
+    "verdict": "clean",
+    "started": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "pushed": "nothing",
+    "prose": "No real in-scope findings.\n\n---\n",
+    "footer": "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+  },
+  "expect_body": [
+    "<!-- review-until-clean pass 2 -->",
+    "**Review pass 2:** CLEAN",
+    "**Started from:** `1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a`",
+    "**Pushed:** nothing",
+    "",
+    "No real in-scope findings.",
+    "",
+    "---",
+    "",
+    "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+  ]
+}
