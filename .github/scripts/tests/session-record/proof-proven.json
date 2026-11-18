@@ -1,0 +1,31 @@
+{
+  "what": "a proven fix: the run, the commit it ran on, the step, the quoted line",
+  "build": "proof",
+  "fields": {
+    "date": "2026-11-14",
+    "outcome": "proven",
+    "merge": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "run": "https://github.com/example/repo/actions/runs/43635697682",
+    "ran_on": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "step": "startup-check / classify-startup: \"Classify the agent start-up log\"",
+    "line": "setup failed in image: step \"Install Bun\" failed",
+    "not_exercised": "the image's Bun install",
+    "prose": "The run stays red on that verdict, as expected."
+  },
+  "expect_body": [
+    "**Proof after merge (2026-11-14):** proven",
+    "**Merge:** `3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c`",
+    "**Run:** https://github.com/example/repo/actions/runs/43635697682",
+    "**Ran on:** `3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c`",
+    "**Step:** startup-check / classify-startup: \"Classify the agent start-up log\"",
+    "**Not exercised:** the image's Bun install",
+    "",
+    "Quoted from the run:",
+    "",
+    "```text",
+    "setup failed in image: step \"Install Bun\" failed",
+    "```",
+    "",
+    "The run stays red on that verdict, as expected."
+  ]
+}

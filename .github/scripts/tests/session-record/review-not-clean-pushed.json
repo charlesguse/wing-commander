@@ -1,0 +1,22 @@
+{
+  "what": "a NOT CLEAN pass that pushed a fix",
+  "build": "review",
+  "fields": {
+    "pass": 3,
+    "verdict": "not-clean",
+    "started": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "pushed": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+    "prose": "**Review:** `code-review medium --max-findings all origin/main...HEAD`.\n\n### Candidates\n1. `a.py:3`: refuted, the path is unreachable."
+  },
+  "expect_body": [
+    "<!-- review-until-clean pass 3 -->",
+    "**Review pass 3:** NOT CLEAN",
+    "**Started from:** `1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a`",
+    "**Pushed:** `2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b`",
+    "",
+    "**Review:** `code-review medium --max-findings all origin/main...HEAD`.",
+    "",
+    "### Candidates",
+    "1. `a.py:3`: refuted, the path is unreachable."
+  ]
+}

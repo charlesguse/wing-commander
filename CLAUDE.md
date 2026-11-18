@@ -79,7 +79,10 @@ decision governs: what was chosen, the options considered, the evidence
 and the undo. A comment on a lifecycle issue in `stage:spec` or
 `stage:clarify`, on a final PR, or on the Spec Kit tracking issue starts a
 pipeline run, so a record about one of those goes on the Roadmap issue
-and names it.
+and names it. Build the comment with
+`python .github/scripts/wc_session_record.py decision`, which writes that
+opening and refuses a record with a part missing (`--about N` names the
+item when the record goes on the Roadmap issue).
 
 **Merging a fix PR.** A session merges its own fix PR without asking, on
 the owner's standing instruction (2026-11-13):

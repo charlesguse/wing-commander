@@ -211,22 +211,36 @@ python .github/scripts/run-local-gates.py --jobs 4
 **6. Commit anything left with the session's trailers, and push to the
 PR branch.**
 
-**7. Report on the PR.** Post one comment, with `gh` or the session's
-GitHub tools, that begins with `<!-- review-until-clean pass N -->` and
-contains:
+**7. Report on the PR.** Write the report to a file, build the comment
+from it, and post that one comment with `gh` or the session's GitHub
+tools:
+
+```
+python .github/scripts/wc_session_record.py review --pass N \
+  --verdict <clean or not-clean> --started <the head you started from> \
+  --pushed <the head you pushed, or the word nothing> \
+  --prose <your report file> --out "$SCRATCH/pass-N.md"
+```
+
+The script writes the opening, `<!-- review-until-clean pass N -->`, then
+the verdict and the two heads, and refuses a report with one of them
+missing. If the PR branch predates the script, run main's copy:
+`git show origin/main:.github/scripts/wc_session_record.py > "$SCRATCH/wc_session_record.py"`.
+
+The verdict is **CLEAN** (no real in-scope findings) or **NOT CLEAN**. A
+commit that only changes comments or wording no gate reads doesn't make a
+pass NOT CLEAN, as on #984's last pass.
+
+Your report file holds:
 
 - the review's own effort line;
-- the head you started from and the head you pushed;
 - every candidate, with its verdict, file:line and one line of why;
 - which test covers each fix;
 - the gate result, naming any failure you waived and why;
-- the out-of-scope list;
-- **CLEAN** (no real in-scope findings) or **NOT CLEAN**. A commit that
-  only changes comments or wording no gate reads doesn't make a pass
-  NOT CLEAN, as on #984's last pass.
+- the out-of-scope list.
 
-End the comment with the attribution footer, and end the session with
-the same report.
+End the comment with the attribution footer (pass it as `--footer` unless
+your posting tool adds one), and end the session with the same report.
 
 ## The thrash check (orchestrator, after every pass)
 

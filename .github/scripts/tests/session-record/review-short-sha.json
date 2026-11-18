@@ -1,0 +1,14 @@
+{
+  "what": "a short SHA is not a head a reader can look up",
+  "build": "review",
+  "fields": {
+    "pass": 1,
+    "verdict": "clean",
+    "started": "1a1a1a1",
+    "pushed": "nothing",
+    "prose": "x"
+  },
+  "expect_refused": [
+    "started"
+  ]
+}

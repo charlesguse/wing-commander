@@ -1,0 +1,16 @@
+{
+  "what": "a proven record with no quoted line is refused",
+  "read": [
+    "**Proof after merge (2026-11-14):** proven",
+    "**Merge:** `3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c`",
+    "**Run:** https://github.com/example/repo/actions/runs/43635697682",
+    "**Ran on:** `3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c`",
+    "**Step:** collect",
+    "**Not exercised:** nothing known",
+    "",
+    "It worked."
+  ],
+  "expect_refused": [
+    "proof"
+  ]
+}

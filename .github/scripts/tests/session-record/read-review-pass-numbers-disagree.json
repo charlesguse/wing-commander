@@ -1,0 +1,14 @@
+{
+  "what": "the opening says pass 3 and the verdict line says pass 2",
+  "read": [
+    "<!-- review-until-clean pass 3 -->",
+    "**Review pass 2:** CLEAN",
+    "**Started from:** `1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a`",
+    "**Pushed:** nothing",
+    "",
+    "Nothing found."
+  ],
+  "expect_refused": [
+    "review"
+  ]
+}

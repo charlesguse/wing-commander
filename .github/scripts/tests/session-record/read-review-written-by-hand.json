@@ -1,0 +1,12 @@
+{
+  "what": "a report from before the form opens like a record and has no verdict line",
+  "read": [
+    "<!-- review-until-clean pass 3 -->",
+    "## review-until-clean pass 3: NOT CLEAN",
+    "",
+    "**Started from:** `1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a`"
+  ],
+  "expect_refused": [
+    "review"
+  ]
+}

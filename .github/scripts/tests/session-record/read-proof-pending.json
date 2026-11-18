@@ -1,0 +1,23 @@
+{
+  "what": "a pending proof reads back with the run that is due",
+  "read": [
+    "**Proof after merge (2026-11-14):** pending",
+    "**Merge:** `3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c`",
+    "**Due:** tomorrow's scheduled run"
+  ],
+  "expect_record": {
+    "kind": "proof",
+    "date": "2026-11-14",
+    "outcome": "pending",
+    "merge": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "run": null,
+    "ran_on": null,
+    "step": null,
+    "line": null,
+    "not_exercised": null,
+    "due": "tomorrow's scheduled run",
+    "why": null,
+    "prose": "",
+    "footer": null
+  }
+}

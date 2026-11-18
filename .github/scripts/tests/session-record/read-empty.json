@@ -1,0 +1,7 @@
+{
+  "what": "an empty body is not a record",
+  "read": [
+    ""
+  ],
+  "expect_none": true
+}

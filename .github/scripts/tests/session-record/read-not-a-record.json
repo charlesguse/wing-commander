@@ -1,0 +1,9 @@
+{
+  "what": "any other comment is not a record",
+  "read": [
+    "Proven after merge (run 43635697682).",
+    "",
+    "- the step ran"
+  ],
+  "expect_none": true
+}

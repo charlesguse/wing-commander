@@ -1,0 +1,30 @@
+{
+  "what": "a record on the Roadmap names the item it is about; a part may run to several lines",
+  "build": "decision",
+  "fields": {
+    "date": "2026-11-14",
+    "chosen": "kept the retry at three attempts",
+    "about": 1102,
+    "options": "\n- three attempts (today)\n- five attempts\n",
+    "evidence": "40 runs since 2026-10-01: none needed a fourth.\n\nSource: the metrics branch.",
+    "undo": "revert the commit",
+    "footer": "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+  },
+  "expect_body": [
+    "**Session decision (2026-11-14):** kept the retry at three attempts",
+    "**About:** #1102",
+    "",
+    "**Options considered:**",
+    "- three attempts (today)",
+    "- five attempts",
+    "",
+    "**Evidence:**",
+    "40 runs since 2026-10-01: none needed a fourth.",
+    "",
+    "Source: the metrics branch.",
+    "",
+    "**Undo:** revert the commit",
+    "",
+    "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+  ]
+}

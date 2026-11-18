@@ -1,0 +1,15 @@
+{
+  "what": "no run reaches the change",
+  "build": "proof",
+  "fields": {
+    "date": "2026-11-14",
+    "outcome": "no-run",
+    "merge": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "why": "the change is to verify-*.py only; its own checks prove it"
+  },
+  "expect_body": [
+    "**Proof after merge (2026-11-14):** no run reaches it",
+    "**Merge:** `3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c`",
+    "**Why:** the change is to verify-*.py only; its own checks prove it"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "what": "evidence before options is refused",
+  "read": [
+    "**Session decision (2026-11-14):** c",
+    "",
+    "**Evidence:** e",
+    "",
+    "**Options considered:** o",
+    "",
+    "**Undo:** u"
+  ],
+  "expect_refused": [
+    "decision"
+  ]
+}

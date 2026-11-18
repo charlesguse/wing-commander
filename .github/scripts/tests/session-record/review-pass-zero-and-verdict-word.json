@@ -1,0 +1,15 @@
+{
+  "what": "pass 0 and a verdict outside the two words",
+  "build": "review",
+  "fields": {
+    "pass": 0,
+    "verdict": "mostly clean",
+    "started": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "pushed": "nothing",
+    "prose": "x"
+  },
+  "expect_refused": [
+    "pass",
+    "verdict"
+  ]
+}

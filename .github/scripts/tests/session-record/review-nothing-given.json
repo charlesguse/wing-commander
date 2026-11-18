@@ -1,0 +1,12 @@
+{
+  "what": "every missing part is named at once",
+  "build": "review",
+  "fields": {},
+  "expect_refused": [
+    "pass",
+    "verdict",
+    "started",
+    "pushed",
+    "prose"
+  ]
+}

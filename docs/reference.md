@@ -188,7 +188,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | metrics-persist | published stage, wrapper | after each stage run; a daily sweep at 06:37 UTC | appends one record per agent run (turns, tokens and cost, where the run reports them) to `records.jsonl` on the `metrics` branch (`WING_COMMANDER_METRICS_BRANCH`, `_PATH`, `_PAUSED`) |
 | `board-status.yml` | this repository | daily, 07:17 UTC | rewrites the "Board status" issue: what waits on the owner, what is in the pipeline, the backlog's size, `main`'s CI, the last release and the merge switches. No agent. `WING_COMMANDER_BOARD_STATUS_PAUSED` stops it |
 | fold-cycle-guard | published stage, wrapper | after an implement run | re-dispatches, once, an implement run that was cancelled while still queued |
-| `lint-workflows.yml` | this repository | every pull request that touches workflows, actions, scripts, docs or a root Markdown file; pushes to `main` that touch workflows; daily | the gate suite. `python .github/scripts/run-local-gates.py` runs the same set locally |
+| `lint-workflows.yml` | this repository | every pull request that touches workflows, actions, scripts, docs, a root Markdown file or another document a gate reads (its `pull_request: paths:` list names each one); pushes to `main` that touch workflows; daily | the gate suite. `python .github/scripts/run-local-gates.py` runs the same set locally |
 | agent-startup-check | published stage | called by the image workflows | checks that the agent action can start inside a container image |
 
 Dispatch-only helpers in this repository: `wing-commander-trial-summary.yml`

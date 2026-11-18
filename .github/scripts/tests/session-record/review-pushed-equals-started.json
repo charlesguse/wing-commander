@@ -1,0 +1,14 @@
+{
+  "what": "a pass that pushed no commit says nothing",
+  "build": "review",
+  "fields": {
+    "pass": 1,
+    "verdict": "clean",
+    "started": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "pushed": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "prose": "x"
+  },
+  "expect_refused": [
+    "pushed"
+  ]
+}

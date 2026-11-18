@@ -1,0 +1,9 @@
+{
+  "what": "a decision that does not open its comment is not a record",
+  "read": [
+    "Proven after merge.",
+    "",
+    "**Session decision (2026-11-14):** merged at `5677971`."
+  ],
+  "expect_none": true
+}

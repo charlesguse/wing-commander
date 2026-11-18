@@ -1,0 +1,19 @@
+{
+  "what": "a CLEAN pass that pushed nothing; blank lines around the report are dropped",
+  "build": "review",
+  "fields": {
+    "pass": 1,
+    "verdict": "clean",
+    "started": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "pushed": "nothing",
+    "prose": "\n\nNo real in-scope findings.\n\n"
+  },
+  "expect_body": [
+    "<!-- review-until-clean pass 1 -->",
+    "**Review pass 1:** CLEAN",
+    "**Started from:** `1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a`",
+    "**Pushed:** nothing",
+    "",
+    "No real in-scope findings."
+  ]
+}
