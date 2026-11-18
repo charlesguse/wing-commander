@@ -25,11 +25,13 @@ import wc_session_record as wsr  # noqa: E402
 
 FIXTURES = os.path.join(HERE, "tests", "session-record", "*.json")
 
-# Each document that tells a session to write a record, and the kind.
+# Each document that tells a session to write a record, and the command
+# it has to name.
 POINTERS = (
     ("CLAUDE.md", "decision"),
     (".claude/skills/review-until-clean/SKILL.md", "review"),
     (".claude/skills/prove-after-merge/SKILL.md", "proof"),
+    (".claude/skills/answer-from-precedent/SKILL.md", "decision --by owner"),
 )
 # How a quoted opening of each kind starts and ends, whatever is between.
 # A bare name (`**Session decision**`) is a mention, not an opening.
@@ -37,7 +39,11 @@ SHAPES = {
     "review": ("<!-- review-until-clean pass", "-->"),
     "proof": ("**Proof after merge", ":**"),
     "decision": ("**Session decision", ":**"),
+    "owner-decision": ("**Owner decision", ":**"),
 }
+# The skill that tells a session's comment from the owner's by its
+# attribution line; its jq test spells the pattern with doubled backslashes.
+FOOTER_READER = ".claude/skills/answer-from-precedent/SKILL.md"
 
 
 def _names(problems):
@@ -87,15 +93,18 @@ def pointer_problems(root):
     """Documents that do not point at the script for their kind, or that
     quote an opening the script does not write."""
     problems = []
-    for relpath, kind in POINTERS:
+    for relpath, command in POINTERS:
         with open(os.path.join(root, *relpath.split("/")), encoding="utf-8") as handle:
             text = handle.read()
-        if "wc_session_record.py {0}".format(kind) not in text:
-            problems.append("{0}: does not point at `wc_session_record.py {1}`".format(relpath, kind))
+        if "wc_session_record.py {0}".format(command) not in text:
+            problems.append("{0}: does not point at `wc_session_record.py {1}`".format(relpath, command))
         for quoted_kind, span in quoted_openings(text):
             if span != wsr.OPENINGS[quoted_kind]:
                 problems.append("{0}: quotes the opening `{1}`, and the script writes `{2}`".format(
                     relpath, span, wsr.OPENINGS[quoted_kind]))
+        if relpath == FOOTER_READER and wsr.FOOTER_RE.pattern.replace("\\", "\\\\") not in text:
+            problems.append("{0}: does not test for the attribution line with the script's "
+                            "pattern, {1}".format(relpath, wsr.FOOTER_RE.pattern))
     return problems
 
 

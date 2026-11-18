@@ -1,0 +1,15 @@
+{
+  "what": "a question belongs to the owner's decision",
+  "build": "decision",
+  "fields": {
+    "date": "2026-11-14",
+    "chosen": "c",
+    "options": "o",
+    "evidence": "e",
+    "undo": "u",
+    "question": "q"
+  },
+  "expect_refused": [
+    "question"
+  ]
+}

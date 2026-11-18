@@ -1,0 +1,9 @@
+{
+  "what": "an owner's decision with words inside the opening is not the form",
+  "read": [
+    "**Owner decision (2026-11-06), decided in chat:** the third part moved to #1111."
+  ],
+  "expect_refused": [
+    "decision"
+  ]
+}

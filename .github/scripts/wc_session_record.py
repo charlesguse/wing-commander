@@ -28,6 +28,7 @@ is written):
     wc_session_record.py proof --outcome no-run --merge SHA --why TEXT
     wc_session_record.py decision --chosen TEXT --options TEXT \\
         --evidence TEXT --undo TEXT [--about N]
+    wc_session_record.py decision --by owner --chosen TEXT --question TEXT [--about N]
     wc_session_record.py check FILE
 
 Every kind also takes --out FILE (written as UTF-8 bytes with LF line
@@ -62,6 +63,7 @@ OPENINGS = {
     "review": "<!-- review-until-clean pass N -->",
     "proof": "**Proof after merge (YYYY-MM-DD):**",
     "decision": "**Session decision (YYYY-MM-DD):**",
+    "owner-decision": "**Owner decision (YYYY-MM-DD):**",
 }
 VERDICTS = {"clean": "CLEAN", "not-clean": "NOT CLEAN"}
 OUTCOMES = {
@@ -74,10 +76,17 @@ RAN = ("proven", "not-proven")  # the outcomes that rest on a finished run
 
 REVIEW_OPEN_RE = re.compile(r"^<!-- review-until-clean pass (\d+) -->$")
 PROOF_OPEN_RE = re.compile(r"^\*\*Proof after merge \((\d{4}-\d{2}-\d{2})\):\*\* (.+)$")
-DECISION_OPEN_RE = re.compile(r"^\*\*Session decision \((\d{4}-\d{2}-\d{2})\):\*\* (.+)$")
+DECISION_OPEN_RE = re.compile(r"^\*\*(Session|Owner) decision \((\d{4}-\d{2}-\d{2})\):\*\* (.+)$")
 LABEL_RE = re.compile(r"^\*\*([^*\n]+?):\*\* ?(.*)$")
 QUOTE_LEAD = "Quoted from the run:"
-DECISION_PARTS = (("Options considered", "options"), ("Evidence", "evidence"), ("Undo", "undo"))
+# A decision's parts by who made it: a session, or the owner in chat with
+# a session writing it down.
+DECISION_PARTS = {
+    "session": (("Options considered", "options"), ("Evidence", "evidence"), ("Undo", "undo")),
+    "owner": (("Question", "question"),),
+}
+# The last line of an owner's decision, so the comment says who wrote it.
+OWNER_NOTE = "Decided in chat. Recorded by a Claude Code session."
 
 
 class RecordError(ValueError):
@@ -225,21 +234,29 @@ def _proof(fields, problems):
 
 
 def _decision(fields, problems):
-    rec = {"kind": "decision", "date": _date(fields.get("date"), problems),
+    by = fields.get("by") or "session"
+    if by not in DECISION_PARTS:
+        problems.append("by: not one of {0}".format(", ".join(sorted(DECISION_PARTS))))
+        by = "session"
+    rec = {"kind": "decision", "by": by, "date": _date(fields.get("date"), problems),
            "chosen": _line("chosen", fields.get("chosen"), problems), "about": None}
     about = fields.get("about")
     if about is not None:
         if isinstance(about, bool) or not isinstance(about, int) or about < 1:
             problems.append("about: not an issue or pull request number")
         rec["about"] = about
-    labels = tuple("**{0}:**".format(label) for label, _key in DECISION_PARTS)
-    for label, key in DECISION_PARTS:
+    labels = tuple("**{0}:**".format(label) for label, _key in DECISION_PARTS[by])
+    for label, key in DECISION_PARTS[by]:
         text = _lf(fields.get(key) or "").strip()
         if not text:
             problems.append("{0}: missing".format(key))
-        elif any(row.startswith(labels) for row in text.split("\n")):
-            problems.append("{0}: a line starts with one of the record's own labels".format(key))
+        elif any(row.startswith(labels) or row.strip() == OWNER_NOTE for row in text.split("\n")):
+            problems.append("{0}: a line is one of the record's own lines".format(key))
         rec[key] = text
+    for other, parts in sorted(DECISION_PARTS.items()):
+        if other != by:
+            _absent(fields, [key for _label, key in parts],
+                    "not a part of a decision by the {0}".format(by), problems)
     _text, rec["footer"] = _footer(fields, "", problems)
     return rec
 
@@ -292,12 +309,15 @@ def render(rec):
         if rec["prose"]:
             out += ["", rec["prose"]]
     else:
-        out = ["**Session decision ({0}):** {1}".format(rec["date"], rec["chosen"])]
+        out = ["**{0} decision ({1}):** {2}".format(
+            rec["by"].capitalize(), rec["date"], rec["chosen"])]
         if rec["about"]:
             out.append("**About:** #{0}".format(rec["about"]))
-        for label, key in DECISION_PARTS:
+        for label, key in DECISION_PARTS[rec["by"]]:
             # A part of several lines starts under its label, so a list in it renders.
             out += ["", "**{0}:**{1}{2}".format(label, "\n" if "\n" in rec[key] else " ", rec[key])]
+        if rec["by"] == "owner":
+            out += ["", OWNER_NOTE]
     if rec["footer"]:
         out += ["", rec["footer"]]
     return "\n".join(out)
@@ -391,16 +411,21 @@ def _read_proof(lines, footer):
 def _read_decision(lines, footer):
     match = DECISION_OPEN_RE.match(lines[0])
     if not match:
-        raise RecordError(["decision: the opening is not `{0}` and what was chosen".format(
-            OPENINGS["decision"])])
-    fields = {"date": match.group(1), "chosen": match.group(2).strip(), "footer": footer}
+        raise RecordError(["decision: the opening is not `{0}` or `{1}`, then what was chosen".format(
+            OPENINGS["decision"], OPENINGS["owner-decision"])])
+    by = match.group(1).lower()
+    fields = {"by": by, "date": match.group(2), "chosen": match.group(3).strip(), "footer": footer}
+    if by == "owner":
+        if lines[-1].strip() != OWNER_NOTE:
+            raise RecordError(["decision: the last line is not `{0}`".format(OWNER_NOTE)])
+        lines = lines[:-1]
     pairs, at = _header(lines, 1)
     if pairs:
         (about,) = _expect(pairs, ("About",), "decision")
         fields["about"] = int(about[1:]) if re.match(r"^#\d+$", about) else 0
     rows = lines[at:]
     starts = []
-    for label, _key in DECISION_PARTS:
+    for label, _key in DECISION_PARTS[by]:
         hits = [i for i, row in enumerate(rows) if row.startswith("**{0}:**".format(label))]
         if len(hits) > 1:
             raise RecordError(["decision: `**{0}:**` starts more than one line".format(label)])
@@ -410,7 +435,7 @@ def _read_decision(lines, footer):
         raise RecordError(["decision: the parts are out of order"])
     if present and any(row.strip() for row in rows[:present[0]]):
         raise RecordError(["decision: text between the opening and the first part"])
-    for index, (label, key) in enumerate(DECISION_PARTS):
+    for index, (label, key) in enumerate(DECISION_PARTS[by]):
         if starts[index] is None:
             continue
         later = [start for start in starts[index + 1:] if start is not None]
@@ -422,7 +447,8 @@ def _read_decision(lines, footer):
 
 _READERS = (("<!-- review-until-clean pass", "review", _read_review),
             ("**Proof after merge", "proof", _read_proof),
-            ("**Session decision", "decision", _read_decision))
+            ("**Session decision", "decision", _read_decision),
+            ("**Owner decision", "decision", _read_decision))
 
 
 def read(body):
@@ -475,8 +501,9 @@ def _args(argv):
     proof.add_argument("--prose", metavar="FILE")
 
     decision = kind("decision", True)
+    decision.add_argument("--by", metavar="session|owner")
     decision.add_argument("--about", type=int, metavar="N")
-    for flag in ("--chosen", "--options", "--evidence", "--undo"):
+    for flag in ("--chosen", "--options", "--evidence", "--undo", "--question"):
         decision.add_argument(flag, metavar="TEXT")
 
     check = kinds.add_parser("check")

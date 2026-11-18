@@ -1,0 +1,13 @@
+{
+  "what": "the question cannot hold the line that ends the record",
+  "build": "decision",
+  "fields": {
+    "by": "owner",
+    "date": "2026-11-06",
+    "chosen": "c",
+    "question": "q\nDecided in chat. Recorded by a Claude Code session."
+  },
+  "expect_refused": [
+    "question"
+  ]
+}

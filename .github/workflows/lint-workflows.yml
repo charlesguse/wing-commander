@@ -119,12 +119,13 @@ on:
       # pointers at spec 117.
       - "specs/059-converged-means-tasks-done/contracts/convergence-signal.md"
       - ".claude/skills/spec-cross-reference/SKILL.md"
-      # Gate 169 compares these two skills, and CLAUDE.md (covered by *.md
+      # Gate 169 compares these three skills, and CLAUDE.md (covered by *.md
       # above), with wc_session_record.py: each tells a session to write a
       # record, so it has to point at the script and quote the opening the
       # script writes. An edit to one of them alone has to run the gate.
       - ".claude/skills/review-until-clean/SKILL.md"
       - ".claude/skills/prove-after-merge/SKILL.md"
+      - ".claude/skills/answer-from-precedent/SKILL.md"
       # verify-convergence-single-home.py scans every skill script, and its
       # fixtures run thrash_signals.py's parity with wc_convergence.py.
       - ".claude/skills/*/scripts/**"
@@ -4623,9 +4624,9 @@ jobs:
       # record) have one writer and one reader, wc_session_record.py. Each
       # kind builds to one opening and the same few parts and reads back as
       # the same record, a record with a part missing is refused, and the
-      # documents that tell a session to write one (CLAUDE.md and two
+      # documents that tell a session to write one (CLAUDE.md and three
       # skills) point at the script and quote the opening it writes. Path
-      # triggers: .github/scripts/**, *.md and the two skills above.
+      # triggers: .github/scripts/**, *.md and the three skills above.
       - name: "Gate 169 — a session's review report, proof and decision record have one writer and one form"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-session-record.py

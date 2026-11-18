@@ -1,0 +1,11 @@
+{
+  "what": "an owner's decision that does not say who wrote it down is refused",
+  "read": [
+    "**Owner decision (2026-11-06):** option B",
+    "",
+    "**Question:** q"
+  ],
+  "expect_refused": [
+    "decision"
+  ]
+}
