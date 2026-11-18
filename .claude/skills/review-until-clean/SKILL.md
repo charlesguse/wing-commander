@@ -224,8 +224,10 @@ python .github/scripts/wc_session_record.py review --pass N \
 
 The script writes the opening, `<!-- review-until-clean pass N -->`, then
 the verdict and the two heads, and refuses a report with one of them
-missing. If the PR branch predates the script, run main's copy:
-`git show origin/main:.github/scripts/wc_session_record.py > "$SCRATCH/wc_session_record.py"`.
+missing. If the PR branch predates the script, run main's copy (the
+prefix stops Git Bash on Windows rewriting the argument, and does nothing
+elsewhere):
+`MSYS_NO_PATHCONV=1 git show origin/main:.github/scripts/wc_session_record.py > "$SCRATCH/wc_session_record.py"`.
 
 The verdict is **CLEAN** (no real in-scope findings) or **NOT CLEAN**. A
 commit that only changes comments or wording no gate reads doesn't make a

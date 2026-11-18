@@ -13,9 +13,10 @@ code may list it and never counts it as evidence for a merge or any other
 durable action.
 
 Single file, standard library only, so a session on a branch that predates
-it can run main's copy:
+it can run main's copy (the prefix stops Git Bash on Windows rewriting the
+argument, and does nothing elsewhere):
 
-    git show origin/main:.github/scripts/wc_session_record.py > "$SCRATCH/wc_session_record.py"
+    MSYS_NO_PATHCONV=1 git show origin/main:.github/scripts/wc_session_record.py > "$SCRATCH/wc_session_record.py"
 
 Usage (every part is checked at once; a missing one is named and nothing
 is written):
@@ -111,7 +112,8 @@ def _trim(text):
 
 def _split_footer(text):
     """(text without its trailing attribution line, that line or None). A
-    `---` rule right above the line goes with it: the cloud tools add both."""
+    `---` rule right above the line goes with it: most posted comments end
+    with the two together."""
     lines = _trim(text).split("\n")
     if not FOOTER_RE.search(lines[-1]):
         return "\n".join(lines), None
