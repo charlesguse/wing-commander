@@ -560,6 +560,15 @@ def main(argv=None):
             data = json.dumps(rec, indent=2, sort_keys=True)
         else:
             data = build(args.kind, _fields(args))
+        # Written inside the try, so a file that cannot be written is
+        # reported like one that cannot be read.
+        payload = (data + "\n").encode("utf-8")
+        out = getattr(args, "out", None)
+        if out:
+            with open(out, "wb") as handle:
+                handle.write(payload)
+        else:
+            sys.stdout.buffer.write(payload)
     except RecordError as error:
         for problem in error.problems:
             print("wc_session_record: {0}".format(problem), file=sys.stderr)
@@ -567,13 +576,6 @@ def main(argv=None):
     except (OSError, UnicodeDecodeError) as error:
         print("wc_session_record: {0}".format(error), file=sys.stderr)
         return 1
-    payload = (data + "\n").encode("utf-8")
-    out = getattr(args, "out", None)
-    if out:
-        with open(out, "wb") as handle:
-            handle.write(payload)
-    else:
-        sys.stdout.buffer.write(payload)
     return 0
 
 

@@ -4,13 +4,16 @@ writer, one reader and one form (wc_session_record.py).
 
 Every kind builds to its fixed opening and parts and reads back as the
 same record; a record with a part missing or malformed is refused, with
-every problem named; and each document that tells a session to write a
-record points at the script and quotes the opening the script writes.
+every problem named; a comment the command line cannot write is reported
+on one line; and each document that tells a session to write a record
+points at the script and quotes the opening the script writes.
 
     python3 .github/scripts/verify-session-record.py
     python3 .github/scripts/verify-session-record.py --self-test
 """
+import contextlib
 import glob
+import io
 import json
 import os
 import re
@@ -108,6 +111,30 @@ def pointer_problems(root):
     return problems
 
 
+def out_problems():
+    """What the command line does wrong with a comment it cannot write.
+    That is a file error like any other: one `wc_session_record:` line and
+    exit 1, never a traceback."""
+    root = tempfile.mkdtemp(prefix="session-record-")
+    argv = ["decision", "--date", "2026-11-14", "--chosen", "c", "--options", "o",
+            "--evidence", "e", "--undo", "u",
+            "--out", os.path.join(root, "no-such-directory", "comment.md")]
+    said = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(said):
+            code = wsr.main(argv)
+    except OSError as error:
+        return ["--out in a missing directory: raised {0}, where a file that cannot "
+                "be read is reported on one line".format(type(error).__name__)]
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    lines = said.getvalue().splitlines()
+    if code != 1 or len(lines) != 1 or not lines[0].startswith("wc_session_record: "):
+        return ["--out in a missing directory: exit {0} and {1!r}, not exit 1 and one "
+                "`wc_session_record:` line".format(code, said.getvalue())]
+    return []
+
+
 def run(root=ROOT):
     failures = 0
     paths = sorted(glob.glob(FIXTURES))
@@ -122,7 +149,7 @@ def run(root=ROOT):
             print("::error::verify-session-record: {0}: {1}".format(os.path.basename(path), error))
         else:
             print("[ok] {0}".format(os.path.basename(path)))
-    for problem in pointer_problems(root):
+    for problem in pointer_problems(root) + out_problems():
         failures += 1
         print("::error::verify-session-record: {0}".format(problem))
     return failures
