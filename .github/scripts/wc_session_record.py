@@ -58,6 +58,10 @@ RUN_RE = re.compile(
     r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/\d+(?:/job/\d+)?$")
 # What tells a session's comment from one the owner typed.
 FOOTER_RE = re.compile(r"Generated (by|with) \[Claude Code\]")
+# A line that is that attribution and nothing else: the phrase, its link
+# and the marks around them (an emoji, emphasis). A sentence that quotes
+# the phrase is not one.
+FOOTER_LINE_RE = re.compile(r"^[\W_]*" + FOOTER_RE.pattern + r"(?:\([^()\s]*\))?[\W_]*$")
 
 # The opening each kind starts with, as a document quotes it.
 # verify-session-record.py fails a document that quotes another.
@@ -118,7 +122,7 @@ def _split_footer(text):
     and stays: render() puts a blank line above the footer, so read() takes
     off what build() put on and no more."""
     lines = _trim(text).split("\n")
-    if not FOOTER_RE.search(lines[-1]):
+    if not FOOTER_LINE_RE.match(lines[-1]):
         return "\n".join(lines), None
     footer = lines.pop().strip()
     if lines and lines[-1].strip() == "---":
@@ -177,7 +181,7 @@ def _footer(fields, text, problems):
     given = _lf(fields.get("footer") or "").strip()
     if not given:
         return _split_footer(text)
-    if "\n" in given or not FOOTER_RE.search(given):
+    if "\n" in given or not FOOTER_LINE_RE.match(given):
         problems.append("footer: not a one-line Claude Code attribution")
     return _trim(text), given
 

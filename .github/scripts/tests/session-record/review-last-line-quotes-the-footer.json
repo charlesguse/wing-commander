@@ -1,0 +1,22 @@
+{
+  "what": "a report whose last line only quotes the attribution phrase keeps that line: it is not the footer",
+  "build": "review",
+  "fields": {
+    "pass": 1,
+    "verdict": "clean",
+    "started": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "pushed": "nothing",
+    "prose": "No real in-scope findings.\n\nOut of scope:\n- the skill's jq test marks \"Generated with [Claude Code]\" bodies"
+  },
+  "expect_body": [
+    "<!-- review-until-clean pass 1 -->",
+    "**Review pass 1:** CLEAN",
+    "**Started from:** `1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a`",
+    "**Pushed:** nothing",
+    "",
+    "No real in-scope findings.",
+    "",
+    "Out of scope:",
+    "- the skill's jq test marks \"Generated with [Claude Code]\" bodies"
+  ]
+}

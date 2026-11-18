@@ -1,0 +1,20 @@
+{
+  "what": "a record with no footer whose last line quotes the attribution phrase reads back whole",
+  "build": "decision",
+  "fields": {
+    "date": "2026-11-14",
+    "chosen": "kept the skill's test for a session's comment",
+    "options": "keep the test; drop it",
+    "evidence": "every session comment read ends with the line",
+    "undo": "restore the \"Generated with [Claude Code]\" test"
+  },
+  "expect_body": [
+    "**Session decision (2026-11-14):** kept the skill's test for a session's comment",
+    "",
+    "**Options considered:** keep the test; drop it",
+    "",
+    "**Evidence:** every session comment read ends with the line",
+    "",
+    "**Undo:** restore the \"Generated with [Claude Code]\" test"
+  ]
+}
