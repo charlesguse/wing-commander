@@ -1,0 +1,24 @@
+{
+  "what": "an attribution line that ends a decision's undo text is the comment's footer, as with a report's prose, so the comment reads back as the record built",
+  "build": "decision",
+  "fields": {
+    "date": "2026-11-14",
+    "chosen": "kept the gate as it is",
+    "options": "keep it; drop it",
+    "evidence": "it caught two defects in a month",
+    "undo": "- revert the commit\n- re-run the gate\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n"
+  },
+  "expect_body": [
+    "**Session decision (2026-11-14):** kept the gate as it is",
+    "",
+    "**Options considered:** keep it; drop it",
+    "",
+    "**Evidence:** it caught two defects in a month",
+    "",
+    "**Undo:**",
+    "- revert the commit",
+    "- re-run the gate",
+    "",
+    "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+  ]
+}

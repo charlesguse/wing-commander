@@ -253,8 +253,20 @@ def _decision(fields, problems):
             problems.append("about: not an issue or pull request number")
         rec["about"] = about
     labels = tuple("**{0}:**".format(label) for label, _key in DECISION_PARTS[by])
+    texts = dict((key, _lf(fields.get(key) or "").strip()) for _label, key in DECISION_PARTS[by])
+    # A session decision's last part runs to the end of the comment when it
+    # has more than one line (render() starts it under its label), so an
+    # attribution line it ends with is the comment's footer, as with a
+    # report's prose: read() takes it as that. One line sits on its label's
+    # line, which read() never takes for a footer, and an owner's decision
+    # ends with OWNER_NOTE.
+    last = DECISION_PARTS[by][-1][1]
+    if by == "session" and "\n" in texts[last]:
+        texts[last], rec["footer"] = _footer(fields, texts[last], problems)
+    else:
+        _none, rec["footer"] = _footer(fields, "", problems)
     for label, key in DECISION_PARTS[by]:
-        text = _lf(fields.get(key) or "").strip()
+        text = texts[key]
         if not text:
             problems.append("{0}: missing".format(key))
         elif any(row.startswith(labels) or row.strip() == OWNER_NOTE for row in text.split("\n")):
@@ -264,7 +276,6 @@ def _decision(fields, problems):
         if other != by:
             _absent(fields, [key for _label, key in parts],
                     "not a part of a decision by the {0}".format(by), problems)
-    _text, rec["footer"] = _footer(fields, "", problems)
     return rec
 
 
