@@ -14,7 +14,8 @@ durable action.
 
 Single file, standard library only, so a session on a branch that predates
 it can run main's copy (the prefix stops Git Bash on Windows rewriting the
-argument, and does nothing elsewhere):
+argument; bash on Linux or macOS ignores it, and PowerShell needs the
+command without it):
 
     MSYS_NO_PATHCONV=1 git show origin/main:.github/scripts/wc_session_record.py > "$SCRATCH/wc_session_record.py"
 
