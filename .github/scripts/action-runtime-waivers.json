@@ -1,6 +1,6 @@
 {
   "$comment": [
-    "Registered exceptions to Gate 169's rule that no external action pin",
+    "Registered exceptions to Gate 170's rule that no external action pin",
     "targets a deprecated Node.js runtime (node20 or older), enforced by",
     ".github/scripts/verify-action-runtime-pins.py at pull-request time.",
     "",

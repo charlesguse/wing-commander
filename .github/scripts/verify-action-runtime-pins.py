@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 169 - no external action pin targets a deprecated Node.js runtime.
+"""Gate 170 - no external action pin targets a deprecated Node.js runtime.
 
 WHY THIS EXISTS
 ---------------
@@ -365,11 +365,11 @@ def main():
     else:
         found, failures = run(args.root)
         if not failures:
-            print("Gate 169: {0} external action pin(s), each with a "
+            print("Gate 170: {0} external action pin(s), each with a "
                   "recorded runtime, none deprecated unwaived.".format(
                       len(found)))
     for f in failures:
-        print("::error::Gate 169: " + f)
+        print("::error::Gate 170: " + f)
     return 1 if failures else 0
 
 

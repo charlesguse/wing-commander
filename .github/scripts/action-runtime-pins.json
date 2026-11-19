@@ -3,7 +3,7 @@
     "The runtime each external action pin in .github/workflows/*.yml and",
     ".github/actions/*/action.yml declares: the `runs.using` value of the",
     "action's own action.yml at that ref. Read by",
-    ".github/scripts/verify-action-runtime-pins.py (Gate 169).",
+    ".github/scripts/verify-action-runtime-pins.py (Gate 170).",
     "",
     "Read each value from the action itself, never from a release title:",
     "  gh api \"repos/<owner>/<repo>/contents/action.yml?ref=<ref>\" --jq .content | base64 -d",
