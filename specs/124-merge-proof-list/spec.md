@@ -18,6 +18,17 @@ A lookup of the 48 pull requests merged into `main` between 2026-10-15 and 2026-
 
 This feature makes that lookup a daily, deterministic list. It changes nothing about how a change is proven.
 
+## Clarifications
+
+### Session 2026-11-19
+
+Answered on #1144 from the owner's decision recorded on the Roadmap issue (#890).
+
+- Q: Does a comment by the pipeline's App count, and under which markers? → A: Only a comment under board item marker step `proven` counts; a step `prove` comment (any outcome reason, including "proof run never started") is set apart (FR-007).
+- Q: How does a merge leave the report when no run can show it working, or the owner decides it needs no proof? → A: Only by moving to another state or by ageing out of the window, and the report says how many aged out (FR-012).
+- Q: Where does the report live? → A: A collapsed section of the "Board status" issue, written by that issue's one writer (FR-021).
+- The five answers the filing session proposed in Assumptions (record rule, 30-day window, per-workflow listing, nightly end-to-end reach, the name "the proof list") were confirmed in the same decision.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - See which merges have a run that could show them working and nothing on record (Priority: P1)
@@ -115,7 +126,7 @@ The owner can leave the proof list running daily without it costing usage window
 - **FR-004**: The reach scan MUST read the tree as it stood at that merge (Story 3), so a workflow the merge added is counted and one removed later is still credited.
 - **FR-005**: The nightly end-to-end run MUST count as reaching the lifecycle stage workflows whose copies its wrappers run, so a merge to a stage workflow is listed with the nightly run among its reaching workflows.
 - **FR-006**: For each entry reached by a workflow, the system MUST record the runs of the reaching workflows that have finished since the merge on a commit that contains it, each with its workflow, event and conclusion; and the comments, posted after the merge, that name an Actions run started after the merge on a commit containing it, each with the account that posted it. Comments MUST be read on the pull request, on each issue the pull request closes, and, for a final PR, on its lifecycle issue.
-- **FR-007**: A comment carrying the board item marker MUST count toward FR-006 only when its marker is step `proven`. A comment under the marker at step `prove` (a failed re-drive, a run never started, or any other outcome reason) MUST NOT count, so the loop's own "proof run never started" notice is set apart. [NEEDS CLARIFICATION: Does a comment by the pipeline's App count at all, and if so under which markers? Proposed above: only step `proven`.]
+- **FR-007**: A comment carrying the board item marker MUST count toward FR-006 only when its marker is step `proven`. A comment under the marker at step `prove` (a failed re-drive, a run never started, or any other outcome reason) MUST NOT count, so the loop's own "proof run never started" notice is set apart. (Clarified: only step `proven` counts.)
 
 #### The states
 
@@ -126,7 +137,7 @@ The owner can leave the proof list running daily without it costing usage window
 
 - **FR-010**: The system MUST give no verdict: it never says a change is proven or not proven, and never reads a run's conclusion as one.
 - **FR-011**: The window MUST be the merges into `main` from the last 30 days.
-- **FR-012**: A merge MUST leave the states-4-and-5 section of the report only by moving to another state or by ageing out of the window, and the report MUST say how many merges in states 4 and 5 aged out since the previous report. [NEEDS CLARIFICATION: How does a merge leave the report when no run can show it working (as on #1082), or when the owner decides it needs no proof? Proposed above: only by ageing out, with the count shown. Alternatives give the owner a way to mark it, which would be a record format this proposal leaves out.]
+- **FR-012**: A merge MUST leave the states-4-and-5 section of the report only by moving to another state or by ageing out of the window, and the report MUST say how many merges in states 4 and 5 aged out since the previous report. A merge no run can show working (as on #1082), or one the owner decides needs no proof, has no other way out; the system offers no way to mark it. (Clarified.)
 - **FR-013**: A read the system cannot complete — runs past the API's per-query cap, a checkout without the history to answer "contains the merge", an unreadable comment thread, an unresolvable tree — MUST fail the run loudly and MUST NOT publish a list that silently omits what it could not read (Principle VIII).
 - **FR-014**: The system MUST start no run: it dispatches no workflow and re-runs nothing.
 - **FR-015**: The system MUST write only its own report. It never comments on, labels, closes or edits a pull request or an issue, and never edits `tasks.md`.
@@ -138,7 +149,7 @@ The owner can leave the proof list running daily without it costing usage window
 - **FR-018**: The system MUST carry a kill switch in the `WING_COMMANDER_*_PAUSED` family that stands it down with nothing written. Creating the repository variable is the owner's.
 - **FR-019**: The system MUST be repository-only: one wrapper of this repository, not a `workflow_call` stage of the published contract.
 - **FR-020**: The report MUST list every merge in states 4 and 5 with its reaching workflows and, for state 5, its finished runs; and MUST give the count of merges in each of the five states for the window.
-- **FR-021**: The report MUST be readable by a session through `gh` (a run's step summary alone is not, because `gh` cannot read it). It MUST be published at [NEEDS CLARIFICATION: Where does the report live? Proposed: a collapsed section of the "Board status" issue, written by that issue's one writer (`wc_board_status.py publish`), since that issue is rewritten whole daily and a second writer would be overwritten. #1143 asks the same of its audit.]
+- **FR-021**: The report MUST be readable by a session through `gh` (a run's step summary alone is not, because `gh` cannot read it). It MUST be published as a collapsed section of the open `disposition:tracking` issue titled "Board status", written by that issue's one writer (`wc_board_status.py publish`), since that issue is rewritten whole daily and a second writer would be overwritten; the proof list supplies the section's content and never writes the issue itself. (Clarified.)
 - **FR-022**: `docs/reference.md` MUST list the new loop with its schedule, window, kill switch and report location, and its "Known limits" section and its description of the board loop's prove step ("records the evidence") MUST be corrected to match what the list shows.
 
 ### Key Entities
@@ -164,11 +175,11 @@ The owner can leave the proof list running daily without it costing usage window
 
 ## Assumptions
 
-- **What counts as a record** is the rule the lookup tested — a comment posted after the merge that names an Actions run started after the merge on a commit containing it — as it stands. It cannot tell a proof from a note, and since the list only lists, that is accepted (filing session's proposed answer).
-- **Window**: 30 days, the span the lookup read (proposed answer).
-- **Granularity**: runs are listed by workflow, not by job, because the per-job scan (`scan_job_uses_graph()`) covers one workflow file today (proposed answer).
-- **The nightly end-to-end run counts** as reaching the lifecycle stages from the wrappers that run copies (proposed answer; FR-005).
-- **Name**: "the proof list", since "prove" names the board loop's step and the hand procedure and "ledger" the review loop's notes and the fold queue (proposed answer).
+- **What counts as a record** is the rule the lookup tested — a comment posted after the merge that names an Actions run started after the merge on a commit containing it — as it stands. It cannot tell a proof from a note, and since the list only lists, that is accepted (filing session's proposed answer, confirmed by the owner).
+- **Window**: 30 days, the span the lookup read (confirmed by the owner).
+- **Granularity**: runs are listed by workflow, not by job, because the per-job scan (`scan_job_uses_graph()`) covers one workflow file today (confirmed by the owner).
+- **The nightly end-to-end run counts** as reaching the lifecycle stages from the wrappers that run copies (confirmed by the owner; FR-005).
+- **Name**: "the proof list", since "prove" names the board loop's step and the hand procedure and "ledger" the review loop's notes and the fold queue (confirmed by the owner).
 - How a change is proven does not change: the `prove` job, the `prove-after-merge` procedure and the scheduled runs stay as they are. Fixing the `prove` job's stand-down (on #889) is separate; this list would show when it is fixed.
 - If #1143 (a daily audit of merges) is also built, the two should share one reading of what reached `main` and one report; neither depends on the other.
 - The reach scan's known misreads stay as they are apart from FR-005: it over-reads a workflow that only names another workflow's file, and that is accepted for a list that gives no verdict.
