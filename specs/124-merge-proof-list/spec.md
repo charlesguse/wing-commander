@@ -29,6 +29,11 @@ Answered on #1144 from the owner's decision recorded on the Roadmap issue (#890)
 - Q: Where does the report live? → A: A collapsed section of the "Board status" issue, written by that issue's one writer (FR-021).
 - The five answers the filing session proposed in Assumptions (record rule, 30-day window, per-workflow listing, nightly end-to-end reach, the name "the proof list") were confirmed in the same decision.
 
+Answered on #1144 from the owner's answers (chosen in chat on 2026-11-19) to the two questions raised in round 1 of the spec PR's review (#1148).
+
+- Q: Does a comment by the pipeline's App that carries no board item marker count as a record? → A: No. An App comment counts only when it carries the board item marker at step `proven`; unmarked App notices, such as the watchdog's `[Inspected run](<run URL>)` notices, never count. Comments by people and sessions are unchanged (FR-007, FR-009).
+- Q: On an issue that more than one merge names, does one qualifying comment count for every merge that names it? → A: No. On an issue that more than one merge in the window names, a comment counts for a merge only when it also names that merge's pull request. This adds a condition to the confirmed record rule (FR-006, FR-009, Assumptions).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - See which merges have a run that could show them working and nothing on record (Priority: P1)
@@ -104,6 +109,8 @@ The owner can leave the proof list running daily without it costing usage window
 ### Edge Cases
 
 - **A comment names the run that posted it.** The board loop's "proof run never started" notice names the run that posted it (on #1047, for #1051). That notice carries the board item marker, so it is set apart and does not put a merge in state 2 (FR-007).
+- **An App notice with no board item marker names a run.** The watchdog's `[Inspected run](<run URL>)` notices name a run but are not proofs; they never count (FR-007).
+- **One issue is named by several merges.** A tracking or lifecycle issue that several merges in the window close or belong to collects comments for all of them; a comment there counts for a merge only when it also names that merge's pull request (FR-006).
 - **A comment names a run that failed, or a skipped job.** It still puts the merge in state 2; the list gives no verdict and does not read a run's conclusion as one (FR-010).
 - **A comment names a run that started before the merge, or on a commit that does not contain the merge.** It does not count.
 - **A comment is posted before the merge.** It does not count.
@@ -125,13 +132,13 @@ The owner can leave the proof list running daily without it costing usage window
 - **FR-003**: For each entry that needs a run, the system MUST record which workflows reach a changed path, by the reach scan the `prove-after-merge` hand procedure already uses (following reusable workflows transitively and counting a literal mention of a changed path). That scan MUST have exactly one home that both the hand procedure and this workflow consume; neither keeps a copy. The list MUST report reach per workflow, not per job.
 - **FR-004**: The reach scan MUST read the tree as it stood at that merge (Story 3), so a workflow the merge added is counted and one removed later is still credited.
 - **FR-005**: The nightly end-to-end run MUST count as reaching the lifecycle stage workflows whose copies its wrappers run, so a merge to a stage workflow is listed with the nightly run among its reaching workflows.
-- **FR-006**: For each entry reached by a workflow, the system MUST record the runs of the reaching workflows that have finished since the merge on a commit that contains it, each with its workflow, event and conclusion; and the comments, posted after the merge, that name an Actions run started after the merge on a commit containing it, each with the account that posted it. Comments MUST be read on the pull request, on each issue the pull request closes, and, for a final PR, on its lifecycle issue.
-- **FR-007**: A comment carrying the board item marker MUST count toward FR-006 only when its marker is step `proven`. A comment under the marker at step `prove` (a failed re-drive, a run never started, or any other outcome reason) MUST NOT count, so the loop's own "proof run never started" notice is set apart. (Clarified: only step `proven` counts.)
+- **FR-006**: For each entry reached by a workflow, the system MUST record the runs of the reaching workflows that have finished since the merge on a commit that contains it, each with its workflow, event and conclusion; and the comments, posted after the merge, that name an Actions run started after the merge on a commit containing it, each with the account that posted it. Comments MUST be read on the pull request, on each issue the pull request closes, and, for a final PR, on its lifecycle issue. An issue is *shared* when it is named, in one of those two ways, by more than one merge in the window; a comment on a shared issue MUST count toward a merge only when it also names that merge's pull request. (Clarified.)
+- **FR-007**: A comment carrying the board item marker MUST count toward FR-006 only when its marker is step `proven`. A comment under the marker at step `prove` (a failed re-drive, a run never started, or any other outcome reason) MUST NOT count, so the loop's own "proof run never started" notice is set apart. A comment posted by the pipeline's App MUST count only when it carries the board item marker at step `proven`; an App comment with no board item marker (for example the watchdog's `[Inspected run](<run URL>)` notices) MUST NOT count. Comments posted by people and sessions are not subject to this paragraph's App rule. (Clarified: only step `proven` counts; unmarked App comments never count.)
 
 #### The states
 
 - **FR-008**: The system MUST place every entry in exactly one of the five states of Story 2, the first that fits, deterministically from the inputs of FR-002 through FR-007.
-- **FR-009**: A comment that names a qualifying run MUST count as a record whatever it says, by whatever account posted it; the list records the account and does not judge the comment.
+- **FR-009**: A comment that names a qualifying run, and meets FR-006's shared-issue condition and FR-007's marker and App conditions, MUST count as a record whatever else it says, by whatever person or session posted it; the list records the account and does not judge the comment.
 
 #### What it never does
 
@@ -157,7 +164,7 @@ The owner can leave the proof list running daily without it costing usage window
 - **Merge entry**: one commit that reached `main` in the window — its SHA, merge time, pull request (if any), the issues that pull request closes, its lifecycle issue (if it is a final PR), its changed paths, and its state.
 - **Reaching workflow**: a workflow that, in the merge's own tree, reaches one of its changed paths by the shared scan, or by FR-005.
 - **Finished run**: a run of a reaching workflow that finished after the merge on a commit containing it — workflow, run id, event, conclusion, head SHA, start time.
-- **Record comment**: a comment posted after the merge, on a place FR-006 names, that names a run started after the merge on a commit containing it — where it was posted, the run it names, the account that posted it, and its board item marker if any.
+- **Record comment**: a comment posted after the merge, on a place FR-006 names, that names a run started after the merge on a commit containing it (and, on a shared issue, that merge's pull request), and that FR-007 does not set apart — where it was posted, the run it names, the account that posted it, and its board item marker if any.
 - **State**: one of the five states of Story 2.
 - **Report**: the published view: the states-4-and-5 listing, the per-state counts and the aged-out count.
 
@@ -165,7 +172,7 @@ The owner can leave the proof list running daily without it costing usage window
 
 ### Measurable Outcomes
 
-- **SC-001**: Over the 2026-10-15 to 2026-11-16 window the lookup read, with the loop's own "proof run never started" notice set apart, the list puts all 10 hand-written proofs in state 2, and its states-4-and-5 section lists the 21 merges the lookup found nothing for (the 14 with nothing found, the 4 Spec Kit bumps, #1051, #1081 and #1082), less any the merge's own tree or FR-005 now reaches differently, each difference explained.
+- **SC-001**: Over the 2026-10-15 to 2026-11-16 window the lookup read, with the loop's own "proof run never started" notice set apart, the list puts all 10 hand-written proofs in state 2 (less any that FR-006's shared-issue condition sets apart, each explained), and its states-4-and-5 section lists the 21 merges the lookup found nothing for (the 14 with nothing found, the 4 Spec Kit bumps, #1051, #1081 and #1082), less any the merge's own tree or FR-005 now reaches differently, each difference explained.
 - **SC-002**: 100% of merges into `main` in the window appear in the list exactly once, in exactly one state.
 - **SC-003**: Two builds over the same inputs produce the same state for every merge.
 - **SC-004**: Across every run, the workflow posts zero comments, applies zero labels, closes zero issues or PRs, dispatches zero workflows and invokes zero agents.
@@ -175,7 +182,7 @@ The owner can leave the proof list running daily without it costing usage window
 
 ## Assumptions
 
-- **What counts as a record** is the rule the lookup tested — a comment posted after the merge that names an Actions run started after the merge on a commit containing it — as it stands. It cannot tell a proof from a note, and since the list only lists, that is accepted (filing session's proposed answer, confirmed by the owner).
+- **What counts as a record** is the rule the lookup tested — a comment posted after the merge that names an Actions run started after the merge on a commit containing it — with one added condition the owner chose: on an issue more than one merge in the window names, the comment must also name that merge's pull request (FR-006). It cannot tell a proof from a note, and since the list only lists, that is accepted (filing session's proposed answer, confirmed by the owner; the shared-issue condition added by the owner on 2026-11-19).
 - **Window**: 30 days, the span the lookup read (confirmed by the owner).
 - **Granularity**: runs are listed by workflow, not by job, because the per-job scan (`scan_job_uses_graph()`) covers one workflow file today (confirmed by the owner).
 - **The nightly end-to-end run counts** as reaching the lifecycle stages from the wrappers that run copies (confirmed by the owner; FR-005).
