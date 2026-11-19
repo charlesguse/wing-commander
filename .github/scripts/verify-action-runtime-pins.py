@@ -99,9 +99,13 @@ def discover(root="."):
     files = [(p, False) for p in sorted(
         glob.glob(os.path.join(root, ".github", "workflows", "*.yml"))
         + glob.glob(os.path.join(root, ".github", "workflows", "*.yaml")))]
+    # Recursive: composites shared between composites live one level
+    # deeper, under .github/actions/_shared/ (CLAUDE.md).
     files += [(p, True) for p in sorted(
-        glob.glob(os.path.join(root, ".github", "actions", "*", "action.yml"))
-        + glob.glob(os.path.join(root, ".github", "actions", "*", "action.yaml")))]
+        glob.glob(os.path.join(root, ".github", "actions", "**", "action.yml"),
+                  recursive=True)
+        + glob.glob(os.path.join(root, ".github", "actions", "**",
+                                 "action.yaml"), recursive=True))]
     for path, is_composite in files:
         rel = _rel(root, path)
         try:
@@ -255,7 +259,7 @@ runs:
 """
 
 
-def _tree(steps, pins, waivers, composite_pin=None):
+def _tree(steps, pins, waivers, composite_pin=None, composite_dir="c"):
     tmp = tempfile.mkdtemp(prefix="wc-action-runtime-")
     os.makedirs(os.path.join(tmp, ".github", "workflows"))
     os.makedirs(os.path.join(tmp, ".github", "scripts"))
@@ -264,7 +268,7 @@ def _tree(steps, pins, waivers, composite_pin=None):
                  "w", encoding="utf-8") as fh:
         fh.write(WORKFLOW.format(steps=body))
     if composite_pin:
-        d = os.path.join(tmp, ".github", "actions", "c")
+        d = os.path.join(tmp, ".github", "actions", *composite_dir.split("/"))
         os.makedirs(d)
         with io.open(os.path.join(d, "action.yml"), "w",
                      encoding="utf-8") as fh:
@@ -280,10 +284,11 @@ def _tree(steps, pins, waivers, composite_pin=None):
 def self_test():
     results = []
 
-    def case(label, steps, pins, waivers, expect, composite_pin=None):
+    def case(label, steps, pins, waivers, expect, composite_pin=None,
+             composite_dir="c"):
         tmp = _tree(steps, {"pins": pins} if isinstance(pins, dict) else pins,
                     {"waivers": waivers} if isinstance(waivers, list)
-                    else waivers, composite_pin)
+                    else waivers, composite_pin, composite_dir)
         try:
             _, failures = run(tmp)
         finally:
@@ -315,6 +320,15 @@ def self_test():
           "actions/download-artifact@v4": "node20"}, [],
          ["actions/download-artifact@v4", ".github/actions/c/action.yml"],
          composite_pin="actions/download-artifact@v4")
+    case("a deprecated pin in a composite under .github/actions/_shared/ "
+         "is found too",
+         ["actions/checkout@v5"],
+         {"actions/checkout@v5": "node24",
+          "actions/download-artifact@v4": "node20"}, [],
+         ["actions/download-artifact@v4",
+          ".github/actions/_shared/c/action.yml"],
+         composite_pin="actions/download-artifact@v4",
+         composite_dir="_shared/c")
     case("a waived deprecated pin passes",
          ["actions/checkout@v4"], {"actions/checkout@v4": "node20"},
          [{"uses": "actions/checkout@v4", "issue": "#889", "reason": "r"}],
