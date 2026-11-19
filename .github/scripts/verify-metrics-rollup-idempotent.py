@@ -112,10 +112,16 @@ def _write_exec(path, content):
     os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def run_rollup(tmp, records_jsonl, spec_dir, issue, gh_state, stub_dir):
+def run_rollup(tmp, records_jsonl, spec_dir, issue, gh_state, stub_dir,
+               sweep_state=None):
     """Execute the shipped rollup step once inside `tmp`; return
-    (rc, region_text, comment_body_text)."""
+    (rc, region_text, comment_body_text). `sweep_state` is the text of a
+    sweep-state.json to place beside records.jsonl, or None for none."""
     os.makedirs(tmp, exist_ok=True)
+    if sweep_state is not None:
+        with open(os.path.join(tmp, "sweep-state.json"), "w",
+                  encoding="utf-8") as f:
+            f.write(sweep_state)
     dest_path = "records.jsonl"
     with open(os.path.join(tmp, dest_path), "w", encoding="utf-8") as f:
         f.write(records_jsonl)
@@ -217,6 +223,37 @@ def case_repeat_rollup_over_the_same_records_is_byte_for_byte_stable():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def case_rollup_states_the_last_sweep():
+    # specs/120-dispatched-run-metrics FR-006: the region says when the last
+    # daily sweep ran (or `unknown`) and that later runs may be missing.
+    case = "rollup states the last sweep"
+    tmp = tempfile.mkdtemp(prefix="wc-metrics-rollup-")
+    stub_dir = os.path.join(tmp, "stubbin")
+    os.makedirs(stub_dir, exist_ok=True)
+    _write_exec(os.path.join(stub_dir, "gh"), GH_STUB)
+    _write_exec(os.path.join(stub_dir, "date"), DATE_STUB)
+    try:
+        for idx, (label, state, want) in enumerate((
+                ("with a high-water mark",
+                 '{"high_water_mark":"2026-09-20T03:00:00Z"}',
+                 "Last daily sweep: `2026-09-20T03:00:00Z`"),
+                ("without sweep-state.json", None,
+                 "Last daily sweep: `unknown`"))):
+            gh_state = os.path.join(tmp, f"gh-{idx}")
+            os.makedirs(gh_state, exist_ok=True)
+            rc, out, region, _c = run_rollup(
+                os.path.join(tmp, f"run-{idx}"), RECORDS,
+                "specs/043-durable-metrics-record", 148, gh_state, stub_dir,
+                sweep_state=state)
+            if rc != 0 or region is None:
+                fail(case, f"{label}: exited {rc}: {out.strip()[:300]}")
+            elif want not in region or "may be missing from the total" not in region:
+                fail(case, f"{label}: region lacks {want!r} and the "
+                           f"may-be-missing sentence:\n{region}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def case_patch_preserves_prose_outside_the_machine_owned_region():
     # MF-F4: a PATCH must splice only the machine-owned region, not replace
     # the whole comment body — a maintainer's own note on this comment
@@ -274,6 +311,7 @@ def case_patch_preserves_prose_outside_the_machine_owned_region():
 CASES = [
     case_repeat_rollup_over_the_same_records_is_byte_for_byte_stable,
     case_patch_preserves_prose_outside_the_machine_owned_region,
+    case_rollup_states_the_last_sweep,
 ]
 
 

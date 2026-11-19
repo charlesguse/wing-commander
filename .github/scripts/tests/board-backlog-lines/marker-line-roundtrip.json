@@ -1,0 +1,7 @@
+{
+  "op": "marker",
+  "bot": "wing-commander-app[bot]",
+  "branch": "fix/889-bl-aaaa1111",
+  "line": "bl-aaaa1111",
+  "issue_path_ignores": true
+}

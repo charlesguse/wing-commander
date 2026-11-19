@@ -1,0 +1,7 @@
+{
+  "op": "route-line",
+  "line_id": "bl-0a1b2c3d",
+  "body": "- [ ] needs a design call [wc:bl-0a1b2c3d in-progress]\n- [ ] other\n",
+  "expect_ok": true,
+  "expect_body": "- [ ] needs a design call [wc:bl-0a1b2c3d proposal #1210]\n- [ ] other\n"
+}

@@ -1,0 +1,4 @@
+{"op": "gate",
+ "env": {"backlog_lines_switch": "true", "loop_paused": false,
+         "constitution_text": "### X. Board\nnothing\n### XI. More\nMaintenance backlog line\n"},
+ "expect": [false, "constitution Principle X does not authorise backlog lines"]}

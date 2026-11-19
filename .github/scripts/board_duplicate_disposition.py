@@ -37,7 +37,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from board_eligibility import DISPOSITION_LABEL, DUPLICATE_STEP  # noqa: E402
-from board_item_marker import is_loop_marker_author, last_marker_match, write_marker  # noqa: E402
+from board_item_marker import (  # noqa: E402
+    current_line_id, is_loop_marker_author, last_marker_match, write_marker)
 
 RECIPROCAL_PHRASE = "Filed for the routed original"
 
@@ -218,6 +219,48 @@ def dispose_as_duplicate(originating_issue, spec_request_issue, spec_request_url
     return True
 
 
+ROUTED_STEP = "routed"
+
+
+def route_line(backlog_issue, line_id, spec_request_issue, spec_request_url, reason,
+               repository=None, run=None, edit=None):
+    """specs/121-board-backlog-line-items FR-013: a Maintenance backlog
+    line's counterpart of dispose_as_duplicate(). The originating issue is
+    the backlog, which is never closed, labelled or retitled (FR-017), so
+    the line is annotated `proposal #N` (which skips it in selection and
+    releases the board) and a loop-authored comment keyed to the line
+    records it. Returns True on success, including a line already pointing
+    at this proposal."""
+    run = run or subprocess.run
+    repository = repository or os.environ.get("GITHUB_REPOSITORY")
+    import board_backlog_edit as bbe
+    if edit is None:
+        def edit(issue, apply_fn, verify):
+            return bbe.edit(issue, apply_fn, verify, fetch=bbe.gh_fetch, write=bbe.gh_write)
+    apply_fn, verify = bbe._operations("route-proposal", line_id, "#{0}".format(spec_request_issue))
+    try:
+        result = edit(backlog_issue, apply_fn, verify)
+    except (RuntimeError, OSError) as exc:
+        print(exc, file=sys.stderr)
+        result = bbe.FAILED
+    if result != bbe.APPLIED:
+        bbe.report(backlog_issue, "route-proposal", line_id, result)
+        print("::error::board_duplicate_disposition: could not point backlog line {0} on #{1} at "
+              "spec-proposal #{2} ({3}) -- the backlog issue is left as it is (specs/121 FR-013).".format(
+                  line_id, backlog_issue, spec_request_issue, result), file=sys.stderr)
+        return False
+    marker = write_marker(ROUTED_STEP, round=0, pr=None, branch=None, base_sha=None,
+                          spec_request=spec_request_issue, line=line_id)
+    body = "Backlog line `{0}` routed to {1} -- {2}\n\n{3}".format(line_id, spec_request_url, reason, marker)
+    proc = run(["gh", "issue", "comment", str(backlog_issue), "-R", repository or "", "--body", body],
+               capture_output=True, text=True)
+    if proc.returncode != 0:
+        print("::warning::board_duplicate_disposition: backlog line {0} points at #{1}, but its record "
+              "comment could not be posted -- {2}".format(line_id, spec_request_issue,
+                                                          (proc.stderr or "").strip()), file=sys.stderr)
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--originating", type=int, required=True)
@@ -232,6 +275,22 @@ def main():
         print("::error::board_duplicate_disposition: GITHUB_REPOSITORY is unset -- cannot dispose of "
               "issue #{0}.".format(args.originating), file=sys.stderr)
         sys.exit(1)
+
+    line_id = current_line_id()
+    if line_id:
+        # -- see board_item_marker.current_line_id(): never the issue path's
+        # close/label of the originating issue for a line (FR-013, FR-017).
+        if not route_line(args.originating, line_id, args.spec_request_issue,
+                          args.spec_request_url, args.reason, repository=repository):
+            sys.exit(1)
+        spec_request_comments, ok = _fetch_comments(args.spec_request_issue, repository, subprocess.run)
+        github_output = os.environ.get("GITHUB_OUTPUT")
+        if github_output:
+            with open(github_output, "a", encoding="utf-8") as fh:
+                fh.write("disposed=true\n")
+                fh.write("needs-reciprocal-link={0}\n".format(
+                    "true" if not ok or spec_request_needs_reciprocal_link(spec_request_comments) else "false"))
+        return
 
     state_labels, ok = _view_issue(args.originating, "state,labels", repository, subprocess.run)
     if not ok:

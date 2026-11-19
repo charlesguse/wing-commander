@@ -1,0 +1,14 @@
+{
+  "op": "line-readers",
+  "markers": [
+    {"step": "fix"},
+    {"step": "review", "line": "bl-0a1b2c3d"},
+    {"step": "triage", "line": "bl-99999999"}
+  ],
+  "expect": {"-": "fix", "bl-0a1b2c3d": "review", "bl-99999999": "triage", "bl-00000000": null},
+  "branches": [
+    ["fix/889-bl-0a1b2c3d", "bl-0a1b2c3d", true],
+    ["fix/889-bl-99999999", "bl-0a1b2c3d", false],
+    ["fix/889-flaky-gate", "bl-0a1b2c3d", false]
+  ]
+}

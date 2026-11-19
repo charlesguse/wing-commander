@@ -1,0 +1,1 @@
+{"op": "closing", "title": "Fix: x", "body": "Backlog line: #889 bl-0a1b2c3d", "commits": ["fix: thing\n\nCloses owner/repo#747"], "expect_hit": true}

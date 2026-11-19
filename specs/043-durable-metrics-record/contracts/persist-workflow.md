@@ -92,9 +92,21 @@ either a `workflow_run` event or a `workflow_dispatch` input).
   touched).
 - Never commits to the repository's default branch.
 - Never approves or merges anything.
-- Runs only after the origin run has concluded (`workflow_run: types:
+- Runs after the origin run has concluded (`workflow_run: types:
   [completed]`, or manual `workflow_dispatch` naming an already-concluded
-  `run-id`) — never a step inside the stage job it collects from.
+  `run-id`) — never a step inside the stage job it collects from. Amended
+  by specs/120-dispatched-run-metrics: the implement and finalize
+  wrappers also call it from a last job in their own run
+  (`persist-metrics`), collecting that run's own records before it
+  concludes; the job is separate from the stage job.
+- Two optional boolean inputs, both default `false` (today's behavior
+  bit for bit), serve that caller: `run-in-cancelled-run` (`persist`
+  gates on `always()` so it runs in a run cancelled after it started;
+  the image check keeps its `if: inputs.container-image != ''` and
+  `persist` tolerates its skip) and `tolerate-failure`
+  (`continue-on-error` on both jobs, plus a warning naming the daily
+  sweep as backstop when `persist` fails). The `workflow_run` and sweep
+  callers pass neither.
 - A failure at any step here (discovery, retrieval, validation, append,
   rollup) fails *this* workflow's own run, visibly, and has no effect on
   the origin pipeline run's status, checks, or comments.

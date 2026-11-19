@@ -1,0 +1,5 @@
+{"initial": "- [ ] a [wc:bl-aaaa1111 in-progress]",
+ "op": "tick-fixed", "line_id": "bl-aaaa1111", "detail": "PR #5",
+ "stale_read_after_write": true,
+ "expect": "applied", "expect_writes": 1,
+ "final_equals": "- [x] a [wc:bl-aaaa1111 fixed PR #5]"}

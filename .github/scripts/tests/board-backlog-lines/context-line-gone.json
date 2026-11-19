@@ -1,0 +1,7 @@
+{
+  "op": "context",
+  "issue": 889,
+  "line_id": "bl-0a1b2c3d",
+  "body": "- [x] Fix #747 [wc:bl-0a1b2c3d fixed by #9]\n",
+  "expect_none": true
+}

@@ -1,0 +1,3 @@
+{"op": "gate",
+ "env": {"backlog_lines_switch": "true", "loop_paused": true, "constitution_text": "### X. a\nMaintenance backlog line\n"},
+ "expect": [false, "board loop is paused"]}

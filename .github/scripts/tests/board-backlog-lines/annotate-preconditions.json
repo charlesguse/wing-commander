@@ -1,0 +1,18 @@
+{
+  "op": "chain",
+  "body": "- [ ] a\n- [ ] b [wc:bl-bbbb2222 in-progress]",
+  "steps": [
+    {"op": "claim", "args": ["bl-aaaa1111", "a"]},
+    {"op": "annotate", "args": ["bl-aaaa1111", "held", "red gate suite"]},
+    {"op": "annotate", "args": ["bl-aaaa1111", "in-progress", "stale"]},
+    {"op": "clear", "args": ["bl-bbbb2222"]},
+    {"op": "clear", "args": ["bl-aaaa1111"]}
+  ],
+  "expect_after": [
+    "- [ ] a [wc:bl-aaaa1111 in-progress]\n- [ ] b [wc:bl-bbbb2222 in-progress]",
+    "- [ ] a [wc:bl-aaaa1111 held red gate suite]\n- [ ] b [wc:bl-bbbb2222 in-progress]",
+    null,
+    null,
+    "- [ ] a\n- [ ] b [wc:bl-bbbb2222 in-progress]"
+  ]
+}

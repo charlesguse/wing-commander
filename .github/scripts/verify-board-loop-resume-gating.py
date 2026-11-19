@@ -2506,11 +2506,12 @@ def _mutations(text):
     # select's two prove markers, fix's review hand-off and breach, review's
     # readiness and round, readiness's awaiting-merge, triage's hand-over
     # ("$marker_step"), prove's three (close-on-merge, proven, prove), and
-    # readiness's not-ready record (specs/093-not-ready-board-release), and
-    # the merge job's merged and handed-over records
-    # (specs/115-board-loop-self-merge).
-    if len(other_at) != 14:
-        raise AssertionError("self-test: expected 14 non-stalled marker renders, found {0}".format(len(other_at)))
+    # readiness's not-ready record (specs/093-not-ready-board-release), the
+    # merge job's merged and handed-over records
+    # (specs/115-board-loop-self-merge), and select's backlog-line stood-down
+    # and first triage records (specs/121-board-backlog-line-items).
+    if len(other_at) != 16:
+        raise AssertionError("self-test: expected 16 non-stalled marker renders, found {0}".format(len(other_at)))
     for n, at in enumerate(other_at):
         guard_at = text.index('|| { echo "::error::', at)
         guard_start = text.rindex(" \\\n", at, guard_at)

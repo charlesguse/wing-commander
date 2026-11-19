@@ -98,6 +98,13 @@ jobs:
       # The classifier from this repository at this run's commit, so a
       # fork's commit is looked up in the fork.
       pipeline-repo: ${{ github.repository }}
+      # A local-path call leaves github.job_workflow_sha empty, and
+      # classify-startup holds no id-token for an OIDC fallback, so without
+      # this it cannot find the classifier's commit and fails before it
+      # classifies. This wrapper calls agent-startup-check.yml from its own
+      # commit, so github.sha is that commit -- see
+      # wing-commander-5-implement.yml.
+      pipeline-ref: ${{ github.sha }}
     secrets:
       container-registry-username: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_USERNAME }}
       container-registry-password: ${{ secrets.WING_COMMANDER_CONTAINER_REGISTRY_PASSWORD }}

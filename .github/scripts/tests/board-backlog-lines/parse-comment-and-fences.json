@@ -1,0 +1,3 @@
+{"op": "parse",
+ "body": "<!--\n- [ ] hidden in a comment\n-->\n````\n```\n- [ ] still inside the long fence\n```\n````\n~~~\n- [ ] inside tilde fence\n```\n- [ ] still inside (backticks do not close tildes)\n~~~\n- [ ] real",
+ "expect": [{"text": "real", "checked": false}]}

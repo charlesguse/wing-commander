@@ -537,6 +537,14 @@ def _unquoted_unfenced(text):
     return "\n".join(kept)
 
 
+def run_url_pattern(repository):
+    """The one home of the run-link pattern: a regex source matching
+    https://github.com/<repository>/actions/runs/<id> and nothing else --
+    no other repository's runs. find_cited_run(), latest_occurrence() and
+    board_backlog_lines.line_context() all match runs through it."""
+    return r"https://github\.com/{0}/actions/runs/[0-9]+".format(re.escape(repository))
+
+
 def find_cited_run(text, repository):
     """#505: the run an issue cites, from text that already passed
     wing-commander-issue-context's trust filter (its context-file: title,
@@ -546,8 +554,7 @@ def find_cited_run(text, repository):
     other run link; otherwise the first run link of `repository` wins.
     Returns the run URL (https://github.com/OWNER/REPO/actions/runs/ID) or
     None."""
-    run_url = r"https://github\.com/{0}/actions/runs/[0-9]+".format(
-        re.escape(repository))
+    run_url = run_url_pattern(repository)
     scanned = _unquoted_unfenced(text)
     first_seen = re.search(
         r"_First seen: \[this run\]\((" + run_url + r")[^)\s]*\)_", scanned)
@@ -573,8 +580,7 @@ def latest_occurrence(occurrences, repository):
     contracts/triage.md "Remaining risk"). A comment
     counts only when its FIRST line is watchdog's OCCURRENCE_LINE citing a
     run of `repository`. None when no comment qualifies."""
-    run_url = r"https://github\.com/{0}/actions/runs/[0-9]+".format(
-        re.escape(repository))
+    run_url = run_url_pattern(repository)
     line_re = re.compile(
         re.escape(OCCURRENCE_LINE) + "(" + run_url + r")[^)\s]*\):?$")
     newest = None

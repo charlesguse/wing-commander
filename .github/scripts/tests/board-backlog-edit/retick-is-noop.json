@@ -1,0 +1,10 @@
+{
+  "initial": "- [x] a [wc:bl-1 fixed by #7]\n- [ ] b",
+  "op": "tick-fixed",
+  "line_id": "bl-1",
+  "detail": "by #7",
+  "after_write": [],
+  "expect": "applied",
+  "expect_writes": 0,
+  "final_equals_initial": true
+}

@@ -8,8 +8,9 @@
 #
 # Two rewrites, both needed once the wrapper runs in another repository:
 #
-#   * `uses: ./.github/workflows/<stage>` becomes
-#     `uses: <pipeline-repo>/.github/workflows/<stage>@<uses-ref>`.
+#   * `uses: ./.github/workflows/<name>` for the wrapper's STAGE and for
+#     metrics-persist.yml (its persist-metrics call) becomes
+#     `uses: <pipeline-repo>/.github/workflows/<name>@<uses-ref>`.
 #   * `pipeline-ref: ${{ github.sha }}` becomes
 #     `pipeline-ref: <pipeline-commit>`. Here the wrapper calls its stage
 #     by local path, so github.sha is the pipeline's own commit (#1071,
@@ -39,9 +40,20 @@ if ! printf '%s' "$pipeline_commit" | grep -qE '^[0-9a-f]{40}$'; then
   exit 1
 fi
 
-pinned="$(sed \
-  -e "s#uses: \./\.github/workflows/${stage}#uses: ${pipeline_repo}/.github/workflows/${stage}@${uses_ref}#" \
-  -e "s#pipeline-ref: \${{ *github\.sha *}}#pipeline-ref: ${pipeline_commit}#" \
+# Scoped to the wrapper's own stage and the metrics-persist.yml its
+# persist-metrics job calls: any other local call (a typo'd `uses:`) stays
+# local and trips the refusal below instead of being pinned to a bogus ref.
+# Extended regex (-E) so alternation is portable to BSD and GNU sed alike;
+# every operand is escaped for the context it lands in.
+stage_re="$(printf '%s' "$stage" | sed 's/[][\.*^$#|(){}+?/&]/\\&/g')"
+repl_esc() { printf '%s' "$1" | sed 's/[\&#]/\\&/g'; }
+repo_r="$(repl_esc "$pipeline_repo")"
+ref_r="$(repl_esc "$uses_ref")"
+commit_r="$(repl_esc "$pipeline_commit")"
+pinned="$(sed -E \
+  -e "s#uses: \./\.github/workflows/(${stage_re}|metrics-persist\.yml)\$#uses: ${repo_r}/.github/workflows/\1@${ref_r}#" \
+  -e "s#uses: \./\.github/workflows/(${stage_re}|metrics-persist\.yml)([^A-Za-z0-9_.-])#uses: ${repo_r}/.github/workflows/\1@${ref_r}\2#" \
+  -e "s#pipeline-ref: \\\$\{\{ *github\.sha *\}\}#pipeline-ref: ${commit_r}#" \
   "$file")"
 
 # Here-strings, not `printf | grep -q`: under pipefail, grep -q exiting on

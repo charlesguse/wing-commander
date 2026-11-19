@@ -23,9 +23,12 @@ asserting after the first sweep that each record_key appears exactly once
 in records.jsonl, and after the second (identical window) that the file is
 byte-for-byte unchanged and no new records commit was made.
 
-Two mutations -- the append step's existing-key skip removed, and the
-sweep's per-run loop collapsed to the first run -- must each break an
-assertion.
+Spec 120 adds a third case: a run whose job id changed between attempts
+(a re-run) must still leave one record per run/job_key/step_index.
+
+Three mutations -- the append step's existing-key skip removed, its
+attempt-independent skip removed, and the sweep's per-run loop collapsed to
+the first run -- must each break an assertion.
 
 Wiring: lint-workflows.yml, Gate 76.
 """
@@ -105,6 +108,41 @@ def suite(bash, mutate=None):
                          f"records commit(s); an idempotent repeat writes none")
     finally:
         cleanup(work)
+    broke += rerun_failures(bash, mutate)
+    return broke
+
+
+# specs/120-dispatched-run-metrics (FR-004, SC-002, research R6): a persisting
+# job, the workflow_run job and the sweep can each meet one run, and a re-run
+# attempt gives the same job a new numeric id. The record persisted on
+# attempt 1 (job id index 1 here) must not be appended again when a later
+# encounter resolves the same job_key to another id (index 0 here).
+RERUN_RUN = {"run_id": "6001", "workflow": "Wing Commander · 5 implement",
+             "concluded_at": "2026-09-20T05:00:00Z",
+             "records": [metrics_record("6001", "implement")]}
+RERUN_SEED = record_line(persisted_record("6001", "implement", index=1))
+
+
+def rerun_failures(bash, mutate=None):
+    broke = []
+    work = tempfile.mkdtemp(prefix="wc-gate76-rerun-")
+    try:
+        first = run_sweep(work, [RERUN_RUN], seed_records=RERUN_SEED,
+                          bash=bash, mutate=mutate)
+        if first["rc"] != 0:
+            return [f"the re-run sweep failed: "
+                    f"{first['steps'][-1][2].strip()[:300]}"]
+        if len(first["records"]) != 1:
+            broke.append(f"a run whose job id changed between attempts left "
+                         f"{record_keys(first['records'])} in records.jsonl; "
+                         f"exactly one record per (run, job_key, step_index) "
+                         f"is expected")
+        second = resweep(work, first, [RERUN_RUN], bash=bash, mutate=mutate)
+        if second["rc"] == 0 and second["records"] != first["records"]:
+            broke.append("a third encounter of the same run changed "
+                         "records.jsonl")
+    finally:
+        cleanup(work)
     return broke
 
 
@@ -114,9 +152,21 @@ def suite(bash, mutate=None):
 def mut_append_forgets_existing_keys(name, script):
     if name != APPEND:
         return script
+    # Both skips: the record_key one and the attempt-independent one (spec
+    # 120) -- either alone still catches an already-persisted record.
     return script.replace(
-        'if [ -n "$key" ] && grep -qxF "$key" "$existing_keys" 2>/dev/null; then',
-        'if [ -n "$key" ] && false; then')
+        'if [ -n "$key" ] && [ -n "${seen_key[$key]:-}" ]; then',
+        'if [ -n "$key" ] && false; then').replace(
+        'if [ -n "$stable" ] && [ -n "${seen_stable[$stable]:-}" ]; then',
+        'if [ -n "$stable" ] && false; then')
+
+
+def mut_append_forgets_stable_keys(name, script):
+    if name != APPEND:
+        return script
+    return script.replace(
+        'if [ -n "$stable" ] && [ -n "${seen_stable[$stable]:-}" ]; then',
+        'if [ -n "$stable" ] && false; then')
 
 
 def mut_discover_only_takes_the_first_run(name, script):
@@ -128,6 +178,8 @@ def mut_discover_only_takes_the_first_run(name, script):
 MUTATIONS = [
     ("the append step stops skipping already-persisted keys",
      mut_append_forgets_existing_keys),
+    ("the append step stops skipping a record whose job id changed",
+     mut_append_forgets_stable_keys),
     ("discovery only covers the sweep's first run",
      mut_discover_only_takes_the_first_run),
 ]

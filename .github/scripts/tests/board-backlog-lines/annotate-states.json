@@ -1,0 +1,18 @@
+{
+  "op": "chain",
+  "body": "- [ ] a\n- [ ] b\n- [x] c [wc:bl-cccc3333 fixed PR #1]",
+  "steps": [
+    {"op": "claim", "args": ["bl-aaaa1111", "a"]},
+    {"op": "annotate", "args": ["bl-aaaa1111", "proposal", "#901"]},
+    {"op": "tick", "args": ["bl-aaaa1111", "evidence", "API 429"]},
+    {"op": "annotate", "args": ["bl-missing0", "held", "x"]},
+    {"op": "annotate", "args": ["bl-cccc3333", "held", "x"]}
+  ],
+  "expect_after": [
+    "- [ ] a [wc:bl-aaaa1111 in-progress]\n- [ ] b\n- [x] c [wc:bl-cccc3333 fixed PR #1]",
+    "- [ ] a [wc:bl-aaaa1111 proposal #901]\n- [ ] b\n- [x] c [wc:bl-cccc3333 fixed PR #1]",
+    "- [x] a [wc:bl-aaaa1111 evidence API 429]\n- [ ] b\n- [x] c [wc:bl-cccc3333 fixed PR #1]",
+    null,
+    null
+  ]
+}

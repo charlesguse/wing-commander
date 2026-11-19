@@ -361,7 +361,9 @@ def self_test():
 
         big = os.path.join(root, "big.yml")
         with io.open(big, "w", encoding="utf-8") as fh:
-            fh.write("    uses: ./.github/workflows/other.yml\n" + ("# pad " + "x" * 70 + "\n") * 30000)
+            # The pin rewrites every local stage call, so the unpinnable line
+            # is a pipeline-ref the rewrite's pattern doesn't match.
+            fh.write("    pipeline-ref: ${{ format('{0}', github.sha) }}\n" + ("# pad " + "x" * 70 + "\n") * 30000)
         r = subprocess.run(["bash", PIN_SCRIPT, big, "nomatch.yml", "o/r", "t", FAKE_COMMIT],
                            capture_output=True, text=True)
         if r.returncode == 0:

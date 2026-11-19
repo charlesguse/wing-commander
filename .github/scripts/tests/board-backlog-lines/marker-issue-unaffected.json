@@ -1,0 +1,6 @@
+{
+  "op": "marker",
+  "bot": "wing-commander-app[bot]",
+  "branch": "fix/12-some-slug",
+  "issue_path_ignores": false
+}

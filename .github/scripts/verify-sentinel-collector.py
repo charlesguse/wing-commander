@@ -55,8 +55,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (  # noqa: E402
-    ensure_jq, find_step, resolve_bash, run_step, step_shell,
-    use_utf8_stdout)
+    GH_ESCAPE_REFUSAL, ensure_jq, find_step, gh_escape_guard_preamble,
+    resolve_bash, run_step, step_shell, use_utf8_stdout)
 
 WATCHDOG = ".github/workflows/watchdog.yml"
 STEP = "Collect: step summaries"
@@ -176,7 +176,7 @@ def render_step(step):
 
 
 def stub_gh(bindir, fixture_dir, raw=False, jobs_rc=0, crash_logs=False,
-            logs_error=None):
+            logs_error=None, new_gh=None):
     """A `gh` that answers the two api calls the fetch helper makes, from files.
 
     `raw=True` skips the `--jq` below and prints jobs.json as is, with exit
@@ -185,7 +185,9 @@ def stub_gh(bindir, fixture_dir, raw=False, jobs_rc=0, crash_logs=False,
     makes the listing exit with that status after printing (gh failing on a
     later page); `crash_logs` makes a log read print part of the log and
     then kill the shell running it; `logs_error` makes every log read fail,
-    printing that message to stderr as gh does.
+    printing that message to stderr as gh does. `new_gh` True or False makes
+    it a gh with or without `--allow-escape-sequences`
+    (wc_shell_harness.gh_escape_guard_preamble); None keeps the bare stub.
 
     The jobs listing is read with `--paginate --jq '.jobs[]'` (spec 036):
     under `--paginate` gh applies the filter to each page and emits one JSON
@@ -201,7 +203,8 @@ def stub_gh(bindir, fixture_dir, raw=False, jobs_rc=0, crash_logs=False,
         fh.write(
             '#!/usr/bin/env bash\n'
             '# Stub for the two `gh api` reads the collector performs.\n'
-            'p="$2"\n'
+            + (gh_escape_guard_preamble(new_gh) if new_gh is not None else '')
+            + 'p="$2"\n'
             f'd="{fixture_dir}"\n'
             'jqexpr=""\n'
             'prev=""\n'
@@ -219,7 +222,9 @@ def stub_gh(bindir, fixture_dir, raw=False, jobs_rc=0, crash_logs=False,
             + ('head -c 5 "$d/log-$id.txt"; kill -KILL "$PPID"; exit 137 ;;\n'
                if crash_logs else
                f'echo "{logs_error}" >&2; exit 1 ;;\n'
-               if logs_error else 'cat "$d/log-$id.txt" ;;\n')
+               if logs_error else
+               'guarded_cat "$d/log-$id.txt" ;;\n' if new_gh is not None else
+               'cat "$d/log-$id.txt" ;;\n')
             +
             '  *) echo "unexpected gh api path: $p" >&2; exit 1 ;;\n'
             'esac\n')
@@ -376,7 +381,8 @@ def shipped_fetch():
 
 def run_fetch(fetch_script, listing, out_dir, tmproot, raw=False, logs=None,
               jobs_rc=0, fail_mv=False, crash_jq=False, stale=None,
-              crash_logs=False, conclusions="", logs_error=None, sleeps=None):
+              crash_logs=False, conclusions="", logs_error=None, sleeps=None,
+              new_gh=None, action_path=None, seen=None):
     """Run the shared helper against stub_gh. `listing` is jobs.json for the
     stub: printed as is when `raw`, else a `{"jobs": [...]}` page gh's own
     `--jq` is applied to; the listing exits `jobs_rc`. A listed job's log is
@@ -386,7 +392,10 @@ def run_fetch(fetch_script, listing, out_dir, tmproot, raw=False, logs=None,
     mid-write would; `stale` is a jobs.json left in `out_dir` beforehand;
     `crash_logs` kills it the same way during a log read; `logs_error` fails
     every log read with that gh message; `sleeps`, a list, gets the number of retry
-    waits the helper took appended. Returns
+    waits the helper took appended; `new_gh` is stub_gh's; `action_path`
+    replaces the composite's real directory as $GITHUB_ACTION_PATH; `seen`, a
+    dict, gets the step's output under "out" and each .log file's text under
+    its name. Returns
     (step rc, `result` output or None, jobs.json text or None, reason.txt
     text or None, the .log files left in `out_dir`)."""
     workdir = tempfile.mkdtemp(dir=tmproot)
@@ -406,7 +415,8 @@ def run_fetch(fetch_script, listing, out_dir, tmproot, raw=False, logs=None,
                           encoding="utf-8", newline="\n") as fh:
                     fh.write(body)
         stub_gh(bindir, fixtures.replace("\\", "/"), raw=raw,
-                jobs_rc=jobs_rc, crash_logs=crash_logs, logs_error=logs_error)
+                jobs_rc=jobs_rc, crash_logs=crash_logs, logs_error=logs_error,
+                new_gh=new_gh)
         if stale is not None:
             os.makedirs(out_dir, exist_ok=True)
             with open(os.path.join(out_dir, "jobs.json"), "w", encoding="utf-8") as fh:
@@ -435,7 +445,11 @@ def run_fetch(fetch_script, listing, out_dir, tmproot, raw=False, logs=None,
         env = {"PATH": bindir + os.pathsep + os.environ["PATH"],
                "GITHUB_REPOSITORY": "charlesguse/wing-commander",
                "RUN_ID": "1", "GH_TOKEN": "x", "OUT_DIR": out_dir,
-               "CONCLUSIONS": conclusions}
+               "CONCLUSIONS": conclusions,
+               # As on the runner: the composite resolves
+               # ../../scripts/gh-allows-escape-sequences.sh from here.
+               "GITHUB_ACTION_PATH": action_path or os.path.abspath(
+                   os.path.dirname(FETCH_ACTION))}
         rc, _out, outs, _sum = run_step(
             BASH, fetch_script, workdir, env, runner_temp,
             shell=step_shell(FETCH_ACTION, FETCH_STEP))
@@ -448,6 +462,11 @@ def run_fetch(fetch_script, listing, out_dir, tmproot, raw=False, logs=None,
                 return None
         logs_left = sorted(f for f in (os.listdir(out_dir) if os.path.isdir(out_dir) else [])
                            if f.endswith(".log"))
+        if seen is not None:
+            seen["out"] = _out
+            for f in logs_left:
+                with open(os.path.join(out_dir, f), encoding="utf-8", newline="") as fh:
+                    seen[f] = fh.read()
         if sleeps is not None:
             try:
                 with open(sleep_log, encoding="utf-8") as fh:
@@ -730,6 +749,38 @@ def staging_suite(stage_script, fetch_script, collector, tmproot):
                         f"logs {logs_left!r}, expected 'ok', no reason, no "
                         f"901.log.")
 
+    # A job log carries ANSI colour codes, and a newer gh refuses to output a
+    # raw body holding escape sequences without --allow-escape-sequences,
+    # even into a file; an older gh rejects that flag
+    # (.github/scripts/gh-allows-escape-sequences.sh). Both must read it, and
+    # the refusal's text must never reach the step log (only a status is
+    # echoed: gh's message could read as a sentinel to a later watchdog).
+    ansi = "\x1b[36;1mecho hi\x1b[0m\nlog line\n"
+    for new_gh, which in ((True, "a gh with --allow-escape-sequences"),
+                          (False, "a gh without --allow-escape-sequences")):
+        seen = {}
+        out_dir = os.path.join(tempfile.mkdtemp(dir=tmproot), "out")
+        _rc, result, _jobs, reason, logs_left = run_fetch(
+            fetch_script, listing, out_dir, tmproot, logs={901: ansi, 902: ansi},
+            new_gh=new_gh, seen=seen)
+        if (result != "ok" or logs_left != ["901.log", "902.log"]
+                or seen.get("901.log") != ansi):
+            failures.append(f"[helper: {which} reads a log carrying ANSI colour "
+                            f"codes] result {result!r}, reason {reason!r}, logs "
+                            f"{logs_left!r}, 901.log {seen.get('901.log')!r}; "
+                            f"expected 'ok', both logs, the body byte for byte.")
+    seen = {}
+    out_dir = os.path.join(tempfile.mkdtemp(dir=tmproot), "out")
+    _rc, result, _jobs, _reason, _logs = run_fetch(
+        fetch_script, listing, out_dir, tmproot, logs={901: ansi}, new_gh=True,
+        action_path=os.path.join(tmproot, "no-such-action"), seen=seen,
+        conclusions="failure")
+    if result != "failed" or "escape" in (seen.get("out") or ""):
+        failures.append(f"[helper: gh's escape-sequence refusal text stays out "
+                        f"of the step log] result {result!r}, output "
+                        f"{seen.get('out')!r}; expected 'failed' and no gh "
+                        f"message text ({GH_ESCAPE_REFUSAL!r}).")
+
     # The retry circuit breaker: a token that cannot read logs must not cost
     # one 10s wait per job, yet a lag must still get its retry.
     def breaker(name, ids, want_waits, want_logs=None, **kw):
@@ -809,11 +860,24 @@ def mut_fetch_log_in_place(script):
     partial log a caller would read as real evidence."""
     return _replace_each(script, [
         ('/logs" > "$OUT_DIR/$id.log.tmp"', '/logs" > "$OUT_DIR/$id.log"'),
+        ('--allow-escape-sequences > "$OUT_DIR/$id.log.tmp"',
+         '--allow-escape-sequences > "$OUT_DIR/$id.log"'),
         ('if [ ! -s "$OUT_DIR/$id.log.tmp" ]; then',
          'if [ ! -s "$OUT_DIR/$id.log" ]; then'),
         ('if ! mv "$OUT_DIR/$id.log.tmp" "$OUT_DIR/$id.log"; then',
          'if false; then'),
     ])
+
+
+def mut_fetch_no_escape_flag(script):
+    """Never pass --allow-escape-sequences: the read as it was before the
+    probe, which a newer gh refuses for a log carrying ANSI colour codes."""
+    return script.replace('&& esc=1', '&& esc=0')
+
+
+def mut_fetch_flag_unprobed(script):
+    """Always pass --allow-escape-sequences, which an older gh rejects."""
+    return script.replace('local esc=0', 'local esc=1')
 
 
 def mut_fetch_no_retry_breaker(script):
@@ -918,6 +982,10 @@ STAGING_MUTATIONS = [
     ("staging labelling a dead helper's missing log log-read", "stage",
      mut_stage_dead_helper_log_read),
     ("the helper streaming a log straight into place", "fetch", mut_fetch_log_in_place),
+    ("the helper never passing --allow-escape-sequences", "fetch",
+     mut_fetch_no_escape_flag),
+    ("the helper passing --allow-escape-sequences unprobed", "fetch",
+     mut_fetch_flag_unprobed),
     ("the helper retrying every job after a systematic failure", "fetch",
      mut_fetch_no_retry_breaker),
     ("the helper retrying a 403", "fetch", mut_fetch_retry_on_403),

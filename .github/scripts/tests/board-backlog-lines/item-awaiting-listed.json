@@ -1,0 +1,23 @@
+{
+  "op": "line-item",
+  "body": "- [ ] a [wc:bl-0a1b2c3d in-progress PR #7]\n",
+  "request": {
+    "switch": ""
+  },
+  "markers": [
+    [
+      "awaiting-merge",
+      "bl-0a1b2c3d",
+      7
+    ]
+  ],
+  "expect": {
+    "action": "none",
+    "awaiting": [
+      [
+        "bl-0a1b2c3d",
+        7
+      ]
+    ]
+  }
+}

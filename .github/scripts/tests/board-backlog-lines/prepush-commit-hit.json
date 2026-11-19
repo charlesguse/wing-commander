@@ -1,0 +1,10 @@
+{
+  "op": "pre-push",
+  "line_id": "bl-0a1b2c3d",
+  "body": "- [ ] flaky gate [wc:bl-0a1b2c3d in-progress]\n",
+  "commits": [
+    "Fixes #747: flaky gate"
+  ],
+  "expect_hit": true,
+  "title_prefix": "Fix: flaky gate"
+}

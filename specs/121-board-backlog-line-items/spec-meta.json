@@ -1,1 +1,12 @@
-{"issue": 1080, "spec_dir": "specs/121-board-backlog-line-items", "feature_num": "121", "stage": "spec", "iteration": 0, "spec_branch": null}
+{
+  "issue": 1080,
+  "spec_dir": "specs/121-board-backlog-line-items",
+  "feature_num": "121",
+  "stage": "review",
+  "iteration": 10,
+  "spec_branch": "spec/121-board-backlog-line-items",
+  "pending_re_review_from": [],
+  "truncated_count": 0,
+  "truncated_tier": null,
+  "gate_suite_ready": true
+}

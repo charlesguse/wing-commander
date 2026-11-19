@@ -1,0 +1,12 @@
+{
+  "initial": "- [ ] a [wc:bl-1 in-progress]\n- [ ] b",
+  "op": "tick-fixed",
+  "line_id": "bl-1",
+  "detail": "PR #3",
+  "after_write": [
+    "- [ ] a [wc:bl-1 in-progress]\n- [ ] b\n- [ ] appended by session",
+    "- [ ] a [wc:bl-1 in-progress]\n- [x] b\n- [ ] appended by session"
+  ],
+  "expect": "applied",
+  "final_contains": ["- [x] a [wc:bl-1 fixed PR #3]", "- [x] b", "- [ ] appended by session"]
+}

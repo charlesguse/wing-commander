@@ -1,0 +1,10 @@
+{
+  "op": "keyword-hold",
+  "line_id": "bl-0a1b2c3d",
+  "body": "- [ ] flaky [wc:bl-0a1b2c3d in-progress PR #7]\n",
+  "commits": [
+    "closes #747"
+  ],
+  "expect": "held",
+  "expect_body": "- [ ] flaky [wc:bl-0a1b2c3d held board:stalled from fix (closing keyword)]\n"
+}

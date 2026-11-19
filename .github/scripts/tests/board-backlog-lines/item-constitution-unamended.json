@@ -1,0 +1,11 @@
+{
+  "body": "- [ ] first defect\n- [ ] second defect\n",
+  "request": {
+    "constitution_text": "### X. Bounded autonomy\nissues only\n"
+  },
+  "expect": {
+    "action": "none",
+    "reason": "constitution Principle X does not authorise backlog lines"
+  },
+  "op": "line-item"
+}

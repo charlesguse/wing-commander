@@ -1,0 +1,9 @@
+{
+  "op": "stall",
+  "line_id": null,
+  "body": "- [ ] flaky gate [wc:bl-0a1b2c3d in-progress]\n",
+  "expect_ok": true,
+  "expect_labelled": true,
+  "expect_body": "- [ ] flaky gate [wc:bl-0a1b2c3d in-progress]\n",
+  "summary_contains": ["board-loop: issue #889 -- stalled from fix (gate suite red) with board:stalled applied"]
+}

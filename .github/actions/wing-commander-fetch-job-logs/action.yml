@@ -112,10 +112,24 @@ runs:
           # The retry circuit breaker (see the header): retry_off is set at
           # the first systematic failure, read_ok at the first good read.
           local retry_off=0 read_ok=0 waits=0
+          # Whether this gh needs --allow-escape-sequences to output a log
+          # carrying ANSI colour codes, and takes it: see
+          # .github/scripts/gh-allows-escape-sequences.sh. 0 if it never ran.
+          local esc=0
+          bash "${GITHUB_ACTION_PATH:-}/../../scripts/gh-allows-escape-sequences.sh" 2>/dev/null && esc=1
+          # One read of job $id's log into its temp file; gh's status is the
+          # function's. Both forms are literal so Gate 12 sees every flag.
+          read_log() {
+            if [ "$esc" = "1" ]; then
+              gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" --allow-escape-sequences > "$OUT_DIR/$id.log.tmp" 2> "$OUT_DIR/$id.log.err"
+            else
+              gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" > "$OUT_DIR/$id.log.tmp" 2> "$OUT_DIR/$id.log.err"
+            fi
+          }
           fetch_one() {
             local id="$1" rc=0
             # Read into a temp file and moved into place whole, like jobs.json.
-            gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" > "$OUT_DIR/$id.log.tmp" 2> "$OUT_DIR/$id.log.err" || rc=$?
+            read_log || rc=$?
             if [ "$rc" != "0" ] && grep -qE 'HTTP 40[13]' "$OUT_DIR/$id.log.err" 2>/dev/null \
                 && ! grep -qi 'rate limit' "$OUT_DIR/$id.log.err" 2>/dev/null; then
               retry_off=1
@@ -126,7 +140,7 @@ runs:
               waits=$((waits + 1))
               sleep 10
               rc=0
-              gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$id/logs" > "$OUT_DIR/$id.log.tmp" 2> "$OUT_DIR/$id.log.err" || rc=$?
+              read_log || rc=$?
               [ "$rc" = "0" ] || [ "$read_ok" = "1" ] || retry_off=1
             fi
             if [ "$rc" != "0" ]; then

@@ -1,0 +1,5 @@
+{
+  "op": "select",
+  "body": "- [x] done\n- [ ] busy [wc:bl-9 held reason]\n- [ ] first free\n- [ ] second free",
+  "expect": {"text": "first free", "index": 2}
+}

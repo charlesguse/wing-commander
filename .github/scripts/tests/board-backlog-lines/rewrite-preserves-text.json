@@ -1,0 +1,12 @@
+{
+  "op": "chain",
+  "body": "- [ ] keep  two  spaces [wc:bl-bbbb2222 in-progress] and tail",
+  "steps": [
+    {"op": "annotate", "args": ["bl-bbbb2222", "held", "needs workflow scope"]},
+    {"op": "clear", "args": ["bl-bbbb2222"]}
+  ],
+  "expect_after": [
+    "- [ ] keep  two  spaces [wc:bl-bbbb2222 held needs workflow scope] and tail",
+    "- [ ] keep  two  spaces and tail"
+  ]
+}

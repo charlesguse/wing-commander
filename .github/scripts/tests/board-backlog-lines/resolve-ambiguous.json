@@ -1,0 +1,5 @@
+{"op": "resolve", "bot": "app[bot]", "maintainers": ["owner"],
+ "issues": [
+  {"number": 889, "title": "Maintenance backlog", "state": "open", "labels": ["disposition:tracking"], "author": "owner"},
+  {"number": 900, "title": "Maintenance backlog (copy)", "state": "open", "labels": ["disposition:tracking"], "author": "owner"}],
+ "expect": [null, "ambiguous: 2 Maintenance backlog candidates"]}

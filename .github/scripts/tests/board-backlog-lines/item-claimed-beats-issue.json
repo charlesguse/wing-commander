@@ -1,0 +1,11 @@
+{
+  "body": "- [ ] first [wc:bl-0a1b2c3d in-progress]\n",
+  "request": {
+    "issue_selected": true
+  },
+  "expect": {
+    "action": "resume",
+    "line_id": "bl-0a1b2c3d"
+  },
+  "op": "line-item"
+}
