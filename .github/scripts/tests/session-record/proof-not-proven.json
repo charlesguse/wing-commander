@@ -1,0 +1,28 @@
+{
+  "what": "a run that reached the change and did not show the fix",
+  "build": "proof",
+  "fields": {
+    "date": "2026-11-14",
+    "outcome": "not-proven",
+    "merge": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "run": "https://github.com/example/repo/actions/runs/43635697682/job/987",
+    "ran_on": "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+    "step": "collect / Fetch job logs",
+    "line": "could not fetch job 12: HTTP 403",
+    "not_exercised": "nothing known"
+  },
+  "expect_body": [
+    "**Proof after merge (2026-11-14):** not proven",
+    "**Merge:** `3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c`",
+    "**Run:** https://github.com/example/repo/actions/runs/43635697682/job/987",
+    "**Ran on:** `2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b`",
+    "**Step:** collect / Fetch job logs",
+    "**Not exercised:** nothing known",
+    "",
+    "Quoted from the run:",
+    "",
+    "```text",
+    "could not fetch job 12: HTTP 403",
+    "```"
+  ]
+}

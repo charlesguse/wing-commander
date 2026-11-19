@@ -1,0 +1,13 @@
+{
+  "what": "a decision in one paragraph has none of the three parts",
+  "read": [
+    "**Session decision (2026-11-14):** merged at `5677971` after three passes.",
+    "",
+    "The owner chose to merge as is."
+  ],
+  "expect_refused": [
+    "options",
+    "evidence",
+    "undo"
+  ]
+}

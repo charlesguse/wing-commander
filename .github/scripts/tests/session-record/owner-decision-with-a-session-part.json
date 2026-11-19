@@ -1,0 +1,14 @@
+{
+  "what": "an undo belongs to a session's own decision",
+  "build": "decision",
+  "fields": {
+    "by": "owner",
+    "date": "2026-11-06",
+    "chosen": "option B",
+    "question": "q",
+    "undo": "revert"
+  },
+  "expect_refused": [
+    "undo"
+  ]
+}

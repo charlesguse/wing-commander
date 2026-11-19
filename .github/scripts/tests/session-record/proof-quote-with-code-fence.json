@@ -1,0 +1,31 @@
+{
+  "what": "a quoted line that holds a code fence gets a longer one, and keeps its line breaks",
+  "build": "proof",
+  "fields": {
+    "date": "2026-11-14",
+    "outcome": "proven",
+    "merge": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "run": "https://github.com/example/repo/actions/runs/43635697682",
+    "ran_on": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "step": "report / Post the summary",
+    "line": "posted:\n```\n  ok\n```",
+    "not_exercised": "the failure path"
+  },
+  "expect_body": [
+    "**Proof after merge (2026-11-14):** proven",
+    "**Merge:** `3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c`",
+    "**Run:** https://github.com/example/repo/actions/runs/43635697682",
+    "**Ran on:** `3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c`",
+    "**Step:** report / Post the summary",
+    "**Not exercised:** the failure path",
+    "",
+    "Quoted from the run:",
+    "",
+    "````text",
+    "posted:",
+    "```",
+    "  ok",
+    "```",
+    "````"
+  ]
+}

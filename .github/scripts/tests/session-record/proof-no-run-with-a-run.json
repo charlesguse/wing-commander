@@ -1,0 +1,14 @@
+{
+  "what": "no-run cannot name a run",
+  "build": "proof",
+  "fields": {
+    "date": "2026-11-14",
+    "outcome": "no-run",
+    "merge": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "why": "docs only",
+    "run": "https://github.com/example/repo/actions/runs/43635697682"
+  },
+  "expect_refused": [
+    "run"
+  ]
+}

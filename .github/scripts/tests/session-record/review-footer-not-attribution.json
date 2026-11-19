@@ -1,0 +1,15 @@
+{
+  "what": "--footer takes the attribution line and nothing else",
+  "build": "review",
+  "fields": {
+    "pass": 1,
+    "verdict": "clean",
+    "started": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "pushed": "nothing",
+    "prose": "x",
+    "footer": "Thanks for reading."
+  },
+  "expect_refused": [
+    "footer"
+  ]
+}

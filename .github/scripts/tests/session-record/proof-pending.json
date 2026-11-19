@@ -1,0 +1,15 @@
+{
+  "what": "a pending proof names the run that is due",
+  "build": "proof",
+  "fields": {
+    "date": "2026-11-14",
+    "outcome": "pending",
+    "merge": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "due": "the next container-mode auto-release run, 2026-11-15 06:00 UTC"
+  },
+  "expect_body": [
+    "**Proof after merge (2026-11-14):** pending",
+    "**Merge:** `3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c`",
+    "**Due:** the next container-mode auto-release run, 2026-11-15 06:00 UTC"
+  ]
+}

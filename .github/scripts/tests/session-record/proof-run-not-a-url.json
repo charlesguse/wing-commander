@@ -1,0 +1,17 @@
+{
+  "what": "a bare run id is not a link a reader can follow",
+  "build": "proof",
+  "fields": {
+    "date": "2026-11-14",
+    "outcome": "proven",
+    "merge": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "run": "43635697682",
+    "ran_on": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "step": "s",
+    "line": "l",
+    "not_exercised": "n"
+  },
+  "expect_refused": [
+    "run"
+  ]
+}

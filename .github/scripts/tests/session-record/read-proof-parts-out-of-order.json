@@ -1,0 +1,11 @@
+{
+  "what": "the parts come in one order",
+  "read": [
+    "**Proof after merge (2026-11-14):** no run reaches it",
+    "**Why:** docs only",
+    "**Merge:** `3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c`"
+  ],
+  "expect_refused": [
+    "proof"
+  ]
+}

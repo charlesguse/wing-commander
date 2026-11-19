@@ -1,0 +1,14 @@
+{
+  "what": "a date that is no date, an outcome outside the four, a short merge SHA",
+  "build": "proof",
+  "fields": {
+    "date": "2026-13-01",
+    "outcome": "green",
+    "merge": "3c3c3c3"
+  },
+  "expect_refused": [
+    "date",
+    "outcome",
+    "merge"
+  ]
+}

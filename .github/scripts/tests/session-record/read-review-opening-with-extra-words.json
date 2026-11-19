@@ -1,0 +1,10 @@
+{
+  "what": "an opening with words after the pass number is not the opening",
+  "read": [
+    "<!-- review-until-clean pass 2 (after the split) -->",
+    "**Review pass 2:** CLEAN"
+  ],
+  "expect_refused": [
+    "review"
+  ]
+}

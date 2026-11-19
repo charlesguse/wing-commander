@@ -1,0 +1,15 @@
+{
+  "what": "--footer takes the attribution line itself, not a sentence that quotes it",
+  "build": "review",
+  "fields": {
+    "pass": 1,
+    "verdict": "clean",
+    "started": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "pushed": "nothing",
+    "prose": "x",
+    "footer": "See the \"Generated with [Claude Code]\" matcher."
+  },
+  "expect_refused": [
+    "footer"
+  ]
+}

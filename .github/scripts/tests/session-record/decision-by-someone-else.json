@@ -1,0 +1,15 @@
+{
+  "what": "a decision is a session's or the owner's",
+  "build": "decision",
+  "fields": {
+    "by": "reviewer",
+    "date": "2026-11-14",
+    "chosen": "c",
+    "options": "o",
+    "evidence": "e",
+    "undo": "u"
+  },
+  "expect_refused": [
+    "by"
+  ]
+}

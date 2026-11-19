@@ -1,0 +1,12 @@
+{
+  "what": "an owner's decision with no question is refused",
+  "build": "decision",
+  "fields": {
+    "by": "owner",
+    "date": "2026-11-06",
+    "chosen": "option B"
+  },
+  "expect_refused": [
+    "question"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "what": "an owner's decision recorded on another issue names the item, and the footer stays last",
+  "build": "decision",
+  "fields": {
+    "by": "owner",
+    "date": "2026-11-06",
+    "chosen": "merge as is",
+    "about": 1140,
+    "question": "The loop stopped after pass 3.\n\n(a) merge as is, (b) one more pass, (c) trim the scope?",
+    "footer": "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+  },
+  "expect_body": [
+    "**Owner decision (2026-11-06):** merge as is",
+    "**About:** #1140",
+    "",
+    "**Question:**",
+    "The loop stopped after pass 3.",
+    "",
+    "(a) merge as is, (b) one more pass, (c) trim the scope?",
+    "",
+    "Decided in chat. Recorded by a Claude Code session.",
+    "",
+    "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+  ]
+}

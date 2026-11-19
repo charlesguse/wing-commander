@@ -1,0 +1,16 @@
+{
+  "what": "what was chosen is one line, and --about is a number",
+  "build": "decision",
+  "fields": {
+    "date": "2026-11-14",
+    "chosen": "a\nb",
+    "about": 0,
+    "options": "o",
+    "evidence": "e",
+    "undo": "u"
+  },
+  "expect_refused": [
+    "chosen",
+    "about"
+  ]
+}

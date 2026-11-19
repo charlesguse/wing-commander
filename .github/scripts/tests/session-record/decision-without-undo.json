@@ -1,0 +1,13 @@
+{
+  "what": "a decision with no undo is refused",
+  "build": "decision",
+  "fields": {
+    "date": "2026-11-14",
+    "chosen": "c",
+    "options": "o",
+    "evidence": "e"
+  },
+  "expect_refused": [
+    "undo"
+  ]
+}

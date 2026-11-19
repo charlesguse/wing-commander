@@ -1,0 +1,16 @@
+{
+  "what": "proven needs the run, its commit, the step, the line and what was not exercised",
+  "build": "proof",
+  "fields": {
+    "date": "2026-11-14",
+    "outcome": "proven",
+    "merge": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+  },
+  "expect_refused": [
+    "run",
+    "ran-on",
+    "step",
+    "not-exercised",
+    "line"
+  ]
+}

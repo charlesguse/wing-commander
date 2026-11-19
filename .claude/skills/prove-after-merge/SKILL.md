@@ -59,9 +59,9 @@ the pipeline may only re-drive a workflow it can correlate by an
   that the relevant `WING_COMMANDER_*_PAUSED` variable is not set.
 - **Can't be dispatched into that situation?** Name the scheduled or
   event-driven run that will hit it, and when.
-- **No candidate at all?** Say so on the PR: "no run reaches this change;
-  proven by its checks only". Don't dispatch something unrelated to have
-  a green run to point at.
+- **No candidate at all?** Say so on the PR with a `no-run` record (step
+  6): no run reaches this change, and its checks are the only proof. Don't
+  dispatch something unrelated to have a green run to point at.
 - **One run, never a burst.** Re-driving an agent stage spends the usage
   window that pipeline runs and local sessions share.
 - **Board-loop logic.** Use a directed proof run (`directed-stage`,
@@ -112,15 +112,35 @@ it once or twice; then say it is overdue rather than waiting forever.
   `gh run view -R "$R" <id> --log --job <job-id> | grep ...`. Quote that line.
 
 **6. Record the evidence.** Comment on the merged PR, or on the issue it
-closed. Give:
+closed. Build the comment with the record script. It writes the opening,
+`**Proof after merge (YYYY-MM-DD):**`, and refuses a record with a part
+missing:
 
-- the run link and the head SHA it ran on;
-- the step that exercised the change;
-- the quoted line;
-- the verdict.
+```
+python .github/scripts/wc_session_record.py proof --outcome proven \
+  --merge <merge-sha> --run <the run's URL> --ran-on <the head SHA it ran on> \
+  --step @step.txt --line @line.txt --not-exercised @not-exercised.txt \
+  --out <a file to post>
+```
 
-End the comment with the attribution footer. If the fix came from the
-Maintenance backlog, add "(proven by run N)" to its line there.
+A value that starts with `@` is read from that file. Write the free text
+to files first, so the shell expands no backtick, `$` or quote in a log
+line: `step.txt` holds the job and step that exercised the change,
+`line.txt` the quoted line, and `not-exercised.txt` what this run did not
+exercise.
+
+The outcome is one of four:
+
+- `proven`, with the parts above;
+- `not-proven`, with the same parts, when the run reached the change and
+  did not show the fix (step 7);
+- `pending`, when the run that will hit the change has not finished:
+  `--due` names that run and when. Post the result as a second record;
+- `no-run`, with `--why`, when no run reaches the change (step 2).
+
+End the comment with the attribution footer (pass it as `--footer` unless
+your posting tool adds one). If the fix came from the Maintenance backlog,
+add "(proven by run N)" to its line there.
 
 **7. If it fails, it's this fix's failure until shown otherwise.**
 

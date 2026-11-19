@@ -1,0 +1,10 @@
+{
+  "what": "an outcome outside the four is refused",
+  "read": [
+    "**Proof after merge (2026-11-14):** green",
+    "**Merge:** `3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c`"
+  ],
+  "expect_refused": [
+    "proof"
+  ]
+}

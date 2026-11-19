@@ -1,0 +1,14 @@
+{
+  "what": "a part cannot start a line with another part's label",
+  "build": "decision",
+  "fields": {
+    "date": "2026-11-14",
+    "chosen": "c",
+    "options": "o",
+    "evidence": "first\n**Undo:** nothing to undo",
+    "undo": "u"
+  },
+  "expect_refused": [
+    "evidence"
+  ]
+}

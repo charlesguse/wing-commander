@@ -146,10 +146,20 @@ grep -rn -i "<topic>" CLAUDE.md .specify/memory/ specs/*/contracts/ specs/*/rese
 
 **4. Write down what the owner decides, where the next session will
 look.** When the owner answers in chat, record it on the issue or PR it
-governs:
+governs. Build the comment with the record script:
 
-- start the comment with `**Owner decision (YYYY-MM-DD):**`;
-- give the question, the chosen option, and that it was decided in chat;
+```
+python .github/scripts/wc_session_record.py decision --by owner \
+  --chosen @chosen.txt --question @question.txt --out <a file to post>
+```
+
+A value that starts with `@` is read from that file. Write the chosen
+option and the question to those two files first, so the shell expands no
+backtick, `$` or quote in them.
+
+- it starts the comment with `**Owner decision (YYYY-MM-DD):**`;
+- it gives the chosen option and the question, and says the decision was
+  made in chat and recorded by a session;
 - `gh search issues --repo "$R" "Owner decision"` then finds it.
 
 Two exceptions:

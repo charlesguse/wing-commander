@@ -1,0 +1,17 @@
+{
+  "what": "a header part is one line",
+  "build": "proof",
+  "fields": {
+    "date": "2026-11-14",
+    "outcome": "proven",
+    "merge": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "run": "https://github.com/example/repo/actions/runs/43635697682",
+    "ran_on": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "step": "job\nstep",
+    "line": "l",
+    "not_exercised": "n"
+  },
+  "expect_refused": [
+    "step"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "what": "the owner's decision: what was chosen, the question, and who wrote it down",
+  "build": "decision",
+  "fields": {
+    "by": "owner",
+    "date": "2026-11-06",
+    "chosen": "option B, sync at the source",
+    "question": "Where should the label sync run: at the source, or in each consumer?"
+  },
+  "expect_body": [
+    "**Owner decision (2026-11-06):** option B, sync at the source",
+    "",
+    "**Question:** Where should the label sync run: at the source, or in each consumer?",
+    "",
+    "Decided in chat. Recorded by a Claude Code session."
+  ]
+}

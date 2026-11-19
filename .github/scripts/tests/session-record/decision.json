@@ -1,0 +1,20 @@
+{
+  "what": "what was chosen, the options, the evidence, the undo",
+  "build": "decision",
+  "fields": {
+    "date": "2026-11-14",
+    "chosen": "merged #1140 at `5677971` without asking",
+    "options": "merge as is; one more pass",
+    "evidence": "three passes; checks green on the head",
+    "undo": "revert `569b96c3`"
+  },
+  "expect_body": [
+    "**Session decision (2026-11-14):** merged #1140 at `5677971` without asking",
+    "",
+    "**Options considered:** merge as is; one more pass",
+    "",
+    "**Evidence:** three passes; checks green on the head",
+    "",
+    "**Undo:** revert `569b96c3`"
+  ]
+}
