@@ -387,7 +387,8 @@ def pr_cites_line(body, issue, line_id):
     return pr_line(body) == (int(issue), line_id)
 
 
-ISSUE_REFERENCE_RE = re.compile(r"^Board item: #(\d+)$", re.M)
+# `\r?`: a body edited on github.com comes back with CRLF line ends.
+ISSUE_REFERENCE_RE = re.compile(r"^Board item: #(\d+)\r?$", re.M)
 LEGACY_FIXES_RE = re.compile(r"(?i)\bfixes #(\d+)")
 
 

@@ -43,7 +43,9 @@ empty. Unchanged from spec 057.
 2. Else (no marker, or marker names no pr):
      gh api repos/:owner/:repo/issues -X GET --paginate \
        -f state=open -f labels=board:owned --jq '{number, body}' \
-     | filter in code: body matches /(?:Fixes|fixes) #<issue_number>\b/
+     | filter in code: board_backlog_lines.pr_issue(body) == <issue_number>
+       (`Board item: #<issue_number>`, or an older PR's `Fixes #<issue_number>`;
+       a line item's PR is matched by pr_cites_line() instead)
    -- at most the small set of currently-open loop-owned PRs; the citation
    check is what stops an unrelated loop-owned PR (there should never be
    more than one, but this is what makes that structural) from being

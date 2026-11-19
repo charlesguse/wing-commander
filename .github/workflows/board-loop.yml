@@ -1353,9 +1353,10 @@ jobs:
             if [ -n "${BOARD_LINE_ID:-}" ]; then
               fallback_number="$(BOARD_OWNED_PRS="$RUNNER_TEMP/board-owned-prs.json" python3 -c 'import json, os, sys; sys.path.insert(0, ".github/scripts"); from board_backlog_lines import pr_cites_line; prs = json.load(open(os.environ["BOARD_OWNED_PRS"], encoding="utf-8")); print(next((str(p["number"]) for p in prs if pr_cites_line(p.get("body"), int(os.environ["ISSUE_NUMBER"]), os.environ["BOARD_LINE_ID"])), ""))')"
             else
-              fallback_number="$(jq -r --arg n "$ISSUE_NUMBER" \
-                  '[.[] | select((.body // "") | test("(?:Fixes|fixes) #" + $n + "\\b"))] | (.[0].number // empty)' \
-                  "$RUNNER_TEMP/board-owned-prs.json")"
+              # #889: an issue-born PR names its issue as `Board item: #N`
+              # (an older PR as `Fixes #N`); board_backlog_lines.pr_issue()
+              # is the one reader.
+              fallback_number="$(BOARD_OWNED_PRS="$RUNNER_TEMP/board-owned-prs.json" python3 -c 'import json, os, sys; sys.path.insert(0, ".github/scripts"); from board_backlog_lines import pr_issue; prs = json.load(open(os.environ["BOARD_OWNED_PRS"], encoding="utf-8")); print(next((str(p["number"]) for p in prs if pr_issue(p.get("body")) == int(os.environ["ISSUE_NUMBER"])), ""))')"
             fi
             if [ -n "$fallback_number" ]; then
               pr_number="$fallback_number"

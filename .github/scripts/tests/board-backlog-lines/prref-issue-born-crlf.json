@@ -1,0 +1,6 @@
+{
+  "op": "pr-ref",
+  "pr_body": "Board item: #12\r\n\r\nMerging this closes no issue (a body edited on github.com comes back with CRLF line ends).",
+  "expect": null,
+  "expect_issue": 12
+}
