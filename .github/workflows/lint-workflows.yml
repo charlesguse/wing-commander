@@ -4772,6 +4772,17 @@ jobs:
       - name: Gate 168 — stranded-review migration decisions (specs/123)
         if: "!cancelled()"
         run: python3 .github/scripts/verify-migrate-stranded-review-lifecycles.py
+      # Gate 170 — #1127/#1128: every external action pin has its runtime
+      # recorded in action-runtime-pins.json, and none targets node20 or
+      # older unless action-runtime-waivers.json waives it with an open
+      # issue. #1128 first bumped download-artifact to @v6, which still
+      # declares node20; nothing read an action's runtime until this gate.
+      - name: Gate 170 — no external action pin targets a deprecated Node.js runtime unwaived
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-action-runtime-pins.py
+      - name: Gate 170 self-test — an unwaived node20 pin, a pin with no row, a stale row, stale waivers and malformed registers each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-action-runtime-pins.py --self-test
       # Gate 165 — specs/116-review-convergence-analyze. It keeps the review
       # loops' convergence arithmetic and thresholds in wc_convergence.py
       # alone (FR-010, FR-018, FR-019); its fixtures run the rules, the

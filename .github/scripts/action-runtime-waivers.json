@@ -1,0 +1,39 @@
+{
+  "$comment": [
+    "Registered exceptions to Gate 170's rule that no external action pin",
+    "targets a deprecated Node.js runtime (node20 or older), enforced by",
+    ".github/scripts/verify-action-runtime-pins.py at pull-request time.",
+    "",
+    "GitHub's runners force such an action onto Node.js 24 and annotate the",
+    "run with \"Node.js 20 is deprecated\", which the watchdog files as",
+    "`deprecated-action-runtime` (#1127). The fallback is temporary; once",
+    "runners drop it, these steps fail.",
+    "",
+    "Every entry is STALE-CHECKED: a waiver for a pin that is no longer in",
+    "use, or whose runtime in action-runtime-pins.json is not deprecated,",
+    "fails the gate, so a waiver cannot outlive the bump it waits for. Each",
+    "cites the open issue that tracks the bump (Gate 124)."
+  ],
+  "waivers": [
+    {
+      "uses": "actions/checkout@v4",
+      "issue": "#889",
+      "reason": "migrate-stranded-review-lifecycles.yml's one checkout; every other checkout is @v5 (node24). Found by the code review of #1128; tracked as a line on the Maintenance backlog #889."
+    },
+    {
+      "uses": "aws-actions/configure-aws-credentials@v4",
+      "issue": "#889",
+      "reason": "v4 declares node20. Found by the code review of #1128; tracked as a line on the Maintenance backlog #889."
+    },
+    {
+      "uses": "docker/build-push-action@v6",
+      "issue": "#889",
+      "reason": "v6 declares node20. Found by the code review of #1128; tracked as a line on the Maintenance backlog #889."
+    },
+    {
+      "uses": "docker/login-action@v3",
+      "issue": "#889",
+      "reason": "v3 declares node20. Found by the code review of #1128; tracked as a line on the Maintenance backlog #889."
+    }
+  ]
+}

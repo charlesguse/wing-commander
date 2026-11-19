@@ -1,0 +1,31 @@
+{
+  "$comment": [
+    "The runtime each external action pin in .github/workflows/*.yml and",
+    ".github/actions/**/action.yml declares: the `runs.using` value of the",
+    "action's own action.yml at that ref. Read by",
+    ".github/scripts/verify-action-runtime-pins.py (Gate 170).",
+    "",
+    "Read each value from the action itself, never from a release title:",
+    "  gh api \"repos/<owner>/<repo>/contents/action.yml?ref=<ref>\" --jq .content | base64 -d",
+    "#1128 bumped actions/download-artifact to @v6 on the belief that v6",
+    "ran on Node.js 24; its action.yml still said node20 (v7 is the first",
+    "node24 tag). `verify-action-runtime-pins.py --check-remote` re-reads",
+    "every entry from GitHub and fails on a wrong one.",
+    "",
+    "Every pin in use must have an entry, and every entry must be in use",
+    "(both directions are checked), so a new pin cannot land unread and a",
+    "removed pin cannot leave a stale row behind."
+  ],
+  "pins": {
+    "actions/checkout@v4": "node20",
+    "actions/checkout@v5": "node24",
+    "actions/create-github-app-token@v3": "node24",
+    "actions/download-artifact@v7": "node24",
+    "actions/upload-artifact@v6": "node24",
+    "anthropics/claude-code-action@v1": "composite",
+    "astral-sh/setup-uv@v10.0.0": "node24",
+    "aws-actions/configure-aws-credentials@v4": "node20",
+    "docker/build-push-action@v6": "node20",
+    "docker/login-action@v3": "node20"
+  }
+}

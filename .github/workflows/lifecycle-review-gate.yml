@@ -1181,7 +1181,7 @@ jobs:
         if: >-
           steps.lifecycle-gate.outputs.is-open == 'true'
           && (needs.review.outputs.in-scope-count != '0' || needs.review.outputs.out-of-scope-count != '0')
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: lifecycle-review-findings
           path: ${{ runner.temp }}/lifecycle-review-findings-artifact

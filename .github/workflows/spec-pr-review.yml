@@ -867,7 +867,7 @@ jobs:
       - name: Download the round's artifacts
         if: needs.review.result != 'skipped'
         continue-on-error: true
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: spec-pr-review-round
           path: ${{ runner.temp }}/round
