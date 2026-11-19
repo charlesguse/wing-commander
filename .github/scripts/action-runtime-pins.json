@@ -1,7 +1,7 @@
 {
   "$comment": [
     "The runtime each external action pin in .github/workflows/*.yml and",
-    ".github/actions/*/action.yml declares: the `runs.using` value of the",
+    ".github/actions/**/action.yml declares: the `runs.using` value of the",
     "action's own action.yml at that ref. Read by",
     ".github/scripts/verify-action-runtime-pins.py (Gate 170).",
     "",

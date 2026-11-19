@@ -15,7 +15,7 @@ in the gate suite could have, because no gate read an action's runtime.
 THE RULE
 --------
 Every external action a step `uses:` in .github/workflows/*.yml or
-.github/actions/*/action.yml (local `./` actions, `docker://` images and
+.github/actions/**/action.yml (local `./` actions, `docker://` images and
 reusable-workflow calls are not action pins) is looked up in
 .github/scripts/action-runtime-pins.json, the committed record of what
 `runs.using` that action's own action.yml declares at that ref:
