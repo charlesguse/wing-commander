@@ -455,10 +455,21 @@ def _unfence(text):
     return (text or "").replace("```", "``\u200b`")
 
 
-def prove_disposition(snapshot):
+def prove_disposition(snapshot, klass=None):
     """What follows a merge, in the words of the announcement. The classifier
     is board_prove.actions_only() -- the one prove-gate/prove use -- never a
-    second rule here (research D8)."""
+    second rule here (research D8).
+
+    A bump never reaches prove: prove-gate enters prove only for a
+    board:owned PR whose body names a board item, and a Spec Kit bump PR is
+    neither, so its announcement says no re-drive follows rather than
+    promising one (#889: the four bumps merged before this said one
+    follows, and on each the closed-PR run skipped prove). Whether a bump
+    should get a proof run of its own is spend, and the owner's call."""
+    if klass == "bump":
+        return ("no proof re-drive follows (bump class): prove-gate enters prove only for the board "
+                "loop's own fix PR, and the evidence on record for this head is its verification run "
+                "(verification_passed_at_head above)")
     paths = [(f or {}).get("path") for f in snapshot.get("files") or [] if (f or {}).get("path")]
     only, reason = actions_only(paths)
     if only:
@@ -478,7 +489,7 @@ def render_announcement(decision, outcome, snapshot=None, merge_sha=None, refusa
     if outcome == "merged":
         text = ("Merged ({0} class) at head_sha {1}; squash commit {2}.\n\nConditions: {3}.\n\n"
                 "Proof: {4}.".format(klass, head, merge_sha or "(not yet reported by GitHub)", results,
-                                     prove_disposition(snapshot or {})))
+                                     prove_disposition(snapshot or {}, klass)))
     elif outcome == "refused":
         text = ("GitHub refused the merge of head_sha {0} ({1} class), refusal_class {2}:\n\n```\n{3}\n```\n\n"
                 "Nothing reached main by another route; handed to a maintainer.".format(

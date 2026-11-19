@@ -808,6 +808,36 @@ def check_auto_update():
         ok("auto-update stage posts the verification record and never merges")
 
 
+def check_merged_proof_disposition():
+    """#889: prove-gate enters prove only for the board loop's own fix PR,
+    so a merged bump's announcement must not promise a re-drive. On all four
+    bumps merged before this (#1089, #1109, #1124, #1136) it said "a proof
+    re-drive follows the merge" and the closed-PR run skipped prove. A fix
+    PR's disposition is still board_prove.actions_only()'s."""
+    bot = "wing-commander[bot]"
+    snap = _bump_snapshot(10, "2026-10-10T00:00:00Z", "iii0", [_verified("iii0", 60)])
+    decision = board_merge.decide({"class": "bump", "snapshot": snap, "bot_login": bot,
+                                   "paused": False, "switch_on": True})
+    text = board_merge.render_announcement(decision, "merged", snap, merge_sha="mmm0")
+    proof = next((line for line in text.splitlines() if line.startswith("Proof: ")), "")
+    if "re-drive follows the merge" in proof or "no proof re-drive follows" not in proof:
+        fail("a merged bump's announcement promises a proof re-drive prove never runs: {0!r}".format(proof))
+    elif "not needed" in proof:
+        fail("a merged bump's announcement says a proof is not needed, a decision nobody made: {0!r}".format(proof))
+    else:
+        ok("a merged bump's announcement says no proof re-drive follows")
+    fix = dict(decision, **{"class": "fix"})
+    for files, want in (([{"path": ".github/workflows/x.yml"}], "a proof re-drive follows the merge"),
+                        ([{"path": "docs/x.md"}], "no proof re-drive is needed")):
+        line = next((l for l in board_merge.render_announcement(fix, "merged", dict(snap, files=files),
+                                                                 merge_sha="mmm0").splitlines()
+                     if l.startswith("Proof: ")), "")
+        if want not in line:
+            fail("a merged fix PR touching {0} is announced {1!r}, want {2!r}".format(files[0]["path"], line, want))
+        else:
+            ok("a merged fix PR touching {0} keeps the actions_only() disposition".format(files[0]["path"]))
+
+
 def main():
     if not os.path.isdir(FIXTURES_DIR):
         fail("fixtures directory {0} does not exist".format(FIXTURES_DIR))
@@ -826,6 +856,7 @@ def main():
     check_pass2_findings()
     check_stalled_tracking_issue()
     check_889_findings()
+    check_merged_proof_disposition()
     check_auto_update()
     print("verify-board-merge: {0} failure(s).".format(failures))
     return 1 if failures else 0

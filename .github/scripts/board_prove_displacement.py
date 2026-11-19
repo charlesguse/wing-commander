@@ -46,7 +46,7 @@ def find_undetected_merges(merged_prs, issues_by_number, bot_login,
 
     `merged_prs`: `[{"issue": int, "pr": int, "merged_at": iso8601 str,
     "head_ref": str}, ...]` -- the repo's recently-merged, loop-labeled fix
-    PRs (the same `Fixes #N` + board-item-marker convention `prove-gate`
+    PRs (the same board_backlog_lines.pr_issue() + board-item-marker convention `prove-gate`
     already reads), one row per issue's own most recent merge (the
     caller's own job to pre-filter to that, never this function's).
 

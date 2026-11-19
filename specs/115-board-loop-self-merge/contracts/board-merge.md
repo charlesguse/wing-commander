@@ -39,7 +39,7 @@ The job never exists on the switch-off path. The readiness report and marker sta
 
 Fix PR: posted on the PR and the resolved issue. Bump: posted on the PR and the `auto-update:tracking` issue.
 
-- **Merged**: head SHA, class, every condition's result, and the prove disposition (re-drive pending, or why not needed).
+- **Merged**: head SHA, class, every condition's result, and the prove disposition (re-drive pending, or why not needed). A bump never enters prove, so its disposition says no re-drive follows and points at the verification run (#889).
 - **Refused**: head SHA, `refusal_class`, GitHub's stderr quoted, and the sentence "handed to a maintainer".
 - **Transient**: head SHA, the class, GitHub's stderr quoted, and that it is not handed over as refused.
 - **Not merged**: the failed condition's name. A PR merged by someone else, or at another head, is announced as merged elsewhere (`merged_elsewhere`), never as "Not merged".

@@ -5,5 +5,6 @@
     889,
     "bl-0a1b2c3d"
   ],
-  "text": "Fix #747's flaky gate; closes owner/repo#3 and GH-9"
+  "text": "Fix #747's flaky gate; closes owner/repo#3 and GH-9",
+  "expect_issue": null
 }

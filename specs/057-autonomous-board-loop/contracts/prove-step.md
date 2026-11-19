@@ -8,6 +8,15 @@ cites an issue this loop selected (contracts/board-item-marker.md) and
 recorded on the issue and the prove step is never entered (edge case,
 User Story 6 scenario 5).
 
+(#889) The fix job names the issue as `Board item: #N`
+(`board_backlog_lines.issue_pr()`), and neither the PR's title nor its
+body carries a closing keyword, so the merge leaves the issue open and
+prove closes it. With `Fixes #N`, GitHub closed the issue at the merge
+and prove's closed-issue stop check stood down on every issue-born
+merge. `board_backlog_lines.pr_issue()` still reads `Fixes #N` on a PR
+opened before that change; such a PR still closes its issue at the
+merge.
+
 (#557) The closing PR must also be this loop's own: `BOARD_PR_OWNED_JQ`
 (`board:owned`, head in this repository) applied to the event's
 `pull_request`. A PR that fails it is not a board item, so prove is not

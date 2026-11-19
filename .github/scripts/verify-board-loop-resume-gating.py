@@ -1804,6 +1804,16 @@ def _fetch_cases():
             return None
         return check
 
+    def names_issue(issue):
+        def check(rc, out, outputs, log, rt):
+            problem = ok_with("eligible", "true")(rc, out, outputs, log, rt)
+            if problem:
+                return problem
+            if outputs.get("issue-number") != issue:
+                return "expected issue-number={0}, got {1!r}".format(issue, outputs.get("issue-number"))
+            return None
+        return check
+
     pr_marker = {"STUB_COMMENTS": "{tmp}/comments-pr.jsonl", "STUB_PR": "{tmp}/pr-open-owned.json"}
 
     def lookup_failed(key):
@@ -1887,6 +1897,12 @@ def _fetch_cases():
         ("resume: marker PR 404 -> board:owned fallback adopted", "select", "resume",
          dict(pr_marker, ISSUE_NUMBER="7", STUB_PULLS="404", STUB_OWNED="{tmp}/owned-prs.jsonl"),
          None, "", ok_with("pr", "50")),
+        # #889: the fix job names the issue as `Board item: #N`, so the
+        # fallback reads that reference too, not only `Fixes #N`.
+        ("resume: marker PR 404 -> board:owned fallback adopts a `Board item: #7` PR", "select",
+         "resume", dict(pr_marker, ISSUE_NUMBER="7", STUB_PULLS="404",
+                        STUB_OWNED="{tmp}/owned-prs-board-item.jsonl"),
+         None, "", ok_with("pr", "51")),
         ("resume: marker PR 404, branch present (ls-remote 0) -> fix", "select", "resume",
          dict(pr_marker, ISSUE_NUMBER="7", STUB_PULLS="404", STUB_LS_REMOTE_RC="0"),
          None, "", ok_with("step", "fix")),
@@ -1904,6 +1920,16 @@ def _fetch_cases():
          ok_with("eligible", "true")),
         ("prove-gate: owned PR, comments fetch fails", "prove-gate", "gate", {}, owned, "502",
          failed_loudly("eligible", "true")),
+        # #889: the fix job names the issue by the non-closing reference, so
+        # GitHub leaves it open at the merge and prove can record a proof.
+        ("prove-gate: owned PR naming its issue as `Board item: #7` -> prove", "prove-gate", "gate",
+         {"PR_BODY": "Board item: #7\n\nMerging this closes no issue."}, owned, "",
+         names_issue("7")),
+        # #889: the reference is read by python; a read that fails fails the
+        # step with an ::error:: naming why, like the step's other reads (#557).
+        ("prove-gate: the board item reference cannot be read -> fails loudly", "prove-gate", "gate",
+         {"PR_BODY": "Board item: #7", "PYTHONHOME": "{tmp}/no-python-home"}, owned, "",
+         failed_loudly("eligible", "false")),
         ("prove-gate: merged PR without board:owned -> not a board item", "prove-gate", "gate", {},
          _pr_event(["bug"], _STUB_REPO), "", not_owned),
         ("prove-gate: board:owned PR from another repository -> not a board item", "prove-gate",
@@ -1959,6 +1985,8 @@ def fetch_behaviour_findings(doc):
                        "head": {"repo": {"full_name": _STUB_REPO}}}, fh)
         with open(os.path.join(tmp, "owned-prs.jsonl"), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(json.dumps({"number": 50, "body": "Fixes #7"}) + "\n")
+        with open(os.path.join(tmp, "owned-prs-board-item.jsonl"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps({"number": 51, "body": "Board item: #7\n\nMerging this closes no issue."}) + "\n")
         comments = os.path.join(tmp, "comments.jsonl")
         with open(comments, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(_marker_comment_line() + "\n")
