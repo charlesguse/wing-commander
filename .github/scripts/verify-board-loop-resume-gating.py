@@ -1919,8 +1919,8 @@ def _fetch_cases():
         ("prove-gate: owned PR naming its issue as `Board item: #7` -> prove", "prove-gate", "gate",
          {"PR_BODY": "Board item: #7\n\nMerging this closes no issue."}, owned, "",
          names_issue("7")),
-        # #889: the reference is read by python; a read that fails must fail
-        # the step, never fall through to "cites no issue" and drop prove.
+        # #889: the reference is read by python; a read that fails fails the
+        # step with an ::error:: naming why, like the step's other reads (#557).
         ("prove-gate: the board item reference cannot be read -> fails loudly", "prove-gate", "gate",
          {"PR_BODY": "Board item: #7", "PYTHONHOME": "{tmp}/no-python-home"}, owned, "",
          failed_loudly("eligible", "false")),

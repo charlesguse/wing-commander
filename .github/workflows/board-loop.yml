@@ -6630,8 +6630,8 @@ jobs:
             merged="$(jq -r '.merged' "$RUNNER_TEMP/board-prove-pr.json")"
           else
             # #889: `Board item: #N`, or an older PR's `Fixes #N`. A failed
-            # read fails the step: an empty result would read as "cites no
-            # issue" and drop this merge's prove without a word.
+            # read already fails the step (the runner's `bash -e`); this
+            # names why, as the other reads in this step do (#557).
             if ! issue_number="$(python3 -c 'import os, sys; sys.path.insert(0, ".github/scripts"); from board_backlog_lines import pr_issue; n = pr_issue(os.environ.get("PR_BODY")); print(n if n is not None else "")')"; then
               echo "::error::board-loop: could not read PR #$PR_NUMBER's board item reference -- its prove is not decided; re-run this job to retry (#889)."
               exit 1
