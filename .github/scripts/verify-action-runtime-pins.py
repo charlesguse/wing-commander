@@ -164,6 +164,7 @@ def evaluate(found, pins, waivers):
                 "remove the stale row.".format(PINS_PATH, pin))
 
     for pin, sites in sorted(found.items()):
+        sites = sorted(set(sites))
         runtime = pins.get(pin)
         if runtime is None:
             failures.append(
