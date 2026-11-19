@@ -274,23 +274,25 @@ jobs:
             exit 1
           fi
 
-          # One row per issue's own MOST RECENT merge -- the same `Fixes #N`
-          # convention prove-gate's own "Resolve the originating issue" step
-          # already reads.
+          # One row per issue's own MOST RECENT merge -- the same
+          # board_backlog_lines.pr_issue() reference prove-gate's own
+          # "Resolve the originating issue" step already reads.
           python3 - <<'PYEOF'
           import json
           import os
-          import re
+          import sys
+
+          sys.path.insert(0, ".github/scripts")
+          from board_backlog_lines import pr_issue
 
           with open(os.path.join(os.environ["RUNNER_TEMP"], "board-recent-merges.json"), encoding="utf-8") as fh:
               prs = json.load(fh)
 
           latest_by_issue = {}
           for pr in prs:
-              m = re.search(r"(?i)\bfixes #(\d+)", pr.get("body") or "")
-              if not m:
+              issue = pr_issue(pr.get("body"))
+              if issue is None:
                   continue
-              issue = int(m.group(1))
               merged_at = pr.get("mergedAt") or ""
               existing = latest_by_issue.get(issue)
               if existing is None or merged_at > existing["merged_at"]:
@@ -3705,9 +3707,13 @@ jobs:
             hits="$(jq -n --arg t "$pr_title" --arg b "$pr_body" '{op: "check-closing-keywords", title: $t, body: $b, commits: []}' | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_backlog_lines.py")"
             [ "$hits" = "[]" ] || { echo "::error::board-loop fix: the line PR's title or body carries a closing keyword ($hits) -- no PR is opened (specs/121 FR-017)."; exit 1; }
           else
+            # #889: no closing keyword in the title or body -- GitHub would
+            # close the issue at the merge, and prove would stand down on
+            # it. board_backlog_lines.issue_pr() is the one home.
             issue_title="$(gh issue view "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)"
-            pr_title="Fix #$ISSUE_NUMBER: $issue_title"
-            pr_body="$(printf 'Fixes #%s.\n\nOpened by board-loop.yml on branch %s (base %s).' "$ISSUE_NUMBER" "$BRANCH" "$BASE_SHA")"
+            issue_pr="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_backlog_lines.py" --issue-pr "$ISSUE_NUMBER" "$issue_title" "$BRANCH" "$BASE_SHA")"
+            pr_title="$(jq -r '.title' <<<"$issue_pr")"
+            pr_body="$(jq -r '.body' <<<"$issue_pr")"
           fi
           pr_url="$(gh pr create -R "$GITHUB_REPOSITORY" --title "$pr_title" --body "$pr_body" --head "$BRANCH" --base main --label board:owned)"
           pr_number="${pr_url##*/}"
@@ -4147,7 +4153,7 @@ jobs:
       # reviewer's in-scope findings drive review-fixup, which commits.
       # Only the PR's title and body are staged, and neither admits text
       # the issue-context trust filter would drop: the fixer titles the PR
-      # `Fix #N: <issue title>`, and the issue's own title and body are in
+      # `Fix board item #N: <issue title>`, and the issue's own title and body are in
       # the context file already (its author is trusted there); anyone who
       # can edit the PR's title or body afterwards has write access, i.e.
       # is a COLLABORATOR, whom that filter also trusts. The PR
@@ -6585,7 +6591,8 @@ jobs:
 
       # The PR body is untrusted content (FR-055/FR-056) -- it reaches this
       # step only through an env var and is only ever pattern-matched for
-      # the `Fixes #N` the fix job itself wrote, never interpreted. Citing
+      # the `Board item: #N` reference the fix job itself wrote (or an
+      # older PR's `Fixes #N`), never interpreted. Citing
       # an issue is not sufficient on its own: the issue must also carry
       # this loop's own board-item marker (contracts/board-item-marker.md),
       # so an unrelated human PR that happens to say "Fixes #12" can never
@@ -6622,11 +6629,13 @@ jobs:
             fi
             merged="$(jq -r '.merged' "$RUNNER_TEMP/board-prove-pr.json")"
           else
-            issue_number="$(python3 -c "
-          import os, re
-          m = re.search(r'(?i)\bfixes #(\d+)', os.environ.get('PR_BODY') or '')
-          print(m.group(1) if m else '')
-          ")"
+            # #889: `Board item: #N`, or an older PR's `Fixes #N`. A failed
+            # read fails the step: an empty result would read as "cites no
+            # issue" and drop this merge's prove without a word.
+            if ! issue_number="$(python3 -c 'import os, sys; sys.path.insert(0, ".github/scripts"); from board_backlog_lines import pr_issue; n = pr_issue(os.environ.get("PR_BODY")); print(n if n is not None else "")')"; then
+              echo "::error::board-loop: could not read PR #$PR_NUMBER's board item reference -- its prove is not decided; re-run this job to retry (#889)."
+              exit 1
+            fi
             # specs/121 FR-021: a line-born PR names its item by the
             # non-closing backlog reference, never `Fixes #N`.
             line_ref="$(python3 -c 'import os, sys; sys.path.insert(0, ".github/scripts"); from board_backlog_lines import pr_line; r = pr_line(os.environ.get("PR_BODY")); print("{0} {1}".format(*r) if r else "")')"

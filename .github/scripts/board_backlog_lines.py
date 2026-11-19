@@ -387,6 +387,37 @@ def pr_cites_line(body, issue, line_id):
     return pr_line(body) == (int(issue), line_id)
 
 
+ISSUE_REFERENCE_RE = re.compile(r"^Board item: #(\d+)$", re.M)
+LEGACY_FIXES_RE = re.compile(r"(?i)\bfixes #(\d+)")
+
+
+def issue_pr(issue, title, branch, base_sha):
+    """An issue-born fix PR's (title, body). Neither carries a closing
+    keyword (#889): with `Fix #N: ...` as the title and `Fixes #N.` in the
+    body, GitHub closed the issue at the merge, before prove ran, and
+    prove's stop check read the closed issue as a maintainer's stop, so no
+    issue-born merge was ever proven. The body names the item by the
+    non-closing `Board item: #N` reference pr_issue() reads; prove closes
+    the issue once the merge is proven, as contracts/prove-step.md says.
+    The title goes through title_for(), which defangs any `#N` in the
+    issue's own title, because under this repository's squash setting
+    (COMMIT_OR_PR_TITLE) the PR title can become main's commit title."""
+    body = ("Board item: #{0}\n\nMerging this closes no issue: the board loop's prove step closes the "
+            "issue once the merge is proven, or records on it why it could not.\n\n"
+            "Opened by board-loop.yml on branch {1} (base {2}).".format(issue, branch, base_sha))
+    return title_for(title, "Fix board item #{0}: ".format(issue)), body
+
+
+def pr_issue(body):
+    """The issue an issue-born fix PR's body names, or None: the
+    `Board item: #N` reference issue_pr() writes, else the `Fixes #N` that
+    PRs opened before #889's fix carry (those still close their issue at
+    the merge, so their prove still stands down). A line-born body names
+    its item by pr_line() instead."""
+    match = ISSUE_REFERENCE_RE.search(body or "") or LEGACY_FIXES_RE.search(body or "")
+    return int(match.group(1)) if match else None
+
+
 def pr_body(issue, line_id, text, branch, base_sha):
     """A line-born fix PR's body: the reference, the line text rendered so
     it carries no closing keyword, and nothing that closes an issue."""
@@ -626,6 +657,13 @@ def main():
         if line is None:
             sys.exit(3)
         sys.stdout.write(pr_body(int(issue), line_id, line["text"], branch, base_sha))
+        return
+    if sys.argv[1:2] == ["--issue-pr"]:
+        # `--issue-pr ISSUE TITLE BRANCH BASE_SHA`: JSON {"title", "body"}
+        # of an issue-born fix PR (#889).
+        _flag, issue, title, branch, base_sha = sys.argv[1:6]
+        pr_title, body = issue_pr(int(issue), title, branch, base_sha)
+        print(json.dumps({"title": pr_title, "body": body}))
         return
     if sys.argv[1:2] == ["--line-title"]:
         # The title a site copies from the item issue's title, taken from

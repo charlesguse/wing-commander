@@ -1,5 +1,6 @@
 {
   "op": "pr-ref",
   "pr_body": "Fixes #12.\n\nOpened by board-loop.yml",
-  "expect": null
+  "expect": null,
+  "expect_issue": 12
 }

@@ -50,7 +50,8 @@ until the PR is positively known to be CLOSED or MERGED
 that, resume sends the still-open issue to a fresh `triage`
 (specs/061-marker-owned-in-flight/contracts/resume-recovery.md). A human
 merge still reaches `prove` through `pull_request: closed`, which reads
-the PR body's `Fixes #N` and the marker's presence, never its step.
+the PR body's `Board item: #N` reference (`Fixes #N` on a PR opened
+before #889's fix) and the marker's presence, never its step.
 Known limit: a push to the PR head after the ready report does not bring
 the item back to readiness.
 

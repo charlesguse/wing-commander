@@ -1,0 +1,7 @@
+{
+  "op": "pr-ref",
+  "pr_body": "Board item: #12\n\nMerging this closes no issue: the board loop's prove step closes the issue once the merge is proven, or records on it why it could not.\n\nOpened by board-loop.yml on branch fix/12-thing (base abc).",
+  "expect": null,
+  "expect_issue": 12,
+  "issue_title": "Fixes #747 regression; closes owner/repo#3, resolves GH-9 and https://github.com/o/r/issues/4"
+}

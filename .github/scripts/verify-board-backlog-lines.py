@@ -248,6 +248,28 @@ def run_pr_ref(case):
             errors.append("pr_body carries a closing keyword: {0!r}".format(body))
         if bbl.pr_line(body) != (889, "bl-0a1b2c3d"):
             errors.append("pr_body does not name its line: {0!r}".format(body))
+    # #889: an issue-born PR names its issue by the non-closing `Board item:
+    # #N` reference (an older PR's `Fixes #N` is still read), and neither its
+    # title nor its body closes an issue at the merge, so prove runs on an
+    # open issue instead of standing down on one GitHub just closed.
+    if "expect_issue" in case:
+        issue_fn = getattr(bbl, "pr_issue", None)
+        if issue_fn is None:
+            errors.append("no pr_issue()")
+        elif issue_fn(case["pr_body"]) != case["expect_issue"]:
+            errors.append("pr_issue: got {0!r}, want {1!r}".format(issue_fn(case["pr_body"]),
+                                                                   case["expect_issue"]))
+    if "issue_title" in case:
+        render = getattr(bbl, "issue_pr", None)
+        if render is None:
+            errors.append("no issue_pr()")
+        else:
+            title, body = render(12, case["issue_title"], "fix/12-thing", "abc")
+            hits = bbl.closing_keyword_hits(title, body, [])
+            if hits:
+                errors.append("issue_pr carries a closing keyword {0!r}: {1!r} / {2!r}".format(hits, title, body))
+            if getattr(bbl, "pr_issue", lambda _b: None)(body) != 12 or bbl.pr_line(body) is not None:
+                errors.append("issue_pr's body does not name issue #12 alone: {0!r}".format(body))
     return "; ".join(errors) or None
 
 
@@ -445,6 +467,8 @@ BOARD_LOOP = os.path.join(os.path.dirname(HERE), "workflows", "board-loop.yml")
 LINE_JOB_ENV = "${{ needs.select.outputs.line-id }}"
 LINE_JOBS = ("triage", "route", "fix-agent", "fix", "review", "review-fixup-publish", "readiness", "merge")
 LINE_GUARD = 'if [ -n "${BOARD_LINE_ID:-}" ]'
+# A closing keyword followed by a shell- or printf-rendered issue number.
+INLINE_CLOSING_RE = re.compile(r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[:\s]+#(?:\$|%s|%d|\{)")
 
 
 def unguarded_closes(run_text):
@@ -510,8 +534,14 @@ def board_loop_wiring(path=BOARD_LOOP):
                         helper in code for helper in ("board_item_marker.py", "board_workflow_scope_hold.py", "stall_args=")):
                     errors.append("{0} labels board:stalled outside the line-aware stall rule: {1}".format(
                         where, line.strip()))
-                if '"Fix #$ISSUE_NUMBER: ' in code and LINE_GUARD not in run:
-                    errors.append("{0} titles a PR from the item issue with no line branch".format(where))
+                # #889: an issue-born PR's title and body come from
+                # board_backlog_lines.issue_pr(); a closing keyword written
+                # into a run block (`Fix #$ISSUE_NUMBER: `, `Fixes #%s.`)
+                # closes the issue at the merge and prove stands down on it.
+                # Matched on the whole line: `code` above is cut at " #".
+                if not line.strip().startswith("#") and INLINE_CLOSING_RE.search(line):
+                    errors.append("{0} writes a closing keyword into a PR it opens: {1}".format(
+                        where, line.strip()))
             uses = step.get("uses") or ""
             with_ = step.get("with") or {}
             if (uses.endswith("wing-commander-issue-context")

@@ -1804,6 +1804,16 @@ def _fetch_cases():
             return None
         return check
 
+    def names_issue(issue):
+        def check(rc, out, outputs, log, rt):
+            problem = ok_with("eligible", "true")(rc, out, outputs, log, rt)
+            if problem:
+                return problem
+            if outputs.get("issue-number") != issue:
+                return "expected issue-number={0}, got {1!r}".format(issue, outputs.get("issue-number"))
+            return None
+        return check
+
     pr_marker = {"STUB_COMMENTS": "{tmp}/comments-pr.jsonl", "STUB_PR": "{tmp}/pr-open-owned.json"}
 
     def lookup_failed(key):
@@ -1904,6 +1914,16 @@ def _fetch_cases():
          ok_with("eligible", "true")),
         ("prove-gate: owned PR, comments fetch fails", "prove-gate", "gate", {}, owned, "502",
          failed_loudly("eligible", "true")),
+        # #889: the fix job names the issue by the non-closing reference, so
+        # GitHub leaves it open at the merge and prove can record a proof.
+        ("prove-gate: owned PR naming its issue as `Board item: #7` -> prove", "prove-gate", "gate",
+         {"PR_BODY": "Board item: #7\n\nMerging this closes no issue."}, owned, "",
+         names_issue("7")),
+        # #889: the reference is read by python; a read that fails must fail
+        # the step, never fall through to "cites no issue" and drop prove.
+        ("prove-gate: the board item reference cannot be read -> fails loudly", "prove-gate", "gate",
+         {"PR_BODY": "Board item: #7", "PYTHONHOME": "{tmp}/no-python-home"}, owned, "",
+         failed_loudly("eligible", "false")),
         ("prove-gate: merged PR without board:owned -> not a board item", "prove-gate", "gate", {},
          _pr_event(["bug"], _STUB_REPO), "", not_owned),
         ("prove-gate: board:owned PR from another repository -> not a board item", "prove-gate",
