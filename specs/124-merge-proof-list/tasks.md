@@ -198,3 +198,10 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
   - .github/scripts/verify-proof-list.py
 
   Detail: Define once and import.
+
+## Maintainer Feedback
+
+- [ ] R1-a Take `<slug>` from `headRefName` (`spec/<slug>`) in `Collector.lifecycle_issue()` in `wc_proof_list.py`, using the `gh pr view` call the collector already makes.
+- [ ] R1-b Read only `specs/<slug>/spec-meta.json` in the merge commit's tree and cross-check `.issue` against the title's `(#N)`.
+- [ ] R1-c Add a fixture where a final PR touches two spec directories and only its own spec's issue is used.
+- [ ] R1-d Add a fixture where its own spec's issue really disagrees with the title, which must fail.
