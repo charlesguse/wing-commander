@@ -1,0 +1,50 @@
+{
+  "repository": "own/repo",
+  "window": {"start": "2026-10-11T00:00:00Z", "end": "2026-11-10T12:00:00Z"},
+  "base_entry": {"sha": "e1", "merged_at": "2026-11-01T00:00:00Z", "pr": 10,
+                 "named_issues": [{"number": 100, "how": "closes"}],
+                 "changed_paths": [".github/workflows/x.yml"],
+                 "reaching": [{"path": ".github/workflows/wrap.yml", "reached_via": "scan", "runs_of_its_own": true}]},
+  "base_run": {"run_id": 1, "run_started_at": "2026-11-02T00:00:00Z", "contains": ["e1"], "resolvable": true},
+  "base_comment": {"comment_id": 1, "account": "owner", "account_type": "User", "posted_at": "2026-11-03T00:00:00Z",
+                   "marker_step": "none", "place": {"kind": "pr", "number": 10},
+                   "body": "Proven by https://github.com/own/repo/actions/runs/500 for #10"},
+  "base_named": {"kind": "found", "run_id": 500, "run_started_at": "2026-11-02T12:00:00Z", "contains": ["e1"], "resolvable": true},
+  "cases": [
+    {"label": "docs-only paths need no run", "entry": {"changed_paths": ["docs/a.md", "specs/1/spec.md"]}, "expect": 1},
+    {"label": "empty paths need no run", "entry": {"changed_paths": []}, "expect": 1},
+    {"label": "docs mixed with a gate script is not state 1", "entry": {"changed_paths": ["docs/a.md", ".github/scripts/verify-x.py", ".github/scripts/b.py"]}, "expect": 4},
+    {"label": "nothing reaches it", "entry": {"reaching": []}, "expect": 3},
+    {"label": "reached, no run", "expect": 4},
+    {"label": "reached, a run on a containing commit, no record", "runs": true, "expect": 5},
+    {"label": "a run on a commit that lacks the merge does not count", "runs": true, "run": {"contains": []}, "expect": 4},
+    {"label": "a reusable-only workflow has no runs of its own", "runs": true, "entry": {"reaching": [{"path": ".github/workflows/wrap.yml", "reached_via": "scan", "runs_of_its_own": false}]}, "expect": 4},
+    {"label": "a record comment moves it to state 2", "runs": true, "comment": {}, "named": {}, "expect": 2},
+    {"label": "state 2 beats state 3 and 4", "entry": {"reaching": []}, "comment": {}, "named": {}, "expect": 2},
+    {"label": "the prove step marker never counts", "runs": true, "comment": {"marker_step": "other"}, "named": {}, "expect": 5},
+    {"label": "the proven marker counts even from a bot", "comment": {"marker_step": "proven", "account_type": "Bot", "account": "app[bot]"}, "named": {}, "expect": 2},
+    {"label": "an unmarked github-actions bot notice never counts", "runs": true, "comment": {"account_type": "Bot", "account": "github-actions[bot]"}, "named": {}, "expect": 5},
+    {"label": "a comment before the merge never counts", "runs": true, "comment": {"posted_at": "2026-10-31T00:00:00Z"}, "named": {}, "expect": 5},
+    {"label": "a named run started before the merge never counts", "runs": true, "comment": {}, "named": {"run_started_at": "2026-10-30T00:00:00Z"}, "expect": 5},
+    {"label": "a named run whose head lacks the merge never counts", "runs": true, "comment": {}, "named": {"contains": []}, "expect": 5},
+    {"label": "a comment naming a run of another repository never counts", "runs": true, "comment": {"body": "https://github.com/other/repo/actions/runs/500 #10"}, "named": {}, "expect": 5},
+    {"label": "a comment on a job link of this repository counts", "comment": {"body": "https://github.com/own/repo/actions/runs/500/job/9 #10"}, "named": {}, "expect": 2},
+    {"label": "a comment on an unrelated place never counts", "runs": true, "comment": {"place": {"kind": "pr", "number": 99}}, "named": {}, "expect": 5},
+    {"label": "an issue comment counts when only this entry names the issue", "comment": {"place": {"kind": "issue", "number": 100}}, "named": {}, "expect": 2},
+    {"label": "a comment that is not an issue of the entry does not count", "comment": {"place": {"kind": "issue", "number": 101}}, "named": {}, "expect": 4}
+  ],
+  "shared_cases": [
+    {"label": "shared issue, comment names no PR", "body": "see https://github.com/own/repo/actions/runs/500", "expect": {"e1": 4, "e2": 4}},
+    {"label": "shared issue, comment names the PR", "body": "for #10: https://github.com/own/repo/actions/runs/500", "expect": {"e1": 2, "e2": 4}},
+    {"label": "shared issue, a longer number is not the PR", "body": "for #101: https://github.com/own/repo/actions/runs/500", "expect": {"e1": 4, "e2": 4}},
+    {"label": "shared issue, the PR URL counts", "body": "https://github.com/own/repo/pull/10 https://github.com/own/repo/actions/runs/500", "expect": {"e1": 2, "e2": 4}}
+  ],
+  "set_apart_cases": [
+    {"label": "an unresolvable run after the merge", "runs": [{"run_id": 7, "run_started_at": "2026-11-05T00:00:00Z", "contains": [], "resolvable": false}], "expect": 1},
+    {"label": "an unresolvable run before every merge is not set apart", "runs": [{"run_id": 7, "run_started_at": "2026-10-05T00:00:00Z", "contains": [], "resolvable": false}], "expect": 0},
+    {"label": "a foreign run named by a qualifying comment", "comment": {"body": "https://github.com/other/repo/actions/runs/9 #10"}, "expect": 1},
+    {"label": "a run named twice is counted once", "comment": {"body": "https://github.com/other/repo/actions/runs/9 and /job/3 https://github.com/other/repo/actions/runs/9/job/3 #10"}, "expect": 1},
+    {"label": "a foreign run named before the merge is not set apart", "comment": {"posted_at": "2026-10-31T00:00:00Z", "body": "https://github.com/other/repo/actions/runs/9 #10"}, "expect": 0},
+    {"label": "a run that is merely not counted is not set apart", "runs": [{"run_id": 8, "run_started_at": "2026-11-05T00:00:00Z", "contains": [], "resolvable": true}], "expect": 0}
+  ]
+}
