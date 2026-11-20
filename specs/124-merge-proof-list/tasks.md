@@ -205,3 +205,9 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
 - [ ] R1-b Read only `specs/<slug>/spec-meta.json` in the merge commit's tree and cross-check `.issue` against the title's `(#N)`.
 - [ ] R1-c Add a fixture where a final PR touches two spec directories and only its own spec's issue is used.
 - [ ] R1-d Add a fixture where its own spec's issue really disagrees with the title, which must fail.
+
+## Maintainer Feedback
+
+- [ ] R2-a Convert to UTC (`astimezone(datetime.timezone.utc)`) before formatting in `Collector.entries` and every other place a time is serialised.
+- [ ] R2-b Normalise to UTC in `parse_time` and `window_for`.
+- [ ] R2-c Add a fixture with a `-05:00` commit and a comment posted between the local and the UTC merge time, which must not count.
