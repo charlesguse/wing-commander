@@ -218,6 +218,10 @@ def check_failed_reads():
          pl.ReadError),
         ("runs past the cap in one day", [("*workflows/wrap.yml/runs*", '{"total_count": 2000}')],
          lambda c: c.workflow_runs(".github/workflows/wrap.yml"), pl.ReadError),
+        ("a deleted workflow's fallback list past the cap",
+         [("*workflows/wrap.yml/runs*", ("404", "Not Found")),
+          ("*actions/runs?*", '{"total_count": 2000}')],
+         lambda c: c.workflow_runs(".github/workflows/wrap.yml"), pl.ReadError),
     ]
     old_path = os.environ["PATH"]
     for label, arms, act, want in cases:
@@ -235,6 +239,72 @@ def check_failed_reads():
                     problems.append("{0}: reported as a 404".format(label))
             finally:
                 os.environ["PATH"] = old_path
+    return problems
+
+
+def check_review_fixes(fx):
+    """Round 1 review findings, each with a case that fails without its fix."""
+    import tempfile
+    import wc_board_status as bs
+    problems = []
+    # Run URLs compare case-insensitively with the repository.
+    mixed = dict(fx["base_comment"], body="Proven by https://github.com/Own/Repo/actions/runs/500 for #10")
+    entry = make_entry(fx["base_entry"])
+    named = {"own/repo/500": dict(fx["base_named"])}
+    states, _ = pl.classify_all([entry], {}, {entry["sha"]: [mixed]}, named, "own/repo",
+                                fx["window"]["start"], fx["window"]["end"])
+    if states.get("e1") != pl.STATE_ON_RECORD:
+        problems.append("a differently capitalised run URL did not count: {0}".format(states))
+    if pl.set_apart([entry], {}, {entry["sha"]: [mixed]}, named, "Own/Repo",
+                    fx["window"]["start"], fx["window"]["end"]) != 0:
+        problems.append("a differently capitalised own-repo run URL was set apart")
+    # Decided: a run's conclusion never changes a state (data-model.md), so a
+    # cancelled run counts like any finished run.
+    cancelled = {".github/workflows/wrap.yml": [dict(fx["base_run"], conclusion="cancelled")]}
+    if pl.classify(entry, cancelled, [], {}, set(), "own/repo") != pl.STATE_RUN_NO_RECORD:
+        problems.append("a cancelled run changed the state")
+    # One ancestry check per (merge, head), however many runs share a head.
+    calls = []
+    saved = (pl.is_ancestor, pl.commit_present)
+    pl.is_ancestor = lambda a, d: calls.append((a, d)) or True
+    pl.commit_present = lambda sha: True
+    try:
+        col = pl.Collector("own/repo", "2026-11-10T12:00:00Z")
+        raw = {"id": 1, "head_sha": "h1", "path": "p", "run_started_at": "2026-11-02T00:00:00Z"}
+        col.run_record(raw, [entry])
+        col.run_record(dict(raw, id=2), [entry])
+    finally:
+        pl.is_ancestor, pl.commit_present = saved
+    if len(calls) != 1:
+        problems.append("{0} ancestry checks for two runs of one head, expected 1".format(len(calls)))
+    # A Finalize PR whose spec dir has no spec-meta.json at that commit is skipped.
+    with tempfile.TemporaryDirectory() as tmp:
+        _git(tmp, "init", "-q")
+        os.makedirs(os.path.join(tmp, "specs", "001-x"))
+        with open(os.path.join(tmp, "specs", "001-x", "spec.md"), "w", encoding="utf-8") as fh:
+            fh.write("x\n")
+        _git(tmp, "add", ".")
+        _git(tmp, "commit", "-q", "-m", "c")
+        import subprocess
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp, capture_output=True,
+                             text=True, check=True).stdout.strip()
+        previous = os.getcwd()
+        os.chdir(tmp)
+        try:
+            got = pl.Collector("own/repo", "2026-11-10T12:00:00Z").lifecycle_issue(
+                sha, "Finalize: x (#5)", ["specs/001-x/spec.md"])
+            if got is not None:
+                problems.append("a missing spec-meta.json gave {0}, expected None".format(got))
+        except pl.ReadError as exc:
+            problems.append("a missing spec-meta.json aborted the build: {0}".format(exc))
+        finally:
+            os.chdir(previous)
+    # A malformed section shape is `unreadable`, never an exception.
+    def gh_obj(path):
+        return []
+    snap = bs.proof_list_snapshot("o/r", {}, None, gh_obj, lambda rid: True, lambda *a: None)
+    if snap.get("status") != "unreadable":
+        problems.append("a malformed API shape gave {0}, expected unreadable".format(snap.get("status")))
     return problems
 
 
@@ -383,7 +453,7 @@ EXEMPT_SC001_PENDING = {
         reason=("sc001/corpus.json and expected.json are captured by a maintainer "
                 "session with full history and `gh` (T029); until then the replay "
                 "reports 'not yet captured' instead of failing"),
-        issue=(1144,)),
+        issue=(889,)),
 }
 SC001_REASONS = ("own-tree", "FR-005", "FR-006-shared-issue", "FR-013-set-apart")
 
@@ -430,7 +500,7 @@ def check_sc001(directory, exempt):
         return ["SC-001: exactly one of corpus.json and expected.json is present"], None
     if sum(present) == 0:
         if exempt:
-            return [], "SC-001 not yet captured (EXEMPT_SC001_PENDING, #1144)"
+            return [], "SC-001 not yet captured (EXEMPT_SC001_PENDING, #889)"
         return ["SC-001: the corpus and answer key are absent and the exemption was deleted "
                 "without the capture"], None
     if exempt:
@@ -504,7 +574,7 @@ def main():
     if note:
         print("[ok] verify-proof-list: {0}".format(note))
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
-                + check_failed_reads() + check_trees() + check_workflow()
+                + check_failed_reads() + check_review_fixes(fx) + check_trees() + check_workflow()
                 + real + check_sc001_fixtures(fx))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4

@@ -241,7 +241,7 @@ EXEMPT_REACH_COPIES = {
         reason=("the skill script still carries its own reach() and mention loop; "
                 "the implement stage cannot write under .claude/, so a maintainer "
                 "commit thins it to import from board_prove (T028)"),
-        issue=(1144,)),
+        issue=(889,)),
 }
 
 

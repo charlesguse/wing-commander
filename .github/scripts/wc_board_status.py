@@ -473,10 +473,10 @@ def proof_list_snapshot(repo, switches, now=None, gh_obj=None, build_ok=None, do
                     section = json.load(fh)
             if section.get("schema") != 1 or not section.get("full") or not section.get("names_only"):
                 raise ValueError("malformed section")
-        except (OSError, ValueError, subprocess.CalledProcessError):
+        except (OSError, ValueError, TypeError, AttributeError, subprocess.CalledProcessError):
             return {"status": "unreadable", "last_good_at": last_good}
         return {"status": "built", "last_good_at": last_good, "section": section}
-    except (subprocess.CalledProcessError, ValueError, KeyError, OSError):
+    except (subprocess.CalledProcessError, ValueError, KeyError, OSError, TypeError, AttributeError):
         return {"status": "paused" if paused else "unreadable", "last_good_at": last_good}
 
 

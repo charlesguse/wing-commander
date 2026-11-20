@@ -256,8 +256,8 @@ All times UTC.
 | hourly at :41 | spec PR review |
 | 04:17 | rebase |
 | 05:43 | the gate suite on `main` |
-| 06:37 | metrics-persist sweep |
 | 06:19 | proof list |
+| 06:37 | metrics-persist sweep |
 | 06:53 | cleanup |
 | 07:13 | Spec Kit updater |
 | 07:17 | board status |
