@@ -291,10 +291,89 @@ def check_trees():
     return problems
 
 
+WRITE_CALLS = ("gh workflow run", "gh issue comment", "gh issue close", "gh issue edit", "gh pr comment",
+               "gh label", "createWorkflowDispatch", "-X POST", "-X PATCH", "-X PUT", "-X DELETE",
+               "--method POST", "--method PATCH", "claude-code-action", "create-github-app-token")
+
+
+def check_workflow_text(text):
+    """FR-014 to FR-019, SC-004, SC-007: the workflow file's own shape."""
+    import yaml
+    problems = []
+    doc = yaml.safe_load(text)
+    on = doc.get("on", doc.get(True)) or {}
+    if on.get("schedule") != [{"cron": "19 6 * * *"}]:
+        problems.append("workflow: the schedule is not 19 6 * * *")
+    if on.get("workflow_dispatch") not in ({}, None) or "inputs" in (on.get("workflow_dispatch") or {}):
+        problems.append("workflow: workflow_dispatch takes inputs")
+    if doc.get("permissions") != {"contents": "read", "actions": "read", "issues": "read",
+                                  "pull-requests": "read"}:
+        problems.append("workflow: permissions are not the four read scopes")
+    if doc.get("concurrency", {}).get("group") != "wing-commander-proof-list":
+        problems.append("workflow: concurrency group is not wing-commander-proof-list")
+    jobs = doc.get("jobs") or {}
+    if len(jobs) != 1:
+        problems.append("workflow: expected exactly one job")
+    job = next(iter(jobs.values()), {})
+    if job.get("timeout-minutes") != 15:
+        problems.append("workflow: timeout-minutes is not 15")
+    steps = job.get("steps") or []
+    names = [s.get("name") for s in steps]
+    if len(steps) != 5 or "refuse" not in (names[0] or "").lower() or "pause" not in (names[1] or "").lower():
+        problems.append("workflow: the refusal and the pause check are not the first two steps: {0}".format(names))
+    elif "default_branch" not in steps[0].get("env", {}).get("DEFAULT_BRANCH", "") or \
+            "exit 1" not in steps[0].get("run", ""):
+        problems.append("workflow: the refusal does not exit 1 on the default branch comparison")
+    if "if" in (steps[0] if steps else {}):
+        problems.append("workflow: the refusal step is conditional")
+    for step in steps[2:]:
+        if step.get("if") != "steps.pause.outputs.paused != 'true'":
+            problems.append("workflow: step {0!r} is not gated on the pause output".format(step.get("name")))
+    code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+    text = code
+    for token in ("always()", "!cancelled()"):
+        if token in text:
+            problems.append("workflow: {0} appears".format(token))
+    uploads = [s for s in steps if "upload-artifact" in str(s.get("uses"))]
+    if len(uploads) != 1 or uploads[0]["with"].get("name") != "proof-list-section" \
+            or uploads[0]["with"].get("retention-days") != 7:
+        problems.append("workflow: the upload is not proof-list-section for 7 days")
+    for call in WRITE_CALLS:
+        if call in text:
+            problems.append("workflow: contains a write or agent call ({0})".format(call))
+    return problems
+
+
+def check_workflow():
+    with open(os.path.join(HERE, "..", "workflows", "wing-commander-proof-list.yml"), encoding="utf-8") as fh:
+        text = fh.read()
+    problems = check_workflow_text(text)
+    with open(os.path.join(HERE, "wc_proof_list.py"), encoding="utf-8") as fh:
+        source = fh.read()
+    for call in ("gh_text([\"api\", \"-X", "\"issue\", \"comment\"", "\"issue\", \"edit\"", "\"workflow\", \"run\"", "\"pr\", \"comment\""):
+        if call in source:
+            problems.append("wc_proof_list.py: contains a write call ({0})".format(call))
+    # Fixtures: each mutation of the shipped file must be noticed.
+    mutations = [
+        ("a refusal that no longer exits", text.replace("exit 1", "exit 0", 1)),
+        ("a permission widened", text.replace("issues: read", "issues: write")),
+        ("an always() on the build", text.replace("- name: Build the proof list\n        if:",
+                                                   "- name: Build the proof list\n        if: always() &&")),
+        ("an input on dispatch", text.replace("workflow_dispatch: {}", "workflow_dispatch:\n    inputs:\n      x: {}")),
+        ("a dropped gate on checkout", text.replace("if: steps.pause.outputs.paused != 'true'\n        uses: actions/checkout",
+                                                     "uses: actions/checkout")),
+        ("a write call", text + "      - run: gh issue comment 1 -b x\n"),
+    ]
+    for label, mutated in mutations:
+        if mutated == text or not check_workflow_text(mutated):
+            problems.append("workflow fixture: {0} was not noticed".format(label))
+    return problems
+
+
 def main():
     fx = load("states.json")
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
-                + check_failed_reads() + check_trees())
+                + check_failed_reads() + check_trees() + check_workflow())
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4
     pl.comment_steps_1_to_4 = lambda entry, comment, shared, repository: True
