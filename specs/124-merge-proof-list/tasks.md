@@ -211,3 +211,10 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
 - [ ] R2-a Convert to UTC (`astimezone(datetime.timezone.utc)`) before formatting in `Collector.entries` and every other place a time is serialised.
 - [ ] R2-b Normalise to UTC in `parse_time` and `window_for`.
 - [ ] R2-c Add a fixture with a `-05:00` commit and a comment posted between the local and the UTC merge time, which must not count.
+
+## Maintainer Feedback
+
+- [ ] R3-a In `verify-board-prove.py` `single_home_fixture_cases`, give the three `EXEMPT_REACH_COPIES` cases (unthinned consumer, stale entry, missing file) each a local dict with its own `Exemption(...)` row.
+- [ ] R3-b In `verify-proof-list.py` `check_sc001_fixtures`, give the two `EXEMPT_SC001_PENDING` cases a local dict with its own `Exemption(...)` row.
+- [ ] R3-c Do not touch the module-level `EXEMPT_*` tables or their entries.
+- [ ] R3-d Show that emptying either live table no longer fails these fixtures.
