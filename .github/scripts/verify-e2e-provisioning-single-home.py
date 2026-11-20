@@ -97,7 +97,8 @@ INLINE_PIN_RE = re.compile(r"(?<!\w)s([^\w\s])uses: \\?\./\\?\.github/workflows/
 # comment at each call site names the script too, and must not count.
 PIN_CALL_RE = re.compile(r'^(?![ \t]*#)[^\n]*\bbash[ \t]+"[^"\n]*/\.github/actions/_shared/pin-e2e-wrapper\.sh"', re.M)
 # The scaffold step's wrapper -> stage map: `[wing-commander-5-implement.yml]=implement.yml`.
-STAGE_MAP_RE = re.compile(r"^\s*\[(wing-commander-[\w.-]+\.yml)\]=([\w.-]+\.yml)\s*$", re.M)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from board_prove import STAGE_MAP_RE  # noqa: E402  (its one home, spec 124 T004)
 FAKE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
 # The seven OnboardingElement keys (data-model.md), in the exact order

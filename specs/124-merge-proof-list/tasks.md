@@ -10,16 +10,16 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the fixture directory `.github/scripts/fixtures/proof-list/` with a short README stating which gate reads which fixture (per quickstart.md step 1); do not create `sc001/`.
-- [ ] T002 [P] Add `any_run_url_pattern()` beside `run_url_pattern()` in `.github/scripts/board_triage.py` (matches any Actions run URL, job links included, captures repository and run id), with a case in `.github/scripts/verify-board-triage.py` or the gate that already covers that module.
+- [x] T001 Create the fixture directory `.github/scripts/fixtures/proof-list/` with a short README stating which gate reads which fixture (per quickstart.md step 1); do not create `sc001/`.
+- [x] T002 [P] Add `any_run_url_pattern()` beside `run_url_pattern()` in `.github/scripts/board_triage.py` (matches any Actions run URL, job links included, captures repository and run id), with a case in `.github/scripts/verify-board-triage.py` or the gate that already covers that module.
 
 ## Phase 2: Foundational (blocks all stories)
 
 **Single home for the two rules (FR-002, FR-003, SC-006; research D2, D12)**
 
-- [ ] T003 Move the reach computation into `.github/scripts/board_prove.py`: `reach()`, `mention_edges()`, `reaching_workflows()`, `workflow_triggers()`, `runs_of_its_own()`. Keep the scan's inline `on:` read unchanged (plan "Build details"). Behaviour of the existing hand-procedure output must not change.
-- [ ] T004 Add `nightly_e2e_edges()` to `.github/scripts/board_prove.py` (FR-005: nightly end-to-end run reaches the stage workflows whose copies its wrappers run, each copied wrapper file, and what those reach). Move `STAGE_MAP_RE` from `.github/scripts/verify-e2e-provisioning-single-home.py` into `board_prove.py` and have that gate import it.
-- [ ] T005 Extend Gate 89 `.github/scripts/verify-board-prove.py` with the single-home check for the reach computation, the mention edge and the FR-005 parser, plus the reused homes of research D6. Take the exemption table (`EXEMPT_REACH_COPIES`, citing #1144, covering only the skill script until the maintainer commit) as a parameter; add fixtures for a reappearing copy and for a stale exemption.
+- [x] T003 Move the reach computation into `.github/scripts/board_prove.py`: `reach()`, `mention_edges()`, `reaching_workflows()`, `workflow_triggers()`, `runs_of_its_own()`. Keep the scan's inline `on:` read unchanged (plan "Build details"). Behaviour of the existing hand-procedure output must not change.
+- [x] T004 Add `nightly_e2e_edges()` to `.github/scripts/board_prove.py` (FR-005: nightly end-to-end run reaches the stage workflows whose copies its wrappers run, each copied wrapper file, and what those reach). Move `STAGE_MAP_RE` from `.github/scripts/verify-e2e-provisioning-single-home.py` into `board_prove.py` and have that gate import it.
+- [x] T005 Extend Gate 89 `.github/scripts/verify-board-prove.py` with the single-home check for the reach computation, the mention edge and the FR-005 parser, plus the reused homes of research D6. Take the exemption table (`EXEMPT_REACH_COPIES`, citing #1144, covering only the skill script until the maintainer commit) as a parameter; add fixtures for a reappearing copy and for a stale exemption.
 
 **Checkpoint**: the rules have one home; the gate fails if a copy reappears.
 

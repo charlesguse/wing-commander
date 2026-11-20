@@ -202,6 +202,161 @@ OUTCOME_REASON_CASES = [
 ]
 
 
+from collections import namedtuple  # noqa: E402
+import ast  # noqa: E402
+import shutil  # noqa: E402
+import warnings  # noqa: E402
+
+Exemption = namedtuple("Exemption", "reason issue permanent permanent_reason decided_by",
+                       defaults=(False, None, ()))
+
+# specs/124-merge-proof-list research D2/D6: the reach computation and the
+# need-a-run rule have one home, board_prove.py; the other helpers the proof
+# list reuses keep theirs. NAME -> the one file allowed to define it.
+SINGLE_HOME_NAMES = {
+    "actions_only": ".github/scripts/board_prove.py",
+    "reach": ".github/scripts/board_prove.py",
+    "mention_edges": ".github/scripts/board_prove.py",
+    "reaching_workflows": ".github/scripts/board_prove.py",
+    "workflow_triggers": ".github/scripts/board_prove.py",
+    "runs_of_its_own": ".github/scripts/board_prove.py",
+    "nightly_e2e_edges": ".github/scripts/board_prove.py",
+    "diff_name_list": ".github/scripts/board_route_backstop.py",
+    "pr_issue": ".github/scripts/board_backlog_lines.py",
+    "pr_line": ".github/scripts/board_backlog_lines.py",
+    "utf16_len": ".github/scripts/board_spec_request_body.py",
+}
+# The two consumers of the reach computation.
+REACH_CONSUMERS = (
+    ".claude/skills/prove-after-merge/scripts/redrive_candidates.py",
+    ".github/scripts/wc_proof_list.py",
+)
+CONSUMER_IMPORTS = ("reaching_workflows", "actions_only")
+FILE_WALKERS = frozenset({"listdir", "walk", "scandir", "glob", "iglob", "rglob"})
+
+# A file here is excused from the single-home check until its maintainer
+# commit thins it (spec 124 T028); an entry whose file breaks nothing is stale.
+# Gate 124 reads this table, so it is only ever written as this literal.
+EXEMPT_REACH_COPIES = {
+    ".claude/skills/prove-after-merge/scripts/redrive_candidates.py": Exemption(
+        reason=("the skill script still carries its own reach() and mention loop; "
+                "the implement stage cannot write under .claude/, so a maintainer "
+                "commit thins it to import from board_prove (T028)"),
+        issue=(1144,)),
+}
+
+
+def _py_files(root):
+    for top in (".github", ".claude"):
+        for dirpath, dirs, names in os.walk(os.path.join(root, top)):
+            dirs[:] = [d for d in dirs if d != "fixtures"]
+            for name in names:
+                if name.endswith(".py"):
+                    yield os.path.relpath(os.path.join(dirpath, name), root).replace(os.sep, "/")
+
+
+def _parse(root, rel):
+    try:
+        with open(os.path.join(root, rel), encoding="utf-8") as fh:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return ast.parse(fh.read())
+    except (OSError, SyntaxError):
+        return None
+
+
+def _name_breaks(tree, rel):
+    return sorted(
+        node.name for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name in SINGLE_HOME_NAMES
+        and SINGLE_HOME_NAMES[node.name] != rel)
+
+
+def _consumer_breaks(tree):
+    imported = set()
+    walks = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "board_prove":
+            imported |= {a.name for a in node.names}
+        elif isinstance(node, ast.Call):
+            fn = node.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+            if name in FILE_WALKERS:
+                walks.append(name)
+    out = ["does not import {0} from board_prove".format(n)
+           for n in CONSUMER_IMPORTS if n not in imported]
+    out += ["lists or walks files itself ({0}())".format(n) for n in sorted(set(walks))]
+    return out
+
+
+def check_single_home(root, exempt):
+    """specs/124 research D2: failures for a copy of the reach computation.
+    `exempt` is {relpath: Exemption} (passed in, never written here)."""
+    failures = []
+    for rel in sorted(_py_files(root)):
+        tree = _parse(root, rel)
+        if tree is None:
+            continue
+        broken = _name_breaks(tree, rel)
+        if rel in REACH_CONSUMERS:
+            broken += _consumer_breaks(tree)
+        if broken and rel not in exempt:
+            failures.append("{0}: carries its own copy of the shared logic ({1}); it has one "
+                            "home, board_prove.py (CLAUDE.md single home).".format(rel, "; ".join(broken)))
+        elif not broken and rel in exempt:
+            failures.append("{0}: its EXEMPT_REACH_COPIES entry is stale -- the file no longer "
+                            "breaks the single-home rule; delete the entry.".format(rel))
+    for rel in sorted(exempt):
+        if not os.path.isfile(os.path.join(root, rel)):
+            failures.append("{0}: EXEMPT_REACH_COPIES names a file that does not exist; "
+                            "delete the entry.".format(rel))
+    return failures
+
+
+_COPY_REACH = "def reach(workflow, uses_graph):\n    return set()\n"
+_COPY_ACTIONS = "def actions_only(paths):\n    return False, ''\n"
+_THIN = ("from board_prove import actions_only, reaching_workflows\n"
+         "def main():\n    return reaching_workflows([], {}), actions_only([])\n")
+_INLINE = _THIN + "import os\ndef main2():\n    return os.listdir('.github/workflows')\n"
+SKILL = REACH_CONSUMERS[0]
+
+
+def single_home_fixture_cases():
+    """Each case fails without the code it tests; returns problem strings."""
+    cases = [
+        ("a copy of reach in another file", {".github/scripts/b.py": _COPY_REACH}, {}, True),
+        ("a copy of actions_only", {".github/scripts/b.py": _COPY_ACTIONS}, {}, True),
+        ("the home itself defining them", {".github/scripts/board_prove.py":
+                                           _COPY_REACH + _COPY_ACTIONS}, {}, False),
+        ("a thinned consumer, no exemption", {SKILL: _THIN}, {}, False),
+        ("an inline mention loop left in the consumer", {SKILL: _INLINE}, {}, True),
+        ("the unthinned consumer passes only with its entry", {SKILL: _COPY_REACH},
+         EXEMPT_REACH_COPIES, False),
+        ("the unthinned consumer without its entry", {SKILL: _COPY_REACH}, {}, True),
+        ("a stale entry for a thinned consumer", {SKILL: _THIN}, EXEMPT_REACH_COPIES, True),
+        ("an entry for a missing file", {}, EXEMPT_REACH_COPIES, True),
+    ]
+    problems = []
+    for label, files, exempt, want_fail in cases:
+        root = tempfile.mkdtemp(prefix="verify_board_prove_home_")
+        try:
+            for rel, text in files.items():
+                path = os.path.join(root, rel)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+            os.makedirs(os.path.join(root, ".github"), exist_ok=True)
+            got = bool(check_single_home(root, exempt))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+        if got != want_fail:
+            problems.append("single-home fixture {0!r}: failed={1}, expected {2}".format(
+                label, got, want_fail))
+        else:
+            print("[ok] single-home fixture: {0}".format(label))
+    return problems
+
+
 def run():
     failures = 0
     for changed_paths, expected in CASES:
@@ -494,6 +649,31 @@ def run():
         print("[ok] every .github/scripts/board_*.py helper ({0}) resolves "
               "to at least one job in board-loop.yml's own job-uses-graph "
               "on the checked-out tree".format(len(real_helpers)))
+
+    for problem in single_home_fixture_cases():
+        failures += 1
+        print("::error::verify-board-prove: {0}".format(problem))
+    for problem in check_single_home(REPO_ROOT, EXEMPT_REACH_COPIES):
+        failures += 1
+        print("::error::verify-board-prove: {0}".format(problem))
+    print("[ok] the reach computation has one home (board_prove.py)")
+
+    import board_prove  # noqa: E402
+    edges = board_prove.nightly_e2e_edges(REPO_ROOT)
+    wrappers = edges.get(board_prove.AUTO_RELEASE) or []
+    if len(wrappers) < 8 or any(not os.path.isfile(os.path.join(REPO_ROOT, w)) for w in wrappers):
+        failures += 1
+        print("::error::verify-board-prove: nightly_e2e_edges() read {0} on the real tree; "
+              "expected the eight existing wrapper files.".format(wrappers))
+    else:
+        print("[ok] nightly_e2e_edges() reads the {0} wrapper files of auto-release.yml".format(len(wrappers)))
+    graph = {"a.yml": ["b.yml"], "b.yml": [".github/x.sh"]}
+    if board_prove.reach("a.yml", graph) != {"a.yml", "b.yml", ".github/x.sh"}:
+        failures += 1
+        print("::error::verify-board-prove: reach() did not close transitively.")
+    if board_prove.runs_of_its_own(os.path.join(REPO_WORKFLOWS_DIR, "implement.yml")):
+        failures += 1
+        print("::error::verify-board-prove: implement.yml (workflow_call only) reported runs of its own.")
 
     print("verify-board-prove: {0} failure(s).".format(failures))
     return 1 if failures else 0

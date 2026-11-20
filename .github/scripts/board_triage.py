@@ -545,6 +545,14 @@ def run_url_pattern(repository):
     return r"https://github\.com/{0}/actions/runs/[0-9]+".format(re.escape(repository))
 
 
+def any_run_url_pattern():
+    """Any Actions run URL, job links included
+    (https://github.com/<owner>/<repo>/actions/runs/<id>[/job/<id>]); groups:
+    1 repository (owner/repo), 2 run id. run_url_pattern() stays the
+    this-repository-only form."""
+    return r"https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/actions/runs/([0-9]+)(?:/jobs?/[0-9]+)?"
+
+
 def find_cited_run(text, repository):
     """#505: the run an issue cites, from text that already passed
     wing-commander-issue-context's trust filter (its context-file: title,
