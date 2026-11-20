@@ -9,6 +9,7 @@ Every input is a plain dict/list (the shapes are in data-model.md), the window
 states (FR-008, FR-011). Nothing here encodes a verdict (FR-010).
 """
 import datetime
+import json
 import os
 import re
 import sys
@@ -293,3 +294,426 @@ def counts(states):
     for state in states.values():
         out[state] += 1
     return out
+
+
+# ---------------------------------------------------------------------------
+# The I/O half: reads git and the GitHub API, then hands plain dicts to the
+# pure half above. Every read raises ReadError on failure: an incomplete read
+# fails the build loudly instead of shrinking the list (FR-013, research D15).
+# ---------------------------------------------------------------------------
+class ReadError(RuntimeError):
+    """A read that failed or came back incomplete."""
+
+
+class NotFound(ReadError):
+    """`gh` reported `(HTTP 404)` on stderr."""
+
+
+RATE_LIMIT_FLOOR = 600
+RUN_CAP = 1000
+SECONDARY_RE = re.compile(r"secondary rate limit", re.I)
+RETRY_AFTER_RE = re.compile(r"retry-after:?\s*(\d+)", re.I)
+SECTION_ARTIFACT = "proof-list-section"
+SECTION_FILE = "proof-list-section.json"
+FINALIZE_RE = re.compile(r"^Finalize:.*\(#(\d+)\)\s*$")
+SPEC_META_RE = re.compile(r"^(specs/[^/]+)/")
+
+
+def _run(argv, cwd=None, sleep=None):
+    import subprocess
+    import time
+    proc = subprocess.run(argv, capture_output=True, text=True, cwd=cwd)
+    if proc.returncode == 0:
+        return proc.stdout
+    err = (proc.stderr or "").strip()
+    if "(HTTP 404)" in err:
+        raise NotFound("{0}: {1}".format(" ".join(argv[:4]), err))
+    if argv[0] == "gh" and SECONDARY_RE.search(err):
+        # A secondary limit only: wait what the server said, once. A primary
+        # limit (403/429 without that text) is a failed read, no back-off.
+        match = RETRY_AFTER_RE.search(err)
+        if match and sleep is not False:
+            (sleep or time.sleep)(min(int(match.group(1)), 60))
+            return _run(argv, cwd, sleep=False)
+    raise ReadError("{0}: {1}".format(" ".join(argv[:4]), err or "exit {0}".format(proc.returncode)))
+
+
+def gh_text(args):
+    return _run(["gh"] + list(args))
+
+
+def api(path, paginate=False):
+    """JSON from `gh api path`; a paginated list is flattened (an object page
+    contributes its one list value)."""
+    if not paginate:
+        return json.loads(gh_text(["api", path]) or "null")
+    pages = json.loads(gh_text(["api", "--paginate", "--slurp", path]) or "[]")
+    out = []
+    for page in pages:
+        if isinstance(page, dict):
+            lists = [v for v in page.values() if isinstance(v, list)]
+            out.extend(lists[0] if lists else [])
+        else:
+            out.extend(page)
+    return out
+
+
+def check_rate_limit(floor=RATE_LIMIT_FLOOR):
+    remaining = int(gh_text(["api", "rate_limit", "--jq", ".resources.core.remaining"]).strip() or 0)
+    if remaining < floor:
+        raise ReadError("only {0} API requests remain (below {1})".format(remaining, floor))
+    return remaining
+
+
+def git(*args):
+    return _run(["git"] + list(args))
+
+
+def first_parent_commits(since=None):
+    """[(sha, committer time)] newest first on the checked-out default branch.
+    A shallow clone is an incomplete history (FR-013)."""
+    if git("rev-parse", "--is-shallow-repository").strip() == "true":
+        raise ReadError("the checkout is shallow: main history is incomplete")
+    out = []
+    for line in git("log", "--first-parent", "--format=%H %cI").splitlines():
+        sha, when = line.split(" ", 1)
+        if since is None or parse_time(when) > parse_time(since):
+            out.append((sha, parse_time(when)))
+    return out
+
+
+def is_ancestor(ancestor, descendant):
+    import subprocess
+    proc = subprocess.run(["git", "merge-base", "--is-ancestor", ancestor, descendant],
+                          capture_output=True, text=True)
+    if proc.returncode in (0, 1):
+        return proc.returncode == 0
+    raise ReadError("git merge-base failed: {0}".format(proc.stderr.strip()))
+
+
+def commit_present(sha):
+    import subprocess
+    return subprocess.run(["git", "cat-file", "-e", "{0}^{{commit}}".format(sha)],
+                          capture_output=True).returncode == 0
+
+
+def marker_step(body):
+    """`proven` | `other` | `none` for the board item marker in `body`."""
+    from board_item_marker import MARKER_OPEN_RE, last_marker_match
+    if not MARKER_OPEN_RE.search(body or ""):
+        return "none"
+    match = last_marker_match(body)
+    if match is None:
+        return "other"
+    try:
+        step = json.loads(match.group(1)).get("step")
+    except (ValueError, AttributeError):
+        return "other"
+    return "proven" if step == "proven" else "other"
+
+
+def comment_record(place, raw, kind):
+    user = raw.get("user") or {}
+    return {"place": place, "where": kind, "comment_id": raw.get("id"),
+            "account": user.get("login"), "account_type": user.get("type", "User"),
+            "posted_at": raw.get("submitted_at") or raw.get("created_at"),
+            "body": raw.get("body") or "", "marker_step": marker_step(raw.get("body"))}
+
+
+class Collector:
+    """One build's reads, with per-build caches (commits' trees, issue threads,
+    named runs, workflow run lists)."""
+
+    def __init__(self, repository, built_at):
+        self.repository = repository
+        self.built_at = parse_time(built_at)
+        self.start, self.end = window_for(self.built_at)
+        self.since = self.start - datetime.timedelta(hours=AGED_OUT_HOURS)
+        self.threads, self.named, self.run_lists, self.trees = {}, {}, {}, {}
+
+    # -- entries -----------------------------------------------------------
+    def entries(self):
+        from board_backlog_lines import pr_issue, pr_line
+        from board_route_backstop import diff_name_list
+        out = []
+        for sha, when in first_parent_commits(self.since):
+            if when > self.end:
+                continue
+            pulls = api("repos/{0}/commits/{1}/pulls".format(self.repository, sha), paginate=True)
+            pr = next((p for p in pulls if p.get("merge_commit_sha") == sha), None)
+            changed = diff_name_list(sha + "^1", sha)
+            needs_run, reason = actions_only(changed)
+            entry = {"sha": sha, "merged_at": when.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                     "pr": pr["number"] if pr else None, "named_issues": [],
+                     "lifecycle_issue": None, "changed_paths": changed,
+                     "needs_run": needs_run, "needs_reason": reason, "reaching": []}
+            if pr:
+                view = json.loads(gh_text(["pr", "view", str(pr["number"]), "-R", self.repository,
+                                           "--json", "closingIssuesReferences,body,title"]))
+                seen = {}
+                for ref in view.get("closingIssuesReferences") or ():
+                    seen.setdefault(ref["number"], "closes")
+                body = view.get("body") or ""
+                if pr_issue(body):
+                    seen.setdefault(pr_issue(body), "board-item")
+                if pr_line(body):
+                    seen.setdefault(pr_line(body)[0], "backlog-line")
+                life = self.lifecycle_issue(sha, view.get("title") or "", changed)
+                if life:
+                    seen.setdefault(life, "lifecycle")
+                    entry["lifecycle_issue"] = life
+                entry["named_issues"] = [{"number": n, "how": h} for n, h in sorted(seen.items())]
+            if needs_run:
+                entry["reaching"] = self.reaching(sha, changed)
+            out.append(entry)
+        return out
+
+    def lifecycle_issue(self, sha, title, changed):
+        match = FINALIZE_RE.match(title)
+        if not match:
+            return None
+        dirs = sorted({m.group(1) for m in (SPEC_META_RE.match(p) for p in changed) if m})
+        for spec_dir in dirs:
+            try:
+                meta = json.loads(git("show", "{0}:{1}/spec-meta.json".format(sha, spec_dir)))
+            except NotFound:
+                continue
+            except (ReadError, ValueError) as exc:
+                raise ReadError("{0}: spec-meta.json unreadable at {1}: {2}".format(spec_dir, sha[:10], exc))
+            if int(meta.get("issue", -1)) != int(match.group(1)):
+                raise ReadError("{0}: spec-meta issue {1} disagrees with the title's #{2}".format(
+                    spec_dir, meta.get("issue"), match.group(1)))
+            return int(match.group(1))
+        return None
+
+    def reaching(self, sha, changed):
+        if sha not in self.trees:
+            self.trees[sha] = tree_reaching(sha, changed)
+        return self.trees[sha]
+
+    # -- comments ----------------------------------------------------------
+    def thread(self, kind, number):
+        key = (kind, number)
+        if key not in self.threads:
+            base = "repos/{0}".format(self.repository)
+            if kind == "pr":
+                items = [(c, "pr-issue-comment") for c in api("{0}/issues/{1}/comments".format(base, number), True)]
+                items += [(c, "pr-review-comment") for c in api("{0}/pulls/{1}/comments".format(base, number), True)]
+                items += [(c, "pr-review") for c in api("{0}/pulls/{1}/reviews".format(base, number), True)]
+            else:
+                items = [(c, "issue {0}".format(number))
+                         for c in api("{0}/issues/{1}/comments".format(base, number), True)]
+            place = {"kind": kind, "number": number}
+            self.threads[key] = [comment_record(place, c, w) for c, w in items]
+        return self.threads[key]
+
+    def comments_for(self, entry):
+        out = []
+        if entry.get("pr") is not None:
+            out += self.thread("pr", entry["pr"])
+        for issue in entry.get("named_issues") or ():
+            out += self.thread("issue", issue["number"])
+        return out
+
+    # -- runs --------------------------------------------------------------
+    def workflow_runs(self, path):
+        if path in self.run_lists:
+            return self.run_lists[path]
+        base = "repos/{0}/actions".format(self.repository)
+        created = "created=%3E%3D{0}".format(self.since.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        name = path.rsplit("/", 1)[-1]
+        query = "{0}/workflows/{1}/runs?status=completed&per_page=100&{2}".format(base, name, created)
+        try:
+            first = api(query + "&page=1")
+            total = int(first.get("total_count", 0))
+            if total <= RUN_CAP:
+                runs = api(query, paginate=True)
+            else:
+                runs = []
+                day = self.since
+                while day < self.end:
+                    nxt = day + datetime.timedelta(days=1)
+                    span = "created={0}..{1}".format(day.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                                     nxt.strftime("%Y-%m-%dT%H:%M:%SZ"))
+                    q = "{0}/workflows/{1}/runs?status=completed&per_page=100&{2}".format(base, name, span)
+                    if int(api(q + "&page=1").get("total_count", 0)) > RUN_CAP:
+                        raise ReadError("{0}: more than {1} runs in one day".format(name, RUN_CAP))
+                    runs += api(q, paginate=True)
+                    day = nxt
+        except NotFound:
+            # The file is gone from the default branch: read the repository's
+            # runs and keep the ones of that path (a later-deleted workflow
+            # is still credited, FR-013).
+            runs = [r for r in api("{0}/runs?status=completed&per_page=100&{1}".format(base, created), True)
+                    if (r.get("path") or "") == path]
+        self.run_lists[path] = runs
+        return runs
+
+    def run_record(self, raw, entries):
+        head = raw.get("head_sha")
+        resolvable = bool(head) and commit_present(head)
+        contains = [e["sha"] for e in entries if resolvable and is_ancestor(e["sha"], head)]
+        return {"workflow": raw.get("path"), "run_id": raw["id"], "event": raw.get("event"),
+                "status": raw.get("status"), "conclusion": raw.get("conclusion"), "head_sha": head,
+                "run_started_at": raw.get("run_started_at") or raw.get("created_at"),
+                "html_url": raw.get("html_url"), "contains": contains, "resolvable": resolvable}
+
+    def runs(self, entries):
+        paths = sorted({w["path"] for e in entries for w in e.get("reaching") or ()
+                        if w.get("runs_of_its_own", True)})
+        out = {}
+        for path in paths:
+            relevant = [e for e in entries if any(w["path"] == path for w in e.get("reaching") or ())]
+            out[path] = [self.run_record(r, relevant) for r in self.workflow_runs(path)]
+        return out
+
+    def named_runs(self, comments_by_sha, entries):
+        out = {}
+        for comments in comments_by_sha.values():
+            for comment in comments:
+                for repo, run_id in named_run_keys(comment.get("body")):
+                    key = "{0}/{1}".format(repo, run_id)
+                    if repo != self.repository or key in out:
+                        continue
+                    if key not in self.named:
+                        try:
+                            raw = api("repos/{0}/actions/runs/{1}".format(repo, run_id))
+                            rec = self.run_record(raw, entries)
+                            rec.update(kind="found", url=raw.get("html_url"))
+                        except NotFound:
+                            rec = {"kind": "not_found", "run_id": run_id}
+                        self.named[key] = rec
+                    out[key] = self.named[key]
+        return out
+
+
+def collect(repository, built_at):
+    """Every input of the pure half, read from git and the API."""
+    check_rate_limit()
+    col = Collector(repository, built_at)
+    entries = col.entries()
+    comments_by_sha = {e["sha"]: col.comments_for(e) for e in entries if e["needs_run"]}
+    runs = col.runs(entries)
+    named = col.named_runs(comments_by_sha, entries)
+    return {"repository": repository, "built_at": col.built_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "head_sha": git("rev-parse", "HEAD").strip(), "entries": entries, "runs": runs,
+            "comments": comments_by_sha, "named_runs": named}
+
+
+# -- per-entry trees (US3) ---------------------------------------------------
+def tree_reaching(sha, changed_paths):
+    """[ReachingWorkflow] from the `.github` tree at `sha` (not today's): the
+    shared reach computation plus the nightly end-to-end edges, merged here only
+    (FR-005; the hand procedure never merges them)."""
+    import contextlib
+    import io
+    import subprocess
+    import tarfile
+    import tempfile
+    from board_prove import (AUTO_RELEASE, STAGE_ARRAY_RE, STAGE_MAP_RE, WORKFLOWS_DIR, reach,
+                             reaching_workflows as _reaching, nightly_e2e_edges,
+                             runs_of_its_own as _own, scan_dispatchable_and_uses_graph)
+    archive = subprocess.run(["git", "archive", sha, ".github"], capture_output=True)
+    if archive.returncode != 0:
+        raise ReadError("git archive {0} failed: {1}".format(sha[:10], archive.stderr.decode(errors="replace")))
+    with tempfile.TemporaryDirectory() as tmp:
+        with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+            tar.extractall(tmp, filter="data")
+        previous = os.getcwd()
+        os.chdir(tmp)
+        try:
+            _disp, graph = scan_dispatchable_and_uses_graph(WORKFLOWS_DIR)
+            base = _reaching(changed_paths, graph)
+            extra = nightly_e2e_edges(".")
+            extended = {k: set(v) for k, v in graph.items()}
+            if extra:
+                with open(AUTO_RELEASE, encoding="utf-8") as fh:
+                    block = STAGE_ARRAY_RE.search(fh.read()).group(1)
+                stages = {"{0}/{1}".format(WORKFLOWS_DIR, stage) for _w, stage in STAGE_MAP_RE.findall(block)}
+                extended.setdefault(AUTO_RELEASE, set()).update(extra[AUTO_RELEASE], stages)
+                for wrapper in extra[AUTO_RELEASE]:
+                    extended.setdefault(wrapper, set(graph.get(wrapper, ())))
+            hits = _reaching(changed_paths, extended)
+            found = []
+            for path in sorted(hits):
+                if path not in graph and not os.path.isfile(path):
+                    continue
+                if path in base:
+                    via = "mention" if set(base[path].values()) == {"mention"} else "scan"
+                else:
+                    via = "nightly-e2e"
+                found.append({"path": path, "reached_via": via,
+                              "runs_of_its_own": _own(path) if os.path.isfile(path) else True})
+            reaches = {w["path"]: reach(w["path"], extended) for w in found}
+            # A workflow_call-only workflow with an in-repository caller that
+            # reaches the same path is dropped (research D4).
+            return [w for w in found
+                    if w["runs_of_its_own"]
+                    or not any(w["path"] in reaches[o["path"]] for o in found if o["path"] != w["path"])]
+        finally:
+            os.chdir(previous)
+
+
+# -- capture, build, render ---------------------------------------------------
+def reduce_body(body):
+    """Keep lines carrying a run link, a PR reference or the board item marker."""
+    keep = re.compile(r"actions/runs/|#\d+|wing-commander-board-item")
+    return "\n".join(line if keep.search(line) else "…" for line in (body or "").splitlines())
+
+
+def capture(bundle, as_of):
+    """The SC-001 corpus document (data-model.md "SC-001 corpus")."""
+    start, end = window_for(bundle["built_at"])
+    out = dict(bundle, as_of=as_of, window={"start": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                            "end": end.strftime("%Y-%m-%dT%H:%M:%SZ")})
+    out["comments"] = {sha: [dict(c, body=reduce_body(c.get("body"))) for c in cs]
+                       for sha, cs in bundle["comments"].items()}
+    return out
+
+
+def report_from_bundle(bundle):
+    from board_spec_request_body import MAX_BODY_UNITS, utf16_len
+    return assemble_report(bundle["entries"], bundle["runs"], bundle["comments"], bundle["named_runs"],
+                           bundle["repository"], bundle["built_at"], bundle["head_sha"],
+                           MAX_BODY_UNITS, utf16_len)
+
+
+def main(argv=None):
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    build = sub.add_parser("build", help="read, classify and write proof-list-section.json")
+    build.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY"))
+    build.add_argument("--out", default=SECTION_FILE)
+    cap = sub.add_parser("capture", help="write the SC-001 corpus (maintainer only)")
+    cap.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY"))
+    cap.add_argument("--end", required=True)
+    cap.add_argument("--as-of", required=True)
+    cap.add_argument("--out", required=True)
+    rend = sub.add_parser("render", help="print one form of a built section")
+    rend.add_argument("--in", dest="src", default=SECTION_FILE)
+    rend.add_argument("--form", choices=("full", "names_only"), default="full")
+    args = parser.parse_args(argv)
+    try:
+        if args.cmd == "render":
+            with open(args.src, encoding="utf-8") as fh:
+                sys.stdout.write(json.load(fh)[args.form])
+            return 0
+        if not args.repository:
+            parser.error("--repository (or GITHUB_REPOSITORY) is required")
+        if args.cmd == "build":
+            now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+            doc = report_from_bundle(collect(args.repository, now))
+        else:
+            doc = capture(collect(args.repository, args.end), args.as_of)
+        with open(args.out, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, indent=2, sort_keys=True)
+        print("wrote {0}".format(args.out))
+        return 0
+    except (ReadError, ValueError) as exc:
+        print("::error::wc_proof_list: {0}".format(exc))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -170,9 +170,131 @@ def check_report(fx):
     return problems
 
 
+def check_set_apart_report(fx):
+    """US1 scenario 9: a run of a reaching workflow whose commit cannot be
+    resolved, plus a comment naming a run of another repository, are counted
+    as set apart and never as a state."""
+    from board_spec_request_body import MAX_BODY_UNITS, utf16_len
+    entry = make_entry(fx["base_entry"])
+    runs = {".github/workflows/wrap.yml": [dict(fx["base_run"], resolvable=False, contains=[])]}
+    comment = dict(fx["base_comment"], body="Proven by https://github.com/other/repo/actions/runs/9 for #10")
+    doc = pl.assemble_report([entry], runs, {"e1": [comment]}, {}, fx["repository"],
+                             "2026-11-10T12:00:00Z", "head1", MAX_BODY_UNITS, utf16_len)
+    problems = []
+    if doc["set_apart"] != 2:
+        problems.append("set-apart report: {0} runs set apart, expected 2".format(doc["set_apart"]))
+    if doc["counts"]["4"] != 1:
+        problems.append("set-apart report: the entry should stay in state 4, got {0}".format(doc["counts"]))
+    return problems
+
+
+# -- the I/O half: failed reads, fail loudly (FR-013, research D15) -----------
+def _stub_gh(arms):
+    """A `gh` on PATH that answers by `case "$*"` arm. Error arms come from
+    wc_shell_harness.gh_error_stub_arm (Gate 127)."""
+    import wc_shell_harness as harness
+    body = ['#!/bin/bash', 'case "$*" in']
+    for glob, reply in arms:
+        if isinstance(reply, tuple):
+            body.append("  {0})\n{1}\n  ;;".format(glob, harness.gh_error_stub_arm(glob, *reply)))
+        else:
+            body.append("  {0})\n    echo '{1}'\n  ;;".format(glob, reply))
+    body += ['  *) echo "unexpected gh $*" >&2; exit 2 ;;', 'esac']
+    return "\n".join(body) + "\n"
+
+
+def check_failed_reads():
+    import stat
+    import tempfile
+    problems = []
+    cases = [
+        ("a 500 on a comment thread", [("*issues/5/comments*", ("500", "Server Error"))],
+         lambda c: c.thread("issue", 5), pl.ReadError),
+        ("a 403 primary rate limit", [("*issues/5/comments*", ("403", "API rate limit exceeded"))],
+         lambda c: c.thread("issue", 5), pl.ReadError),
+        ("a 404 on a named run is told apart", [("*actions/runs/7*", ("404", "Not Found"))],
+         lambda c: pl.api("repos/own/repo/actions/runs/7"), pl.NotFound),
+        ("under 600 requests left", [("*rate_limit*", "100")], lambda c: pl.check_rate_limit(),
+         pl.ReadError),
+        ("runs past the cap in one day", [("*workflows/wrap.yml/runs*", '{"total_count": 2000}')],
+         lambda c: c.workflow_runs(".github/workflows/wrap.yml"), pl.ReadError),
+    ]
+    old_path = os.environ["PATH"]
+    for label, arms, act, want in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "gh")
+            with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(_stub_gh(arms))
+            os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
+            os.environ["PATH"] = tmp + os.pathsep + old_path
+            try:
+                act(pl.Collector("own/repo", "2026-11-10T12:00:00Z"))
+                problems.append("{0}: the read did not fail".format(label))
+            except want as exc:
+                if want is pl.ReadError and isinstance(exc, pl.NotFound):
+                    problems.append("{0}: reported as a 404".format(label))
+            finally:
+                os.environ["PATH"] = old_path
+    return problems
+
+
+def _git(cwd, *args):
+    import subprocess
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com"] + list(args),
+                   cwd=cwd, check=True, capture_output=True)
+
+
+AUTO_RELEASE_TEXT = ("on: {workflow_dispatch: {}}\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n"
+                     "      - run: |\n          declare -A stage_file=(\n"
+                     "            [wing-commander-5-implement.yml]=implement.yml\n          )\n")
+
+
+def check_trees():
+    """US3: reach is read from the tree at the entry's merge; a later-deleted
+    workflow is still credited; the nightly end-to-end edge reaches a stage
+    workflow change (FR-005)."""
+    import tempfile
+    problems = []
+    previous = os.getcwd()
+    with tempfile.TemporaryDirectory() as repo:
+        wf = os.path.join(repo, ".github", "workflows")
+        os.makedirs(wf)
+        _git(repo, "init", "-q")
+        files = {"new.yml": "on: {push: {}}\njobs: {}\n", "implement.yml": "on: {workflow_call: {}}\njobs: {}\n",
+                 "wing-commander-5-implement.yml": "on: {workflow_dispatch: {}}\njobs: {}\n",
+                 "auto-release.yml": AUTO_RELEASE_TEXT}
+        for name, text in files.items():
+            with open(os.path.join(wf, name), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "add")
+        sha = pl._run(["git", "rev-parse", "HEAD"], cwd=repo).strip()
+        os.remove(os.path.join(wf, "new.yml"))
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "delete")
+        os.chdir(repo)
+        try:
+            added = pl.tree_reaching(sha, [".github/workflows/new.yml"])
+            names = {w["path"]: w for w in added}
+            if ".github/workflows/new.yml" not in names:
+                problems.append("trees: a workflow deleted later is no longer credited: {0}".format(sorted(names)))
+            elif names[".github/workflows/new.yml"]["reached_via"] != "scan":
+                problems.append("trees: the added workflow was not reached by the scan")
+            nightly = pl.tree_reaching(sha, [".github/workflows/implement.yml"])
+            via = {w["path"]: w["reached_via"] for w in nightly}
+            if via.get(".github/workflows/auto-release.yml") != "nightly-e2e":
+                problems.append("trees: the nightly end-to-end run does not reach a stage workflow: {0}".format(via))
+            if pl.tree_reaching(sha, [".github/workflows/nothing.yml"]):
+                problems.append("trees: a path no workflow reaches was listed")
+        finally:
+            os.chdir(previous)
+    return problems
+
+
 def main():
     fx = load("states.json")
-    problems = check(fx) + check_report(fx)
+    problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
+                + check_failed_reads() + check_trees())
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4
     pl.comment_steps_1_to_4 = lambda entry, comment, shared, repository: True
