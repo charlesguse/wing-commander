@@ -202,13 +202,11 @@ OUTCOME_REASON_CASES = [
 ]
 
 
-from collections import namedtuple  # noqa: E402
 import ast  # noqa: E402
 import shutil  # noqa: E402
 import warnings  # noqa: E402
 
-Exemption = namedtuple("Exemption", "reason issue permanent permanent_reason decided_by",
-                       defaults=(False, None, ()))
+from board_prove import Exemption  # noqa: E402
 
 # specs/124-merge-proof-list research D2/D6: the reach computation and the
 # need-a-run rule have one home, board_prove.py; the other helpers the proof

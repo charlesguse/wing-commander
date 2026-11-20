@@ -102,6 +102,16 @@ def check(fx):
         problems.append("window_for() is not end - 30 days")
     if list(inspect.signature(pl.window_for).parameters) != ["end"]:
         problems.append("window_for() takes more than the build's own end time")
+    # Round 2: capture reads the 33-day corpus window and drops what is later than as-of.
+    cs, ce = pl.capture_window_for("2026-11-17T00:00:00Z")
+    if (ce - cs) != datetime.timedelta(days=33):
+        problems.append("capture window is not 33 days")
+    cap = pl.capture({"built_at": "2026-11-17T00:00:00Z", "runs": {},
+                      "comments": {"s": [{"posted_at": "2026-11-10T00:00:00Z", "body": "a"},
+                                         {"posted_at": "2026-11-16T00:00:00Z", "body": "b"}]}},
+                     "2026-11-12T00:00:00Z")
+    if len(cap["comments"]["s"]) != 1 or cap["window"]["start"] != "2026-10-15T00:00:00Z":
+        problems.append("capture did not use the corpus window or filter at as-of")
     # An entry exactly at `start` is outside (start < merged_at), exactly at `end` inside.
     edge = make_entry(fx["base_entry"], {"merged_at": start})
     last = make_entry(fx["base_entry"], {"sha": "e9", "pr": 30, "merged_at": end})
@@ -441,10 +451,7 @@ def check_workflow():
 
 
 # -- SC-001: replay of the captured corpus (research D13) ---------------------
-from collections import namedtuple  # noqa: E402
-
-Exemption = namedtuple("Exemption", "reason issue permanent permanent_reason decided_by",
-                       defaults=(False, None, ()))
+from board_prove import Exemption  # noqa: E402
 # Interim: the corpus and its answer key are captured by a maintainer session
 # (T029), which deletes this entry in the same commit. Passed to the check as a
 # parameter; never written here (Gate 124).
