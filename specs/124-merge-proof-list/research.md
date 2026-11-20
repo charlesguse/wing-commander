@@ -156,11 +156,12 @@ No `[NEEDS CLARIFICATION]` markers remained in spec.md. The decisions below were
 - **Reasons** are SC-001's four: `own-tree`, `FR-005`, `FR-006-shared-issue`, `FR-013-set-apart`. A shift with any other cause (for example an entry the FR-007 bot-account rule moves) is not on SC-001's list. The session stops and raises it with the owner rather than adding a fifth reason, because SC-001 is merged spec.
 - **The interval before the capture**: implement builds the replay check and drives it with small synthetic corpora. While the two SC-001 files are absent, the check reports SC-001 as "not yet captured" through a Gate-124-shaped exemption, `EXEMPT_SC001_PENDING` in `verify-proof-list.py` (`issue=(1144,)`), rather than as a red gate.
   - Why not a red gate: implement's cycle-start gate verdict (`implement.yml`'s `gate-suite-implement-cycle` job) is its agent's input every cycle, and a red SC-001 check would invite the agent to invent a corpus, so SC-001 would go green with nothing real behind it.
-  - The exemption applies only while both files are absent, and a stale entry fails the gate. The four cases, each with a fixture:
+  - The exemption applies only while both files are absent, and a stale entry fails the gate. The five cases, each with a fixture:
     1. both files absent, entry present: "not yet captured", not red;
     2. either file present, entry present: fails as stale (the capture commit must delete the entry);
     3. exactly one file present: fails;
-    4. both files present, no entry: the replay runs in full, and any difference not on the list fails.
+    4. both files present, no entry: the replay runs in full, and any difference not on the list fails;
+    5. both files absent, no entry: fails (the exemption was deleted without the capture).
 
     The implement stage must not create, edit or weaken either file, or the check that reads them.
   - The trade-off: a deletion forgotten in the capture commit fails the final PR's own CI (case 2), but, as with D2's exemption, nothing mechanical blocks a final PR whose capture was never done. Gate 124 fails only on `main` and only once #1144 is closed. The unticked `[maintainer]` line and the owner's review of the final PR hold the order. `EXEMPT_SC001_PENDING` therefore holds only while lifecycle auto-merge (`WING_COMMANDER_LIFECYCLE_AUTO_MERGE`) is off, so that a human merges every final PR.

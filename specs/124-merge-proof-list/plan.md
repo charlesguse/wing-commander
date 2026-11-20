@@ -146,7 +146,7 @@ The tasks stage reads only this directory, so the task shapes the review asked f
   - Gate 124's `verify-waiver-citations.py` fails any write, `del`, mutating method call or `|=` on an `EXEMPT_*` name anywhere in its module, so the single-home and SC-001 checks take their table as a parameter and the fixtures (stale ones included) pass their own dict.
   - The names-only fixture asserts the "shortened" line and that every state-4 and state-5 entry is present (FR-020).
   - `marker_step` is `none` only when no marker opener is found; an opener with no match or with bad JSON is `other`.
-  - The scan reads `on:` inline today (`board_prove.py` L240); once `workflow_triggers()` moves in, the scan calls it, so `board_prove` keeps one `on:` reader.
+  - The scan keeps its inline `on:` read (`board_prove.py` L240) unchanged, as research D14 keeps the scan as it is; `workflow_triggers()` moves in beside it, and the single-home names rule (research D2) is about defined functions, so the inline read does not break it.
   - `verify-e2e-provisioning-single-home.py` already reads the `stage_file` array with `STAGE_MAP_RE` (L100, L217); move that pattern into `board_prove.py` for `nightly_e2e_edges()` and have the gate import it.
   - The workflow uses `actions/checkout@v5`, as every workflow but one does.
 - **Final "Maintainer follow-up" phase**, each line tagged `[maintainer]` (the first two are not on the tasks prompt's list of maintainer kinds, so the tag must be written explicitly). Deleting each exemption entry is part of its `[maintainer]` task, never an ordinary task of its own.
