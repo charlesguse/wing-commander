@@ -162,3 +162,39 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
   The 06:19 proof list row is placed after 06:37 (and 05:43) in the time-ordered table; it belongs between 05:43 and 06:37.
 
   - docs/reference.md
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: capture subcommand cannot build the SC-001 corpus window
+
+  capture builds a 30-day window ending at --end via Collector window_for(built_at), not the 33-day corpus window, and --as-of is only stored, never used to drop later comments/runs.
+
+  - .github/scripts/wc_proof_list.py
+
+  Detail: capture(collect(repo, args.end), as_of); corpus needs 2026-10-15..2026-11-17 and filtering at as_of per D13.
+
+- [ ] Review finding: Per-day run slicing double-counts runs on slice boundaries
+
+  workflow_runs slices use inclusive created=A..B and the next slice starts at B, so a run created exactly at midnight appears twice and inflates workflow_summary counts.
+
+  - .github/scripts/wc_proof_list.py
+
+  Detail: De-duplicate by run id or end each slice one second early.
+
+- [ ] Review finding: Secondary-rate-limit back-off likely never triggers
+
+  _run only waits when gh stderr matches retry-after, which gh api normally does not print, so secondary limits become immediate ReadError; the stub in the verify gate hides this.
+
+  - .github/scripts/wc_proof_list.py
+  - .github/scripts/verify-proof-list.py
+
+  Detail: Add a fixed bounded wait when secondary-limit text matches without Retry-After.
+
+- [ ] Review finding: Exemption namedtuple duplicated across two verify scripts
+
+  Exemption with identical fields is defined in both verify-board-prove.py and verify-proof-list.py, violating the single-home rule.
+
+  - .github/scripts/verify-board-prove.py
+  - .github/scripts/verify-proof-list.py
+
+  Detail: Define once and import.
