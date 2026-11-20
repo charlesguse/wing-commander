@@ -50,5 +50,6 @@ jobs:
           BOARD_LOOP_PAUSED: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED }}
           LIFECYCLE_AUTO_MERGE: ${{ vars.WING_COMMANDER_LIFECYCLE_AUTO_MERGE }}
           LIFECYCLE_REVIEW_GATE_PAUSED: ${{ vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED }}
+          PROOF_LIST_PAUSED: ${{ vars.WING_COMMANDER_PROOF_LIST_PAUSED }}
           TASKS_REVIEW: ${{ vars.WING_COMMANDER_TASKS_REVIEW }}
         run: python3 .github/scripts/wc_board_status.py publish
