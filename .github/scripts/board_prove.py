@@ -329,6 +329,112 @@ def scan_job_uses_graph(workflow_path):
     return {job_name: sorted(paths) for job_name, paths in graph.items()}
 
 
+WORKFLOWS_DIR = ".github/workflows"
+ACTIONS_DIR = ".github/actions"
+AUTO_RELEASE = ".github/workflows/auto-release.yml"
+# The scaffold step's wrapper -> stage map in auto-release.yml:
+# `[wing-commander-5-implement.yml]=implement.yml`. One home (specs/124-merge-proof-list
+# research D12); verify-e2e-provisioning-single-home.py imports it from here.
+STAGE_MAP_RE = re.compile(r"^\s*\[(wing-commander-[\w.-]+\.yml)\]=([\w.-]+\.yml)\s*$", re.M)
+STAGE_ARRAY_RE = re.compile(r"declare -A stage_file=\((.*?)^\s*\)", re.M | re.S)
+
+
+def reach(workflow, uses_graph):
+    """The transitive closure of what `workflow` references in `uses_graph`,
+    plus `workflow` itself (specs/124-merge-proof-list research D2)."""
+    seen, stack = set(), [workflow]
+    while stack:
+        node = stack.pop()
+        for ref in uses_graph.get(node, ()):
+            if ref not in seen:
+                seen.add(ref)
+                if ref in uses_graph:
+                    stack.append(ref)
+    return seen | {workflow}
+
+
+def mention_edges(changed_paths):
+    """{changed_path: set(workflow/composite files that name it)}, read
+    relative to the working directory. The uses-graph resolves .py helpers
+    only, so a shell script a workflow runs by path reaches nothing; a
+    literal mention of a changed `.github/` path in non-comment text counts
+    as an edge to it (#976). A full-line comment is not an edge."""
+    mentioned_by = {path: set() for path in changed_paths}
+    files = []
+    if os.path.isdir(WORKFLOWS_DIR):
+        for name in os.listdir(WORKFLOWS_DIR):
+            if name.endswith((".yml", ".yaml")):
+                files.append("{0}/{1}".format(WORKFLOWS_DIR, name))
+    for dirpath, _dirs, names in os.walk(ACTIONS_DIR):
+        for name in names:
+            if name in ("action.yml", "action.yaml"):
+                files.append(os.path.join(dirpath, name).replace(os.sep, "/"))
+    for path in files:
+        with open(path, encoding="utf-8") as fh:
+            text = "\n".join(line for line in fh.read().splitlines()
+                             if not line.lstrip().startswith("#"))
+        for changed_path in changed_paths:
+            if (changed_path.startswith(".github/") and changed_path != path
+                    and changed_path in text):
+                mentioned_by[changed_path].add(path)
+    return mentioned_by
+
+
+def reaching_workflows(changed_paths, uses_graph):
+    """{workflow: {changed_path: "scan"|"mention"}} for every workflow in
+    `uses_graph` whose reach (or a file mentioning a changed path inside that
+    reach) covers a changed path. "scan" wins over "mention"."""
+    changed_set = set(changed_paths)
+    mentioned_by = mention_edges(sorted(changed_set))
+    result = {}
+    for workflow in sorted(uses_graph):
+        reached = reach(workflow, uses_graph)
+        hits = {}
+        for path in sorted(changed_set):
+            if path in reached:
+                hits[path] = "scan"
+            elif mentioned_by.get(path, set()) & reached:
+                hits[path] = "mention"
+        if hits:
+            result[workflow] = hits
+    return result
+
+
+def workflow_triggers(path):
+    """The `on:` map of the workflow at `path` ({name: config})."""
+    with open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+    on = doc.get("on", doc.get(True)) or {}
+    if isinstance(on, str):
+        return {on: None}
+    if isinstance(on, list):
+        return {name: None for name in on}
+    return on
+
+
+def runs_of_its_own(path):
+    """False when the workflow's only trigger is `workflow_call` (research D4)."""
+    return set(workflow_triggers(path)) != {"workflow_call"}
+
+
+def nightly_e2e_edges(root="."):
+    """FR-005 (research D12): {auto-release.yml: [wrapper files]} read from the
+    `declare -A stage_file=(...)` array of `root`'s auto-release.yml. No file
+    gives {}; a file whose array cannot be parsed raises ValueError. Only the
+    proof list merges these edges; reach() and the hand procedure never do."""
+    path = os.path.join(root, AUTO_RELEASE)
+    if not os.path.isfile(path):
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    block = STAGE_ARRAY_RE.search(text)
+    pairs = STAGE_MAP_RE.findall(block.group(1)) if block else []
+    if not pairs:
+        raise ValueError("{0}: cannot parse the stage_file array".format(AUTO_RELEASE))
+    return {AUTO_RELEASE: sorted("{0}/{1}".format(WORKFLOWS_DIR, wrapper)
+                                 for wrapper, _stage in pairs)}
+
+
 def redrive_target(changed_paths, dispatchable, uses_graph):
     """Which workflow to re-drive to prove the merged change (FR-042,
     contracts/prove-step.md "Re-drive": "the wrapper workflow that can
