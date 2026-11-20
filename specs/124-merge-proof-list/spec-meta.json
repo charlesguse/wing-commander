@@ -3,7 +3,7 @@
   "spec_dir": "specs/124-merge-proof-list",
   "feature_num": "124",
   "stage": "implement",
-  "iteration": 4,
+  "iteration": 5,
   "spec_branch": "spec/124-merge-proof-list",
   "truncated_count": 0,
   "truncated_tier": null,
