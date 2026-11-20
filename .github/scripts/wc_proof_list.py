@@ -22,6 +22,7 @@ from board_triage import any_run_url_pattern  # noqa: E402
 
 STATES = (1, 2, 3, 4, 5)
 WINDOW_DAYS = 30
+CAPTURE_DAYS = 33  # the SC-001 corpus window, 2026-10-15..2026-11-17 (research D13)
 AGED_OUT_HOURS = 24
 # data-model.md "State": 1 needs no run, 2 on record, 3 nothing reaches it,
 # 4 reached but no finished run counts, 5 run(s) count but nothing on record.
@@ -41,6 +42,12 @@ def window_for(end):
     """`start = end - 30 days`; the only way a build's window is set (FR-011)."""
     end = parse_time(end)
     return end - datetime.timedelta(days=WINDOW_DAYS), end
+
+
+def capture_window_for(end):
+    """The SC-001 corpus window, used by `capture` only, never by `build`."""
+    end = parse_time(end)
+    return end - datetime.timedelta(days=CAPTURE_DAYS), end
 
 
 def pr_named(body, pr, repository=None):
@@ -313,6 +320,7 @@ class NotFound(ReadError):
 RATE_LIMIT_FLOOR = 600
 RUN_CAP = 1000
 SECONDARY_RE = re.compile(r"secondary rate limit", re.I)
+SECONDARY_DEFAULT_WAIT = 30
 RETRY_AFTER_RE = re.compile(r"retry-after:?\s*(\d+)", re.I)
 SECTION_ARTIFACT = "proof-list-section"
 SECTION_FILE = "proof-list-section.json"
@@ -332,9 +340,11 @@ def _run(argv, cwd=None, sleep=None):
     if argv[0] == "gh" and SECONDARY_RE.search(err):
         # A secondary limit only: wait what the server said, once. A primary
         # limit (403/429 without that text) is a failed read, no back-off.
+        # `gh api` seldom prints Retry-After: without it wait a fixed, bounded time.
         match = RETRY_AFTER_RE.search(err)
-        if match and sleep is not False:
-            (sleep or time.sleep)(min(int(match.group(1)), 60))
+        if sleep is not False:
+            wait = min(int(match.group(1)), 60) if match else SECONDARY_DEFAULT_WAIT
+            (sleep or time.sleep)(wait)
             return _run(argv, cwd, sleep=False)
     raise ReadError("{0}: {1}".format(" ".join(argv[:4]), err or "exit {0}".format(proc.returncode)))
 
@@ -425,10 +435,10 @@ class Collector:
     """One build's reads, with per-build caches (commits' trees, issue threads,
     named runs, workflow run lists)."""
 
-    def __init__(self, repository, built_at):
+    def __init__(self, repository, built_at, window=window_for):
         self.repository = repository
         self.built_at = parse_time(built_at)
-        self.start, self.end = window_for(self.built_at)
+        self.start, self.end = window(self.built_at)
         self.since = self.start - datetime.timedelta(hours=AGED_OUT_HOURS)
         self.threads, self.named, self.run_lists, self.trees = {}, {}, {}, {}
         self.present, self.ancestry = {}, {}
@@ -540,8 +550,10 @@ class Collector:
                 day = self.since
                 while day < self.end:
                     nxt = day + datetime.timedelta(days=1)
-                    span = "created={0}..{1}".format(day.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                                     nxt.strftime("%Y-%m-%dT%H:%M:%SZ"))
+                    # The range is inclusive at both ends: stop one second early.
+                    span = "created={0}..{1}".format(
+                        day.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        (nxt - datetime.timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ"))
                     q = "{0}/workflows/{1}/runs?status=completed&per_page=100&{2}".format(base, name, span)
                     if int(api(q + "&page=1").get("total_count", 0)) > RUN_CAP:
                         raise ReadError("{0}: more than {1} runs in one day".format(name, RUN_CAP))
@@ -606,10 +618,10 @@ class Collector:
         return out
 
 
-def collect(repository, built_at):
+def collect(repository, built_at, window=window_for):
     """Every input of the pure half, read from git and the API."""
     check_rate_limit()
-    col = Collector(repository, built_at)
+    col = Collector(repository, built_at, window)
     entries = col.entries()
     comments_by_sha = {e["sha"]: col.comments_for(e) for e in entries if e["needs_run"]}
     runs = col.runs(entries)
@@ -682,11 +694,19 @@ def reduce_body(body):
 
 def capture(bundle, as_of):
     """The SC-001 corpus document (data-model.md "SC-001 corpus")."""
-    start, end = window_for(bundle["built_at"])
+    start, end = capture_window_for(bundle["built_at"])
+    cutoff = parse_time(as_of)
+
+    def known(when):
+        return not when or parse_time(when) <= cutoff
+
     out = dict(bundle, as_of=as_of, window={"start": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
                                             "end": end.strftime("%Y-%m-%dT%H:%M:%SZ")})
-    out["comments"] = {sha: [dict(c, body=reduce_body(c.get("body"))) for c in cs]
+    out["comments"] = {sha: [dict(c, body=reduce_body(c.get("body"))) for c in cs
+                             if known(c.get("posted_at"))]
                        for sha, cs in bundle["comments"].items()}
+    out["runs"] = {path: [r for r in rs if known(r.get("run_started_at"))]
+                   for path, rs in bundle["runs"].items()} if isinstance(bundle["runs"], dict) else bundle["runs"]
     return out
 
 
@@ -724,7 +744,7 @@ def main(argv=None):
             now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
             doc = report_from_bundle(collect(args.repository, now))
         else:
-            doc = capture(collect(args.repository, args.end), args.as_of)
+            doc = capture(collect(args.repository, args.end, capture_window_for), args.as_of)
         with open(args.out, "w", encoding="utf-8") as fh:
             json.dump(doc, fh, indent=2, sort_keys=True)
         print("wrote {0}".format(args.out))

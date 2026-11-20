@@ -19,6 +19,12 @@ import sys
 
 import json
 import yaml
+from collections import namedtuple
+
+# One definition of a waiver row, shared by verify-board-prove.py and
+# verify-proof-list.py (tables are passed to checks as parameters, Gate 124).
+Exemption = namedtuple("Exemption", "reason issue permanent permanent_reason decided_by",
+                       defaults=(False, None, ()))
 
 DOCS_ONLY_GLOBS = ("docs/**", "specs/**")
 VERIFY_SCRIPT_GLOB = ".github/scripts/verify-*.py"
