@@ -17,7 +17,7 @@ Prerequisites: a checkout with full history; `python3`, PyYAML.
      - **Set apart (AS9)**: an unresolvable run plus a foreign named run give a count of 2. A pre-merge run and a run on a non-containing commit leave it unchanged. A run named twice counts once.
      - **Reach**: own tree, from a throwaway git repository built by the gate (Story 3: a workflow added, then deleted later); nightly reach (AS4), with eight wrappers, a wrapper missing from the array, no `auto-release.yml`, and an unparseable array; a reusable-only change listing `wing-commander-5-implement.yml`, not `implement.yml`; an orphan reusable shown as "no runs of its own".
      - **Entries**: a direct push; a final PR whose `closingIssuesReferences` is empty, with its lifecycle issue from `spec-meta.json`, and a title that disagrees with it (fails); a commit whose title names an issue before the PR number.
-     - **Aged out**: one commit on each side of each window boundary.
+     - **Aged out**: one commit on each side of each of the three boundaries (`start - 24h`, `start`, `end`), and a supplied window that is not 30 days long (research D10).
      - **Failed reads (FR-013)**, each failing the build: runs past the cap after slicing; shallow or short history; an unreadable comment thread; an unresolvable tree. Also a 403/429 primary limit, and a rate-limit floor below 600.
      - **Size**: the full and names-only renderings; a names-only form over `MAX_BODY_UNITS` fails the build.
      - **Determinism (SC-003)**: the same inputs built twice give the same states.
@@ -40,9 +40,9 @@ Prerequisites: a checkout with full history; `python3`, PyYAML.
      - the last-good date found by paging past runs that stood down;
      - the build step's name constant matching the workflow file;
      - the new `SWITCH_ENV` entry's env line in `board-status.yml` (the existing `switches_half()` check).
-   - **`verify-board-prove.py`** (Gate 89, existing): the single-home check and its fixtures (research D2); `EXEMPT_REACH_COPIES` excusing only the skill script.
+   - **`verify-board-prove.py`** (Gate 89, existing): the single-home check and its fixtures (research D2); `EXEMPT_REACH_COPIES` excusing only the skill script; a stale entry (a thinned skill script that still has its entry) failing.
    - **`verify-waiver-citations.py`** (Gate 124, existing) reads `EXEMPT_REACH_COPIES` and `EXEMPT_SC001_PENDING`.
-2. **SC-001 replay**: `python .github/scripts/verify-proof-list.py` replays `.github/scripts/fixtures/proof-list/sc001/corpus.json` for 2026-10-15 to 2026-11-16 and compares against `expected.json`. Any difference not on its list, and any listed difference that no longer occurs, fails. While both files are absent the check reports "SC-001 not yet captured" under `EXEMPT_SC001_PENDING` (research D13); the `[maintainer]` capture task adds the files and deletes the exemption.
+2. **SC-001 replay**: `python .github/scripts/verify-proof-list.py` replays `.github/scripts/fixtures/proof-list/sc001/corpus.json` over its window (`2026-10-15T00:00:00Z` to `2026-11-17T00:00:00Z`, the corpus's own `start` and `end`) and compares against `expected.json`. Any difference not on its list, and any listed difference that no longer occurs, fails. While both files are absent the check reports "SC-001 not yet captured" under `EXEMPT_SC001_PENDING` (research D13); the `[maintainer]` capture task adds the files and deletes the exemption in the same commit. A fixture for each of D13's four cases: both files absent with the entry (not yet captured); either file present with the entry (fails as stale); exactly one file present (fails); both present with no entry (the replay runs).
 3. **Dry render**: `python .github/scripts/wc_proof_list.py render .github/scripts/fixtures/proof-list/<case>.json` prints a section. Confirm it has no verdict wording.
 4. **After merge** (`[maintainer]`, `prove-after-merge`):
    1. Dispatch `wing-commander-proof-list.yml` on the default branch and wait for it.
