@@ -218,3 +218,11 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
 - [ ] R3-b In `verify-proof-list.py` `check_sc001_fixtures`, give the two `EXEMPT_SC001_PENDING` cases a local dict with its own `Exemption(...)` row.
 - [ ] R3-c Do not touch the module-level `EXEMPT_*` tables or their entries.
 - [ ] R3-d Show that emptying either live table no longer fails these fixtures.
+
+## Maintainer Feedback
+
+- [ ] R5-a Read issue comments and PR review comments with `?since=` and `per_page=100`, keeping the `created_at` filter, including the thread reads around L517-522.
+- [ ] R5-b Keep one read per thread, bounded by the earliest `merged_at` among the entries that read that thread.
+- [ ] R5-c In `Collector.named_runs`, call `actions/runs/{id}` only for run links in comments that pass `comment_steps_1_to_4` for at least one entry.
+- [ ] R5-d Keep the fail-loudly behaviour on a primary rate limit.
+- [ ] R5-e Add fixtures that fail without each change, covering the request count and the paging parameters.
