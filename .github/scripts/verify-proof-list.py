@@ -111,9 +111,68 @@ def check(fx):
     return problems
 
 
+VERDICT_WORDS = ("proven", "not proven", "passed", "verified", "unproven")
+
+
+def check_report(fx):
+    """US1: the report lists every state-4/5 entry, collapses hundreds of runs
+    to counts plus earliest/latest, shortens by names only, and fails when even
+    that does not fit (FR-010, FR-020)."""
+    from board_spec_request_body import MAX_BODY_UNITS, utf16_len
+    problems = []
+    built_at = "2026-11-10T12:00:00Z"
+    e4 = make_entry(fx["base_entry"], {"sha": "aaaaaaaaaaaa", "pr": 41})
+    e5 = make_entry(fx["base_entry"], {"sha": "bbbbbbbbbbbb", "pr": 42,
+                                       "reaching": [{"path": ".github/workflows/wrap.yml", "reached_via": "scan", "runs_of_its_own": True},
+                                                    {"path": ".github/workflows/called.yml", "reached_via": "scan", "runs_of_its_own": False}]})
+    e2 = make_entry(fx["base_entry"], {"sha": "cccccccccccc", "pr": 43, "changed_paths": ["docs/a.md"]})
+    e4["reaching"] = [{"path": ".github/workflows/other.yml", "reached_via": "mention", "runs_of_its_own": True}]
+    runs = {".github/workflows/wrap.yml": [
+        {"run_id": 1000 + i, "event": "schedule" if i % 2 else "push", "conclusion": "success" if i % 3 else "failure",
+         "run_started_at": "2026-11-0{0}T0{1}:00:00Z".format(2 + i % 7, i % 10),
+         "html_url": "https://github.com/own/repo/actions/runs/{0}".format(1000 + i),
+         "contains": ["bbbbbbbbbbbb"], "resolvable": True} for i in range(300)]}
+    try:
+        doc = pl.assemble_report([e4, e5, e2], runs, {}, {}, fx["repository"], built_at, "head1",
+                                 MAX_BODY_UNITS, utf16_len)
+    except ValueError as exc:
+        return ["report assembly failed on a small fixture: {0}".format(exc)]
+    if doc["schema"] != 1 or doc["window"]["start"] != "2026-10-11T12:00:00Z":
+        problems.append("report schema/window wrong: {0}".format({k: doc[k] for k in ("schema", "window")}))
+    if doc["counts"] != {"1": 1, "2": 0, "3": 0, "4": 1, "5": 1}:
+        problems.append("report counts wrong: {0}".format(doc["counts"]))
+    for form in ("full", "names_only"):
+        for sha in ("aaaaaaaaaa", "bbbbbbbbbb"):
+            if sha not in doc[form]:
+                problems.append("{0} form drops entry {1}".format(form, sha))
+        if "cccccccccc" in doc[form]:
+            problems.append("{0} form lists a state-1 entry".format(form))
+        if "no runs of its own" not in doc[form]:
+            problems.append("{0} form lacks the 'no runs of its own' marking".format(form))
+        if any(word in doc[form].lower() for word in VERDICT_WORDS):
+            problems.append("{0} form carries verdict wording".format(form))
+    if pl.STANDING_LINE not in doc["full"]:
+        problems.append("the standing state-3 line is missing")
+    if pl.SHORTENED_LINE in doc["full"] or pl.SHORTENED_LINE not in doc["names_only"]:
+        problems.append("the shortened line must appear in the names-only form only")
+    if doc["full"].count("actions/runs/") != 2:
+        problems.append("300 runs did not collapse to an earliest and latest link: {0} links".format(
+            doc["full"].count("actions/runs/")))
+    if "schedule/success" not in doc["full"] or "push/failure" not in doc["full"]:
+        problems.append("the per-event counts are missing from the full form")
+    if "actions/runs/" in doc["names_only"]:
+        problems.append("the names-only form carries run links")
+    try:
+        pl.assemble_report([e4, e5], runs, {}, {}, fx["repository"], built_at, "head1", 100, utf16_len)
+        problems.append("a report over the size limit did not fail the build")
+    except ValueError:
+        pass
+    return problems
+
+
 def main():
     fx = load("states.json")
-    problems = check(fx)
+    problems = check(fx) + check_report(fx)
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4
     pl.comment_steps_1_to_4 = lambda entry, comment, shared, repository: True
