@@ -2,13 +2,11 @@
   "issue": 1144,
   "spec_dir": "specs/124-merge-proof-list",
   "feature_num": "124",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 5,
   "spec_branch": "spec/124-merge-proof-list",
   "truncated_count": 0,
   "truncated_tier": null,
   "gate_suite_ready": true,
-  "pending_re_review_from": [
-    "charlesguse"
-  ]
+  "pending_re_review_from": []
 }
