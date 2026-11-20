@@ -60,6 +60,7 @@ The owner, or a session working the board, opens the proof list's daily report a
 6. **Given** a commit in state 4 or 5 that reached `main` in the day just before the window starts, **When** the list is built, **Then** it is no longer an entry of the list and is counted in the report's aged-out count; nothing else removes an entry from the states-4-and-5 section except moving to another state (FR-012).
 7. **Given** a state-5 entry whose PR or board-item issue carries a comment, posted after the merge and naming a qualifying run, that is one of these — a comment by the pipeline's App with no board item marker, a comment by `github-actions[bot]` with no board item marker, or a comment by anyone under the board item marker at step `prove` — **When** the list is built, **Then** the entry stays in state 5 (FR-007).
 8. **Given** two entries in the window with different pull requests that name the same issue, and a comment on that issue that names a qualifying run and only the first entry's pull request, **When** the list is built, **Then** the comment counts for the first entry and not for the second (FR-006).
+9. **Given** a finished run of a reaching workflow whose commit cannot be resolved while `main`'s history is complete, and a comment on an entry's pull request, posted after the merge, that names a run that is not a run of this repository, **When** the list is built, **Then** neither run qualifies, the build completes and publishes the list, and the report's count of runs set apart includes both (FR-013, FR-020).
 
 ---
 
