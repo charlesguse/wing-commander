@@ -98,3 +98,67 @@ T002 with T003; T009 with T006-T008; T013, T019, T022 are fixture-only and can r
 ## Implementation strategy
 
 MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and live reads. Then US3 (own-tree accuracy), then US4 (workflow and publication), then docs and the SC-001 replay; the maintainer captures last.
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Missing spec-meta.json aborts whole proof-list build
+
+  lifecycle_issue() only treats NotFound (HTTP 404) as skippable, but git show for a missing path exits 128 with 'does not exist', so it raises ReadError and main() exits 1.
+
+  - .github/scripts/wc_proof_list.py
+
+  Detail: A Finalize PR touching a spec dir with no spec-meta.json at that commit fails the daily build until it ages out of the window.
+
+- [ ] Review finding: Waiver cites issue 1144 that will close on merge
+
+  EXEMPT_REACH_COPIES cites issue 1144 (the lifecycle item), so closing it turns Gate 124 red on main while PRs stay green.
+
+  - .github/scripts/verify-board-prove.py
+
+  Detail: Repoint the waiver at the open Maintenance backlog issue or another tracker that stays open.
+
+- [ ] Review finding: O(runs x entries) git subprocesses may exceed job timeout
+
+  run_record() spawns one git merge-base --is-ancestor per (run, entry) plus per-run commit_present calls, which can reach tens of thousands of subprocesses against a 15-minute timeout.
+
+  - .github/scripts/wc_proof_list.py
+
+  Detail: Cache is_ancestor by (sha, head) or compute containment once per distinct head_sha.
+
+- [ ] Review finding: counting_runs counts cancelled/skipped runs
+
+  Every completed run whose head contains the merge counts regardless of conclusion, so cancelled or skipped runs move an entry from state 4 to state 5 and lose the re-drive nudge.
+
+  - .github/scripts/wc_proof_list.py
+
+  Detail: Decide explicitly which conclusions count and add a fixture.
+
+- [ ] Review finding: Run-URL repository comparison is case-sensitive
+
+  key[0] == repository fails for differently capitalised owner/repo in a proof comment's run URL, so a genuine own-repo run is treated as set apart.
+
+  - .github/scripts/wc_proof_list.py
+
+  Detail: Compare lower-cased; the same applies in set_apart() and named_runs().
+
+- [ ] Review finding: NotFound fallback in workflow_runs silently truncates at the cap
+
+  The fallback lists the whole repo run stream with no RUN_CAP or day-splitting check, so a truncated list shrinks the counting runs without failing loudly.
+
+  - .github/scripts/wc_proof_list.py
+
+  Detail: Apply the same total_count > RUN_CAP check or raise ReadError.
+
+- [ ] Review finding: proof_list_snapshot can crash the Board status rewrite
+
+  It catches only CalledProcessError, ValueError, KeyError and OSError, so a malformed API shape raising AttributeError or TypeError aborts the whole daily publish.
+
+  - .github/scripts/wc_board_status.py
+
+  Detail: Add TypeError/AttributeError or wrap the call so failure becomes status unreadable.
+
+- [ ] Review finding: Daily-times table row out of time order
+
+  The 06:19 proof list row is placed after 06:37 (and 05:43) in the time-ordered table; it belongs between 05:43 and 06:37.
+
+  - docs/reference.md
