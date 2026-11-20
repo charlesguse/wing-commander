@@ -234,3 +234,8 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
 - [ ] R6-c `reduce_body`: build the keep-test from `board_triage.any_run_url_pattern()`, `board_item_marker.MARKER_OPEN_RE` and the PR-reference rule, including `/pull/N` URLs. Add a fixture.
 - [ ] R6-d `sc001_replay`: also flag an entry with no PR in state 4 or 5, keyed by SHA. Add a fixture.
 - [ ] R6-e Do not create or edit `sc001/corpus.json` or `sc001/expected.json`, delete any `EXEMPT_*` entry, or edit the prove-after-merge skill. These remain the `[maintainer]` tasks T028 and T029.
+
+## Maintainer Feedback
+
+- [ ] R7-a Add a line to `docs/reference.md` under "Known limits" saying the "runs set apart" count is mostly `pull_request` runs on branches deleted after a squash-merge, whose head commits are not in the checkout (about 197 in a dry run on real data).
+- [ ] R7-b Leave the count's definition unchanged (FR-013, research D5).
