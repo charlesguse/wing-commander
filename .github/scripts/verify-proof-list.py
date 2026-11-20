@@ -370,10 +370,142 @@ def check_workflow():
     return problems
 
 
+# -- SC-001: replay of the captured corpus (research D13) ---------------------
+from collections import namedtuple  # noqa: E402
+
+Exemption = namedtuple("Exemption", "reason issue permanent permanent_reason decided_by",
+                       defaults=(False, None, ()))
+# Interim: the corpus and its answer key are captured by a maintainer session
+# (T029), which deletes this entry in the same commit. Passed to the check as a
+# parameter; never written here (Gate 124).
+EXEMPT_SC001_PENDING = {
+    "sc001": Exemption(
+        reason=("sc001/corpus.json and expected.json are captured by a maintainer "
+                "session with full history and `gh` (T029); until then the replay "
+                "reports 'not yet captured' instead of failing"),
+        issue=(1144,)),
+}
+SC001_REASONS = ("own-tree", "FR-005", "FR-006-shared-issue", "FR-013-set-apart")
+
+
+def sc001_replay(corpus, expected):
+    """The replay: needs neither git nor `gh`. Returns problems."""
+    problems = []
+    states, _aged = pl.classify_all(corpus["entries"], corpus["runs"], corpus["comments"],
+                                    corpus["named_runs"], corpus["repository"],
+                                    corpus["window"]["start"], corpus["window"]["end"])
+    by_pr = {e["pr"]: states.get(e["sha"]) for e in corpus["entries"] if e.get("pr") is not None}
+    diffs = []
+    for pr in expected["proofs"]:
+        if by_pr.get(pr) != pl.STATE_ON_RECORD:
+            diffs.append((pr, "proofs", by_pr.get(pr)))
+    for pr in expected["listed"]:
+        if by_pr.get(pr) not in (pl.STATE_NO_RUN, pl.STATE_RUN_NO_RECORD):
+            diffs.append((pr, "listed", by_pr.get(pr)))
+    named = set(expected["proofs"]) | set(expected["listed"])
+    for pr, state in sorted(by_pr.items()):
+        if pr not in named and state in (pl.STATE_NO_RUN, pl.STATE_RUN_NO_RECORD):
+            diffs.append((pr, "listed", state))
+    allowed = {}
+    for item in expected.get("expected_differences", ()):
+        if item.get("reason") not in SC001_REASONS:
+            problems.append("SC-001: #{0} has reason {1!r}, outside SC-001's four".format(
+                item.get("pr"), item.get("reason")))
+        allowed[(item.get("pr"), item.get("half"), item.get("actual_state"))] = item
+    for key in diffs:
+        if key not in allowed:
+            problems.append("SC-001: #{0} ({1}) is in state {2}, a difference that is not on the list".format(*key))
+    for key, item in sorted(allowed.items(), key=lambda kv: str(kv[0])):
+        if key not in diffs:
+            problems.append("SC-001: the expected difference for #{0} ({1}, state {2}) no longer differs; "
+                            "delete it".format(*key))
+    return problems
+
+
+def check_sc001(directory, exempt):
+    """-> (problems, note). The five cases of research D13."""
+    paths = [os.path.join(directory, n) for n in ("corpus.json", "expected.json")]
+    present = [os.path.isfile(p) for p in paths]
+    if sum(present) == 1:
+        return ["SC-001: exactly one of corpus.json and expected.json is present"], None
+    if sum(present) == 0:
+        if exempt:
+            return [], "SC-001 not yet captured (EXEMPT_SC001_PENDING, #1144)"
+        return ["SC-001: the corpus and answer key are absent and the exemption was deleted "
+                "without the capture"], None
+    if exempt:
+        return ["SC-001: both files are present but EXEMPT_SC001_PENDING is still there; "
+                "the capture commit deletes the entry"], None
+    with open(paths[0], encoding="utf-8") as fh:
+        corpus = json.load(fh)
+    with open(paths[1], encoding="utf-8") as fh:
+        expected = json.load(fh)
+    return sc001_replay(corpus, expected), "SC-001 replayed {0} entries".format(len(corpus["entries"]))
+
+
+def check_sc001_fixtures(fx):
+    import tempfile
+    problems = []
+    base = fx["base_entry"]
+    entries = [make_entry(base, {"sha": "p1", "pr": 1}),
+               make_entry(base, {"sha": "l2", "pr": 2}),
+               make_entry(base, {"sha": "x3", "pr": 3, "changed_paths": ["docs/a.md"]})]
+    comment = dict(fx["base_comment"], place={"kind": "pr", "number": 1})
+    corpus = {"repository": fx["repository"], "window": fx["window"], "entries": entries,
+              "runs": {}, "named_runs": {"own/repo/500": dict(fx["base_named"], contains=["p1"])},
+              "comments": {"p1": [comment]}}
+    good = {"proofs": [1], "listed": [2], "expected_differences": []}
+    if sc001_replay(corpus, good):
+        problems.append("SC-001 fixture: the matching corpus failed: {0}".format(sc001_replay(corpus, good)))
+    diff = {"pr": 2, "sha": "l2", "half": "listed", "expected_state": 5, "actual_state": 3,
+            "reason": "own-tree", "note": "x"}
+    mismatches = [
+        ("a proof not in state 2", dict(good, proofs=[2], listed=[1])),
+        ("a listed entry outside 4 or 5", dict(good, listed=[3])),
+        ("an extra entry in 4 or 5", dict(good, listed=[])),
+        ("a stale expected difference", dict(good, expected_differences=[dict(diff, pr=1, half="proofs", actual_state=4)])),
+        ("a reason outside SC-001's four", dict(good, expected_differences=[dict(diff, reason="other")])),
+    ]
+    for label, expected in mismatches:
+        if not sc001_replay(corpus, expected):
+            problems.append("SC-001 fixture: {0} was not noticed".format(label))
+    # an expected difference that matches an actual one is accepted
+    moved = dict(corpus, entries=[make_entry(base, {"sha": "l2", "pr": 2, "reaching": []})] + entries[:1] + entries[2:])
+    if sc001_replay(moved, dict(good, expected_differences=[dict(diff, actual_state=3)])):
+        problems.append("SC-001 fixture: a listed difference was rejected: {0}".format(
+            sc001_replay(moved, dict(good, expected_differences=[dict(diff, actual_state=3)]))))
+    # the five exemption cases
+    exempt = EXEMPT_SC001_PENDING
+    with tempfile.TemporaryDirectory() as tmp:
+        def write(name):
+            with open(os.path.join(tmp, name), "w", encoding="utf-8") as fh:
+                json.dump(corpus if name == "corpus.json" else good, fh)
+        for label, files, table, want_fail in (
+                ("both absent, entry present", (), exempt, False),
+                ("both absent, no entry", (), {}, True),
+                ("exactly one file", ("corpus.json",), {}, True),
+                ("both present, entry still there", ("corpus.json", "expected.json"), exempt, True),
+                ("both present, no entry, replay passes", ("corpus.json", "expected.json"), {}, False)):
+            for name in ("corpus.json", "expected.json"):
+                path = os.path.join(tmp, name)
+                if os.path.exists(path):
+                    os.remove(path)
+            for name in files:
+                write(name)
+            got, _note = check_sc001(tmp, table)
+            if bool(got) != want_fail:
+                problems.append("SC-001 fixture: {0}: {1}".format(label, got or "did not fail"))
+    return problems
+
+
 def main():
     fx = load("states.json")
+    real, note = check_sc001(os.path.join(FIXTURES, "sc001"), EXEMPT_SC001_PENDING)
+    if note:
+        print("[ok] verify-proof-list: {0}".format(note))
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
-                + check_failed_reads() + check_trees() + check_workflow())
+                + check_failed_reads() + check_trees() + check_workflow()
+                + real + check_sc001_fixtures(fx))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4
     pl.comment_steps_1_to_4 = lambda entry, comment, shared, repository: True
