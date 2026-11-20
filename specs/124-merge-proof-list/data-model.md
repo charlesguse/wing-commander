@@ -10,7 +10,7 @@ How each field is derived is in research D6's "Reused homes" table.
 | `sha` | string | first-parent commit on the default branch |
 | `merged_at` | UTC timestamp | committer time on the first-parent line (FR-001) |
 | `pr` | int \| null | the PR from `commits/{sha}/pulls` whose `merge_commit_sha` equals `sha`; null for a direct push |
-| `named_issues` | list of {`number`, `how`} | `how` ∈ `closes` (`closingIssuesReferences`), `board-item` (`pr_issue()`), `backlog-line` (`pr_line()`), `lifecycle` |
+| `named_issues` | list of {`number`, `how`} | `how` ∈ `closes` (`closingIssuesReferences`), `board-item` (`pr_issue()`), `backlog-line` (`pr_line()`), `lifecycle`. Read for every entry with a PR, state 1 included, because shared-issue detection counts every entry's PR (research D6) |
 | `lifecycle_issue` | int \| null | final PR only (title `Finalize: … (#N)`): `.issue` of the merge tree's `specs/<slug>/spec-meta.json`, cross-checked against the title |
 | `changed_paths` | string[] | `diff_name_list(sha^1, sha)`; empty is allowed |
 | `needs_run`, `needs_reason` | bool, string | `needs_run, needs_reason = actions_only(changed_paths)`; the function returns a pair, so the pair itself is never used as a condition |
@@ -45,12 +45,12 @@ Qualification, for one entry, in order (FR-006, FR-007, FR-009; research D6):
 1. `posted_at` is after `merged_at`, and the comment is on a place FR-006 names for that entry.
 2. A marker is present: continue only if `marker_step == proven`. Otherwise it never counts.
 3. No marker and `account_type == Bot`: it never counts.
-4. On a shared issue (named by more than one entry's PR), the body names that entry's PR (`#N` with boundaries, or the PR URL).
+4. On a shared issue (named by more than one entry's PR, any entry, state 1 included), the body names that entry's PR (`#N` with boundaries, or the PR URL).
 5. At least one NamedRun in the body qualifies for that entry.
 
 ## SetApartRun
 Exactly FR-013's two cases (research D5):
-- `unresolvable`: a run of a reaching workflow, or a `found` named run, whose `head_sha` is absent from a complete history;
+- `unresolvable`: a run of a reaching workflow, or a `found` named run, whose `head_sha` is absent from a complete history, and whose `run_started_at` is after the `merged_at` of an entry whose `reaching` includes its workflow (for a named run, of the entry whose comment names it). An unresolvable run that started before every such merge is not set apart (research D5);
 - `not-this-repository`: a named run of `kind` `foreign` or `not_found`, named by a comment that passes steps 1-4 above.
 
 Each is counted once across the window, de-duplicated by run id or URL, never per entry.
@@ -84,9 +84,9 @@ Invariants: exactly one state per entry; the same inputs give the same state; no
 
 ## SC-001 corpus (`.github/scripts/fixtures/proof-list/sc001/corpus.json`)
 The pure half's input, written by `wc_proof_list.py capture` (research D13):
-- `window` {`start`: 2026-10-15, `end`: 2026-11-16}, `as_of`, `repository`;
-- `entries`: every first-parent commit in the window and in the day before it, with the Entry fields and `reaching` computed at capture time from each entry's own tree;
-- `runs`: per reaching workflow with runs of its own, the FinishedRun fields of every completed run created on or after the earliest merge, plus `contains` (the entry SHAs that are ancestors of its `head_sha`) and `resolvable` (bool);
+- `window` {`start`: `2026-10-15T00:00:00Z`, `end`: `2026-11-17T00:00:00Z`} as UTC instants (SC-001's "2026-10-15 to 2026-11-16", last day included), `as_of`, `repository`. The replay passes `start` and `end` to the pure half as they are (research D10);
+- `entries`: every first-parent commit in the window and in the aged-out day before it (`start − 24h < merge ≤ start`), with the Entry fields and `reaching` computed at capture time from each entry's own tree;
+- `runs`: per reaching workflow with runs of its own, the FinishedRun fields of every completed run created at or after the aged-out day's start (`start − 24h`, research D4), plus `contains` (the entry SHAs that are ancestors of its `head_sha`) and `resolvable` (bool);
 - `named_runs`: NamedRun records keyed by URL, with `contains` and `resolvable` as above;
 - `comments`: RecordComment records per place read, posted no later than `as_of`, with each body reduced to its lines carrying a run link, a PR reference or the board item marker (other lines become `…`) and then scrubbed of any private project name.
 
