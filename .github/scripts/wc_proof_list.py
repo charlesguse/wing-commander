@@ -54,7 +54,7 @@ def pr_named(body, pr, repository=None):
 
 def named_run_keys(body):
     """[(repository, run_id)] for every Actions run URL in `body`, in order."""
-    return [(m.group(1), m.group(2)) for m in _RUN_URL_RE.finditer(body or "")]
+    return [(m.group(1).lower(), m.group(2)) for m in _RUN_URL_RE.finditer(body or "")]
 
 
 def shared_issues(entries):
@@ -115,7 +115,7 @@ def qualifying_comments(entry, comments, named_runs, shared, repository):
         if not comment_steps_1_to_4(entry, comment, shared, repository):
             continue
         for key in named_run_keys(comment.get("body")):
-            if key[0] == repository and run_qualifies(
+            if key[0] == repository.lower() and run_qualifies(
                     entry, _named_run_for(entry, key, named_runs)):
                 out.append(comment)
                 break
@@ -189,8 +189,9 @@ def set_apart(entries, runs, comments_by_sha, named_runs, repository, start, end
             if not comment_steps_1_to_4(entry, comment, shared, repository):
                 continue
             for key in named_run_keys(comment.get("body")):
-                record = None if key[0] != repository else _named_run_for(entry, key, named_runs)
-                if key[0] != repository or (record or {}).get("kind") in ("foreign", "not_found") \
+                own = key[0] == repository.lower()
+                record = _named_run_for(entry, key, named_runs) if own else None
+                if not own or (record or {}).get("kind") in ("foreign", "not_found") \
                         or record is None:
                     apart.add(("url", "{0}/{1}".format(*key)))
                 elif (record.get("kind") == "found" and not record.get("resolvable", True)
@@ -430,6 +431,7 @@ class Collector:
         self.start, self.end = window_for(self.built_at)
         self.since = self.start - datetime.timedelta(hours=AGED_OUT_HOURS)
         self.threads, self.named, self.run_lists, self.trees = {}, {}, {}, {}
+        self.present, self.ancestry = {}, {}
 
     # -- entries -----------------------------------------------------------
     def entries(self):
@@ -478,7 +480,12 @@ class Collector:
                 meta = json.loads(git("show", "{0}:{1}/spec-meta.json".format(sha, spec_dir)))
             except NotFound:
                 continue
-            except (ReadError, ValueError) as exc:
+            except ReadError as exc:
+                # `git show` of a path absent at that commit exits 128.
+                if "does not exist" in str(exc) or "exists on disk, but not in" in str(exc):
+                    continue
+                raise ReadError("{0}: spec-meta.json unreadable at {1}: {2}".format(spec_dir, sha[:10], exc))
+            except ValueError as exc:
                 raise ReadError("{0}: spec-meta.json unreadable at {1}: {2}".format(spec_dir, sha[:10], exc))
             if int(meta.get("issue", -1)) != int(match.group(1)):
                 raise ReadError("{0}: spec-meta issue {1} disagrees with the title's #{2}".format(
@@ -544,15 +551,27 @@ class Collector:
             # The file is gone from the default branch: read the repository's
             # runs and keep the ones of that path (a later-deleted workflow
             # is still credited, FR-013).
-            runs = [r for r in api("{0}/runs?status=completed&per_page=100&{1}".format(base, created), True)
-                    if (r.get("path") or "") == path]
+            fallback = "{0}/runs?status=completed&per_page=100&{1}".format(base, created)
+            if int(api(fallback + "&page=1").get("total_count", 0)) > RUN_CAP:
+                raise ReadError("{0}: the repository has more than {1} runs in the window; "
+                                "a deleted workflow's runs cannot be read completely".format(name, RUN_CAP))
+            runs = [r for r in api(fallback, True) if (r.get("path") or "") == path]
         self.run_lists[path] = runs
         return runs
 
     def run_record(self, raw, entries):
         head = raw.get("head_sha")
-        resolvable = bool(head) and commit_present(head)
-        contains = [e["sha"] for e in entries if resolvable and is_ancestor(e["sha"], head)]
+        if head not in self.present:
+            self.present[head] = bool(head) and commit_present(head)
+        resolvable = self.present[head]
+        contains = []
+        for e in entries:
+            if not resolvable:
+                break
+            if (e["sha"], head) not in self.ancestry:
+                self.ancestry[(e["sha"], head)] = is_ancestor(e["sha"], head)
+            if self.ancestry[(e["sha"], head)]:
+                contains.append(e["sha"])
         return {"workflow": raw.get("path"), "run_id": raw["id"], "event": raw.get("event"),
                 "status": raw.get("status"), "conclusion": raw.get("conclusion"), "head_sha": head,
                 "run_started_at": raw.get("run_started_at") or raw.get("created_at"),
@@ -573,7 +592,7 @@ class Collector:
             for comment in comments:
                 for repo, run_id in named_run_keys(comment.get("body")):
                     key = "{0}/{1}".format(repo, run_id)
-                    if repo != self.repository or key in out:
+                    if repo != self.repository.lower() or key in out:
                         continue
                     if key not in self.named:
                         try:
