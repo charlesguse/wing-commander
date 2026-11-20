@@ -57,6 +57,13 @@ ACTION = ".github/actions/wing-commander-publish-stranded-commits/action.yml"
 STEP_NAME = "Publish stranded commits"
 BRANCH = "spec/999-gate123-fixture"
 
+# The harness clones and pushes to a bare `origin`; a runner or user config
+# with safe.bareRepository=explicit makes git refuse it. Command-line config
+# (GIT_CONFIG_COUNT) outranks that, and every child process inherits it.
+os.environ["GIT_CONFIG_COUNT"] = "1"
+os.environ["GIT_CONFIG_KEY_0"] = "safe.bareRepository"
+os.environ["GIT_CONFIG_VALUE_0"] = "all"
+
 BASH = None
 VERBOSE = "-v" in sys.argv[1:]
 
