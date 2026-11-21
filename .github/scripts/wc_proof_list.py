@@ -339,10 +339,17 @@ SPEC_BRANCH_RE = re.compile(r"^spec/([^/]+)$")
 def _run(argv, cwd=None, sleep=None):
     import subprocess
     import time
-    proc = subprocess.run(argv, capture_output=True, text=True, cwd=cwd)
+    # Bytes, decoded here as strict UTF-8: with text=True a failed decode
+    # leaves stdout None on Windows (the reader thread dies), which read as an
+    # empty thread (FR-013).
+    proc = subprocess.run(argv, capture_output=True, cwd=cwd)
+    try:
+        out = proc.stdout.decode("utf-8", errors="strict").replace("\r\n", "\n")
+    except UnicodeDecodeError as exc:
+        raise ReadError("{0}: output is not UTF-8 ({1})".format(" ".join(argv[:4]), exc))
     if proc.returncode == 0:
-        return proc.stdout
-    err = (proc.stderr or "").strip()
+        return out
+    err = proc.stderr.decode("utf-8", errors="replace").strip()
     if "(HTTP 404)" in err:
         raise NotFound("{0}: {1}".format(" ".join(argv[:4]), err))
     if argv[0] == "gh" and SECONDARY_RE.search(err):
@@ -363,11 +370,21 @@ def gh_text(args):
 
 def api(path, paginate=False):
     """JSON from `gh api path`; a paginated list is flattened (an object page
-    contributes its one list value)."""
+    contributes its one list value). An empty or unparseable read is a
+    failed read, never an empty list (FR-013)."""
+    args = ["api", path] if not paginate else ["api", "--paginate", "--slurp", path]
+    text = gh_text(args)
+    if not (text or "").strip():
+        raise ReadError("gh api {0}: empty read".format(path))
+    try:
+        doc = json.loads(text)
+    except ValueError as exc:
+        raise ReadError("gh api {0}: not JSON ({1})".format(path, exc))
     if not paginate:
-        return json.loads(gh_text(["api", path]) or "null")
-    pages = json.loads(gh_text(["api", "--paginate", "--slurp", path]) or "[]")
-    out = []
+        return doc
+    if not isinstance(doc, list):
+        raise ReadError("gh api --paginate --slurp {0}: not a list of pages".format(path))
+    pages, out = doc, []
     for page in pages:
         if isinstance(page, dict):
             lists = [v for v in page.values() if isinstance(v, list)]
@@ -431,11 +448,35 @@ def marker_step(body):
     return "proven" if step == "proven" else "other"
 
 
+def ref_repository(ref):
+    """`owner/name`, lower case, of a `closingIssuesReferences` item. A
+    reference that says neither fails the read: guessing this repository
+    would read another repository's issue of the same number."""
+    repo = ref.get("repository") or {}
+    owner, name = (repo.get("owner") or {}).get("login"), repo.get("name")
+    if owner and name:
+        return "{0}/{1}".format(owner, name).lower()
+    match = re.match(r"https://github\.com/([^/]+/[^/]+)/issues/\d+$", ref.get("url") or "")
+    if match:
+        return match.group(1).lower()
+    raise ReadError("closingIssuesReferences item #{0} names no repository".format(ref.get("number")))
+
+
+def is_pending_review(raw):
+    """A review not yet submitted: no `submitted_at`, nothing posted (only the
+    reading token's own pending reviews are visible)."""
+    return raw.get("state") == "PENDING" or not raw.get("submitted_at")
+
+
 def comment_record(place, raw, kind):
     user = raw.get("user") or {}
+    posted = raw.get("submitted_at") or raw.get("created_at")
+    if not posted:
+        raise ReadError("{0} {1} on {2} #{3} has no time".format(
+            kind, raw.get("id"), place.get("kind"), place.get("number")))
     return {"place": place, "where": kind, "comment_id": raw.get("id"),
             "account": user.get("login"), "account_type": user.get("type", "User"),
-            "posted_at": raw.get("submitted_at") or raw.get("created_at"),
+            "posted_at": posted,
             "body": raw.get("body") or "", "marker_step": marker_step(raw.get("body"))}
 
 
@@ -472,7 +513,10 @@ class Collector:
                                            "--json", "closingIssuesReferences,body,title,headRefName"]))
                 seen = {}
                 for ref in view.get("closingIssuesReferences") or ():
-                    seen.setdefault(ref["number"], "closes")
+                    # A PR can close another repository's issue; only this
+                    # repository's issues are places of this entry.
+                    if ref_repository(ref) == self.repository.lower():
+                        seen.setdefault(ref["number"], "closes")
                 body = view.get("body") or ""
                 if pr_issue(body):
                     seen.setdefault(pr_issue(body), "board-item")
@@ -528,7 +572,8 @@ class Collector:
             if kind == "pr":
                 items = [(c, "pr-issue-comment") for c in api("{0}/issues/{1}/comments".format(base, number), True)]
                 items += [(c, "pr-review-comment") for c in api("{0}/pulls/{1}/comments".format(base, number), True)]
-                items += [(c, "pr-review") for c in api("{0}/pulls/{1}/reviews".format(base, number), True)]
+                items += [(c, "pr-review") for c in api("{0}/pulls/{1}/reviews".format(base, number), True)
+                          if not is_pending_review(c)]
             else:
                 items = [(c, "issue {0}".format(number))
                          for c in api("{0}/issues/{1}/comments".format(base, number), True)]

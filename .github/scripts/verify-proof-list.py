@@ -417,7 +417,7 @@ def check_entries():
         _commit(repo.root, {"a.txt": "a\n"}, "2026-10-01T00:00:00 +0000")
         sha = _commit(repo.root, FINAL_SHA_FILES, "2026-11-09T20:00:00 -0500")
         view = {"title": "Finalize: own (#5)", "headRefName": "spec/124-own", "body": "",
-                "closingIssuesReferences": []}
+                "closingIssuesReferences": [_closing_ref("own/repo", 7), _closing_ref("Other/Repo", 8)]}
 
         def api(path, paginate):
             if path.endswith("/commits/{0}/pulls".format(sha)):
@@ -438,6 +438,10 @@ def check_entries():
         if entry["lifecycle_issue"] != 5 or {"number": 5, "how": "lifecycle"} not in entry["named_issues"]:
             problems.append("entries: lifecycle issue {0}, named {1}; expected #5 from spec/124-own".format(
                 entry["lifecycle_issue"], entry["named_issues"]))
+        # R4: an issue the PR closes in another repository is not one of its places.
+        if sorted(i["number"] for i in entry["named_issues"]) != [5, 7]:
+            problems.append("entries: named issues {0}, expected #5 and #7 (not other/repo#8)".format(
+                entry["named_issues"]))
         # R2: the commit's -05:00 time is written in UTC, so a comment posted
         # between the local and the UTC merge time is before the merge.
         if entry["merged_at"] != "2026-11-10T01:00:00Z":
@@ -452,6 +456,55 @@ def check_entries():
             problems.append("entries: a comment posted before the real (UTC) merge time counted")
     return problems
 
+
+
+def check_loud_reads():
+    """R4 (FR-013, research D6): a read that cannot be decoded, comes back
+    empty or carries no time fails; it never reads as an empty thread."""
+    problems = []
+    bad = [sys.executable, "-c", r"import sys; sys.stdout.buffer.write(b'[\xff\xfe]')"]
+    try:
+        got = pl._run(bad)
+        problems.append("_run: output that is not UTF-8 read as {0!r}, expected a failed read".format(got))
+    except pl.ReadError:
+        pass
+    except Exception as exc:  # noqa: BLE001 - any other exception is the defect
+        problems.append("_run: output that is not UTF-8 raised {0!r}, not a failed read".format(exc))
+    good = [sys.executable, "-c", r"import sys; sys.stdout.buffer.write('caf\u00e9'.encode('utf-8'))"]
+    if pl._run(good) != "café":
+        problems.append("_run: UTF-8 output was not decoded as UTF-8: {0!r}".format(pl._run(good)))
+    saved = pl.gh_text
+    try:
+        for reply in ("", "  " + chr(10)):
+            pl.gh_text = lambda args, reply=reply: reply
+            for paginate in (False, True):
+                try:
+                    got = pl.api("repos/own/repo/issues/5/comments", paginate)
+                    problems.append("api(paginate={0}): an empty read gave {1!r}, expected a failed read".format(
+                        paginate, got))
+                except pl.ReadError:
+                    pass
+                except Exception as exc:  # noqa: BLE001
+                    problems.append("api(paginate={0}): an empty read raised {1!r}, not a failed read".format(
+                        paginate, exc))
+    finally:
+        pl.gh_text = saved
+    user = {"login": "owner", "type": "User"}
+    reviews = [{"id": 1, "state": "PENDING", "submitted_at": None, "body": "draft", "user": user},
+               {"id": 2, "state": "COMMENTED", "submitted_at": "2026-11-03T00:00:00Z", "body": "x", "user": user}]
+
+    def api(path, paginate):
+        return reviews if "/reviews" in path else []
+    with _FakeReads(api=api):
+        try:
+            got = pl.Collector("own/repo", "2026-11-10T12:00:00Z").thread("pr", 10)
+        except pl.ReadError as exc:
+            got = None
+            problems.append("thread: a pending review failed the read: {0}".format(exc))
+    if got is not None and [c["comment_id"] for c in got] != [2]:
+        problems.append("thread: a pending review was kept: {0}".format(
+            [(c["comment_id"], c["posted_at"]) for c in got]))
+    return problems
 
 def check_utc():
     """R2: every time is read and written in UTC (FR-011, data-model Entry)."""
@@ -747,7 +800,7 @@ def main():
         print("[ok] verify-proof-list: {0}".format(note))
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
                 + check_failed_reads() + check_review_fixes(fx) + check_lifecycle_issue()
-                + check_entries() + check_utc() + check_trees() + check_workflow()
+                + check_entries() + check_loud_reads() + check_utc() + check_trees() + check_workflow()
                 + real + check_sc001_fixtures(fx) + fixtures_name_no_live_table(check_sc001_fixtures))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4
