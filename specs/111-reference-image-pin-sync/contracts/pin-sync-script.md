@@ -53,9 +53,12 @@ The `Copy the pinned digest to the dogfood image` step (`id: dogfood`) of the
 same `sync-pins` job, after the pin sync, is the single home of the copy
 (no other workflow or composite carries `imagetools create`).
 `verify-reference-image-pin-sync.py` runs it verbatim against a stubbed
-`docker`. It runs only when `steps.sync.outcome == 'success'` and
-`steps.sync.outputs.pinned == 'true'`; the job's concurrency group
-serialises it with every other run's sync and copy.
+`docker`. It runs when `!cancelled()` and
+`steps.sync.outputs.pinned == 'true'`, and is never gated on the sync step's
+outcome: a test-repository write that fails after this repository's pin was
+written leaves this repository pinned to the digest, so the copy still runs.
+The job's concurrency group serialises it with every other run's sync and
+copy.
 
 ## Inputs (environment)
 | Name | Source | Notes |
@@ -70,8 +73,8 @@ serialises it with every other run's sync and copy.
 
 ## Behaviour (order is part of the contract)
 1. `TARGET` empty → `::notice::`, summary "Skipped", output `dogfood=skipped`, exit 0; no `docker` call.
-2. `TARGET` (lower-cased) not under `ghcr.io/<OWNER lower-cased>/` → fail "outside ghcr.io/<owner>/"; not `ghcr.io/<path>[:tag]` (a digest reference, a malformed name) → fail; its name without the tag is `IMAGE` (lower-cased) → fail "is the reference image itself"; `DIGEST` malformed → fail. No `docker` call before these pass.
-3. `docker login ghcr.io` with the token on stdin; refused → fail.
+2. `TARGET` (lower-cased) not under `ghcr.io/<OWNER lower-cased>/` → fail "outside ghcr.io/<owner>/"; its name without the tag, lower-cased, is `IMAGE` (lower-cased) → fail "is the reference image itself"; `TARGET` as written not `ghcr.io/<path>[:tag]`, with every path component lower case in Docker's grammar (`[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*`, so no `..` and no leading or trailing separator) and the tag case-sensitive `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}` (a digest reference, an upper-case or malformed name) → fail "not a lower-case ghcr.io image name"; `DIGEST` malformed → fail. No `docker` call before these pass.
+3. `docker login ghcr.io` with the token on stdin; refused → fail. Once logged in, the step's exit runs `docker logout ghcr.io`.
 4. `TARGET` already resolves to `DIGEST` (`imagetools inspect --format '{{json .Manifest}}'`) → `dogfood=current`, exit 0, no push.
 5. `docker buildx imagetools create --tag TARGET IMAGE@DIGEST` (a server-side manifest copy: no build, no pull). Refused → fail; a denial (`denied`, `forbidden`, `unauthorized`, 401/403) names the fix: grant this repository write access on the package (package settings → Manage Actions access); any other error names it as the likely cause.
 6. Read `TARGET` back: it must resolve to `DIGEST`, else fail. Then `dogfood=copied`, exit 0.

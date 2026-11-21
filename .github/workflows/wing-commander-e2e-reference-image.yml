@@ -173,7 +173,8 @@ jobs:
       actions: read
       contents: read
       issues: write
-      # The dogfood copy step's push to the private dogfood package only.
+      # This job's one GITHUB_TOKEN carries it; only the dogfood copy
+      # step uses it, to push to the private dogfood package.
       packages: write
     steps:
       - name: Checkout
@@ -506,10 +507,11 @@ jobs:
       # Keeps the private dogfood image a copy of the reference digest just
       # pinned, so the nightly private-image-dogfood.yml checks the bytes
       # this run's start-up check passed (specs/044-private-registry-
-      # credentials FR-027; contracts/pin-sync-script.md, "Dogfood copy").
+      # credentials FR-027; contracts/pin-sync-script.md, "The dogfood copy step").
       # A server-side registry copy: no rebuild, no pull. Runs only when
-      # this repository's own pin now holds this run's digest (pinned), so
-      # a superseded run never copies an older digest, and inside this
+      # this repository's own pin now holds this run's digest (pinned),
+      # even when the test repository's write failed after it, so a
+      # superseded run never copies an older digest, and inside this
       # job's concurrency group, so two runs' copies never interleave. The
       # target comes only from WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE
       # (unset: skipped with a notice) and must be a tag in this owner's
@@ -518,11 +520,12 @@ jobs:
       # it. GITHUB_TOKEN can push only when the package grants this
       # repository write access (package settings -> Manage Actions
       # access); a refusal names that setting. Never echo REGISTRY_TOKEN.
-      # !cancelled(), not the implicit success(): a failed close of the
-      # sync failure issue above must not strand a copy of a pinned digest.
+      # !cancelled(), not the implicit success() or the sync's outcome: a
+      # failed test-repository write, or a failed close of the sync failure
+      # issue above, must not strand a copy of a pinned digest.
       - name: Copy the pinned digest to the dogfood image
         id: dogfood
-        if: ${{ !cancelled() && steps.sync.outcome == 'success' && steps.sync.outputs.pinned == 'true' }}
+        if: ${{ !cancelled() && steps.sync.outputs.pinned == 'true' }}
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REGISTRY_USER: ${{ github.actor }}
@@ -548,7 +551,14 @@ jobs:
           VAR=WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE
           GRANT="grant ${THIS_REPO:-this repository} write access on the package (its package settings -> Manage Actions access)"
           ERRS="$(mktemp)"
-          trap 'rm -f "$ERRS"' EXIT
+          logged_in=""
+          cleanup() {
+            rm -f "$ERRS"
+            if [ -n "$logged_in" ]; then
+              docker logout ghcr.io > /dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
 
           report() { # outcome message
             echo "dogfood=$1" >> "${GITHUB_OUTPUT:-/dev/null}"
@@ -577,29 +587,35 @@ jobs:
             exit 0
           fi
 
-          # 2. Refuse a target this workflow must never push to.
-          #    ghcr.io names are lower case, so the tests are too; the only
-          #    ':' the name pattern allows starts the tag.
+          # 2. Refuse a target this workflow must never push to. The owner
+          #    and self tests compare lower-cased, so no case spelling slips
+          #    past them; the name test is case-sensitive on the original
+          #    value, the one docker and the nightly reader both use: a
+          #    lower-case repository path in Docker's component grammar (no
+          #    '..', no leading or trailing separator), then an optional
+          #    case-sensitive tag. The only ':' it allows starts the tag.
           target_lc="${TARGET,,}"
           owner_lc="${OWNER,,}"
           if [ -z "$owner_lc" ] || [[ "$target_lc" != "ghcr.io/${owner_lc}/"* ]]; then
             fail "${VAR} (${TARGET}) is outside ghcr.io/${OWNER}/; nothing was pushed."
           fi
-          if ! [[ "$target_lc" =~ ^ghcr\.io/[a-z0-9._-]+(/[a-z0-9._-]+)+(:[a-z0-9._-]+)?$ ]]; then
-            fail "${VAR} (${TARGET}) is not a ghcr.io image name with an optional tag (a digest cannot be pushed to); nothing was pushed."
-          fi
           if [ "${target_lc%%:*}" = "${IMAGE,,}" ]; then
             fail "${VAR} (${TARGET}) is the reference image itself; nothing was pushed."
+          fi
+          component='[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*'
+          if ! [[ "$TARGET" =~ ^ghcr\.io(/${component})+(:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?$ ]]; then
+            fail "${VAR} (${TARGET}) is not a lower-case ghcr.io image name with an optional tag (a digest cannot be pushed to); nothing was pushed."
           fi
           if ! [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             fail "the published digest (${DIGEST:-empty}) is not sha256:<64 hex>; nothing was pushed."
           fi
 
-          # 3. Log in with this job's token, scoped to this step.
+          # 3. Log in with this job's token; the EXIT trap logs out.
           if ! printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin > /dev/null 2> "$ERRS"; then
             show_errs
             fail "could not log in to ghcr.io with GITHUB_TOKEN; nothing was pushed."
           fi
+          logged_in=1
 
           held_digest() { # the digest TARGET resolves to now
             local d

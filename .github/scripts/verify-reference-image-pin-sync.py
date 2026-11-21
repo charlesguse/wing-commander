@@ -247,6 +247,12 @@ CASES = {
         vars={THIS: OLD}, reach=[THIS, E2E], set_fail=[E2E],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[]),
     # A write refused after the probe passed: nothing after it is written.
+    # This repository's write lands, the test repository's is refused: the
+    # run fails, yet this repository's pin holds this run's digest (pinned).
+    "this-written-e2e-refused": dict(
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E], set_fail_expected=[E2E],
+        exit=1, status={THIS: "written", E2E: "failed"}, writes=[THIS],
+        reason="write refused"),
     "write-refused-after-probe": dict(
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E], set_fail_expected=[THIS],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
@@ -292,12 +298,13 @@ CASES = {
 
 # Cases whose outcome leaves this repository's own pin holding this run's
 # digest (written or current): only these may set `pinned`, which gates the
-# dogfood copy, so a superseded or failed run never copies its digest.
+# dogfood copy, so a superseded run, or one whose own write failed, never
+# copies its digest.
 PINNED = {"both-written", "all-current", "e2e-unset", "not-superseded",
           "e2e-is-this-repo", "hand-set-held-value", "exact-reach-case-insensitive",
           "absent-variable", "newer-rerun-pending", "newer-pending-shadows-lower",
           "newer-rerun-check-running", "newer-rerun-check-null",
-          "newer-cancelled-before-check"}
+          "newer-cancelled-before-check", "this-written-e2e-refused"}
 
 # Cases whose outcome may close the failure issue (every sync-set repository
 # written or current); every other case must leave `synced` unset.
@@ -461,6 +468,8 @@ REGISTRY_TOKEN = "ghs_REGISTRYTOKENVALUE456"
 OTHER = "sha256:" + "c" * 64
 CREATE = "docker buildx imagetools create --tag "
 PERMISSION = "Manage Actions access"
+DENIED = "refused the push"
+OTHER_ERROR = "could not copy"
 
 # name: env overrides + stub state -> expectations. `outcome` is the step's
 # dogfood output, `create` whether a copy was attempted, `docker` whether
@@ -493,18 +502,40 @@ DOGFOOD_CASES = {
                           outcome="failed", docker=False, says="optional tag"),
     "malformed-digest": dict(env={"DIGEST": "sha256:xyz"}, exit=1, outcome="failed",
                              docker=False),
-    # The owner matches case-insensitively (ghcr.io lowercases names).
-    "owner-case": dict(env={"OWNER": "Octo", "TARGET": "ghcr.io/Octo/dogfood:latest"},
+    # The owner matches case-insensitively (a mixed-case account name).
+    "owner-case": dict(env={"OWNER": "Octo", "TARGET": "ghcr.io/octo/dogfood:latest"},
                        exit=0, outcome="copied", create=True, held_after=DIGEST),
+    # Docker refuses an upper-case repository path: refused before any call,
+    # not sent to the registry and blamed on package permissions.
+    "upper-case-name": dict(env={"OWNER": "Octo", "TARGET": "ghcr.io/Octo/dogfood:latest"},
+                            exit=1, outcome="failed", docker=False, says="lower-case"),
+    # A tag is case-sensitive: pushed exactly as written.
+    "tag-case-kept": dict(env={"TARGET": "ghcr.io/octo/dogfood:Nightly"}, exit=0,
+                          outcome="copied", create=True, held_after=DIGEST),
+    # Names Docker's reference grammar refuses.
+    "dotdot-path": dict(env={"TARGET": "ghcr.io/octo/../evil/dogfood:latest"}, exit=1,
+                        outcome="failed", docker=False, says="lower-case"),
+    "leading-separator": dict(env={"TARGET": "ghcr.io/octo/-dogfood:latest"}, exit=1,
+                              outcome="failed", docker=False, says="lower-case"),
+    "dot-tag": dict(env={"TARGET": "ghcr.io/octo/dogfood:.x"}, exit=1,
+                    outcome="failed", docker=False, says="lower-case"),
+    "registry-port": dict(env={"TARGET": "ghcr.io:443/octo/dogfood:latest"}, exit=1,
+                          outcome="failed", docker=False, says="outside ghcr.io/octo/"),
+    "registry-suffix": dict(env={"TARGET": "ghcr.io.evil/octo/dogfood:latest"}, exit=1,
+                            outcome="failed", docker=False, says="outside ghcr.io/octo/"),
     "login-refused": dict(login_fail=True, exit=1, outcome="failed", create=False,
                           says="could not log in"),
     # The package has not granted this repository write access.
     "push-denied": dict(create_fail="ERROR: failed to push: denied: permission_denied: write_package",
-                        exit=1, outcome="failed", create=True, says=PERMISSION),
+                        exit=1, outcome="failed", create=True, says=DENIED),
     "push-403": dict(create_fail="unexpected status from PUT request: 403 Forbidden",
-                     exit=1, outcome="failed", create=True, says=PERMISSION),
+                     exit=1, outcome="failed", create=True, says=DENIED),
+    # Any other error names permission only as the likely cause.
     "push-other-error": dict(create_fail="ERROR: dial tcp: i/o timeout", exit=1,
-                             outcome="failed", create=True, says=PERMISSION),
+                             outcome="failed", create=True, says=OTHER_ERROR),
+    # The copy reported success but the tag cannot be read back.
+    "readback-failed": dict(readback_fail=True, exit=1, outcome="failed", create=True,
+                            says="could not read"),
     # The copy must leave the tag on exactly the checked digest.
     "copied-wrong-digest": dict(after=OTHER, exit=1, outcome="failed", create=True,
                                 says="not " + DIGEST),
@@ -523,8 +554,9 @@ def run_dogfood_case(case, tmp, bash, script):
         if case.get(fname):
             with open(os.path.join(stub_dir, fname), "w") as f:
                 f.write(case[fname])
-    if case.get("login_fail"):
-        open(os.path.join(stub_dir, "login_fail"), "w").close()
+    for flag in ("login_fail", "readback_fail"):
+        if case.get(flag):
+            open(os.path.join(stub_dir, flag), "w").close()
     open(os.path.join(stub_dir, "log"), "w").close()
     body = os.path.join(tmp, "body.md")
     env = {
@@ -573,6 +605,13 @@ def check_dogfood_case(name, case, bash, script):
             errs.append("docker login must log in to ghcr.io only, the token on stdin")
     if creates and not any(line.startswith("docker login") for line in log):
         errs.append("a copy was attempted without a login")
+    if any(line.startswith("docker login") for line in log) and not case.get("login_fail"):
+        if log[-1] != "docker logout ghcr.io":
+            errs.append(f"a step that logged in must end with docker logout ghcr.io: {log}")
+    elif any(line.startswith("docker logout") for line in log):
+        errs.append("a step that never logged in must not log out")
+    if "create_fail" in case and PERMISSION not in summary:
+        errs.append(f"a push failure must name {PERMISSION!r}")
     if "held_after" in case and held_after != case["held_after"]:
         errs.append(f"target ends holding {held_after!r}, want {case['held_after']!r}")
     if "says" in case and case["says"] not in summary:
@@ -614,9 +653,11 @@ def check_dogfood_wiring():
     if st.get("id") != "dogfood":
         errs.append("the dogfood copy step must have id: dogfood")
     cond = str(st.get("if"))
-    for want in ("steps.sync.outcome == 'success'", "steps.sync.outputs.pinned == 'true'"):
-        if want not in cond:
-            errs.append(f"the dogfood copy must be gated on {want}")
+    if "steps.sync.outputs.pinned == 'true'" not in cond:
+        errs.append("the dogfood copy must be gated on steps.sync.outputs.pinned == 'true'")
+    if "steps.sync.outcome" in cond or "steps.sync.conclusion" in cond:
+        errs.append("the dogfood copy must not be gated on the sync's outcome: a test-repository "
+                    "write that fails after this repository's pin was written still pinned it")
     if re.search(r"\balways\(\)|\bfailure\(\)", cond):
         errs.append("the dogfood copy must not run after a failed step")
     if "!cancelled()" not in cond:
