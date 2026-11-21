@@ -237,11 +237,11 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
 
 ## Maintainer Feedback
 
-- [ ] R6-a `classify_all`: compute the shared-issue set from the entries in the window for window classification, adding the aged-out day only for the aged-out pass (FR-006). Add a fixture.
-- [ ] R6-b `pr_named`: match the PR URL only for this repository (`github.com/<repository>/pull/N`, case-insensitive). Add a fixture.
-- [ ] R6-c `reduce_body`: build the keep-test from `board_triage.any_run_url_pattern()`, `board_item_marker.MARKER_OPEN_RE` and the PR-reference rule, including `/pull/N` URLs. Add a fixture.
-- [ ] R6-d `sc001_replay`: also flag an entry with no PR in state 4 or 5, keyed by SHA. Add a fixture.
-- [ ] R6-e Do not create or edit `sc001/corpus.json` or `sc001/expected.json`, delete any `EXEMPT_*` entry, or edit the prove-after-merge skill. These remain the `[maintainer]` tasks T028 and T029.
+- [x] R6-a `classify_all`: compute the shared-issue set from the entries in the window for window classification, adding the aged-out day only for the aged-out pass (FR-006). Add a fixture.
+- [x] R6-b `pr_named`: match the PR URL only for this repository (`github.com/<repository>/pull/N`, case-insensitive). Add a fixture.
+- [x] R6-c `reduce_body`: build the keep-test from `board_triage.any_run_url_pattern()`, `board_item_marker.MARKER_OPEN_RE` and the PR-reference rule, including `/pull/N` URLs. Add a fixture.
+- [x] R6-d `sc001_replay`: also flag an entry with no PR in state 4 or 5, keyed by SHA. Add a fixture.
+- [x] R6-e Do not create or edit `sc001/corpus.json` or `sc001/expected.json`, delete any `EXEMPT_*` entry, or edit the prove-after-merge skill. These remain the `[maintainer]` tasks T028 and T029.
 
 ## Maintainer Feedback
 
