@@ -209,6 +209,33 @@ def check_git_floor(root, tag):
     return ("docker", "exit {0} -- {1}".format(proc.returncode, err[-1000:] or "no output"))
 
 
+LOADER_FRAGMENT = os.path.join(".github", "scripts", "image-glibc-loader.sh")
+
+
+# image-glibc-loader.sh's own failure message; Gate 148 checks it is still
+# in the fragment, so this copy cannot drift from it.
+LOADER_MESSAGES = ("no glibc dynamic loader",)
+
+
+def check_glibc_loader(root, tag):
+    """-> None when the built image has the glibc dynamic loader the agent
+    action's Bun needs, as every stage's probe requires, else ("loader",
+    the fragment's own message) or ("docker", why the probe could not run).
+    Runs image-glibc-loader.sh itself, its one home."""
+    with open(os.path.join(root, LOADER_FRAGMENT), encoding="utf-8") as fh:
+        fragment = fh.read().strip()
+    proc = subprocess.run(["docker", "run", "--rm", "--entrypoint", "sh", tag, "-c", fragment],
+                          capture_output=True, text=True)
+    if proc.returncode == 0:
+        return None
+    err = proc.stderr.strip() or proc.stdout.strip()
+    # The fragment's own message is a loader failure; anything else is
+    # docker failing to run the probe, said as such.
+    if any(m in err for m in LOADER_MESSAGES):
+        return ("loader", err)
+    return ("docker", "exit {0} -- {1}".format(proc.returncode, err[-1000:] or "no output"))
+
+
 def _optout_sites(node, path=()):
     """Yield the key path of every place `node` sets DOCKERLESS_ENV: as a
     mapping key (an env: entry) or in a string writing `NAME=` (a run:
@@ -434,7 +461,8 @@ def scan(root=".", tag=IMAGE_TAG):
     try:
         # One container start probes required-tools.txt and the prompted
         # commands together; the misses are reported per list. The git
-        # floor (image-git-floor.sh) runs in a second start below.
+        # floor (image-git-floor.sh) and the glibc loader check
+        # (image-glibc-loader.sh) each run in a start of their own below.
         missing, log = check_tools(tag, tools + wanted)
         shell_ran = missing is not None
         if missing is None:
@@ -451,6 +479,14 @@ def scan(root=".", tag=IMAGE_TAG):
         elif floor:
             failures.append(
                 f"could not run the git floor probe in the built image -- {floor[1]}")
+        loader = check_glibc_loader(root, tag) if shell_ran else None
+        if loader and loader[0] == "loader":
+            failures.append(
+                f"the reference image built from {DOCKERFILE_DIR}/Dockerfile fails the "
+                f"glibc loader check every stage's image probe enforces -- {loader[1]}")
+        elif loader:
+            failures.append(
+                f"could not run the glibc loader probe in the built image -- {loader[1]}")
         req_missing = [t for t in missing if t in tools]
         if req_missing:
             failures.append(
@@ -488,6 +524,7 @@ def _copy_subject(dst):
     os.makedirs(os.path.dirname(os.path.join(dst, IMPLEMENT_WORKFLOW)), exist_ok=True)
     shutil.copy(IMPLEMENT_WORKFLOW, os.path.join(dst, IMPLEMENT_WORKFLOW))
     shutil.copy(GIT_FLOOR_FRAGMENT, os.path.join(dst, GIT_FLOOR_FRAGMENT))
+    shutil.copy(LOADER_FRAGMENT, os.path.join(dst, LOADER_FRAGMENT))
 
 
 def _drop_installs(root, packages):

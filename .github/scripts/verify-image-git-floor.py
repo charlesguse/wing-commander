@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Gate 148 - every stage's image probe enforces the git >= 2.38 floor
-(specs/112-agent-startup-image-check, FR-013, User Story 4).
+(specs/112-agent-startup-image-check, FR-013, User Story 4) and requires the
+glibc dynamic loader the agent action's Bun needs.
 
 .github/scripts/image-git-floor.sh is the canonical POSIX sh fragment. This
 gate (a) runs it under `sh` against a stubbed `git --version` for each case in
@@ -14,6 +15,24 @@ too, so the pasted copies cannot drift; and (c) asserts Gate 62
 classifies its result with FLOOR_MESSAGES, which must be the fragment's own
 two messages.
 
+The glibc loader check has its own canonical fragment,
+.github/scripts/image-glibc-loader.sh, checked the same three ways: it is run
+against image-glibc-loader-fixtures/ (a stubbed `uname -m` and a fake file
+tree per case: glibc, gcompat, musl, a dangling loader link, an unknown
+arch, no uname), every stage's probe must embed it byte for byte ahead of
+the git floor along with its host-side report (LOADER_HOST_BRANCH), and
+Gate 62 must run it against the reference image (LOADER_MESSAGES). Why the
+check exists: anthropics/claude-code-action installs Bun with
+oven-sh/setup-bun, which downloads bun-linux-<x64|aarch64>.zip -- a glibc
+build whatever the image's libc (it has no musl variant). Its ELF
+interpreter is /lib64/ld-linux-x86-64.so.2 on x86_64 and
+/lib/ld-linux-aarch64.so.1 on aarch64, so on an image without that loader
+(Alpine/musl, distroless) the probe used to pass and the agent's "Install
+Bun" step died with `bun: cannot execute: required file not found`.
+/lib/ld-linux-x86-64.so.2 is also accepted on x86_64: Alpine's gcompat
+installs it (and the /lib64 link beside it). An unknown arch, or no uname,
+is never failed by this check.
+
 NOTE ON GATE NUMBERING: this gate was first registered as Gate 142. It is
 numbered 148, not 142: 141-146 were taken by spec 110's PR #982, which
 claimed them first among the open lifecycle branches.
@@ -24,6 +43,7 @@ import glob
 import json
 import re
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -33,6 +53,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 FRAGMENT = os.path.join(HERE, "image-git-floor.sh")
 FIXTURES = os.path.join(HERE, "image-git-floor-fixtures")
+LOADER_FRAGMENT = os.path.join(HERE, "image-glibc-loader.sh")
+LOADER_FIXTURES = os.path.join(HERE, "image-glibc-loader-fixtures")
 WORKFLOWS = os.path.join(ROOT, ".github", "workflows", "*.yml")
 
 
@@ -45,6 +67,21 @@ HOST_BRANCH = (
     "              echo \"::error::wing-commander verify-image-prerequisites: $IMAGE failed the git version floor -- "
     "$(cat docker-inspect-error.log)${missing:+ (also missing required tool(s):$missing)}\"\n"
 )
+
+
+# The host side of the loader check: reported under its own message, ahead
+# of (and chained to) the git-floor report, still listing missing tools.
+LOADER_HOST_BRANCH = (
+    "if grep -q 'no glibc dynamic loader' docker-inspect-error.log; then\n"
+    "              echo \"::error::wing-commander verify-image-prerequisites: $IMAGE has "
+    "$(cat docker-inspect-error.log) -- the agent action's Bun cannot run in it "
+    "(Alpine/musl and distroless images need a glibc base)"
+    "${missing:+ (also missing required tool(s):$missing)}\"\n"
+    "            elif grep -qE 'is older than the 2\\.38 minimum|could not parse git version' docker-inspect-error.log; then\n"
+)
+
+# The probe's order: the tool loop, then the loader check, then the floor.
+PROBE_HEAD = 'printf " %s" "$t"; done; '
 
 
 def read_fragment(path=FRAGMENT):
@@ -86,6 +123,65 @@ def check_cases(fragment, fixtures=FIXTURES):
     for f in os.listdir(fixtures):
         if f.endswith(".txt") and f[:-4] not in expectations:
             errors.append("fixture %s has no expectation" % f)
+    return errors
+
+
+def run_loader_fragment(fragment, arch, files, links=None):
+    """-> (exit code, stderr stripped) of the loader fragment under sh, with
+    `uname -m` stubbed to print `arch` (absent when arch is None) and its
+    absolute /lib paths rooted in a temp tree holding `files` and `links`."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "root")
+        os.makedirs(root)
+        for f in files:
+            dst = root + f
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            open(dst, "w").close()
+        for f, target in (links or {}).items():
+            dst = root + f
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            os.symlink(root + target, dst)
+        bindir = os.path.join(tmp, "bin")
+        os.makedirs(bindir)
+        if arch is not None:
+            stub = os.path.join(bindir, "uname")
+            with open(stub, "w", encoding="utf-8") as fh:
+                fh.write("#!/bin/sh\necho %s\n" % arch)
+            os.chmod(stub, os.stat(stub).st_mode | stat.S_IXUSR)
+        rooted = fragment.replace("/lib", root + "/lib")
+        sh = shutil.which("sh") or "/bin/sh"
+        proc = subprocess.run([sh, "-c", rooted], env={"PATH": bindir},
+                              capture_output=True, text=True)
+        return proc.returncode, proc.stderr.strip().replace(root, "")
+
+
+def check_loader_cases(fragment, fixtures=LOADER_FIXTURES):
+    errors = []
+    with open(os.path.join(fixtures, "expectations.json"), encoding="utf-8") as fh:
+        expectations = json.load(fh)
+    if "/lib" not in fragment:
+        errors.append("image-glibc-loader.sh names no /lib path, so no fixture can root it")
+    for name, exp in sorted(expectations.items()):
+        rc, err = run_loader_fragment(fragment, exp["uname"], exp["files"], exp.get("links"))
+        if (rc == 0) != exp["pass"]:
+            errors.append("loader %s: expected pass=%s, exit code was %s (%s)" % (name, exp["pass"], rc, err))
+        elif not exp["pass"] and err != exp["message"]:
+            errors.append("loader %s: expected message %r, got %r" % (name, exp["message"], err))
+    return errors
+
+
+def check_loader_stages(loader, floor, stages):
+    """Every probe embeds the loader fragment byte for byte, between the
+    tool loop and the git floor, and the loader's host-side report."""
+    errors = []
+    for path, text in stages:
+        name = os.path.basename(path)
+        if loader not in text:
+            errors.append("%s: the image probe lacks the glibc-loader fragment from image-glibc-loader.sh" % name)
+        elif PROBE_HEAD + loader + "; " + floor not in text:
+            errors.append("%s: the glibc-loader fragment is not between the tool loop and the git floor" % name)
+        if LOADER_HOST_BRANCH not in text:
+            errors.append("%s: the image probe lacks the canonical glibc-loader failure report (LOADER_HOST_BRANCH)" % name)
     return errors
 
 
@@ -141,9 +237,31 @@ def check_gate_62(path=GATE_62):
     return []
 
 
+def check_gate_62_loader(path=GATE_62):
+    """Gate 62 must run image-glibc-loader.sh against the reference image
+    too, and classify with the fragment's own message."""
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    if "image-glibc-loader.sh" not in text or "loader = check_glibc_loader(root, tag) if shell_ran else None" not in text:
+        return ["verify-gate-62.py does not run image-glibc-loader.sh against the reference image"]
+    m = re.search(r"^LOADER_MESSAGES = \((.*?)\)$", text, re.M)
+    fragment = read_fragment(LOADER_FRAGMENT)
+    copies = re.findall(r'"([^"]+)"', m.group(1)) if m else []
+    if len(copies) != 1 or any(c not in fragment for c in copies):
+        return ["verify-gate-62.py's LOADER_MESSAGES %r are not image-glibc-loader.sh's own message" % copies]
+    body = re.search(r"^def check_glibc_loader\(.*?(?=^def |\Z)", text, re.M | re.S)
+    if not body or not re.search(r"(?m)^\s+if any\(m in err for m in LOADER_MESSAGES\):", body.group(0)):
+        return ["verify-gate-62.py's check_glibc_loader does not classify with LOADER_MESSAGES"]
+    return []
+
+
 def run_checks():
     fragment = read_fragment()
-    return check_cases(fragment) + check_stages(fragment, stage_files()) + check_gate_62()
+    loader = read_fragment(LOADER_FRAGMENT)
+    stages = stage_files()
+    return (check_cases(fragment) + check_stages(fragment, stages) + check_gate_62()
+            + check_loader_cases(loader) + check_loader_stages(loader, fragment, stages)
+            + check_gate_62_loader())
 
 
 def self_test():
@@ -195,11 +313,86 @@ def self_test():
             'for t in $REQUIRED_TOOLS; do command -v "$t"', 'for t in $REQUIRED_TOOLS; do command -v -- "$t"'))] + stages[1:]
         if not any(os.path.basename(path) in e for e in check_stages(fragment, stage_files_from(reworded))):
             failures.append("a stage whose probe was reworded dropped out of the check")
+    failures.extend(loader_self_test(fragment, stages))
     for f in failures:
         print("::error::Gate 148 self-test: " + f)
     if not failures:
         print("Gate 148 self-test: ok")
     return 1 if failures else 0
+
+
+def loader_self_test(floor, stages):
+    """Each drift of the glibc-loader check must fail the gate."""
+    failures = []
+    loader = read_fragment(LOADER_FRAGMENT)
+
+    def caught(mutated, case):
+        return any(("loader %s:" % case) in e for e in check_loader_cases(mutated))
+
+    # (fragment, the fixture that must catch it, what the mutation is)
+    mutations = [
+        (loader.replace(" /lib/ld-linux-x86-64.so.2", ""), "gcompat-x86_64",
+         "a fragment that dropped gcompat's /lib loader"),
+        (loader.replace("/lib64/ld-linux-x86-64.so.2 ", ""), "glibc-x86_64",
+         "a fragment that dropped the /lib64 loader"),
+        (loader.replace("*) gl_want=;;", '*) gl_want="/lib64/ld-linux-x86-64.so.2";;'), "unknown-arch",
+         "a fragment that fails an unknown arch"),
+        (loader.replace("*) gl_want=;;", '*) gl_want="/lib64/ld-linux-x86-64.so.2";;'), "no-uname",
+         "a fragment that fails when uname is missing"),
+        (loader.replace('"/lib/ld-linux-aarch64.so.1"', '"/lib/ld-linux-aarch64.so.1 /lib64/ld-linux-x86-64.so.2"'),
+         "aarch64-with-x86_64-loader", "a fragment that accepts the other arch's loader"),
+        (loader.replace('if [ -e "$gl_p" ]', 'if [ -L "$gl_p" ] || [ -e "$gl_p" ]'),
+         "x86_64-dangling-loader-link", "a fragment that accepts a dangling loader link"),
+        (loader.replace("exit 1; fi", "fi"), "musl-x86_64",
+         "a fragment that reports a missing loader but does not fail"),
+        (loader.replace("no glibc dynamic loader", "glibc loader missing"), "musl-aarch64",
+         "a fragment whose message drifted"),
+        ("true", "musl-x86_64", "a fragment that checks nothing"),
+    ]
+    for mutated, case, what in mutations:
+        if mutated == loader:
+            failures.append("fixture setup: %s -- the mutation no longer applies to image-glibc-loader.sh" % what)
+        elif not caught(mutated, case):
+            failures.append("%s was not caught by the %s case" % (what, case))
+    if stages:
+        path, text = stages[0]
+        dropped = [(path, text.replace(loader + "; ", ""))] + stages[1:]
+        if not any(os.path.basename(path) in e and "glibc-loader fragment" in e
+                   for e in check_loader_stages(loader, floor, dropped)):
+            failures.append("a probe missing the glibc-loader fragment was not caught")
+        path, text = stages[-1]
+        drifted = stages[:-1] + [(path, text.replace(loader, loader.replace("x86_64)", "x86_64|amd64)")))]
+        if not any(os.path.basename(path) in e for e in check_loader_stages(loader, floor, drifted)):
+            failures.append("a drifted copy of the glibc-loader fragment was not caught")
+        path, text = stages[0]
+        moved = [(path, text.replace(PROBE_HEAD + loader + "; ", PROBE_HEAD).replace(
+            "exit 1; fi; fi'", "exit 1; fi; fi; " + loader + "'"))] + stages[1:]
+        if moved[0][1] == text or not any("between the tool loop" in e for e in check_loader_stages(loader, floor, moved)):
+            failures.append("a glibc-loader fragment moved after the git floor was not caught")
+        path, text = stages[-1]
+        report = [(path, text.replace("need a glibc base)", "need glibc)"))] + stages[:-1]
+        if not any("LOADER_HOST_BRANCH" in e for e in check_loader_stages(loader, floor, report)):
+            failures.append("a drifted glibc-loader failure report was not caught")
+    with tempfile.TemporaryDirectory() as tmp:
+        p = os.path.join(tmp, "g62.py")
+        with open(GATE_62, encoding="utf-8") as fh:
+            src = fh.read()
+        g62 = [
+            (src.replace("loader = check_glibc_loader(root, tag) if shell_ran else None", "loader = None"),
+             "a Gate 62 that never runs the glibc loader check"),
+            (src.replace('LOADER_MESSAGES = ("no glibc dynamic loader",)', 'LOADER_MESSAGES = ("no loader",)'),
+             "a Gate 62 whose loader message drifted from the fragment"),
+            (src.replace("if any(m in err for m in LOADER_MESSAGES):", 'if "no glibc" in err:'),
+             "a Gate 62 classifying the loader with an inline literal"),
+        ]
+        for mutated, what in g62:
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write(mutated)
+            if mutated == src:
+                failures.append("fixture setup: %s -- the mutation no longer applies to verify-gate-62.py" % what)
+            elif not check_gate_62_loader(p):
+                failures.append("%s was not caught" % what)
+    return failures
 
 
 def main(argv):
