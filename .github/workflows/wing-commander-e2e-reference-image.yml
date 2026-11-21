@@ -515,7 +515,9 @@ jobs:
       # job's concurrency group, so two runs' copies never interleave. The
       # target comes only from WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE
       # (unset: skipped with a notice) and must be a tag in this owner's
-      # ghcr.io namespace other than the reference image itself. A pushed
+      # ghcr.io namespace other than the reference image itself, and must
+      # already resolve: this step never creates the package, since one a
+      # first GITHUB_TOKEN push creates can come out public. A pushed
       # tag keeps the existing package's visibility; nothing here changes
       # it. GITHUB_TOKEN can push only when the package grants this
       # repository write access (package settings -> Manage Actions
@@ -617,23 +619,67 @@ jobs:
           fi
           logged_in=1
 
-          held_digest() { # the digest TARGET resolves to now
-            local d
-            d="$(docker buildx imagetools inspect "$TARGET" --format '{{json .Manifest}}' 2> "$ERRS" | jq -r '.digest // empty')" || return 1
-            [ -n "$d" ] || return 1
-            printf '%s' "$d"
+          # The docker call's stderr with the image names taken out, so a
+          # name such as img-403 is never read as a registry status.
+          errs_text() {
+            local t
+            t="$(cat "$ERRS" 2> /dev/null)"
+            t="${t//"$TARGET"/}"
+            t="${t//"$SOURCE"/}"
+            printf '%s' "$t"
+          }
+          # Prints the digest TARGET resolves to now. Returns 1 when the
+          # registry says it does not exist, 2 when it denies the read, 3
+          # on any other error (or no digest). A denial is tested first: a
+          # private package this token cannot read is not missing.
+          held_digest() {
+            local d e
+            if d="$(docker buildx imagetools inspect "$TARGET" --format '{{json .Manifest}}' 2> "$ERRS" | jq -r '.digest // empty')"; then
+              [ -n "$d" ] || return 3
+              printf '%s' "$d"
+              return 0
+            fi
+            e="$(errs_text)"
+            if grep -qiE 'denied|forbidden|unauthori[sz]ed|\b40[13]\b' <<< "$e"; then
+              return 2
+            fi
+            if grep -qiE 'not found|manifest unknown|name unknown|\b404\b' <<< "$e"; then
+              return 1
+            fi
+            return 3
           }
 
-          # 4. Already this digest: nothing to push.
-          if held="$(held_digest)" && [ "$held" = "$DIGEST" ]; then
-            report current "Current: \`${TARGET}\` already holds \`${SOURCE}\`."
-            exit 0
-          fi
+          # 4. Read TARGET first. Already this digest: nothing to push. Not
+          #    there yet: refused, since the first push would create the
+          #    package with GITHUB_TOKEN, and a package created that way
+          #    can come out public; the owner creates it private first.
+          # bash -e: the status is read in an if, never left to end the step.
+          if held="$(held_digest)"; then rc=0; else rc=$?; fi
+          case "$rc" in
+            0)
+              if [ "$held" = "$DIGEST" ]; then
+                report current "Current: \`${TARGET}\` already holds \`${SOURCE}\`."
+                exit 0
+              fi
+              ;;
+            1)
+              show_errs
+              fail "${TARGET} does not resolve yet, so nothing was pushed: this step never creates the package, which a first push with GITHUB_TOKEN could make public. Create it private first (push any image to ${TARGET} yourself and keep the package private), then ${GRANT}."
+              ;;
+            2)
+              show_errs
+              fail "ghcr.io refused to read ${TARGET}, so nothing was pushed: GITHUB_TOKEN can read and push to that package only when it grants this repository write access -- ${GRANT}."
+              ;;
+            *)
+              show_errs
+              fail "could not read ${TARGET} to check what it holds, so nothing was pushed; re-run the failed jobs once ghcr.io answers."
+              ;;
+          esac
 
           # 5. Copy the manifest server side, then prove the tag holds it.
           if ! docker buildx imagetools create --tag "$TARGET" "$SOURCE" > /dev/null 2> "$ERRS"; then
             show_errs
-            if grep -qiE 'denied|forbidden|unauthori[sz]ed|\b40[13]\b' "$ERRS"; then
+            if grep -qiE 'denied|forbidden|unauthori[sz]ed|\b40[13]\b' <<< "$(errs_text)"; then
               fail "ghcr.io refused the push of ${SOURCE} to ${TARGET}: GITHUB_TOKEN can push to that package only when it grants this repository write access -- ${GRANT}."
             fi
             fail "could not copy ${SOURCE} to ${TARGET}; if the cause is permission, ${GRANT}."

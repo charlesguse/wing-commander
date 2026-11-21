@@ -40,7 +40,9 @@ WHAT IT CHECKS
    the skip when the variable is unset, every refused target (outside the
    owner's namespace, the reference image itself, a digest, a malformed or
    upper-case name) with no docker call, the login, the already-current
-   no-op, the copy and its read-back, the push-denied message, and that
+   no-op, the refusal of a target that does not resolve yet (never
+   created, kept apart from a denied read and any other registry error),
+   the copy and its read-back, the push-denied message, and that
    the token reaches neither output nor the issue body. Its wiring: gated
    on `!cancelled()` and the sync step's `pinned` output, `secrets.GITHUB_TOKEN` bound
    to that step only, the failure issue filed on its failure and closed after
@@ -487,10 +489,30 @@ OTHER_ERROR = "could not copy"
 # dogfood output, `create` whether a copy was attempted, `docker` whether
 # docker was called at all, `says` text the summary must carry.
 DOGFOOD_CASES = {
-    "copied": dict(exit=0, outcome="copied", create=True, held_after=DIGEST),
-    # A target that resolves to another digest, or to nothing yet.
-    "copied-over-other": dict(held=OTHER, exit=0, outcome="copied", create=True,
-                              held_after=DIGEST),
+    # A target that resolves to another digest: copied over it.
+    "copied": dict(held=OTHER, exit=0, outcome="copied", create=True, held_after=DIGEST),
+    # A target that does not resolve yet: refused, never created, since a
+    # package GITHUB_TOKEN creates can come out public. The message says to
+    # create it private first and names the grant.
+    "target-missing": dict(exit=1, outcome="failed", create=False, held_after=None,
+                           says="does not resolve yet", names_grant=True),
+    # A name that holds a status code is not read as that status.
+    "target-missing-403-name": dict(env={"TARGET": "ghcr.io/octo/img-403:latest"}, exit=1,
+                                    outcome="failed", create=False, held_after=None,
+                                    says="does not resolve yet"),
+    # A denied read is not "does not exist": it names the grant.
+    "target-read-denied": dict(
+        inspect_fail="ERROR: failed to authorize: unexpected status from GET request: 403 Forbidden",
+        held=OTHER, exit=1, outcome="failed", create=False, says="refused to read",
+        names_grant=True),
+    # A denied read that also says "not found" is still a denial.
+    "target-read-denied-not-found": dict(
+        inspect_fail="ERROR: denied: requested resource not found or access denied",
+        held=OTHER, exit=1, outcome="failed", create=False, says="refused to read"),
+    # Any other registry error is neither: nothing pushed.
+    "target-read-other-error": dict(inspect_fail="ERROR: dial tcp: i/o timeout", held=OTHER,
+                                    exit=1, outcome="failed", create=False,
+                                    says="could not read ghcr.io/octo/dogfood:latest to check"),
     "current": dict(held=DIGEST, exit=0, outcome="current", create=False),
     # Unset: a notice, no docker call, a green step.
     "unset": dict(env={"TARGET": ""}, exit=0, outcome="skipped", docker=False,
@@ -516,13 +538,13 @@ DOGFOOD_CASES = {
                              docker=False),
     # The owner matches case-insensitively (a mixed-case account name).
     "owner-case": dict(env={"OWNER": "Octo", "TARGET": "ghcr.io/octo/dogfood:latest"},
-                       exit=0, outcome="copied", create=True, held_after=DIGEST),
+                       held=OTHER, exit=0, outcome="copied", create=True, held_after=DIGEST),
     # Docker refuses an upper-case repository path: refused before any call,
     # not sent to the registry and blamed on package permissions.
     "upper-case-name": dict(env={"OWNER": "Octo", "TARGET": "ghcr.io/Octo/dogfood:latest"},
                             exit=1, outcome="failed", docker=False, says="lower-case"),
     # A tag is case-sensitive: pushed exactly as written.
-    "tag-case-kept": dict(env={"TARGET": "ghcr.io/octo/dogfood:Nightly"}, exit=0,
+    "tag-case-kept": dict(env={"TARGET": "ghcr.io/octo/dogfood:Nightly"}, held=OTHER, exit=0,
                           outcome="copied", create=True, held_after=DIGEST),
     # Names Docker's reference grammar refuses.
     "dotdot-path": dict(env={"TARGET": "ghcr.io/octo/../evil/dogfood:latest"}, exit=1,
@@ -535,21 +557,21 @@ DOGFOOD_CASES = {
                           outcome="failed", docker=False, says="outside ghcr.io/octo/"),
     "registry-suffix": dict(env={"TARGET": "ghcr.io.evil/octo/dogfood:latest"}, exit=1,
                             outcome="failed", docker=False, says="outside ghcr.io/octo/"),
-    "login-refused": dict(login_fail=True, exit=1, outcome="failed", create=False,
+    "login-refused": dict(held=OTHER, login_fail=True, exit=1, outcome="failed", create=False,
                           says="could not log in"),
     # The package has not granted this repository write access.
-    "push-denied": dict(create_fail="ERROR: failed to push: denied: permission_denied: write_package",
+    "push-denied": dict(held=OTHER, create_fail="ERROR: failed to push: denied: permission_denied: write_package",
                         exit=1, outcome="failed", create=True, says=DENIED),
-    "push-403": dict(create_fail="unexpected status from PUT request: 403 Forbidden",
+    "push-403": dict(held=OTHER, create_fail="unexpected status from PUT request: 403 Forbidden",
                      exit=1, outcome="failed", create=True, says=DENIED),
     # Any other error names permission only as the likely cause.
-    "push-other-error": dict(create_fail="ERROR: dial tcp: i/o timeout", exit=1,
+    "push-other-error": dict(held=OTHER, create_fail="ERROR: dial tcp: i/o timeout", exit=1,
                              outcome="failed", create=True, says=OTHER_ERROR),
     # The copy reported success but the tag cannot be read back.
-    "readback-failed": dict(readback_fail=True, exit=1, outcome="failed", create=True,
+    "readback-failed": dict(held=OTHER, readback_fail=True, exit=1, outcome="failed", create=True,
                             says="could not read"),
     # The copy must leave the tag on exactly the checked digest.
-    "copied-wrong-digest": dict(after=OTHER, exit=1, outcome="failed", create=True,
+    "copied-wrong-digest": dict(held=OTHER, after=OTHER, exit=1, outcome="failed", create=True,
                                 says="not " + DIGEST),
 }
 
@@ -562,7 +584,7 @@ def run_dogfood_case(case, tmp, bash, script):
     docker = os.path.join(bin_dir, "docker")
     shutil.copy(DOCKER_STUB, docker)
     os.chmod(docker, os.stat(docker).st_mode | stat.S_IXUSR)
-    for fname in ("held", "after", "create_fail"):
+    for fname in ("held", "after", "create_fail", "inspect_fail"):
         if case.get(fname):
             with open(os.path.join(stub_dir, fname), "w") as f:
                 f.write(case[fname])
@@ -622,8 +644,8 @@ def check_dogfood_case(name, case, bash, script):
             errs.append(f"a step that logged in must end with docker logout ghcr.io: {log}")
     elif any(line.startswith("docker logout") for line in log):
         errs.append("a step that never logged in must not log out")
-    if "create_fail" in case and PERMISSION not in summary:
-        errs.append(f"a push failure must name {PERMISSION!r}")
+    if ("create_fail" in case or case.get("names_grant")) and PERMISSION not in summary:
+        errs.append(f"a push failure or a missing or unreadable target must name {PERMISSION!r}")
     if "held_after" in case and held_after != case["held_after"]:
         errs.append(f"target ends holding {held_after!r}, want {case['held_after']!r}")
     if "says" in case and case["says"] not in summary:

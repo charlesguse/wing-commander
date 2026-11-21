@@ -257,7 +257,9 @@ image, not a separate build: `wing-commander-e2e-reference-image.yml` copies
 each digest it pins to the tag the variable names, server side, once the
 start-up check has passed on it
 (`specs/111-reference-image-pin-sync/contracts/pin-sync-script.md`, "The
-dogfood copy step").
+dogfood copy step"). The copy never creates the package: the owner creates
+it private first and grants this repository Write under Manage Actions
+access, and until the tag resolves the copy is refused.
 
 ## Non-goals (unchanged from specs/038, restated for this contract's boundary)
 

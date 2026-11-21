@@ -1567,7 +1567,11 @@ digest to the variable's tag with a server-side registry copy
 (`docker buildx imagetools create`, no rebuild or pull) and reads the tag
 back, so the nightly run checks exactly the bytes the rebuild checked. It
 pushes with `GITHUB_TOKEN`, which needs the package to grant this
-repository write access (Manage Actions access); it refuses a target
+repository write access (Manage Actions access). It never creates the
+package, since one a first `GITHUB_TOKEN` push creates can come out
+public: a tag that does not resolve yet is refused, telling the owner to
+create the package private first (a denied read, or any other registry
+error, is reported as itself, not as a missing package). It refuses a target
 outside this owner's `ghcr.io` namespace or the reference image itself,
 skips while the variable is unset, never changes the package's visibility,
 and files one `dogfood-image-sync:failed` issue when the copy fails

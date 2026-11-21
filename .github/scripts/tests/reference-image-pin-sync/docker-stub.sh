@@ -4,7 +4,10 @@
 # per-case directory:
 #   login_fail    present: `login` fails
 #   login_stdin   written: what `login --password-stdin` read
-#   held          the digest the target resolves to (absent: inspect fails)
+#   held          the digest the target resolves to (absent: inspect fails
+#                 "not found")
+#   inspect_fail  present: `imagetools inspect` fails, printing its content
+#                 to stderr (a denied read, a registry error)
 #   create_fail   present: `imagetools create` fails, printing its content
 #                 to stderr
 #   after         the digest the target resolves to after a create
@@ -37,6 +40,10 @@ case "${1:-} ${2:-} ${3:-}" in
     ;;
   "buildx imagetools inspect")
     refuse_upper "${4:-}"
+    if [ -f "${STUB_DIR}/inspect_fail" ]; then
+      cat "${STUB_DIR}/inspect_fail" >&2
+      exit 1
+    fi
     if [ ! -f "${STUB_DIR}/held" ]; then
       echo "ERROR: ${4:-}: not found" >&2
       exit 1
