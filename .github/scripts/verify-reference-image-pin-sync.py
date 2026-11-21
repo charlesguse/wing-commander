@@ -34,6 +34,18 @@ WHAT IT CHECKS
    (provision-e2e-target.sh pins a freshly provisioned target at its own
    creation and is a different mechanism, outside .github/workflows and
    .github/actions.)
+4. Dogfood copy: runs the same job's `Copy the pinned digest to the
+   dogfood image` run: block VERBATIM against a stubbed `docker`
+   (tests/reference-image-pin-sync/docker-stub.sh) for each dogfood case:
+   the skip when the variable is unset, every refused target (outside the
+   owner's namespace, the reference image itself, a digest, a malformed or
+   upper-case name) with no docker call, the login, the already-current
+   no-op, the copy and its read-back, the push-denied message, and that
+   the token reaches neither output nor the issue body. Its wiring: gated
+   on `!cancelled()` and the sync step's `pinned` output, `secrets.GITHUB_TOKEN` bound
+   to that step only, the failure issue filed on its failure and closed after
+   a copied or current outcome. Single home: no other workflow or
+   composite carries `imagetools create`.
 
 Usage: python3 .github/scripts/verify-reference-image-pin-sync.py
 Requires: bash, jq.
@@ -246,13 +258,13 @@ CASES = {
     "absent-variable-refused": dict(
         vars={THIS: OLD}, reach=[THIS, E2E], set_fail=[E2E],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[]),
-    # A write refused after the probe passed: nothing after it is written.
     # This repository's write lands, the test repository's is refused: the
     # run fails, yet this repository's pin holds this run's digest (pinned).
     "this-written-e2e-refused": dict(
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E], set_fail_expected=[E2E],
         exit=1, status={THIS: "written", E2E: "failed"}, writes=[THIS],
         reason="write refused"),
+    # A write refused after the probe passed: nothing after it is written.
     "write-refused-after-probe": dict(
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E], set_fail_expected=[THIS],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
