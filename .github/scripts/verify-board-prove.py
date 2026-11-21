@@ -16,6 +16,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from board_prove import (  # noqa: E402
+    SCRIPT_PATH_RE, WORKFLOW_REF_RE,
     _close_script_imports, _resolve_script_imports, actions_only,
     aimable_jobs, directed_proof_group_busy, directed_stage,
     is_safe_redrive_target, joins_directed_group, outcome_reason,
@@ -229,6 +230,28 @@ def run():
                   "expected {2}, got {3}.".format(workflow_text, inputs, expected, got))
         else:
             print("[ok] is_safe_redrive_target(...): {0}".format(got))
+
+    # #1161: a literal path mention is a whole path, never a substring of
+    # a longer one (`.yml.bak`, `.pyc`, an `x`-prefixed `.github` root).
+    mention_cases = [
+        (WORKFLOW_REF_RE, "uses .github/workflows/a.yml.bak", []),
+        (WORKFLOW_REF_RE, "uses x.github/workflows/a.yml", []),
+        (WORKFLOW_REF_RE, "see ./.github/workflows/a.yml.", [".github/workflows/a.yml"]),
+        (WORKFLOW_REF_RE, "'.github/workflows/a.yml'", [".github/workflows/a.yml"]),
+        (SCRIPT_PATH_RE, "python3 .github/scripts/foo.pyc", []),
+        (SCRIPT_PATH_RE, "python3 .github/scripts/foo.py.bak", []),
+        (SCRIPT_PATH_RE, "python3 .github/scripts/foo.py", [(".github/scripts/foo.py")]),
+    ]
+    for regex, text, expected in mention_cases:
+        got = [m.group(0) if regex is WORKFLOW_REF_RE else
+               ".github/scripts/{0}.py".format(m.group(1) or m.group(2) or m.group(3))
+               for m in regex.finditer(text)]
+        if got != expected:
+            failures += 1
+            print("::error::verify-board-prove: mention scan of {0!r}: expected "
+                  "{1}, got {2}.".format(text, expected, got))
+        else:
+            print("[ok] mention scan of {0!r} = {1}".format(text, got))
 
     for changed_paths, expected in DIRECTED_STAGE_CASES:
         got = directed_stage(changed_paths, JOB_USES_GRAPH, aimable_jobs)
