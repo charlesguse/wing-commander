@@ -1978,11 +1978,35 @@ def run():
     problems.extend(defer_problems)
     problems.extend(_mutation_check_defer_wiring(board_loop_text))
 
+    problems.extend(run_any_run_url_cases())
+
     for problem in problems:
         print("::error::verify-board-triage: {0}".format(problem))
     failures += len(problems)
     print("verify-board-triage: {0} failure(s).".format(failures))
     return 1 if failures else 0
+
+
+def run_any_run_url_cases():
+    """board_triage.any_run_url_pattern() matches a run URL of any repository,
+    job links included, capturing repository and run id (spec 124 T002)."""
+    pattern = re.compile(board_triage.any_run_url_pattern())
+    cases = [
+        ("see https://github.com/own/repo/actions/runs/123 ok", ("own/repo", "123")),
+        ("https://github.com/other/thing/actions/runs/45/job/678", ("other/thing", "45")),
+        ("https://github.com/own/repo/actions/workflows/x.yml", None),
+        ("https://example.com/own/repo/actions/runs/9", None),
+    ]
+    problems = []
+    for text, expected in cases:
+        match = pattern.search(text)
+        got = (match.group(1), match.group(2)) if match else None
+        if got != expected:
+            problems.append("any_run_url_pattern on {0!r}: got {1}, expected {2}".format(
+                text, got, expected))
+    if not problems:
+        print("[ok] any_run_url_pattern: any repository, job links, repository and run id captured")
+    return problems
 
 
 if __name__ == "__main__":

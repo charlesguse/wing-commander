@@ -1,3 +1,12 @@
-{"issue": 1144, "spec_dir": "specs/124-merge-proof-list",
- "feature_num": "124", "stage": "spec", "iteration": 0,
- "spec_branch": null}
+{
+  "issue": 1144,
+  "spec_dir": "specs/124-merge-proof-list",
+  "feature_num": "124",
+  "stage": "review",
+  "iteration": 6,
+  "spec_branch": "spec/124-merge-proof-list",
+  "truncated_count": 0,
+  "truncated_tier": null,
+  "gate_suite_ready": true,
+  "pending_re_review_from": []
+}

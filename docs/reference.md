@@ -36,7 +36,7 @@ checks it against the workflows yet (see [Keeping this current](#keeping-this-cu
 | [Watchdog](#watchdog) | inspects every finished stage run and files defects | published stage, this repository's wrapper | after each stage run | yes | no |
 | [Auto-release](#releases-and-upgrades) | proves the unreleased head end to end, then tags a release | this repository | daily | no (it drives the stages, which do) | no (it tags) |
 | [Spec Kit updater](#releases-and-upgrades) | detects, verifies and proposes a Spec Kit upgrade | published stage, this repository's wrapper | daily | yes | no (the board loop merges its PR) |
-| [Housekeeping](#housekeeping-and-observability) | rebase, cleanup, metrics, board status, image checks | mixed | events and daily | rebase and cleanup | no |
+| [Housekeeping](#housekeeping-and-observability) | rebase, cleanup, metrics, board status, proof list, image checks | mixed | events and daily | rebase and cleanup | no |
 
 ## Feature lifecycle
 
@@ -186,7 +186,8 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | rebase | published stage, wrapper | every push to `main` by a non-bot actor; nightly, 04:17 UTC | brings each open spec branch up to date with `main` (`rebase`, or `merge` with `WING_COMMANDER_SPEC_BRANCH_SYNC`); an agent resolves conflicts (`claude-sonnet-5-5`, turn budget 50); one it cannot resolve is left untouched and reported on the lifecycle issue |
 | cleanup | published stage, wrapper | a lifecycle PR closes; daily, 06:53 UTC | see the lifecycle table |
 | metrics-persist | published stage, wrapper | after each stage run; a daily sweep at 06:37 UTC | appends one record per agent run (turns, tokens and cost, where the run reports them) to `records.jsonl` on the `metrics` branch (`WING_COMMANDER_METRICS_BRANCH`, `_PATH`, `_PAUSED`) |
-| `board-status.yml` | this repository | daily, 07:17 UTC | rewrites the "Board status" issue: what waits on the owner, what is in the pipeline, the backlog's size, `main`'s CI, the last release and the merge switches. No agent. `WING_COMMANDER_BOARD_STATUS_PAUSED` stops it |
+| `board-status.yml` | this repository | daily, 07:17 UTC | rewrites the "Board status" issue: what waits on the owner, what is in the pipeline, the backlog's size, `main`'s CI, the last release, the merge switches and the proof list's section. No agent. `WING_COMMANDER_BOARD_STATUS_PAUSED` stops it, and stops the section's rewrite with it |
+| `wing-commander-proof-list.yml` | this repository | daily, 06:19 UTC; dispatch from the default branch only | builds the proof list: for each merge to the default branch in the last 30 days, whether a workflow run could show it working and whether anything is on record. Read-only, no agent, no App token; it uploads one artifact that `board-status.yml` shows as a collapsed section of "Board status". A dispatch from another branch is refused. `WING_COMMANDER_PROOF_LIST_PAUSED` stops it |
 | fold-cycle-guard | published stage, wrapper | after an implement run | re-dispatches, once, an implement run that was cancelled while still queued |
 | `lint-workflows.yml` | this repository | every pull request that touches workflows, actions, scripts, docs, a root Markdown file or another document a gate reads (its `pull_request: paths:` list names each one); pushes to `main` that touch workflows; daily | the gate suite. `python .github/scripts/run-local-gates.py` runs the same set locally |
 | agent-startup-check | published stage | called by the image workflows | checks that the agent action can start inside a container image |
@@ -237,7 +238,8 @@ means running. A pause takes effect no later than the next run.
 | `WING_COMMANDER_AUTO_RELEASE_PAUSED` | auto-release (set it by dispatching `auto-release-switch.yml`) |
 | `WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED` | only auto-release's container runs |
 | `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED` | the Spec Kit updater |
-| `WING_COMMANDER_BOARD_STATUS_PAUSED` | the daily Board status rewrite |
+| `WING_COMMANDER_BOARD_STATUS_PAUSED` | the daily Board status rewrite, the proof list's section included |
+| `WING_COMMANDER_PROOF_LIST_PAUSED` | the daily proof-list build; the section then shows "paused" |
 | `WING_COMMANDER_METRICS_PAUSED` | metrics records |
 
 The feature lifecycle has no pause variable. To stop one lifecycle, close its
@@ -254,6 +256,7 @@ All times UTC.
 | hourly at :41 | spec PR review |
 | 04:17 | rebase |
 | 05:43 | the gate suite on `main` |
+| 06:19 | proof list |
 | 06:37 | metrics-persist sweep |
 | 06:53 | cleanup |
 | 07:13 | Spec Kit updater |
@@ -327,6 +330,21 @@ tables above. No kill switch is set except spec PR review's.
 - A session in a sandbox whose token cannot read Actions variables cannot see
   the settings above. The "Board status" issue shows the merge switches only.
 - Nothing enforces the three-lifecycle limit in implement.
+- The proof list's scan under-reads: a literal mention counts only for
+  `.github/` paths in non-comment text, script imports are followed only
+  through `.github/scripts/board_*.py`, and no composite-calls-composite edge
+  exists. A change only to `.claude/skills/speckit-implement/SKILL.md` lands in
+  state 3 although `implement.yml` hands that file to its agent. State 3 means
+  the scan found no edge, not that nothing runs the change.
+- A session's proof posted on an issue shared by several merges counts for a
+  merge only when it names that merge's PR; one that names none counts for
+  none. The board loop's prove step is checked against what the list shows,
+  and the list never says a change is proven or not.
+- The proof list's "runs set apart" count is large: 197 in a dry run on real
+  data, beside 41 entries. Most of it is `pull_request` runs on branches
+  deleted after a squash-merge, whose head commits are not in the checkout.
+  That is the count as defined (a run that cannot be placed on this
+  repository's history), so it is kept, not trimmed.
 - Nothing outside a session checks that session's own merge of a fix PR.
   `main` has no branch protection, and the separate session's validation
   is a report on the pull request, posted under the owner's account.

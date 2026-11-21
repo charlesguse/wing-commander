@@ -375,10 +375,91 @@ def switches_half():
     check("board_now.py exits non-zero when it can't read the switches", stopped)
 
 
+def proof_list_half():
+    """specs/124-merge-proof-list: the section's notices (contracts/
+    proof-list-report.md, research D17) and the constants shared with the
+    proof-list workflow."""
+    import datetime
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with open(os.path.join(root, ".github", "workflows", bs.PROOF_LIST_WORKFLOW), encoding="utf-8") as fh:
+        wf = fh.read()
+    check("the proof-list workflow's upload name is the writer's artifact constant",
+          "name: {0}\n".format(bs.PROOF_LIST_ARTIFACT) in wf)
+    check("the proof-list workflow's build step is the writer's build-step constant",
+          "- name: {0}\n".format(bs.PROOF_LIST_BUILD_STEP) in wf)
+    check("proof_list_paused is in SWITCH_ENV and passed by board-status.yml",
+          bs.SWITCH_ENV.get("proof_list_paused") == "PROOF_LIST_PAUSED")
+
+    now = datetime.datetime(2026, 11, 20, 12, 0, 0)
+    section = {"schema": 1, "built_at": "2026-11-20T06:19:00Z", "full": "FULLFORM\n", "names_only": "NAMESONLY\n"}
+
+    def run(path_runs, ok, switches=None, download="ok", fail=None):
+        def gh_obj(path):
+            if fail and fail in path:
+                raise subprocess.CalledProcessError(1, "gh", "", "boom")
+            if path.endswith("/o/r") or path == "repos/o/r":
+                return {"default_branch": "main"}
+            return {"workflow_runs": path_runs}
+
+        def dl(repo, rid, tmp):
+            if download == "ok":
+                with open(os.path.join(tmp, "proof-list-section.json"), "w", encoding="utf-8") as fh:
+                    json.dump(section, fh)
+            elif download == "bad":
+                with open(os.path.join(tmp, "proof-list-section.json"), "w", encoding="utf-8") as fh:
+                    fh.write("{")
+        return bs.proof_list_snapshot("o/r", switches or {}, now, gh_obj, lambda rid: ok.get(rid, False), dl)
+
+    def mk(rid, when, conclusion="success", event="schedule"):
+        return {"id": rid, "run_started_at": when, "conclusion": conclusion, "event": event,
+                "head_repository": {"full_name": "o/r"}}
+    fresh, old = mk(3, "2026-11-20T06:19:00Z"), mk(2, "2026-11-19T06:19:00Z")
+    got = run([fresh, old], {3: True})
+    check("a fresh successful build is built, with its section", got["status"] == "built" and got["section"] == section, got)
+    check("no run is never", run([], {})["status"] == "never")
+    check("a failed latest build is failed, last good known",
+          run([mk(4, "2026-11-20T06:19:00Z", "failure"), old], {2: True}) ==
+          {"status": "failed", "last_good_at": "2026-11-19T06:19:00Z"})
+    check("a cancelled latest build is failed", run([mk(4, "2026-11-20T06:19:00Z", "cancelled")], {})["status"] == "failed")
+    check("a build older than 48 hours is failed", run([mk(5, "2026-11-17T06:19:00Z")], {5: True})["status"] == "failed")
+    check("a successful run that stood down on the switch is paused", run([fresh], {3: False})["status"] == "paused")
+    check("the switch set is paused whatever the history", run([fresh], {3: True}, {"proof_list_paused": "true"})["status"] == "paused")
+    check("a refused run (another event or repository) is not read",
+          run([dict(fresh, event="push")], {3: True})["status"] == "never"
+          and run([dict(fresh, head_repository={"full_name": "x/y"})], {3: True})["status"] == "never")
+    check("a missing artifact is unreadable", run([fresh], {3: True}, download="none")["status"] == "unreadable")
+    check("a malformed artifact is unreadable", run([fresh], {3: True}, download="bad")["status"] == "unreadable")
+    check("an unreadable history is unreadable with last good unknown",
+          run([fresh], {3: True}, fail="workflows/") == {"status": "unreadable", "last_good_at": "unknown"})
+
+    body = "board body\n"
+    full = bs.proof_list_block({"status": "built", "last_good_at": "x", "section": section}, body)
+    check("a build that fits embeds the full form between the contract's markers",
+          "FULLFORM" in full and 'status="built"' in full and full.rstrip().endswith("<!-- wc-proof-list:end -->"), full)
+    near = "x" * (60000 - len(body) - 700)
+    names = bs.proof_list_block({"status": "built", "section": dict(section, full="F" * 5000)}, near)
+    check("a body too full for the full form gets the names-only form", "NAMESONLY" in names and "FFFF" not in names, names[:200])
+    over = bs.proof_list_block({"status": "built", "section": dict(section, full="F" * 5000, names_only="N" * 5000)}, "y" * 59000)
+    check("when neither form fits the failed notice shows, with no list",
+          'status="failed"' in over and "NNNN" not in over and "too large" in over, over[:300])
+    for status, last, text in (("paused", "never", "never been a good build"),
+                               ("failed", "2026-11-19T06:19:00Z", "2026-11-19T06:19:00Z"),
+                               ("never", "never", "never been built"),
+                               ("unreadable", "unknown", "date is unknown")):
+        blk = bs.proof_list_block({"status": status, "last_good_at": last}, body)
+        check("the {0} notice shows no list and says when the last good build was".format(status),
+              'status="{0}"'.format(status) in blk and text in blk and "FULLFORM" not in blk, blk)
+    check("render places the section after the board and leaves the rest unchanged",
+          bs.render(dict(SNAP, proof_list={"status": "never"})).startswith(bs.render(SNAP))
+          and "wc-proof-list:begin" not in bs.render(SNAP))
+
+
 def main():
     render_half()
     runtime_half()
     switches_half()
+    proof_list_half()
     print("verify-board-status: {0} failure(s).".format(len(failures)))
     return 1 if failures else 0
 
