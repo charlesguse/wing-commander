@@ -245,12 +245,15 @@ EXEMPT_REACH_COPIES = {
 
 
 def _py_files(root):
-    for top in (".github", ".claude"):
-        for dirpath, dirs, names in os.walk(os.path.join(root, top)):
-            dirs[:] = [d for d in dirs if d != "fixtures"]
-            for name in names:
-                if name.endswith(".py"):
-                    yield os.path.relpath(os.path.join(dirpath, name), root).replace(os.sep, "/")
+    """The repository's own .py files under .github/ and .claude/, outside
+    fixtures. Listed through wc_repo_files.repo_files (git's tracked files,
+    the one home for this), so the untracked worktrees a local checkout keeps
+    under the ignored .claude/worktrees/ are never read as copies."""
+    from wc_repo_files import repo_files
+    for rel in repo_files(root):
+        parts = rel.split("/")
+        if parts[0] in (".github", ".claude") and rel.endswith(".py") and "fixtures" not in parts[:-1]:
+            yield rel
 
 
 def _parse(root, rel):
@@ -358,6 +361,38 @@ def single_home_fixture_cases():
             print("[ok] single-home fixture: {0}".format(label))
     return problems
 
+
+
+def worktree_copy_fixture_cases():
+    """R11: a checkout with a git worktree under the ignored .claude/worktrees/
+    holds an untracked copy of board_prove.py; it must not be reported, while
+    a tracked copy elsewhere still is."""
+    import subprocess
+    problems = []
+    for label, tracked_copy, want_fail in (
+            ("an untracked copy inside an ignored worktree directory", False, False),
+            ("a tracked copy in another file", True, True)):
+        root = tempfile.mkdtemp(prefix="verify_board_prove_wt_")
+        try:
+            files = {".gitignore": ".claude/worktrees/\n",
+                     ".github/scripts/board_prove.py": _COPY_REACH,
+                     ".claude/worktrees/wt/.github/scripts/board_prove.py": _COPY_REACH}
+            if tracked_copy:
+                files[".github/scripts/b.py"] = _COPY_REACH
+            for rel, text in files.items():
+                path = os.path.join(root, rel)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+            git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+            for args in (["init", "-q"], ["add", "-A"], ["commit", "-qm", "c"]):
+                subprocess.run(git + args, cwd=root, check=True, capture_output=True)
+            got = check_single_home(root, {})
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+        if bool(got) != want_fail:
+            problems.append("worktree fixture {0!r}: {1}".format(label, got or "did not fail"))
+    return problems
 
 
 def check_nightly_edges(root):
@@ -705,7 +740,8 @@ def run():
               "to at least one job in board-loop.yml's own job-uses-graph "
               "on the checked-out tree".format(len(real_helpers)))
 
-    for problem in single_home_fixture_cases() + fixtures_name_no_live_table(single_home_fixture_cases):
+    for problem in (single_home_fixture_cases() + fixtures_name_no_live_table(single_home_fixture_cases)
+                    + worktree_copy_fixture_cases()):
         failures += 1
         print("::error::verify-board-prove: {0}".format(problem))
     for problem in check_single_home(REPO_ROOT, EXEMPT_REACH_COPIES):
