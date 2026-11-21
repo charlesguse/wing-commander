@@ -438,6 +438,40 @@ def check_entries():
         if entry["lifecycle_issue"] != 5 or {"number": 5, "how": "lifecycle"} not in entry["named_issues"]:
             problems.append("entries: lifecycle issue {0}, named {1}; expected #5 from spec/124-own".format(
                 entry["lifecycle_issue"], entry["named_issues"]))
+        # R2: the commit's -05:00 time is written in UTC, so a comment posted
+        # between the local and the UTC merge time is before the merge.
+        if entry["merged_at"] != "2026-11-10T01:00:00Z":
+            problems.append("entries: a -05:00 merge was written as {0}, expected 2026-11-10T01:00:00Z".format(
+                entry["merged_at"]))
+        early = {"comment_id": 1, "account": "owner", "account_type": "User", "marker_step": "none",
+                 "posted_at": "2026-11-09T22:00:00Z", "place": {"kind": "pr", "number": 77},
+                 "body": "Proven by https://github.com/own/repo/actions/runs/500 for #77"}
+        named = {"own/repo/500": {"kind": "found", "run_id": 500, "run_started_at": "2026-11-10T02:00:00Z",
+                                  "contains": [sha], "resolvable": True}}
+        if pl.classify(entry, {}, [early], named, set(), "own/repo") == pl.STATE_ON_RECORD:
+            problems.append("entries: a comment posted before the real (UTC) merge time counted")
+    return problems
+
+
+def check_utc():
+    """R2: every time is read and written in UTC (FR-011, data-model Entry)."""
+    from board_spec_request_body import MAX_BODY_UNITS, utf16_len
+    problems = []
+    if pl.parse_time("2026-11-09T20:00:00-05:00").isoformat() != "2026-11-10T01:00:00+00:00":
+        problems.append("parse_time keeps the offset instead of converting to UTC")
+    start, end = pl.window_for("2026-11-17T00:00:00-05:00")
+    if end.isoformat() != "2026-11-17T05:00:00+00:00":
+        problems.append("window_for: an offset --end gave {0}".format(end.isoformat()))
+    doc = pl.assemble_report([], {}, {}, {}, "own/repo", "2026-11-10T07:00:00-05:00", "h",
+                             MAX_BODY_UNITS, utf16_len)
+    if doc["built_at"] != "2026-11-10T12:00:00Z" or doc["window"]["end"] != "2026-11-10T12:00:00Z":
+        problems.append("report: an offset build time was written as {0}, window {1}".format(
+            doc["built_at"], doc["window"]))
+    cap = pl.capture({"built_at": "2026-11-17T00:00:00-05:00", "runs": {}, "comments": {}},
+                     "2026-11-16T23:59:59-05:00")
+    if cap["window"]["end"] != "2026-11-17T05:00:00Z" or cap["as_of"] != "2026-11-17T04:59:59Z":
+        problems.append("capture: offset times written as window {0}, as-of {1}".format(
+            cap["window"], cap["as_of"]))
     return problems
 
 
@@ -699,7 +733,7 @@ def main():
         print("[ok] verify-proof-list: {0}".format(note))
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
                 + check_failed_reads() + check_review_fixes(fx) + check_lifecycle_issue()
-                + check_entries() + check_trees() + check_workflow()
+                + check_entries() + check_utc() + check_trees() + check_workflow()
                 + real + check_sc001_fixtures(fx))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4
