@@ -221,11 +221,11 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
 
 ## Maintainer Feedback
 
-- [ ] R4-a In `wc_proof_list.py` `_run`, decode output as UTF-8 with `errors="strict"` and raise `ReadError` when the output cannot be decoded or `stdout` is None.
-- [ ] R4-b In `api()`, raise `ReadError` on an empty read instead of turning it into `[]` or `null`.
-- [ ] R4-c In `Collector.thread`, skip reviews whose state is `PENDING` or that have no `submitted_at`, so `posted_at` is never None.
-- [ ] R4-d In `Collector.entries`, keep only `closingIssuesReferences` whose repository is this repository.
-- [ ] R4-e Add a fixture for each that fails without its change.
+- [x] R4-a In `wc_proof_list.py` `_run`, decode output as UTF-8 with `errors="strict"` and raise `ReadError` when the output cannot be decoded or `stdout` is None.
+- [x] R4-b In `api()`, raise `ReadError` on an empty read instead of turning it into `[]` or `null`.
+- [x] R4-c In `Collector.thread`, skip reviews whose state is `PENDING` or that have no `submitted_at`, so `posted_at` is never None.
+- [x] R4-d In `Collector.entries`, keep only `closingIssuesReferences` whose repository is this repository.
+- [x] R4-e Add a fixture for each that fails without its change.
 
 ## Maintainer Feedback
 
