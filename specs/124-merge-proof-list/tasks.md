@@ -247,3 +247,60 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
 
 - [x] R7-a Add a line to `docs/reference.md` under "Known limits" saying the "runs set apart" count is mostly `pull_request` runs on branches deleted after a squash-merge, whose head commits are not in the checkout (about 197 in a dry run on real data).
 - [x] R7-b Leave the count's definition unchanged (FR-013, research D5).
+
+## Review Gate Round 5 Findings
+
+- [ ] Review finding: Daily build can time out from per-(entry,head) git subprocess product
+
+  run_record() runs git merge-base --is-ancestor per entry and head, even for runs started before the entry merged, so a busy repo needs tens of thousands of git calls and can hit the 15-minute job timeout.
+
+  - .github/scripts/wc_proof_list.py
+
+  Detail: Skip the ancestry call when run_started_at <= merged_at, or use one rev-list or branch --contains per head.
+
+- [ ] Review finding: Rebase-merged PRs are treated as direct pushes
+
+  The commit-to-PR match needs merge_commit_sha == sha, so only the last rebased commit matches and earlier commits get pr=None, which hides their proof comments.
+
+  - .github/scripts/wc_proof_list.py
+
+- [ ] Review finding: capture() does not clip merges and named runs to as_of
+
+  capture() keeps entries merged up to --end and named runs started after as_of, so the SC-001 replay sees data the saved lookup could not have seen.
+
+  - .github/scripts/wc_proof_list.py
+
+- [ ] Review finding: fixtures_name_no_live_table duplicated in two gates
+
+  The same function body is pasted into verify-proof-list.py and verify-board-prove.py, which breaks the repo's single-home rule.
+
+  - .github/scripts/verify-proof-list.py
+  - .github/scripts/verify-board-prove.py
+
+- [ ] Review finding: Pause-switch test is written twice with no gate comparing them
+
+  wc_board_status._switch_on and the workflow's xargs/tr pause step implement the same test, and nothing checks they agree.
+
+  - .github/scripts/wc_board_status.py
+
+  Detail: Have the step call _switch_on, or add a gate case with padded and mixed-case values.
+
+- [ ] Review finding: proof_list_block writes the wrong last-good timestamp
+
+  The last-good= marker attribute gets the section's own built_at instead of the snapshot's last_good_at.
+
+  - .github/scripts/wc_board_status.py
+
+- [ ] Review finding: Skipped-build latest run reports paused forever, bypassing the staleness check
+
+  A latest run that succeeded but skipped its build step returns 'paused' before the 48-hour staleness test, so the section never turns to failed after the switch is cleared and the schedule stops.
+
+  - .github/scripts/wc_board_status.py
+
+- [ ] Review finding: Hard-coded #889 in exemption note and waivers
+
+  The note and waiver rows hard-code the backlog issue number, which goes stale at a board reset and turns Gate 124 red on main.
+
+  - .github/scripts/verify-proof-list.py
+
+  Detail: Derive the number from Exemption.issue.
