@@ -565,7 +565,10 @@ jobs:
             exit 1
           }
           # The last lines of the docker call's stderr, for the log only.
-          show_errs() { [ -s "$ERRS" ] && tail -n 5 "$ERRS" >&2; return 0; }
+          show_errs() {
+            [ -s "$ERRS" ] && tail -n 5 "$ERRS" >&2
+            return 0
+          }
 
           # 1. Unset: nothing to keep in sync.
           if [ -z "$TARGET" ]; then
