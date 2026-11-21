@@ -14,7 +14,12 @@
 # (specs/111-reference-image-pin-sync). The
 # image is pinned by digest, never by the moving `:latest` tag. A failed
 # sync fails this run and files one `reference-image-sync:failed` issue;
-# docs/setup.md says what to do about it.
+# docs/setup.md says what to do about it. Once this repository's own pin
+# holds the digest, the same job copies that digest, server side, to the
+# private dogfood image WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE names, so
+# the nightly private-image-dogfood check runs on the bytes checked here; a
+# failed copy fails this run and files one `dogfood-image-sync:failed`
+# issue.
 name: "Wing Commander · e2e reference image"
 
 on:
@@ -29,8 +34,8 @@ permissions:
   contents: read
   packages: write
 
-# The one place this image's name is written; the tags, the summary and the
-# start-up check dispatch all read it.
+# The one place this image's name is written; the tags, the summary, the
+# start-up check dispatch and the dogfood copy all read it.
 env:
   E2E_IMAGE: ghcr.io/charlesguse/wing-commander-e2e-image
 
@@ -77,7 +82,9 @@ jobs:
             echo "\`unclassified\` when the check could not reach a verdict (a re-run helps"
             echo "only when that was transient). The \`sync-pins\` job writes"
             echo "\`${E2E_IMAGE}@${DIGEST}\` to the \`WING_COMMANDER_CONTAINER_IMAGE\`"
-            echo "variable only when that run passed and this is a default-branch build."
+            echo "variable only when that run passed and this is a default-branch build,"
+            echo "then copies that digest to the private dogfood image"
+            echo "(\`WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE\`) once this repository's pin holds it."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The agent action does not support the `push` event this workflow runs
@@ -166,6 +173,8 @@ jobs:
       actions: read
       contents: read
       issues: write
+      # The dogfood copy step's push to the private dogfood package only.
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -265,6 +274,15 @@ jobs:
             if jq -e 'all(.[]; .status == "written" or .status == "current")' \
                 "$OUTCOME_FILE" > /dev/null; then
               echo "synced=true" >> "${GITHUB_OUTPUT:-/dev/null}"
+            fi
+            # pinned=true when this repository's own pin now holds this
+            # run's digest (written or current): the dogfood copy below
+            # runs only then, so a superseded run never copies its older
+            # digest over a newer one.
+            if jq -e --arg r "$THIS_REPO" \
+                'any(.[]; (.repo | ascii_downcase) == ($r | ascii_downcase) and (.status == "written" or .status == "current"))' \
+                "$OUTCOME_FILE" > /dev/null; then
+              echo "pinned=true" >> "${GITHUB_OUTPUT:-/dev/null}"
             fi
             if jq -e 'any(.[]; .status == "failed")' "$OUTCOME_FILE" > /dev/null; then
               exit 1
@@ -484,6 +502,154 @@ jobs:
           label-color: B60205
           label-description: "wing-commander: the reference-image pin sync failed"
           close-comment: A later sync wrote or confirmed every pin.
+
+      # Keeps the private dogfood image a copy of the reference digest just
+      # pinned, so the nightly private-image-dogfood.yml checks the bytes
+      # this run's start-up check passed (specs/044-private-registry-
+      # credentials FR-027; contracts/pin-sync-script.md, "Dogfood copy").
+      # A server-side registry copy: no rebuild, no pull. Runs only when
+      # this repository's own pin now holds this run's digest (pinned), so
+      # a superseded run never copies an older digest, and inside this
+      # job's concurrency group, so two runs' copies never interleave. The
+      # target comes only from WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE
+      # (unset: skipped with a notice) and must be a tag in this owner's
+      # ghcr.io namespace other than the reference image itself. A pushed
+      # tag keeps the existing package's visibility; nothing here changes
+      # it. GITHUB_TOKEN can push only when the package grants this
+      # repository write access (package settings -> Manage Actions
+      # access); a refusal names that setting. Never echo REGISTRY_TOKEN.
+      # !cancelled(), not the implicit success(): a failed close of the
+      # sync failure issue above must not strand a copy of a pinned digest.
+      - name: Copy the pinned digest to the dogfood image
+        id: dogfood
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' && steps.sync.outputs.pinned == 'true' }}
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+          IMAGE: ${{ env.E2E_IMAGE }}
+          DIGEST: ${{ needs.build-and-publish.outputs.digest }}
+          TARGET: ${{ vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE }}
+          OWNER: ${{ github.repository_owner }}
+          THIS_REPO: ${{ github.repository }}
+          BODY_FILE: ${{ runner.temp }}/dogfood-copy-failure-body.md
+        run: |
+          set -uo pipefail
+
+          : "${BODY_FILE:?BODY_FILE is required}"
+          SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          REGISTRY_TOKEN="${REGISTRY_TOKEN:-}"
+          REGISTRY_USER="${REGISTRY_USER:-}"
+          IMAGE="${IMAGE:-}"
+          DIGEST="${DIGEST:-}"
+          TARGET="${TARGET:-}"
+          OWNER="${OWNER:-}"
+          THIS_REPO="${THIS_REPO:-}"
+          SOURCE="${IMAGE}@${DIGEST}"
+          VAR=WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE
+          GRANT="grant ${THIS_REPO:-this repository} write access on the package (its package settings -> Manage Actions access)"
+          ERRS="$(mktemp)"
+          trap 'rm -f "$ERRS"' EXIT
+
+          report() { # outcome message
+            echo "dogfood=$1" >> "${GITHUB_OUTPUT:-/dev/null}"
+            { echo "### Dogfood image copy"; echo ""; echo "$2"; } >> "$SUMMARY"
+          }
+          fail() { # message
+            echo "::error::$1"
+            report failed "Failed: $1"
+            {
+              echo "The dogfood image copy failed in run ${GITHUB_SERVER_URL:-}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}."
+              echo ""
+              echo "$1"
+            } > "$BODY_FILE"
+            exit 1
+          }
+          # The last lines of the docker call's stderr, for the log only.
+          show_errs() { [ -s "$ERRS" ] && tail -n 5 "$ERRS" >&2; return 0; }
+
+          # 1. Unset: nothing to keep in sync.
+          if [ -z "$TARGET" ]; then
+            echo "::notice::${VAR} is unset, so no dogfood image copy was made."
+            report skipped "Skipped: \`${VAR}\` is unset."
+            exit 0
+          fi
+
+          # 2. Refuse a target this workflow must never push to.
+          #    ghcr.io names are lower case, so the tests are too; the only
+          #    ':' the name pattern allows starts the tag.
+          target_lc="${TARGET,,}"
+          owner_lc="${OWNER,,}"
+          if [ -z "$owner_lc" ] || [[ "$target_lc" != "ghcr.io/${owner_lc}/"* ]]; then
+            fail "${VAR} (${TARGET}) is outside ghcr.io/${OWNER}/; nothing was pushed."
+          fi
+          if ! [[ "$target_lc" =~ ^ghcr\.io/[a-z0-9._-]+(/[a-z0-9._-]+)+(:[a-z0-9._-]+)?$ ]]; then
+            fail "${VAR} (${TARGET}) is not a ghcr.io image name with an optional tag (a digest cannot be pushed to); nothing was pushed."
+          fi
+          if [ "${target_lc%%:*}" = "${IMAGE,,}" ]; then
+            fail "${VAR} (${TARGET}) is the reference image itself; nothing was pushed."
+          fi
+          if ! [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            fail "the published digest (${DIGEST:-empty}) is not sha256:<64 hex>; nothing was pushed."
+          fi
+
+          # 3. Log in with this job's token, scoped to this step.
+          if ! printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin > /dev/null 2> "$ERRS"; then
+            show_errs
+            fail "could not log in to ghcr.io with GITHUB_TOKEN; nothing was pushed."
+          fi
+
+          held_digest() { # the digest TARGET resolves to now
+            local d
+            d="$(docker buildx imagetools inspect "$TARGET" --format '{{json .Manifest}}' 2> "$ERRS" | jq -r '.digest // empty')" || return 1
+            [ -n "$d" ] || return 1
+            printf '%s' "$d"
+          }
+
+          # 4. Already this digest: nothing to push.
+          if held="$(held_digest)" && [ "$held" = "$DIGEST" ]; then
+            report current "Current: \`${TARGET}\` already holds \`${SOURCE}\`."
+            exit 0
+          fi
+
+          # 5. Copy the manifest server side, then prove the tag holds it.
+          if ! docker buildx imagetools create --tag "$TARGET" "$SOURCE" > /dev/null 2> "$ERRS"; then
+            show_errs
+            if grep -qiE 'denied|forbidden|unauthori[sz]ed|\b40[13]\b' "$ERRS"; then
+              fail "ghcr.io refused the push of ${SOURCE} to ${TARGET}: GITHUB_TOKEN can push to that package only when it grants this repository write access -- ${GRANT}."
+            fi
+            fail "could not copy ${SOURCE} to ${TARGET}; if the cause is permission, ${GRANT}."
+          fi
+          if ! held="$(held_digest)"; then
+            show_errs
+            fail "copied ${SOURCE} to ${TARGET} but could not read ${TARGET} back to confirm it."
+          fi
+          if [ "$held" != "$DIGEST" ]; then
+            fail "after the copy ${TARGET} resolves to ${held}, not ${DIGEST}."
+          fi
+          report copied "Copied: \`${TARGET}\` now holds \`${SOURCE}\`."
+
+      - name: File or update the dogfood copy failure issue
+        if: ${{ failure() && steps.dogfood.outcome == 'failure' }}
+        uses: ./.github/actions/wing-commander-durable-failure-issue
+        with:
+          token: ${{ github.token }}
+          operation: report
+          label: dogfood-image-sync:failed
+          label-color: B60205
+          label-description: "wing-commander: the dogfood image copy failed"
+          title: Dogfood image copy failed
+          body-file: ${{ runner.temp }}/dogfood-copy-failure-body.md
+
+      - name: Close the dogfood copy failure issue on success
+        if: ${{ !cancelled() && steps.dogfood.outcome == 'success' && (steps.dogfood.outputs.dogfood == 'copied' || steps.dogfood.outputs.dogfood == 'current') }}
+        uses: ./.github/actions/wing-commander-durable-failure-issue
+        with:
+          token: ${{ github.token }}
+          operation: close
+          label: dogfood-image-sync:failed
+          label-color: B60205
+          label-description: "wing-commander: the dogfood image copy failed"
+          close-comment: A later copy left the dogfood image holding the pinned reference digest.
 
       - name: Fail the job when the sync failed
         if: ${{ failure() && steps.sync.outcome == 'failure' }}
