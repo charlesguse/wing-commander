@@ -735,6 +735,10 @@ def check_workflow_text(text):
     if len(uploads) != 1 or uploads[0]["with"].get("name") != "proof-list-section" \
             or uploads[0]["with"].get("retention-days") != 7:
         problems.append("workflow: the upload is not proof-list-section for 7 days")
+    elif uploads[0]["with"].get("overwrite") is not True:
+        # A re-run keeps the run id; without overwrite the second upload of
+        # the same name fails (-- see pr-conversation.yml).
+        problems.append("workflow: the upload does not set overwrite: true")
     for call in WRITE_CALLS:
         if call in text:
             problems.append("workflow: contains a write or agent call ({0})".format(call))
@@ -786,6 +790,7 @@ def check_workflow():
         ("a dropped gate on checkout", text.replace("if: steps.pause.outputs.paused != 'true'\n        uses: actions/checkout",
                                                      "uses: actions/checkout")),
         ("a write call", text + "      - run: gh issue comment 1 -b x\n"),
+        ("the upload's overwrite dropped", text.replace("          overwrite: true\n", "")),
     ]
     for label, mutated in mutations:
         if mutated == text or not check_workflow_text(mutated):

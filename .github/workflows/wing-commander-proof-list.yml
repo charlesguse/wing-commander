@@ -73,6 +73,10 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python3 .github/scripts/wc_proof_list.py build --out proof-list-section.json
 
+      # `overwrite: true` -- see pr-conversation.yml: a "Re-run all jobs"
+      # keeps the run id, and upload-artifact v4+ refuses a name that already
+      # exists in it, so a re-run of a run that already uploaded would fail
+      # here and Board status would show "failed" until the next build.
       - name: Upload the section
         if: steps.pause.outputs.paused != 'true'
         uses: actions/upload-artifact@v6
@@ -81,3 +85,4 @@ jobs:
           path: proof-list-section.json
           retention-days: 7
           if-no-files-found: error
+          overwrite: true
