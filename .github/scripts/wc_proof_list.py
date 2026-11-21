@@ -325,7 +325,7 @@ RETRY_AFTER_RE = re.compile(r"retry-after:?\s*(\d+)", re.I)
 SECTION_ARTIFACT = "proof-list-section"
 SECTION_FILE = "proof-list-section.json"
 FINALIZE_RE = re.compile(r"^Finalize:.*\(#(\d+)\)\s*$")
-SPEC_META_RE = re.compile(r"^(specs/[^/]+)/")
+SPEC_BRANCH_RE = re.compile(r"^spec/([^/]+)$")
 
 
 def _run(argv, cwd=None, sleep=None):
@@ -461,7 +461,7 @@ class Collector:
                      "needs_run": needs_run, "needs_reason": reason, "reaching": []}
             if pr:
                 view = json.loads(gh_text(["pr", "view", str(pr["number"]), "-R", self.repository,
-                                           "--json", "closingIssuesReferences,body,title"]))
+                                           "--json", "closingIssuesReferences,body,title,headRefName"]))
                 seen = {}
                 for ref in view.get("closingIssuesReferences") or ():
                     seen.setdefault(ref["number"], "closes")
@@ -470,7 +470,7 @@ class Collector:
                     seen.setdefault(pr_issue(body), "board-item")
                 if pr_line(body):
                     seen.setdefault(pr_line(body)[0], "backlog-line")
-                life = self.lifecycle_issue(sha, view.get("title") or "", changed)
+                life = self.lifecycle_issue(sha, view.get("title") or "", view.get("headRefName"))
                 if life:
                     seen.setdefault(life, "lifecycle")
                     entry["lifecycle_issue"] = life
@@ -480,28 +480,32 @@ class Collector:
             out.append(entry)
         return out
 
-    def lifecycle_issue(self, sha, title, changed):
+    def lifecycle_issue(self, sha, title, head_ref):
+        """research D6: a final PR's lifecycle issue is `.issue` in
+        `specs/<slug>/spec-meta.json` in the merge commit's tree, `<slug>`
+        from the PR's head branch `spec/<slug>`, cross-checked against the
+        title's `(#N)`. Other spec directories the PR touched are never read
+        (final PRs edit other specs' live contracts). Not a final PR, a head
+        branch that is not `spec/<slug>`, or no spec-meta.json at that commit:
+        None."""
         match = FINALIZE_RE.match(title)
-        if not match:
+        slug = SPEC_BRANCH_RE.match(head_ref or "")
+        if not match or not slug:
             return None
-        dirs = sorted({m.group(1) for m in (SPEC_META_RE.match(p) for p in changed) if m})
-        for spec_dir in dirs:
-            try:
-                meta = json.loads(git("show", "{0}:{1}/spec-meta.json".format(sha, spec_dir)))
-            except NotFound:
-                continue
-            except ReadError as exc:
-                # `git show` of a path absent at that commit exits 128.
-                if "does not exist" in str(exc) or "exists on disk, but not in" in str(exc):
-                    continue
-                raise ReadError("{0}: spec-meta.json unreadable at {1}: {2}".format(spec_dir, sha[:10], exc))
-            except ValueError as exc:
-                raise ReadError("{0}: spec-meta.json unreadable at {1}: {2}".format(spec_dir, sha[:10], exc))
-            if int(meta.get("issue", -1)) != int(match.group(1)):
-                raise ReadError("{0}: spec-meta issue {1} disagrees with the title's #{2}".format(
-                    spec_dir, meta.get("issue"), match.group(1)))
-            return int(match.group(1))
-        return None
+        path = "specs/{0}/spec-meta.json".format(slug.group(1))
+        # `ls-tree` prints nothing for a path absent at that commit and fails
+        # only when the commit itself cannot be read.
+        if not git("ls-tree", "--name-only", sha, "--", path).strip():
+            return None
+        try:
+            meta = json.loads(git("show", "{0}:{1}".format(sha, path)))
+            issue = int(meta.get("issue"))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ReadError("{0} unreadable at {1}: {2}".format(path, sha[:10], exc))
+        if issue != int(match.group(1)):
+            raise ReadError("{0}: spec-meta issue {1} disagrees with the title's #{2}".format(
+                path, meta.get("issue"), match.group(1)))
+        return issue
 
     def reaching(self, sha, changed):
         if sha not in self.trees:
