@@ -253,7 +253,16 @@ caught by the agent start-up check on the next daily dogfood run, not by
 pinning. The probe additionally requires **git >= 2.38**
 (`.github/scripts/image-git-floor.sh`, verbatim in every stage's probe,
 enforced by Gate 148), failing with `git <found> is older than the 2.38
-minimum`. The start-up check is its own opt-in published workflow,
+minimum`. Ahead of the floor it requires the **glibc dynamic loader** the
+agent action's Bun needs (`.github/scripts/image-glibc-loader.sh`, verbatim
+in every stage's probe, enforced by Gate 148): `oven-sh/setup-bun`
+downloads `bun-linux-<x64|aarch64>.zip`, a glibc build, whatever the
+image's libc. On x86_64 `/lib64/ld-linux-x86-64.so.2` (which Alpine's
+`gcompat` also installs), on aarch64 `/lib/ld-linux-aarch64.so.1`: Bun's
+own ELF interpreter paths, so a loader at any other path does not count; `uname -m` reporting anything else, or no
+`uname`, passes. A miss fails with `<image> has no glibc dynamic loader
+(<path> for <arch>) -- the agent action's Bun cannot run in it` and still
+lists any missing tools. The start-up check is its own opt-in published workflow,
 `agent-startup-check.yml` (spec 112's contract); no existing stage, and not
 `private-image-dogfood.yml`, gains an input, secret or permission.
 

@@ -110,9 +110,27 @@ Inside the existing `docker run --entrypoint sh` probe of every
 - output that does not parse fails with `could not parse git version from
   "<output>"`.
 
-Gate 148 (`verify-image-git-floor.py`) fails a stage whose probe lacks the
-fragment, or the host-side report of a floor failure, verbatim. Gate 62
-runs the same fragment against the reference image it builds.
+Between the tool presence loop and that fragment, the fragment from
+`.github/scripts/image-glibc-loader.sh` requires the glibc dynamic loader
+the agent action's Bun needs (`oven-sh/setup-bun` downloads a glibc build,
+`bun-linux-<x64|aarch64>.zip`, on every Linux image):
+
+- `uname -m` is `x86_64`: `/lib64/ld-linux-x86-64.so.2` must exist
+  (Alpine's `gcompat` installs it; a loader only at
+  `/lib/ld-linux-x86-64.so.2` does not count, since the kernel loads Bun's
+  interpreter from the exact `/lib64` path);
+- `uname -m` is `aarch64`: `/lib/ld-linux-aarch64.so.1` must exist;
+- any other arch, or no `uname`: not checked;
+- a miss fails with `no glibc dynamic loader (<path> for <arch>)`, reported
+  host-side as `<image> has no glibc dynamic loader (<path> for <arch>) --
+  the agent action's Bun cannot run in it (Alpine/musl and distroless
+  images need a glibc base)`, with any missing tools appended.
+
+Gate 148 (`verify-image-git-floor.py`) fails a stage whose probe lacks
+either fragment, or either host-side report, verbatim, and runs the loader
+fragment against fixtures (glibc, gcompat, musl, a loader only under /lib, a dangling loader link, an
+unknown arch, no uname). Gate 62 runs both fragments against the reference
+image it builds.
 
 ## Gate
 

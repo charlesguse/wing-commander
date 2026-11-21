@@ -4432,12 +4432,14 @@ jobs:
       # `git --version` outputs and found verbatim in every stage's probe,
       # with its host-side failure report; and verify-gate-62.py (Gate 62)
       # runs the same fragment on the reference image and classifies with
-      # the fragment's own messages.
+      # the fragment's own messages. The glibc dynamic loader the agent
+      # action's Bun needs is checked the same way from its own fragment
+      # (image-glibc-loader.sh, run against image-glibc-loader-fixtures/).
       # Numbered 148, not 142: 141-146 were taken by spec 110's PR #982.
-      - name: "Gate 148 — every stage's image probe enforces the git 2.38 floor, verbatim from image-git-floor.sh"
+      - name: "Gate 148 — every stage's image probe enforces the git 2.38 floor and the glibc loader, verbatim from image-git-floor.sh and image-glibc-loader.sh"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-image-git-floor.py
-      - name: "Gate 148 self-test — a lowered floor, a probe missing the fragment or its host report, and a Gate 62 that skips or drifts from the floor each fail"
+      - name: "Gate 148 self-test — a lowered floor, a loosened or tightened loader check, a probe missing either fragment or its host report, and a Gate 62 that skips or drifts from either each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-image-git-floor.py --self-test
 
