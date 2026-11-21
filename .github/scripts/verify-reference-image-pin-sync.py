@@ -247,6 +247,12 @@ CASES = {
         vars={THIS: OLD}, reach=[THIS, E2E], set_fail=[E2E],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[]),
     # A write refused after the probe passed: nothing after it is written.
+    # This repository's write lands, the test repository's is refused: the
+    # run fails, yet this repository's pin holds this run's digest (pinned).
+    "this-written-e2e-refused": dict(
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E], set_fail_expected=[E2E],
+        exit=1, status={THIS: "written", E2E: "failed"}, writes=[THIS],
+        reason="write refused"),
     "write-refused-after-probe": dict(
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E], set_fail_expected=[THIS],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
@@ -289,6 +295,16 @@ CASES = {
         run_list_fail=True, vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[]),
 }
+
+# Cases whose outcome leaves this repository's own pin holding this run's
+# digest (written or current): only these may set `pinned`, which gates the
+# dogfood copy, so a superseded run, or one whose own write failed, never
+# copies its digest.
+PINNED = {"both-written", "all-current", "e2e-unset", "not-superseded",
+          "e2e-is-this-repo", "hand-set-held-value", "exact-reach-case-insensitive",
+          "absent-variable", "newer-rerun-pending", "newer-pending-shadows-lower",
+          "newer-rerun-check-running", "newer-rerun-check-null",
+          "newer-cancelled-before-check", "this-written-e2e-refused"}
 
 # Cases whose outcome may close the failure issue (every sync-set repository
 # written or current); every other case must leave `synced` unset.
@@ -427,6 +443,9 @@ def check_case(name, case, bash, script):
         want_synced = "true" if name in SYNCED else None
         if outputs.get("synced") != want_synced:
             errs.append(f"synced output {outputs.get('synced')!r}, want {want_synced!r}")
+        want_pinned = "true" if name in PINNED else None
+        if outputs.get("pinned") != want_pinned:
+            errs.append(f"pinned output {outputs.get('pinned')!r}, want {want_pinned!r}")
         if os.path.exists(table):
             with open(table) as f:
                 tbl = f.read()
@@ -439,6 +458,249 @@ def check_case(name, case, bash, script):
             errs.append("TABLE_FILE was not written")
         if TOKEN in blob:
             errs.append("the token value appears in output, summary or outcome file")
+    return errs
+
+
+DOGFOOD_STEP = "Copy the pinned digest to the dogfood image"
+DOCKER_STUB = os.path.join(HERE, "tests", "reference-image-pin-sync", "docker-stub.sh")
+DOGFOOD = "ghcr.io/octo/dogfood:latest"
+REGISTRY_TOKEN = "ghs_REGISTRYTOKENVALUE456"
+OTHER = "sha256:" + "c" * 64
+CREATE = "docker buildx imagetools create --tag "
+PERMISSION = "Manage Actions access"
+DENIED = "refused the push"
+OTHER_ERROR = "could not copy"
+
+# name: env overrides + stub state -> expectations. `outcome` is the step's
+# dogfood output, `create` whether a copy was attempted, `docker` whether
+# docker was called at all, `says` text the summary must carry.
+DOGFOOD_CASES = {
+    "copied": dict(exit=0, outcome="copied", create=True, held_after=DIGEST),
+    # A target that resolves to another digest, or to nothing yet.
+    "copied-over-other": dict(held=OTHER, exit=0, outcome="copied", create=True,
+                              held_after=DIGEST),
+    "current": dict(held=DIGEST, exit=0, outcome="current", create=False),
+    # Unset: a notice, no docker call, a green step.
+    "unset": dict(env={"TARGET": ""}, exit=0, outcome="skipped", docker=False,
+                  says="WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE` is unset"),
+    # Outside this owner's ghcr.io namespace: refused before any docker call.
+    "foreign-owner": dict(env={"TARGET": "ghcr.io/someone-else/dogfood:latest"},
+                          exit=1, outcome="failed", docker=False, says="outside ghcr.io/octo/"),
+    "foreign-registry": dict(env={"TARGET": "docker.io/octo/dogfood:latest"},
+                             exit=1, outcome="failed", docker=False, says="outside ghcr.io/octo/"),
+    # A name that only starts with the owner's (ghcr.io/octopus/...).
+    "owner-prefix": dict(env={"TARGET": "ghcr.io/octopus/dogfood:latest"},
+                         exit=1, outcome="failed", docker=False, says="outside ghcr.io/octo/"),
+    # The reference image itself, by any tag or case: refused.
+    "self-copy": dict(env={"TARGET": IMAGE + ":latest"}, exit=1, outcome="failed",
+                      docker=False, says="is the reference image itself"),
+    "self-copy-untagged-upper": dict(env={"TARGET": IMAGE.upper().replace("GHCR.IO", "ghcr.io")},
+                                     exit=1, outcome="failed", docker=False,
+                                     says="is the reference image itself"),
+    # A digest reference cannot be pushed to.
+    "digest-target": dict(env={"TARGET": "ghcr.io/octo/dogfood@" + DIGEST}, exit=1,
+                          outcome="failed", docker=False, says="optional tag"),
+    "malformed-digest": dict(env={"DIGEST": "sha256:xyz"}, exit=1, outcome="failed",
+                             docker=False),
+    # The owner matches case-insensitively (a mixed-case account name).
+    "owner-case": dict(env={"OWNER": "Octo", "TARGET": "ghcr.io/octo/dogfood:latest"},
+                       exit=0, outcome="copied", create=True, held_after=DIGEST),
+    # Docker refuses an upper-case repository path: refused before any call,
+    # not sent to the registry and blamed on package permissions.
+    "upper-case-name": dict(env={"OWNER": "Octo", "TARGET": "ghcr.io/Octo/dogfood:latest"},
+                            exit=1, outcome="failed", docker=False, says="lower-case"),
+    # A tag is case-sensitive: pushed exactly as written.
+    "tag-case-kept": dict(env={"TARGET": "ghcr.io/octo/dogfood:Nightly"}, exit=0,
+                          outcome="copied", create=True, held_after=DIGEST),
+    # Names Docker's reference grammar refuses.
+    "dotdot-path": dict(env={"TARGET": "ghcr.io/octo/../evil/dogfood:latest"}, exit=1,
+                        outcome="failed", docker=False, says="lower-case"),
+    "leading-separator": dict(env={"TARGET": "ghcr.io/octo/-dogfood:latest"}, exit=1,
+                              outcome="failed", docker=False, says="lower-case"),
+    "dot-tag": dict(env={"TARGET": "ghcr.io/octo/dogfood:.x"}, exit=1,
+                    outcome="failed", docker=False, says="lower-case"),
+    "registry-port": dict(env={"TARGET": "ghcr.io:443/octo/dogfood:latest"}, exit=1,
+                          outcome="failed", docker=False, says="outside ghcr.io/octo/"),
+    "registry-suffix": dict(env={"TARGET": "ghcr.io.evil/octo/dogfood:latest"}, exit=1,
+                            outcome="failed", docker=False, says="outside ghcr.io/octo/"),
+    "login-refused": dict(login_fail=True, exit=1, outcome="failed", create=False,
+                          says="could not log in"),
+    # The package has not granted this repository write access.
+    "push-denied": dict(create_fail="ERROR: failed to push: denied: permission_denied: write_package",
+                        exit=1, outcome="failed", create=True, says=DENIED),
+    "push-403": dict(create_fail="unexpected status from PUT request: 403 Forbidden",
+                     exit=1, outcome="failed", create=True, says=DENIED),
+    # Any other error names permission only as the likely cause.
+    "push-other-error": dict(create_fail="ERROR: dial tcp: i/o timeout", exit=1,
+                             outcome="failed", create=True, says=OTHER_ERROR),
+    # The copy reported success but the tag cannot be read back.
+    "readback-failed": dict(readback_fail=True, exit=1, outcome="failed", create=True,
+                            says="could not read"),
+    # The copy must leave the tag on exactly the checked digest.
+    "copied-wrong-digest": dict(after=OTHER, exit=1, outcome="failed", create=True,
+                                says="not " + DIGEST),
+}
+
+
+def run_dogfood_case(case, tmp, bash, script):
+    stub_dir = os.path.join(tmp, "stub")
+    bin_dir = os.path.join(tmp, "bin")
+    os.makedirs(stub_dir)
+    os.makedirs(bin_dir)
+    docker = os.path.join(bin_dir, "docker")
+    shutil.copy(DOCKER_STUB, docker)
+    os.chmod(docker, os.stat(docker).st_mode | stat.S_IXUSR)
+    for fname in ("held", "after", "create_fail"):
+        if case.get(fname):
+            with open(os.path.join(stub_dir, fname), "w") as f:
+                f.write(case[fname])
+    for flag in ("login_fail", "readback_fail"):
+        if case.get(flag):
+            open(os.path.join(stub_dir, flag), "w").close()
+    open(os.path.join(stub_dir, "log"), "w").close()
+    body = os.path.join(tmp, "body.md")
+    env = {
+        "PATH": bin_dir + os.pathsep + os.environ["PATH"], "STUB_DIR": stub_dir,
+        "REGISTRY_TOKEN": REGISTRY_TOKEN, "REGISTRY_USER": "octo-bot",
+        "IMAGE": IMAGE, "DIGEST": DIGEST, "TARGET": DOGFOOD, "OWNER": "octo",
+        "THIS_REPO": THIS, "BODY_FILE": body, "HOME": tmp,
+    }
+    env.update(case.get("env", {}))
+    workdir = os.path.join(tmp, "work")
+    os.makedirs(workdir)
+    rc, output, outputs, summary = H.run_step(
+        bash, script, workdir, env, tmp, shell=H.step_shell(WORKFLOW, DOGFOOD_STEP))
+    with open(os.path.join(stub_dir, "log")) as f:
+        log = f.read().splitlines()
+    held = os.path.join(stub_dir, "held")
+    held_after = open(held).read() if os.path.exists(held) else None
+    stdin = os.path.join(stub_dir, "login_stdin")
+    login_stdin = open(stdin).read() if os.path.exists(stdin) else None
+    body_text = open(body).read() if os.path.exists(body) else None
+    return rc, output, outputs, summary, log, held_after, login_stdin, body_text, env
+
+
+def check_dogfood_case(name, case, bash, script):
+    errs = []
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, output, outputs, summary, log, held_after, login_stdin, body, env = \
+            run_dogfood_case(case, tmp, bash, script)
+    if rc != case["exit"]:
+        errs.append(f"exit {rc}, want {case['exit']} ({output.strip()})")
+    if outputs.get("dogfood") != case["outcome"]:
+        errs.append(f"dogfood output {outputs.get('dogfood')!r}, want {case['outcome']!r}")
+    creates = [line for line in log if line.startswith(CREATE)]
+    if case.get("docker", True) is False:
+        if log:
+            errs.append(f"docker was called before the refusal/skip: {log}")
+    elif case.get("create") is not None and bool(creates) != case["create"]:
+        errs.append(f"copy attempted {bool(creates)}, want {case['create']}")
+    for line in creates:
+        if line != f"{CREATE}{env['TARGET']} {IMAGE}@{DIGEST}":
+            errs.append(f"a copy that is not the pinned digest to the configured target: {line}")
+    if any(line.startswith("docker login") for line in log):
+        if login_stdin != REGISTRY_TOKEN:
+            errs.append("docker login must read GITHUB_TOKEN from stdin")
+        if not any(line == "docker login ghcr.io -u octo-bot --password-stdin" for line in log):
+            errs.append("docker login must log in to ghcr.io only, the token on stdin")
+    if creates and not any(line.startswith("docker login") for line in log):
+        errs.append("a copy was attempted without a login")
+    if any(line.startswith("docker login") for line in log) and not case.get("login_fail"):
+        if log[-1] != "docker logout ghcr.io":
+            errs.append(f"a step that logged in must end with docker logout ghcr.io: {log}")
+    elif any(line.startswith("docker logout") for line in log):
+        errs.append("a step that never logged in must not log out")
+    if "create_fail" in case and PERMISSION not in summary:
+        errs.append(f"a push failure must name {PERMISSION!r}")
+    if "held_after" in case and held_after != case["held_after"]:
+        errs.append(f"target ends holding {held_after!r}, want {case['held_after']!r}")
+    if "says" in case and case["says"] not in summary:
+        errs.append(f"the summary does not say {case['says']!r}: {summary.strip()!r}")
+    if case["exit"] == 1:
+        if not body or "The dogfood image copy failed" not in body:
+            errs.append("a failure must write the failure issue body")
+        elif "says" in case and case["says"] not in body:
+            errs.append(f"the failure issue body does not say {case['says']!r}")
+        if "::error::" not in output:
+            errs.append("a failure must print an ::error:: annotation")
+    elif body is not None:
+        errs.append("a step that did not fail wrote a failure issue body")
+    if name == "unset" and "::notice::" not in output:
+        errs.append("an unset target must print a ::notice:: annotation")
+    if REGISTRY_TOKEN in output + summary + (body or ""):
+        errs.append("the registry token appears in output, summary or issue body")
+    return errs
+
+
+def check_dogfood_wiring():
+    """The copy runs in sync-pins (its concurrency group serialises it), only
+    after this run's own pin holds the digest, under the one token bound to
+    that step, reading the target only from the repository variable; the
+    issue steps are guarded to the copy's own outcome."""
+    import yaml
+    errs = []
+    with open(WORKFLOW) as f:
+        text = f.read()
+    wf = yaml.safe_load(text)
+    sync = (wf.get("jobs") or {}).get("sync-pins") or {}
+    steps = sync.get("steps") or []
+    names = [st.get("name") for st in steps]
+    if DOGFOOD_STEP not in names:
+        return ["sync-pins must carry the dogfood copy step"]
+    st = steps[names.index(DOGFOOD_STEP)]
+    if names.index(DOGFOOD_STEP) < names.index(SYNC_STEP):
+        errs.append("the dogfood copy must come after the pin sync")
+    if st.get("id") != "dogfood":
+        errs.append("the dogfood copy step must have id: dogfood")
+    cond = str(st.get("if"))
+    if "steps.sync.outputs.pinned == 'true'" not in cond:
+        errs.append("the dogfood copy must be gated on steps.sync.outputs.pinned == 'true'")
+    if "steps.sync.outcome" in cond or "steps.sync.conclusion" in cond:
+        errs.append("the dogfood copy must not be gated on the sync's outcome: a test-repository "
+                    "write that fails after this repository's pin was written still pinned it")
+    if re.search(r"\balways\(\)|\bfailure\(\)", cond):
+        errs.append("the dogfood copy must not run after a failed step")
+    if "!cancelled()" not in cond:
+        errs.append("the dogfood copy must be gated !cancelled(), not the implicit success(): "
+                    "a failed close of the sync failure issue must not strand the copy")
+    env = st.get("env") or {}
+    if env.get("TARGET") != "${{ vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE }}":
+        errs.append("the dogfood target must come only from WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE")
+    if env.get("IMAGE") != "${{ env.E2E_IMAGE }}":
+        errs.append("the copy's source image must be E2E_IMAGE")
+    if env.get("DIGEST") != "${{ needs.build-and-publish.outputs.digest }}":
+        errs.append("the copy's source digest must be the published digest")
+    if env.get("REGISTRY_TOKEN") != "${{ secrets.GITHUB_TOKEN }}":
+        errs.append("the copy must push with GITHUB_TOKEN, no other secret")
+    holders = [s.get("name") for s in steps if "secrets.GITHUB_TOKEN" in json.dumps(s)]
+    if holders != [DOGFOOD_STEP]:
+        errs.append(f"secrets.GITHUB_TOKEN must be bound to the copy step only, not {holders}")
+    if len(re.findall(r"ghcr\.io/[A-Za-z0-9]", text)) != 1:
+        errs.append("the workflow must write one ghcr.io image name (E2E_IMAGE), no second one")
+    perms = sync.get("permissions") or {}
+    if perms.get("packages") != "write":
+        errs.append("sync-pins needs packages: write for the copy")
+    if "visibility" in str(st.get("run")):
+        errs.append("the copy must never change package visibility")
+    report = [s for s in steps if s.get("uses", "").endswith("wing-commander-durable-failure-issue")
+              and (s.get("with") or {}).get("label") == "dogfood-image-sync:failed"]
+    ops = {(s.get("with") or {}).get("operation"): str(s.get("if")) for s in report}
+    if "steps.dogfood.outcome == 'failure'" not in ops.get("report", "") or \
+            "failure()" not in ops.get("report", ""):
+        errs.append("the dogfood failure issue must be filed on the copy step's failure")
+    if "steps.dogfood.outputs.dogfood == 'copied'" not in ops.get("close", "") or \
+            "steps.dogfood.outputs.dogfood == 'current'" not in ops.get("close", ""):
+        errs.append("the dogfood failure issue must close only after a copied or current outcome")
+    # Single home: the registry copy is written once, in this step.
+    for p in glob.glob(os.path.join(GH_DIR, "workflows", "*.yml")) + \
+            [q for q in glob.glob(os.path.join(GH_DIR, "actions", "**", "*"), recursive=True)
+             if os.path.isfile(q)]:
+        with open(p, errors="replace") as f:
+            n = len(re.findall(r"\bimagetools\s+create\b", f.read()))
+        want = 1 if os.path.abspath(p) == os.path.abspath(WORKFLOW) else 0
+        if n != want:
+            errs.append(f"{os.path.relpath(p, GH_DIR)} carries {n} `imagetools create` call(s), "
+                        f"want {want}")
     return errs
 
 
@@ -582,8 +844,9 @@ def check_wiring():
     if text.count(jq_row) != 1:
         errs.append(f"the outcome table's row rendering appears {text.count(jq_row)} times; "
                     f"want once (finish() writes TABLE_FILE, every reader cats it)")
-    guarded = [s for s in steps if "durable-failure-issue" in s and "operation: report" in s]
-    if len(guarded) != 1 or "label: reference-image-sync:failed" not in guarded[0] or \
+    guarded = [s for s in steps if "durable-failure-issue" in s and "operation: report" in s
+               and "label: reference-image-sync:failed" in s]
+    if len(guarded) != 1 or \
             "steps.sync.outcome == 'failure'" not in guarded[0]:
         errs.append("the report step must be guarded to the sync step's failure with the sync label")
     closers = [s for s in steps if "durable-failure-issue" in s and "operation: close" in s
@@ -665,6 +928,11 @@ def main():
     for name, case in CASES.items():
         for e in check_case(name, case, bash, script):
             failures.append(f"case {name}: {e}")
+    dogfood_script = str(H.find_step(WORKFLOW, DOGFOOD_STEP).get("run") or "")
+    for name, case in DOGFOOD_CASES.items():
+        for e in check_dogfood_case(name, case, bash, dogfood_script):
+            failures.append(f"dogfood case {name}: {e}")
+    failures += [f"dogfood wiring: {e}" for e in check_dogfood_wiring()]
     failures += [f"wiring: {e}" for e in check_wiring()]
     failures += [f"single-home: {e}" for e in check_single_home()]
     failures += [f"single-home detector: {e}" for e in check_pin_write_detector()]
@@ -675,7 +943,8 @@ def main():
             print("FAIL " + f)
         print(f"FAIL  {len(failures)} problem(s)")
         return 1
-    print(f"PASS  verify-reference-image-pin-sync.py ({len(CASES)} cases, wiring, single home)")
+    print(f"PASS  verify-reference-image-pin-sync.py ({len(CASES)} cases, "
+          f"{len(DOGFOOD_CASES)} dogfood copy cases, wiring, single home)")
     return 0
 
 
