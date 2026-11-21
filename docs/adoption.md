@@ -995,7 +995,15 @@ know before you set either:
   consume `anthropics/claude-code-action@v1`, so the action's own
   dependencies can change under an image that passed the tool-presence check.
   The image prerequisite probe also requires **git >= 2.38** (it names the
-  version found). Separately, the published
+  version found) and a **glibc dynamic loader**: the action installs Bun
+  from a glibc build, so on x86_64 the image must have
+  `/lib64/ld-linux-x86-64.so.2` (Alpine's `gcompat` provides it) and on
+  aarch64 `/lib/ld-linux-aarch64.so.1`: the exact path the kernel loads
+  Bun's interpreter from.
+  An Alpine/musl or distroless image fails with `<image> has no glibc
+  dynamic loader (<path> for <arch>)` instead of passing the probe and
+  dying at the agent's "Install Bun" step. Another architecture, or an
+  image with no `uname`, is not failed by this check. Separately, the published
   [`agent-startup-check.yml`](#agent-startup-check) runs the real action's
   setup in your image with no model credential and classifies the log: a
   red `classify-startup` job either names the failing setup step and quotes
@@ -1631,7 +1639,7 @@ credential. Contract: [agent-startup-check.md](../specs/112-agent-startup-image-
 | Inputs | `container-image` (string, `""` = the whole workflow is a no-op); `runner`, `environment`, `environment-deployment`, `pipeline-repo`, `pipeline-ref` (as in Common inputs, except that this workflow holds no `id-token`, so set `pipeline-ref` whenever `github.job_workflow_sha` comes through empty) |
 | Secrets | `container-registry-username` / `container-registry-password` (optional, for a private image); `pipeline-repo-token` (optional, only for a [private pipeline repository](#private-pipeline-repository)) |
 | Permissions | The calling job grants `actions: read` (classify-startup reads the startup-agent job's log) and `contents: read` |
-| Jobs | `verify-image-prerequisites` (the same tool-list and git-floor probe every stage runs), `startup-agent` (inside `container-image`), `classify-startup` (on `runner` directly, not in the image, so it can report on an image that cannot start a shell; it needs `gh`, `jq` and `python3` on the runner, which GitHub's hosted runners carry) |
+| Jobs | `verify-image-prerequisites` (the same tool-list, glibc-loader and git-floor probe every stage runs), `startup-agent` (inside `container-image`), `classify-startup` (on `runner` directly, not in the image, so it can report on an image that cannot start a shell; it needs `gh`, `jq` and `python3` on the runner, which GitHub's hosted runners carry) |
 
 ```yaml
 jobs:

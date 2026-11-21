@@ -1,0 +1,64 @@
+{
+  "glibc-x86_64": {
+    "uname": "x86_64",
+    "files": ["/lib64/ld-linux-x86-64.so.2", "/lib/x86_64-linux-gnu/libc.so.6"],
+    "pass": true,
+    "message": ""
+  },
+  "gcompat-x86_64": {
+    "uname": "x86_64",
+    "files": ["/lib/ld-musl-x86_64.so.1", "/lib/ld-linux-x86-64.so.2"],
+    "links": {"/lib64/ld-linux-x86-64.so.2": "/lib/ld-linux-x86-64.so.2"},
+    "pass": true,
+    "message": ""
+  },
+  "x86_64-loader-only-in-lib": {
+    "uname": "x86_64",
+    "files": ["/lib/ld-musl-x86_64.so.1", "/lib/ld-linux-x86-64.so.2"],
+    "pass": false,
+    "message": "no glibc dynamic loader (/lib64/ld-linux-x86-64.so.2 for x86_64)"
+  },
+  "musl-x86_64": {
+    "uname": "x86_64",
+    "files": ["/lib/ld-musl-x86_64.so.1", "/lib/libc.musl-x86_64.so.1"],
+    "pass": false,
+    "message": "no glibc dynamic loader (/lib64/ld-linux-x86-64.so.2 for x86_64)"
+  },
+  "glibc-aarch64": {
+    "uname": "aarch64",
+    "files": ["/lib/ld-linux-aarch64.so.1"],
+    "pass": true,
+    "message": ""
+  },
+  "musl-aarch64": {
+    "uname": "aarch64",
+    "files": ["/lib/ld-musl-aarch64.so.1"],
+    "pass": false,
+    "message": "no glibc dynamic loader (/lib/ld-linux-aarch64.so.1 for aarch64)"
+  },
+  "aarch64-with-x86_64-loader": {
+    "uname": "aarch64",
+    "files": ["/lib64/ld-linux-x86-64.so.2"],
+    "pass": false,
+    "message": "no glibc dynamic loader (/lib/ld-linux-aarch64.so.1 for aarch64)"
+  },
+  "x86_64-dangling-loader-link": {
+    "uname": "x86_64",
+    "files": [],
+    "links": {"/lib64/ld-linux-x86-64.so.2": "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2"},
+    "pass": false,
+    "message": "no glibc dynamic loader (/lib64/ld-linux-x86-64.so.2 for x86_64)"
+  },
+  "unknown-arch": {
+    "uname": "riscv64",
+    "files": [],
+    "pass": true,
+    "message": ""
+  },
+  "no-uname": {
+    "uname": null,
+    "files": [],
+    "pass": true,
+    "message": ""
+  }
+}

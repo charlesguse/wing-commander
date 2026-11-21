@@ -45,8 +45,12 @@
 # setup in the image and names the step that fails. The git floor (>= 2.38,
 # image-git-floor.sh) is checked in the same probe as presence; older git
 # ignores the safe.directory setting each stage passes through
-# container.env and dies with "dubious ownership" (#963). unzip is listed
-# on the evidence above.
+# container.env and dies with "dubious ownership" (#963). The same probe
+# requires the glibc dynamic loader (image-glibc-loader.sh): setup-bun
+# downloads a glibc Bun build on every Linux image, so an Alpine/musl or
+# distroless image passed this list and died at "Install Bun" with
+# "bun: cannot execute: required file not found". unzip is listed on the
+# evidence above.
 #
 # Presence is all this contract checks, for `timeout` as for `gh`. A
 # BusyBox build older than 1.30 (2018) provides the applet but requires
