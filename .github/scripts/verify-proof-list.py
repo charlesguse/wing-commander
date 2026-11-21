@@ -702,8 +702,9 @@ def check_sc001_fixtures(fx):
     if sc001_replay(moved, dict(good, expected_differences=[dict(diff, actual_state=3)])):
         problems.append("SC-001 fixture: a listed difference was rejected: {0}".format(
             sc001_replay(moved, dict(good, expected_differences=[dict(diff, actual_state=3)]))))
-    # the five exemption cases
-    exempt = EXEMPT_SC001_PENDING
+    # the five exemption cases, with their own table: never EXEMPT_SC001_PENDING,
+    # which T029 deletes (plan.md "Build details")
+    exempt = {"sc001": Exemption(reason="fixture: the capture is pending", issue=(889,))}
     with tempfile.TemporaryDirectory() as tmp:
         def write(name):
             with open(os.path.join(tmp, name), "w", encoding="utf-8") as fh:
@@ -726,6 +727,19 @@ def check_sc001_fixtures(fx):
     return problems
 
 
+
+def fixtures_name_no_live_table(fn):
+    """[problem] when fixture function `fn` names a module-level EXEMPT_*
+    table: T029 deletes the live entry, which must not turn the fixture red."""
+    import ast
+    import textwrap
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    named = sorted({n.id for n in ast.walk(tree)
+                    if isinstance(n, ast.Name) and n.id.startswith("EXEMPT_")})
+    return ["{0}() uses the live table {1}; give its cases their own dict".format(fn.__name__, name)
+            for name in named]
+
+
 def main():
     fx = load("states.json")
     real, note = check_sc001(os.path.join(FIXTURES, "sc001"), EXEMPT_SC001_PENDING)
@@ -734,7 +748,7 @@ def main():
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
                 + check_failed_reads() + check_review_fixes(fx) + check_lifecycle_issue()
                 + check_entries() + check_utc() + check_trees() + check_workflow()
-                + real + check_sc001_fixtures(fx))
+                + real + check_sc001_fixtures(fx) + fixtures_name_no_live_table(check_sc001_fixtures))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4
     pl.comment_steps_1_to_4 = lambda entry, comment, shared, repository: True

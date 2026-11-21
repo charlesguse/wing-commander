@@ -320,7 +320,11 @@ SKILL = REACH_CONSUMERS[0]
 
 
 def single_home_fixture_cases():
-    """Each case fails without the code it tests; returns problem strings."""
+    """Each case fails without the code it tests; returns problem strings.
+    The cases with an entry pass their own table, never EXEMPT_REACH_COPIES:
+    the maintainer commit that deletes the live entry (T028) must not turn
+    these red (plan.md "Build details")."""
+    own_entry = {SKILL: Exemption(reason="fixture: the unthinned consumer", issue=(889,))}
     cases = [
         ("a copy of reach in another file", {".github/scripts/b.py": _COPY_REACH}, {}, True),
         ("a copy of actions_only", {".github/scripts/b.py": _COPY_ACTIONS}, {}, True),
@@ -329,10 +333,10 @@ def single_home_fixture_cases():
         ("a thinned consumer, no exemption", {SKILL: _THIN}, {}, False),
         ("an inline mention loop left in the consumer", {SKILL: _INLINE}, {}, True),
         ("the unthinned consumer passes only with its entry", {SKILL: _COPY_REACH},
-         EXEMPT_REACH_COPIES, False),
+         own_entry, False),
         ("the unthinned consumer without its entry", {SKILL: _COPY_REACH}, {}, True),
-        ("a stale entry for a thinned consumer", {SKILL: _THIN}, EXEMPT_REACH_COPIES, True),
-        ("an entry for a missing file", {}, EXEMPT_REACH_COPIES, True),
+        ("a stale entry for a thinned consumer", {SKILL: _THIN}, own_entry, True),
+        ("an entry for a missing file", {}, own_entry, True),
     ]
     problems = []
     for label, files, exempt, want_fail in cases:
@@ -353,6 +357,20 @@ def single_home_fixture_cases():
         else:
             print("[ok] single-home fixture: {0}".format(label))
     return problems
+
+
+
+def fixtures_name_no_live_table(fn):
+    """[problem] when fixture function `fn` names a module-level EXEMPT_*
+    table: deleting the live entry (a maintainer task) would turn the
+    fixture red although the real check passes."""
+    import inspect
+    import textwrap
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    named = sorted({n.id for n in ast.walk(tree)
+                    if isinstance(n, ast.Name) and n.id.startswith("EXEMPT_")})
+    return ["{0}() uses the live table {1}; give its cases their own dict".format(fn.__name__, name)
+            for name in named]
 
 
 def run():
@@ -648,7 +666,7 @@ def run():
               "to at least one job in board-loop.yml's own job-uses-graph "
               "on the checked-out tree".format(len(real_helpers)))
 
-    for problem in single_home_fixture_cases():
+    for problem in single_home_fixture_cases() + fixtures_name_no_live_table(single_home_fixture_cases):
         failures += 1
         print("::error::verify-board-prove: {0}".format(problem))
     for problem in check_single_home(REPO_ROOT, EXEMPT_REACH_COPIES):
