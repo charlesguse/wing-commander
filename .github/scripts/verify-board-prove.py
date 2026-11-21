@@ -360,6 +360,55 @@ def single_home_fixture_cases():
 
 
 
+def check_nightly_edges(root):
+    """-> (problems, wrappers): nightly_e2e_edges() on `root`'s tree reads at
+    least one wrapper and every wrapper it names exists. No fixed count: the
+    array is the source, so adding or removing a stage wrapper is not a
+    failure (round-4 finding 9)."""
+    import board_prove
+    try:
+        wrappers = board_prove.nightly_e2e_edges(root).get(board_prove.AUTO_RELEASE) or []
+    except ValueError as exc:
+        return ["nightly_e2e_edges() failed on {0}: {1}".format(root, exc)], []
+    missing = [w for w in wrappers if not os.path.isfile(os.path.join(root, w))]
+    if not wrappers or missing:
+        return ["nightly_e2e_edges() read {0}; expected at least one wrapper, each an existing "
+                "file (missing: {1})".format(wrappers, missing)], wrappers
+    return [], wrappers
+
+
+def nightly_edges_fixture_cases():
+    """check_nightly_edges on small trees: two wrappers pass; a named wrapper
+    that does not exist, and an array that cannot be parsed, fail."""
+    array = ("jobs:\n  j:\n    steps:\n      - run: |\n          declare -A stage_file=(\n"
+             "            [wing-commander-1-a.yml]=a.yml\n            [wing-commander-2-b.yml]=b.yml\n"
+             "          )\n")
+    wrappers = {".github/workflows/wing-commander-1-a.yml": "on: {}\n",
+                ".github/workflows/wing-commander-2-b.yml": "on: {}\n"}
+    cases = [
+        ("two wrappers, both present", dict(wrappers), False),
+        ("a named wrapper that does not exist",
+         {".github/workflows/wing-commander-1-a.yml": "on: {}\n"}, True),
+        ("an array that cannot be parsed", None, True),
+    ]
+    problems = []
+    for label, files, want_fail in cases:
+        root = tempfile.mkdtemp(prefix="verify_board_prove_nightly_")
+        try:
+            text = array if files is not None else "jobs: {}\n"
+            for rel, body in dict(files or {}, **{".github/workflows/auto-release.yml": text}).items():
+                path = os.path.join(root, rel)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(body)
+            got = bool(check_nightly_edges(root)[0])
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+        if got != want_fail:
+            problems.append("nightly-edges fixture {0!r}: failed={1}, expected {2}".format(label, got, want_fail))
+    return problems
+
+
 def fixtures_name_no_live_table(fn):
     """[problem] when fixture function `fn` names a module-level EXEMPT_*
     table: deleting the live entry (a maintainer task) would turn the
@@ -675,13 +724,12 @@ def run():
     print("[ok] the reach computation has one home (board_prove.py)")
 
     import board_prove  # noqa: E402
-    edges = board_prove.nightly_e2e_edges(REPO_ROOT)
-    wrappers = edges.get(board_prove.AUTO_RELEASE) or []
-    if len(wrappers) < 8 or any(not os.path.isfile(os.path.join(REPO_ROOT, w)) for w in wrappers):
+    problems, wrappers = check_nightly_edges(REPO_ROOT)
+    problems += nightly_edges_fixture_cases()
+    for problem in problems:
         failures += 1
-        print("::error::verify-board-prove: nightly_e2e_edges() read {0} on the real tree; "
-              "expected the eight existing wrapper files.".format(wrappers))
-    else:
+        print("::error::verify-board-prove: {0}".format(problem))
+    if not problems:
         print("[ok] nightly_e2e_edges() reads the {0} wrapper files of auto-release.yml".format(len(wrappers)))
     graph = {"a.yml": ["b.yml"], "b.yml": [".github/x.sh"]}
     if board_prove.reach("a.yml", graph) != {"a.yml", "b.yml", ".github/x.sh"}:
