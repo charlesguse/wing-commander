@@ -340,6 +340,11 @@ tables above. No kill switch is set except spec PR review's.
   merge only when it names that merge's PR; one that names none counts for
   none. The board loop's prove step is checked against what the list shows,
   and the list never says a change is proven or not.
+- The proof list's "runs set apart" count is large: 197 in a dry run on real
+  data, beside 41 entries. Most of it is `pull_request` runs on branches
+  deleted after a squash-merge, whose head commits are not in the checkout.
+  That is the count as defined (a run that cannot be placed on this
+  repository's history), so it is kept, not trimmed.
 - Nothing outside a session checks that session's own merge of a fix PR.
   `main` has no branch protection, and the separate session's validation
   is a report on the pull request, posted under the owner's account.

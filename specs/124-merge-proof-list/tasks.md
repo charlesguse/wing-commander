@@ -245,5 +245,5 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
 
 ## Maintainer Feedback
 
-- [ ] R7-a Add a line to `docs/reference.md` under "Known limits" saying the "runs set apart" count is mostly `pull_request` runs on branches deleted after a squash-merge, whose head commits are not in the checkout (about 197 in a dry run on real data).
-- [ ] R7-b Leave the count's definition unchanged (FR-013, research D5).
+- [x] R7-a Add a line to `docs/reference.md` under "Known limits" saying the "runs set apart" count is mostly `pull_request` runs on branches deleted after a squash-merge, whose head commits are not in the checkout (about 197 in a dry run on real data).
+- [x] R7-b Leave the count's definition unchanged (FR-013, research D5).
