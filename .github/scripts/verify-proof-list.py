@@ -886,13 +886,7 @@ from board_prove import Exemption  # noqa: E402
 # Interim: the corpus and its answer key are captured by a maintainer session
 # (T029), which deletes this entry in the same commit. Passed to the check as a
 # parameter; never written here (Gate 124).
-EXEMPT_SC001_PENDING = {
-    "sc001": Exemption(
-        reason=("sc001/corpus.json and expected.json are captured by a maintainer "
-                "session with full history and `gh` (T029); until then the replay "
-                "reports 'not yet captured' instead of failing"),
-        issue=(889,)),
-}
+EXEMPT_SC001_PENDING = {}
 SC001_REASONS = ("own-tree", "FR-005", "FR-006-shared-issue", "FR-013-set-apart")
 # SC-001 and data-model.md "SC-001 expected file": the fixed corpus window and
 # the answer key's size (the lookup's 10 hand-written proofs, its 21 merges

@@ -87,7 +87,7 @@ No `[NEEDS CLARIFICATION]` markers remained in spec.md. The decisions below were
 
   | What | Home |
   |---|---|
-  | commit → PR | `gh api repos/{repo}/commits/{sha}/pulls`, keeping the PR whose `merge_commit_sha` equals the SHA; none means a direct push. Never the commit title: `5fccc8c8`'s title names the issue first |
+  | commit → PR | `gh api repos/{repo}/commits/{sha}/pulls`, keeping the PR whose `merge_commit_sha` equals the SHA; when none does, the single merged PR in the list (a rebase merge's earlier commits); none means a direct push. Never the commit title: `5fccc8c8`'s title names the issue first |
   | changed paths | `board_route_backstop.diff_name_list(sha^1, sha)` |
   | closed issues | `gh pr view N --json closingIssuesReferences` |
   | board item | `board_backlog_lines.pr_issue()` / `pr_line()` |

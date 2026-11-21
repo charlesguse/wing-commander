@@ -81,7 +81,7 @@
 ## Phase 8: Maintainer follow-up
 
 - [x] T028 [maintainer] Thin `.claude/skills/prove-after-merge/scripts/redrive_candidates.py` to import its reach computation from `board_prove` and delete the `EXEMPT_REACH_COPIES` entry for it, in one commit on the lifecycle branch before the final PR merges.
-- [ ] T029 [maintainer] Capture the SC-001 corpus with `wc_proof_list.py capture` and build `expected.json` from the saved 2026-11-16 lookup (research D13), from a local session with full history and `gh`; recheck each merge against FR-007, FR-006's shared-issue condition and FR-013 set-apart runs, record each shift with a reason, raise any shift outside SC-001's four reasons, scrub private names, and delete the `EXEMPT_SC001_PENDING` entry in the same commit, before the final PR merges.
+- [x] T029 [maintainer] Capture the SC-001 corpus with `wc_proof_list.py capture` and build `expected.json` from the saved 2026-11-16 lookup (research D13), from a local session with full history and `gh`; recheck each merge against FR-007, FR-006's shared-issue condition and FR-013 set-apart runs, record each shift with a reason, raise any shift outside SC-001's four reasons, scrub private names, and delete the `EXEMPT_SC001_PENDING` entry in the same commit, before the final PR merges.
 - [ ] T030 [maintainer] Create and later clear the repository variable `WING_COMMANDER_PROOF_LIST_PAUSED` when exercising the switch (FR-018).
 - [ ] T031 [maintainer] After-merge proof (quickstart.md step 4): dispatch the workflow from the default branch, then `board-status.yml`; dispatch from another branch and confirm refusal; set and clear the switch.
 
