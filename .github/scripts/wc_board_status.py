@@ -275,7 +275,62 @@ def render(snap):
     lines.append("**Open pull requests:** {0}{1}".format(
         len(prs), "; not part of a lifecycle: {0}".format(
             ", ".join("#{0}".format(n) for n in loose)) if loose else ""))
-    return "\n".join(lines) + "\n"
+    body = "\n".join(lines) + "\n"
+    if snap.get("proof_list"):
+        body += "\n" + proof_list_block(snap["proof_list"], body)
+    return body
+
+
+# --------------------------------------------------------------------------
+# The proof list's section (specs/124-merge-proof-list, contracts/
+# proof-list-report.md). wing-commander-proof-list.yml builds the content;
+# this file is the only writer. The constants below are the one home of the
+# names verify-board-status.py checks against the workflow file.
+# --------------------------------------------------------------------------
+PROOF_LIST_WORKFLOW = "wing-commander-proof-list.yml"
+PROOF_LIST_ARTIFACT = "proof-list-section"
+PROOF_LIST_BUILD_STEP = "Build the proof list"
+PROOF_LIST_STALE_HOURS = 48
+PROOF_LIST_NOTICES = {
+    "paused": "The proof list is paused (`WING_COMMANDER_PROOF_LIST_PAUSED`).",
+    "failed": "The proof list's latest build did not succeed, or is more than 48 hours old.",
+    "never": "The proof list has never been built.",
+    "unreadable": "The proof list's build history or artifact could not be read this time.",
+}
+
+
+def _pl_block(status, built, last_good, summary, content):
+    return ('<!-- wc-proof-list:begin status="{0}" built="{1}" last-good="{2}" -->\n'
+            "<details><summary>{3}</summary>\n\n{4}\n</details>\n"
+            "<!-- wc-proof-list:end -->\n").format(status, built, last_good, summary, content.rstrip("\n"))
+
+
+def proof_list_block(pl, body):
+    """The section for snapshot entry `pl`, placed after `body`: the full form
+    if the whole body fits MAX_BODY_UNITS, else names-only, else the failed
+    notice. Entries are never dropped for size (FR-020)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from board_spec_request_body import MAX_BODY_UNITS, utf16_len
+    status = pl.get("status", "unreadable")
+    last_good = pl.get("last_good_at") or "never"
+    used = utf16_len(body) + 1
+    notice = None
+    if status == "built":
+        section = pl.get("section") or {}
+        built = section.get("built_at", "none")
+        summary = "Proof list: built {0} (window 30 days)".format(built[:10])
+        for key in ("full", "names_only"):
+            block = _pl_block("built", built, last_good, summary, section.get(key, ""))
+            if used + utf16_len(block) <= MAX_BODY_UNITS:
+                return block
+        status, notice = "failed", "The proof list was too large for this issue's body."
+    notice = notice or PROOF_LIST_NOTICES.get(status, PROOF_LIST_NOTICES["unreadable"])
+    when = {"never": "there has never been a good build"}.get(
+        last_good, "the last good build was {0}".format(last_good))
+    if last_good == "unknown":
+        when = "the last good build's date is unknown"
+    return _pl_block(status, "none", last_good, "Proof list: {0}".format(status),
+                     "{0} {1}.".format(notice, when[0].upper() + when[1:]))
 
 
 # --------------------------------------------------------------------------
@@ -361,7 +416,72 @@ def snapshot(repo, switches):
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {"now": now, "issues": issues, "prs": prs, "maintenance": maintenance,
             "roadmap_number": roadmap, "release": release, "main_ci": main_ci,
-            "switches": switches}
+            "switches": switches, "proof_list": proof_list_snapshot(repo, switches)}
+
+
+def _gh_obj(path):
+    return json.loads(_gh(["api", path]))
+
+
+def _build_step_ok(repo, run_id):
+    jobs = _gh_obj("repos/{0}/actions/runs/{1}/jobs?per_page=100".format(repo, run_id)).get("jobs") or []
+    return any(step.get("name") == PROOF_LIST_BUILD_STEP and step.get("conclusion") == "success"
+               for job in jobs for step in job.get("steps") or [])
+
+
+def proof_list_snapshot(repo, switches, now=None, gh_obj=None, build_ok=None, download=None):
+    """The section's status (research D17): paused, never, failed, built or
+    unreadable, plus the last good build's time. The readers are parameters so
+    verify-board-status.py drives every branch."""
+    gh_obj, build_ok = gh_obj or _gh_obj, build_ok or (lambda rid: _build_step_ok(repo, rid))
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    paused = _switch_on(switches.get("proof_list_paused"))
+    last_good = "unknown"
+    try:
+        default = gh_obj("repos/{0}".format(repo))["default_branch"]
+        try:
+            runs = gh_obj("repos/{0}/actions/workflows/{1}/runs?status=completed&branch={2}&per_page=30".format(
+                repo, PROOF_LIST_WORKFLOW, default)).get("workflow_runs") or []
+        except subprocess.CalledProcessError as exc:
+            if "HTTP 404" not in (exc.stderr or ""):
+                raise
+            runs = []
+        runs = [r for r in runs if r.get("event") in ("schedule", "workflow_dispatch")
+                and (r.get("head_repository") or {}).get("full_name") == repo]
+        last_good, good_ok = "never", {}
+        for run in runs:
+            good_ok[run["id"]] = build_ok(run["id"]) if run.get("conclusion") == "success" else False
+            if good_ok[run["id"]]:
+                last_good = run.get("run_started_at") or run.get("created_at") or "unknown"
+                break
+        if paused:
+            return {"status": "paused", "last_good_at": last_good}
+        if not runs:
+            return {"status": "never", "last_good_at": "never"}
+        latest = runs[0]
+        if latest.get("conclusion") != "success":
+            return {"status": "failed", "last_good_at": last_good}
+        started = datetime.datetime.strptime((latest.get("run_started_at") or "")[:19], "%Y-%m-%dT%H:%M:%S")
+        if (now.replace(tzinfo=None) - started) > datetime.timedelta(hours=PROOF_LIST_STALE_HOURS):
+            return {"status": "failed", "last_good_at": last_good}
+        if not good_ok.get(latest["id"]):
+            return {"status": "paused", "last_good_at": last_good}
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                (download or _download_section)(repo, latest["id"], tmp)
+                with open(os.path.join(tmp, "proof-list-section.json"), encoding="utf-8") as fh:
+                    section = json.load(fh)
+            if section.get("schema") != 1 or not section.get("full") or not section.get("names_only"):
+                raise ValueError("malformed section")
+        except (OSError, ValueError, TypeError, AttributeError, subprocess.CalledProcessError):
+            return {"status": "unreadable", "last_good_at": last_good}
+        return {"status": "built", "last_good_at": last_good, "section": section}
+    except (subprocess.CalledProcessError, ValueError, KeyError, OSError, TypeError, AttributeError):
+        return {"status": "paused" if paused else "unreadable", "last_good_at": last_good}
+
+
+def _download_section(repo, run_id, directory):
+    _gh(["run", "download", str(run_id), "-R", repo, "-n", PROOF_LIST_ARTIFACT, "-D", directory])
 
 
 def publish(repo, body):
@@ -393,6 +513,7 @@ SWITCH_ENV = {
     "board_can_push_workflows": "BOARD_CAN_PUSH_WORKFLOWS",
     "board_loop_paused": "BOARD_LOOP_PAUSED",
     "lifecycle_auto_merge": "LIFECYCLE_AUTO_MERGE",
+    "proof_list_paused": "PROOF_LIST_PAUSED",
     "review_gate_paused": "LIFECYCLE_REVIEW_GATE_PAUSED",
     "tasks_review": "TASKS_REVIEW",
 }

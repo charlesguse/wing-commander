@@ -3459,6 +3459,13 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-status.py
 
+      # The proof list (specs/124-merge-proof-list) classifies every merge to
+      # the default branch into one of five states by code. Not numbered:
+      # gate numbers are allocated by hand and collide (#773).
+      - name: Proof list puts every entry in exactly one state, decided by code
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-proof-list.py
+
       # auto-release-switch.yml sets or clears WING_COMMANDER_AUTO_RELEASE_PAUSED
       # and reads it back; anyone may pause, only the repository owner may
       # resume (specs/055-unattended-e2e-gates FR-028). Not numbered, as above.

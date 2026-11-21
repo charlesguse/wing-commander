@@ -219,7 +219,9 @@ board loop (`board-loop.yml`, [spec](specs/057-autonomous-board-loop/spec.md)),
 the lifecycle review gate (`lifecycle-review-gate.yml`,
 [spec](specs/062-lifecycle-review-gate/spec.md)), spec PR review
 (`spec-pr-review.yml`, [spec](specs/122-settled-spec-pr-review/spec.md)),
-board status (`board-status.yml`), auto-release (`auto-release.yml`,
+board status (`board-status.yml`), the proof list
+(`wing-commander-proof-list.yml`,
+[spec](specs/124-merge-proof-list/spec.md)), auto-release (`auto-release.yml`,
 [spec](specs/045-auto-release-verified-head/spec.md)) and the gate suite
 (`lint-workflows.yml`).
 
