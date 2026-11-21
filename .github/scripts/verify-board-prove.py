@@ -235,13 +235,7 @@ FILE_WALKERS = frozenset({"listdir", "walk", "scandir", "glob", "iglob", "rglob"
 # A file here is excused from the single-home check until its maintainer
 # commit thins it (spec 124 T028); an entry whose file breaks nothing is stale.
 # Gate 124 reads this table, so it is only ever written as this literal.
-EXEMPT_REACH_COPIES = {
-    ".claude/skills/prove-after-merge/scripts/redrive_candidates.py": Exemption(
-        reason=("the skill script still carries its own reach() and mention loop; "
-                "the implement stage cannot write under .claude/, so a maintainer "
-                "commit thins it to import from board_prove (T028)"),
-        issue=(889,)),
-}
+EXEMPT_REACH_COPIES = {}
 
 
 def _py_files(root):

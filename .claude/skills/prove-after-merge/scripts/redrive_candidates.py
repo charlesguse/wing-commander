@@ -39,9 +39,9 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file_
                                          "..", "..", "..", ".."))
 sys.path.insert(0, os.path.join(REPO_ROOT, ".github", "scripts"))
 
-import yaml  # noqa: E402  (board_prove needs it too)
 from board_prove import (  # noqa: E402
-    actions_only, redrive_target, scan_dispatchable_and_uses_graph)
+    actions_only, reaching_workflows, redrive_target, scan_dispatchable_and_uses_graph,
+    workflow_triggers)
 from board_route_backstop import diff_name_list  # noqa: E402
 
 WORKFLOWS_DIR = ".github/workflows"
@@ -51,34 +51,11 @@ def git(*args):
     return subprocess.run(["git"] + list(args), capture_output=True, text=True)
 
 
-def triggers(path):
-    with open(path, encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh) or {}
-    on = doc.get("on", doc.get(True)) or {}
-    if isinstance(on, str):
-        return {on: None}
-    if isinstance(on, list):
-        return {name: None for name in on}
-    return on
-
-
 def required_dispatch_inputs(trigger_map):
     dispatch = trigger_map.get("workflow_dispatch")
     inputs = (dispatch.get("inputs") or {}) if isinstance(dispatch, dict) else {}
     return sorted(name for name, spec in inputs.items()
                   if (spec or {}).get("required") and (spec or {}).get("default") in (None, ""))
-
-
-def reach(workflow, uses_graph):
-    seen, stack = set(), [workflow]
-    while stack:
-        node = stack.pop()
-        for ref in uses_graph.get(node, ()):
-            if ref not in seen:
-                seen.add(ref)
-                if ref in uses_graph:
-                    stack.append(ref)
-    return seen | {workflow}
 
 
 def main():
@@ -106,47 +83,15 @@ def main():
     safe, uses_graph = scan_dispatchable_and_uses_graph(WORKFLOWS_DIR)
     pick, pick_reason = redrive_target(changed, safe, uses_graph)
 
-    # The uses-graph resolves .py helpers only, so a shell script a workflow
-    # runs by path (`bash .github/scripts/verify-watchdog-run.sh`, #976's
-    # merge) would reach nothing. Count a literal mention of a changed path
-    # under .github/ in a workflow or composite file as an edge to it (docs
-    # paths are only ever mentioned in comments, and need no run). A
-    # full-line comment is not an edge: every stage workflow's "Canonical
-    # required-tool list: .github/scripts/required-tools.txt" names a file
-    # none of them reads.
-    mentioned_by = {path: set() for path in changed}
-    texts = {}
-    for name in os.listdir(WORKFLOWS_DIR):
-        if name.endswith((".yml", ".yaml")):
-            texts["{0}/{1}".format(WORKFLOWS_DIR, name)] = None
-    for dirpath, _dirs, names in os.walk(".github/actions"):
-        for name in names:
-            if name in ("action.yml", "action.yaml"):
-                texts[os.path.join(dirpath, name).replace(os.sep, "/")] = None
-    for path in texts:
-        with open(path, encoding="utf-8") as fh:
-            text = "\n".join(line for line in fh.read().splitlines()
-                              if not line.lstrip().startswith("#"))
-        for changed_path in changed:
-            if (changed_path.startswith(".github/") and changed_path != path
-                    and changed_path in text):
-                mentioned_by[changed_path].add(path)
-
-    changed_set = set(changed)
     candidates = []
-    for workflow in sorted(uses_graph):
-        reached = reach(workflow, uses_graph)
-        hits = sorted(path for path in changed_set
-                      if path in reached or mentioned_by[path] & reached)
-        if not hits:
-            continue
-        trigger_map = triggers(workflow)
+    for workflow, hit_map in sorted(reaching_workflows(changed, uses_graph).items()):
+        trigger_map = workflow_triggers(workflow)
         candidates.append({
             "workflow": workflow.rsplit("/", 1)[-1],
             "dispatchable": "workflow_dispatch" in trigger_map,
             "required_inputs": required_dispatch_inputs(trigger_map),
             "triggers": sorted(str(name) for name in trigger_map),
-            "reaches": hits,
+            "reaches": sorted(hit_map),
         })
     candidates.sort(key=lambda c: (not c["dispatchable"], c["workflow"]))
 
