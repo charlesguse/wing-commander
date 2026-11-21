@@ -489,6 +489,57 @@ def check_entries():
 
 
 
+def check_closed_by_commit(fx):
+    """R9 (FR-006): an issue the merge commit's message closes is read,
+    confirmed by its own `closed` event; another repository's issue, and an
+    issue closed by hand, are not."""
+    problems = []
+    message = ("Fix #12: the thing (#77)\n\nAlso closes Other/Repo#13 and fixes #14.\n"
+               "It prefixes #15, which closes nothing.\n")
+    with _InRepo() as repo:
+        _commit(repo.root, {"a.txt": "a\n"}, "2026-10-01T00:00:00 +0000")
+        sha = _commit(repo.root, {".github/workflows/x.yml": "on: {push: {}}\njobs: {}\n"},
+                      "2026-11-01T00:00:00 +0000", message=message)
+        view = {"title": "Fix #12: the thing", "headRefName": "fix/12", "body": "",
+                "closingIssuesReferences": []}
+        events = {"12": [{"event": "referenced", "commit_id": sha},
+                         {"event": "closed", "commit_id": sha}],
+                  "14": [{"event": "closed", "commit_id": None}]}
+
+        def api(path, paginate):
+            if path.endswith("/commits/{0}/pulls".format(sha)):
+                return [{"number": 77, "merge_commit_sha": sha}]
+            for number, rows in events.items():
+                if "/issues/{0}/events".format(number) in path:
+                    return rows
+            raise AssertionError("unexpected read " + path)
+        reaching = [{"path": ".github/workflows/x.yml", "reached_via": "scan", "runs_of_its_own": True}]
+        with _FakeReads(api=api, gh=lambda args: json.dumps(view), tree=lambda s, c: reaching) as fake:
+            try:
+                entries = pl.Collector("own/repo", "2026-11-10T12:00:00Z").entries()
+            except (pl.ReadError, AssertionError) as exc:
+                return ["closed by commit: the read failed: {0}".format(exc)]
+    reads = [c[1] for c in fake.calls if c[0] == "api" and "/events" in c[1]]
+    if any("/13/" in r or "other/repo" in r.lower() or "/15/" in r for r in reads):
+        problems.append("closed by commit: read another repository's issue or a non-keyword one: {0}".format(reads))
+    entry = entries[0] if entries else {}
+    named = {i["number"]: i["how"] for i in entry.get("named_issues") or ()}
+    if named != {12: "closes-commit"}:
+        problems.append("closed by commit: named issues {0}, expected only #12 closes-commit "
+                        "(#14 was closed by hand, #13 is another repository's)".format(named))
+    proof = dict(fx["base_comment"], place={"kind": "issue", "number": 12}, posted_at="2026-11-03T00:00:00Z",
+                 body="Proven by https://github.com/own/repo/actions/runs/500")
+    run = dict(fx["base_named"], contains=[sha])
+    if entry and pl.classify(entry, {}, [proof], {"own/repo/500": run}, set(), "own/repo") != pl.STATE_ON_RECORD:
+        problems.append("closed by commit: a proof on the issue the merge message closed is not state 2")
+    if pl.closing_targets("Resolves: GH-3, closes https://github.com/Own/Repo/issues/4 and "
+                          "https://github.com/other/repo/issues/5", "own/repo") != [3, 4]:
+        problems.append("closing_targets: {0}, expected [3, 4]".format(pl.closing_targets(
+            "Resolves: GH-3, closes https://github.com/Own/Repo/issues/4 and "
+            "https://github.com/other/repo/issues/5", "own/repo")))
+    return problems
+
+
 def check_loud_reads():
     """R4 (FR-013, research D6): a read that cannot be decoded, comes back
     empty or carries no time fails; it never reads as an empty thread."""
@@ -1054,7 +1105,7 @@ def main():
         print("[ok] verify-proof-list: {0}".format(note))
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
                 + check_failed_reads() + check_review_fixes(fx) + check_lifecycle_issue()
-                + check_entries() + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_workflow()
+                + check_entries() + check_closed_by_commit(fx) + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_workflow()
                 + real + check_sc001_fixtures(fx) + fixtures_name_no_live_table(check_sc001_fixtures))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4

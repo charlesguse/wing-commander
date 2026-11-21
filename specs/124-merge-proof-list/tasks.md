@@ -307,10 +307,10 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
 
 ## Maintainer Feedback
 
-- [ ] R9-a In `wc_proof_list.py` `Collector.entries`, read the merge commit's message (`git log -1 --format=%B <sha>`) for GitHub's closing keywords (close/closes/closed, fix/fixes/fixed, resolve/resolves/resolved, optional `:`, then `#N` or this repository's `owner/repo#N`), dropping other repositories' issues as R4 does.
-- [ ] R9-b Keep each candidate only when `issues/{N}/events` has a `closed` event whose `commit_id` is the merge SHA, and add it to `named_issues` with `how` `closes-commit`.
-- [ ] R9-c Correct research D6 and data-model.md's `how` list to match.
-- [ ] R9-d Add fixtures: a proof on an issue closed only by the merge message lands in state 2; another repository's issue is not read; an issue closed by hand, not by that commit, is not read.
+- [x] R9-a In `wc_proof_list.py` `Collector.entries`, read the merge commit's message (`git log -1 --format=%B <sha>`) for GitHub's closing keywords (close/closes/closed, fix/fixes/fixed, resolve/resolves/resolved, optional `:`, then `#N` or this repository's `owner/repo#N`), dropping other repositories' issues as R4 does.
+- [x] R9-b Keep each candidate only when `issues/{N}/events` has a `closed` event whose `commit_id` is the merge SHA, and add it to `named_issues` with `how` `closes-commit`.
+- [x] R9-c Correct research D6 and data-model.md's `how` list to match.
+- [x] R9-d Add fixtures: a proof on an issue closed only by the merge message lands in state 2; another repository's issue is not read; an issue closed by hand, not by that commit, is not read.
 - [x] R10-a In `verify-proof-list.py` `sc001_replay`, fail on a corpus window other than 2026-10-15T00:00:00Z..2026-11-17T00:00:00Z, on `proofs` not exactly 10 or `listed` not exactly 21, on overlap or repeats, on two `expected_differences` items with the same (PR or SHA, half, actual_state), and on an `expected_state` that is not 2 for the `proofs` half or 4/5 for the `listed` half. A fixture for each.
 - [x] R10-b In `check_failed_reads`, make the stub's catch-all fail the case, give the paginated arms a list of pages, and assert each case's expected message, so deleting a cap or floor check fails the gate. Show it with mutations.
 - [x] R11-a In `verify-board-prove.py`, have `_py_files` list files through `wc_repo_files.repo_files(root)`, with a fixture of an untracked copy of `board_prove.py` inside an ignored worktree directory that must not be reported.

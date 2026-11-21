@@ -10,7 +10,7 @@ How each field is derived is in research D6's "Reused homes" table.
 | `sha` | string | first-parent commit on the default branch |
 | `merged_at` | UTC timestamp | committer time on the first-parent line (FR-001) |
 | `pr` | int \| null | the PR from `commits/{sha}/pulls` whose `merge_commit_sha` equals `sha`; null for a direct push |
-| `named_issues` | list of {`number`, `how`} | `how` ∈ `closes` (`closingIssuesReferences`), `board-item` (`pr_issue()`), `backlog-line` (`pr_line()`), `lifecycle`. Read for every entry with a PR, state 1 included, because shared-issue detection counts every entry's PR (research D6) |
+| `named_issues` | list of {`number`, `how`} | `how` ∈ `closes` (`closingIssuesReferences`), `closes-commit` (a closing keyword in the merge commit's message, confirmed by the issue's `closed` event for that commit; research D6), `board-item` (`pr_issue()`), `backlog-line` (`pr_line()`), `lifecycle`. Read for every entry with a PR, state 1 included, because shared-issue detection counts every entry's PR (research D6) |
 | `lifecycle_issue` | int \| null | final PR only (title `Finalize: … (#N)`): `.issue` of the merge tree's `specs/<slug>/spec-meta.json`, cross-checked against the title |
 | `changed_paths` | string[] | `diff_name_list(sha^1, sha)`; empty is allowed |
 | `needs_run`, `needs_reason` | bool, string | `needs_run, needs_reason = actions_only(changed_paths)`; the function returns a pair, so the pair itself is never used as a condition |

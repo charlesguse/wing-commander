@@ -482,6 +482,28 @@ def marker_step(body):
     return "proven" if step == "proven" else "other"
 
 
+def closing_targets(text, repository):
+    """[N] for this repository's issues that a GitHub closing keyword in
+    `text` names (`Fixes #N`, `closes owner/repo#N`, `resolved: GH-N`, an
+    issue URL), in order. Another repository's issue is dropped, as R4 drops
+    its closingIssuesReferences."""
+    from board_backlog_lines import CLOSING_RE
+    own, out = repository.lower(), []
+    for match in CLOSING_RE.finditer(text or ""):
+        target = re.split(r"[:\s]+", match.group(0), maxsplit=1)[1]
+        if target.lower().startswith("http"):
+            parts = target.split("/")  # https: '' github.com owner repo issues N
+            repo, number = "/".join(parts[3:5]), parts[6]
+        elif target.upper().startswith("GH-"):
+            repo, number = own, target[3:]
+        else:
+            repo, _hash, number = target.rpartition("#")
+            repo = repo or own
+        if repo.lower() == own and int(number) not in out:
+            out.append(int(number))
+    return out
+
+
 def ref_repository(ref):
     """`owner/name`, lower case, of a `closingIssuesReferences` item. A
     reference that says neither fails the read: guessing this repository
@@ -565,6 +587,8 @@ class Collector:
                 if life:
                     seen.setdefault(life, "lifecycle")
                     entry["lifecycle_issue"] = life
+                for number in self.closed_by_commit(sha, seen):
+                    seen.setdefault(number, "closes-commit")
                 entry["named_issues"] = [{"number": n, "how": h} for n, h in sorted(seen.items())]
             if needs_run:
                 entry["reaching"] = self.reaching(sha, changed)
@@ -597,6 +621,29 @@ class Collector:
             raise ReadError("{0}: spec-meta issue {1} disagrees with the title's #{2}".format(
                 path, meta.get("issue"), match.group(1)))
         return issue
+
+    def closed_by_commit(self, sha, already):
+        """FR-006 "each issue the pull request closes": a squash merge's
+        message (the PR title, `Fix #N: ...`) closes issue N from the default
+        branch while `closingIssuesReferences` stays empty. Candidates are
+        this repository's issues named after a closing keyword in the merge
+        commit's message (board_backlog_lines.CLOSING_RE, the one home of
+        GitHub's keyword grammar); each is kept only when its
+        `issues/{N}/events` has a `closed` event whose `commit_id` is this
+        merge. One read per candidate not already named. A number that is
+        no issue (404) is no candidate."""
+        message = git("log", "-1", "--format=%B", sha)
+        out = []
+        for number in closing_targets(message, self.repository):
+            if number in already or number in out:
+                continue
+            try:
+                events = api("repos/{0}/issues/{1}/events?per_page=100".format(self.repository, number), True)
+            except NotFound:
+                continue
+            if any(e.get("event") == "closed" and e.get("commit_id") == sha for e in events):
+                out.append(number)
+        return out
 
     def reaching(self, sha, changed):
         if sha not in self.trees:
