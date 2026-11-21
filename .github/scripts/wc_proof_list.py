@@ -59,13 +59,24 @@ def capture_window_for(end):
     return end - datetime.timedelta(days=CAPTURE_DAYS), end
 
 
-def pr_named(body, pr, repository=None):
-    """True when `body` names PR `pr`: `#N` with boundaries, or its URL."""
+def pr_reference_pattern(repository, pr=None):
+    """The one PR-reference rule (research D6): `#N` not preceded by a word
+    character, `/` or `#` and not followed by a word character, or this
+    repository's PR URL `github.com/<repository>/pull/N` not followed by a
+    digit (case-insensitive). `pr` None matches any number. Another
+    repository's PR URL is never a reference to this one's."""
+    num = str(int(pr)) if pr is not None else r"\d+"
+    alternatives = [r"(?<![\w#/])#{0}(?!\w)".format(num)]
+    if repository:
+        alternatives.append(r"github\.com/{0}/pull/{1}(?!\d)".format(re.escape(repository), num))
+    return re.compile("|".join(alternatives), re.I)
+
+
+def pr_named(body, pr, repository):
+    """True when `body` names PR `pr` of `repository`."""
     if pr is None:
         return False
-    if re.search(r"(?<![\w#/])#{0}(?!\w)".format(int(pr)), body or ""):
-        return True
-    return bool(re.search(r"/pull/{0}(?!\d)".format(int(pr)), body or ""))
+    return bool(pr_reference_pattern(repository, pr).search(body or ""))
 
 
 def named_run_keys(body):
@@ -82,6 +93,16 @@ def shared_issues(entries):
         for issue in entry.get("named_issues") or ():
             named.setdefault(issue["number"], set()).add(entry["pr"])
     return {number for number, prs in named.items() if len(prs) > 1}
+
+
+def shared_by_pass(entries, start, end):
+    """(window, aged) shared-issue sets. FR-006: an issue is shared when more
+    than one PR among the entries IN THE WINDOW names it; the aged-out pass,
+    classified as if the window began a day earlier, adds the aged-out day's
+    entries. `window` is the smaller set, so the more permissive one."""
+    day_before = parse_time(start) - datetime.timedelta(hours=AGED_OUT_HOURS)
+    return (shared_issues([e for e in entries if in_window(e, start, end)]),
+            shared_issues([e for e in entries if in_window(e, day_before, end)]))
 
 
 def _on_place(entry, comment):
@@ -117,10 +138,12 @@ def comment_steps_1_to_4(entry, comment, shared, repository):
     return True
 
 
-def comments_that_can_count(entries, comments_by_sha, repository):
+def comments_that_can_count(entries, comments_by_sha, repository, start, end):
     """[[comment, ...] per entry]: each entry's comments that pass steps 1-4
-    for it. The named runs of any other comment are never needed."""
-    shared = shared_issues(entries)
+    for it. The named runs of any other comment are never needed. Uses the
+    window's shared set, the more permissive one, so no comment that
+    classify_all or set_apart could pass is left out."""
+    shared, _aged = shared_by_pass(entries, start, end)
     return [[c for c in comments_by_sha.get(e["sha"], ())
              if comment_steps_1_to_4(e, c, shared, repository)] for e in entries]
 
@@ -181,28 +204,31 @@ def in_window(entry, start, end):
 def classify_all(entries, runs, comments_by_sha, named_runs, repository, start, end):
     """({sha: state} for entries in the window, aged_out count).
 
-    `shared` counts every entry's PR, so it reads all entries given, window or
-    not. The aged-out count is state 4 or 5 among the commits in the 24 hours
-    before `start`, classified as if the window began a day earlier (FR-012)."""
-    shared = shared_issues(entries)
+    A window entry is classified with the window's shared issues (FR-006: the
+    PRs among the entries in the window). The aged-out count is state 4 or 5
+    among the commits in the 24 hours before `start`, classified as if the
+    window began a day earlier, so with that day's PRs added (FR-012)."""
+    shared_window, shared_aged = shared_by_pass(entries, start, end)
     day_before = parse_time(start) - datetime.timedelta(hours=AGED_OUT_HOURS)
     states, aged_out = {}, 0
     for entry in entries:
-        state = classify(entry, runs, comments_by_sha.get(entry["sha"], ()),
-                         named_runs, shared, repository)
+        comments = comments_by_sha.get(entry["sha"], ())
         if in_window(entry, start, end):
-            states[entry["sha"]] = state
-        elif in_window(entry, day_before, start) and state in (STATE_NO_RUN, STATE_RUN_NO_RECORD):
-            aged_out += 1
+            states[entry["sha"]] = classify(entry, runs, comments, named_runs, shared_window, repository)
+        elif in_window(entry, day_before, start):
+            state = classify(entry, runs, comments, named_runs, shared_aged, repository)
+            if state in (STATE_NO_RUN, STATE_RUN_NO_RECORD):
+                aged_out += 1
     return states, aged_out
 
 
 def set_apart(entries, runs, comments_by_sha, named_runs, repository, start, end):
     """Count of runs set apart, exactly FR-013's two cases, de-duplicated by run
     id or URL (data-model.md "SetApartRun")."""
-    shared = shared_issues(entries)
+    shared_window, shared_aged = shared_by_pass(entries, start, end)
     apart = set()
     for entry in entries:
+        shared = shared_window if in_window(entry, start, end) else shared_aged
         merged = parse_time(entry["merged_at"])
         for workflow in entry.get("reaching") or ():
             for run in runs.get(workflow["path"], ()):
@@ -691,7 +717,8 @@ class Collector:
         least one entry; a comment that fails them can never count or be set
         apart, so its runs are never read (research D15)."""
         out = {}
-        for comments in comments_that_can_count(entries, comments_by_sha, self.repository):
+        for comments in comments_that_can_count(entries, comments_by_sha, self.repository,
+                                                self.start, self.end):
             for comment in comments:
                 for repo, run_id in named_run_keys(comment.get("body")):
                     key = "{0}/{1}".format(repo, run_id)
@@ -778,10 +805,16 @@ def tree_reaching(sha, changed_paths):
 
 
 # -- capture, build, render ---------------------------------------------------
-def reduce_body(body):
-    """Keep lines carrying a run link, a PR reference or the board item marker."""
-    keep = re.compile(r"actions/runs/|#\d+|wing-commander-board-item")
-    return "\n".join(line if keep.search(line) else "…" for line in (body or "").splitlines())
+def reduce_body(body, repository):
+    """Keep lines carrying a run link, a PR reference or the board item
+    marker (data-model.md "SC-001 corpus"); every other line becomes an
+    ellipsis. The keep-test is built from the patterns the classifier itself
+    reads with (research D6 reused homes), so a replay of the reduced body
+    classifies as the live build did."""
+    from board_item_marker import MARKER_OPEN_RE
+    keeps = (_RUN_URL_RE, MARKER_OPEN_RE, pr_reference_pattern(repository))
+    return "\n".join(line if any(k.search(line) for k in keeps) else "…"
+                     for line in (body or "").splitlines())
 
 
 def capture(bundle, as_of):
@@ -793,7 +826,8 @@ def capture(bundle, as_of):
         return not when or parse_time(when) <= cutoff
 
     out = dict(bundle, as_of=utc_text(as_of), window={"start": utc_text(start), "end": utc_text(end)})
-    out["comments"] = {sha: [dict(c, body=reduce_body(c.get("body"))) for c in cs
+    repository = bundle["repository"]
+    out["comments"] = {sha: [dict(c, body=reduce_body(c.get("body"), repository)) for c in cs
                              if known(c.get("posted_at"))]
                        for sha, cs in bundle["comments"].items()}
     out["runs"] = {path: [r for r in rs if known(r.get("run_started_at"))]

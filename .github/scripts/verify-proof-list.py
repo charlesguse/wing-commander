@@ -106,7 +106,7 @@ def check(fx):
     cs, ce = pl.capture_window_for("2026-11-17T00:00:00Z")
     if (ce - cs) != datetime.timedelta(days=33):
         problems.append("capture window is not 33 days")
-    cap = pl.capture({"built_at": "2026-11-17T00:00:00Z", "runs": {},
+    cap = pl.capture({"built_at": "2026-11-17T00:00:00Z", "runs": {}, "repository": "own/repo",
                       "comments": {"s": [{"posted_at": "2026-11-10T00:00:00Z", "body": "a"},
                                          {"posted_at": "2026-11-16T00:00:00Z", "body": "b"}]}},
                      "2026-11-12T00:00:00Z")
@@ -551,6 +551,73 @@ def check_read_cost(fx):
     return problems
 
 
+def check_classifier_corrections(fx):
+    """R6: the shared set is the window's, a PR URL counts only for this
+    repository, reduce_body keeps every line the classifier reads, and the
+    replay flags a direct push in state 4 or 5."""
+    problems = []
+    start, end, repo = fx["window"]["start"], fx["window"]["end"], fx["repository"]
+    # (a) FR-006: an aged-out PR naming the same issue does not make it shared
+    # for the window ...
+    e1 = make_entry(fx["base_entry"])  # PR 10, issue 100, merged 2026-11-01
+    aged = make_entry(fx["base_entry"], {"sha": "a1", "pr": 20, "merged_at": "2026-10-10T12:00:00Z"})
+    on_issue = dict(fx["base_comment"], place={"kind": "issue", "number": 100},
+                    body="see https://github.com/own/repo/actions/runs/500")
+    for_aged = dict(on_issue, posted_at="2026-10-10T13:00:00Z",
+                    body="see https://github.com/own/repo/actions/runs/600")
+    named = {"own/repo/500": dict(fx["base_named"], contains=["e1"]),
+             "own/repo/600": dict(fx["base_named"], run_id=600, run_started_at="2026-10-10T12:30:00Z",
+                                  contains=["a1"])}
+    states, aged_out = pl.classify_all([e1, aged], {}, {"e1": [on_issue], "a1": [for_aged]}, named,
+                                       repo, start, end)
+    if states.get("e1") != pl.STATE_ON_RECORD:
+        problems.append("shared issues: an aged-out PR on the same issue made a window entry need its "
+                        "PR named (state {0}, expected 2)".format(states.get("e1")))
+    # ... but the aged-out pass, classified as if the window began a day
+    # earlier, has both PRs and treats the issue as shared.
+    if aged_out != 1:
+        problems.append("shared issues: aged-out count {0}, expected 1 (the issue is shared on the "
+                        "aged-out pass, so the comment naming no PR does not count)".format(aged_out))
+    # (b) a PR URL names the PR only for this repository.
+    for body, want in (("https://github.com/other/repo/pull/10", False),
+                       ("https://github.com/Own/Repo/pull/10", True),
+                       ("https://github.com/own/repo/pull/101", False),
+                       ("other/repo#10", False), ("for #10.", True)):
+        if pl.pr_named(body, 10, repo) != want:
+            problems.append("pr_named({0!r}, 10): {1}, expected {2}".format(body, not want, want))
+    # (c) the corpus keeps every line the classifier reads, and only those.
+    body = "\n".join(["Proven on https://github.com/own/repo/pull/10",
+                      "<!-- wing-commander-board-item: {\"step\": \"proven\"} -->",
+                      "run https://github.com/own/repo/actions/runs/500/job/7",
+                      "a private line", "other/repo#10 is not a reference"])
+    want = "\n".join(body.splitlines()[:3] + ["…", "…"])
+    got = pl.reduce_body(body, repo)
+    if got != want:
+        problems.append("reduce_body: {0!r}, expected {1!r}".format(got, want))
+    e2 = make_entry(fx["base_entry"], {"sha": "e2", "pr": 11})
+    url_only = dict(on_issue, body="Proven on https://github.com/own/repo/pull/10\n"
+                                   "https://github.com/own/repo/actions/runs/500")
+    live, _ = pl.classify_all([e1, e2], {}, {"e1": [url_only], "e2": [url_only]}, named, repo, start, end)
+    reduced = dict(url_only, body=pl.reduce_body(url_only["body"], repo))
+    replay, _ = pl.classify_all([e1, e2], {}, {"e1": [reduced], "e2": [reduced]}, named, repo, start, end)
+    if live != replay or live.get("e1") != pl.STATE_ON_RECORD:
+        problems.append("reduce_body: the live build gave {0}, the replay of the reduced body {1}".format(
+            live, replay))
+    # (d) a direct push in state 4 or 5 is flagged by the replay, keyed by SHA.
+    push = make_entry(fx["base_entry"], {"sha": "d4", "pr": None, "named_issues": []})
+    corpus = {"repository": repo, "window": fx["window"], "entries": [push], "runs": {},
+              "named_runs": {}, "comments": {}}
+    key = {"proofs": [], "listed": [], "expected_differences": []}
+    if not sc001_replay(corpus, key):
+        problems.append("SC-001: a direct push in state 4 was not flagged")
+    listed = dict(key, expected_differences=[{"pr": None, "sha": "d4", "half": "listed", "expected_state": 3,
+                                              "actual_state": 4, "reason": "own-tree", "note": "x"}])
+    if sc001_replay(corpus, listed):
+        problems.append("SC-001: a direct push's listed difference was rejected: {0}".format(
+            sc001_replay(corpus, listed)))
+    return problems
+
+
 def check_utc():
     """R2: every time is read and written in UTC (FR-011, data-model Entry)."""
     from board_spec_request_body import MAX_BODY_UNITS, utf16_len
@@ -565,7 +632,8 @@ def check_utc():
     if doc["built_at"] != "2026-11-10T12:00:00Z" or doc["window"]["end"] != "2026-11-10T12:00:00Z":
         problems.append("report: an offset build time was written as {0}, window {1}".format(
             doc["built_at"], doc["window"]))
-    cap = pl.capture({"built_at": "2026-11-17T00:00:00-05:00", "runs": {}, "comments": {}},
+    cap = pl.capture({"built_at": "2026-11-17T00:00:00-05:00", "runs": {}, "comments": {},
+                      "repository": "own/repo"},
                      "2026-11-16T23:59:59-05:00")
     if cap["window"]["end"] != "2026-11-17T05:00:00Z" or cap["as_of"] != "2026-11-17T04:59:59Z":
         problems.append("capture: offset times written as window {0}, as-of {1}".format(
@@ -732,20 +800,33 @@ def sc001_replay(corpus, expected):
     for pr, state in sorted(by_pr.items()):
         if pr not in named and state in (pl.STATE_NO_RUN, pl.STATE_RUN_NO_RECORD):
             diffs.append((pr, "listed", state))
+    # A direct push has no PR for the answer key to name, so it is keyed by
+    # its SHA: in state 4 or 5 it is "any other entry" (data-model.md).
+    for entry in corpus["entries"]:
+        state = states.get(entry["sha"])
+        if entry.get("pr") is None and state in (pl.STATE_NO_RUN, pl.STATE_RUN_NO_RECORD):
+            diffs.append((entry["sha"], "listed", state))
     allowed = {}
     for item in expected.get("expected_differences", ()):
+        who = item.get("pr") if item.get("pr") is not None else item.get("sha")
         if item.get("reason") not in SC001_REASONS:
-            problems.append("SC-001: #{0} has reason {1!r}, outside SC-001's four".format(
-                item.get("pr"), item.get("reason")))
-        allowed[(item.get("pr"), item.get("half"), item.get("actual_state"))] = item
+            problems.append("SC-001: {0} has reason {1!r}, outside SC-001's four".format(
+                _who(who), item.get("reason")))
+        allowed[(who, item.get("half"), item.get("actual_state"))] = item
     for key in diffs:
         if key not in allowed:
-            problems.append("SC-001: #{0} ({1}) is in state {2}, a difference that is not on the list".format(*key))
+            problems.append("SC-001: {0} ({1}) is in state {2}, a difference that is not on the list".format(
+                _who(key[0]), key[1], key[2]))
     for key, item in sorted(allowed.items(), key=lambda kv: str(kv[0])):
         if key not in diffs:
-            problems.append("SC-001: the expected difference for #{0} ({1}, state {2}) no longer differs; "
-                            "delete it".format(*key))
+            problems.append("SC-001: the expected difference for {0} ({1}, state {2}) no longer differs; "
+                            "delete it".format(_who(key[0]), key[1], key[2]))
     return problems
+
+
+def _who(key):
+    """`#N` for a PR, `direct push <sha>` for an entry with none."""
+    return "#{0}".format(key) if isinstance(key, int) else "direct push {0}".format(str(key)[:10])
 
 
 def check_sc001(directory, exempt):
@@ -845,7 +926,7 @@ def main():
         print("[ok] verify-proof-list: {0}".format(note))
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
                 + check_failed_reads() + check_review_fixes(fx) + check_lifecycle_issue()
-                + check_entries() + check_loud_reads() + check_read_cost(fx) + check_utc() + check_trees() + check_workflow()
+                + check_entries() + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_workflow()
                 + real + check_sc001_fixtures(fx) + fixtures_name_no_live_table(check_sc001_fixtures))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4
