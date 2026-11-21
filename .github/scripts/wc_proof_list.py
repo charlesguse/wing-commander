@@ -32,10 +32,19 @@ _RUN_URL_RE = re.compile(any_run_url_pattern())
 
 
 def parse_time(value):
-    """UTC datetime from an ISO string ending in Z or an offset, or a datetime."""
-    if isinstance(value, datetime.datetime):
-        return value if value.tzinfo else value.replace(tzinfo=datetime.timezone.utc)
-    return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    """UTC datetime from an ISO string ending in Z or an offset, or a datetime.
+    An offset is converted, never dropped: git's `%cI` keeps each commit's
+    own `-04:00`/`-05:00`, and every time this module writes is UTC."""
+    if not isinstance(value, datetime.datetime):
+        value = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if value.tzinfo is None:
+        return value.replace(tzinfo=datetime.timezone.utc)
+    return value.astimezone(datetime.timezone.utc)
+
+
+def utc_text(value):
+    """The one serialised form of a time: `YYYY-MM-DDTHH:MM:SSZ`, in UTC."""
+    return parse_time(value).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def window_for(end):
@@ -289,9 +298,8 @@ def assemble_report(entries, runs, comments_by_sha, named_runs, repository, buil
     if utf16_len(names_only) > max_units:
         raise ValueError("the names-only form is {0} UTF-16 units, over the {1} limit".format(
             utf16_len(names_only), max_units))
-    return {"schema": 1, "built_at": parse_time(built_at).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "window": {"start": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                       "end": end.strftime("%Y-%m-%dT%H:%M:%SZ")},
+    return {"schema": 1, "built_at": utc_text(built_at),
+            "window": {"start": utc_text(start), "end": utc_text(end)},
             "head_sha": head_sha, "counts": {str(k): v for k, v in cts.items()},
             "aged_out": aged_out, "set_apart": apart, "full": full, "names_only": names_only}
 
@@ -455,7 +463,7 @@ class Collector:
             pr = next((p for p in pulls if p.get("merge_commit_sha") == sha), None)
             changed = diff_name_list(sha + "^1", sha)
             needs_run, reason = actions_only(changed)
-            entry = {"sha": sha, "merged_at": when.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            entry = {"sha": sha, "merged_at": utc_text(when),
                      "pr": pr["number"] if pr else None, "named_issues": [],
                      "lifecycle_issue": None, "changed_paths": changed,
                      "needs_run": needs_run, "needs_reason": reason, "reaching": []}
@@ -541,7 +549,7 @@ class Collector:
         if path in self.run_lists:
             return self.run_lists[path]
         base = "repos/{0}/actions".format(self.repository)
-        created = "created=%3E%3D{0}".format(self.since.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        created = "created=%3E%3D{0}".format(utc_text(self.since))
         name = path.rsplit("/", 1)[-1]
         query = "{0}/workflows/{1}/runs?status=completed&per_page=100&{2}".format(base, name, created)
         try:
@@ -556,8 +564,8 @@ class Collector:
                     nxt = day + datetime.timedelta(days=1)
                     # The range is inclusive at both ends: stop one second early.
                     span = "created={0}..{1}".format(
-                        day.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        (nxt - datetime.timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+                        utc_text(day),
+                        utc_text(nxt - datetime.timedelta(seconds=1)))
                     q = "{0}/workflows/{1}/runs?status=completed&per_page=100&{2}".format(base, name, span)
                     if int(api(q + "&page=1").get("total_count", 0)) > RUN_CAP:
                         raise ReadError("{0}: more than {1} runs in one day".format(name, RUN_CAP))
@@ -630,7 +638,7 @@ def collect(repository, built_at, window=window_for):
     comments_by_sha = {e["sha"]: col.comments_for(e) for e in entries if e["needs_run"]}
     runs = col.runs(entries)
     named = col.named_runs(comments_by_sha, entries)
-    return {"repository": repository, "built_at": col.built_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    return {"repository": repository, "built_at": utc_text(col.built_at),
             "head_sha": git("rev-parse", "HEAD").strip(), "entries": entries, "runs": runs,
             "comments": comments_by_sha, "named_runs": named}
 
@@ -704,8 +712,7 @@ def capture(bundle, as_of):
     def known(when):
         return not when or parse_time(when) <= cutoff
 
-    out = dict(bundle, as_of=as_of, window={"start": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                            "end": end.strftime("%Y-%m-%dT%H:%M:%SZ")})
+    out = dict(bundle, as_of=utc_text(as_of), window={"start": utc_text(start), "end": utc_text(end)})
     out["comments"] = {sha: [dict(c, body=reduce_body(c.get("body"))) for c in cs
                              if known(c.get("posted_at"))]
                        for sha, cs in bundle["comments"].items()}

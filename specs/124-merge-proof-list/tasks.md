@@ -208,9 +208,9 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
 
 ## Maintainer Feedback
 
-- [ ] R2-a Convert to UTC (`astimezone(datetime.timezone.utc)`) before formatting in `Collector.entries` and every other place a time is serialised.
-- [ ] R2-b Normalise to UTC in `parse_time` and `window_for`.
-- [ ] R2-c Add a fixture with a `-05:00` commit and a comment posted between the local and the UTC merge time, which must not count.
+- [x] R2-a Convert to UTC (`astimezone(datetime.timezone.utc)`) before formatting in `Collector.entries` and every other place a time is serialised.
+- [x] R2-b Normalise to UTC in `parse_time` and `window_for`.
+- [x] R2-c Add a fixture with a `-05:00` commit and a comment posted between the local and the UTC merge time, which must not count.
 
 ## Maintainer Feedback
 
