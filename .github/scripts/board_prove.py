@@ -103,6 +103,20 @@ def actions_only(changed_paths):
     return True, "changed path(s) outside docs/**, specs/**, and .github/scripts/verify-*.py"
 
 
+def fixtures_name_no_live_table(fn):
+    """[problem] when fixture function `fn` names a module-level EXEMPT_*
+    table: deleting the live entry (a maintainer task) would turn the
+    fixture red although the real check passes."""
+    import ast
+    import inspect
+    import textwrap
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    named = sorted({n.id for n in ast.walk(tree)
+                    if isinstance(n, ast.Name) and n.id.startswith("EXEMPT_")})
+    return ["{0}() uses the live table {1}; give its cases their own dict".format(fn.__name__, name)
+            for name in named]
+
+
 def is_safe_redrive_target(workflow_text, workflow_dispatch_inputs=None):
     """Whether wing-commander-dispatch-and-wait can actually redrive this
     workflow unattended (research.md D14, its own action.yml header):

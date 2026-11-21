@@ -536,6 +536,11 @@ class Collector:
                 continue
             pulls = api("repos/{0}/commits/{1}/pulls".format(self.repository, sha), paginate=True)
             pr = next((p for p in pulls if p.get("merge_commit_sha") == sha), None)
+            if pr is None:
+                # A rebase merge leaves only the last commit as merge_commit_sha;
+                # earlier commits of the same merged PR belong to it too.
+                merged = [p for p in pulls if p.get("merged_at")]
+                pr = merged[0] if len(merged) == 1 else None
             changed = diff_name_list(sha + "^1", sha)
             needs_run, reason = actions_only(changed)
             entry = {"sha": sha, "merged_at": utc_text(when),
@@ -691,9 +696,13 @@ class Collector:
             self.present[head] = bool(head) and commit_present(head)
         resolvable = self.present[head]
         contains = []
+        started = raw.get("run_started_at") or raw.get("created_at")
         for e in entries:
             if not resolvable:
                 break
+            # A head cannot contain a merge made after the run started.
+            if started and parse_time(started) <= parse_time(e["merged_at"]):
+                continue
             if (e["sha"], head) not in self.ancestry:
                 self.ancestry[(e["sha"], head)] = is_ancestor(e["sha"], head)
             if self.ancestry[(e["sha"], head)]:
@@ -826,6 +835,9 @@ def capture(bundle, as_of):
         return not when or parse_time(when) <= cutoff
 
     out = dict(bundle, as_of=utc_text(as_of), window={"start": utc_text(start), "end": utc_text(end)})
+    out["entries"] = [e for e in bundle.get("entries", []) if known(e.get("merged_at"))]
+    out["named_runs"] = {k: r for k, r in (bundle.get("named_runs") or {}).items()
+                         if known(r.get("run_started_at"))}
     repository = bundle["repository"]
     out["comments"] = {sha: [dict(c, body=reduce_body(c.get("body"), repository)) for c in cs
                              if known(c.get("posted_at"))]

@@ -741,10 +741,36 @@ def check_workflow_text(text):
     return problems
 
 
+def check_pause_agreement(text):
+    """The workflow's pause step and wc_board_status._switch_on are one test
+    written twice; run the step's shell on padded and mixed-case values and
+    require it to agree with _switch_on."""
+    import subprocess
+    import tempfile
+    import yaml
+    import wc_board_status as bs
+    step = next((s for job in yaml.safe_load(text)["jobs"].values() for s in job["steps"]
+                 if s.get("id") == "pause"), None)
+    if step is None:
+        return ["workflow: no step with id pause"]
+    problems = []
+    for value in ("true", "TRUE", "  True  ", "\ttrue\n", "false", "", "yes", "truee", "1"):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "output")
+            open(out, "w").close()
+            subprocess.run(["bash", "-c", step["run"]], check=True, capture_output=True,
+                           env={"PATH": os.environ.get("PATH", ""), "PAUSED": value, "GITHUB_OUTPUT": out})
+            with open(out, encoding="utf-8") as fh:
+                got = "paused=true" in fh.read().split()
+        if got != bs._switch_on(value):
+            problems.append("workflow pause step disagrees with _switch_on on {0!r}: step={1}".format(value, got))
+    return problems
+
+
 def check_workflow():
     with open(os.path.join(HERE, "..", "workflows", "wing-commander-proof-list.yml"), encoding="utf-8") as fh:
         text = fh.read()
-    problems = check_workflow_text(text)
+    problems = check_workflow_text(text) + check_pause_agreement(text)
     with open(os.path.join(HERE, "wc_proof_list.py"), encoding="utf-8") as fh:
         source = fh.read()
     for call in ("gh_text([\"api\", \"-X", "\"issue\", \"comment\"", "\"issue\", \"edit\"", "\"workflow\", \"run\"", "\"pr\", \"comment\""):
@@ -837,7 +863,9 @@ def check_sc001(directory, exempt):
         return ["SC-001: exactly one of corpus.json and expected.json is present"], None
     if sum(present) == 0:
         if exempt:
-            return [], "SC-001 not yet captured (EXEMPT_SC001_PENDING, #889)"
+            issues = sorted({n for e in exempt.values() for n in e.issue})
+            return [], "SC-001 not yet captured (EXEMPT_SC001_PENDING, {0})".format(
+                ", ".join("#{0}".format(n) for n in issues))
         return ["SC-001: the corpus and answer key are absent and the exemption was deleted "
                 "without the capture"], None
     if exempt:
@@ -907,16 +935,7 @@ def check_sc001_fixtures(fx):
 
 
 
-def fixtures_name_no_live_table(fn):
-    """[problem] when fixture function `fn` names a module-level EXEMPT_*
-    table: T029 deletes the live entry, which must not turn the fixture red."""
-    import ast
-    import textwrap
-    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
-    named = sorted({n.id for n in ast.walk(tree)
-                    if isinstance(n, ast.Name) and n.id.startswith("EXEMPT_")})
-    return ["{0}() uses the live table {1}; give its cases their own dict".format(fn.__name__, name)
-            for name in named]
+from board_prove import fixtures_name_no_live_table  # noqa: E402,F401  (single home)
 
 
 def main():
