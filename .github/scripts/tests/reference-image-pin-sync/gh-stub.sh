@@ -9,6 +9,13 @@
 #                      with its own --jq (absent: the view fails)
 #   vars/<o>__<r>      the held value of the variable (absent: the read 404s)
 #   probe_fail         repositories (one per line) whose variable read is refused (403)
+#   var_access         repositories (one per line) whose variable list the token
+#                      can read (200); any other repository's list answers 403
+#                      "Resource not accessible", as GitHub does for a public
+#                      repository a fine-grained token was not granted
+#   list_404           repositories whose variable list answers 404
+#   list_500           repositories whose variable list answers 500
+#   list_rate_limited  repositories whose variable list answers a rate-limit 403
 #   set_fail           repositories (one per line) refusing every variable write (403)
 #   set_fail_expected  repositories (one per line) refusing a write of any value
 #                      other than the one they hold (the permission probe passes)
@@ -34,6 +41,23 @@ case "${1:-} ${2:-}" in
     fi
     [ -f "${STUB_DIR}/reach" ] && cat "${STUB_DIR}/reach"
     exit 0
+    ;;
+  "api repos/"*"/actions/variables?"*)
+    repo="${2#repos/}"
+    repo="${repo%%/actions/*}"
+    if listed var_access "$repo"; then
+      echo '{"total_count":0,"variables":[]}'
+      exit 0
+    elif listed list_404 "$repo"; then
+      echo "gh: Not Found (HTTP 404)" >&2
+    elif listed list_500 "$repo"; then
+      echo "gh: Server Error (HTTP 500)" >&2
+    elif listed list_rate_limited "$repo"; then
+      echo "gh: API rate limit exceeded for user ID 1. (HTTP 403)" >&2
+    else
+      echo "gh: Resource not accessible by personal access token (HTTP 403)" >&2
+    fi
+    exit 1
     ;;
   "api repos/"*)
     repo="${2#repos/}"

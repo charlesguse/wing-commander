@@ -283,10 +283,37 @@ CASES = {
     "probe-failed": dict(
         vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E], probe_fail=[E2E],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[]),
+    # A listed repository outside the sync set whose Actions variables the
+    # token can read is reached: nothing is written.
     "over-reach": dict(
-        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E, "octo/extra"],
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E, "octo/extra"], var_access=["octo/extra"],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
         reason="octo/extra"),
+    # A fine-grained token can read every public repository, so user/repos
+    # lists them all (#1162). One whose variables answer 403 or 404 is not
+    # reached: a correctly scoped token syncs.
+    "public-repos-listed-not-reached": dict(
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E, "octo/public-a", "octo/public-b"],
+        list_404=["octo/public-b"],
+        exit=0, status={THIS: "written", E2E: "written"}, writes=[THIS, E2E],
+        probed=["octo/public-a", "octo/public-b"]),
+    # Only the listed repository whose variables answer 200 is named.
+    "over-reach-variables-readable": dict(
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E, "octo/public-a", "octo/readable"],
+        var_access=["octo/readable"],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
+        reason_exact="credential reaches octo/readable", probed=["octo/public-a", "octo/readable"]),
+    # A probe that answers neither 200 nor a clean 403/404 is never read as
+    # "not reached": nothing is written.
+    "reach-probe-error": dict(
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E, "octo/public-a"], list_500=["octo/public-a"],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
+        reason="could not tell whether WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN reaches octo/public-a (HTTP 500)"),
+    "reach-probe-rate-limited": dict(
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E, "octo/public-a"],
+        list_rate_limited=["octo/public-a"],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
+        reason="could not tell whether WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN reaches octo/public-a (HTTP 403)"),
     "under-permission": dict(
         vars={THIS: OLD, E2E: OLD}, reach=[THIS],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[]),
@@ -318,11 +345,13 @@ PINNED = {"both-written", "all-current", "e2e-unset", "not-superseded",
           "e2e-is-this-repo", "hand-set-held-value", "exact-reach-case-insensitive",
           "absent-variable", "newer-rerun-pending", "newer-pending-shadows-lower",
           "newer-rerun-check-running", "newer-rerun-check-null",
-          "newer-cancelled-before-check", "this-written-e2e-refused"}
+          "newer-cancelled-before-check", "this-written-e2e-refused",
+          "public-repos-listed-not-reached"}
 
 # Cases whose outcome may close the failure issue (every sync-set repository
 # written or current); every other case must leave `synced` unset.
 SYNCED = {"both-written", "all-current", "exact-reach-case-insensitive",
+          "public-repos-listed-not-reached",
           "absent-variable", "not-superseded", "hand-set-held-value", "newer-rerun-pending",
           "newer-pending-shadows-lower", "newer-rerun-check-running", "newer-rerun-check-null",
           "newer-cancelled-before-check"}
@@ -342,7 +371,11 @@ def run_case(name, case, tmp, bash, script):
     for fname, items in (("reach", case.get("reach", [])),
                          ("probe_fail", case.get("probe_fail", [])),
                          ("set_fail", case.get("set_fail", [])),
-                         ("set_fail_expected", case.get("set_fail_expected", []))):
+                         ("set_fail_expected", case.get("set_fail_expected", [])),
+                         ("var_access", case.get("var_access", [])),
+                         ("list_404", case.get("list_404", [])),
+                         ("list_500", case.get("list_500", [])),
+                         ("list_rate_limited", case.get("list_rate_limited", []))):
         with open(os.path.join(stub_dir, fname), "w") as f:
             f.write("".join(f"{i}\n" for i in items))
     # jobs: {run number: one jobs document, or a list of them per attempt}
@@ -417,6 +450,13 @@ def check_case(name, case, bash, script):
                 errs.append(f"{repo}: held/expected {r.get('held')!r}/{r.get('expected')!r}")
         if "reason" in case and not any(case["reason"] in r["reason"] for r in rows):
             errs.append(f"no reason names {case['reason']!r}")
+        if "reason_exact" in case and not any(case["reason_exact"] == r["reason"] for r in rows):
+            errs.append(f"no reason is exactly {case['reason_exact']!r}: "
+                        f"{sorted({r['reason'] for r in rows})}")
+        for repo in case.get("probed", []):
+            if not any(line == f"GH_TOKEN={TOKEN} api repos/{repo}/actions/variables?per_page=1"
+                       for line in log):
+                errs.append(f"{repo}'s Actions variables were not probed under the sync token")
         # Writes are judged by where the pins end up (the stub keeps what
         # was written), and every set call must be the one variable, written
         # with the new value or with the value that repository already held
