@@ -320,7 +320,7 @@ def proof_list_block(pl, body):
         built = section.get("built_at", "none")
         summary = "Proof list: built {0} (window 30 days)".format(built[:10])
         for key in ("full", "names_only"):
-            block = _pl_block("built", built, built, summary, section.get(key, ""))
+            block = _pl_block("built", built, last_good, summary, section.get(key, ""))
             if used + utf16_len(block) <= MAX_BODY_UNITS:
                 return block
         status, notice = "failed", "The proof list was too large for this issue's body."
@@ -461,11 +461,11 @@ def proof_list_snapshot(repo, switches, now=None, gh_obj=None, build_ok=None, do
         latest = runs[0]
         if latest.get("conclusion") != "success":
             return {"status": "failed", "last_good_at": last_good}
-        if not good_ok.get(latest["id"]):
-            return {"status": "paused", "last_good_at": last_good}
         started = datetime.datetime.strptime((latest.get("run_started_at") or "")[:19], "%Y-%m-%dT%H:%M:%S")
         if (now.replace(tzinfo=None) - started) > datetime.timedelta(hours=PROOF_LIST_STALE_HOURS):
             return {"status": "failed", "last_good_at": last_good}
+        if not good_ok.get(latest["id"]):
+            return {"status": "paused", "last_good_at": last_good}
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 (download or _download_section)(repo, latest["id"], tmp)

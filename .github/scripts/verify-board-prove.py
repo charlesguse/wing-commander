@@ -408,17 +408,7 @@ def nightly_edges_fixture_cases():
     return problems
 
 
-def fixtures_name_no_live_table(fn):
-    """[problem] when fixture function `fn` names a module-level EXEMPT_*
-    table: deleting the live entry (a maintainer task) would turn the
-    fixture red although the real check passes."""
-    import inspect
-    import textwrap
-    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
-    named = sorted({n.id for n in ast.walk(tree)
-                    if isinstance(n, ast.Name) and n.id.startswith("EXEMPT_")})
-    return ["{0}() uses the live table {1}; give its cases their own dict".format(fn.__name__, name)
-            for name in named]
+from board_prove import fixtures_name_no_live_table  # noqa: E402,F401  (single home)
 
 
 def run():
