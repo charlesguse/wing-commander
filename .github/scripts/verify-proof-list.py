@@ -287,28 +287,6 @@ def check_review_fixes(fx):
         pl.is_ancestor, pl.commit_present = saved
     if len(calls) != 1:
         problems.append("{0} ancestry checks for two runs of one head, expected 1".format(len(calls)))
-    # A Finalize PR whose spec dir has no spec-meta.json at that commit is skipped.
-    with tempfile.TemporaryDirectory() as tmp:
-        _git(tmp, "init", "-q")
-        os.makedirs(os.path.join(tmp, "specs", "001-x"))
-        with open(os.path.join(tmp, "specs", "001-x", "spec.md"), "w", encoding="utf-8") as fh:
-            fh.write("x\n")
-        _git(tmp, "add", ".")
-        _git(tmp, "commit", "-q", "-m", "c")
-        import subprocess
-        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp, capture_output=True,
-                             text=True, check=True).stdout.strip()
-        previous = os.getcwd()
-        os.chdir(tmp)
-        try:
-            got = pl.Collector("own/repo", "2026-11-10T12:00:00Z").lifecycle_issue(
-                sha, "Finalize: x (#5)", ["specs/001-x/spec.md"])
-            if got is not None:
-                problems.append("a missing spec-meta.json gave {0}, expected None".format(got))
-        except pl.ReadError as exc:
-            problems.append("a missing spec-meta.json aborted the build: {0}".format(exc))
-        finally:
-            os.chdir(previous)
     # A malformed section shape is `unreadable`, never an exception.
     def gh_obj(path):
         return []
@@ -318,10 +296,149 @@ def check_review_fixes(fx):
     return problems
 
 
-def _git(cwd, *args):
+def _git(cwd, *args, **env):
     import subprocess
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com"] + list(args),
-                   cwd=cwd, check=True, capture_output=True)
+                   cwd=cwd, check=True, capture_output=True, env=dict(os.environ, **env))
+
+
+def _write(root, rel, text):
+    path = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+
+
+def _commit(root, files, when, message="c"):
+    """Writes `files` ({relpath: text}), commits them with committer and
+    author time `when` (git's own date form, offset included), returns the SHA."""
+    for rel, text in files.items():
+        _write(root, rel, text)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", message, GIT_COMMITTER_DATE=when, GIT_AUTHOR_DATE=when)
+    return pl._run(["git", "rev-parse", "HEAD"], cwd=root).strip()
+
+
+class _InRepo:
+    """chdir into a temporary git repository; the collector's git reads are real."""
+
+    def __enter__(self):
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root, self._previous = self._tmp.name, os.getcwd()
+        _git(self.root, "init", "-q")
+        os.chdir(self.root)
+        return self
+
+    def __exit__(self, *exc):
+        os.chdir(self._previous)
+        self._tmp.cleanup()
+        return False
+
+
+class _FakeReads:
+    """Replaces the collector's GitHub readers in-process, so a fixture runs
+    with no `gh` on PATH, on any OS. `api` and `gh` are callables; every call
+    is recorded in `calls`."""
+
+    def __init__(self, api=None, gh=None, tree=None):
+        self.api, self.gh, self.tree, self.calls = api, gh, tree, []
+
+    def __enter__(self):
+        self._saved = (pl.api, pl.gh_text, pl.tree_reaching)
+
+        def api(path, paginate=False):
+            self.calls.append(("api", path, paginate))
+            return self.api(path, paginate)
+
+        def gh(args):
+            self.calls.append(("gh",) + tuple(args))
+            return self.gh(list(args))
+        pl.api, pl.gh_text = api, gh
+        if self.tree is not None:
+            pl.tree_reaching = self.tree
+        return self
+
+    def __exit__(self, *exc):
+        pl.api, pl.gh_text, pl.tree_reaching = self._saved
+        return False
+
+
+FINAL_SHA_FILES = {
+    ".github/workflows/x.yml": "on: {push: {}}\njobs: {}\n",
+    "specs/001-other/spec-meta.json": '{"issue": 148}\n',
+    "specs/001-other/contracts/c.md": "edited by a later final PR\n",
+    "specs/124-own/spec-meta.json": '{"issue": 5}\n',
+}
+
+
+def check_lifecycle_issue():
+    """R1 (research D6): the lifecycle issue comes from the head branch's own
+    spec directory only, cross-checked against the title."""
+    problems = []
+    with _InRepo() as repo:
+        sha = _commit(repo.root, FINAL_SHA_FILES, "2026-11-09T20:00:00 -0500")
+        col = pl.Collector("own/repo", "2026-11-10T12:00:00Z")
+        cases = [
+            ("a final PR touching two spec directories uses only its own",
+             "Finalize: own (#5)", "spec/124-own", 5),
+            ("a final PR whose spec has no spec-meta.json at that commit",
+             "Finalize: gone (#9)", "spec/999-gone", None),
+            ("a head branch that is not spec/<slug>", "Finalize: own (#5)", "claude/x", None),
+            ("a PR that is not a final PR", "Fix things (#5)", "spec/124-own", None),
+        ]
+        for label, title, head, want in cases:
+            try:
+                got = col.lifecycle_issue(sha, title, head)
+            except pl.ReadError as exc:
+                got = "ReadError: {0}".format(exc)
+            if got != want:
+                problems.append("lifecycle issue: {0}: got {1!r}, expected {2!r}".format(label, got, want))
+        try:
+            got = col.lifecycle_issue(sha, "Finalize: own (#6)", "spec/124-own")
+            problems.append("lifecycle issue: its own spec-meta disagreeing with the title gave "
+                            "{0!r}, expected a failed read".format(got))
+        except pl.ReadError:
+            pass
+    return problems
+
+
+def _closing_ref(repo, number):
+    owner, name = repo.split("/")
+    return {"number": number, "repository": {"name": name, "owner": {"login": owner}},
+            "url": "https://github.com/{0}/issues/{1}".format(repo, number)}
+
+
+def check_entries():
+    """`Collector.entries` end to end on a real repository, with the GitHub
+    reads faked: the head branch reaches lifecycle_issue (R1)."""
+    problems = []
+    with _InRepo() as repo:
+        _commit(repo.root, {"a.txt": "a\n"}, "2026-10-01T00:00:00 +0000")
+        sha = _commit(repo.root, FINAL_SHA_FILES, "2026-11-09T20:00:00 -0500")
+        view = {"title": "Finalize: own (#5)", "headRefName": "spec/124-own", "body": "",
+                "closingIssuesReferences": []}
+
+        def api(path, paginate):
+            if path.endswith("/commits/{0}/pulls".format(sha)):
+                return [{"number": 77, "merge_commit_sha": sha}]
+            raise AssertionError("unexpected read " + path)
+        reaching = [{"path": ".github/workflows/x.yml", "reached_via": "scan", "runs_of_its_own": True}]
+        with _FakeReads(api=api, gh=lambda args: json.dumps(view), tree=lambda s, c: reaching) as fake:
+            try:
+                entries = pl.Collector("own/repo", "2026-11-10T12:00:00Z").entries()
+            except pl.ReadError as exc:
+                return ["entries: a final PR touching two spec directories failed the read: {0}".format(exc)]
+        views = [c for c in fake.calls if c[:2] == ("gh", "pr")]
+        if not views or "headRefName" not in views[0][-1]:
+            problems.append("entries: gh pr view does not read headRefName: {0}".format(views))
+        if len(entries) != 1:
+            return problems + ["entries: {0} entries, expected the one merge in the window".format(len(entries))]
+        entry = entries[0]
+        if entry["lifecycle_issue"] != 5 or {"number": 5, "how": "lifecycle"} not in entry["named_issues"]:
+            problems.append("entries: lifecycle issue {0}, named {1}; expected #5 from spec/124-own".format(
+                entry["lifecycle_issue"], entry["named_issues"]))
+    return problems
 
 
 AUTO_RELEASE_TEXT = ("on: {workflow_dispatch: {}}\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n"
@@ -581,7 +698,8 @@ def main():
     if note:
         print("[ok] verify-proof-list: {0}".format(note))
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
-                + check_failed_reads() + check_review_fixes(fx) + check_trees() + check_workflow()
+                + check_failed_reads() + check_review_fixes(fx) + check_lifecycle_issue()
+                + check_entries() + check_trees() + check_workflow()
                 + real + check_sc001_fixtures(fx))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4
