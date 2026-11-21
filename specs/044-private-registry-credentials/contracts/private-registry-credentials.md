@@ -252,6 +252,14 @@ repository. The wrapper is gated on a
 non-empty, so a repository that has not yet built and pushed the dogfood
 image gets a clean no-op instead of a permanently failing scheduled run.
 This repository's own lifecycle stages are not moved onto this image.
+On this repository the dogfood image is a private copy of the e2e reference
+image, not a separate build: `wing-commander-e2e-reference-image.yml` copies
+each digest it pins to the tag the variable names, server side, once the
+start-up check has passed on it
+(`specs/111-reference-image-pin-sync/contracts/pin-sync-script.md`, "The
+dogfood copy step"). The copy never creates the package: the owner creates
+it private first and grants this repository Write under Manage Actions
+access, and until the tag resolves the copy is refused.
 
 ## Non-goals (unchanged from specs/038, restated for this contract's boundary)
 

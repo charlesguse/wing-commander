@@ -1559,6 +1559,25 @@ start-up call grants `actions: read`. The start-up jobs run whatever
 results (spec 112's edge case), so an image missing `unzip` gets the
 start-up verdict too.
 
+The private image the variable names is not built by hand: it is a private
+copy of the e2e reference image. After a rebuild's start-up check passes and
+this repository's `WING_COMMANDER_CONTAINER_IMAGE` pin holds the new digest,
+`wing-commander-e2e-reference-image.yml`'s `sync-pins` job copies that
+digest to the variable's tag with a server-side registry copy
+(`docker buildx imagetools create`, no rebuild or pull) and reads the tag
+back, so the nightly run checks exactly the bytes the rebuild checked. It
+pushes with `GITHUB_TOKEN`, which needs the package to grant this
+repository write access (Manage Actions access). It never creates the
+package, since one a first `GITHUB_TOKEN` push creates can come out
+public: a tag that does not resolve yet is refused, telling the owner to
+create the package private first (a denied read, or any other registry
+error, is reported as itself, not as a missing package). It refuses a target
+outside this owner's `ghcr.io` namespace or the reference image itself,
+skips while the variable is unset, never changes the package's visibility,
+and files one `dogfood-image-sync:failed` issue when the copy fails
+(`specs/111-reference-image-pin-sync/contracts/pin-sync-script.md`, "The
+dogfood copy step").
+
 ## Auto-Release (`auto-release.yml`)
 
 **Trigger**: daily `schedule` (`cron: "9 9 * * *"`) + manual
