@@ -24,8 +24,13 @@ DOCS_ONLY_GLOBS = ("docs/**", "specs/**")
 VERIFY_SCRIPT_GLOB = ".github/scripts/verify-*.py"
 SCRIPTS_DIR = ".github/scripts"
 RUN_NAME_ATTEMPT_TOKEN_RE = re.compile(r"^run-name:.*inputs\.attempt-token", re.MULTILINE)
-WORKFLOW_REF_RE = re.compile(r"\.github/workflows/[A-Za-z0-9._-]+\.ya?ml")
-COMPOSITE_REF_RE = re.compile(r"\.github/actions/[A-Za-z0-9._-]+")
+# A reference is a whole path, never a substring of a longer one (#1161):
+# no word/hyphen character may precede the `.github` root (`x.github/...`),
+# and a workflow path may not run on into a longer name (`foo.yml.bak`,
+# `foo.ymlx`); a sentence-ending `.` after it is still fine.
+WORKFLOW_REF_RE = re.compile(
+    r"(?<![\w-])\.github/workflows/[A-Za-z0-9._-]+\.ya?ml(?![A-Za-z0-9_-]|\.[A-Za-z0-9])")
+COMPOSITE_REF_RE = re.compile(r"(?<![\w-])\.github/actions/[A-Za-z0-9._-]+")
 # research.md D5: the module-loading idiom most board helpers are actually
 # loaded by (e.g. board-loop.yml's own `sys.path.insert(0, ".github/scripts")`
 # + `from board_prove import ...`); single- and double-quoted forms both
@@ -57,8 +62,8 @@ SCRIPT_IMPORT_RE = re.compile(r"^\s*(?:from (\w+) import|import (\w+))\b", re.MU
 # equally unambiguous and equally needing no sys.path.insert guard -- each
 # alternative matches that path shape regardless of quoting.
 SCRIPT_PATH_RE = re.compile(
-    r"\.github/scripts/(\w+)\.py|wc-pristine/scripts/(\w+)\.py"
-    r"|GITHUB_ACTION_PATH/\.\./\.\./scripts/(\w+)\.py")
+    r"(?:(?<![\w-])\.github/scripts/(\w+)\.py|(?<![\w-])wc-pristine/scripts/(\w+)\.py"
+    r"|GITHUB_ACTION_PATH/\.\./\.\./scripts/(\w+)\.py)(?![\w-]|\.\w)")
 DIRECTED_GROUP = "wing-commander-board-loop-directed-proof"
 ORDINARY_GROUP = "wing-commander-board-loop"
 
