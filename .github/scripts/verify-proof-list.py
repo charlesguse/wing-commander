@@ -367,7 +367,7 @@ class _FakeReads:
 FINAL_SHA_FILES = {
     ".github/workflows/x.yml": "on: {push: {}}\njobs: {}\n",
     "specs/001-other/spec-meta.json": '{"issue": 148}\n',
-    "specs/001-other/contracts/c.md": "edited by a later final PR\n",
+    "specs/001-other/notes.txt": "another spec this final PR edited\n",
     "specs/124-own/spec-meta.json": '{"issue": 5}\n',
 }
 

@@ -417,7 +417,7 @@ def api(path, paginate=False):
     if not paginate:
         return doc
     if not isinstance(doc, list):
-        raise ReadError("gh api --paginate --slurp {0}: not a list of pages".format(path))
+        raise ReadError("gh api {0} (paged): not a list of pages".format(path))
     pages, out = doc, []
     for page in pages:
         if isinstance(page, dict):
