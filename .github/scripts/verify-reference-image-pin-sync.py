@@ -76,7 +76,8 @@ IMAGE = "ghcr.io/octo/img"
 DIGEST = "sha256:" + "a" * 64
 OLD = IMAGE + "@sha256:" + "b" * 64
 NEW = IMAGE + "@" + DIGEST
-TOKEN = "ghp_SECRETTOKENVALUE123"
+TOKEN = "github_pat_SECRETTOKENVALUE123"
+CLASSIC_TOKEN = "ghp_SECRETTOKENVALUE123"
 AMBIENT = "ambient-workflow-token"
 
 def run_jobs(check, sync_step, job="same"):
@@ -314,6 +315,25 @@ CASES = {
         list_rate_limited=["octo/public-a"],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
         reason="could not tell whether WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN reaches octo/public-a (HTTP 403)"),
+    # A classic token carries its user's access to every repository it
+    # lists, push included: every listed one outside the sync set is
+    # reached, whatever its variables endpoint answers.
+    "classic-listed-extra-reached": dict(
+        token=CLASSIC_TOKEN, vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E, "octo/public-a"],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
+        reason_exact="credential reaches octo/public-a", not_probed=["octo/public-a"]),
+    # A fine-grained token lists a private repository only when it selects
+    # it: reached even when its user cannot read the variables there.
+    "private-listed-extra-reached": dict(
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E, "octo/public-a", "octo/private-x"],
+        private=["octo/private-x"],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
+        reason_exact="credential reaches octo/private-x", not_probed=["octo/private-x"]),
+    # An abuse-detection 403 is a rate limit, not a refusal.
+    "reach-probe-abuse-limited": dict(
+        vars={THIS: OLD, E2E: OLD}, reach=[THIS, E2E, "octo/public-a"], list_abuse=["octo/public-a"],
+        exit=1, status={THIS: "failed", E2E: "failed"}, writes=[],
+        reason="could not tell whether WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN reaches octo/public-a (HTTP 403)"),
     "under-permission": dict(
         vars={THIS: OLD, E2E: OLD}, reach=[THIS],
         exit=1, status={THIS: "failed", E2E: "failed"}, writes=[]),
@@ -375,7 +395,9 @@ def run_case(name, case, tmp, bash, script):
                          ("var_access", case.get("var_access", [])),
                          ("list_404", case.get("list_404", [])),
                          ("list_500", case.get("list_500", [])),
-                         ("list_rate_limited", case.get("list_rate_limited", []))):
+                         ("list_rate_limited", case.get("list_rate_limited", [])),
+                         ("list_abuse", case.get("list_abuse", [])),
+                         ("private", case.get("private", []))):
         with open(os.path.join(stub_dir, fname), "w") as f:
             f.write("".join(f"{i}\n" for i in items))
     # jobs: {run number: one jobs document, or a list of them per attempt}
@@ -408,7 +430,7 @@ def run_case(name, case, tmp, bash, script):
     table = os.path.join(tmp, "table.md")
     env = {
         "PATH": bin_dir + os.pathsep + os.environ["PATH"],
-        "STUB_DIR": stub_dir, "GH_TOKEN": AMBIENT, "SYNC_TOKEN": TOKEN,
+        "STUB_DIR": stub_dir, "GH_TOKEN": AMBIENT, "SYNC_TOKEN": case.get("token", TOKEN),
         "IMAGE": IMAGE, "DIGEST": DIGEST, "THIS_REPO": THIS, "E2E_REPO": E2E,
         "CHECKS_PASSED": "true", "RUN_NUMBER": "7",
         "OUTCOME_FILE": outcome, "TABLE_FILE": table, "HOME": tmp,
@@ -430,6 +452,7 @@ def run_case(name, case, tmp, bash, script):
 
 def check_case(name, case, bash, script):
     errs = []
+    token = case.get("token", TOKEN)
     with tempfile.TemporaryDirectory() as tmp:
         rc, output, outputs, outcome, table, summary, log, final = run_case(name, case, tmp, bash, script)
         if rc != case["exit"]:
@@ -454,9 +477,12 @@ def check_case(name, case, bash, script):
             errs.append(f"no reason is exactly {case['reason_exact']!r}: "
                         f"{sorted({r['reason'] for r in rows})}")
         for repo in case.get("probed", []):
-            if not any(line == f"GH_TOKEN={TOKEN} api repos/{repo}/actions/variables?per_page=1"
+            if not any(line == f"GH_TOKEN={token} api repos/{repo}/actions/variables?per_page=1"
                        for line in log):
                 errs.append(f"{repo}'s Actions variables were not probed under the sync token")
+        for repo in case.get("not_probed", []):
+            if any(f"api repos/{repo}/actions/variables?" in line for line in log):
+                errs.append(f"{repo} is reached from the listing alone and must not be probed")
         # Writes are judged by where the pins end up (the stub keeps what
         # was written), and every set call must be the one variable, written
         # with the new value or with the value that repository already held
@@ -488,7 +514,7 @@ def check_case(name, case, bash, script):
                     errs.append("run list/view did not use the ambient workflow token")
                 if "run list" in line and ("--branch main" not in line or "--limit 100" not in line):
                     errs.append("run list must read the last 100 default-branch runs")
-            elif not line.startswith(f"GH_TOKEN={TOKEN} "):
+            elif not line.startswith(f"GH_TOKEN={token} "):
                 errs.append(f"a sync call did not run under the sync token: {line}")
         blob = output + summary
         if os.path.exists(outcome):
@@ -510,7 +536,7 @@ def check_case(name, case, bash, script):
                     errs.append(f"table row does not have exactly 5 cells: {row!r}")
         else:
             errs.append("TABLE_FILE was not written")
-        if TOKEN in blob:
+        if token in blob:
             errs.append("the token value appears in output, summary or outcome file")
     return errs
 

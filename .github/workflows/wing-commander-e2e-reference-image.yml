@@ -395,25 +395,31 @@ jobs:
             finish
           fi
           if ! reach="$(GH_TOKEN="$SYNC_TOKEN" gh api 'user/repos?affiliation=owner,collaborator,organization_member' \
-            --paginate --jq '.[].full_name' 2> "$ERRS")"; then
+            --paginate --jq '.[] | "\(.full_name) \(.private)"' 2> "$ERRS")"; then
             record_all failed "WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN was rejected when listing reachable repositories$(http_status)"
             finish
           fi
-          listed_sorted="$(printf '%s\n' "$reach" | tr '[:upper:]' '[:lower:]' | sed '/^$/d' | sort -u)"
+          listed_sorted="$(printf '%s\n' "$reach" | awk 'NF { print $1 }' | tr '[:upper:]' '[:lower:]' | sort -u)"
+          private_sorted="$(printf '%s\n' "$reach" | awk '$2 == "true" { print $1 }' | tr '[:upper:]' '[:lower:]' | sort -u)"
           want_sorted="$(printf '%s\n' "${SYNC_SET[@]}" | tr '[:upper:]' '[:lower:]' | sort -u)"
-          # A fine-grained token can read every public repository, so the
-          # list names them all. A listed repository outside the sync set is
-          # reached only when the token can read its Actions variables: a
-          # token's permissions are the same on every repository it selects,
-          # and a token that cannot read a repository's variables cannot
-          # write them. 403 or 404 is not reached, unless the 403 is a rate
-          # limit; any other answer writes nothing.
+          # A listed repository outside the sync set is reached when the
+          # token is not fine-grained (a classic token carries its user's
+          # access to every repository it lists, push included), or the
+          # repository is private (a fine-grained token lists a private
+          # repository only when it selects it). A fine-grained token can
+          # read every public repository, so the list names them all: a
+          # public one is reached only when the token can read its Actions
+          # variables, since a token's permissions are the same on every
+          # repository it selects. 403 or 404 is not reached, unless the 403
+          # is a rate limit; any other answer writes nothing.
           extra=""
           while read -r r; do
             [ -n "$r" ] || continue
-            if GH_TOKEN="$SYNC_TOKEN" gh api "repos/${r}/actions/variables?per_page=1" > /dev/null 2> "$ERRS"; then
+            if [[ "$SYNC_TOKEN" != github_pat_* ]] || grep -qxF -- "$r" <<< "$private_sorted"; then
               extra="${extra:+${extra},}${r}"
-            elif grep -q 'HTTP 404' "$ERRS" || { grep -q 'HTTP 403' "$ERRS" && ! grep -qi 'rate limit' "$ERRS"; }; then
+            elif GH_TOKEN="$SYNC_TOKEN" gh api "repos/${r}/actions/variables?per_page=1" > /dev/null 2> "$ERRS"; then
+              extra="${extra:+${extra},}${r}"
+            elif grep -q 'HTTP 404' "$ERRS" || { grep -q 'HTTP 403' "$ERRS" && ! grep -qiE 'rate limit|abuse' "$ERRS"; }; then
               continue
             else
               record_all failed "could not tell whether WING_COMMANDER_REFERENCE_IMAGE_SYNC_TOKEN reaches ${r}$(http_status)"

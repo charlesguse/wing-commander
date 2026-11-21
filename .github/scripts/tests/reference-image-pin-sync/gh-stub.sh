@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Stubbed `gh` for verify-reference-image-pin-sync.py. The harness copies it
 # to <tmp>/bin/gh and points STUB_DIR at a per-case directory:
-#   reach              one full_name per line: what `api user/repos` returns
+#   reach              one full_name per line: the repositories `api user/repos`
+#                      lists, filtered with its own --jq
+#   private            repositories (one per line) the listing marks private
 #   reach_fail         present: `api user/repos` fails with HTTP 401
 #   runs.json          the JSON array `run list` filters with its own --jq
 #   run_list_fail      present: `run list` fails
@@ -16,6 +18,7 @@
 #   list_404           repositories whose variable list answers 404
 #   list_500           repositories whose variable list answers 500
 #   list_rate_limited  repositories whose variable list answers a rate-limit 403
+#   list_abuse         repositories whose variable list answers an abuse-detection 403
 #   set_fail           repositories (one per line) refusing every variable write (403)
 #   set_fail_expected  repositories (one per line) refusing a write of any value
 #                      other than the one they hold (the permission probe passes)
@@ -39,8 +42,12 @@ case "${1:-} ${2:-}" in
       echo "gh: Bad credentials (HTTP 401)" >&2
       exit 1
     fi
-    [ -f "${STUB_DIR}/reach" ] && cat "${STUB_DIR}/reach"
-    exit 0
+    touch "${STUB_DIR}/reach" "${STUB_DIR}/private"
+    jq -Rn --rawfile priv "${STUB_DIR}/private" \
+      '($priv | ascii_downcase | split("\n")) as $p
+       | [inputs | select(length > 0) | {full_name: ., private: ((ascii_downcase) as $n | $p | index($n) != null)}]' \
+      < "${STUB_DIR}/reach" | jq -r "$(arg_after --jq "$@")"
+    exit $?
     ;;
   "api repos/"*"/actions/variables?"*)
     repo="${2#repos/}"
@@ -54,6 +61,8 @@ case "${1:-} ${2:-}" in
       echo "gh: Server Error (HTTP 500)" >&2
     elif listed list_rate_limited "$repo"; then
       echo "gh: API rate limit exceeded for user ID 1. (HTTP 403)" >&2
+    elif listed list_abuse "$repo"; then
+      echo "gh: You have triggered an abuse detection mechanism. Please wait a few minutes before you try again. (HTTP 403)" >&2
     else
       echo "gh: Resource not accessible by personal access token (HTTP 403)" >&2
     fi
