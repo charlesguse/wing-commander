@@ -506,6 +506,51 @@ def check_loud_reads():
             [(c["comment_id"], c["posted_at"]) for c in got]))
     return problems
 
+
+def check_read_cost(fx):
+    """R5 (research D6, D15): each thread is read once, bounded by `since=`
+    at the earliest merge among the entries that read it, at per_page=100;
+    a run is looked up only for a comment that passes steps 1-4."""
+    problems = []
+    older = make_entry(fx["base_entry"])  # e1, PR 10, issue 100, merged 2026-11-01
+    newer = make_entry(fx["base_entry"], {"sha": "e2", "pr": 11, "merged_at": "2026-11-05T00:00:00Z"})
+    with _FakeReads(api=lambda path, paginate: []) as fake:
+        col = pl.Collector("own/repo", "2026-11-10T12:00:00Z")
+        col.bound_threads([newer, older])
+        col.comments_for(newer)  # the build reads newest first
+        col.comments_for(older)
+    reads = sorted(c[1] for c in fake.calls)
+    want = sorted([
+        "repos/own/repo/issues/100/comments?per_page=100&since=2026-11-01T00:00:00Z",
+        "repos/own/repo/issues/10/comments?per_page=100&since=2026-11-01T00:00:00Z",
+        "repos/own/repo/pulls/10/comments?per_page=100&since=2026-11-01T00:00:00Z",
+        "repos/own/repo/pulls/10/reviews?per_page=100",
+        "repos/own/repo/issues/11/comments?per_page=100&since=2026-11-05T00:00:00Z",
+        "repos/own/repo/pulls/11/comments?per_page=100&since=2026-11-05T00:00:00Z",
+        "repos/own/repo/pulls/11/reviews?per_page=100",
+    ])
+    if reads != want:
+        problems.append("thread reads: {0}, expected {1}".format(reads, want))
+    base = fx["base_comment"]
+    comments = {"e1": [dict(base, comment_id=1, posted_at="2026-10-31T00:00:00Z",
+                            body="https://github.com/own/repo/actions/runs/7 #10"),
+                       dict(base, comment_id=2, body="https://github.com/own/repo/actions/runs/8 #10"),
+                       dict(base, comment_id=3, account_type="Bot",
+                            body="https://github.com/own/repo/actions/runs/9 #10")]}
+
+    def api(path, paginate):
+        run_id = int(path.rsplit("/", 1)[-1])
+        return {"id": run_id, "head_sha": "0" * 40, "run_started_at": "2026-11-02T00:00:00Z",
+                "html_url": "https://github.com/own/repo/actions/runs/{0}".format(run_id)}
+    with _FakeReads(api=api) as fake:
+        pl.Collector("own/repo", "2026-11-10T12:00:00Z").named_runs(comments, [older])
+    looked = [c[1] for c in fake.calls]
+    if looked != ["repos/own/repo/actions/runs/8"]:
+        problems.append("named runs: looked up {0}; expected only run 8 (run 7 is named before the "
+                        "merge, run 9 by an unmarked bot)".format(looked))
+    return problems
+
+
 def check_utc():
     """R2: every time is read and written in UTC (FR-011, data-model Entry)."""
     from board_spec_request_body import MAX_BODY_UNITS, utf16_len
@@ -800,7 +845,7 @@ def main():
         print("[ok] verify-proof-list: {0}".format(note))
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
                 + check_failed_reads() + check_review_fixes(fx) + check_lifecycle_issue()
-                + check_entries() + check_loud_reads() + check_utc() + check_trees() + check_workflow()
+                + check_entries() + check_loud_reads() + check_read_cost(fx) + check_utc() + check_trees() + check_workflow()
                 + real + check_sc001_fixtures(fx) + fixtures_name_no_live_table(check_sc001_fixtures))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4
