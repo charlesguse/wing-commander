@@ -217,7 +217,7 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
 - [x] R3-a In `verify-board-prove.py` `single_home_fixture_cases`, give the three `EXEMPT_REACH_COPIES` cases (unthinned consumer, stale entry, missing file) each a local dict with its own `Exemption(...)` row.
 - [x] R3-b In `verify-proof-list.py` `check_sc001_fixtures`, give the two `EXEMPT_SC001_PENDING` cases a local dict with its own `Exemption(...)` row.
 - [x] R3-c Do not touch the module-level `EXEMPT_*` tables or their entries.
-- [ ] R3-d Show that emptying either live table no longer fails these fixtures.
+- [x] R3-d Show that emptying either live table no longer fails these fixtures.
 
 ## Maintainer Feedback
 
