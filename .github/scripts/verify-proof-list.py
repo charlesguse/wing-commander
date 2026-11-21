@@ -200,8 +200,10 @@ def check_set_apart_report(fx):
 
 # -- the I/O half: failed reads, fail loudly (FR-013, research D15) -----------
 def _stub_gh(arms):
-    """A `gh` on PATH that answers by `case "$*"` arm. Error arms come from
-    wc_shell_harness.gh_error_stub_arm (Gate 127)."""
+    """A `gh` on PATH that answers by `case "$*"` arm, first match wins. Error
+    arms come from wc_shell_harness.gh_error_stub_arm (Gate 127). Any other
+    call is recorded in $STUB_UNEXPECTED and fails, so a case can never pass
+    on a read it did not mean to make."""
     import wc_shell_harness as harness
     body = ['#!/bin/bash', 'case "$*" in']
     for glob, reply in arms:
@@ -209,46 +211,75 @@ def _stub_gh(arms):
             body.append("  {0})\n{1}\n  ;;".format(glob, harness.gh_error_stub_arm(glob, *reply)))
         else:
             body.append("  {0})\n    echo '{1}'\n  ;;".format(glob, reply))
-    body += ['  *) echo "unexpected gh $*" >&2; exit 2 ;;', 'esac']
+    body += ['  *) echo "$*" >> "$STUB_UNEXPECTED"; echo "unexpected gh $*" >&2; exit 2 ;;', 'esac']
     return "\n".join(body) + "\n"
 
 
+# A paged read (paginated and slurped) is answered with a list of pages;
+# its arm comes first, since `case` takes the first match.
+_PAGES_OF_NONE = '[{"total_count": 2000, "workflow_runs": []}]'
+
+
 def check_failed_reads():
+    """FR-013 / SC-007: each failed read fails the build with its own message.
+    The message is asserted, so a case cannot pass on an unrelated ReadError
+    (the second review's N3: deleting a cap check left the gate green)."""
+    import shutil
     import stat
     import tempfile
     problems = []
+    runs = ".github/workflows/wrap.yml"
     cases = [
         ("a 500 on a comment thread", [("*issues/5/comments*", ("500", "Server Error"))],
-         lambda c: c.thread("issue", 5), pl.ReadError),
+         lambda c: c.thread("issue", 5), pl.ReadError, "(HTTP 500)"),
         ("a 403 primary rate limit", [("*issues/5/comments*", ("403", "API rate limit exceeded"))],
-         lambda c: c.thread("issue", 5), pl.ReadError),
+         lambda c: c.thread("issue", 5), pl.ReadError, "API rate limit exceeded"),
         ("a 404 on a named run is told apart", [("*actions/runs/7*", ("404", "Not Found"))],
-         lambda c: pl.api("repos/own/repo/actions/runs/7"), pl.NotFound),
-        ("under 600 requests left", [("*rate_limit*", "100")], lambda c: pl.check_rate_limit(),
-         pl.ReadError),
-        ("runs past the cap in one day", [("*workflows/wrap.yml/runs*", '{"total_count": 2000}')],
-         lambda c: c.workflow_runs(".github/workflows/wrap.yml"), pl.ReadError),
+         lambda c: pl.api("repos/own/repo/actions/runs/7"), pl.NotFound, "(HTTP 404)"),
+        ("under 600 requests left", [("'api rate_limit --jq .resources.core.remaining'", "100")],
+         lambda c: pl.check_rate_limit(), pl.ReadError, "only 100 API requests remain"),
+        ("runs past the cap in one day",
+         [("*--paginate*workflows/wrap.yml/runs*", _PAGES_OF_NONE),
+          ("*workflows/wrap.yml/runs*", '{"total_count": 2000}')],
+         lambda c: c.workflow_runs(runs), pl.ReadError, "more than 1000 runs in one day"),
         ("a deleted workflow's fallback list past the cap",
          [("*workflows/wrap.yml/runs*", ("404", "Not Found")),
+          ("*--paginate*actions/runs?*", _PAGES_OF_NONE),
           ("*actions/runs?*", '{"total_count": 2000}')],
-         lambda c: c.workflow_runs(".github/workflows/wrap.yml"), pl.ReadError),
+         lambda c: c.workflow_runs(runs), pl.ReadError, "a deleted workflow's runs cannot be read completely"),
     ]
-    old_path = os.environ["PATH"]
-    for label, arms, act, want in cases:
+    old_path, saved_gh = os.environ["PATH"], pl.gh_text
+    for label, arms, act, want, text in cases:
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "gh")
+            unexpected = os.path.join(tmp, "unexpected")
             with open(path, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(_stub_gh(arms))
             os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
             os.environ["PATH"] = tmp + os.pathsep + old_path
+            os.environ["STUB_UNEXPECTED"] = unexpected
+            if os.name == "nt":
+                # Windows cannot exec a bash script found as `gh`; run the same
+                # stub through bash so the cases run on a maintainer's machine.
+                bash = shutil.which("bash")
+                pl.gh_text = lambda args, stub=path, bash=bash: pl._run([bash, stub] + list(args))
             try:
                 act(pl.Collector("own/repo", "2026-11-10T12:00:00Z"))
                 problems.append("{0}: the read did not fail".format(label))
-            except want as exc:
-                if want is pl.ReadError and isinstance(exc, pl.NotFound):
-                    problems.append("{0}: reported as a 404".format(label))
+            except Exception as exc:  # noqa: BLE001 - the type and message are the test
+                if not isinstance(exc, want) or (want is pl.ReadError and isinstance(exc, pl.NotFound)):
+                    problems.append("{0}: raised {1}, expected {2}".format(label, type(exc).__name__,
+                                                                         want.__name__))
+                elif text not in str(exc):
+                    problems.append("{0}: failed with {1!r}, not {2!r}".format(label, str(exc)[:160], text))
             finally:
                 os.environ["PATH"] = old_path
+                os.environ.pop("STUB_UNEXPECTED", None)
+                pl.gh_text = saved_gh
+            if os.path.exists(unexpected):
+                with open(unexpected, encoding="utf-8") as fh:
+                    problems.append("{0}: the stub was asked for a read it does not answer: {1}".format(
+                        label, fh.read().strip().splitlines()[:3]))
     return problems
 
 
@@ -608,13 +639,14 @@ def check_classifier_corrections(fx):
     corpus = {"repository": repo, "window": fx["window"], "entries": [push], "runs": {},
               "named_runs": {}, "comments": {}}
     key = {"proofs": [], "listed": [], "expected_differences": []}
-    if not sc001_replay(corpus, key):
+    none = {"window": fx["window"], "sizes": {"proofs": 0, "listed": 0}}
+    if not sc001_replay(corpus, key, **none):
         problems.append("SC-001: a direct push in state 4 was not flagged")
-    listed = dict(key, expected_differences=[{"pr": None, "sha": "d4", "half": "listed", "expected_state": 3,
+    listed = dict(key, expected_differences=[{"pr": None, "sha": "d4", "half": "listed", "expected_state": 4,
                                               "actual_state": 4, "reason": "own-tree", "note": "x"}])
-    if sc001_replay(corpus, listed):
+    if sc001_replay(corpus, listed, **none):
         problems.append("SC-001: a direct push's listed difference was rejected: {0}".format(
-            sc001_replay(corpus, listed)))
+            sc001_replay(corpus, listed, **none)))
     return problems
 
 
@@ -811,11 +843,55 @@ EXEMPT_SC001_PENDING = {
         issue=(889,)),
 }
 SC001_REASONS = ("own-tree", "FR-005", "FR-006-shared-issue", "FR-013-set-apart")
+# SC-001 and data-model.md "SC-001 expected file": the fixed corpus window and
+# the answer key's size (the lookup's 10 hand-written proofs, its 21 merges
+# with nothing found). Fixtures pass their own; the real replay never does.
+SC001_WINDOW = {"start": "2026-10-15T00:00:00Z", "end": "2026-11-17T00:00:00Z"}
+SC001_SIZES = {"proofs": 10, "listed": 21}
+SC001_HALF_STATES = {"proofs": (2,), "listed": (4, 5)}
 
 
-def sc001_replay(corpus, expected):
-    """The replay: needs neither git nor `gh`. Returns problems."""
+def sc001_shape(corpus, expected, window, sizes):
+    """Problems with the corpus window or the answer key's shape: the replay
+    alone passes `proofs: []`, a dropped proof or two colliding differences."""
     problems = []
+    got = corpus.get("window") or {}
+    if (got.get("start"), got.get("end")) != (window["start"], window["end"]):
+        problems.append("SC-001: the corpus window is {0}..{1}, not {2}..{3}".format(
+            got.get("start"), got.get("end"), window["start"], window["end"]))
+    halves = {}
+    for half in ("proofs", "listed"):
+        items = expected.get(half)
+        if not isinstance(items, list) or not all(isinstance(n, int) and not isinstance(n, bool)
+                                                  for n in items):
+            problems.append("SC-001: `{0}` is not a list of PR numbers".format(half))
+            items = []
+        if len(items) != sizes[half]:
+            problems.append("SC-001: `{0}` has {1} PRs, expected {2}".format(half, len(items), sizes[half]))
+        if len(set(items)) != len(items):
+            problems.append("SC-001: `{0}` repeats a PR".format(half))
+        halves[half] = set(items)
+    if halves["proofs"] & halves["listed"]:
+        problems.append("SC-001: #{0} is in both `proofs` and `listed`".format(
+            ", #".join(str(n) for n in sorted(halves["proofs"] & halves["listed"]))))
+    seen = set()
+    for item in expected.get("expected_differences", ()):
+        who = item.get("pr") if item.get("pr") is not None else item.get("sha")
+        key = (who, item.get("half"), item.get("actual_state"))
+        if key in seen:
+            problems.append("SC-001: two expected differences for {0} ({1}, state {2})".format(
+                _who(who), key[1], key[2]))
+        seen.add(key)
+        if item.get("expected_state") not in SC001_HALF_STATES.get(item.get("half"), ()):
+            problems.append("SC-001: the expected difference for {0} has half {1!r} and expected_state "
+                            "{2!r}; proofs expect 2, listed 4 or 5".format(
+                                _who(who), item.get("half"), item.get("expected_state")))
+    return problems
+
+
+def sc001_replay(corpus, expected, window=SC001_WINDOW, sizes=SC001_SIZES):
+    """The replay: needs neither git nor `gh`. Returns problems."""
+    problems = sc001_shape(corpus, expected, window, sizes)
     states, _aged = pl.classify_all(corpus["entries"], corpus["runs"], corpus["comments"],
                                     corpus["named_runs"], corpus["repository"],
                                     corpus["window"]["start"], corpus["window"]["end"])
@@ -860,7 +936,7 @@ def _who(key):
     return "#{0}".format(key) if isinstance(key, int) else "direct push {0}".format(str(key)[:10])
 
 
-def check_sc001(directory, exempt):
+def check_sc001(directory, exempt, window=SC001_WINDOW, sizes=SC001_SIZES):
     """-> (problems, note). The five cases of research D13."""
     paths = [os.path.join(directory, n) for n in ("corpus.json", "expected.json")]
     present = [os.path.isfile(p) for p in paths]
@@ -880,7 +956,8 @@ def check_sc001(directory, exempt):
         corpus = json.load(fh)
     with open(paths[1], encoding="utf-8") as fh:
         expected = json.load(fh)
-    return sc001_replay(corpus, expected), "SC-001 replayed {0} entries".format(len(corpus["entries"]))
+    return (sc001_replay(corpus, expected, window, sizes),
+            "SC-001 replayed {0} entries".format(len(corpus["entries"])))
 
 
 def check_sc001_fixtures(fx):
@@ -895,25 +972,52 @@ def check_sc001_fixtures(fx):
               "runs": {}, "named_runs": {"own/repo/500": dict(fx["base_named"], contains=["p1"])},
               "comments": {"p1": [comment]}}
     good = {"proofs": [1], "listed": [2], "expected_differences": []}
-    if sc001_replay(corpus, good):
-        problems.append("SC-001 fixture: the matching corpus failed: {0}".format(sc001_replay(corpus, good)))
+    shape = {"window": fx["window"], "sizes": {"proofs": 1, "listed": 1}}
+    if sc001_replay(corpus, good, **shape):
+        problems.append("SC-001 fixture: the matching corpus failed: {0}".format(sc001_replay(corpus, good, **shape)))
     diff = {"pr": 2, "sha": "l2", "half": "listed", "expected_state": 5, "actual_state": 3,
             "reason": "own-tree", "note": "x"}
     mismatches = [
         ("a proof not in state 2", dict(good, proofs=[2], listed=[1])),
         ("a listed entry outside 4 or 5", dict(good, listed=[3])),
         ("an extra entry in 4 or 5", dict(good, listed=[])),
-        ("a stale expected difference", dict(good, expected_differences=[dict(diff, pr=1, half="proofs", actual_state=4)])),
+        ("a stale expected difference", dict(good, expected_differences=[dict(diff, pr=1, half="proofs", expected_state=2, actual_state=4)])),
         ("a reason outside SC-001's four", dict(good, expected_differences=[dict(diff, reason="other")])),
     ]
     for label, expected in mismatches:
-        if not sc001_replay(corpus, expected):
+        if not sc001_replay(corpus, expected, **shape):
             problems.append("SC-001 fixture: {0} was not noticed".format(label))
+    # R10: the answer key's shape and the corpus window, which the replay
+    # alone never checked (each passed before sc001_shape).
+    # `moved`: #2 really differs (state 3), so a difference item for it is live.
+    moved = dict(corpus, entries=[make_entry(base, {"sha": "l2", "pr": 2, "reaching": []})] + entries[:1] + entries[2:])
+    two = {"window": fx["window"], "sizes": {"proofs": 2, "listed": 1}}
+    shaped = [
+        ("an empty proofs half", corpus, dict(good, proofs=[]), shape),
+        ("a proof dropped from the answer key", corpus, dict(good, proofs=[1]), two),
+        ("a proof repeated", corpus, dict(good, proofs=[1, 1]), two),
+        ("a PR in both halves", corpus, dict(good, proofs=[1, 2], listed=[2]), two),
+        ("another corpus window", corpus, good, {"window": {"start": fx["window"]["start"],
+                                                           "end": "2026-11-11T00:00:00Z"},
+                                                "sizes": shape["sizes"]}),
+        ("two differences with one key", moved, dict(good, expected_differences=[
+            dict(diff), dict(diff, reason="FR-005")]), shape),
+        ("a listed difference expecting state 2", moved, dict(good, expected_differences=[
+            dict(diff, expected_state=2)]), shape),
+    ]
+    for label, case_corpus, expected, own in shaped:
+        if not sc001_replay(case_corpus, expected, **own):
+            problems.append("SC-001 fixture: {0} was not noticed".format(label))
+    if (SC001_WINDOW, SC001_SIZES) != ({"start": "2026-10-15T00:00:00Z", "end": "2026-11-17T00:00:00Z"},
+                                       {"proofs": 10, "listed": 21}) \
+            or inspect.signature(sc001_replay).parameters["sizes"].default is not SC001_SIZES \
+            or inspect.signature(check_sc001).parameters["window"].default is not SC001_WINDOW:
+        problems.append("SC-001: the real replay does not default to the fixed window and the 10/21 key")
     # an expected difference that matches an actual one is accepted
     moved = dict(corpus, entries=[make_entry(base, {"sha": "l2", "pr": 2, "reaching": []})] + entries[:1] + entries[2:])
-    if sc001_replay(moved, dict(good, expected_differences=[dict(diff, actual_state=3)])):
+    if sc001_replay(moved, dict(good, expected_differences=[dict(diff, actual_state=3)]), **shape):
         problems.append("SC-001 fixture: a listed difference was rejected: {0}".format(
-            sc001_replay(moved, dict(good, expected_differences=[dict(diff, actual_state=3)]))))
+            sc001_replay(moved, dict(good, expected_differences=[dict(diff, actual_state=3)]), **shape)))
     # the five exemption cases, with their own table: never EXEMPT_SC001_PENDING,
     # which T029 deletes (plan.md "Build details")
     exempt = {"sc001": Exemption(reason="fixture: the capture is pending", issue=(889,))}
@@ -933,7 +1037,7 @@ def check_sc001_fixtures(fx):
                     os.remove(path)
             for name in files:
                 write(name)
-            got, _note = check_sc001(tmp, table)
+            got, _note = check_sc001(tmp, table, **shape)
             if bool(got) != want_fail:
                 problems.append("SC-001 fixture: {0}: {1}".format(label, got or "did not fail"))
     return problems
