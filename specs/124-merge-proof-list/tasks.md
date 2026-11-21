@@ -201,41 +201,49 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
 
 ## Maintainer Feedback
 
-- [x] R1-a Take `<slug>` from `headRefName` (`spec/<slug>`) in `Collector.lifecycle_issue()` in `wc_proof_list.py`, using the `gh pr view` call the collector already makes.
-- [x] R1-b Read only `specs/<slug>/spec-meta.json` in the merge commit's tree and cross-check `.issue` against the title's `(#N)`.
-- [x] R1-c Add a fixture where a final PR touches two spec directories and only its own spec's issue is used.
-- [x] R1-d Add a fixture where its own spec's issue really disagrees with the title, which must fail.
+- [ ] R1-a Take `<slug>` from `headRefName` (`spec/<slug>`) in `Collector.lifecycle_issue()` in `wc_proof_list.py`, using the `gh pr view` call the collector already makes.
+- [ ] R1-b Read only `specs/<slug>/spec-meta.json` in the merge commit's tree and cross-check `.issue` against the title's `(#N)`.
+- [ ] R1-c Add a fixture where a final PR touches two spec directories and only its own spec's issue is used.
+- [ ] R1-d Add a fixture where its own spec's issue really disagrees with the title, which must fail.
 
 ## Maintainer Feedback
 
-- [x] R2-a Convert to UTC (`astimezone(datetime.timezone.utc)`) before formatting in `Collector.entries` and every other place a time is serialised.
-- [x] R2-b Normalise to UTC in `parse_time` and `window_for`.
-- [x] R2-c Add a fixture with a `-05:00` commit and a comment posted between the local and the UTC merge time, which must not count.
+- [ ] R2-a Convert to UTC (`astimezone(datetime.timezone.utc)`) before formatting in `Collector.entries` and every other place a time is serialised.
+- [ ] R2-b Normalise to UTC in `parse_time` and `window_for`.
+- [ ] R2-c Add a fixture with a `-05:00` commit and a comment posted between the local and the UTC merge time, which must not count.
 
 ## Maintainer Feedback
 
-- [x] R3-a In `verify-board-prove.py` `single_home_fixture_cases`, give the three `EXEMPT_REACH_COPIES` cases (unthinned consumer, stale entry, missing file) each a local dict with its own `Exemption(...)` row.
-- [x] R3-b In `verify-proof-list.py` `check_sc001_fixtures`, give the two `EXEMPT_SC001_PENDING` cases a local dict with its own `Exemption(...)` row.
-- [x] R3-c Do not touch the module-level `EXEMPT_*` tables or their entries.
-- [x] R3-d Show that emptying either live table no longer fails these fixtures.
+- [ ] R3-a In `verify-board-prove.py` `single_home_fixture_cases`, give the three `EXEMPT_REACH_COPIES` cases (unthinned consumer, stale entry, missing file) each a local dict with its own `Exemption(...)` row.
+- [ ] R3-b In `verify-proof-list.py` `check_sc001_fixtures`, give the two `EXEMPT_SC001_PENDING` cases a local dict with its own `Exemption(...)` row.
+- [ ] R3-c Do not touch the module-level `EXEMPT_*` tables or their entries.
+- [ ] R3-d Show that emptying either live table no longer fails these fixtures.
 
 ## Maintainer Feedback
 
-- [x] R5-a Read issue comments and PR review comments with `?since=` and `per_page=100`, keeping the `created_at` filter, including the thread reads around L517-522.
-- [x] R5-b Keep one read per thread, bounded by the earliest `merged_at` among the entries that read that thread.
-- [x] R5-c In `Collector.named_runs`, call `actions/runs/{id}` only for run links in comments that pass `comment_steps_1_to_4` for at least one entry.
-- [x] R5-d Keep the fail-loudly behaviour on a primary rate limit.
-- [x] R5-e Add fixtures that fail without each change, covering the request count and the paging parameters.
+- [ ] R4-a In `wc_proof_list.py` `_run`, decode output as UTF-8 with `errors="strict"` and raise `ReadError` when the output cannot be decoded or `stdout` is None.
+- [ ] R4-b In `api()`, raise `ReadError` on an empty read instead of turning it into `[]` or `null`.
+- [ ] R4-c In `Collector.thread`, skip reviews whose state is `PENDING` or that have no `submitted_at`, so `posted_at` is never None.
+- [ ] R4-d In `Collector.entries`, keep only `closingIssuesReferences` whose repository is this repository.
+- [ ] R4-e Add a fixture for each that fails without its change.
 
 ## Maintainer Feedback
 
-- [x] R6-a `classify_all`: compute the shared-issue set from the entries in the window for window classification, adding the aged-out day only for the aged-out pass (FR-006). Add a fixture.
-- [x] R6-b `pr_named`: match the PR URL only for this repository (`github.com/<repository>/pull/N`, case-insensitive). Add a fixture.
-- [x] R6-c `reduce_body`: build the keep-test from `board_triage.any_run_url_pattern()`, `board_item_marker.MARKER_OPEN_RE` and the PR-reference rule, including `/pull/N` URLs. Add a fixture.
-- [x] R6-d `sc001_replay`: also flag an entry with no PR in state 4 or 5, keyed by SHA. Add a fixture.
-- [x] R6-e Do not create or edit `sc001/corpus.json` or `sc001/expected.json`, delete any `EXEMPT_*` entry, or edit the prove-after-merge skill. These remain the `[maintainer]` tasks T028 and T029.
+- [ ] R5-a Read issue comments and PR review comments with `?since=` and `per_page=100`, keeping the `created_at` filter, including the thread reads around L517-522.
+- [ ] R5-b Keep one read per thread, bounded by the earliest `merged_at` among the entries that read that thread.
+- [ ] R5-c In `Collector.named_runs`, call `actions/runs/{id}` only for run links in comments that pass `comment_steps_1_to_4` for at least one entry.
+- [ ] R5-d Keep the fail-loudly behaviour on a primary rate limit.
+- [ ] R5-e Add fixtures that fail without each change, covering the request count and the paging parameters.
 
 ## Maintainer Feedback
 
-- [x] R7-a Add a line to `docs/reference.md` under "Known limits" saying the "runs set apart" count is mostly `pull_request` runs on branches deleted after a squash-merge, whose head commits are not in the checkout (about 197 in a dry run on real data).
-- [x] R7-b Leave the count's definition unchanged (FR-013, research D5).
+- [ ] R6-a `classify_all`: compute the shared-issue set from the entries in the window for window classification, adding the aged-out day only for the aged-out pass (FR-006). Add a fixture.
+- [ ] R6-b `pr_named`: match the PR URL only for this repository (`github.com/<repository>/pull/N`, case-insensitive). Add a fixture.
+- [ ] R6-c `reduce_body`: build the keep-test from `board_triage.any_run_url_pattern()`, `board_item_marker.MARKER_OPEN_RE` and the PR-reference rule, including `/pull/N` URLs. Add a fixture.
+- [ ] R6-d `sc001_replay`: also flag an entry with no PR in state 4 or 5, keyed by SHA. Add a fixture.
+- [ ] R6-e Do not create or edit `sc001/corpus.json` or `sc001/expected.json`, delete any `EXEMPT_*` entry, or edit the prove-after-merge skill. These remain the `[maintainer]` tasks T028 and T029.
+
+## Maintainer Feedback
+
+- [ ] R7-a Add a line to `docs/reference.md` under "Known limits" saying the "runs set apart" count is mostly `pull_request` runs on branches deleted after a squash-merge, whose head commits are not in the checkout (about 197 in a dry run on real data).
+- [ ] R7-b Leave the count's definition unchanged (FR-013, research D5).
