@@ -997,8 +997,9 @@ know before you set either:
   The image prerequisite probe also requires **git >= 2.38** (it names the
   version found) and a **glibc dynamic loader**: the action installs Bun
   from a glibc build, so on x86_64 the image must have
-  `/lib64/ld-linux-x86-64.so.2` (or `/lib/ld-linux-x86-64.so.2`, which
-  Alpine's `gcompat` provides) and on aarch64 `/lib/ld-linux-aarch64.so.1`.
+  `/lib64/ld-linux-x86-64.so.2` (Alpine's `gcompat` provides it) and on
+  aarch64 `/lib/ld-linux-aarch64.so.1`: the exact path the kernel loads
+  Bun's interpreter from.
   An Alpine/musl or distroless image fails with `<image> has no glibc
   dynamic loader (<path> for <arch>)` instead of passing the probe and
   dying at the agent's "Install Bun" step. Another architecture, or an

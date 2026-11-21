@@ -8,8 +8,15 @@
   "gcompat-x86_64": {
     "uname": "x86_64",
     "files": ["/lib/ld-musl-x86_64.so.1", "/lib/ld-linux-x86-64.so.2"],
+    "links": {"/lib64/ld-linux-x86-64.so.2": "/lib/ld-linux-x86-64.so.2"},
     "pass": true,
     "message": ""
+  },
+  "x86_64-loader-only-in-lib": {
+    "uname": "x86_64",
+    "files": ["/lib/ld-musl-x86_64.so.1", "/lib/ld-linux-x86-64.so.2"],
+    "pass": false,
+    "message": "no glibc dynamic loader (/lib64/ld-linux-x86-64.so.2 for x86_64)"
   },
   "musl-x86_64": {
     "uname": "x86_64",

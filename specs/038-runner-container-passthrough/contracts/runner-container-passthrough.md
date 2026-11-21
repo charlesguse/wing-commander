@@ -257,9 +257,9 @@ minimum`. Ahead of the floor it requires the **glibc dynamic loader** the
 agent action's Bun needs (`.github/scripts/image-glibc-loader.sh`, verbatim
 in every stage's probe, enforced by Gate 148): `oven-sh/setup-bun`
 downloads `bun-linux-<x64|aarch64>.zip`, a glibc build, whatever the
-image's libc. On x86_64 `/lib64/ld-linux-x86-64.so.2` or
-`/lib/ld-linux-x86-64.so.2` (Alpine's `gcompat`), on aarch64
-`/lib/ld-linux-aarch64.so.1`; `uname -m` reporting anything else, or no
+image's libc. On x86_64 `/lib64/ld-linux-x86-64.so.2` (which Alpine's
+`gcompat` also installs), on aarch64 `/lib/ld-linux-aarch64.so.1`: Bun's
+own ELF interpreter paths, so a loader at any other path does not count; `uname -m` reporting anything else, or no
 `uname`, passes. A miss fails with `<image> has no glibc dynamic loader
 (<path> for <arch>) -- the agent action's Bun cannot run in it` and still
 lists any missing tools. The start-up check is its own opt-in published workflow,

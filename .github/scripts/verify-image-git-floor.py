@@ -18,7 +18,7 @@ two messages.
 The glibc loader check has its own canonical fragment,
 .github/scripts/image-glibc-loader.sh, checked the same three ways: it is run
 against image-glibc-loader-fixtures/ (a stubbed `uname -m` and a fake file
-tree per case: glibc, gcompat, musl, a dangling loader link, an unknown
+tree per case: glibc, gcompat, musl, a loader only under /lib, a dangling loader link, an unknown
 arch, no uname), every stage's probe must embed it byte for byte ahead of
 the git floor along with its host-side report (LOADER_HOST_BRANCH), and
 Gate 62 must run it against the reference image (LOADER_MESSAGES). Why the
@@ -29,8 +29,9 @@ interpreter is /lib64/ld-linux-x86-64.so.2 on x86_64 and
 /lib/ld-linux-aarch64.so.1 on aarch64, so on an image without that loader
 (Alpine/musl, distroless) the probe used to pass and the agent's "Install
 Bun" step died with `bun: cannot execute: required file not found`.
-/lib/ld-linux-x86-64.so.2 is also accepted on x86_64: Alpine's gcompat
-installs it (and the /lib64 link beside it). An unknown arch, or no uname,
+Only that exact path counts: the kernel loads the interpreter from it, so an
+x86_64 image whose loader is only at /lib/ld-linux-x86-64.so.2 cannot run
+Bun (Alpine's gcompat installs the /lib64 link as well). An unknown arch, or no uname,
 is never failed by this check.
 
 NOTE ON GATE NUMBERING: this gate was first registered as Gate 142. It is
@@ -331,10 +332,11 @@ def loader_self_test(floor, stages):
 
     # (fragment, the fixture that must catch it, what the mutation is)
     mutations = [
-        (loader.replace(" /lib/ld-linux-x86-64.so.2", ""), "gcompat-x86_64",
-         "a fragment that dropped gcompat's /lib loader"),
-        (loader.replace("/lib64/ld-linux-x86-64.so.2 ", ""), "glibc-x86_64",
-         "a fragment that dropped the /lib64 loader"),
+        (loader.replace('x86_64) gl_want="/lib64/ld-linux-x86-64.so.2"',
+                        'x86_64) gl_want="/lib64/ld-linux-x86-64.so.2 /lib/ld-linux-x86-64.so.2"'),
+         "x86_64-loader-only-in-lib", "a fragment that accepts a loader Bun's interpreter path never reaches"),
+        (loader.replace('x86_64) gl_want="/lib64/ld-linux-x86-64.so.2"', 'x86_64) gl_want="/lib/ld-linux-x86-64.so.2"'),
+         "glibc-x86_64", "a fragment that dropped the /lib64 loader"),
         (loader.replace("*) gl_want=;;", '*) gl_want="/lib64/ld-linux-x86-64.so.2";;'), "unknown-arch",
          "a fragment that fails an unknown arch"),
         (loader.replace("*) gl_want=;;", '*) gl_want="/lib64/ld-linux-x86-64.so.2";;'), "no-uname",

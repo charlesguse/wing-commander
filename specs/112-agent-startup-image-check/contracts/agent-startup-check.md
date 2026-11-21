@@ -115,8 +115,10 @@ Between the tool presence loop and that fragment, the fragment from
 the agent action's Bun needs (`oven-sh/setup-bun` downloads a glibc build,
 `bun-linux-<x64|aarch64>.zip`, on every Linux image):
 
-- `uname -m` is `x86_64`: `/lib64/ld-linux-x86-64.so.2` or
-  `/lib/ld-linux-x86-64.so.2` (Alpine's `gcompat`) must exist;
+- `uname -m` is `x86_64`: `/lib64/ld-linux-x86-64.so.2` must exist
+  (Alpine's `gcompat` installs it; a loader only at
+  `/lib/ld-linux-x86-64.so.2` does not count, since the kernel loads Bun's
+  interpreter from the exact `/lib64` path);
 - `uname -m` is `aarch64`: `/lib/ld-linux-aarch64.so.1` must exist;
 - any other arch, or no `uname`: not checked;
 - a miss fails with `no glibc dynamic loader (<path> for <arch>)`, reported
@@ -126,7 +128,7 @@ the agent action's Bun needs (`oven-sh/setup-bun` downloads a glibc build,
 
 Gate 148 (`verify-image-git-floor.py`) fails a stage whose probe lacks
 either fragment, or either host-side report, verbatim, and runs the loader
-fragment against fixtures (glibc, gcompat, musl, a dangling loader link, an
+fragment against fixtures (glibc, gcompat, musl, a loader only under /lib, a dangling loader link, an
 unknown arch, no uname). Gate 62 runs both fragments against the reference
 image it builds.
 
