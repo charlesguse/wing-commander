@@ -2,7 +2,7 @@
   "issue": 1144,
   "spec_dir": "specs/124-merge-proof-list",
   "feature_num": "124",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 6,
   "spec_branch": "spec/124-merge-proof-list",
   "truncated_count": 0,
