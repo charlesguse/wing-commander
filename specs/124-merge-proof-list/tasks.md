@@ -229,11 +229,11 @@ MVP is US2 + US1 (T001-T017): a classifier and report produced from fixtures and
 
 ## Maintainer Feedback
 
-- [ ] R5-a Read issue comments and PR review comments with `?since=` and `per_page=100`, keeping the `created_at` filter, including the thread reads around L517-522.
-- [ ] R5-b Keep one read per thread, bounded by the earliest `merged_at` among the entries that read that thread.
-- [ ] R5-c In `Collector.named_runs`, call `actions/runs/{id}` only for run links in comments that pass `comment_steps_1_to_4` for at least one entry.
-- [ ] R5-d Keep the fail-loudly behaviour on a primary rate limit.
-- [ ] R5-e Add fixtures that fail without each change, covering the request count and the paging parameters.
+- [x] R5-a Read issue comments and PR review comments with `?since=` and `per_page=100`, keeping the `created_at` filter, including the thread reads around L517-522.
+- [x] R5-b Keep one read per thread, bounded by the earliest `merged_at` among the entries that read that thread.
+- [x] R5-c In `Collector.named_runs`, call `actions/runs/{id}` only for run links in comments that pass `comment_steps_1_to_4` for at least one entry.
+- [x] R5-d Keep the fail-loudly behaviour on a primary rate limit.
+- [x] R5-e Add fixtures that fail without each change, covering the request count and the paging parameters.
 
 ## Maintainer Feedback
 

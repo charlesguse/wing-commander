@@ -117,6 +117,14 @@ def comment_steps_1_to_4(entry, comment, shared, repository):
     return True
 
 
+def comments_that_can_count(entries, comments_by_sha, repository):
+    """[[comment, ...] per entry]: each entry's comments that pass steps 1-4
+    for it. The named runs of any other comment are never needed."""
+    shared = shared_issues(entries)
+    return [[c for c in comments_by_sha.get(e["sha"], ())
+             if comment_steps_1_to_4(e, c, shared, repository)] for e in entries]
+
+
 def run_qualifies(entry, run):
     """A `found` named run: started after the merge, merge an ancestor of its head."""
     return (bool(run) and run.get("kind") == "found" and run.get("resolvable", True)
@@ -490,7 +498,7 @@ class Collector:
         self.start, self.end = window(self.built_at)
         self.since = self.start - datetime.timedelta(hours=AGED_OUT_HOURS)
         self.threads, self.named, self.run_lists, self.trees = {}, {}, {}, {}
-        self.present, self.ancestry = {}, {}
+        self.present, self.ancestry, self.thread_since = {}, {}, {}
 
     # -- entries -----------------------------------------------------------
     def entries(self):
@@ -565,28 +573,51 @@ class Collector:
         return self.trees[sha]
 
     # -- comments ----------------------------------------------------------
+    @staticmethod
+    def thread_keys(entry):
+        """The (kind, number) threads an entry's comments are read from (D6)."""
+        keys = [("pr", entry["pr"])] if entry.get("pr") is not None else []
+        return keys + [("issue", i["number"]) for i in entry.get("named_issues") or ()]
+
+    def bound_threads(self, entries):
+        """research D6: each thread is read once, with `?since=` set to the
+        earliest merge among ALL the entries that read it. Done before any
+        read: a bound taken from the first (newest) reader would drop the
+        comments an older entry on the same shared issue needs."""
+        for entry in entries:
+            for key in self.thread_keys(entry):
+                when = parse_time(entry["merged_at"])
+                if key not in self.thread_since or when < self.thread_since[key]:
+                    self.thread_since[key] = when
+
     def thread(self, kind, number):
         key = (kind, number)
         if key not in self.threads:
             base = "repos/{0}".format(self.repository)
+            # `since` filters by update time, so it only bounds the read; the
+            # classifier still keeps a comment only when it was posted after
+            # its entry's merge. Review bodies take no `since` (D6).
+            since = self.thread_since.get(key)
+            bound = "per_page=100" + ("&since={0}".format(utc_text(since)) if since else "")
             if kind == "pr":
-                items = [(c, "pr-issue-comment") for c in api("{0}/issues/{1}/comments".format(base, number), True)]
-                items += [(c, "pr-review-comment") for c in api("{0}/pulls/{1}/comments".format(base, number), True)]
-                items += [(c, "pr-review") for c in api("{0}/pulls/{1}/reviews".format(base, number), True)
+                items = [(c, "pr-issue-comment")
+                         for c in api("{0}/issues/{1}/comments?{2}".format(base, number, bound), True)]
+                items += [(c, "pr-review-comment")
+                          for c in api("{0}/pulls/{1}/comments?{2}".format(base, number, bound), True)]
+                items += [(c, "pr-review")
+                          for c in api("{0}/pulls/{1}/reviews?per_page=100".format(base, number), True)
                           if not is_pending_review(c)]
             else:
                 items = [(c, "issue {0}".format(number))
-                         for c in api("{0}/issues/{1}/comments".format(base, number), True)]
+                         for c in api("{0}/issues/{1}/comments?{2}".format(base, number, bound), True)]
             place = {"kind": kind, "number": number}
             self.threads[key] = [comment_record(place, c, w) for c, w in items]
         return self.threads[key]
 
     def comments_for(self, entry):
         out = []
-        if entry.get("pr") is not None:
-            out += self.thread("pr", entry["pr"])
-        for issue in entry.get("named_issues") or ():
-            out += self.thread("issue", issue["number"])
+        for kind, number in self.thread_keys(entry):
+            out += self.thread(kind, number)
         return out
 
     # -- runs --------------------------------------------------------------
@@ -656,8 +687,11 @@ class Collector:
         return out
 
     def named_runs(self, comments_by_sha, entries):
+        """Reads each run named by a comment that passes steps 1-4 for at
+        least one entry; a comment that fails them can never count or be set
+        apart, so its runs are never read (research D15)."""
         out = {}
-        for comments in comments_by_sha.values():
+        for comments in comments_that_can_count(entries, comments_by_sha, self.repository):
             for comment in comments:
                 for repo, run_id in named_run_keys(comment.get("body")):
                     key = "{0}/{1}".format(repo, run_id)
@@ -680,6 +714,7 @@ def collect(repository, built_at, window=window_for):
     check_rate_limit()
     col = Collector(repository, built_at, window)
     entries = col.entries()
+    col.bound_threads([e for e in entries if e["needs_run"]])
     comments_by_sha = {e["sha"]: col.comments_for(e) for e in entries if e["needs_run"]}
     runs = col.runs(entries)
     named = col.named_runs(comments_by_sha, entries)
