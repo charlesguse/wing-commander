@@ -505,10 +505,18 @@ DOGFOOD_CASES = {
         inspect_fail="ERROR: failed to authorize: unexpected status from GET request: 403 Forbidden",
         held=OTHER, exit=1, outcome="failed", create=False, says="refused to read",
         names_grant=True),
-    # A denied read that also says "not found" is still a denial.
+    # An answer that says both (ghcr.io's for a package this token cannot
+    # see, missing or not): names both fixes, create-private first.
     "target-read-denied-not-found": dict(
         inspect_fail="ERROR: denied: requested resource not found or access denied",
-        held=OTHER, exit=1, outcome="failed", create=False, says="refused to read"),
+        held=OTHER, exit=1, outcome="failed", create=False,
+        says="or says it does not exist", names_grant=True, says_also="create it private first"),
+    # The name in docker's URL form, without the tag, is not a status either.
+    "target-missing-403-url": dict(
+        env={"TARGET": "ghcr.io/octo/img-403:latest"},
+        inspect_fail="ERROR: unexpected status from HEAD request to "
+                     "https://ghcr.io/v2/octo/img-403/manifests/latest: 404 Not Found",
+        exit=1, outcome="failed", create=False, says="does not resolve yet"),
     # Any other registry error is neither: nothing pushed.
     "target-read-other-error": dict(inspect_fail="ERROR: dial tcp: i/o timeout", held=OTHER,
                                     exit=1, outcome="failed", create=False,
@@ -648,6 +656,8 @@ def check_dogfood_case(name, case, bash, script):
         errs.append(f"a push failure or a missing or unreadable target must name {PERMISSION!r}")
     if "held_after" in case and held_after != case["held_after"]:
         errs.append(f"target ends holding {held_after!r}, want {case['held_after']!r}")
+    if "says_also" in case and case["says_also"] not in summary:
+        errs.append(f"the summary does not say {case['says_also']!r}: {summary.strip()!r}")
     if "says" in case and case["says"] not in summary:
         errs.append(f"the summary does not say {case['says']!r}: {summary.strip()!r}")
     if case["exit"] == 1:
@@ -666,15 +676,22 @@ def check_dogfood_case(name, case, bash, script):
     return errs
 
 
-def check_dogfood_wiring():
+DOGFOOD_REPORT_IF = "${{ failure() && steps.dogfood.outcome == 'failure' }}"
+DOGFOOD_CLOSE_IF = ("${{ !cancelled() && steps.dogfood.outcome == 'success' && "
+                    "(steps.dogfood.outputs.dogfood == 'copied' || "
+                    "steps.dogfood.outputs.dogfood == 'current') }}")
+
+
+def check_dogfood_wiring(text=None):
     """The copy runs in sync-pins (its concurrency group serialises it), only
     after this run's own pin holds the digest, under the one token bound to
     that step, reading the target only from the repository variable; the
-    issue steps are guarded to the copy's own outcome."""
+    issue steps are guarded, exactly, to the copy's own outcome."""
     import yaml
     errs = []
-    with open(WORKFLOW) as f:
-        text = f.read()
+    if text is None:
+        with open(WORKFLOW) as f:
+            text = f.read()
     wf = yaml.safe_load(text)
     sync = (wf.get("jobs") or {}).get("sync-pins") or {}
     steps = sync.get("steps") or []
@@ -719,12 +736,15 @@ def check_dogfood_wiring():
     report = [s for s in steps if s.get("uses", "").endswith("wing-commander-durable-failure-issue")
               and (s.get("with") or {}).get("label") == "dogfood-image-sync:failed"]
     ops = {(s.get("with") or {}).get("operation"): str(s.get("if")) for s in report}
-    if "steps.dogfood.outcome == 'failure'" not in ops.get("report", "") or \
-            "failure()" not in ops.get("report", ""):
-        errs.append("the dogfood failure issue must be filed on the copy step's failure")
-    if "steps.dogfood.outputs.dogfood == 'copied'" not in ops.get("close", "") or \
-            "steps.dogfood.outputs.dogfood == 'current'" not in ops.get("close", ""):
-        errs.append("the dogfood failure issue must close only after a copied or current outcome")
+    # Exact guards: a substring test would accept `!failure()`, or a close
+    # guard that lost `!cancelled()` and so fell back to the implicit
+    # success(), skipping the close whenever the sync step failed.
+    if ops.get("report") != DOGFOOD_REPORT_IF:
+        errs.append(f"the dogfood failure issue must be filed exactly on {DOGFOOD_REPORT_IF}, "
+                    f"not {ops.get('report')!r}")
+    if ops.get("close") != DOGFOOD_CLOSE_IF:
+        errs.append(f"the dogfood failure issue must close exactly on {DOGFOOD_CLOSE_IF}, "
+                    f"not {ops.get('close')!r}")
     # Single home: the registry copy is written once, in this step.
     for p in glob.glob(os.path.join(GH_DIR, "workflows", "*.yml")) + \
             [q for q in glob.glob(os.path.join(GH_DIR, "actions", "**", "*"), recursive=True)
@@ -953,6 +973,26 @@ def check_pin_write_detector():
     return errs
 
 
+def check_dogfood_wiring_detector():
+    """check_dogfood_wiring must refuse issue guards that only look right."""
+    with open(WORKFLOW) as f:
+        text = f.read()
+    errs = []
+    mutations = {
+        "a close guard without !cancelled()":
+            (DOGFOOD_CLOSE_IF, DOGFOOD_CLOSE_IF.replace("!cancelled() && ", "")),
+        "a report guard on !failure()":
+            (DOGFOOD_REPORT_IF, DOGFOOD_REPORT_IF.replace("failure() &&", "!failure() &&", 1)),
+    }
+    for what, (old, new) in mutations.items():
+        if text.count(old) != 1:
+            errs.append(f"cannot build the mutation {what}: guard not found once in the workflow")
+            continue
+        if not check_dogfood_wiring(text.replace(old, new)):
+            errs.append(f"the dogfood wiring check accepts {what}")
+    return errs
+
+
 def main():
     H.use_utf8_stdout()
     H.ensure_jq()
@@ -967,6 +1007,7 @@ def main():
         for e in check_dogfood_case(name, case, bash, dogfood_script):
             failures.append(f"dogfood case {name}: {e}")
     failures += [f"dogfood wiring: {e}" for e in check_dogfood_wiring()]
+    failures += [f"dogfood wiring detector: {e}" for e in check_dogfood_wiring_detector()]
     failures += [f"wiring: {e}" for e in check_wiring()]
     failures += [f"single-home: {e}" for e in check_single_home()]
     failures += [f"single-home detector: {e}" for e in check_pin_write_detector()]
