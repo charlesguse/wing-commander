@@ -361,6 +361,16 @@ def render_guidance(scratch_filename, extra_note, root, runner_temp, pushes="fal
     return rc, out, outputs.get("guidance", "")
 
 
+def site_pushes(with_block):
+    """-> the `pushes` value a guidance step passes the composite, as the
+    runner would: a YAML boolean arrives as "true"/"false", absent is the
+    input's default "false"."""
+    value = with_block.get("pushes", "false")
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
 def deep_check(path, job, root):
     """-> [failure message, ...] for implement.yml's cycle/retry sites."""
     failures = []
@@ -399,9 +409,12 @@ def deep_check(path, job, root):
                 f"{path}: {spec['guidance_step_name']!r}'s extra-note does "
                 f"not mention using a distinct filename from the cycle "
                 f"step's scratch file (FR-013).")
+        # Render with the site's own `pushes` (#1167): both implement.yml
+        # sites set it, so the string they ship carries the push sentence,
+        # and FR-009/FR-013 are checked on that string, not a pushes-off one.
         rc, out, guidance = render_guidance(
             actual_filename or spec["scratch_filename"], extra_note, root,
-            shared_runner_temp)
+            shared_runner_temp, pushes=site_pushes(with_block))
         if rc != 0:
             failures.append(
                 f"{path}: rendering {spec['guidance_step_name']!r}'s "
@@ -745,6 +758,35 @@ jobs:
                        "should FAIL (FR-013), it PASSED")
     else:
         print("ok    (6c) implement.yml's retry with a blanked extra-note fails")
+
+    # (6d)/(6e) #1167: the deep check renders each site with its own
+    # `pushes`. Cycle told how to push and retry not is a divergence the
+    # agents would read (FR-009); a pushes-off render of both hid it.
+    cycle_pushes = cycle_guidance.replace(
+        "scratch-filename: implement-commit-message-cycle.txt\n",
+        "scratch-filename: implement-commit-message-cycle.txt\n"
+        '          pushes: "true"\n')
+    assert cycle_pushes != cycle_guidance, "(6d) fixture edit did not apply"
+    implement_split = implement_ok.replace(cycle_guidance, cycle_pushes)
+    failures = _scan_fixture("implement.yml pushes split", "implement.yml",
+                              implement_split, root)
+    if not failures:
+        failed.append("(6d) implement.yml with pushes on for cycle only "
+                       "should FAIL the deep check (FR-009), it PASSED")
+    else:
+        print("ok    (6d) implement.yml's cycle/retry rendered with differing pushes fails")
+    retry_pushes = retry_guidance_ok.replace(
+        "scratch-filename: implement-commit-message-retry.txt\n",
+        "scratch-filename: implement-commit-message-retry.txt\n"
+        '          pushes: "true"\n')
+    implement_both = implement_split.replace(retry_guidance_ok, retry_pushes)
+    failures = _scan_fixture("implement.yml pushes both", "implement.yml",
+                              implement_both, root)
+    if failures:
+        failed.append(f"(6e) implement.yml with pushes on for both should "
+                       f"PASS the deep check, it FAILED: {failures!r}")
+    else:
+        print("ok    (6e) implement.yml's cycle/retry both rendered with pushes on pass")
 
     # (7) #1167: a site whose tool args grant `Bash(git push:*)` must set
     # pushes: "true" on its guidance step; one granted no push need not.
