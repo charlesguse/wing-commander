@@ -37,6 +37,7 @@ import board_merge  # noqa: E402
 import board_readiness  # noqa: E402
 import wc_board_status  # noqa: E402
 import lifecycle_merge_preconditions as lmp  # noqa: E402
+import lifecycle_readiness  # noqa: E402
 import wc_lifecycle_review_marker  # noqa: E402
 from board_item_marker import last_converged_review_head  # noqa: E402
 
@@ -136,7 +137,7 @@ def _checks_condition(rollup, rule):
     if rule == RULE_NO_GATE:
         green = lmp.checks_green_without_gate_status(rollup)
         gate = lmp.gate_suite_green_in_rollup(rollup)
-        counted = [e for e in rollup if e.get("context") != "lifecycle-review-gate"]
+        counted = [e for e in rollup if e.get("context") != lifecycle_readiness.OWN_STATUS_CONTEXT]
     else:
         green = board_readiness.checks_green(rollup)
         gate = board_readiness.gate_suite_green(rollup)

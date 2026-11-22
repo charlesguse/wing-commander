@@ -35,7 +35,10 @@ REUSED_RULE_NAMES = ("_checks_green", "_gate_suite_green", "checks_green", "gate
                      "verification_run_confirms", "latest_record_at_head", "bump_records",
                      "eligible_fix_class", "last_converged_review_head", "verification_passed_at_head")
 # Terminal-state literals the "checks green" rules own.
-FORBIDDEN_LITERALS = ('"SUCCESS"', '"NEUTRAL"', '"SKIPPED"', '"lint"', "'SUCCESS'", "'lint'")
+# '"lifecycle-review-gate"' is lifecycle_readiness.OWN_STATUS_CONTEXT's
+# (#1173 round 5, finding 3).
+FORBIDDEN_LITERALS = ('"SUCCESS"', '"NEUTRAL"', '"SKIPPED"', '"lint"', "'SUCCESS'", "'lint'",
+                      '"lifecycle-review-gate"', "'lifecycle-review-gate'")
 # FR-017: a write to a PR, a commit's checks, labels, reviews, or the repository.
 WRITE_VERBS = (r"gh\s+pr\s+(merge|review|edit|comment|close)", r"gh\s+issue\s+(comment|edit|close)",
                r"gh\s+label", r"gh\s+workflow\s+run", r"git\s+push",
