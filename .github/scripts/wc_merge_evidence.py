@@ -307,14 +307,18 @@ def cut_rollup(rollup, merged_at):
     for index, entry in enumerate(rollup):
         status = "context" in entry
         stamp = entry.get("startedAt") if status else (entry.get("startedAt") or entry.get("completedAt"))
-        if _after(stamp, merged_at):
+        # A queued check run with no time at all existed, unfinished, at the
+        # merge: keep it as not finished rather than leave it out.
+        unstamped_check = not status and not stamp
+        if _after(stamp, merged_at) and not unstamped_check:
             left_out += 1
             continue
         if not status and _after(entry.get("completedAt"), merged_at):
             entry = dict(entry, status="IN_PROGRESS", conclusion="")
         key = ("status", entry.get("context")) if status else ("check", entry.get("workflowName"), entry.get("name"))
         # Ties keep the first seen: GitHub lists statuses newest first.
-        if key not in latest or str(stamp) > str(latest[key][0]):
+        stamp = stamp or ""
+        if key not in latest or stamp > latest[key][0]:
             latest[key] = (stamp, index, entry)
     return [entry for _stamp, _index, entry in sorted(latest.values(), key=lambda t: t[1])], left_out
 
@@ -483,9 +487,10 @@ def render_markdown(section, names_only=False):
         out.append("None.")
     out += ["", "**Reached main without a pull request ({0})**".format(len(section["unpaired"])), ""]
     for c in section["unpaired"]:
-        out.append("- `{0}`".format(c["sha"][:12]) if names_only else
-                   "- `{0}` author {1}, committer {2}, {3}".format(c["sha"][:12], c["author"], c["committer"],
-                                                                  c["committed_at"]))
+        note = " (could not be checked for a pull request)" if c.get("unchecked") else ""
+        out.append("- `{0}`{1}".format(c["sha"][:12], note) if names_only else
+                   "- `{0}` author {1}, committer {2}, {3}{4}".format(c["sha"][:12], c["author"], c["committer"],
+                                                                     c["committed_at"], note))
     if not section["unpaired"]:
         out.append("None.")
     out += ["", "**Open pull requests ({0})**".format(len(section["open_verdicts"])), ""]
@@ -648,7 +653,14 @@ def collect(repo, bot_login, actions_token=None, default_branch="main", final_pr
             snap = {"number": pr["number"], "headRefOid": (pr.get("head") or {}).get("sha"),
                     "headRefName": (pr.get("head") or {}).get("ref"), "baseRefName": default_branch,
                     "statusCheckRollup": None,
+                    "author": {"login": (pr.get("user") or {}).get("login"),
+                               "is_bot": (pr.get("user") or {}).get("type") == "Bot"},
+                    "body": pr.get("body") or "",
+                    "cross_repository": ((pr.get("head") or {}).get("repo") or {}).get("full_name") != repo,
                     "not_read": ["the snapshot: {0}".format((getattr(exc, "stderr", "") or str(exc)).strip())]}
+            # The kind from what the PR list itself shows, so a read error
+            # does not file the record under 'maintainer' by default.
+            _assign_once(snap, bot_login, final_prefix, spec_prefix, default_branch)
         snapshots.append(snap)
     return snapshots
 
@@ -785,9 +797,8 @@ def run_audit(repo, bot_login, default_branch, out_path, final_prefix, spec_pref
         path = download_ledger(repo, default_branch, tmp)
         ledger, _found = load_ledger(path)
     token = os.environ.get("WC_ACTIONS_TOKEN") or None
-    found = [p for p in board_merge.gh_items(
-        "repos/{0}/pulls?state=closed&base={1}&sort=updated&direction=desc&per_page=100".format(repo, default_branch))
-        if p.get("merged_at") and window["start"] <= p["merged_at"] <= window["end"]]
+    found = [p for p in _closed_pulls_since(repo, default_branch, window["start"])
+             if p.get("merged_at") and window["start"] <= p["merged_at"] <= window["end"]]
     merged, entries = [], []
     for item in found:
         pull = json.loads(_gh_ok(["api", "repos/{0}/pulls/{1}".format(repo, item["number"])]))
@@ -811,7 +822,13 @@ def run_audit(repo, bot_login, default_branch, out_path, final_prefix, spec_pref
     if log.returncode != 0:
         raise RuntimeError("git log of the window failed: {0}".format(log.stderr.strip()))
     open_verdicts = open_verdicts_latest(repo, ledger)
-    unpaired = [c for c in unpaired_commits(commits, merged) if not _belongs_to_merged_pr(repo, c["sha"])]
+    unpaired = []
+    for c in unpaired_commits(commits, merged):
+        paired = _belongs_to_merged_pr(repo, c["sha"])
+        if paired is None:
+            unpaired.append(dict(c, unchecked=True))
+        elif not paired:
+            unpaired.append(c)
     section = build_section(entries, unpaired, open_verdicts, window, now, ledger)
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(section, fh, sort_keys=True, indent=1)
@@ -853,12 +870,31 @@ def open_verdicts_latest(repo, ledger, is_open=None):
 
 def _belongs_to_merged_pr(repo, sha):
     """A rebase merge puts several commits on main; the pull request that
-    produced one is told by GitHub, so a commit with a merged PR is paired."""
+    produced one is told by GitHub, so a commit with a merged PR is paired.
+    None when the lookup could not be read: the commit is then listed as
+    could-not-be-checked, never as a direct push."""
     try:
         pulls = json.loads(_gh_ok(["api", "repos/{0}/commits/{1}/pulls".format(repo, sha)]))
     except (subprocess.CalledProcessError, ValueError):
-        return False
+        return None
     return any(p.get("merged_at") for p in pulls)
+
+
+def _closed_pulls_since(repo, default_branch, start, read=None):
+    """Closed PRs newest-updated first, paged by hand and stopped once a
+    page's oldest updated_at is before `start` (a PR merged in the window was
+    updated at or after its merge), so the cost does not grow with the
+    repository's age."""
+    read = read or (lambda page: json.loads(_gh_ok(["api", (
+        "repos/{0}/pulls?state=closed&base={1}&sort=updated&direction=desc&per_page=100&page={2}"
+        .format(repo, default_branch, page))])))
+    out, page = [], 1
+    while True:
+        items = read(page)
+        out += items
+        if len(items) < 100 or min((p.get("updated_at") or "") for p in items) < start:
+            return out
+        page += 1
 
 
 def main(argv=None):

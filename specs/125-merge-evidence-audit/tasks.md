@@ -201,7 +201,7 @@ MVP is Phase 1–3 (US1): hourly verdicts in the ledger, gated. Then US2 for the
 
 ## Review Gate Round 4 Findings
 
-- [ ] Review finding: Failed PR lookup reports commit as unpaired direct push
+- [x] Review finding: Failed PR lookup reports commit as unpaired direct push
 
   _belongs_to_merged_pr returns False on a read error (5xx, 403, rate limit), so a rebase-merged commit is listed as reaching main without a pull request.
 
@@ -209,7 +209,7 @@ MVP is Phase 1–3 (US1): hourly verdicts in the ledger, gated. Then US2 for the
 
   Detail: Return None on a read error and have run_audit mark the section incomplete, or list the commit as 'could not be checked'.
 
-- [ ] Review finding: Audit reads every closed PR in the repository's history
+- [x] Review finding: Audit reads every closed PR in the repository's history
 
   run_audit pages all closed PRs via gh_items --paginate and never stops once updated_at falls before the window start, so the audit cost grows with repository age.
 
@@ -217,7 +217,7 @@ MVP is Phase 1–3 (US1): hourly verdicts in the ledger, gated. Then US2 for the
 
   Detail: Page manually and stop when a page's oldest updated_at is before window['start']. A rate-limit failure mid-read aborts the whole audit.
 
-- [ ] Review finding: cut_rollup drops queued checks with no started_at
+- [x] Review finding: cut_rollup drops queued checks with no started_at
 
   A check run with neither startedAt nor completedAt gets stamp None, and _after(None) is True, so the run is dropped as post-merge. The as-of-merge verdict can then read 'met' while a check was still pending at merge.
 
@@ -225,7 +225,7 @@ MVP is Phase 1–3 (US1): hourly verdicts in the ledger, gated. Then US2 for the
 
   Detail: Use created_at as a fallback stamp (read it in _rest_rollup), or keep unstamped runs as not finished.
 
-- [ ] Review finding: Read-error fallback snapshot is recorded under the wrong kind
+- [x] Review finding: Read-error fallback snapshot is recorded under the wrong kind
 
   When collect hits a read error, its fallback snapshot has no assigned_kind, author or body, so evaluate() derives kind 'maintainer' and the ledger stores the record under that kind.
 
@@ -233,7 +233,7 @@ MVP is Phase 1–3 (US1): hourly verdicts in the ledger, gated. Then US2 for the
 
   Detail: Assign the kind from the PR list item before the failing reads, or record kind 'unknown' for a stub snapshot.
 
-- [ ] Review finding: T024 marked done but the SC-003 replay check is absent
+- [x] Review finding: T024 marked done but the SC-003 replay check is absent
 
   The gate only prints that the SC-003 replay is pending. Nothing fails when the corpus lands or is missing, so EXEMPT_SC003_PENDING guards nothing.
 
@@ -241,7 +241,7 @@ MVP is Phase 1–3 (US1): hourly verdicts in the ledger, gated. Then US2 for the
 
   Detail: Add a check that fixtures/merge-evidence/sc003/ is empty exactly while the exemption entry exists, or reopen T024.
 
-- [ ] Review finding: Proof-list keeps its own copy of the pause test
+- [x] Review finding: Proof-list keeps its own copy of the pause test
 
   wing-commander-proof-list.yml still carries a shell copy of the pause test, and PAUSE_SHELL_COPIES_LEFT hard-codes it as an exemption. This breaks the 'shared logic has one home' rule, and no gate fails if the copy drifts.
 

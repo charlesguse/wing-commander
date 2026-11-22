@@ -53,6 +53,12 @@ CHECKOUT_REF = "${{ github.event.repository.default_branch }}"
 # Its refusal applies to dispatches only, a different shape, so it was left
 # alone; moving it onto the composite is a follow-up of #1173's round-3 fixes.
 PAUSE_SHELL_COPIES_LEFT = (".github/workflows/wing-commander-proof-list.yml",)
+# Tracked by the Maintenance backlog, #889 (gate 124 reads this entry); delete
+# both when proof-list moves onto the watch-guard composite.
+EXEMPT_PAUSE_SHELL_COPY = {
+    "proof-list-pause-copy": dict(reason="its refusal applies to dispatches only, a different shape",
+                                  issue=(889,)),
+}
 # SC-003 replay corpus: pending the maintainer capture (tasks.md T029). Tracked
 # by the Maintenance backlog, #889 (gate 124 reads this entry; the final PR
 # closes #1143, so it cannot be the tracker); delete it when sc003/ lands.
@@ -734,12 +740,77 @@ def check_negatives(text):
     return problems
 
 
+def check_sc003_pending(pending=None, directory=None):
+    """The SC-003 corpus directory is empty exactly while the exemption entry
+    exists: landing the corpus without deleting the entry, or deleting the
+    entry without the corpus, fails."""
+    pending = EXEMPT_SC003_PENDING if pending is None else pending
+    directory = directory or os.path.join(FIXTURES, "sc003")
+    filled = os.path.isdir(directory) and any(not n.startswith(".") for n in os.listdir(directory))
+    if filled and pending:
+        return ["sc003/ holds the corpus but EXEMPT_SC003_PENDING still exists: delete the entry (T029)"]
+    if not filled and not pending:
+        return ["EXEMPT_SC003_PENDING is gone but sc003/ holds no corpus: the SC-003 replay has nothing to read"]
+    return []
+
+
+def check_review_round4():
+    """Round 4 findings of #1173's review, each shown to fail without its fix."""
+    problems = []
+    # A failed PR lookup is could-not-be-checked, never a direct push.
+    real = me._gh_ok
+
+    def boom(args, *a, **k):
+        raise subprocess.CalledProcessError(1, "gh", "", "HTTP 502")
+    me._gh_ok = boom
+    try:
+        if me._belongs_to_merged_pr("o/r", "abc") is not None:
+            problems.append("round4: a failed commit-to-PR lookup must read as None, not as a direct push")
+    finally:
+        me._gh_ok = real
+    # The closed-PR read stops at the window start.
+    pages = []
+
+    def read(page):
+        pages.append(page)
+        return [{"updated_at": "2026-01-01T00:00:00Z"} for _ in range(100)]
+    me._closed_pulls_since("o/r", "main", "2026-06-01T00:00:00Z", read=read)
+    if pages != [1]:
+        problems.append("round4: the closed-PR read paged past the window start: {0}".format(pages))
+    # A queued check run with no time is kept as not finished.
+    cut, left = me.cut_rollup([{"name": "x", "workflowName": "w", "status": "QUEUED", "conclusion": ""}],
+                              "2026-11-01T00:00:00Z")
+    if left != 0 or len(cut) != 1 or cut[0].get("status") == "COMPLETED":
+        problems.append("round4: an unstamped queued check run was dropped by cut_rollup")
+    # A read error keeps the kind the PR list shows.
+    saved = me.board_merge.fetch_snapshot
+    saved_items = me.board_merge.gh_items
+
+    def fail(*a, **k):
+        raise subprocess.CalledProcessError(1, "gh", "", "HTTP 502")
+    me.board_merge.fetch_snapshot = fail
+    me.board_merge.gh_items = lambda path, *a, **k: [{
+        "number": 7, "head": {"sha": "a" * 40, "ref": "spec/001-thing", "repo": {"full_name": "o/r"}},
+        "user": {"login": "someone", "type": "User"}, "body": ""}]
+    try:
+        snap = me.collect("o/r", "bot", None, "main")[0]
+    finally:
+        me.board_merge.fetch_snapshot = saved
+        me.board_merge.gh_items = saved_items
+    if (snap.get("assigned_kind") or [None])[0] != "final":
+        problems.append("round4: a read-error snapshot was not given the kind the PR list shows")
+    return problems
+
+
 def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
         + check_review_round1() + check_review_round2() + check_review_round3_rollup() \
         + check_review_round3_open() + check_review_round3_kind() + check_review_round3_linked_issue()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
+    problems += check_review_round4() + check_sc003_pending()
+    if not check_sc003_pending(pending={}, directory=os.path.join(FIXTURES, "_none_")):
+        problems.append("self-check: a missing corpus with no exemption was not noticed")
     wf = os.path.join(REPO, WORKFLOW)
     if os.path.exists(wf):
         text = read(WORKFLOW)
