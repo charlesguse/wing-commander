@@ -40,7 +40,7 @@ The owner's direction (2026-11-16): keep the existing merge jobs, and add a work
 
 ### User Story 1 - See, for an open pull request into main, whether its merge evidence is there on the exact head (Priority: P1)
 
-The owner reads each open pull request's latest verdict in the daily Board status section; a session about to merge reads the verdict for its current head from the latest verdict run's output with `gh` (FR-018). Either sees, for the current head commit: the kind the audit assigned it, every condition that kind needs with its result, and the first one unmet. The verdict was computed by deterministic code from a complete snapshot fetched fresh for that head, so it can be trusted to describe that commit and no earlier one.
+The owner, or a session about to merge, reads the verdict for a pull request's current head from the latest verdict run's output with `gh` (FR-018) and sees, for that head commit: the kind the audit assigned it, every condition that kind needs with its result, and the first one unmet. The verdict was computed by deterministic code from a complete snapshot fetched fresh for that head, so it can be trusted to describe that commit and no earlier one. The daily Board status section also shows each open pull request's latest verdict as of that report, naming the head it was computed for.
 
 **Why this priority**: This is the one question the feature exists to answer. The daily audit (Story 2) reads these verdicts; without them it has nothing to list.
 
