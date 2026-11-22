@@ -609,6 +609,7 @@ def download_ledger(repo, default_branch, directory):
     candidates = [a for a in artifacts if a.get("name") == LEDGER_ARTIFACT and not a.get("expired")
                   and (a.get("workflow_run") or {}).get("head_branch") == default_branch]
     candidates.sort(key=lambda a: a.get("created_at") or "", reverse=True)
+    missed = []
     for artifact in candidates:
         run_id = (artifact.get("workflow_run") or {}).get("id")
         run = _gh_json(["api", "repos/{0}/actions/runs/{1}".format(repo, run_id)], "gh api actions/runs")
@@ -622,8 +623,14 @@ def download_ledger(repo, default_branch, directory):
         if r.returncode == 0:
             return os.path.join(directory, LEDGER_FILE)
         if "(HTTP 404)" in (r.stderr or "") or "no valid artifacts" in (r.stderr or ""):
+            missed.append(str(run_id))
             continue
         raise subprocess.CalledProcessError(r.returncode, "gh run download", r.stdout, r.stderr)
+    if missed:
+        # A ledger exists but none could be fetched: starting empty would
+        # overwrite the history, so the run fails and uploads nothing
+        # (#1173 round 5, finding 5).
+        raise LedgerError("no merge-evidence-ledger could be downloaded from run(s) {0}".format(", ".join(missed)))
     return None
 
 

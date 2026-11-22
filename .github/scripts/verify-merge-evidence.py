@@ -497,6 +497,8 @@ def _ledger_gh(mode, downloads):
             downloads.append(int(args[3]))
             if mode == "download-502":
                 return _Done(1, "", "gh: Bad Gateway (HTTP 502)")
+            if mode == "all-missing":
+                return _Done(1, "", "no valid artifacts found to download")
             if int(args[3]) in (5, 11, 12):
                 return _Done()
             return _Done(1, "", "no valid artifacts found to download")
@@ -509,13 +511,16 @@ def check_download_errors():
     empty listing starts empty, any other failure fails the run. In-process,
     so it runs wherever the gate does."""
     problems = []
+    # "all-missing" (#1173 round 5, finding 5): ledgers exist and none downloads,
+    # so the run must fail rather than start an empty ledger over them.
     for mode, expect in (("404", None), ("empty", None), ("502", "raise"), ("download-502", "raise"),
+                         ("all-missing", "raise"),
                          ("found", 5)):
         downloads = []
         with _Patched(_run=_ledger_gh(mode, downloads)):
             try:
                 got = me.download_ledger("o/r", "main", "dir")
-            except subprocess.CalledProcessError:
+            except (subprocess.CalledProcessError, me.LedgerError):
                 if expect != "raise":
                     problems.append("download: mode {0} failed instead of {1}".format(mode, expect))
                 continue
