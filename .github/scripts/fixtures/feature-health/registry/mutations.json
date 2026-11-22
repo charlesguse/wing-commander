@@ -1,0 +1,7 @@
+[
+  {"label": "reference.md lists a feature the registry lacks", "kind": "add_ref_row", "expect": "invented feature"},
+  {"label": "an entry names a missing workflow file", "kind": "missing_file", "expect": "does not exist"},
+  {"label": "an entry names an unknown kill switch", "kind": "unknown_switch", "expect": "Kill switches table"},
+  {"label": "two entries share a name", "kind": "duplicate", "expect": "duplicate registry name"},
+  {"label": "quiet_days of 0", "kind": "quiet_zero", "expect": "quiet_days"}
+]

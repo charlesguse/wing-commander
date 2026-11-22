@@ -223,7 +223,9 @@ board status (`board-status.yml`), the proof list
 (`wing-commander-proof-list.yml`,
 [spec](specs/124-merge-proof-list/spec.md)), the merge evidence audit
 (`wing-commander-merge-evidence.yml`,
-[spec](specs/125-merge-evidence-audit/spec.md)), auto-release (`auto-release.yml`,
+[spec](specs/125-merge-evidence-audit/spec.md)), feature health
+(`wing-commander-feature-health.yml`,
+[spec](specs/126-feature-health/spec.md)), auto-release (`auto-release.yml`,
 [spec](specs/045-auto-release-verified-head/spec.md)) and the gate suite
 (`lint-workflows.yml`).
 

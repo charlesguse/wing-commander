@@ -1,0 +1,100 @@
+name: "wing-commander-feature-health"
+
+# Feature health (specs/126-feature-health): one health state per feature,
+# from run history, kill switches and each feature's own output signal.
+# Read-only and agent-free: it builds one Markdown section and uploads it.
+# board-status.yml's writer (wc_board_status.py) is the only thing that ever
+# shows it, in the "Board status" issue. No agent, no App token, no dispatch,
+# no comment, label, close or issue edit.
+#
+# Step gating: only the default success() applies. A refused run stops every
+# later step; the pause output gates checkout, build and upload; a failed build
+# stops the upload -- see wing-commander-proof-list.yml.
+on:
+  schedule:
+    - cron: "29 6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: wing-commander-feature-health
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Refuse a dispatch off the default branch
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ] \
+            && { [ -z "$DEFAULT_BRANCH" ] || [ "$REF" != "refs/heads/$DEFAULT_BRANCH" ]; }; then
+            echo "::error::feature health builds only on the default branch (ref '$REF', default '$DEFAULT_BRANCH')"
+            exit 1
+          fi
+
+      - name: Check the pause switch
+        id: pause
+        shell: bash
+        env:
+          PAUSED: ${{ vars.WING_COMMANDER_FEATURE_HEALTH_PAUSED }}
+        run: |
+          # Same test as wc_board_status._switch_on: trimmed, case-folded `true`.
+          value=$(printf '%s' "$PAUSED" | tr '[:upper:]' '[:lower:]' | xargs)
+          if [ "$value" = "true" ]; then
+            echo "paused=true" >> "$GITHUB_OUTPUT"
+            echo "WING_COMMANDER_FEATURE_HEALTH_PAUSED is set; standing down."
+          else
+            echo "paused=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.pause.outputs.paused != 'true'
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # The token cannot read repository variables, so each switch and the
+      # one required variable arrive as env, as board-status.yml passes its
+      # switches. A missing key reads as unreadable; an empty one as off.
+      - name: Build the feature health section
+        if: steps.pause.outputs.paused != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SPEC_REVIEW_PAUSED: ${{ vars.WING_COMMANDER_SPEC_REVIEW_PAUSED }}
+          LIFECYCLE_REVIEW_GATE_PAUSED: ${{ vars.WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED }}
+          BOARD_LOOP_PAUSED: ${{ vars.WING_COMMANDER_BOARD_LOOP_PAUSED }}
+          WATCHDOG_PAUSED: ${{ vars.WING_COMMANDER_WATCHDOG_PAUSED }}
+          AUTO_RELEASE_PAUSED: ${{ vars.WING_COMMANDER_AUTO_RELEASE_PAUSED }}
+          AUTO_UPDATE_SPEC_KIT_PAUSED: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED }}
+          METRICS_PAUSED: ${{ vars.WING_COMMANDER_METRICS_PAUSED }}
+          METRICS_BRANCH: ${{ vars.WING_COMMANDER_METRICS_BRANCH }}
+          BOARD_STATUS_PAUSED: ${{ vars.WING_COMMANDER_BOARD_STATUS_PAUSED }}
+          PROOF_LIST_PAUSED: ${{ vars.WING_COMMANDER_PROOF_LIST_PAUSED }}
+          FEATURE_HEALTH_PAUSED: ${{ vars.WING_COMMANDER_FEATURE_HEALTH_PAUSED }}
+          PRIVATE_IMAGE_DOGFOOD_IMAGE: ${{ vars.WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE }}
+        run: python3 .github/scripts/wc_feature_health.py build --out feature-health-section.md
+
+      # `overwrite: true` -- see pr-conversation.yml: a re-run keeps the run
+      # id and upload-artifact v4+ refuses a name that already exists in it.
+      - name: Upload the section
+        if: steps.pause.outputs.paused != 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: feature-health-section
+          path: feature-health-section.md
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true

@@ -3473,6 +3473,10 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-merge-evidence.py
 
+      - name: Feature health puts every feature in exactly one state, decided by code
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-feature-health.py
+
       # auto-release-switch.yml sets or clears WING_COMMANDER_AUTO_RELEASE_PAUSED
       # and reads it back; anyone may pause, only the repository owner may
       # resume (specs/055-unattended-e2e-gates FR-028). Not numbered, as above.

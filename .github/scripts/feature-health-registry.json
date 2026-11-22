@@ -1,0 +1,152 @@
+[
+  {
+    "name": "lifecycle",
+    "reference_names": ["feature lifecycle", "cleanup"],
+    "workflows": [
+      {"file": "wing-commander-1-intake.yml", "cadence": "event", "stage": "intake"},
+      {"file": "wing-commander-2-clarify.yml", "cadence": "event", "stage": "clarify"},
+      {"file": "wing-commander-3-plan.yml", "cadence": "event", "stage": "plan"},
+      {"file": "wing-commander-4-tasks.yml", "cadence": "event", "stage": "tasks"},
+      {"file": "wing-commander-5-implement.yml", "cadence": "event", "stage": "implement"},
+      {"file": "wing-commander-6-finalize.yml", "cadence": "event", "stage": "finalize"},
+      {"file": "wing-commander-7-cleanup.yml", "cadence": "schedule", "stage": "cleanup"}
+    ],
+    "kill_switch": null,
+    "requires_var": null,
+    "signal": {"kind": "merged_pr", "label": "merged final PR", "head_prefixes": ["spec/"]},
+    "quiet_days": 30
+  },
+  {
+    "name": "spec PR review",
+    "reference_names": [],
+    "workflows": [{"file": "spec-pr-review.yml", "cadence": "schedule"}],
+    "kill_switch": "WING_COMMANDER_SPEC_REVIEW_PAUSED",
+    "requires_var": null,
+    "signal": null
+  },
+  {
+    "name": "lifecycle review gate",
+    "reference_names": [],
+    "workflows": [{"file": "lifecycle-review-gate.yml", "cadence": "schedule"}],
+    "kill_switch": "WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED",
+    "requires_var": null,
+    "signal": null
+  },
+  {
+    "name": "PR conversation",
+    "reference_names": [],
+    "workflows": [{"file": "wing-commander-9-pr-conversation.yml", "cadence": "event"}],
+    "kill_switch": null,
+    "requires_var": null,
+    "signal": null
+  },
+  {
+    "name": "board loop",
+    "reference_names": [],
+    "workflows": [{"file": "board-loop.yml", "cadence": "schedule"}],
+    "kill_switch": "WING_COMMANDER_BOARD_LOOP_PAUSED",
+    "requires_var": null,
+    "signal": {"kind": "merged_pr", "label": "merged fix PR", "head_prefixes": ["fix/"]},
+    "quiet_days": 30
+  },
+  {
+    "name": "watchdog",
+    "reference_names": [],
+    "workflows": [
+      {"file": "wing-commander-8-watchdog.yml", "cadence": "event"},
+      {"file": "wing-commander-8b-watchdog-self.yml", "cadence": "event"}
+    ],
+    "kill_switch": "WING_COMMANDER_WATCHDOG_PAUSED",
+    "requires_var": null,
+    "signal": null
+  },
+  {
+    "name": "auto-release",
+    "reference_names": [],
+    "workflows": [{"file": "auto-release.yml", "cadence": "schedule"}],
+    "kill_switch": "WING_COMMANDER_AUTO_RELEASE_PAUSED",
+    "requires_var": null,
+    "signal": {"kind": "release", "label": "release"},
+    "quiet_days": 30
+  },
+  {
+    "name": "Spec Kit updater",
+    "reference_names": [],
+    "workflows": [{"file": "wing-commander-auto-update-spec-kit.yml", "cadence": "schedule"}],
+    "kill_switch": "WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED",
+    "requires_var": null,
+    "signal": null
+  },
+  {
+    "name": "rebase",
+    "reference_names": [],
+    "workflows": [{"file": "wing-commander-rebase.yml", "cadence": "schedule"}],
+    "kill_switch": null,
+    "requires_var": null,
+    "signal": null
+  },
+  {
+    "name": "metrics-persist",
+    "reference_names": ["metrics-persist sweep"],
+    "workflows": [{"file": "wing-commander-metrics-persist.yml", "cadence": "schedule"}],
+    "kill_switch": "WING_COMMANDER_METRICS_PAUSED",
+    "requires_var": null,
+    "signal": {"kind": "branch_commit", "label": "metrics commit", "branch": "metrics"}
+  },
+  {
+    "name": "board status",
+    "reference_names": ["board-status.yml"],
+    "workflows": [{"file": "board-status.yml", "cadence": "schedule"}],
+    "kill_switch": "WING_COMMANDER_BOARD_STATUS_PAUSED",
+    "requires_var": null,
+    "signal": {"kind": "issue_updated", "label": "Board status update", "title": "Board status"}
+  },
+  {
+    "name": "proof list",
+    "reference_names": ["wing-commander-proof-list.yml"],
+    "workflows": [{"file": "wing-commander-proof-list.yml", "cadence": "schedule"}],
+    "kill_switch": "WING_COMMANDER_PROOF_LIST_PAUSED",
+    "requires_var": null,
+    "signal": {"kind": "issue_section", "label": "proof list section", "title": "Board status", "marker": "wc-proof-list:begin"}
+  },
+  {
+    "name": "feature health",
+    "reference_names": ["wing-commander-feature-health.yml"],
+    "workflows": [{"file": "wing-commander-feature-health.yml", "cadence": "schedule"}],
+    "kill_switch": "WING_COMMANDER_FEATURE_HEALTH_PAUSED",
+    "requires_var": null,
+    "signal": {"kind": "issue_section", "label": "feature health section", "title": "Board status", "marker": "wing-commander-feature-health"}
+  },
+  {
+    "name": "private-image dogfood",
+    "reference_names": [],
+    "workflows": [{"file": "wing-commander-private-image-dogfood.yml", "cadence": "schedule"}],
+    "kill_switch": null,
+    "requires_var": "WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE",
+    "signal": null
+  },
+  {
+    "name": "fold-cycle-guard",
+    "reference_names": [],
+    "workflows": [{"file": "wing-commander-9b-fold-cycle-guard.yml", "cadence": "event"}],
+    "kill_switch": null,
+    "requires_var": null,
+    "signal": null
+  },
+  {
+    "name": "agent-startup-check",
+    "reference_names": [],
+    "workflows": [{"file": "agent-startup-check.yml", "cadence": "event"}],
+    "kill_switch": null,
+    "requires_var": null,
+    "signal": null
+  },
+  {
+    "name": "gate suite",
+    "reference_names": ["lint-workflows.yml", "the gate suite on main"],
+    "workflows": [{"file": "lint-workflows.yml", "cadence": "schedule", "events": ["schedule", "push"]}],
+    "kill_switch": null,
+    "requires_var": null,
+    "signal": null
+  }
+]

@@ -589,12 +589,90 @@ def merge_evidence_half():
           and "wc-merge-evidence:begin" not in bs.render(SNAP))
 
 
+def feature_health_half():
+    """specs/126-feature-health: the section's writer statuses (contracts/
+    feature-health-report.md "Writer statuses") and the constants shared with
+    the feature-health workflow."""
+    import datetime
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with open(os.path.join(root, ".github", "workflows", bs.FEATURE_HEALTH_WORKFLOW), encoding="utf-8") as fh:
+        wf = fh.read()
+    check("the feature-health workflow's upload name is the writer's artifact constant",
+          "name: {0}\n".format(bs.FEATURE_HEALTH_ARTIFACT) in wf)
+    check("the feature-health workflow's build step is the writer's build-step constant",
+          "- name: {0}\n".format(bs.FEATURE_HEALTH_BUILD_STEP) in wf)
+    check("feature_health_paused is in SWITCH_ENV",
+          bs.SWITCH_ENV.get("feature_health_paused") == "FEATURE_HEALTH_PAUSED")
+    check("board-status.yml passes the feature-health switch",
+          "FEATURE_HEALTH_PAUSED: ${{ vars.WING_COMMANDER_FEATURE_HEALTH_PAUSED }}" in open(
+              os.path.join(root, ".github", "workflows", "board-status.yml"), encoding="utf-8").read())
+
+    now = datetime.datetime(2026, 11, 20, 12, 0, 0)
+    content = bs.FEATURE_HEALTH_MARKER + "\n**Feature health** — built 2026-11-20 06:29Z · 1 features · 0 unreadable\n"
+
+    def run(path_runs, ok, switches=None, download="ok", fail=None):
+        def gh_obj(path):
+            if fail and fail in path:
+                raise subprocess.CalledProcessError(1, "gh", "", "boom")
+            if path == "repos/o/r":
+                return {"default_branch": "main"}
+            return {"workflow_runs": path_runs}
+
+        def dl(repo, rid, tmp):
+            if download in ("ok", "bad"):
+                with open(os.path.join(tmp, bs.FEATURE_HEALTH_ARTIFACT + ".md"), "w", encoding="utf-8") as fh:
+                    fh.write(content if download == "ok" else "garbage")
+        return bs.feature_health_snapshot("o/r", switches or {}, now, gh_obj, lambda rid: ok.get(rid, False), dl)
+
+    def mk(rid, when, conclusion="success"):
+        return {"id": rid, "run_started_at": when, "conclusion": conclusion, "event": "schedule",
+                "head_repository": {"full_name": "o/r"}}
+    fresh, old = mk(3, "2026-11-20T06:29:00Z"), mk(2, "2026-11-19T06:29:00Z")
+    got = run([fresh, old], {3: True})
+    check("a fresh feature-health build is built, with its content", got["status"] == "built" and got["section"] == content, got)
+    check("no feature-health run is never", run([], {})["status"] == "never")
+    check("a failed latest feature-health build is failed, last good known",
+          run([mk(4, "2026-11-20T06:29:00Z", "failure"), old], {2: True})
+          == {"status": "failed", "last_good_at": "2026-11-19T06:29:00Z"})
+    stale = run([mk(5, "2026-11-17T06:29:00Z")], {5: True})
+    check("a build older than 48 hours keeps its content and is stale", stale["status"] == "stale" and stale["section"] == content, stale)
+    check("a run that stood down on the switch is paused", run([fresh], {3: False})["status"] == "paused")
+    check("the switch set is paused whatever the history",
+          run([fresh], {3: True}, {"feature_health_paused": "true"})["status"] == "paused")
+    check("a missing artifact is unreadable", run([fresh], {3: True}, download="none")["status"] == "unreadable")
+    check("a malformed artifact is unreadable", run([fresh], {3: True}, download="bad")["status"] == "unreadable")
+    check("an unreadable history is unreadable with last good unknown",
+          run([fresh], {3: True}, fail="workflows/") == {"status": "unreadable", "last_good_at": "unknown"})
+
+    body = "board body\n"
+    built = bs.feature_health_block({"status": "built", "section": content}, body)
+    check("a built section is embedded as the artifact content", built.startswith(bs.FEATURE_HEALTH_MARKER) and "Feature health" in built, built)
+    st = bs.feature_health_block(dict(stale, built_at="2026-11-17T06:29:00Z"), body)
+    check("a stale section says so and gives its build date", "Stale" in st and "2026-11-17" in st, st)
+    table = content + "\n<details><summary>All features</summary>\n\n" + "| row |\n" * 20000 + "</details>\n"
+    short = bs.feature_health_block({"status": "built", "section": table}, body)
+    check("an over-size table is dropped and the call-outs stay", "Table shortened" in short and "| row |" not in short, short[:200])
+    for status, last, text in (("paused", "2026-11-19T06:29:00Z", "WING_COMMANDER_FEATURE_HEALTH_PAUSED"),
+                               ("failed", "2026-11-19T06:29:00Z", "latest build failed"),
+                               ("never", "never", "not yet built"),
+                               ("unreadable", "2026-11-19T06:29:00Z", "could not read")):
+        blk = bs.feature_health_block({"status": status, "last_good_at": last}, body)
+        check("the {0} notice says {1}".format(status, text), text in blk and "Feature health —" not in blk, blk)
+        if status != "never":
+            check("the {0} notice gives the last good build date".format(status), "2026-11-19" in blk, blk)
+    check("render places the feature-health section after the board",
+          bs.render(dict(SNAP, feature_health={"status": "never"})).startswith(bs.render(SNAP))
+          and bs.FEATURE_HEALTH_MARKER not in bs.render(SNAP))
+
+
 def main():
     render_half()
     runtime_half()
     switches_half()
     proof_list_half()
     merge_evidence_half()
+    feature_health_half()
     print("verify-board-status: {0} failure(s).".format(len(failures)))
     return 1 if failures else 0
 
