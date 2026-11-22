@@ -42,7 +42,7 @@ The owner's direction (2026-11-16): keep the existing merge jobs, and add a work
 
 The owner, or a session about to merge, reads the verdict for a pull request's current head from the latest verdict run's output with `gh` (FR-018) and sees, for that head commit: the kind the audit assigned it, every condition that kind needs with its result, and the first one unmet. The verdict was computed by deterministic code from a complete snapshot fetched fresh for that head, so it can be trusted to describe that commit and no earlier one. The daily Board status section also shows each open pull request's latest verdict as of that report, naming the head it was computed for.
 
-**Why this priority**: This is the one question the feature exists to answer. The daily audit (Story 2) reads these verdicts; without them it has nothing to list.
+**Why this priority**: This is the one question the feature exists to answer. The daily audit (Story 2) reads these records to mark each merge as recorded or reconstructed.
 
 **Independent Test**: With an open board loop fix PR whose head has green checks, a gate-suite run, and an App-posted clean review verdict naming that head, run the workflow and confirm a verdict record exists for that head naming kind "board loop fix PR", every condition met, and no first-unmet condition. Push a new commit and confirm the next verdict is recorded against the new head and does not count the earlier review verdict.
 
@@ -60,20 +60,20 @@ The owner, or a session about to merge, reads the verdict for a pull request's c
 
 ### User Story 2 - Read a daily audit of everything that reached main (Priority: P1)
 
-Once a day the owner reads one list: each pull request merged into `main` since the last audit, with the verdict at the merged commit as of the moment it merged, the account that merged it, and any commit that reached `main` without a pull request.
+Once a day the owner reads one list: each pull request merged into `main` in the last 30 days, with the verdict at the merged commit as of the moment it merged, the account that merged it, and any commit that reached `main` without a pull request.
 
 **Why this priority**: The owner's direction is to watch merges into `main`. The audit is the watching; it is what turns a gap such as "25 of 48 merges had no record" from a one-off lookup into a standing view.
 
-**Independent Test**: In a window containing one merged pull request with a recorded verdict at its merged commit, one merged pull request whose merged commit has no recorded verdict, and one direct push to `main`, run the audit and confirm all three appear: the first with its recorded verdict, the second with a verdict reconstructed from records dated no later than the merge, and the third in the "without a pull request" list.
+**Independent Test**: In a window containing one merged pull request with a recorded verdict at its merged commit, one merged pull request whose merged commit has no recorded verdict, and one direct push to `main`, run the audit and confirm all three appear: the first with the as-of-merge verdict, marked recorded; the second with the as-of-merge verdict, computed from records dated no later than the merge and marked reconstructed; and the third in the "without a pull request" list.
 
 **Acceptance Scenarios**:
 
-1. **Given** a pull request merged since the last audit, **When** the audit runs, **Then** it lists the pull request, its kind, the merged commit, the verdict at that commit as of the merge, the first unmet condition if any, and the account that merged it.
-2. **Given** a pull request merged at a commit for which no verdict was recorded before the merge, **When** the audit runs, **Then** it computes the verdict for that commit from checks, statuses and records dated no later than the merge, and marks the entry as reconstructed.
+1. **Given** a pull request merged into `main` in the last 30 days, **When** the audit runs, **Then** it lists the pull request, its kind, the merged commit, the verdict at that commit as of the merge, the first unmet condition if any, and the account that merged it.
+2. **Given** a pull request merged at a commit for which no verdict was recorded before the merge, **When** the audit runs, **Then** it computes the verdict for that commit from checks, statuses and records dated no later than the merge, as for every entry, and marks the entry as reconstructed.
 3. **Given** a merged commit whose checks gained new runs after the merge (stages started by the merge), **When** the audit runs, **Then** those later runs are left out of the verdict as of the merge (FR-012).
 4. **Given** a commit on `main` that no merged pull request produced, **When** the audit runs, **Then** it is listed under "reached main without a pull request" with its author and committer.
 5. **Given** a merge whose pull request carries a session decision record (a comment starting `**Session decision (`) choosing to merge without the evidence, as on #1140, **When** the audit runs, **Then** the entry shows its unmet condition and links that decision record, reported and not counted (FR-015).
-6. **Given** an audit that did not run for several days, **When** it next runs, **Then** it covers every merge since the last audit that did run, not only the last day.
+6. **Given** a day on which the audit did not run, **When** it next runs, **Then** it lists every merge of the last 30 days, the missed day's among them, because each audit rebuilds the whole window (FR-012).
 
 ---
 
@@ -135,20 +135,20 @@ The owner and every merge path keep working exactly as today. The workflow never
 
 **Verdict record**
 
-- **FR-011**: The workflow MUST write one verdict record per head commit per pull request: the pull request, the head commit, the kind and the facts that decided it, each condition and its result with a one-line reason when unmet, the first condition unmet, whether the snapshot was complete, and the time it was computed. A later run for the same head MUST replace that head's record, not add a second. Records MUST be kept in a store the workflow's own runs read and write (FR-018), and a head's record MUST survive until the audit that covers that pull request's merge has read it, so the audit can tell a recorded verdict from a reconstructed one (FR-013).
+- **FR-011**: The workflow MUST write one verdict record per head commit per pull request: the pull request, the head commit, the kind and the facts that decided it, each condition and its result with a one-line reason when unmet, the first condition unmet, whether the snapshot was complete, and the time it was computed. A later run for the same head MUST replace that head's record, not add a second. Records MUST be kept in a store the workflow's own runs read and write (FR-018), and a head's record MUST survive at least as long as its pull request's merge stays inside the audit's 30-day window (FR-012), so the audit can mark each entry recorded or reconstructed (FR-013).
 
 **Daily audit**
 
-- **FR-012**: Once a day the workflow MUST list each pull request merged into `main` since the last completed audit: the pull request, its kind, the merged commit and its last head, the verdict at that head as of the merge time, the first unmet condition, and the account that merged it. "As of the merge" means checks, statuses and records dated no later than the merge; anything dated after it is left out.
-- **FR-013**: When no verdict was recorded for a merged pull request's last head before it merged, the audit MUST reconstruct the verdict as FR-012 says and mark the entry as reconstructed.
-- **FR-014**: The audit MUST list every commit that reached `main` since the last completed audit without being the merge or squash commit of a merged pull request, with its author and committer.
+- **FR-012**: Once a day the workflow MUST rebuild the whole audit window and list each pull request merged into `main` in the last 30 days: the pull request, its kind, the merged commit and its last head, the verdict at that head as of the merge time, the first unmet condition, and the account that merged it. The audit MUST always compute that verdict as of the merge, whether or not a verdict record exists. "As of the merge" means checks, statuses and records dated no later than the merge; anything dated after it is left out. A verdict record serves only to mark the entry recorded or reconstructed (FR-013) and, when the latest record for that head made before the merge differs from the as-of-merge verdict in its result or its first unmet condition, to show that record's result beside it. Each audit rebuilds the window rather than listing what changed since the last one, as spec 124's proof list rebuilds its own, so a day on which the audit did not run loses nothing.
+- **FR-013**: When a verdict was recorded for a merged pull request's last head before it merged, the audit entry MUST be marked recorded; when none was, it MUST be marked reconstructed. The verdict is computed the same way either way (FR-012).
+- **FR-014**: The audit MUST list every commit that reached `main` in the last 30 days without being the merge or squash commit of a merged pull request, with its author and committer.
 - **FR-015**: When a merged pull request carries a session decision record (a comment starting `**Session decision (`), the audit entry MUST link it, as reported and not counted; the entry's verdict is unchanged by it.
-- **FR-016**: The workflow MUST compute verdicts for every open pull request into `main` on an hourly schedule and on manual dispatch, each run writing its verdict records to the store FR-018 names; it MUST NOT be chained to the CI workflow finishing. A pull request merged between two runs gets only a reconstructed verdict in the audit (FR-013). Hourly, not every 30 minutes, because every job counts as at least one Actions minute and a 30-minute schedule would use about 1,440 minutes a month (clarified 2026-11-22, #1143). The workflow MUST run the daily audit on a daily schedule and on manual dispatch.
+- **FR-016**: The workflow MUST compute verdicts for every open pull request into `main` on an hourly schedule and on manual dispatch, each run writing its verdict records to the store FR-018 names; it MUST NOT be chained to the CI workflow finishing. A pull request merged between two runs has no record for its last head before the merge, so its audit entry is marked reconstructed (FR-013). Hourly, not every 30 minutes, because every job counts as at least one Actions minute and a 30-minute schedule would use about 1,440 minutes a month (clarified 2026-11-22, #1143). The workflow MUST run the daily audit on a daily schedule and on manual dispatch.
 
 **Only watching**
 
 - **FR-017**: The workflow MUST NOT merge, approve, request changes, label, push, comment on a commit, create or update a check run or commit status, or edit any pull request. Its verdict MUST NOT appear among any commit's checks or statuses.
-- **FR-018**: The verdict records MUST live in a store the workflow's own runs read and write, not in an issue, so each hourly run can record its verdicts without waiting on the daily report. The daily report MUST be a collapsed section of the "Board status" issue, written by that issue's one writer (`board-status.yml`), which only displays what this workflow built: the audit and each open pull request's latest verdict, as the proof list of spec 124 already reports there (its own workflow builds the section and uploads it; `board-status.yml` displays it). A session about to merge MUST be able to read the verdict for a pull request's current head from the latest verdict run's output with `gh`, without the Board status issue. Nothing is written to a lifecycle issue, a final PR or the Spec Kit tracking issue, because a comment there starts a pipeline run.
+- **FR-018**: The verdict records MUST live in a store the workflow's own runs read and write, not in an issue, so each hourly run can record its verdicts without waiting on the daily report. The daily report MUST be a collapsed section of the "Board status" issue, written by that issue's one writer (`board-status.yml`), which only displays what this workflow built: the audit of the whole 30-day window (FR-012) and each open pull request's latest verdict, as the proof list of spec 124 already reports there (its own workflow builds the section and uploads it; `board-status.yml` displays it). A session about to merge MUST be able to read the verdict for a pull request's current head from the latest verdict run's output with `gh`, without the Board status issue. Nothing is written to a lifecycle issue, a final PR or the Spec Kit tracking issue, because a comment there starts a pipeline run.
 - **FR-019**: No existing merge job or merge rule MUST read this feature's records; the two merge jobs keep their own decisions.
 - **FR-020**: Every step MUST be deterministic code; the workflow MUST invoke no agent.
 - **FR-021**: The workflow MUST refuse to run, before reading anything, when its ref is not the default branch.
@@ -157,7 +157,7 @@ The owner and every merge path keep working exactly as today. The workflow never
 
 **Watching period**
 
-- **FR-024**: The watching period MUST be a fixed 30 days from the day the feature ships. When it ends, the owner reviews the audit and decides the next step, including whether the merge jobs read the verdict (clarified 2026-11-22, #1143).
+- **FR-024**: The watching period MUST be a fixed 30 days from the day the feature ships. When it ends, the owner reviews the audit, which on that day covers every merge of the period because each audit rebuilds the last 30 days (FR-012), and decides the next step, including whether the merge jobs read the verdict (clarified 2026-11-22, #1143).
 
 **Documentation**
 
@@ -167,10 +167,10 @@ The owner and every merge path keep working exactly as today. The workflow never
 
 - **Pull request kind**: one of *Spec Kit bump PR*, *board loop fix PR*, *final PR*, *spec PR*, *maintainer PR*, with the facts that decided it.
 - **Condition**: a named check of the snapshot with a result (met, unmet, not read) and a one-line reason when not met.
-- **Verdict record**: one per pull request head commit, kept in the workflow's own store until the audit covering that pull request's merge has read it; the kind, every condition, the first unmet, snapshot completeness, computed-at time.
+- **Verdict record**: one per pull request head commit, kept in the workflow's own store at least as long as its pull request's merge stays inside the audit's 30-day window; the kind, every condition, the first unmet, snapshot completeness, computed-at time.
 - **Counted record**: evidence whose origin code can confirm — posted by the App, or written by an Actions run the Actions API confirms.
 - **Reported record**: evidence under a maintainer's account, listed for the reader and never counted.
-- **Audit entry**: one per merge into `main` since the last audit — the pull request, merged commit, last head, verdict as of the merge (recorded or reconstructed), first unmet condition, merging account, and any linked session decision record.
+- **Audit entry**: one per merge into `main` in the last 30 days — the pull request, merged commit, last head, verdict as of the merge (marked recorded or reconstructed, with a differing pre-merge record's result beside it), first unmet condition, merging account, and any linked session decision record.
 - **Unpaired commit**: a commit that reached `main` without a merged pull request.
 
 ## Success Criteria *(mandatory)*
@@ -183,7 +183,7 @@ The owner and every merge path keep working exactly as today. The workflow never
 - **SC-004**: Across the watching period, no check run, commit status, label, review, merge or push is ever attributable to the workflow — zero.
 - **SC-005**: Across the watching period, no merge by the board loop or the lifecycle review gate is delayed or changed by the workflow — zero.
 - **SC-006**: The workflow adds zero agent turns to the shared usage window.
-- **SC-007**: A reader can answer "what was the evidence when this commit reached `main`?" for any merge since the feature shipped from the audit alone, in under a minute.
+- **SC-007**: A reader can answer "what was the evidence when this commit reached `main`?" for any merge in the last 30 days from the audit alone, in under a minute.
 
 ## Assumptions
 
@@ -191,7 +191,7 @@ The owner and every merge path keep working exactly as today. The workflow never
 - **Kinds by existing facts**: a board loop fix PR and a bump are identified exactly as the board loop's merge code identifies them today; the owner's and a session's pull requests are one kind, because GitHub records the same account for both.
 - **Session pass reports before #1142**: shown as reported, never counted (FR-009). The verdict is therefore unmet for every maintainer PR until #1142's round record exists; that is the expected reading during watching, not a defect.
 - **Where it reports**: verdict records in a store of the workflow's own; the daily audit and each open pull request's latest verdict in the Board status issue's collapsed section, displayed by its one writer, as #1144 / spec 124 chose for its own report; a current verdict read from the latest run's output with `gh` (FR-018). The store's form is a plan decision. The run summary is not used, because `gh` cannot read it.
-- **Audit window**: "since the last completed audit", with the first audit covering the 30 days before it ran.
+- **Audit window**: the last 30 days, rebuilt whole by every daily audit (every merge into `main` and every commit without a pull request in that window), as spec 124's proof list rebuilds its own; the first audit covers the 30 days before it ran, and a missed day loses nothing.
 - **Name**: "the merge evidence audit" — "gate" already names the `verify-*` checks, the gate suite and the lifecycle review gate.
 - **Out of scope, each the owner's call later**: the merge jobs and the session fix-PR rule reading this verdict in place of their own conditions; requiring the verdict before any merge.
 - **Trigger limits accepted as given** (GitHub docs read 2026-11-16): an event caused by the Actions token starts no workflow run, dispatches excepted; `check_run` and `check_suite` do not fire for suites GitHub Actions created; `workflow_run` runs the default branch's workflow file and chains at most three levels.
