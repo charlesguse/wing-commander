@@ -799,13 +799,21 @@ def check_workflow_text(text):
         problems.append("workflow: timeout-minutes is not 15")
     steps = job.get("steps") or []
     names = [s.get("name") for s in steps]
-    if len(steps) != 5 or "refuse" not in (names[0] or "").lower() or "pause" not in (names[1] or "").lower():
-        problems.append("workflow: the refusal and the pause check are not the first two steps: {0}".format(names))
-    elif "default_branch" not in steps[0].get("env", {}).get("DEFAULT_BRANCH", "") or \
-            "exit 1" not in steps[0].get("run", ""):
-        problems.append("workflow: the refusal does not exit 1 on the default branch comparison")
-    if "if" in (steps[0] if steps else {}):
-        problems.append("workflow: the refusal step is conditional")
+    # #1173 round 5: checkout (pinned to the default branch), then the
+    # wing-commander-watch-guard composite, the refusal's and the pause
+    # test's one home, with its dispatch-only refusal.
+    guard = (steps[1] if len(steps) > 1 else {}) or {}
+    if len(steps) != 4 or "actions/checkout@" not in str(steps[0].get("uses")) \
+            or guard.get("uses") != "./.github/actions/wing-commander-watch-guard" or guard.get("id") != "pause":
+        problems.append("workflow: the steps are not checkout, the watch guard, build, upload: {0}".format(names))
+    elif (guard.get("with") or {}).get("refuse-on") != "dispatch" \
+            or "default_branch" not in str((guard.get("with") or {}).get("default-branch")):
+        problems.append("workflow: the guard does not refuse a dispatch off the default branch")
+    elif (steps[0].get("with") or {}).get("ref") != "${{ github.event.repository.default_branch }}":
+        problems.append("workflow: the checkout is not pinned to the default branch")
+    for step in steps[:2]:
+        if "if" in step:
+            problems.append("workflow: step {0!r} is conditional".format(step.get("name")))
     for step in steps[2:]:
         if step.get("if") != "steps.pause.outputs.paused != 'true'":
             problems.append("workflow: step {0!r} is not gated on the pause output".format(step.get("name")))
@@ -829,24 +837,27 @@ def check_workflow_text(text):
 
 
 def check_pause_agreement(text):
-    """The workflow's pause step and wc_board_status._switch_on are one test
-    written twice; run the step's shell on padded and mixed-case values and
-    require it to agree with _switch_on."""
+    """The pause test the workflow runs (the watch guard's pause step) agrees
+    with wc_board_status._switch_on on padded and mixed-case values."""
     import subprocess
     import tempfile
     import yaml
     import wc_board_status as bs
-    step = next((s for job in yaml.safe_load(text)["jobs"].values() for s in job["steps"]
+    uses = next((s.get("uses") for job in yaml.safe_load(text)["jobs"].values() for s in job["steps"]
                  if s.get("id") == "pause"), None)
+    if not uses or not uses.startswith("./"):
+        return ["workflow: no step with id pause runs a local composite"]
+    with open(os.path.join(HERE, "..", "..", uses[2:], "action.yml"), encoding="utf-8") as fh:
+        step = next((s for s in yaml.safe_load(fh)["runs"]["steps"] if s.get("id") == "pause"), None)
     if step is None:
-        return ["workflow: no step with id pause"]
+        return ["workflow: the guard has no step with id pause"]
     problems = []
     for value in ("true", "TRUE", "  True  ", "\ttrue\n", "false", "", "yes", "truee", "1"):
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "output")
             open(out, "w").close()
             subprocess.run(["bash", "-c", step["run"]], check=True, capture_output=True,
-                           env={"PATH": os.environ.get("PATH", ""), "PAUSED": value, "GITHUB_OUTPUT": out})
+                           env=dict(os.environ, SWITCH_VALUE=value, SWITCH_NAME="X", GITHUB_OUTPUT=out, SCRIPTS=HERE))
             with open(out, encoding="utf-8") as fh:
                 got = "paused=true" in fh.read().split()
         if got != bs._switch_on(value):
@@ -865,13 +876,14 @@ def check_workflow():
             problems.append("wc_proof_list.py: contains a write call ({0})".format(call))
     # Fixtures: each mutation of the shipped file must be noticed.
     mutations = [
-        ("a refusal that no longer exits", text.replace("exit 1", "exit 0", 1)),
+        ("a refusal made every-run", text.replace("          refuse-on: dispatch\n", "          refuse-on: every-run\n", 1)),
         ("a permission widened", text.replace("issues: read", "issues: write")),
         ("an always() on the build", text.replace("- name: Build the proof list\n        if:",
                                                    "- name: Build the proof list\n        if: always() &&")),
         ("an input on dispatch", text.replace("workflow_dispatch: {}", "workflow_dispatch:\n    inputs:\n      x: {}")),
-        ("a dropped gate on checkout", text.replace("if: steps.pause.outputs.paused != 'true'\n        uses: actions/checkout",
-                                                     "uses: actions/checkout")),
+        ("a dropped gate on the build", text.replace("- name: Build the proof list\n        if: steps.pause.outputs.paused != 'true'\n",
+                                                      "- name: Build the proof list\n", 1)),
+        ("an unpinned checkout", text.replace("          ref: ${{ github.event.repository.default_branch }}\n", "", 1)),
         ("a write call", text + "      - run: gh issue comment 1 -b x\n"),
         ("the upload's overwrite dropped", text.replace("          overwrite: true\n", "")),
     ]

@@ -1,0 +1,155 @@
+name: "wing-commander-merge-evidence"
+
+# Board status finds the daily audit's runs by this title
+# (wc_board_status.MERGE_EVIDENCE_AUDIT_TITLES); the hourly verdict runs never
+# build the section.
+# Each title is written out whole, so verify-board-status.py can find each
+# one literally.
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch'
+  && (inputs.job == 'audit' && 'merge-evidence dispatch audit'
+  || inputs.job == 'verdicts' && 'merge-evidence dispatch verdicts'
+  || 'merge-evidence dispatch both')
+  || (github.event.schedule == '41 5 * * *' && 'merge-evidence audit' || 'merge-evidence verdicts') }}
+
+# The merge evidence audit (specs/125-merge-evidence-audit): an hourly verdict
+# for every open pull request into the default branch, and a daily audit of
+# everything that reached it in the last 30 days. It only watches: read-only
+# permissions, no agent, no App token, no dispatch, and no comment, label,
+# review, merge, push, check run or commit status. The verdicts live in the
+# `merge-evidence-ledger` artifact; board-status.yml's writer
+# (wc_board_status.py) is the only thing that ever shows the daily
+# `merge-evidence-section`. No merge job reads either (FR-019).
+#
+# Step gating: no always-style or cancellation-negating condition anywhere.
+# Each job checks out first, because the refusal and the pause test live in
+# the wing-commander-watch-guard composite, which runs from the checkout. The
+# checkout is pinned to the default branch, so a dispatch from another branch
+# runs only the default branch's code, and the guard still refuses it; it
+# reads no pull request or check. A refused run stops every later step; the pause output
+# gates build and upload under the default success(); a failed build stops
+# the upload, so the ledger keeps its last good state (research D3).
+on:
+  schedule:
+    - cron: "7 * * * *"
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Which job to run"
+        type: choice
+        options:
+          - both
+          - verdicts
+          - audit
+        default: both
+
+# The pipeline App's login as REST shows it on its comments. Unset, it falls
+# back to this repository's App; wc_merge_evidence.py still marks every
+# verdict incomplete when it ends up empty.
+env:
+  BOT_LOGIN: ${{ vars.WING_COMMANDER_BOT_LOGIN || 'wing-commander-bot[bot]' }}
+
+permissions:
+  contents: read
+  actions: read
+  issues: read
+  pull-requests: read
+  checks: read
+  statuses: read
+
+jobs:
+  verdicts:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '7 * * * *')
+      || (github.event_name == 'workflow_dispatch' && inputs.job != 'audit')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: wing-commander-merge-evidence-ledger
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Refuse a run off the default branch, then check the pause switch
+        id: pause
+        uses: ./.github/actions/wing-commander-watch-guard
+        with:
+          what: the merge evidence audit runs
+          default-branch: ${{ github.event.repository.default_branch }}
+          switch-name: WING_COMMANDER_MERGE_EVIDENCE_PAUSED
+          switch-value: ${{ vars.WING_COMMANDER_MERGE_EVIDENCE_PAUSED }}
+
+      - name: Record the verdicts
+        if: steps.pause.outputs.paused != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          FINAL_PREFIX: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
+          SPEC_PREFIX: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 .github/scripts/wc_merge_evidence.py verdicts --default-branch "$DEFAULT_BRANCH" --out ledger.json
+
+      # `overwrite: true` -- see wing-commander-proof-list.yml: a re-run keeps
+      # the run id, and upload-artifact refuses a name that already exists in it.
+      - name: Upload the ledger
+        if: steps.pause.outputs.paused != 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: merge-evidence-ledger
+          path: ledger.json
+          retention-days: 90
+          if-no-files-found: error
+          overwrite: true
+
+  audit:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '41 5 * * *')
+      || (github.event_name == 'workflow_dispatch' && inputs.job != 'verdicts')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: wing-commander-merge-evidence-audit
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Refuse a run off the default branch, then check the pause switch
+        id: pause
+        uses: ./.github/actions/wing-commander-watch-guard
+        with:
+          what: the merge evidence audit runs
+          default-branch: ${{ github.event.repository.default_branch }}
+          switch-name: WING_COMMANDER_MERGE_EVIDENCE_PAUSED
+          switch-value: ${{ vars.WING_COMMANDER_MERGE_EVIDENCE_PAUSED }}
+
+      - name: Build the audit
+        if: steps.pause.outputs.paused != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          FINAL_PREFIX: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
+          SPEC_PREFIX: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: python3 .github/scripts/wc_merge_evidence.py audit --default-branch "$DEFAULT_BRANCH" --out merge-evidence-section.json
+
+      - name: Upload the section
+        if: steps.pause.outputs.paused != 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: merge-evidence-section
+          path: merge-evidence-section.json
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true

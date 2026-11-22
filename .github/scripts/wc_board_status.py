@@ -278,6 +278,8 @@ def render(snap):
     body = "\n".join(lines) + "\n"
     if snap.get("proof_list"):
         body += "\n" + proof_list_block(snap["proof_list"], body)
+    if snap.get("merge_evidence"):
+        body += "\n" + merge_evidence_block(snap["merge_evidence"], body)
     return body
 
 
@@ -299,16 +301,17 @@ PROOF_LIST_NOTICES = {
 }
 
 
-def _pl_block(status, built, last_good, summary, content):
-    return ('<!-- wc-proof-list:begin status="{0}" built="{1}" last-good="{2}" -->\n'
+def _pl_block(status, built, last_good, summary, content, tag="wc-proof-list"):
+    return ('<!-- {5}:begin status="{0}" built="{1}" last-good="{2}" -->\n'
             "<details><summary>{3}</summary>\n\n{4}\n</details>\n"
-            "<!-- wc-proof-list:end -->\n").format(status, built, last_good, summary, content.rstrip("\n"))
+            "<!-- {5}:end -->\n").format(status, built, last_good, summary, content.rstrip("\n"), tag)
 
 
-def proof_list_block(pl, body):
+def _section_block(pl, body, label, notices, tag):
     """The section for snapshot entry `pl`, placed after `body`: the full form
     if the whole body fits MAX_BODY_UNITS, else names-only, else the failed
-    notice. Entries are never dropped for size (FR-020)."""
+    notice. Entries are never dropped for size (FR-020). The one renderer of
+    every built-by-another-workflow section (proof list, merge evidence)."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from board_spec_request_body import MAX_BODY_UNITS, utf16_len
     status = pl.get("status", "unreadable")
@@ -318,19 +321,50 @@ def proof_list_block(pl, body):
     if status == "built":
         section = pl.get("section") or {}
         built = section.get("built_at", "none")
-        summary = "Proof list: built {0} (window 30 days)".format(built[:10])
+        summary = "{0}: built {1} (window 30 days)".format(label, built[:10])
         for key in ("full", "names_only"):
-            block = _pl_block("built", built, last_good, summary, section.get(key, ""))
+            block = _pl_block("built", built, last_good, summary, section.get(key, ""), tag)
             if used + utf16_len(block) <= MAX_BODY_UNITS:
                 return block
-        status, notice = "failed", "The proof list was too large for this issue's body."
-    notice = notice or PROOF_LIST_NOTICES.get(status, PROOF_LIST_NOTICES["unreadable"])
+        status, notice = "failed", "The {0} was too large for this issue's body.".format(label.lower())
+    notice = notice or notices.get(status, notices["unreadable"])
     when = {"never": "there has never been a good build"}.get(
         last_good, "the last good build was {0}".format(last_good))
     if last_good == "unknown":
         when = "the last good build's date is unknown"
-    return _pl_block(status, "none", last_good, "Proof list: {0}".format(status),
-                     "{0} {1}.".format(notice, when[0].upper() + when[1:]))
+    return _pl_block(status, "none", last_good, "{0}: {1}".format(label, status),
+                     "{0} {1}.".format(notice, when[0].upper() + when[1:]), tag)
+
+
+def proof_list_block(pl, body):
+    return _section_block(pl, body, "Proof list", PROOF_LIST_NOTICES, "wc-proof-list")
+
+
+# --------------------------------------------------------------------------
+# The merge evidence audit's section (specs/125-merge-evidence-audit,
+# contracts/merge-evidence-report.md). wing-commander-merge-evidence.yml
+# builds the content; this file only displays it. The artifact name is
+# wc_merge_evidence.SECTION_ARTIFACT (its one home); verify-merge-evidence.py
+# and verify-board-status.py check these constants against the workflow.
+# --------------------------------------------------------------------------
+MERGE_EVIDENCE_WORKFLOW = "wing-commander-merge-evidence.yml"
+MERGE_EVIDENCE_ARTIFACT = "merge-evidence-section"
+MERGE_EVIDENCE_FILE = "merge-evidence-section.json"
+MERGE_EVIDENCE_BUILD_STEP = "Build the audit"
+# The workflow's `run-name:` for the runs that carry the daily audit job;
+# the hourly verdict runs have another title and are not the audit.
+MERGE_EVIDENCE_AUDIT_TITLES = ("merge-evidence audit", "merge-evidence dispatch both",
+                               "merge-evidence dispatch audit")
+MERGE_EVIDENCE_NOTICES = {
+    "paused": "The merge evidence audit is paused (`WING_COMMANDER_MERGE_EVIDENCE_PAUSED`).",
+    "failed": "The merge evidence audit's latest build did not succeed, or is more than 48 hours old.",
+    "never": "The merge evidence audit has never been built.",
+    "unreadable": "The merge evidence audit's build history or artifact could not be read this time.",
+}
+
+
+def merge_evidence_block(me, body):
+    return _section_block(me, body, "Merge evidence audit", MERGE_EVIDENCE_NOTICES, "wc-merge-evidence")
 
 
 # --------------------------------------------------------------------------
@@ -416,48 +450,107 @@ def snapshot(repo, switches):
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {"now": now, "issues": issues, "prs": prs, "maintenance": maintenance,
             "roadmap_number": roadmap, "release": release, "main_ci": main_ci,
-            "switches": switches, "proof_list": proof_list_snapshot(repo, switches)}
+            "switches": switches, "proof_list": proof_list_snapshot(repo, switches),
+            "merge_evidence": merge_evidence_snapshot(repo, switches)}
 
 
 def _gh_obj(path):
     return json.loads(_gh(["api", path]))
 
 
-def _build_step_ok(repo, run_id):
+def _build_step_ok(repo, run_id, step_name=None):
+    step_name = step_name or PROOF_LIST_BUILD_STEP
     jobs = _gh_obj("repos/{0}/actions/runs/{1}/jobs?per_page=100".format(repo, run_id)).get("jobs") or []
-    return any(step.get("name") == PROOF_LIST_BUILD_STEP and step.get("conclusion") == "success"
+    return any(step.get("name") == step_name and step.get("conclusion") == "success"
                for job in jobs for step in job.get("steps") or [])
 
 
 def proof_list_snapshot(repo, switches, now=None, gh_obj=None, build_ok=None, download=None):
+    """The proof list's section status; see section_snapshot()."""
+    return section_snapshot(repo, switches, PROOF_LIST_WORKFLOW, PROOF_LIST_ARTIFACT, "proof_list_paused",
+                            now, gh_obj, build_ok or (lambda rid: _build_step_ok(repo, rid)), download)
+
+
+def merge_evidence_snapshot(repo, switches, now=None, gh_obj=None, build_ok=None, download=None):
+    """The merge evidence audit's section status; only the daily audit's runs
+    count (the hourly verdict runs never build the section)."""
+    return section_snapshot(repo, switches, MERGE_EVIDENCE_WORKFLOW, MERGE_EVIDENCE_ARTIFACT,
+                            "merge_evidence_paused", now, gh_obj,
+                            build_ok or (lambda rid: _build_step_ok(repo, rid, MERGE_EVIDENCE_BUILD_STEP)),
+                            download, titles=MERGE_EVIDENCE_AUDIT_TITLES, filename=MERGE_EVIDENCE_FILE)
+
+
+# The events a read-only watcher's own runs come from. A pull_request run
+# executes the PR's copy of the workflow (a fork's, with a head branch it
+# can name `main`), so its artifacts are never this repository's output.
+TRUSTED_RUN_EVENTS = ("schedule", "workflow_dispatch")
+# section_snapshot pages 100 completed runs at a time looking for the latest
+# good build, and stops at the end of the history, once a page's runs are all
+# older than SECTION_LOOKBACK_DAYS, or at SECTION_RUN_PAGES pages (the merge
+# evidence workflow has ~25 runs a day). Stopping early is said as "not found
+# within ...", never as "never" (#1173 round 5, finding 8).
+SECTION_RUN_PAGES = 10
+SECTION_LOOKBACK_DAYS = 31
+
+
+def trusted_watcher_run(run, repo):
+    """The one home of "this run is the repository's own scheduled or
+    dispatched run" (the section readers here and
+    wc_merge_evidence.download_ledger): its event is a schedule or a
+    dispatch and its head repository is `repo`, never a fork."""
+    return ((run or {}).get("event") in TRUSTED_RUN_EVENTS
+            and ((run or {}).get("head_repository") or {}).get("full_name") == repo)
+
+
+def section_snapshot(repo, switches, workflow, artifact, switch_key, now, gh_obj, build_ok, download,
+                     titles=None, filename="proof-list-section.json"):
     """The section's status (research D17): paused, never, failed, built or
     unreadable, plus the last good build's time. The readers are parameters so
     verify-board-status.py drives every branch."""
-    gh_obj, build_ok = gh_obj or _gh_obj, build_ok or (lambda rid: _build_step_ok(repo, rid))
+    gh_obj = gh_obj or _gh_obj
     now = now or datetime.datetime.now(datetime.timezone.utc)
-    paused = _switch_on(switches.get("proof_list_paused"))
+    paused = _switch_on(switches.get(switch_key))
     last_good = "unknown"
     try:
         default = gh_obj("repos/{0}".format(repo))["default_branch"]
-        try:
-            runs = gh_obj("repos/{0}/actions/workflows/{1}/runs?status=completed&branch={2}&per_page=30".format(
-                repo, PROOF_LIST_WORKFLOW, default)).get("workflow_runs") or []
-        except subprocess.CalledProcessError as exc:
-            if "HTTP 404" not in (exc.stderr or ""):
-                raise
-            runs = []
-        runs = [r for r in runs if r.get("event") in ("schedule", "workflow_dispatch")
-                and (r.get("head_repository") or {}).get("full_name") == repo]
-        last_good, good_ok = "never", {}
-        for run in runs:
-            good_ok[run["id"]] = build_ok(run["id"]) if run.get("conclusion") == "success" else False
-            if good_ok[run["id"]]:
-                last_good = run.get("run_started_at") or run.get("created_at") or "unknown"
+        # Pages of 100 until the latest good build is found (a page-count
+        # bound, not a run count of one day: #1173 review R3).
+        runs, found, good_ok, cut_short = [], "never", {}, None
+        oldest_kept = (now.replace(tzinfo=None) - datetime.timedelta(days=SECTION_LOOKBACK_DAYS)).strftime(
+            "%Y-%m-%dT%H:%M:%S")
+        for page in range(1, SECTION_RUN_PAGES + 1):
+            try:
+                batch = gh_obj("repos/{0}/actions/workflows/{1}/runs?status=completed&branch={2}"
+                               "&per_page=100&page={3}".format(repo, workflow, default, page)).get("workflow_runs") or []
+            except subprocess.CalledProcessError as exc:
+                if "HTTP 404" not in (exc.stderr or ""):
+                    raise
+                batch = []
+            for run in batch:
+                if not trusted_watcher_run(run, repo) or (titles is not None and run.get("display_title") not in titles):
+                    continue
+                runs.append(run)
+                if found == "never":
+                    good_ok[run["id"]] = build_ok(run["id"]) if run.get("conclusion") == "success" else False
+                    if good_ok[run["id"]]:
+                        found = run.get("run_started_at") or run.get("created_at") or "unknown"
+            if found != "never" or len(batch) < 100:
                 break
+            if max((r.get("run_started_at") or r.get("created_at") or "")[:19] for r in batch) < oldest_kept:
+                cut_short = "not found in the last {0} days".format(SECTION_LOOKBACK_DAYS)
+                break
+            if page == SECTION_RUN_PAGES:
+                cut_short = "not found within the newest {0} runs".format(SECTION_RUN_PAGES * 100)
+        if found == "never" and cut_short:
+            found = cut_short
+        # Set only once the history was read: a failed read leaves "unknown".
+        last_good = found
         if paused:
             return {"status": "paused", "last_good_at": last_good}
         if not runs:
-            return {"status": "never", "last_good_at": "never"}
+            # No audit within the bound is not "never built": older runs exist.
+            return {"status": "failed", "last_good_at": cut_short} if cut_short else \
+                {"status": "never", "last_good_at": "never"}
         latest = runs[0]
         if latest.get("conclusion") != "success":
             return {"status": "failed", "last_good_at": last_good}
@@ -468,8 +561,11 @@ def proof_list_snapshot(repo, switches, now=None, gh_obj=None, build_ok=None, do
             return {"status": "paused", "last_good_at": last_good}
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                (download or _download_section)(repo, latest["id"], tmp)
-                with open(os.path.join(tmp, "proof-list-section.json"), encoding="utf-8") as fh:
+                if download:
+                    download(repo, latest["id"], tmp)
+                else:
+                    _download_section(repo, latest["id"], tmp, artifact)
+                with open(os.path.join(tmp, filename), encoding="utf-8") as fh:
                     section = json.load(fh)
             if section.get("schema") != 1 or not section.get("full") or not section.get("names_only"):
                 raise ValueError("malformed section")
@@ -480,8 +576,8 @@ def proof_list_snapshot(repo, switches, now=None, gh_obj=None, build_ok=None, do
         return {"status": "paused" if paused else "unreadable", "last_good_at": last_good}
 
 
-def _download_section(repo, run_id, directory):
-    _gh(["run", "download", str(run_id), "-R", repo, "-n", PROOF_LIST_ARTIFACT, "-D", directory])
+def _download_section(repo, run_id, directory, artifact=PROOF_LIST_ARTIFACT):
+    _gh(["run", "download", str(run_id), "-R", repo, "-n", artifact, "-D", directory])
 
 
 def publish(repo, body):
@@ -513,6 +609,7 @@ SWITCH_ENV = {
     "board_can_push_workflows": "BOARD_CAN_PUSH_WORKFLOWS",
     "board_loop_paused": "BOARD_LOOP_PAUSED",
     "lifecycle_auto_merge": "LIFECYCLE_AUTO_MERGE",
+    "merge_evidence_paused": "MERGE_EVIDENCE_PAUSED",
     "proof_list_paused": "PROOF_LIST_PAUSED",
     "review_gate_paused": "LIFECYCLE_REVIEW_GATE_PAUSED",
     "tasks_review": "TASKS_REVIEW",

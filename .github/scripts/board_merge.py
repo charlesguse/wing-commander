@@ -555,6 +555,14 @@ def pick_bump_candidate(snapshots, bot_login, stalled_issues=()):
     return {"pr": chosen.get("number"), "issue": bump_tracking_issue(chosen.get("body"))}
 
 
+# Public names for the read-only merge evidence audit (spec 125, FR-008): it
+# calls these, never copies them. Aliases only; no behaviour change. No merge
+# decision here reads the audit (FR-019).
+attributed_to_auto_update = _attributed_to_auto_update
+bot_pr_author = _bot_pr_author
+bot_marker_records = _bot_marker_records
+
+
 def _gh(args, token=None):
     env = dict(os.environ)
     if token:
@@ -591,6 +599,11 @@ def _fetch_verification_run(repo, record, token):
             "status": run.get("status"), "conclusion": run.get("conclusion"),
             "referenced_workflows": [(w or {}).get("path") for w in run.get("referenced_workflows") or []],
             "artifacts": [(a or {}).get("name") for a in artifacts]}
+
+
+gh_items = _gh_items
+fetch_verification_run = _fetch_verification_run
+is_app_user = _is_app_user
 
 
 def fetch_snapshot(repo, pr, bot_login, actions_token=None):

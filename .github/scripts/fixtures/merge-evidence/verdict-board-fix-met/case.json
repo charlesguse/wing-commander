@@ -1,0 +1,2 @@
+{"base": "board-fix", "patch": {"verdict_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+ "expect": {"kind": "board-fix", "first_unmet": null, "complete": true, "rule_applied": "all-statuses"}}

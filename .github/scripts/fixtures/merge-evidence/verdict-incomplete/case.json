@@ -1,0 +1,5 @@
+{"base": "board-fix",
+ "patch": {"verdict_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+           "counts": {"files": 2, "commits": 1, "comments": 0, "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+ "expect": {"kind": "board-fix", "first_unmet": "review_verdict_at_head", "complete": false,
+            "result_of": {"review_verdict_at_head": "not-read", "zero_open_findings": "not-read"}}}

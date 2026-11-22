@@ -1,0 +1,3 @@
+{"base": "board-fix", "patch": {"verdict_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+ "expect": {"kind": "board-fix", "first_unmet": "review_verdict_at_head", "complete": true,
+            "reason_contains": "another commit"}}

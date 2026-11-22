@@ -455,11 +455,146 @@ def proof_list_half():
           and "wc-proof-list:begin" not in bs.render(SNAP))
 
 
+def run_name_title_problems(wf_text):
+    """Each of the writer's audit titles must appear whole, as a quoted
+    literal, in the workflow's run-name (finding 9, #1173 round 3); a
+    shared prefix or a format() template is not enough."""
+    import yaml
+    run_name = str((yaml.safe_load(wf_text) or {}).get("run-name") or "")
+    problems = ["run-name has no literal '{0}'".format(t) for t in bs.MERGE_EVIDENCE_AUDIT_TITLES
+                if "'{0}'".format(t) not in run_name]
+    if "'merge-evidence verdicts'" not in run_name or "merge-evidence verdicts" in bs.MERGE_EVIDENCE_AUDIT_TITLES:
+        problems.append("the hourly title 'merge-evidence verdicts' is missing, or counted as an audit")
+    return problems
+
+
+def merge_evidence_half():
+    """specs/125-merge-evidence-audit: the section's statuses, its shortened
+    form, and the constants shared with the merge evidence workflow."""
+    import datetime
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with open(os.path.join(root, ".github", "workflows", bs.MERGE_EVIDENCE_WORKFLOW), encoding="utf-8") as fh:
+        wf = fh.read()
+    check("the merge-evidence workflow's upload name is the writer's artifact constant",
+          "name: {0}\n".format(bs.MERGE_EVIDENCE_ARTIFACT) in wf)
+    check("the merge-evidence workflow's build step is the writer's build-step constant",
+          "- name: {0}\n".format(bs.MERGE_EVIDENCE_BUILD_STEP) in wf)
+    missing = run_name_title_problems(wf)
+    check("the merge-evidence workflow's run-name writes out each audit title the writer filters on",
+          not missing, "; ".join(missing))
+    for label, old_text, new_text in (("a renamed dispatch title", "'merge-evidence dispatch both'",
+                                       "'merge-evidence dispatch all'"),
+                                      ("a renamed scheduled audit title", "'merge-evidence audit'",
+                                       "'merge-evidence audits'")):
+        mutated = wf.replace(old_text, new_text)
+        check("the run-name check notices {0}".format(label),
+              mutated != wf and run_name_title_problems(mutated))
+    check("merge_evidence_paused is in SWITCH_ENV and passed by board-status.yml",
+          bs.SWITCH_ENV.get("merge_evidence_paused") == "MERGE_EVIDENCE_PAUSED")
+    with open(os.path.join(root, ".github", "workflows", "board-status.yml"), encoding="utf-8") as fh:
+        check("board-status.yml passes the pause variable",
+              "MERGE_EVIDENCE_PAUSED: ${{ vars.WING_COMMANDER_MERGE_EVIDENCE_PAUSED }}" in fh.read())
+
+    now = datetime.datetime(2026, 11, 20, 12, 0, 0)
+    section = {"schema": 1, "built_at": "2026-11-20T05:41:00Z", "full": "MEFULL\n", "names_only": "MENAMES\n"}
+
+    def run(runs, ok, switches=None, download="ok"):
+        def gh_obj(path):
+            if path == "repos/o/r":
+                return {"default_branch": "main"}
+            return {"workflow_runs": runs}
+
+        def dl(repo, rid, tmp):
+            if download == "ok":
+                with open(os.path.join(tmp, bs.MERGE_EVIDENCE_FILE), "w", encoding="utf-8") as fh:
+                    json.dump(section, fh)
+        return bs.merge_evidence_snapshot("o/r", switches or {}, now, gh_obj, lambda rid: ok.get(rid, False), dl)
+
+    def mk(rid, when, title="merge-evidence audit", conclusion="success"):
+        return {"id": rid, "run_started_at": when, "conclusion": conclusion, "event": "schedule",
+                "display_title": title, "head_repository": {"full_name": "o/r"}}
+    audit = mk(3, "2026-11-20T05:41:00Z")
+    hourly = mk(9, "2026-11-20T11:07:00Z", "merge-evidence verdicts")
+    check("built: the hourly verdict runs are not the audit",
+          run([hourly, audit], {3: True})["status"] == "built")
+    check("never: only hourly runs exist", run([hourly], {9: True})["status"] == "never")
+    check("failed: the latest audit failed",
+          run([mk(4, "2026-11-20T05:41:00Z", conclusion="failure")], {})["status"] == "failed")
+    check("paused: the switch is set, whatever the history",
+          run([audit], {3: True}, {"merge_evidence_paused": "True "})["status"] == "paused")
+    check("unreadable: the artifact is missing", run([audit], {3: True}, download="none")["status"] == "unreadable")
+
+    # #1173 review R3: ~25 runs a day, so the last good audit can sit past the
+    # first 30 runs; the reader pages until it finds it.
+    def paged(runs):
+        def gh_obj(path):
+            if path == "repos/o/r":
+                return {"default_branch": "main"}
+            per = int(re.search(r"per_page=(\d+)", path).group(1))
+            page = int((re.search(r"[?&]page=(\d+)", path) or re.search(r"()", path)).group(1) or 1)
+            return {"workflow_runs": runs[(page - 1) * per:page * per]}
+        return gh_obj
+    hourly_runs = [mk(100 + i, "2026-11-20T11:07:00Z", "merge-evidence verdicts") for i in range(140)]
+    late_good = mk(7, "2026-11-19T05:41:00Z")
+    failed_audit = mk(8, "2026-11-20T05:41:00Z", conclusion="failure")
+    deep = hourly_runs[:20] + [failed_audit] + hourly_runs[20:130] + [late_good]
+    snap = bs.merge_evidence_snapshot("o/r", {}, now, paged(deep), lambda rid: rid == 7, lambda *a: None)
+    check("a failed audit keeps the last good build from past the first 100 runs",
+          snap == {"status": "failed", "last_good_at": "2026-11-19T05:41:00Z"}, snap)
+    fresh = hourly_runs[:35] + [audit]
+    snap = bs.merge_evidence_snapshot("o/r", {}, now, paged(fresh), lambda rid: rid == 3,
+                                      lambda repo, rid, tmp: json.dump(section, open(
+                                          os.path.join(tmp, bs.MERGE_EVIDENCE_FILE), "w", encoding="utf-8")))
+    check("a good audit past the 30th run is still found (not 'never')", snap.get("status") == "built", snap)
+    # Round 5, finding 8: past three pages the reader keeps going, and a
+    # bound it stops at is said as "not found within ...", never "never".
+    mid = hourly_runs[:5] + [failed_audit] + [mk(200 + i, "2026-11-20T11:07:00Z", "merge-evidence verdicts")
+                                              for i in range(440)] + [late_good]
+    snap = bs.merge_evidence_snapshot("o/r", {}, now, paged(mid), lambda rid: rid == 7, lambda *a: None)
+    check("the last good audit past three pages (the 447th run) is still found",
+          snap == {"status": "failed", "last_good_at": "2026-11-19T05:41:00Z"}, snap)
+    capped = [mk(1000 + i, "2026-11-20T11:07:00Z", "merge-evidence verdicts") for i in range(1050)] + [late_good]
+    snap = bs.merge_evidence_snapshot("o/r", {}, now, paged(capped), lambda rid: True, lambda *a: None)
+    check("no audit within the run cap is 'not found within N runs', not 'never'",
+          snap.get("status") == "failed" and "not found within the newest" in str(snap.get("last_good_at")), snap)
+    aged = [mk(3000 + i, "2026-09-01T11:07:00Z", "merge-evidence verdicts") for i in range(150)] + [late_good]
+    snap = bs.merge_evidence_snapshot("o/r", {}, now, paged(aged), lambda rid: True, lambda *a: None)
+    check("runs older than the lookback stop the reader with 'not found in the last N days'",
+          snap.get("status") == "failed" and "not found in the last" in str(snap.get("last_good_at")), snap)
+    check("the notice for a bound reads as a sentence",
+          "The last good build was not found within the newest 1000 runs." in bs.merge_evidence_block(
+              {"status": "failed", "last_good_at": "not found within the newest 1000 runs"}, "body\n"))
+    forked = [dict(audit, id=21, event="pull_request"), dict(audit, id=22, head_repository={"full_name": "fork/r"})]
+    check("a pull_request or fork run is never the audit",
+          bs.merge_evidence_snapshot("o/r", {}, now, paged(forked), lambda rid: True, lambda *a: None)["status"] == "never")
+    try:
+        bs.merge_evidence_snapshot("o/r", {}, now, lambda path: (_ for _ in ()).throw(
+            subprocess.CalledProcessError(1, "gh", "", "boom")), lambda rid: True)
+        unreadable = True
+    except subprocess.CalledProcessError:
+        unreadable = False
+    check("unreadable: a failed history read is a status, not a crash", unreadable)
+
+    body = "board body\n"
+    built = {"status": "built", "last_good_at": "x", "section": section}
+    check("a section that fits shows the full form between its own markers",
+          "MEFULL" in bs.merge_evidence_block(built, body)
+          and "<!-- wc-merge-evidence:end -->" in bs.merge_evidence_block(built, body))
+    near = "x" * (60000 - len(body) - 700)
+    short = bs.merge_evidence_block({"status": "built", "section": dict(section, full="F" * 5000)}, near)
+    check("over size, the names-only form shows", "MENAMES" in short and "FFFF" not in short)
+    check("render places the section after the board and leaves the rest unchanged",
+          bs.render(dict(SNAP, merge_evidence={"status": "never"})).startswith(bs.render(SNAP))
+          and "wc-merge-evidence:begin" not in bs.render(SNAP))
+
+
 def main():
     render_half()
     runtime_half()
     switches_half()
     proof_list_half()
+    merge_evidence_half()
     print("verify-board-status: {0} failure(s).".format(len(failures)))
     return 1 if failures else 0
 

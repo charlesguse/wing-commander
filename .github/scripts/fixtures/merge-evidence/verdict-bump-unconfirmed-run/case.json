@@ -1,0 +1,3 @@
+{"base": "bump", "patch": {"bump_comment": {"head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "tier": "t1", "result": "passed", "run_id": "99"}},
+ "expect": {"kind": "bump", "first_unmet": "verification_confirmed", "complete": true,
+            "reason_contains": "does not confirm"}}

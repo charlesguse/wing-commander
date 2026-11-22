@@ -1,0 +1,4 @@
+{"base": "board-fix", "patch": {"verdict_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+ "merge": {"pr": 10, "merged_commit": "cccccccccccccccccccccccccccccccccccccccc", "merged_at": "2026-11-10T12:00:00Z", "merged_by": "owner"},
+ "ledger": [{"pr": 10, "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "computed_at": "2026-11-10T11:07:00Z", "first_unmet": "review_verdict_at_head", "complete": true}],
+ "expect": {"mark": "recorded", "first_unmet": null, "prior_result": "unmet"}}

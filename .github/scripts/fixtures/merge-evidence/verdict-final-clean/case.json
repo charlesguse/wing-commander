@@ -1,0 +1,2 @@
+{"base": "final", "patch": {"gate_marker": {"round": 2, "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "outcome": "clean", "findings_open": 0}},
+ "expect": {"kind": "final", "first_unmet": null, "complete": true, "rule_applied": "without-gate-status"}}

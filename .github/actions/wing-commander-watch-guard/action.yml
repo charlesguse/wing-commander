@@ -1,0 +1,90 @@
+name: wing-commander-watch-guard
+description: >
+  The two opening steps of a read-only watcher job (wing-commander-merge-evidence.yml,
+  both jobs, and wing-commander-proof-list.yml): refuse a run whose ref is
+  not the default branch (every run, or only a dispatch), then read
+  the job's pause switch with wc_board_status._switch_on, the one home of
+  that test, and say whether the job stands down. It reads nothing from
+  GitHub, so the refusal still comes before every step that does. Needs the
+  repository checked out (the switch test is Python in .github/scripts).
+
+inputs:
+  what:
+    description: >
+      What refuses, for the error line, e.g. "the merge evidence audit runs".
+    required: true
+  default-branch:
+    description: >
+      github.event.repository.default_branch. Empty refuses the run.
+    required: true
+  switch-name:
+    description: The pause variable's name, for the log line.
+    required: true
+  refuse-on:
+    description: >
+      `every-run` (the default) refuses any run off the default branch;
+      `dispatch` refuses only a workflow_dispatch off it, as the proof list
+      always has. Any other value fails the step.
+    required: false
+    default: every-run
+  event:
+    description: >
+      github.event_name, passed in (a composite reads no event facts
+      itself, constitution VII). Needed when refuse-on is `dispatch`.
+    required: false
+    default: ''
+  switch-value:
+    description: >
+      The pause variable's value (vars.<switch-name>). A composite cannot
+      read vars itself, so the caller passes it.
+    required: false
+    default: ''
+
+outputs:
+  paused:
+    description: >
+      'true' when the switch is on; the caller gates every later step on
+      `!= 'true'`, so a guard that never ran leaves them gated by success().
+    value: ${{ steps.pause.outputs.paused }}
+
+runs:
+  using: composite
+  steps:
+    - name: Refuse a run off the default branch
+      shell: bash
+      env:
+        REF: ${{ github.ref }}
+        EVENT: ${{ inputs.event }}
+        DEFAULT_BRANCH: ${{ inputs.default-branch }}
+        WHAT: ${{ inputs.what }}
+        REFUSE_ON: ${{ inputs.refuse-on }}
+      run: |
+        case "$REFUSE_ON" in
+          every-run) ;;
+          dispatch)
+            if [ -z "$EVENT" ]; then
+              echo "::error::wing-commander-watch-guard: refuse-on dispatch needs the event input"
+              exit 1
+            fi
+            [ "$EVENT" = "workflow_dispatch" ] || exit 0 ;;
+          *) echo "::error::wing-commander-watch-guard: refuse-on must be every-run or dispatch, not '$REFUSE_ON'"; exit 1 ;;
+        esac
+        if [ -z "$DEFAULT_BRANCH" ] || [ "$REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+          echo "::error::$WHAT only on the default branch (ref '$REF', default '$DEFAULT_BRANCH')"
+          exit 1
+        fi
+
+    - name: Check the pause switch
+      id: pause
+      shell: bash
+      env:
+        SWITCH_VALUE: ${{ inputs.switch-value }}
+        SWITCH_NAME: ${{ inputs.switch-name }}
+        SCRIPTS: ${{ github.action_path }}/../../scripts
+      run: |
+        set -euo pipefail
+        paused=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import wc_board_status as bs; print("true" if bs._switch_on(sys.argv[2]) else "false")' "$SCRIPTS" "$SWITCH_VALUE")
+        echo "paused=$paused" >> "$GITHUB_OUTPUT"
+        if [ "$paused" = "true" ]; then
+          echo "$SWITCH_NAME is set; standing down."
+        fi

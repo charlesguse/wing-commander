@@ -1,0 +1,10 @@
+{"base": "board-fix",
+ "patch": {"verdict_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+           "statusCheckRollup": [
+             {"name": "lint", "conclusion": "FAILURE", "workflowName": "lint · workflows",
+              "startedAt": "2026-11-10T09:00:00Z", "completedAt": "2026-11-10T09:30:00Z"},
+             {"name": "lint", "conclusion": "SUCCESS", "workflowName": "lint · workflows",
+              "startedAt": "2026-11-10T10:00:00Z", "completedAt": "2026-11-10T10:30:00Z"}]},
+ "merge": {"pr": 10, "merged_commit": "cccccccccccccccccccccccccccccccccccccccc", "merged_at": "2026-11-10T12:00:00Z", "merged_by": "owner"},
+ "ledger": [],
+ "expect": {"mark": "reconstructed", "first_unmet": null, "left_out": 0}}

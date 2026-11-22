@@ -54,6 +54,8 @@ import json
 import subprocess
 import sys
 
+from lifecycle_readiness import _checks_green as _readiness_checks_green
+from lifecycle_readiness import _gate_suite_green as _readiness_gate_suite_green
 from lifecycle_readiness import evaluate_from_snapshot as _readiness
 
 # In the order unmet_reason names them (contracts/readiness-and-merge.md
@@ -93,6 +95,13 @@ def _no_unresolved_human_review(reviews, bot_login):
             continue
         standing[login] = state
     return not any(state == "CHANGES_REQUESTED" for state in standing.values())
+
+
+# Public names for the merge evidence audit (spec 125, FR-008): the final-PR rule (the gate's own status left out) and the
+# unresolved-human-review test, called and never copied. Aliases only.
+no_unresolved_human_review = _no_unresolved_human_review
+checks_green_without_gate_status = _readiness_checks_green
+gate_suite_green_in_rollup = _readiness_gate_suite_green
 
 
 def evaluate_from_snapshot(snapshot, review_gate, kill_switch_paused,

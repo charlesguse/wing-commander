@@ -1,0 +1,3 @@
+{"base": "maintainer", "patch": {"headRefName": "spec-draft/125-x", "statusCheckRollup": []},
+ "expect": {"kind": "spec", "first_unmet": "checks_green_with_gate_suite", "complete": true,
+            "reason_contains": "no checks on the head"}}

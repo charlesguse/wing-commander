@@ -3466,6 +3466,13 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-proof-list.py
 
+      # The merge evidence audit (specs/125-merge-evidence-audit) records one
+      # verdict per pull-request head by code and only watches. Not numbered:
+      # gate numbers are allocated by hand and collide (#773).
+      - name: Merge evidence audit records every verdict by code and only watches
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-merge-evidence.py
+
       # auto-release-switch.yml sets or clears WING_COMMANDER_AUTO_RELEASE_PAUSED
       # and reads it back; anyone may pause, only the repository owner may
       # resume (specs/055-unattended-e2e-gates FR-028). Not numbered, as above.

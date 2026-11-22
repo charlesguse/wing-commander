@@ -1,3 +1,12 @@
-{"issue": 1143, "spec_dir": "specs/125-merge-evidence-audit",
- "feature_num": "125", "stage": "spec", "iteration": 0,
- "spec_branch": null}
+{
+  "issue": 1143,
+  "spec_dir": "specs/125-merge-evidence-audit",
+  "feature_num": "125",
+  "stage": "review",
+  "iteration": 5,
+  "spec_branch": "spec/125-merge-evidence-audit",
+  "truncated_count": 0,
+  "truncated_tier": null,
+  "gate_suite_ready": true,
+  "pending_re_review_from": []
+}
