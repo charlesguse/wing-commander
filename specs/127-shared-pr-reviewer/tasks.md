@@ -127,7 +127,7 @@ Field constraints are those of `data-model.md`; tasks cite the `Entity.field` th
 - [x] T039 [P] Add the one fix-PR line to CLAUDE.md's fix-PR section exactly as in the spec Scope (FR-004): "A session dispatches the shared reviewer on each of its fix PRs, on the head its hand review covers, during report-only use."
 - [x] T040 [P] Update `docs/reference.md` with the loop row, defaults (models, turns 40/40, budget 5), limits and the kill switch, per its rule on which changes must update it
 - [x] T041 Confirm the existing reviewers and `review-until-clean` are untouched (FR-005, FR-028): add a check to the nearest existing gate or `verify-shared-review-wiring.py` that no existing workflow or skill reads the shared verdict
-- [ ] T042 Walk quickstart.md steps 1-3 and 5-6 locally with fixtures; run `python .github/scripts/run-local-gates.py`; get the `review-step-gating` and `container-shell-safety` skill passes on the new workflows
+- [x] T042 Walk quickstart.md steps 1-3 and 5-6 locally with fixtures; run `python .github/scripts/run-local-gates.py`; get the `review-step-gating` and `container-shell-safety` skill passes on the new workflows
 
 ---
 
