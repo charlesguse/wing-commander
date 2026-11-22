@@ -154,3 +154,8 @@ Field constraints are those of `data-model.md`; tasks cite the `Entity.field` th
 ## Implementation Strategy
 
 MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, also P1), US3 (confirmation), US4 (isolation proofs), US5 (budget), polish. Each story is verified by its fixtures before the next starts.
+
+## Phase 10: Convergence
+
+- [ ] T046 Add an "unpublished callable" exclusion form (a registry with a reason per entry, read by `wc_published_stages.py` and by Gates 7, 22, 23, 12, `verify-stage-tool-lists.py` and `verify-stage-shell-lint.py`'s inline derivations) so `shared-pr-reviewer.yml` can exist without being a published stage, per FR-002 and T020 (missing)
+- [ ] T047 Move the parked drafts `specs/127-shared-pr-reviewer/draft-shared-pr-reviewer.yml.txt` and `draft-wing-commander-shared-pr-reviewer.yml.txt` to `.github/workflows/shared-pr-reviewer.yml` and `wing-commander-shared-pr-reviewer.yml` once T046 lands, then finish T014, T015, T018, T019, T025, T029, T033 against them and rerun the gate suite (partial)
