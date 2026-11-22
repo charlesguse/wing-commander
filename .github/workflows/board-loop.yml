@@ -988,7 +988,9 @@ jobs:
           # held attempt: board_backlog_lines.release_attempt() closes that
           # attempt's open PR, keeping its branch, and records the release.
           # Until that is final no new line is claimed, so a released line is
-          # never claimed fresh beside its old PR; the next run retries.
+          # not claimed fresh beside a PR the loop can still close (one its
+          # token refuses is named in the record for a maintainer); the next
+          # run retries.
           release_pending=false
           mapfile -t released < <(jq -r '.released[]' <<<"$decision")
           for gone in "${released[@]}"; do

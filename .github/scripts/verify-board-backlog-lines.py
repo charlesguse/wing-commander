@@ -373,6 +373,8 @@ def run_release_attempt(case):
             rcs = case.get("close_rcs") or [case.get("close_rc", 0)]
             tries = sum(1 for c in calls if c[:3] == ["gh", "pr", "close"])
             return _Proc(rcs[min(tries, len(rcs)) - 1])
+        if cmd[:3] == ["gh", "pr", "comment"]:
+            return _Proc(case.get("note_rc", 0))
         if cmd[:3] == ["gh", "issue", "comment"]:
             return _Proc(case.get("post_rc", 0))
         return _Proc(1)
@@ -398,9 +400,20 @@ def run_release_attempt(case):
     for cmd in closes:
         if "--delete-branch" in cmd or "-d" in cmd:
             errors.append("deleted the attempt's branch: {0!r}".format(cmd))
-        note = cmd[cmd.index("--comment") + 1] if "--comment" in cmd else ""
-        if line_id not in note or "released" not in note:
-            errors.append("close comment does not say the line was released: {0!r}".format(note))
+    # One release note per closed PR and none on a refused one, whether it
+    # rode on a close (`--comment`, which gh posts before it closes, so
+    # every retry repeats it) or was posted on its own after the close.
+    notes = {}
+    for cmd in calls:
+        flag = {"close": "--comment", "comment": "--body"}.get(cmd[2] if cmd[:2] == ["gh", "pr"] else None)
+        if flag and flag in cmd:
+            note = cmd[cmd.index(flag) + 1]
+            if line_id not in note or "released" not in note:
+                errors.append("PR note does not say the line was released: {0!r}".format(note))
+            notes[int(cmd[3])] = notes.get(int(cmd[3]), 0) + 1
+    want_notes = {n: 1 for n in case.get("expect_noted", [])}
+    if notes != want_notes:
+        errors.append("release notes per PR {0!r}, want {1!r}".format(notes, want_notes))
     posts = [cmd for cmd in calls if cmd[:3] == ["gh", "issue", "comment"]]
     if len(posts) != (1 if case["expect_record"] else 0):
         errors.append("{0} backlog records, want {1}".format(len(posts), 1 if case["expect_record"] else 0))

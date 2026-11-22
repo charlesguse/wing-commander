@@ -626,9 +626,11 @@ def hold_for_keywords(issue, line_id, site, branch, base_sha, hits, run=None):
 def release_attempt(issue, line_id, run=None, repository=None, sleep=None, close_attempts=3):
     """#1135 option (c): a released line's held attempt ends. Its open pull
     request -- head `branch_for(issue, line_id)` in this repository, body
-    citing this line (pr_cites_line()) -- is closed with a comment saying
-    the line was released, and its branch is left in place, so it can never
-    merge against a line that has moved on. Then one record goes on the
+    citing this line (pr_cites_line()) -- is closed, and its branch is left
+    in place, so it can never merge against a line that has moved on. One
+    comment saying the line was released goes on it after the close, never
+    with it: `gh pr close --comment` posts its comment before it closes, so
+    a retried close would repeat it on a PR still open. Then one record goes on the
     backlog issue, whose stood-down marker ends the id's `stalled` state so
     no later run does this again (decide_line_item()'s `released`). A pull
     request the token could not close is named in that record with the
@@ -672,12 +674,20 @@ def release_attempt(issue, line_id, run=None, repository=None, sleep=None, close
         for attempt in range(max(1, close_attempts)):
             if attempt:
                 sleep(5 * attempt)
-            shut = run(["gh", "pr", "close", str(pr["number"]), "-R", repository, "--comment", pr_note],
+            shut = run(["gh", "pr", "close", str(pr["number"]), "-R", repository],
                        capture_output=True, text=True)
             if shut.returncode == 0:
                 break
         if shut.returncode == 0:
             closed.append(pr["number"])
+            # The close is final without its note; the backlog record below
+            # still names this PR as closed.
+            said = run(["gh", "pr", "comment", str(pr["number"]), "-R", repository, "--body", pr_note],
+                       capture_output=True, text=True)
+            if said.returncode != 0:
+                print("::warning::board_backlog_lines: closed pull request #{0}, but its release "
+                      "note could not be posted ({1}).".format(
+                          pr["number"], (said.stderr or "").strip()), file=sys.stderr)
         else:
             refused.append((pr["number"], ((shut.stderr or "").strip().splitlines() or [""])[-1]))
     lines = ["Board loop: backlog line `{0}` was released from its hold, so its held attempt "

@@ -20,5 +20,8 @@
   "expect_record": true,
   "record_contains": [
     "Closed its pull request #41"
+  ],
+  "expect_noted": [
+    41
   ]
 }

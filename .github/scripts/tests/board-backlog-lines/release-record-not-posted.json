@@ -13,5 +13,8 @@
   "expect_closes": [
     41
   ],
-  "expect_record": true
+  "expect_record": true,
+  "expect_noted": [
+    41
+  ]
 }

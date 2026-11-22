@@ -18,5 +18,8 @@
     "fix/889-bl-0a1b2c3d",
     "left in place",
     "claimed fresh"
+  ],
+  "expect_noted": [
+    41
   ]
 }
