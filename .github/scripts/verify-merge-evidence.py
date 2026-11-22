@@ -859,6 +859,41 @@ def check_round5_login_seen(base_doc):
         problems.append("login: a maintainer PR, which needs no App record, names the App login")
     return problems
 
+def check_round5_record_time():
+    """Round 5, finding 6: each record is stamped when its own snapshot was
+    read, after the read, not with the run's start."""
+    problems = []
+    clock = iter("2026-11-20T05:{0:02d}:00Z".format(m) for m in range(0, 60))
+    reads = []
+
+    def fake_fetch(repo, number, bot_login, token):
+        reads.append(number)
+        return {"number": number, "headRefOid": "h%d" % number, "headRefName": "feature/x", "baseRefName": "main",
+                "author": {"login": "owner", "is_bot": False}, "body": "", "statusCheckRollup": []}
+
+    def fake_extend(repo, snap, *args, **kwargs):
+        snap["evidence_read_at_clock"] = next(clock)
+        return snap
+
+    with _Patched(_now=lambda: next(clock), board_merge__gh_items=lambda url: [{"number": 1}, {"number": 2}],
+                  board_merge__fetch_snapshot=fake_fetch, _extend_with_evidence=fake_extend,
+                  check_rate_limit=lambda: 5000, download_ledger=lambda *a: None,
+                  _pr_state=lambda repo, n: {"state": "open", "at": None}):
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                ledger = me.run_verdicts("o/r", "wc[bot]", "main", os.path.join(tmp, "l.json"), "spec/", "spec-draft/")
+            except Exception as exc:  # the old code reads the clock once, before every snapshot
+                return ["record time: run_verdicts failed under the fake clock: {0!r}".format(exc)]
+    times = {r["pr"]: r["computed_at"] for r in ledger["records"].values()}
+    if len(set(times.values())) != 2:
+        problems.append("record time: both records carry one time ({0}), not their own read times".format(times))
+    elif not times[1] < times[2]:
+        problems.append("record time: the later read has the earlier time: {0}".format(times))
+    first_evidence = "2026-11-20T05:00:00Z"
+    if any(t <= first_evidence for t in times.values()):
+        problems.append("record time: a record is stamped before its own evidence was read: {0}".format(times))
+    return problems
+
 def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
@@ -866,6 +901,7 @@ def main():
         + check_review_round3_open() + check_review_round3_kind() + check_review_round3_linked_issue()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
     problems += check_review_round4() + check_sc003_pending()
+    problems += check_round5_record_time()
     problems += check_round5_login_seen(base_doc)
     problems += check_round5_truncated_comments()
     problems += check_round5_base_branch(base_doc)

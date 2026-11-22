@@ -686,6 +686,9 @@ def collect(repo, bot_login, actions_token=None, default_branch="main", final_pr
             snap["number"] = pr["number"]
             snap["not_read"] = not_read
             _extend_with_evidence(repo, snap, bot_login, not_read, default_branch, final_prefix, spec_prefix)
+            # When this PR's snapshot was read, taken after the read: the
+            # record's time (#1173 round 5, finding 6).
+            snap["read_at"] = _now()
         except (subprocess.CalledProcessError, ValueError) as exc:
             snap = {"number": pr["number"], "headRefOid": (pr.get("head") or {}).get("sha"),
                     "headRefName": (pr.get("head") or {}).get("ref"), "baseRefName": default_branch,
@@ -698,6 +701,7 @@ def collect(repo, bot_login, actions_token=None, default_branch="main", final_pr
             # The kind from what the PR list itself shows, so a read error
             # does not file the record under 'maintainer' by default.
             _assign_once(snap, bot_login, final_prefix, spec_prefix, default_branch)
+            snap["read_at"] = _now()
         snapshots.append(snap)
     return snapshots
 
@@ -724,7 +728,11 @@ def run_verdicts(repo, bot_login, default_branch, out_path, final_prefix, spec_p
     for snap in collect(repo, bot_login, os.environ.get("WC_ACTIONS_TOKEN") or None, default_branch,
                         final_prefix, spec_prefix):
         open_prs.add(snap["number"])
-        replace_record(ledger, evaluate(snap, bot_login, now, final_prefix, spec_prefix, default_branch))
+        # Each record carries the time its own snapshot was read, never the
+        # run's start, so a PR merged mid-run is never "recorded" from
+        # evidence read after its merge.
+        replace_record(ledger, evaluate(snap, bot_login, snap.get("read_at") or _now(), final_prefix, spec_prefix,
+                                        default_branch))
     states = {}
     for pr in sorted({r["pr"] for r in ledger["records"].values()} - open_prs):
         try:
