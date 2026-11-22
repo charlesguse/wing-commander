@@ -527,22 +527,36 @@ def check_rate_limit(floor=RATE_LIMIT_FLOOR):
     return remaining
 
 
-def download_ledger(repo, default_branch, directory):
-    """The ledger of the latest successful default-branch run that carries one
-    (audit and paused runs upload none), or None when there is none. A 404 is
-    told apart from other failures by gh's stderr."""
-    r = _run(["gh", "run", "list", "-R", repo, "--workflow", WORKFLOW_FILE, "--branch", default_branch,
-              "--status", "success", "--limit", "100", "--json", "databaseId"])
+def _gh_json(args, what):
+    """-> parsed JSON, None on a 404; any other failure raises."""
+    r = _run(["gh"] + args)
     if r.returncode != 0:
         if "(HTTP 404)" in (r.stderr or ""):
             return None
-        raise subprocess.CalledProcessError(r.returncode, "gh run list", r.stdout, r.stderr)
-    runs = json.loads(r.stdout or "[]")
-    if not runs:
-        return None
-    for run in runs:
-        r = _run(["gh", "run", "download", str(run["databaseId"]), "-R", repo, "-n", LEDGER_ARTIFACT,
-                  "-D", directory])
+        raise subprocess.CalledProcessError(r.returncode, what, r.stdout, r.stderr)
+    return json.loads(r.stdout or "null")
+
+
+def download_ledger(repo, default_branch, directory):
+    """The newest unexpired `merge-evidence-ledger` artifact uploaded by this
+    workflow on the default branch, or None when there is none. Found by
+    name through the artifacts API, so any number of runs that upload none
+    (audit and paused runs) cannot hide it. GitHub lists artifacts newest
+    first and a run off the default branch is refused before its upload,
+    so the first page holds the newest one. A 404 is told apart from other
+    failures by gh's stderr."""
+    listing = _gh_json(["api", "repos/{0}/actions/artifacts?name={1}&per_page=100".format(repo, LEDGER_ARTIFACT)],
+                       "gh api actions/artifacts")
+    artifacts = (listing or {}).get("artifacts") or []
+    candidates = [a for a in artifacts if a.get("name") == LEDGER_ARTIFACT and not a.get("expired")
+                  and (a.get("workflow_run") or {}).get("head_branch") == default_branch]
+    candidates.sort(key=lambda a: a.get("created_at") or "", reverse=True)
+    for artifact in candidates:
+        run_id = (artifact.get("workflow_run") or {}).get("id")
+        run = _gh_json(["api", "repos/{0}/actions/runs/{1}".format(repo, run_id)], "gh api actions/runs")
+        if not run or not (run.get("path") or "").endswith("/" + WORKFLOW_FILE):
+            continue
+        r = _run(["gh", "run", "download", str(run_id), "-R", repo, "-n", LEDGER_ARTIFACT, "-D", directory])
         if r.returncode == 0:
             return os.path.join(directory, LEDGER_FILE)
         if "(HTTP 404)" in (r.stderr or "") or "no valid artifacts" in (r.stderr or ""):

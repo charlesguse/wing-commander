@@ -13,7 +13,6 @@ import copy
 import json
 import os
 import re
-import stat
 import subprocess
 import sys
 import tempfile
@@ -23,7 +22,6 @@ sys.path.insert(0, HERE)
 import wc_merge_evidence as me  # noqa: E402
 from board_item_marker import render_bump_verification  # noqa: E402
 from wc_lifecycle_review_marker import write_marker  # noqa: E402
-from wc_shell_harness import gh_error_stub_arm  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(HERE))
 FIXTURES = os.path.join(HERE, "fixtures", "merge-evidence")
@@ -315,36 +313,71 @@ def check_review_round3_rollup():
     return problems
 
 
-def _stub_gh(directory, mode):
-    list_arm = (gh_error_stub_arm("run list", "404", "Not Found") if mode == "404"
-                else gh_error_stub_arm("run list", "502", "Bad Gateway") if mode == "502"
-                else '    printf \'[]\'\n    exit 0\n')
-    script = "#!/usr/bin/env bash\ncase \"$*\" in\n  \"run list\"*)\n" + list_arm + "    ;;\nesac\nexit 1\n"
-    path = os.path.join(directory, "gh")
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(script)
-    os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+class _Done:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def _ledger_gh(mode, downloads):
+    """A fake `_run` for download_ledger(): `mode` shapes the artifact
+    listing; 150 newer runs upload no ledger (a pause of about six days),
+    and only run 5 still holds one. `downloads` records the runs fetched."""
+    def artifact(rid, created, branch="main", expired=False):
+        return {"name": me.LEDGER_ARTIFACT, "expired": expired, "created_at": created,
+                "workflow_run": {"id": rid, "head_branch": branch}}
+    listing = {"artifacts": [artifact(8, "2026-11-19T07:07:00Z", expired=True),
+                             artifact(7, "2026-11-19T06:07:00Z", branch="topic"),
+                             artifact(6, "2026-11-19T05:07:00Z"),
+                             artifact(5, "2026-11-13T07:07:00Z"),
+                             artifact(4, "2026-11-12T07:07:00Z")]}
+    paths = {6: ".github/workflows/other.yml"}
+
+    def fake(args):
+        text = " ".join(args)
+        if args[:3] == ["gh", "run", "list"]:
+            return _Done(stdout=json.dumps([{"databaseId": 1000 + i} for i in range(150)]))
+        if "actions/artifacts?" in text and "name={0}".format(me.LEDGER_ARTIFACT) in text:
+            if mode in ("404", "502"):
+                return _Done(1, "", "gh: {0} (HTTP {1})".format("Not Found" if mode == "404" else "Bad Gateway", mode))
+            return _Done(stdout=json.dumps({"artifacts": []} if mode == "empty" else listing))
+        match = re.search(r"actions/runs/(\d+)$", text)
+        if args[:2] == ["gh", "api"] and match:
+            rid = int(match.group(1))
+            return _Done(stdout=json.dumps({"id": rid, "path": paths.get(rid, ".github/workflows/" + me.WORKFLOW_FILE)}))
+        if args[:3] == ["gh", "run", "download"]:
+            downloads.append(int(args[3]))
+            if mode == "download-502":
+                return _Done(1, "", "gh: Bad Gateway (HTTP 502)")
+            if int(args[3]) == 5:
+                return _Done()
+            return _Done(1, "", "no valid artifacts found to download")
+        return _Done(1, "", "unexpected call: " + text)
+    return fake
 
 
 def check_download_errors():
+    """The ledger is found by artifact name (finding 5, round 3); a 404 or an
+    empty listing starts empty, any other failure fails the run. In-process,
+    so it runs wherever the gate does."""
     problems = []
-    old_path = os.environ.get("PATH", "")
-    try:
-        for mode, expect_raise in (("404", False), ("empty", False), ("502", True)):
-            with tempfile.TemporaryDirectory() as tmp:
-                _stub_gh(tmp, mode)
-                os.environ["PATH"] = tmp + os.pathsep + old_path
-                try:
-                    got = me.download_ledger("o/r", "main", tmp)
-                    if expect_raise:
-                        problems.append("download: HTTP 502 did not fail")
-                    elif got is not None:
-                        problems.append("download: mode {0} returned {1}".format(mode, got))
-                except subprocess.CalledProcessError:
-                    if not expect_raise:
-                        problems.append("download: mode {0} failed instead of starting empty".format(mode))
-    finally:
-        os.environ["PATH"] = old_path
+    for mode, expect in (("404", None), ("empty", None), ("502", "raise"), ("download-502", "raise"),
+                         ("found", 5)):
+        downloads = []
+        with _Patched(_run=_ledger_gh(mode, downloads)):
+            try:
+                got = me.download_ledger("o/r", "main", "dir")
+            except subprocess.CalledProcessError:
+                if expect != "raise":
+                    problems.append("download: mode {0} failed instead of {1}".format(mode, expect))
+                continue
+        if expect == "raise":
+            problems.append("download: mode {0} did not fail".format(mode))
+        elif expect is None and got is not None:
+            problems.append("download: mode {0} returned {1}".format(mode, got))
+        elif expect == 5 and (got != os.path.join("dir", me.LEDGER_FILE) or downloads != [5]):
+            problems.append("download: after 150 runs with no ledger, the newest unexpired default-branch "
+                            "ledger of this workflow was not the one fetched (got {0}, fetched {1})".format(
+                                got, downloads))
     return problems
 
 

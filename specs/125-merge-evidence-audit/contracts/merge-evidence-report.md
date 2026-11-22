@@ -5,10 +5,13 @@ Layer: consuming instrument; not part of the `workflow_call` published contract.
 ## 1. Reading the current verdict for a pull request (FR-018)
 
 ```
-gh run list --workflow wing-commander-merge-evidence.yml --branch main --status success --limit 1 --json databaseId
-gh run download <databaseId> -n merge-evidence-ledger -D <empty dir>
+gh api "repos/<owner>/<repo>/actions/artifacts?name=merge-evidence-ledger&per_page=100" \
+  --jq '[.artifacts[] | select((.expired | not) and .workflow_run.head_branch == "main")] | sort_by(.created_at) | last | .workflow_run.id'
+gh run download <run id> -n merge-evidence-ledger -D <empty dir>
 jq '.records["<pr>@<head>"]' <dir>/ledger.json
 ```
+
+The ledger is found by artifact name, not by the latest successful run: the daily audit runs and paused runs upload no ledger.
 
 The reader MUST compare `<head>` with the PR's current `headRefOid`. No record for the current head means "not yet computed", never "met". `written_at` shows how old the ledger is.
 
