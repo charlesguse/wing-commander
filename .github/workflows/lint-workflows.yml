@@ -4839,6 +4839,17 @@ jobs:
         if: "!cancelled()"
         run: bash .github/scripts/wc_convergence_tests/run-tests.sh
 
+      # Gate 171 — specs/127-shared-pr-reviewer. The shared reviewer's
+      # record marker is disjoint from spec 116's (FR-020), and its
+      # deterministic module (records, identity, blocking rule, verdict,
+      # run confirmation, budget) is exercised by checked-in fixtures.
+      - name: Gate 171 — the shared reviewer's marker is disjoint from the convergence round marker
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-shared-review-marker-disjoint.py --self-test
+      - name: Gate 171 fixtures — shared reviewer records, verdict, blocking rule, identity, confirmation and budget
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-shared-review-fixtures.py
+
       # Gate 165 — specs/115-board-loop-self-merge (FR-013, FR-015): every
       # merge-blocking condition and every refusal branch of board_merge.py
       # has a checked-in fixture under .github/scripts/fixtures/board-merge/
