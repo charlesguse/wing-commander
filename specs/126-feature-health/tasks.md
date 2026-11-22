@@ -116,8 +116,8 @@ MVP = Phases 1-3 (registry, drift gate, classifier, renderer, fixtures): the ver
 
 ## Phase 9: Convergence
 
-- [ ] T033 Make `.github/scripts/wc_feature_health.py` reuse `wc_board_status._switch_on` for kill-switch values instead of its own `.strip().lower() == "true"` test in `collect`, with a fixture that fails if the two diverge, per FR-004 and T017 (partial)
-- [ ] T034 Import the triage close grounds from `.github/scripts/board_triage.py` for the `triage_close` reader instead of a registry-held literal list, and make `verify-feature-health.py` check the grounds against that script, per FR-003 and T013 (partial)
+- [X] T033 Make `.github/scripts/wc_feature_health.py` reuse `wc_board_status._switch_on` for kill-switch values instead of its own `.strip().lower() == "true"` test in `collect`, with a fixture that fails if the two diverge, per FR-004 and T017 (partial)
+- [X] T034 Import the triage close grounds from `.github/scripts/board_triage.py` for the `triage_close` reader instead of a registry-held literal list, and make `verify-feature-health.py` check the grounds against that script, per FR-003 and T013 (partial)
 
 ## Counts
 

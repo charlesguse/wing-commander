@@ -464,6 +464,12 @@ def triage(issue, cited_run):
     return _not_closed(outcome, proposal)
 
 
+#: The `ground` values triage() returns with outcome "closed". Read by
+#: wc_feature_health's triage_close signal; verify-feature-health.py checks
+#: each one still appears as a closed outcome in this file.
+TRIAGE_CLOSE_GROUNDS = ("rate_limit", "action_bump")
+
+
 def defer_on_rate_limit(verdict, agent_verdict):
     """A `proceed` verdict from a triage agent whose own agent-verdict was
     `rate-limited` (an API 429) is `defer`: the agent judged nothing, so

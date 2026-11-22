@@ -22,6 +22,10 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
 REGISTRY_PATH = os.path.join(HERE, "feature-health-registry.json")
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import wc_board_status  # noqa: E402
+from board_triage import TRIAGE_CLOSE_GROUNDS  # noqa: E402
 
 # data-model.md "Health state": earliest wins.
 STATE_ORDER = ["unreadable", "paused", "not configured", "failing", "not running",
@@ -318,7 +322,7 @@ def read_signal(signal, repo, since, gh, environ):
         for i in gh("{0}/issues?state=closed&since={1}&per_page=30".format(base, s)):
             for c in gh("{0}/issues/{1}/comments?per_page=100".format(base, i["number"])):
                 body = c.get("body") or ""
-                if any(g in body for g in signal["grounds"]) and not any(
+                if any(g in body for g in TRIAGE_CLOSE_GROUNDS) and not any(
                         d in body for d in signal.get("duplicate_markers", ())):
                     times.append(c["created_at"])
     elif kind == "branch_commit":
@@ -353,7 +357,7 @@ def collect(registry, repo, now, gh=gh_json, environ=None, read_text=None):
                 if env not in environ:
                     ctx[kind][name] = "unreadable"
                 elif kind == "switches":
-                    ctx[kind][name] = environ[env].strip().lower() == "true"
+                    ctx[kind][name] = wc_board_status._switch_on(environ[env])
                 else:
                     ctx[kind][name] = bool(environ[env].strip())
         for ref in entry["workflows"]:

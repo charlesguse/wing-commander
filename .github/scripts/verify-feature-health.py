@@ -398,6 +398,33 @@ def self_check(fx):
     return [] if weakened else ["self-check: the state fixtures did not notice a disabled quiet rule"]
 
 
+def check_shared_sources():
+    """FR-003/FR-004 single home: triage grounds come from board_triage.py and
+    switch values from wc_board_status._switch_on."""
+    import board_triage
+    import wc_board_status as bs
+    problems = []
+    if fh.TRIAGE_CLOSE_GROUNDS is not board_triage.TRIAGE_CLOSE_GROUNDS:
+        problems.append("triage grounds are not imported from board_triage.py")
+    with open(os.path.join(HERE, "board_triage.py"), encoding="utf-8") as fp:
+        src = fp.read()
+    for g in board_triage.TRIAGE_CLOSE_GROUNDS:
+        if '"outcome": "closed", "ground": "{0}"'.format(g) not in src:
+            problems.append("board_triage.py no longer closes on ground {0}".format(g))
+    if re.search(r'"grounds"\s*:', json.dumps(fh.load_registry())):
+        problems.append("registry holds a literal triage grounds list")
+    # A switch value must read the same through both modules.
+    for value in ("true", " TRUE ", "false", "", "1", "yes"):
+        env = {"BOARD_X": value}
+        entry = [{"name": "f", "workflows": [], "kill_switch": "WING_COMMANDER_BOARD_X"}]
+        got = fh.collect(entry, "own/repo", fh.parse_time("2026-11-20T00:00:00"),
+                         gh=lambda *_a, **_k: [], environ=env)
+        ctx = got[2] if isinstance(got, tuple) else got
+        if ctx["switches"]["WING_COMMANDER_BOARD_X"] != bs._switch_on(value):
+            problems.append("switch value {0!r} reads differently from wc_board_status".format(value))
+    return problems
+
+
 def main():
     with open(os.path.join(REPO, "docs", "reference.md"), encoding="utf-8") as fp:
         ref_text = fp.read()
@@ -411,6 +438,7 @@ def main():
     problems += check_signals(load("signals", "signals.json"))
     problems += check_unreadable(load("unreadable", "scenarios.json"))
     problems += check_workflow()
+    problems += check_shared_sources()
     real, note = check_sc001(os.path.join(FIXTURES, "sc001"), EXEMPT_SC001_PENDING)
     problems += real + self_check(fx)
     if note:
