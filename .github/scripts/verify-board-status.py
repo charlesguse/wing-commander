@@ -455,6 +455,19 @@ def proof_list_half():
           and "wc-proof-list:begin" not in bs.render(SNAP))
 
 
+def run_name_title_problems(wf_text):
+    """Each of the writer's audit titles must appear whole, as a quoted
+    literal, in the workflow's run-name (finding 9, #1173 round 3); a
+    shared prefix or a format() template is not enough."""
+    import yaml
+    run_name = str((yaml.safe_load(wf_text) or {}).get("run-name") or "")
+    problems = ["run-name has no literal '{0}'".format(t) for t in bs.MERGE_EVIDENCE_AUDIT_TITLES
+                if "'{0}'".format(t) not in run_name]
+    if "'merge-evidence verdicts'" not in run_name or "merge-evidence verdicts" in bs.MERGE_EVIDENCE_AUDIT_TITLES:
+        problems.append("the hourly title 'merge-evidence verdicts' is missing, or counted as an audit")
+    return problems
+
+
 def merge_evidence_half():
     """specs/125-merge-evidence-audit: the section's statuses, its shortened
     form, and the constants shared with the merge evidence workflow."""
@@ -467,9 +480,16 @@ def merge_evidence_half():
           "name: {0}\n".format(bs.MERGE_EVIDENCE_ARTIFACT) in wf)
     check("the merge-evidence workflow's build step is the writer's build-step constant",
           "- name: {0}\n".format(bs.MERGE_EVIDENCE_BUILD_STEP) in wf)
-    check("the merge-evidence workflow's run-name carries the audit titles the writer filters on",
-          all(title.rsplit(" ", 1)[0] in wf for title in bs.MERGE_EVIDENCE_AUDIT_TITLES)
-          and "'merge-evidence audit'" in wf and "merge-evidence dispatch {0}" in wf)
+    missing = run_name_title_problems(wf)
+    check("the merge-evidence workflow's run-name writes out each audit title the writer filters on",
+          not missing, "; ".join(missing))
+    for label, old_text, new_text in (("a renamed dispatch title", "'merge-evidence dispatch both'",
+                                       "'merge-evidence dispatch all'"),
+                                      ("a renamed scheduled audit title", "'merge-evidence audit'",
+                                       "'merge-evidence audits'")):
+        mutated = wf.replace(old_text, new_text)
+        check("the run-name check notices {0}".format(label),
+              mutated != wf and run_name_title_problems(mutated))
     check("merge_evidence_paused is in SWITCH_ENV and passed by board-status.yml",
           bs.SWITCH_ENV.get("merge_evidence_paused") == "MERGE_EVIDENCE_PAUSED")
     with open(os.path.join(root, ".github", "workflows", "board-status.yml"), encoding="utf-8") as fh:

@@ -3,8 +3,13 @@ name: "wing-commander-merge-evidence"
 # Board status finds the daily audit's runs by this title
 # (wc_board_status.MERGE_EVIDENCE_AUDIT_TITLES); the hourly verdict runs never
 # build the section.
+# Each title is written out whole, so verify-board-status.py can find each
+# one literally.
 run-name: >-
-  ${{ github.event_name == 'workflow_dispatch' && format('merge-evidence dispatch {0}', inputs.job)
+  ${{ github.event_name == 'workflow_dispatch'
+  && (inputs.job == 'audit' && 'merge-evidence dispatch audit'
+  || inputs.job == 'verdicts' && 'merge-evidence dispatch verdicts'
+  || 'merge-evidence dispatch both')
   || (github.event.schedule == '41 5 * * *' && 'merge-evidence audit' || 'merge-evidence verdicts') }}
 
 # The merge evidence audit (specs/125-merge-evidence-audit): an hourly verdict
