@@ -148,3 +148,53 @@ MVP is Phase 1–3 (US1): hourly verdicts in the ledger, gated. Then US2 for the
   The 05:41 merge evidence audit row sits after the 05:43 row in a time-ordered table. Move it above.
 
   - docs/reference.md
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: Open final/spec PRs classed maintainer because cross_repository is set after assign_kind
+
+  _extend_with_evidence calls assign_kind before snap["cross_repository"] is set and the snapshot never fetches isCrossRepository, so same-repo spec PRs are classed maintainer and their issue comments/labels are never read, leaving hourly verdicts for open final PRs unmeetable.
+
+  - .github/scripts/wc_merge_evidence.py
+
+  Detail: assign_kind at ~line 1545 runs before cross_repository is set at ~1549; SNAPSHOT_FIELDS lacks isCrossRepository.
+
+- [ ] Review finding: download_ledger looks back only 20 workflow runs and can silently restart an empty ledger
+
+  The ledger lookup scans 20 successful runs of the whole workflow, including audit and paused runs that upload no ledger, so a long pause makes the next run start empty and lose recorded history.
+
+  - .github/scripts/wc_merge_evidence.py
+
+  Detail: After about 20 runs with no ledger upload, run_verdicts logs 'starting an empty one' and recorded merges become 'reconstructed'.
+
+- [ ] Review finding: run_audit uses capped search/issues to find merged PRs
+
+  The search API returns at most 1000 results and can lag behind new merges, so merged PRs can be missed and then listed as reaching main without a pull request.
+
+  - .github/scripts/wc_merge_evidence.py
+
+  Detail: List closed pulls with pagination and filter on merged_at, or flag the section incomplete when total_count exceeds what was read.
+
+- [ ] Review finding: _line crashes when merge_commit_sha is None
+
+  entry["merged_commit"][:12] raises TypeError for a null merge commit, which fails the whole daily audit step.
+
+  - .github/scripts/wc_merge_evidence.py
+
+  Detail: Render (entry["merged_commit"] or "unknown")[:12], or treat a missing merge commit as not-read.
+
+- [ ] Review finding: cut_snapshot drops checks and statuses that were updated after the merge
+
+  Checks with no completed_at, and statuses whose latest state postdates the merge, are removed from the rollup, so legitimate merges can read as having missing evidence.
+
+  - .github/scripts/wc_merge_evidence.py
+
+  Detail: Cut checks on started_at or created_at, and treat a context whose only visible state postdates the merge as not-read.
+
+- [ ] Review finding: _rest_rollup reads commit statuses without pagination
+
+  commits/{sha}/status is read with the default 30-item page, so a failing status beyond the first 30 is omitted and the verdict can read met.
+
+  - .github/scripts/wc_merge_evidence.py
+
+  Detail: Add per_page=100 and --paginate with a jq that emits the statuses.
