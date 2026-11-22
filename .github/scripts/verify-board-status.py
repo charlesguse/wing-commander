@@ -455,11 +455,82 @@ def proof_list_half():
           and "wc-proof-list:begin" not in bs.render(SNAP))
 
 
+def merge_evidence_half():
+    """specs/125-merge-evidence-audit: the section's statuses, its shortened
+    form, and the constants shared with the merge evidence workflow."""
+    import datetime
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with open(os.path.join(root, ".github", "workflows", bs.MERGE_EVIDENCE_WORKFLOW), encoding="utf-8") as fh:
+        wf = fh.read()
+    check("the merge-evidence workflow's upload name is the writer's artifact constant",
+          "name: {0}\n".format(bs.MERGE_EVIDENCE_ARTIFACT) in wf)
+    check("the merge-evidence workflow's build step is the writer's build-step constant",
+          "- name: {0}\n".format(bs.MERGE_EVIDENCE_BUILD_STEP) in wf)
+    check("the merge-evidence workflow's run-name carries the audit titles the writer filters on",
+          all(title.rsplit(" ", 1)[0] in wf for title in bs.MERGE_EVIDENCE_AUDIT_TITLES)
+          and "'merge-evidence audit'" in wf and "merge-evidence dispatch {0}" in wf)
+    check("merge_evidence_paused is in SWITCH_ENV and passed by board-status.yml",
+          bs.SWITCH_ENV.get("merge_evidence_paused") == "MERGE_EVIDENCE_PAUSED")
+    with open(os.path.join(root, ".github", "workflows", "board-status.yml"), encoding="utf-8") as fh:
+        check("board-status.yml passes the pause variable",
+              "MERGE_EVIDENCE_PAUSED: ${{ vars.WING_COMMANDER_MERGE_EVIDENCE_PAUSED }}" in fh.read())
+
+    now = datetime.datetime(2026, 11, 20, 12, 0, 0)
+    section = {"schema": 1, "built_at": "2026-11-20T05:41:00Z", "full": "MEFULL\n", "names_only": "MENAMES\n"}
+
+    def run(runs, ok, switches=None, download="ok"):
+        def gh_obj(path):
+            if path == "repos/o/r":
+                return {"default_branch": "main"}
+            return {"workflow_runs": runs}
+
+        def dl(repo, rid, tmp):
+            if download == "ok":
+                with open(os.path.join(tmp, bs.MERGE_EVIDENCE_FILE), "w", encoding="utf-8") as fh:
+                    json.dump(section, fh)
+        return bs.merge_evidence_snapshot("o/r", switches or {}, now, gh_obj, lambda rid: ok.get(rid, False), dl)
+
+    def mk(rid, when, title="merge-evidence audit", conclusion="success"):
+        return {"id": rid, "run_started_at": when, "conclusion": conclusion, "event": "schedule",
+                "display_title": title, "head_repository": {"full_name": "o/r"}}
+    audit = mk(3, "2026-11-20T05:41:00Z")
+    hourly = mk(9, "2026-11-20T11:07:00Z", "merge-evidence verdicts")
+    check("built: the hourly verdict runs are not the audit",
+          run([hourly, audit], {3: True})["status"] == "built")
+    check("never: only hourly runs exist", run([hourly], {9: True})["status"] == "never")
+    check("failed: the latest audit failed",
+          run([mk(4, "2026-11-20T05:41:00Z", conclusion="failure")], {})["status"] == "failed")
+    check("paused: the switch is set, whatever the history",
+          run([audit], {3: True}, {"merge_evidence_paused": "True "})["status"] == "paused")
+    check("unreadable: the artifact is missing", run([audit], {3: True}, download="none")["status"] == "unreadable")
+    try:
+        bs.merge_evidence_snapshot("o/r", {}, now, lambda path: (_ for _ in ()).throw(
+            subprocess.CalledProcessError(1, "gh", "", "boom")), lambda rid: True)
+        unreadable = True
+    except subprocess.CalledProcessError:
+        unreadable = False
+    check("unreadable: a failed history read is a status, not a crash", unreadable)
+
+    body = "board body\n"
+    built = {"status": "built", "last_good_at": "x", "section": section}
+    check("a section that fits shows the full form between its own markers",
+          "MEFULL" in bs.merge_evidence_block(built, body)
+          and "<!-- wc-merge-evidence:end -->" in bs.merge_evidence_block(built, body))
+    near = "x" * (60000 - len(body) - 700)
+    short = bs.merge_evidence_block({"status": "built", "section": dict(section, full="F" * 5000)}, near)
+    check("over size, the names-only form shows", "MENAMES" in short and "FFFF" not in short)
+    check("render places the section after the board and leaves the rest unchanged",
+          bs.render(dict(SNAP, merge_evidence={"status": "never"})).startswith(bs.render(SNAP))
+          and "wc-merge-evidence:begin" not in bs.render(SNAP))
+
+
 def main():
     render_half()
     runtime_half()
     switches_half()
     proof_list_half()
+    merge_evidence_half()
     print("verify-board-status: {0} failure(s).".format(len(failures)))
     return 1 if failures else 0
 

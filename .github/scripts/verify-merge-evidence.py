@@ -263,13 +263,79 @@ def check_workflow(text):
     return problems
 
 
+def check_shape(text, write_verbs=WRITE_VERBS):
+    """FR-017, FR-020 to FR-023 over the workflow's text."""
+    problems = []
+    try:
+        import yaml
+        doc = yaml.safe_load(text)
+    except Exception as exc:  # unparseable is a failure of its own
+        return ["the workflow does not parse: {0}".format(exc)]
+    perms = doc.get("permissions") or {}
+    writes = [k for k, v in perms.items() if v != "read"] if isinstance(perms, dict) else ["(not a mapping)"]
+    if writes:
+        problems.append("permissions are not all read-only: {0}".format(writes))
+    for name, job in (doc.get("jobs") or {}).items():
+        if job.get("permissions") not in (None, {}):
+            problems.append("job {0} sets its own permissions".format(name))
+        steps = job.get("steps") or []
+        if not steps or "default branch" not in (steps[0].get("name") or ""):
+            problems.append("job {0}: the first step does not refuse a non-default ref".format(name))
+        if not any(s.get("id") == "pause" and "WING_COMMANDER_MERGE_EVIDENCE_PAUSED" in json.dumps(s) for s in steps):
+            problems.append("job {0}: no pause step on WING_COMMANDER_MERGE_EVIDENCE_PAUSED".format(name))
+        for s in steps:
+            uses = s.get("uses") or ""
+            if "claude" in uses.lower() or "anthropic" in uses.lower():
+                problems.append("job {0} runs an agent step: {1}".format(name, uses))
+    if "always()" in text or "!cancelled()" in text:
+        problems.append("the workflow uses always() or !cancelled(): a failed read must stop the upload")
+    for verb in write_verbs:
+        if re.search(verb, text):
+            problems.append("the workflow can write: matches {0}".format(verb))
+    return problems
+
+
+def check_no_reader(files=None):
+    """FR-019: no merge job or rule mentions the artifacts or the module."""
+    problems = []
+    needles = (me.LEDGER_ARTIFACT, me.SECTION_ARTIFACT, "wc_merge_evidence", "merge-evidence")
+    for rel, text in (files or {r: read(r) for r in NO_READER_FILES}).items():
+        for needle in needles:
+            if needle in text:
+                problems.append("{0} references {1}: a merge path must read none of this feature".format(rel, needle))
+    return problems
+
+
+def check_negatives(text):
+    """Each shape and no-reader check is shown to fail on a broken copy; the
+    EXEMPT_* tables are never mutated."""
+    problems = []
+    broken = {
+        "write permission": text.replace("contents: read", "contents: write", 1),
+        "always()": text.replace("if: steps.pause.outputs.paused != 'true'", "if: always()", 1),
+        "agent step": text.replace("actions/checkout@v5", "anthropics/claude-code-action@v1", 1),
+        "merge verb": text + "\n        run: gh pr merge 1\n",
+        "no pause step": text.replace("WING_COMMANDER_MERGE_EVIDENCE_PAUSED", "SOMETHING_ELSE"),
+        "no refusal first": text.replace("Refuse a run off the default branch", "Something else", 1),
+    }
+    for label, mutated in broken.items():
+        if mutated == text or not check_shape(mutated):
+            problems.append("self-check: the shape check did not notice: {0}".format(label))
+    reader = {r: read(r) for r in NO_READER_FILES}
+    reader[NO_READER_FILES[0]] += "\n# reads merge-evidence-ledger\n"
+    if not check_no_reader(reader):
+        problems.append("self-check: the no-reader check did not notice a reference")
+    return problems
+
+
 def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
     wf = os.path.join(REPO, WORKFLOW)
     if os.path.exists(wf):
-        problems += check_workflow(read(WORKFLOW))
+        text = read(WORKFLOW)
+        problems += check_workflow(text) + check_shape(text) + check_no_reader() + check_negatives(text)
     # Shown to fail: each check must notice a broken subject.
     notice = check_single_home(read(".github/scripts/wc_merge_evidence.py")
                                + "\ndef _checks_green(rollup):\n    return rollup\n")

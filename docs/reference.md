@@ -188,6 +188,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | metrics-persist | published stage, wrapper | after each stage run; a daily sweep at 06:37 UTC | appends one record per agent run (turns, tokens and cost, where the run reports them) to `records.jsonl` on the `metrics` branch (`WING_COMMANDER_METRICS_BRANCH`, `_PATH`, `_PAUSED`) |
 | `board-status.yml` | this repository | daily, 07:17 UTC | rewrites the "Board status" issue: what waits on the owner, what is in the pipeline, the backlog's size, `main`'s CI, the last release, the merge switches and the proof list's section. No agent. `WING_COMMANDER_BOARD_STATUS_PAUSED` stops it, and stops the section's rewrite with it |
 | `wing-commander-proof-list.yml` | this repository | daily, 06:19 UTC; dispatch from the default branch only | builds the proof list: for each merge to the default branch in the last 30 days, whether a workflow run could show it working and whether anything is on record. Read-only, no agent, no App token; it uploads one artifact that `board-status.yml` shows as a collapsed section of "Board status". A dispatch from another branch is refused. `WING_COMMANDER_PROOF_LIST_PAUSED` stops it |
+| `wing-commander-merge-evidence.yml` | this repository | hourly at :07 (verdicts) and daily, 05:41 UTC (audit); dispatch from the default branch only | the merge evidence audit ([spec](../specs/125-merge-evidence-audit/spec.md)): an hourly verdict for every open pull request into `main`, kept in the `merge-evidence-ledger` artifact, and a daily audit of every merge of the last 30 days with the verdict as of the merge and every commit that reached `main` without a pull request, which `board-status.yml` shows as a collapsed section. It only watches: read-only permissions, no agent, no App token, no merge, label, comment, check or status, and no merge job reads it. A dispatch from another branch is refused. `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` stops it; `WING_COMMANDER_BOT_LOGIN` names the pipeline App's login (`<slug>[bot]`) so its records can be told from a maintainer's, and without it every verdict is incomplete |
 | fold-cycle-guard | published stage, wrapper | after an implement run | re-dispatches, once, an implement run that was cancelled while still queued |
 | `lint-workflows.yml` | this repository | every pull request that touches workflows, actions, scripts, docs, a root Markdown file or another document a gate reads (its `pull_request: paths:` list names each one); pushes to `main` that touch workflows; daily | the gate suite. `python .github/scripts/run-local-gates.py` runs the same set locally |
 | agent-startup-check | published stage | called by the image workflows | checks that the agent action can start inside a container image |
@@ -220,6 +221,18 @@ another way.
 "A human" includes a Claude Code session acting on the owner's instruction
 under the owner's GitHub account; see the [README](../README.md#how-this-repository-is-operated).
 
+What the [merge evidence audit](#housekeeping-and-observability) records
+about these merges, and changes none of them: for each pull request into
+`main`, a verdict on the exact head, and for each merge of the last 30 days
+the verdict as of the merge, marked recorded or reconstructed. A bump PR
+needs its confirmed verification record, a board loop fix PR the App's
+converged review verdict at the head, a final PR the review gate's clean
+round at the head; a spec PR or a maintainer PR needs a round record that
+does not exist yet, so it reads unmet. A pass report or decision record posted
+under a maintainer's account is listed, never counted. Every kind also needs
+green checks with the gate suite among them, so a pull request with no checks
+reads unmet.
+
 Also always the owner's: promoting a `spec-proposal` to `spec-request`,
 answering a clarification question no earlier decision settles, model tier
 and spend, credentials, App permissions and repository variables.
@@ -240,6 +253,7 @@ means running. A pause takes effect no later than the next run.
 | `WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED` | the Spec Kit updater |
 | `WING_COMMANDER_BOARD_STATUS_PAUSED` | the daily Board status rewrite, the proof list's section included |
 | `WING_COMMANDER_PROOF_LIST_PAUSED` | the daily proof-list build; the section then shows "paused" |
+| `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` | the merge evidence audit's hourly verdicts and daily audit; the section then shows "paused" |
 | `WING_COMMANDER_METRICS_PAUSED` | metrics records |
 
 The feature lifecycle has no pause variable. To stop one lifecycle, close its
@@ -251,11 +265,13 @@ All times UTC.
 
 | When | Workflow |
 |---|---|
+| hourly at :07 | merge evidence verdicts |
 | hourly at :13 | board loop |
 | hourly at :27 | lifecycle review gate |
 | hourly at :41 | spec PR review |
 | 04:17 | rebase |
 | 05:43 | the gate suite on `main` |
+| 05:41 | merge evidence audit |
 | 06:19 | proof list |
 | 06:37 | metrics-persist sweep |
 | 06:53 | cleanup |
@@ -330,6 +346,13 @@ tables above. No kill switch is set except spec PR review's.
 - A session in a sandbox whose token cannot read Actions variables cannot see
   the settings above. The "Board status" issue shows the merge switches only.
 - Nothing enforces the three-lifecycle limit in implement.
+- The merge evidence audit records after the fact and blocks nothing: a
+  session's merge of its own fix PR is still checked by nothing before it
+  happens. It cannot tell a session's merge from the owner's (both merge under
+  the owner's account), a pull request merged within an hour of opening has
+  only a reconstructed verdict, spec PRs read unmet while they have no checks,
+  and maintainer PRs read unmet until a reviewer's round record exists (#1142).
+  Its 30-day watching period ends on the date its section's header names.
 - The proof list's scan under-reads: a literal mention counts only for
   `.github/` paths in non-comment text, script imports are followed only
   through `.github/scripts/board_*.py`, and no composite-calls-composite edge

@@ -97,8 +97,7 @@ def _no_unresolved_human_review(reviews, bot_login):
     return not any(state == "CHANGES_REQUESTED" for state in standing.values())
 
 
-# Public names for the merge-evidence audit (specs/125-merge-evidence-audit,
-# FR-008): the final-PR rule (the gate's own status left out) and the
+# Public names for the merge evidence audit (spec 125, FR-008): the final-PR rule (the gate's own status left out) and the
 # unresolved-human-review test, called and never copied. Aliases only.
 no_unresolved_human_review = _no_unresolved_human_review
 checks_green_without_gate_status = _readiness_checks_green

@@ -555,8 +555,9 @@ def pick_bump_candidate(snapshots, bot_login, stalled_issues=()):
     return {"pr": chosen.get("number"), "issue": bump_tracking_issue(chosen.get("body"))}
 
 
-# Public names for the read-only merge-evidence audit (specs/125-merge-evidence-audit,
-# FR-008): it calls these, never copies them. Aliases only; no behaviour change.
+# Public names for the read-only merge evidence audit (spec 125, FR-008): it
+# calls these, never copies them. Aliases only; no behaviour change. No merge
+# decision here reads the audit (FR-019).
 attributed_to_auto_update = _attributed_to_auto_update
 bot_pr_author = _bot_pr_author
 bot_marker_records = _bot_marker_records

@@ -43,14 +43,14 @@ Run `python .github/scripts/run-local-gates.py` before pushing; every task leave
 
 **Independent Test**: fixture window with a recorded merge, a reconstructed merge and a direct push lists all three correctly.
 
-- [ ] T013 [P] [US2] Add `cut_snapshot()` to `.github/scripts/wc_merge_evidence.py` (as-of-merge time cut, FR-012) and the audit-entry builder (`Audit entry.mark`, `Audit entry.prior_record_result`, `Audit entry.decision_record` in data-model.md), plus unpaired-commit detection (`Unpaired commit` in data-model.md) excluding squash commits of merged PRs.
-- [ ] T014 [P] [US2] Fixtures under `.github/scripts/fixtures/merge-evidence/audit-*/`: recorded merge, reconstructed merge, post-merge runs left out, unpaired commit, session decision record linked and not counted, missed-day rebuild, squash commit not listed as unpaired.
-- [ ] T015 [US2] Implement the runtime `audit` subcommand in `.github/scripts/wc_merge_evidence.py`; the window start and end are parameters, and the workflow passes none (FR-012). Render the section object (`Section` in data-model.md) and write it for upload.
-- [ ] T016 [US2] Add the daily audit job to `.github/workflows/wing-commander-merge-evidence.yml` (timeout 15 minutes) that uploads `merge-evidence-section` with `overwrite: true` and 7-day retention.
-- [ ] T017 [US2] Extend `.github/scripts/verify-merge-evidence.py` with the audit fixture checks from T014 and a check that the artifact names in the workflow equal the constants from T007.
-- [ ] T018 [P] [US2] Add `merge_evidence_snapshot()`, the `SWITCH_ENV` entry and the collapsed-section renderer with statuses built/paused/failed/never/unreadable and the names-only shortened form over `MAX_BODY_UNITS` to `.github/scripts/wc_board_status.py`.
-- [ ] T019 [US2] Add the `MERGE_EVIDENCE_PAUSED` env line to `.github/workflows/board-status.yml`; the pause test calls `wc_board_status._switch_on`, not a literal comparison.
-- [ ] T020 [US2] Extend `.github/scripts/verify-board-status.py` with the writer's merge-evidence paths: each status and the shortened form.
+- [x] T013 [P] [US2] Add `cut_snapshot()` to `.github/scripts/wc_merge_evidence.py` (as-of-merge time cut, FR-012) and the audit-entry builder (`Audit entry.mark`, `Audit entry.prior_record_result`, `Audit entry.decision_record` in data-model.md), plus unpaired-commit detection (`Unpaired commit` in data-model.md) excluding squash commits of merged PRs.
+- [x] T014 [P] [US2] Fixtures under `.github/scripts/fixtures/merge-evidence/audit-*/`: recorded merge, reconstructed merge, post-merge runs left out, unpaired commit, session decision record linked and not counted, missed-day rebuild, squash commit not listed as unpaired.
+- [x] T015 [US2] Implement the runtime `audit` subcommand in `.github/scripts/wc_merge_evidence.py`; the window start and end are parameters, and the workflow passes none (FR-012). Render the section object (`Section` in data-model.md) and write it for upload.
+- [x] T016 [US2] Add the daily audit job to `.github/workflows/wing-commander-merge-evidence.yml` (timeout 15 minutes) that uploads `merge-evidence-section` with `overwrite: true` and 7-day retention.
+- [x] T017 [US2] Extend `.github/scripts/verify-merge-evidence.py` with the audit fixture checks from T014 and a check that the artifact names in the workflow equal the constants from T007.
+- [x] T018 [P] [US2] Add `merge_evidence_snapshot()`, the `SWITCH_ENV` entry and the collapsed-section renderer with statuses built/paused/failed/never/unreadable and the names-only shortened form over `MAX_BODY_UNITS` to `.github/scripts/wc_board_status.py`.
+- [x] T019 [US2] Add the `MERGE_EVIDENCE_PAUSED` env line to `.github/workflows/board-status.yml`; the pause test calls `wc_board_status._switch_on`, not a literal comparison.
+- [x] T020 [US2] Extend `.github/scripts/verify-board-status.py` with the writer's merge-evidence paths: each status and the shortened form.
 
 **Checkpoint**: audit visible in Board status.
 
@@ -60,16 +60,16 @@ Run `python .github/scripts/run-local-gates.py` before pushing; every task leave
 
 **Independent Test**: gate checks on the workflow's shape and on the merge jobs' sources all pass; each fails when its subject is broken.
 
-- [ ] T021 [P] [US3] Extend `.github/scripts/verify-merge-evidence.py` with workflow-shape checks: read-only `permissions:`, no write verbs to checks/statuses/labels/reviews/merges/pushes/comments, no `always()`/`!cancelled()`, no agent action, non-default-ref refusal as the first step, pause step present (FR-017, FR-020 to FR-023).
-- [ ] T022 [P] [US3] Extend `.github/scripts/verify-merge-evidence.py` with the FR-019 no-reader check: `board-merge` and `lifecycle-review-gate` sources and workflows reference neither artifact constant nor `wc_merge_evidence`.
-- [ ] T023 [P] [US3] Add a negative fixture for each T021/T022 check, mutating a copy in memory so each check is shown to fail; `EXEMPT_*` tables are parameters of the checks, never mutated.
-- [ ] T024 [US3] Add the SC-003 replay check in `.github/scripts/verify-merge-evidence.py` behind an `EXEMPT_SC003_PENDING` entry citing `#1143`, so gate 124 sees a tracker for it.
+- [x] T021 [P] [US3] Extend `.github/scripts/verify-merge-evidence.py` with workflow-shape checks: read-only `permissions:`, no write verbs to checks/statuses/labels/reviews/merges/pushes/comments, no `always()`/`!cancelled()`, no agent action, non-default-ref refusal as the first step, pause step present (FR-017, FR-020 to FR-023).
+- [x] T022 [P] [US3] Extend `.github/scripts/verify-merge-evidence.py` with the FR-019 no-reader check: `board-merge` and `lifecycle-review-gate` sources and workflows reference neither artifact constant nor `wc_merge_evidence`.
+- [x] T023 [P] [US3] Add a negative fixture for each T021/T022 check, mutating a copy in memory so each check is shown to fail; `EXEMPT_*` tables are parameters of the checks, never mutated.
+- [x] T024 [US3] Add the SC-003 replay check in `.github/scripts/verify-merge-evidence.py` behind an `EXEMPT_SC003_PENDING` entry citing `#1143`, so gate 124 sees a tracker for it.
 
 ## Phase 6: Polish and cross-cutting
 
-- [ ] T025 [P] Update `docs/reference.md`: the workflow, its schedule, the `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` switch, the "Merge classes" and "Known limits" sections (FR-025).
-- [ ] T026 [P] Add the `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` row to `docs/setup.md` §3 and list the workflow among the repository-only workflows in `README.md`.
-- [ ] T027 Run the `review-step-gating` skill over `.github/workflows/wing-commander-merge-evidence.yml` and the `board-status.yml` change, and fix findings.
+- [x] T025 [P] Update `docs/reference.md`: the workflow, its schedule, the `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` switch, the "Merge classes" and "Known limits" sections (FR-025).
+- [x] T026 [P] Add the `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` row to `docs/setup.md` §3 and list the workflow among the repository-only workflows in `README.md`.
+- [x] T027 Run the `review-step-gating` skill over `.github/workflows/wing-commander-merge-evidence.yml` and the `board-status.yml` change, and fix findings.
 - [ ] T028 Walk `quickstart.md` steps that need no dispatch against the fixtures, then run `python .github/scripts/run-local-gates.py` and fix what it reports.
 
 ## Phase 7: Maintainer follow-up

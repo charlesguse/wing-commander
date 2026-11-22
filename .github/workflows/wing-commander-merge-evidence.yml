@@ -1,5 +1,12 @@
 name: "wing-commander-merge-evidence"
 
+# Board status finds the daily audit's runs by this title
+# (wc_board_status.MERGE_EVIDENCE_AUDIT_TITLES); the hourly verdict runs never
+# build the section.
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' && format('merge-evidence dispatch {0}', inputs.job)
+  || (github.event.schedule == '41 5 * * *' && 'merge-evidence audit' || 'merge-evidence verdicts') }}
+
 # The merge evidence audit (specs/125-merge-evidence-audit): an hourly verdict
 # for every open pull request into the default branch, and a daily audit of
 # everything that reached it in the last 30 days. It only watches: read-only
@@ -9,7 +16,7 @@ name: "wing-commander-merge-evidence"
 # (wc_board_status.py) is the only thing that ever shows the daily
 # `merge-evidence-section`. No merge job reads either (FR-019).
 #
-# Step gating: no always() or !cancelled() anywhere. A refused run stops every
+# Step gating: no always-style or cancellation-negating condition anywhere. A refused run stops every
 # later step; the pause output gates checkout, build and upload under the
 # default success(); a failed build stops the upload, so the ledger keeps its
 # last good state (research D3).
