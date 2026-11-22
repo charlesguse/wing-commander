@@ -299,7 +299,7 @@ def cut_snapshot(snap, merged_at):
     if snap.get("statusCheckRollup") is not None:
         rollup = []
         for entry in snap["statusCheckRollup"]:
-            stamp = entry.get("completedAt") or entry.get("startedAt")
+            stamp = entry.get("startedAt") or entry.get("completedAt")
             if _after(stamp, merged_at):
                 left_out += 1
             else:
@@ -411,7 +411,7 @@ def _line(entry):
     v = entry["verdict_as_of_merge"]
     first = v["first_unmet"] or "none"
     text = "- #{0} {1} `{2}` as of merge: {3}, first unmet: {4}; merged by {5}; {6}".format(
-        entry["pr"], entry["kind"], entry["merged_commit"][:12], result_of(v), first,
+        entry["pr"], entry["kind"], (entry["merged_commit"] or "unknown")[:12], result_of(v), first,
         entry["merged_by"], entry["mark"])
     if entry.get("prior_record_result"):
         text += "; earlier record: {0}, first unmet {1}".format(
@@ -510,7 +510,7 @@ def download_ledger(repo, default_branch, directory):
     (audit and paused runs upload none), or None when there is none. A 404 is
     told apart from other failures by gh's stderr."""
     r = _run(["gh", "run", "list", "-R", repo, "--workflow", WORKFLOW_FILE, "--branch", default_branch,
-              "--status", "success", "--limit", "20", "--json", "databaseId"])
+              "--status", "success", "--limit", "100", "--json", "databaseId"])
     if r.returncode != 0:
         if "(HTTP 404)" in (r.stderr or ""):
             return None
@@ -539,11 +539,11 @@ def _issue_comments(repo, number):
 def _extend_with_evidence(repo, snap, bot_login, not_read, base_branch=None):
     """Reviews, labels and the kind's evidence issue; each part that cannot be
     read is named, never defaulted."""
-    kind, _facts = assign_kind(snap, bot_login, base_branch=base_branch)
     pull = json.loads(_gh_ok(["pr", "view", str(snap["number"]), "-R", repo, "--json",
                               "reviews,isCrossRepository"]))
     snap["reviews"] = pull.get("reviews") or []
     snap["cross_repository"] = bool(pull.get("isCrossRepository"))
+    kind, _facts = assign_kind(snap, bot_login, base_branch=base_branch)
     issue = linked_issue(kind, snap)
     snap["issue_comments"] = None
     snap["labels"] = None
@@ -634,9 +634,13 @@ def _rest_rollup(repo, sha):
         c = json.loads(line)
         rollup.append({"name": c.get("name"), "status": (c.get("status") or "").upper(),
                        "conclusion": (c.get("conclusion") or "").upper(),
-                       "completedAt": c.get("completed_at"),
+                       "completedAt": c.get("completed_at"), "startedAt": c.get("started_at"),
                        "workflowName": suites.get((c.get("check_suite") or {}).get("id"), "")})
-    for s in json.loads(_gh_ok(["api", "repos/{0}/commits/{1}/status".format(repo, sha)])).get("statuses") or []:
+    for line in _gh_ok(["api", "repos/{0}/commits/{1}/status?per_page=100".format(repo, sha), "--paginate",
+                        "--jq", ".statuses[] | tojson"]).splitlines():
+        if not line.strip():
+            continue
+        s = json.loads(line)
         rollup.append({"context": s.get("context"), "state": (s.get("state") or "").upper(),
                        "startedAt": s.get("created_at")})
     return rollup
@@ -704,9 +708,9 @@ def run_audit(repo, bot_login, default_branch, out_path, final_prefix, spec_pref
         path = download_ledger(repo, default_branch, tmp)
         ledger, _found = load_ledger(path)
     token = os.environ.get("WC_ACTIONS_TOKEN") or None
-    found = board_merge.gh_items("search/issues?q={0}&per_page=100".format(
-        "repo:{0}+is:pr+is:merged+base:{1}+merged:>={2}".format(repo, default_branch, window["start"][:10])),
-        items=".items[]")
+    found = [p for p in board_merge.gh_items(
+        "repos/{0}/pulls?state=closed&base={1}&sort=updated&direction=desc&per_page=100".format(repo, default_branch))
+        if p.get("merged_at") and window["start"] <= p["merged_at"] <= window["end"]]
     merged, entries = [], []
     for item in found:
         pull = json.loads(_gh_ok(["api", "repos/{0}/pulls/{1}".format(repo, item["number"])]))

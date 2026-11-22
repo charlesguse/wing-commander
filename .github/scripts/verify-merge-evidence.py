@@ -228,6 +228,29 @@ def check_review_round1():
     return problems
 
 
+def check_review_round2():
+    """Review gate round 2: each fix fails this check without it."""
+    problems = []
+    src = read(".github/scripts/wc_merge_evidence.py")
+    ext = src[src.index("def _extend_with_evidence"):src.index("def collect")]
+    if ext.index('snap["cross_repository"]') > ext.index("assign_kind("):
+        problems.append("kind: assign_kind runs before cross_repository is set")
+    if '"--limit", "20"' in src:
+        problems.append("ledger: the run lookback is still 20 runs")
+    if "search/issues" in src:
+        problems.append("audit: merged PRs are found through the capped search API")
+    if '(entry["merged_commit"] or "unknown")[:12]' not in src:
+        problems.append("line: a null merge commit is not handled")
+    if '--paginate' not in src[src.index("def _rest_rollup"):src.index("def _merged_snapshot")].split("/status")[1]:
+        problems.append("rollup: commit statuses are read without pagination")
+    cut = me.cut_snapshot({"statusCheckRollup": [
+        {"name": "c", "startedAt": "2026-11-01T00:00:00Z", "completedAt": None},
+        {"name": "d", "startedAt": "2026-11-03T00:00:00Z"}]}, "2026-11-02T00:00:00Z")
+    if [e["name"] for e in cut["statusCheckRollup"]] != ["c"]:
+        problems.append("cut: a check is cut on its completion time, not its start")
+    return problems
+
+
 def _stub_gh(directory, mode):
     list_arm = (gh_error_stub_arm("run list", "404", "Not Found") if mode == "404"
                 else gh_error_stub_arm("run list", "502", "Bad Gateway") if mode == "502"
@@ -359,7 +382,7 @@ def check_negatives(text):
 def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
-        + check_review_round1()
+        + check_review_round1() + check_review_round2()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
     wf = os.path.join(REPO, WORKFLOW)
     if os.path.exists(wf):
