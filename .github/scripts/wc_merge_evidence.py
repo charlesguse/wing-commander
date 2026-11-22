@@ -249,6 +249,19 @@ def _final_conditions(snap, bot_login):
     return out
 
 
+# The kinds whose conditions read records the pipeline App writes.
+APP_EVIDENCE_KINDS = ("bump", "board-fix", "final")
+
+
+def _app_seen(snap, bot_login):
+    """True when any comment or review read for this PR is by the App."""
+    for comment in list(snap.get("comments") or []) + list(snap.get("issue_comments") or []):
+        if board_merge.is_app_user(comment.get("user"), bot_login):
+            return True
+    return any(board_merge._is_bot((r.get("author") or {}).get("login"), bot_login)
+               for r in snap.get("reviews") or [])
+
+
 def evaluate(snap, bot_login, now, final_prefix="spec/", spec_prefix="spec-draft/", base_branch=None):
     """One VerdictRecord (data-model.md) for `snap`, at its head. A snapshot
     the runtime half built carries the kind it assigned while choosing the
@@ -264,6 +277,12 @@ def evaluate(snap, bot_login, now, final_prefix="spec/", spec_prefix="spec-draft
     if not bot_login:
         complete = False
         not_read.append("the pipeline App's login (no record can be told from a maintainer's)")
+    elif kind in APP_EVIDENCE_KINDS and not _app_seen(snap, bot_login):
+        # A wrong login reads like evidence that is not there yet; say so
+        # (#1173 round 5, finding 4).
+        complete = False
+        not_read.append("any record by the App login `{0}`: no comment or review on the pull request or "
+                        "its evidence issue is by it (is WING_COMMANDER_BOT_LOGIN right?)".format(bot_login))
     conditions = [_checks_condition(snap.get("statusCheckRollup"), rule)]
     if kind == "bump":
         conditions += _bump_conditions(snap, bot_login)

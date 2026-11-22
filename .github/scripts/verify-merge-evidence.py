@@ -833,6 +833,27 @@ def check_round5_truncated_comments():
         return ["cut: a truncated comment read (1 of 3) reads complete after the cut"]
     return []
 
+def check_round5_login_seen(base_doc):
+    """Round 5, finding 4: a kind that needs the App's records, with none by
+    the configured login, names the login among what was not read."""
+    problems = []
+    # A wrong login also turns a bump or board-fix PR into a maintainer PR
+    # (their kind needs the App as author), so only a final PR, told by its
+    # branch, can show it here.
+    for name in ("verdict-final-clean",):
+        if not os.path.isdir(os.path.join(FIXTURES, name)):
+            continue
+        snap = build_snapshot(base_doc, load(name, "case.json"))
+        rec = me.evaluate(snap, "someone-else[bot]", NOW)
+        if rec["complete"] or not any("someone-else[bot]" in n for n in rec["not_read"]):
+            problems.append("login: {0} under a wrong App login does not say no record is by it".format(name))
+        if any("App login" in n for n in me.evaluate(snap, base_doc["bot_login"], NOW)["not_read"]):
+            problems.append("login: {0} under the right App login says no record is by it".format(name))
+    maintainer = build_snapshot(base_doc, {"base": "maintainer"})
+    if any("App login" in n for n in me.evaluate(maintainer, "someone-else[bot]", NOW)["not_read"]):
+        problems.append("login: a maintainer PR, which needs no App record, names the App login")
+    return problems
+
 def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
@@ -840,6 +861,7 @@ def main():
         + check_review_round3_open() + check_review_round3_kind() + check_review_round3_linked_issue()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
     problems += check_review_round4() + check_sc003_pending()
+    problems += check_round5_login_seen(base_doc)
     problems += check_round5_truncated_comments()
     problems += check_round5_base_branch(base_doc)
     if not check_sc003_pending(pending={}, directory=os.path.join(FIXTURES, "_none_")):
