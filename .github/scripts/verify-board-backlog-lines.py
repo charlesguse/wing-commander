@@ -125,6 +125,8 @@ def run_case(case):
         return run_pre_push(case)
     if op == "keyword-hold":
         return run_keyword_hold(case)
+    if op == "release-attempt":
+        return run_release_attempt(case)
     if op == "route-line":
         return run_route_line(case)
     if op == "line-item":
@@ -338,6 +340,100 @@ def run_keyword_hold(case):
     posted = [cmd for cmd in calls if cmd[:3] == ["gh", "issue", "comment"]]
     if bool(posted) != (case["expect"] == "held"):
         errors.append("refusal comment {0!r}".format(posted))
+    # #1135: the hold comment says how to release the line and what
+    # releasing does (its held PR is closed, the line claimed fresh).
+    text = " ".join(" ".join(cmd) for cmd in posted)
+    errors += ["refusal comment lacks {0!r}".format(n) for n in case.get("comment_contains", []) if n not in text]
+    errors += ["refusal comment carries {0!r}".format(n) for n in case.get("comment_absent", []) if n in text]
+    return "; ".join(errors) or None
+
+
+def run_release_attempt(case):
+    """#1135 option (c): release_attempt() closes a released line's open
+    pull request (on its own branch, in this repository, citing the line)
+    without deleting the branch, and posts one record whose stood-down
+    marker takes the id out of decide_line_item()'s `released`; a close the
+    token refuses names the maintainer's command; a failed read or record
+    post is not final (None)."""
+    import contextlib
+    import io
+    import board_item_marker as bim
+    fn = getattr(bbl, "release_attempt", None)
+    if fn is None:
+        return "no release_attempt()"
+    calls = []
+
+    def run(cmd, **_kw):
+        calls.append(cmd)
+        if cmd[:2] == ["gh", "api"]:
+            return _Proc(case.get("list_rc", 0),
+                         "".join(json.dumps(pr) + "\n" for pr in case.get("prs", [])))
+        if cmd[:3] == ["gh", "pr", "close"]:
+            # `close_rcs`: the exit of each close in turn (the last repeats).
+            rcs = case.get("close_rcs") or [case.get("close_rc", 0)]
+            tries = sum(1 for c in calls if c[:3] == ["gh", "pr", "close"])
+            return _Proc(rcs[min(tries, len(rcs)) - 1])
+        if cmd[:3] == ["gh", "pr", "comment"]:
+            return _Proc(case.get("note_rc", 0))
+        if cmd[:3] == ["gh", "issue", "comment"]:
+            return _Proc(case.get("post_rc", 0))
+        return _Proc(1)
+
+    line_id = case["line_id"]
+    import time
+    real_sleep, time.sleep = time.sleep, lambda _s: None  # a retried close waits for nothing here
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            got = fn(889, line_id, run=run, repository="o/r")
+    finally:
+        time.sleep = real_sleep
+    errors = []
+    want = case["expect"]
+    if (got is None) != (want is None) or (want is not None and want not in got):
+        errors.append("outcome {0!r}, want {1!r}".format(got, want))
+    lists = [cmd for cmd in calls if cmd[:2] == ["gh", "api"]]
+    if not lists or "head=o:fix/889-{0}".format(line_id) not in lists[0] or "state=open" not in lists[0]:
+        errors.append("did not list the open pull requests on the line's own branch: {0!r}".format(lists))
+    closes = [cmd for cmd in calls if cmd[:3] == ["gh", "pr", "close"]]
+    if [int(cmd[3]) for cmd in closes] != case.get("expect_closes", []):
+        errors.append("closed {0!r}, want {1!r}".format([cmd[3] for cmd in closes], case.get("expect_closes", [])))
+    for cmd in closes:
+        if "--delete-branch" in cmd or "-d" in cmd:
+            errors.append("deleted the attempt's branch: {0!r}".format(cmd))
+    # One release note per closed PR and none on a refused one, whether it
+    # rode on a close (`--comment`, which gh posts before it closes, so
+    # every retry repeats it) or was posted on its own after the close.
+    notes = {}
+    for cmd in calls:
+        flag = {"close": "--comment", "comment": "--body"}.get(cmd[2] if cmd[:2] == ["gh", "pr"] else None)
+        if flag and flag in cmd:
+            note = cmd[cmd.index(flag) + 1]
+            if line_id not in note or "released" not in note:
+                errors.append("PR note does not say the line was released: {0!r}".format(note))
+            notes[int(cmd[3])] = notes.get(int(cmd[3]), 0) + 1
+    want_notes = {n: 1 for n in case.get("expect_noted", [])}
+    if notes != want_notes:
+        errors.append("release notes per PR {0!r}, want {1!r}".format(notes, want_notes))
+    posts = [cmd for cmd in calls if cmd[:3] == ["gh", "issue", "comment"]]
+    if len(posts) != (1 if case["expect_record"] else 0):
+        errors.append("{0} backlog records, want {1}".format(len(posts), 1 if case["expect_record"] else 0))
+    if posts:
+        body = posts[0][posts[0].index("--body") + 1]
+        errors += ["record lacks {0!r}".format(n) for n in case.get("record_contains", []) if n not in body]
+        # Once only: with the record newest, the id is no longer released.
+        decision = bbl.decide_line_item({
+            "tracking_issues": [{"number": 889, "title": "Maintenance backlog", "state": "OPEN",
+                                 "labels": [{"name": "disposition:tracking"}],
+                                 "author": {"login": "owner"}, "authorAssociation": "OWNER",
+                                 "body": "- [ ] a\n"}],
+            "comments": [
+                {"created_at": "2026-01-01T00:00:00Z", "user": {"login": "bot[bot]", "type": "Bot"},
+                 "body": bim.write_marker("stalled", 0, None, None, None, line=line_id)},
+                {"created_at": "2026-01-02T00:00:00Z", "user": {"login": "bot[bot]", "type": "Bot"},
+                 "body": body}],
+            "bot_login": "bot[bot]", "issue_selected": True})
+        if line_id in decision.get("released", []):
+            errors.append("the record leaves {0} released, so every run would end it again".format(line_id))
     return "; ".join(errors) or None
 
 
@@ -566,6 +662,19 @@ def board_loop_wiring(path=BOARD_LOOP):
         errors.append("select has no `line` step")
     elif line_step.get("continue-on-error") is not True:
         errors.append("select's line step can fail the select job while the feature is dark (FR-020)")
+    if line_step is not None:
+        # #1135 option (c): a released line's attempt is ended before a
+        # claim, and no claim is made while one is not ended yet.
+        run = line_step.get("run") or ""
+        claim_at = run.find('{op: "claim"')
+        release_at = run.find("--release-attempt")
+        arm = re.search(r"(?m)^\s*claim\)\s*$", run)
+        if release_at < 0 or claim_at < 0 or release_at > claim_at:
+            errors.append("select's line step does not end a released line's attempt "
+                          "(board_backlog_lines.py --release-attempt) before it claims (#1135)")
+        elif arm is None or '"$release_pending" = true' not in run[arm.end():claim_at]:
+            errors.append("select's line step claims a line while a released line's attempt "
+                          "is not ended (#1135)")
     return errors
 
 

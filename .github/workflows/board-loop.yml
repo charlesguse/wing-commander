@@ -983,6 +983,25 @@ jobs:
             fi
           done
 
+          # #1135 option (c): a held line a maintainer released (its id is
+          # on no line, its newest marker is the hold's stalled one) ends its
+          # held attempt: board_backlog_lines.release_attempt() closes that
+          # attempt's open PR, keeping its branch, and records the release.
+          # Until that is final no new line is claimed, so a released line is
+          # not claimed fresh beside a PR the loop can still close (one its
+          # token refuses is named in the record for a maintainer); the next
+          # run retries.
+          release_pending=false
+          mapfile -t released < <(jq -r '.released[]' <<<"$decision")
+          for gone in "${released[@]}"; do
+            if outcome="$(python3 .github/scripts/board_backlog_lines.py --release-attempt "$backlog" "$gone")"; then
+              echo "board-loop: backlog line $gone on #$backlog was released -- $outcome (#1135)." >> "$GITHUB_STEP_SUMMARY"
+            else
+              release_pending=true
+              echo "::warning::board-loop: released backlog line $gone's attempt could not be ended this run -- no new line is claimed until it is (#1135)."
+            fi
+          done
+
           # FR-011/FR-021: a line whose PR already merged but is still in
           # progress was missed by that merge's own pull_request: closed run
           # (it was displaced): tick it here, noting the proof never ran.
@@ -1019,6 +1038,10 @@ jobs:
               echo "board-loop: selected backlog line $line_id on #$backlog -- claimed, still the current item (specs/121 FR-006)." >> "$GITHUB_STEP_SUMMARY"
               ;;
             claim)
+              if [ "$release_pending" = true ]; then
+                echo "board-loop: no backlog line claimed -- a released line's attempt is not ended yet (#1135)." >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
               text="$(jq -r '.text' <<<"$decision")"
               claim="$(jq -n --argjson issue "$backlog" --arg id "$line_id" --arg text "$text" \
                 '{op: "claim", issue: $issue, line_id: $id, detail: $text}' \

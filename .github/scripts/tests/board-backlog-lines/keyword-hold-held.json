@@ -6,5 +6,14 @@
     "closes #747"
   ],
   "expect": "held",
-  "expect_body": "- [ ] flaky [wc:bl-0a1b2c3d held board:stalled from fix (closing keyword)]\n"
+  "expect_body": "- [ ] flaky [wc:bl-0a1b2c3d held board:stalled from fix (closing keyword)]\n",
+  "comment_contains": [
+    "--op release --line-id bl-0a1b2c3d",
+    "closes its open pull request",
+    "fix/889-bl-0a1b2c3d",
+    "claimed fresh under a new id and branch"
+  ],
+  "comment_absent": [
+    "sole re-eligibility condition"
+  ]
 }

@@ -1,0 +1,12 @@
+{
+  "op": "release-attempt",
+  "line_id": "bl-0a1b2c3d",
+  "prs": [],
+  "expect": "no open pull request",
+  "expect_closes": [],
+  "expect_record": true,
+  "record_contains": [
+    "no open pull request",
+    "claimed fresh"
+  ]
+}

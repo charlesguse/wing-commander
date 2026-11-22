@@ -1,0 +1,9 @@
+{
+  "initial": "- [ ] a [wc:bl-1 held board:stalled from fix]\n- [ ] b",
+  "op": "release",
+  "line_id": "bl-1",
+  "after_write": [],
+  "expect": "applied",
+  "expect_writes": 1,
+  "final_equals": "- [ ] a\n- [ ] b"
+}

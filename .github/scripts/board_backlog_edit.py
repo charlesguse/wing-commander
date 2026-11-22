@@ -45,6 +45,9 @@ def _operations(op, line_id, detail, url=""):
         hits = [line for line in bbl.parse_lines(body) if line["id"] == line_id]
         return hits[0] if len(hits) == 1 else None
 
+    def released(body):
+        return not any(line["id"] == line_id for line in bbl.parse_lines(body))
+
     table = {
         "claim": (lambda b: bbl.claim(b, line_id, detail), "in-progress", False),
         "progress": (lambda b: bbl.annotate(b, line_id, "in-progress", detail), "in-progress", False),
@@ -53,16 +56,19 @@ def _operations(op, line_id, detail, url=""):
         "tick-evidence": (lambda b: bbl.tick(b, line_id, "evidence", detail), "evidence", True),
         "tick-fixed": (lambda b: bbl.tick(b, line_id, "fixed", detail), "fixed", True),
         "note-proof": (lambda b: bbl.note_proof(b, line_id, detail, url), "fixed", True),
-        "release": (lambda b: bbl.clear_note(b, line_id), None, False),
+        "release": (lambda b: b if released(b) else bbl.clear_note(b, line_id), None, False),
     }
     if op not in table:
         raise SystemExit("unknown --op {0!r}".format(op))
     apply_fn, state, checked = table[op]
 
     def verify(body):
+        if op == "release":
+            # Releasing removes the id with its annotation, so a released
+            # line is one no line carries any more; a release run again, or
+            # on a line already released, changes nothing (#1135).
+            return released(body)
         line = state_of(body)
-        if state is None:
-            return line is not None and line["state"] is None
         if line is None or line["state"] != state or line["checked"] != checked:
             return False
         if op in ("progress", "hold", "route-proposal", "tick-evidence", "tick-fixed"):

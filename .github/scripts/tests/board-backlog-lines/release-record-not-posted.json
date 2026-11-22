@@ -1,0 +1,20 @@
+{
+  "op": "release-attempt",
+  "line_id": "bl-0a1b2c3d",
+  "prs": [
+    {
+      "number": 41,
+      "body": "Backlog line: #889 bl-0a1b2c3d\n\nWorks the Maintenance backlog line below.",
+      "repo": "o/r"
+    }
+  ],
+  "post_rc": 1,
+  "expect": null,
+  "expect_closes": [
+    41
+  ],
+  "expect_record": true,
+  "expect_noted": [
+    41
+  ]
+}
