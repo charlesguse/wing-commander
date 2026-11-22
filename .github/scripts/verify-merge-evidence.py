@@ -671,6 +671,7 @@ def check_proof_list_guard(text):
             or (steps[0].get("with") or {}).get("ref") != CHECKOUT_REF:
         return ["{0}: the job does not open with a checkout pinned to the default branch".format(PROOF_LIST_WORKFLOW)]
     if guard.get("uses") != GUARD_USES or guard.get("id") != "pause" or with_.get("refuse-on") != "dispatch" \
+            or with_.get("event") != "${{ github.event_name }}" \
             or "WING_COMMANDER_PROOF_LIST_PAUSED" not in str(with_.get("switch-value")):
         return ["{0}: the second step is not {1} (id pause, refuse-on: dispatch, the proof list's switch)".format(
             PROOF_LIST_WORKFLOW, GUARD_USES)]
@@ -691,6 +692,7 @@ def check_guard_refusal_modes(action_text):
                                    ("dispatch", "schedule", "refs/heads/topic", 0),
                                    ("dispatch", "workflow_dispatch", "refs/heads/topic", 1),
                                    ("dispatch", "workflow_dispatch", "refs/heads/main", 0),
+                                   ("dispatch", "", "refs/heads/main", 1),
                                    ("sometimes", "schedule", "refs/heads/main", 1)):
         env = dict(os.environ, REF=ref, EVENT=event, DEFAULT_BRANCH="main", WHAT="x runs", REFUSE_ON=mode)
         got = subprocess.run(["bash", "-c", step["run"]], capture_output=True, text=True, env=env).returncode

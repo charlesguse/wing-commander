@@ -27,6 +27,12 @@ inputs:
       always has. Any other value fails the step.
     required: false
     default: every-run
+  event:
+    description: >
+      github.event_name, passed in (a composite reads no event facts
+      itself, constitution VII). Needed when refuse-on is `dispatch`.
+    required: false
+    default: ''
   switch-value:
     description: >
       The pause variable's value (vars.<switch-name>). A composite cannot
@@ -48,14 +54,19 @@ runs:
       shell: bash
       env:
         REF: ${{ github.ref }}
-        EVENT: ${{ github.event_name }}
+        EVENT: ${{ inputs.event }}
         DEFAULT_BRANCH: ${{ inputs.default-branch }}
         WHAT: ${{ inputs.what }}
         REFUSE_ON: ${{ inputs.refuse-on }}
       run: |
         case "$REFUSE_ON" in
           every-run) ;;
-          dispatch) [ "$EVENT" = "workflow_dispatch" ] || exit 0 ;;
+          dispatch)
+            if [ -z "$EVENT" ]; then
+              echo "::error::wing-commander-watch-guard: refuse-on dispatch needs the event input"
+              exit 1
+            fi
+            [ "$EVENT" = "workflow_dispatch" ] || exit 0 ;;
           *) echo "::error::wing-commander-watch-guard: refuse-on must be every-run or dispatch, not '$REFUSE_ON'"; exit 1 ;;
         esac
         if [ -z "$DEFAULT_BRANCH" ] || [ "$REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
