@@ -28,6 +28,14 @@ A lookup of the 48 pull requests merged into `main` from 2026-10-15 to 2026-11-1
 
 The owner's direction (2026-11-16): keep the existing merge jobs, and add a workflow that watches merges into `main` and only records what it finds. This feature is that workflow. It changes no existing merge decision, and nothing waits on its verdict.
 
+## Clarifications
+
+### Session 2026-11-22
+
+- Q: For a pull request with no checks at all (every spec PR today), is the verdict "unmet: no checks", or are missing checks reported separately as not applicable? → A: Unmet. "No checks on the head" is the first unmet condition for any kind; spec PRs show as unmet until #1141 moves them off `main` or a check is added (FR-006).
+- Q: What starts a verdict run? → A: A schedule over every open pull request into `main`, hourly rather than every 30 minutes (each job costs at least one Actions minute), plus manual dispatch; a pull request merged between two runs gets only a reconstructed verdict (FR-016).
+- Q: How long does the watching period run, and what ends it? → A: A fixed 30 days; when it ends the owner reviews the audit and decides the next step, including whether the merge jobs read the verdict (FR-024).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - See, for an open pull request into main, whether its merge evidence is there on the exact head (Priority: P1)
@@ -46,6 +54,7 @@ The owner, or a session about to merge, looks up the verdict for a pull request 
 4. **Given** a final PR whose most recent lifecycle review gate round was recorded at the current head and came back clean with zero open in-scope findings, **When** the verdict is computed, **Then** the review-evidence condition is met.
 5. **Given** a pull request whose only review evidence is a comment posted under a maintainer's account (a session's pass report, a decision record), **When** the verdict is computed, **Then** that comment is listed in the verdict as reported and the review-evidence condition is not counted as met by it (FR-009).
 6. **Given** a snapshot that could not be fetched completely (a page missing, a call refused), **When** the verdict is computed, **Then** the verdict says it is incomplete and names what could not be read, and no condition is reported as met on data that was not read (FR-005).
+7. **Given** a pull request of any kind, a spec PR among them, with no checks on its head, **When** the verdict is computed, **Then** the checks condition is unmet and "no checks on the head" is reported as the first unmet condition (FR-006).
 
 ---
 
@@ -114,7 +123,7 @@ The owner and every merge path keep working exactly as today. The workflow never
 
 **Conditions**
 
-- **FR-006**: For every kind, the verdict MUST include the condition "checks green on the head commit, with the gate suite among them". A head with no checks is not green (Principle VIII) [NEEDS CLARIFICATION: For a pull request with no checks at all — every spec PR today — is the verdict simply "unmet: no checks", or is the spec PR a kind whose verdict reports the missing checks separately as "not applicable until #1141 moves spec PRs off main"?].
+- **FR-006**: For every kind, the verdict MUST include the condition "checks green on the head commit, with the gate suite among them". A head with no checks is not green (Principle VIII): for a pull request of any kind with no checks on its head, this condition is unmet and "no checks on the head" is its first unmet condition. No kind is exempt; spec PRs, which have no checks today, therefore show as unmet until #1141 moves them off `main` or a check is added (clarified 2026-11-22, #1143).
 - **FR-007**: The verdict MUST then include the kind's own evidence condition:
   - *Spec Kit bump PR*: its verification record, counted only when the Actions run it names is confirmed by the Actions API as the expected workflow, on that head, successful — as the bump's merge conditions confirm it today.
   - *Board loop fix PR*: the board loop's own review verdict for that head commit, posted by the pipeline's App, with zero open findings.
@@ -134,7 +143,7 @@ The owner and every merge path keep working exactly as today. The workflow never
 - **FR-013**: When no verdict was recorded for a merged pull request's last head before it merged, the audit MUST reconstruct the verdict as FR-012 says and mark the entry as reconstructed.
 - **FR-014**: The audit MUST list every commit that reached `main` since the last completed audit without being the merge or squash commit of a merged pull request, with its author and committer.
 - **FR-015**: When a merged pull request carries a session decision record (a comment starting `**Session decision (`), the audit entry MUST link it, as reported and not counted; the entry's verdict is unchanged by it.
-- **FR-016**: The workflow MUST compute verdicts for open pull requests [NEEDS CLARIFICATION: What starts a verdict run — a frequent schedule over every open pull request into main (simple, but a pull request merged between two runs gets only a reconstructed verdict), a run chained to the CI workflow finishing on a pull request (fresh per head, but subject to GitHub's workflow_run chaining limits and blind to statuses the review workflows post with the Actions token), or both?], and MUST run the daily audit on a daily schedule and on manual dispatch.
+- **FR-016**: The workflow MUST compute verdicts for every open pull request into `main` on an hourly schedule and on manual dispatch; it MUST NOT be chained to the CI workflow finishing. A pull request merged between two runs gets only a reconstructed verdict in the audit (FR-013). Hourly, not every 30 minutes, because every job counts as at least one Actions minute and a 30-minute schedule would use about 1,440 minutes a month (clarified 2026-11-22, #1143). The workflow MUST run the daily audit on a daily schedule and on manual dispatch.
 
 **Only watching**
 
@@ -148,7 +157,7 @@ The owner and every merge path keep working exactly as today. The workflow never
 
 **Watching period**
 
-- **FR-024**: The watching period MUST be bounded: [NEEDS CLARIFICATION: How long does the watching period run, and what result ends it — a fixed span (for example 30 days) after which the owner reviews the audit, a count of merges with complete verdicts, or no end until the owner opens the follow-up that has the merge jobs read the verdict?].
+- **FR-024**: The watching period MUST be a fixed 30 days from the day the feature ships. When it ends, the owner reviews the audit and decides the next step, including whether the merge jobs read the verdict (clarified 2026-11-22, #1143).
 
 **Documentation**
 
