@@ -3,7 +3,7 @@
   "spec_dir": "specs/125-merge-evidence-audit",
   "feature_num": "125",
   "stage": "implement",
-  "iteration": 1,
+  "iteration": 2,
   "spec_branch": "spec/125-merge-evidence-audit",
   "truncated_count": 0,
   "truncated_tier": null,

@@ -70,7 +70,7 @@ Run `python .github/scripts/run-local-gates.py` before pushing; every task leave
 - [x] T025 [P] Update `docs/reference.md`: the workflow, its schedule, the `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` switch, the "Merge classes" and "Known limits" sections (FR-025).
 - [x] T026 [P] Add the `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` row to `docs/setup.md` §3 and list the workflow among the repository-only workflows in `README.md`.
 - [x] T027 Run the `review-step-gating` skill over `.github/workflows/wing-commander-merge-evidence.yml` and the `board-status.yml` change, and fix findings.
-- [ ] T028 Walk `quickstart.md` steps that need no dispatch against the fixtures, then run `python .github/scripts/run-local-gates.py` and fix what it reports.
+- [x] T028 Walk `quickstart.md` steps that need no dispatch against the fixtures, then run `python .github/scripts/run-local-gates.py` and fix what it reports.
 
 ## Phase 7: Maintainer follow-up
 
