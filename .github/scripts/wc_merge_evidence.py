@@ -62,7 +62,10 @@ RULE_NO_GATE = "without-gate-status"
 UNREAD_STATE = "whether the pull request is still open (its state could not be read)"
 NO_ROUND_RECORD_REASON = "no counted round record exists for this kind (#1142 not built)"
 _PASS_REPORT_RE = re.compile(r"(?i)\b(review|validat\w*|verif\w*) (pass|report|verdict)\b|\bclean pass\b")
-_LINKED_ISSUE_RE = re.compile(r"(?i)\b(?:closes|fixes|resolves|refs?|for)\s+#(\d+)")
+# A final PR's lifecycle issue: finalize.yml's own closing line first, else a
+# GitHub closing keyword. A mention ("refs #N", "for #N") never links one.
+_LIFECYCLE_LINE_RE = re.compile(r"(?m)^Lifecycle issue: #(\d+)[ \t\r]*$")
+_LINKED_ISSUE_RE = re.compile(r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+#(\d+)\b")
 _FIX_ISSUE_RE = re.compile(r"fix/(\d+)-")
 
 
@@ -102,7 +105,8 @@ def linked_issue(kind, snap):
         match = _FIX_ISSUE_RE.match(snap.get("headRefName") or "")
         return int(match.group(1)) if match else None
     if kind == "final":
-        match = _LINKED_ISSUE_RE.search(snap.get("body") or "")
+        body = snap.get("body") or ""
+        match = _LIFECYCLE_LINE_RE.search(body) or _LINKED_ISSUE_RE.search(body)
         return int(match.group(1)) if match else None
     return None
 

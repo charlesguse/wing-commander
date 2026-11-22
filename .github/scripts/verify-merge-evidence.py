@@ -377,6 +377,27 @@ def check_review_round3_kind():
     return problems
 
 
+def check_review_round3_linked_issue():
+    """Finding 7 (round 3): a final PR's evidence issue is finalize.yml's
+    "Lifecycle issue: #N" line, else a GitHub closing keyword; an earlier
+    mention ("Refs #N", "for #N") never picks it."""
+    problems = []
+    with open(os.path.join(REPO, ".github", "workflows", "finalize.yml"), encoding="utf-8") as fh:
+        if 'echo "Lifecycle issue: #$ISSUE"' not in fh.read():
+            problems.append("linked issue: finalize.yml no longer writes the `Lifecycle issue: #N` line this reads")
+    cases = (("Refs #900, done for #901.\n\nCloses #1143", 1143),
+             ("- Fold (2026-11-22, review by a reviewer, #1143) 98196176: folded.\nSee #77.\n\nLifecycle issue: #1143\r\n",
+              1143),
+             ("Refs #900\nLifecycle issue: #1143", 1143),
+             ("fixed #8", 8), ("Resolves: #9", 9), ("close #10", 10),
+             ("for #901, refs #902, ref #903", None), ("Lifecycle issue: #12 and more", None))
+    for body, want in cases:
+        got = me.linked_issue("final", {"body": body})
+        if got != want:
+            problems.append("linked issue: {0!r} links #{1}, expected {2}".format(body, got, want))
+    return problems
+
+
 def check_review_round3_open():
     """Finding 4 (round 3): an open PR whose state cannot be read stays in
     the report, marked incomplete and naming what was not read (FR-005)."""
@@ -580,7 +601,7 @@ def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
         + check_review_round1() + check_review_round2() + check_review_round3_rollup() \
-        + check_review_round3_open() + check_review_round3_kind()
+        + check_review_round3_open() + check_review_round3_kind() + check_review_round3_linked_issue()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
     wf = os.path.join(REPO, WORKFLOW)
     if os.path.exists(wf):
