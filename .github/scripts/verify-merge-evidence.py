@@ -179,6 +179,25 @@ def check_ledger():
         me.prune(test, {pr: {"state": state, "at": at}}, NOW)
         if bool(test["records"]) != kept:
             problems.append("ledger: PR in state {0} at {1} {2}".format(state, at, "dropped" if kept else "kept"))
+    # Finding 6 (round 3): the watching period ends 30 days after the
+    # ledger's first write, carried forward, never after a record's time.
+    first = me.empty_ledger()
+    if "first_written_at" not in first:
+        problems.append("ledger: an empty ledger has no first_written_at")
+    stamp = getattr(me, "stamp_ledger", None)
+    if stamp is None:
+        problems.append("ledger: no stamp_ledger() sets first_written_at")
+    else:
+        stamp(first, "2026-11-01T07:07:00Z", "1")
+        stamp(first, "2026-11-12T07:07:00Z", "2")
+        if (first.get("first_written_at"), first.get("written_at"), first.get("written_by_run")) != (
+                "2026-11-01T07:07:00Z", "2026-11-12T07:07:00Z", "2"):
+            problems.append("ledger: a later write did not carry first_written_at forward: {0}".format(first))
+    first["first_written_at"] = "2026-11-01T07:07:00Z"
+    me.replace_record(first, {"pr": 9, "head": "h", "computed_at": "2026-11-12T07:07:00Z"})
+    ends = me.build_section([], [], [], me.window_bounds(NOW), NOW, first)["watching_ends"]
+    if ends != "2026-12-01":
+        problems.append("ledger: the watching period ends {0}, not 30 days after the first write (2026-12-01)".format(ends))
     unknown = me.empty_ledger()
     me.replace_record(unknown, {"pr": 9, "head": "h", "computed_at": NOW})
     me.prune(unknown, {}, NOW)

@@ -349,7 +349,17 @@ def cut_snapshot(snap, merged_at):
 
 # ---- ledger ----
 def empty_ledger():
-    return {"schema": 1, "written_at": None, "written_by_run": None, "records": {}}
+    return {"schema": 1, "first_written_at": None, "written_at": None, "written_by_run": None, "records": {}}
+
+
+def stamp_ledger(ledger, now, run_id):
+    """Marks the ledger written by this run. `first_written_at` is set once,
+    by the run that first writes the ledger, and carried forward by every
+    later one: the watching period (FR-024) is counted from it."""
+    if not ledger.get("first_written_at"):
+        ledger["first_written_at"] = now
+    ledger["written_at"], ledger["written_by_run"] = now, run_id
+    return ledger
 
 
 def load_ledger(path):
@@ -479,10 +489,12 @@ def render_markdown(section, names_only=False):
 
 
 def build_section(entries, unpaired, open_verdicts, window, now, ledger, rebuilt_from_ledger_at=None):
-    oldest = min((r.get("computed_at") for r in ledger["records"].values() if r.get("computed_at")), default=None)
+    # FR-024: a fixed 30 days from the ledger's first write, never from a
+    # record, since records are replaced hourly and pruned.
+    first = ledger.get("first_written_at")
     ends = None
-    if oldest:
-        start = datetime.datetime.strptime(oldest, "%Y-%m-%dT%H:%M:%SZ")
+    if first:
+        start = datetime.datetime.strptime(first, "%Y-%m-%dT%H:%M:%SZ")
         ends = (start + datetime.timedelta(days=WINDOW_DAYS)).strftime("%Y-%m-%d")
     counts = {"merged": len(entries), "unpaired": len(unpaired), "open": len(open_verdicts),
               "recorded": sum(1 for e in entries if e["mark"] == "recorded"),
@@ -646,7 +658,7 @@ def run_verdicts(repo, bot_login, default_branch, out_path, final_prefix, spec_p
             print("merge-evidence: could not read PR #{0}: {1}; keeping its records".format(pr, exc))
     for key in prune(ledger, states, now):
         print("merge-evidence: pruned {0}".format(key))
-    ledger["written_at"], ledger["written_by_run"] = now, run_id
+    stamp_ledger(ledger, now, run_id)
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(ledger, fh, sort_keys=True, indent=1)
     return ledger

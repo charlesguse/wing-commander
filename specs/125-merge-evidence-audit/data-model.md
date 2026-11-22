@@ -3,9 +3,11 @@
 ## Ledger (`merge-evidence-ledger` artifact, `ledger.json`)
 
 ```
-{ "schema": 1, "written_at": <UTC>, "written_by_run": <run id>,
+{ "schema": 1, "first_written_at": <UTC>, "written_at": <UTC>, "written_by_run": <run id>,
   "records": { "<pr>@<head sha>": VerdictRecord, ... } }
 ```
+
+- `first_written_at`: set by the run that first writes the ledger and carried forward by every later run. The watching period (FR-024) ends 30 days after it; records are replaced hourly and pruned, so no record's time can fix that date.
 
 - Replace rule: a later run for the same `(pr, head)` replaces the entry (FR-011).
 - Prune rule: kept while the PR is open and for 31 days after merge; dropped 7 days after a close without merge (research D2).
