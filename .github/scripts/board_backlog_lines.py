@@ -365,7 +365,10 @@ def cited_runs_section(text, fenced, repository):
             + "".join("- {0}\n".format(link) for link in links))
 
 
-PR_REFERENCE_RE = re.compile(r"^Backlog line: #(\d+) (bl-[0-9a-f]{8})$", re.M)
+# `\r?`: a PR body edited on github.com comes back with CRLF line ends, as
+# ISSUE_REFERENCE_RE below says; without it release_attempt() skipped such
+# a PR and recorded the release as final with the PR still open (#1170).
+PR_REFERENCE_RE = re.compile(r"^Backlog line: #(\d+) (bl-[0-9a-f]{8})\r?$", re.M)
 
 
 def pr_reference(issue, line_id):
