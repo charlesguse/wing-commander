@@ -2,10 +2,11 @@
   "issue": 1142,
   "spec_dir": "specs/127-shared-pr-reviewer",
   "feature_num": "127",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 5,
   "spec_branch": "spec/127-shared-pr-reviewer",
   "truncated_count": 0,
   "truncated_tier": null,
-  "gate_suite_ready": true
+  "gate_suite_ready": true,
+  "pending_re_review_from": []
 }
