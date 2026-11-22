@@ -37,12 +37,37 @@ import sys
 import yaml
 
 
+def unpublished_callables(root="."):
+    """Workflow basenames registered as internal callables, with reasons.
+
+    .github/scripts/unpublished-callables.json maps a workflow filename to
+    the reason it is callable yet not an adopter-facing stage (spec 127,
+    FR-002). An entry with an empty reason is ignored, so an exemption can
+    never be silent. Missing or malformed file: no exclusions.
+    """
+    import json
+    try:
+        with open(os.path.join(root, ".github", "scripts",
+                               "unpublished-callables.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items()
+            if isinstance(k, str) and isinstance(v, str) and v.strip()}
+
+
 def published_stages(root="."):
-    """Sorted paths of every workflow declaring on.workflow_call."""
+    """Sorted paths of every workflow declaring on.workflow_call, except
+    the registered unpublished callables (unpublished-callables.json)."""
     found = []
+    skip = unpublished_callables(root)
     pattern = os.path.join(root, ".github", "workflows")
     for path in sorted(glob.glob(os.path.join(pattern, "*.yml"))
                        + glob.glob(os.path.join(pattern, "*.yaml"))):
+        if os.path.basename(path) in skip:
+            continue
         try:
             wf = yaml.safe_load(open(path, encoding="utf-8")) or {}
         except yaml.YAMLError:

@@ -620,7 +620,13 @@ jobs:
       - name: Gate 7 — every job of every published stage carries the environment binding
         run: |
           python3 - <<'PYEOF'
-          import glob, os, sys, yaml
+          import glob, json, os, sys, yaml
+
+          try:
+              UNPUBLISHED = json.load(open(".github/scripts/unpublished-callables.json",
+                                           encoding="utf-8"))
+          except (OSError, ValueError):
+              UNPUBLISHED = {}
 
           # sub-key -> the workflow_call input it must forward.
           BINDINGS = {"name": "environment", "deployment": "environment-deployment"}
@@ -681,6 +687,10 @@ jobs:
               # Membership, not truthiness: a bare `workflow_call:` parses to
               # None, and a stage with no inputs yet is still a stage — it
               # must fail this gate, not slip past it as "not a stage".
+              # A callable registered in unpublished-callables.json (spec
+              # 127) is internal, not a stage — see wc_published_stages.py.
+              if os.path.basename(f) in UNPUBLISHED:
+                  continue
               if isinstance(on, dict) and "workflow_call" in on:
                   call = on.get("workflow_call") or {}
               elif isinstance(on, list) and "workflow_call" in on:
@@ -1563,6 +1573,14 @@ jobs:
                   return DOLLAR_OPEN + " " + re.sub(r"\s+", " ", m.group(1).strip()) + " " + DOLLAR_CLOSE
               return GH_EXPR_RE.sub(repl, s.strip())
 
+          # Callables registered in unpublished-callables.json (spec 127) are
+          # internal, not stages — see wc_published_stages.py.
+          try:
+              UNPUBLISHED = __import__("json").load(open(
+                  ".github/scripts/unpublished-callables.json", encoding="utf-8"))
+          except (OSError, ValueError):
+              UNPUBLISHED = {}
+
           failures = 0
           stages = bound = 0
           for f in sorted(glob.glob(".github/workflows/*.yml")
@@ -1571,6 +1589,8 @@ jobs:
               # PyYAML resolves the bare key `on` to the boolean True (YAML
               # 1.1); quoted "on" stays a string. Accept either.
               on = wf.get(True, wf.get("on"))
+              if os.path.basename(f) in UNPUBLISHED:
+                  continue
               if isinstance(on, dict) and "workflow_call" in on:
                   call = on.get("workflow_call") or {}
               elif isinstance(on, list) and "workflow_call" in on:
@@ -1881,6 +1901,14 @@ jobs:
               ("agent-startup-check.yml", "classify-startup"),
           }
 
+          # Callables registered in unpublished-callables.json (spec 127) are
+          # internal, not stages — see wc_published_stages.py.
+          try:
+              UNPUBLISHED = __import__("json").load(open(
+                  ".github/scripts/unpublished-callables.json", encoding="utf-8"))
+          except (OSError, ValueError):
+              UNPUBLISHED = {}
+
           failures = 0
           stages = 0
           embedded = {}
@@ -1888,6 +1916,8 @@ jobs:
                           + glob.glob(".github/workflows/*.yaml")):
               wf = yaml.safe_load(open(f, encoding="utf-8")) or {}
               on = wf.get(True, wf.get("on"))
+              if os.path.basename(f) in UNPUBLISHED:
+                  continue
               if isinstance(on, dict) and "workflow_call" in on:
                   call = on.get("workflow_call") or {}
               elif isinstance(on, list) and "workflow_call" in on:
