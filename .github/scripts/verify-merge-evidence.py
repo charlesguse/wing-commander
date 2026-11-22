@@ -258,7 +258,8 @@ def check_review_round2():
     problems = []
     src = read(".github/scripts/wc_merge_evidence.py")
     ext = src[src.index("def _extend_with_evidence"):src.index("def collect")]
-    if ext.index('snap["cross_repository"]') > ext.index("_assign_once("):
+    call = ext.find("_assign_once(") if "_assign_once(" in ext else ext.find("assign_kind(")
+    if call < 0 or ext.index('snap["cross_repository"]') > call:
         problems.append("kind: assign_kind runs before cross_repository is set")
     if '"--limit", "20"' in src:
         problems.append("ledger: the run lookback is still 20 runs")
