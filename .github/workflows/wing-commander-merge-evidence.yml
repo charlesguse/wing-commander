@@ -21,10 +21,13 @@ run-name: >-
 # (wc_board_status.py) is the only thing that ever shows the daily
 # `merge-evidence-section`. No merge job reads either (FR-019).
 #
-# Step gating: no always-style or cancellation-negating condition anywhere. A refused run stops every
-# later step; the pause output gates checkout, build and upload under the
-# default success(); a failed build stops the upload, so the ledger keeps its
-# last good state (research D3).
+# Step gating: no always-style or cancellation-negating condition anywhere.
+# Each job checks out first, because the refusal and the pause test live in
+# the wing-commander-watch-guard composite, which runs from the checkout;
+# checkout reads only this repository's code at the ref, never a pull
+# request or a check. A refused run stops every later step; the pause output
+# gates build and upload under the default success(); a failed build stops
+# the upload, so the ledger keeps its last good state (research D3).
 on:
   schedule:
     - cron: "7 * * * *"
@@ -65,37 +68,19 @@ jobs:
       group: wing-commander-merge-evidence-ledger
       cancel-in-progress: false
     steps:
-      - name: Refuse a run off the default branch
-        shell: bash
-        env:
-          REF: ${{ github.ref }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          if [ -z "$DEFAULT_BRANCH" ] || [ "$REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
-            echo "::error::the merge evidence audit runs only on the default branch (ref '$REF', default '$DEFAULT_BRANCH')"
-            exit 1
-          fi
-
-      - name: Check the pause switch
-        id: pause
-        shell: bash
-        env:
-          PAUSED: ${{ vars.WING_COMMANDER_MERGE_EVIDENCE_PAUSED }}
-        run: |
-          # Same test as wc_board_status._switch_on: trimmed, case-folded `true`.
-          value=$(printf '%s' "$PAUSED" | tr '[:upper:]' '[:lower:]' | xargs)
-          if [ "$value" = "true" ]; then
-            echo "paused=true" >> "$GITHUB_OUTPUT"
-            echo "WING_COMMANDER_MERGE_EVIDENCE_PAUSED is set; standing down."
-          else
-            echo "paused=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Checkout
-        if: steps.pause.outputs.paused != 'true'
         uses: actions/checkout@v5
         with:
           persist-credentials: false
+
+      - name: Refuse a run off the default branch, then check the pause switch
+        id: pause
+        uses: ./.github/actions/wing-commander-watch-guard
+        with:
+          what: the merge evidence audit runs
+          default-branch: ${{ github.event.repository.default_branch }}
+          switch-name: WING_COMMANDER_MERGE_EVIDENCE_PAUSED
+          switch-value: ${{ vars.WING_COMMANDER_MERGE_EVIDENCE_PAUSED }}
 
       - name: Record the verdicts
         if: steps.pause.outputs.paused != 'true'
@@ -130,38 +115,20 @@ jobs:
       group: wing-commander-merge-evidence-audit
       cancel-in-progress: false
     steps:
-      - name: Refuse a run off the default branch
-        shell: bash
-        env:
-          REF: ${{ github.ref }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          if [ -z "$DEFAULT_BRANCH" ] || [ "$REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
-            echo "::error::the merge evidence audit runs only on the default branch (ref '$REF', default '$DEFAULT_BRANCH')"
-            exit 1
-          fi
-
-      - name: Check the pause switch
-        id: pause
-        shell: bash
-        env:
-          PAUSED: ${{ vars.WING_COMMANDER_MERGE_EVIDENCE_PAUSED }}
-        run: |
-          # Same test as wc_board_status._switch_on: trimmed, case-folded `true`.
-          value=$(printf '%s' "$PAUSED" | tr '[:upper:]' '[:lower:]' | xargs)
-          if [ "$value" = "true" ]; then
-            echo "paused=true" >> "$GITHUB_OUTPUT"
-            echo "WING_COMMANDER_MERGE_EVIDENCE_PAUSED is set; standing down."
-          else
-            echo "paused=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Checkout
-        if: steps.pause.outputs.paused != 'true'
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Refuse a run off the default branch, then check the pause switch
+        id: pause
+        uses: ./.github/actions/wing-commander-watch-guard
+        with:
+          what: the merge evidence audit runs
+          default-branch: ${{ github.event.repository.default_branch }}
+          switch-name: WING_COMMANDER_MERGE_EVIDENCE_PAUSED
+          switch-value: ${{ vars.WING_COMMANDER_MERGE_EVIDENCE_PAUSED }}
 
       - name: Build the audit
         if: steps.pause.outputs.paused != 'true'

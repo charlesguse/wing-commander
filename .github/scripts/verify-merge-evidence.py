@@ -44,6 +44,14 @@ WRITE_VERBS = (r"gh\s+pr\s+(merge|review|edit|comment|close)", r"gh\s+issue\s+(c
 NO_READER_FILES = (".github/scripts/board_merge.py", ".github/scripts/lifecycle_merge_preconditions.py",
                    ".github/workflows/board-loop.yml", ".github/workflows/lifecycle-review-gate.yml")
 WORKFLOW = ".github/workflows/wing-commander-merge-evidence.yml"
+# Finding 8 (round 3): the refusal and the pause test have one home, this
+# composite, whose pause test calls wc_board_status._switch_on.
+GUARD_USES = "./.github/actions/wing-commander-watch-guard"
+GUARD_ACTION = ".github/actions/wing-commander-watch-guard/action.yml"
+# The one workflow that still carries its own shell copy of the pause test.
+# Its refusal applies to dispatches only, a different shape, so it was left
+# alone; moving it onto the composite is a follow-up of #1173's round-3 fixes.
+PAUSE_SHELL_COPIES_LEFT = (".github/workflows/wing-commander-proof-list.yml",)
 # SC-003 replay corpus: pending the maintainer capture (tasks.md T029). Tracked
 # by the Maintenance backlog, #889 (gate 124 reads this entry; the final PR
 # closes #1143, so it cannot be the tracker); delete it when sc003/ lands.
@@ -547,8 +555,12 @@ def check_shape(text, write_verbs=WRITE_VERBS):
         if job.get("permissions") not in (None, {}):
             problems.append("job {0} sets its own permissions".format(name))
         steps = job.get("steps") or []
-        if not steps or "default branch" not in (steps[0].get("name") or ""):
-            problems.append("job {0}: the first step does not refuse a non-default ref".format(name))
+        # Finding 8 (round 3): checkout, then the guard composite, before any
+        # step that reads GitHub (FR-021).
+        if len(steps) < 2 or not str(steps[0].get("uses") or "").startswith("actions/checkout@") \
+                or steps[0].get("if") or steps[1].get("uses") != GUARD_USES:
+            problems.append("job {0}: the steps do not open with checkout, then {1}, the refusal".format(
+                name, GUARD_USES))
         if not any(s.get("id") == "pause" and "WING_COMMANDER_MERGE_EVIDENCE_PAUSED" in json.dumps(s) for s in steps):
             problems.append("job {0}: no pause step on WING_COMMANDER_MERGE_EVIDENCE_PAUSED".format(name))
         for s in steps:
@@ -560,6 +572,102 @@ def check_shape(text, write_verbs=WRITE_VERBS):
     for verb in write_verbs:
         if re.search(verb, text):
             problems.append("the workflow can write: matches {0}".format(verb))
+    return problems
+
+
+def _run_blocks(doc):
+    for job in ((doc or {}).get("jobs") or {}).values():
+        for step in job.get("steps") or []:
+            if step.get("run"):
+                yield step["run"]
+    for step in (((doc or {}).get("runs") or {}).get("steps") or []):
+        if step.get("run"):
+            yield step["run"]
+
+
+_PAUSE_SHELL_RE = re.compile(r"tr\s+'\[:upper:\]'\s+'\[:lower:\]'[^\n]*xargs")
+
+
+def check_guard_single_home(workflow_text, action_text, workflows=None, copies_left=PAUSE_SHELL_COPIES_LEFT):
+    """Finding 8 (round 3), CLAUDE.md "Shared logic has exactly one home":
+    the merge-evidence workflow pastes neither the refusal nor the pause
+    test; the guard's pause test calls wc_board_status._switch_on rather
+    than re-implementing it in shell; and no other workflow grows a shell
+    copy of that test."""
+    import yaml
+    problems = []
+    doc = yaml.safe_load(workflow_text) or {}
+    for block in _run_blocks(doc):
+        if "refs/heads/" in block or "paused=" in block or _PAUSE_SHELL_RE.search(block):
+            problems.append("{0}: a run block re-pastes the refusal or the pause test; use {1}".format(
+                WORKFLOW, GUARD_USES))
+    if workflow_text.count("uses: " + GUARD_USES) != len(doc.get("jobs") or {}):
+        problems.append("{0}: not every job uses {1}".format(WORKFLOW, GUARD_USES))
+    if not action_text:
+        return problems + ["{0} is missing".format(GUARD_ACTION)]
+    blocks = list(_run_blocks(yaml.safe_load(action_text)))
+    if not any("bs._switch_on(" in b for b in blocks) or any(_PAUSE_SHELL_RE.search(b) for b in blocks):
+        problems.append("{0}: the pause test does not call wc_board_status._switch_on".format(GUARD_ACTION))
+    if workflows is None:
+        wf_dir = os.path.join(REPO, ".github", "workflows")
+        workflows = {".github/workflows/" + n: read(".github/workflows/" + n)
+                     for n in sorted(os.listdir(wf_dir)) if n.endswith((".yml", ".yaml"))}
+    for rel, other in workflows.items():
+        if rel in copies_left:
+            continue
+        try:
+            other_doc = yaml.safe_load(other)
+        except Exception:
+            continue
+        if any(_PAUSE_SHELL_RE.search(b) and "paused=" in b for b in _run_blocks(other_doc)):
+            problems.append("{0}: a shell copy of the pause test; call {1} or wc_board_status._switch_on".format(
+                rel, GUARD_USES))
+    return problems
+
+
+def check_guard_agreement(action_text):
+    """The guard's pause step, run as the runner would, agrees with
+    wc_board_status._switch_on on padded and mixed-case values."""
+    import yaml
+    import wc_board_status as bs
+    step = next((st for st in yaml.safe_load(action_text)["runs"]["steps"] if st.get("id") == "pause"), None)
+    if step is None:
+        return ["{0}: no step with id pause".format(GUARD_ACTION)]
+    problems = []
+    for value in ("true", "TRUE", "  True  ", "\ttrue\n", "false", "", "yes", "truee", "1"):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "output")
+            open(out, "w").close()
+            env = dict(os.environ, SWITCH_VALUE=value, SWITCH_NAME="X", GITHUB_OUTPUT=out, SCRIPTS=HERE)
+            run = subprocess.run(["bash", "-c", step["run"]], capture_output=True, text=True, env=env)
+            with open(out, encoding="utf-8") as fh:
+                got = fh.read().split()
+        if run.returncode != 0 or got not in (["paused=true"], ["paused=false"]):
+            problems.append("{0}: the pause step failed on {1!r}: {2}".format(GUARD_ACTION, value, run.stderr.strip()))
+        elif (got == ["paused=true"]) != bs._switch_on(value):
+            problems.append("{0}: the pause step disagrees with _switch_on on {1!r}".format(GUARD_ACTION, value))
+    return problems
+
+
+def check_guard_negatives(text, action):
+    """Shown to fail: a re-pasted pause step, a shell pause test in the
+    guard, and a shell copy in another workflow are each noticed."""
+    problems = []
+    pasted = text.replace("      - name: Record the verdicts\n",
+                          "      - name: Pause again\n        shell: bash\n        run: |\n"
+                          "          echo \"paused=true\" >> \"$GITHUB_OUTPUT\"\n\n"
+                          "      - name: Record the verdicts\n", 1)
+    shell_guard = action.replace("bs._switch_on(", "bs.other(", 1)
+    other = {".github/workflows/x.yml": "jobs:\n  a:\n    steps:\n      - run: |\n"
+             "          value=$(printf '%s' \"$P\" | tr '[:upper:]' '[:lower:]' | xargs)\n"
+             "          echo \"paused=true\" >> \"$GITHUB_OUTPUT\"\n"}
+    for label, args in (("a re-pasted pause step", (pasted, action, {})),
+                        ("a guard that no longer calls _switch_on", (text, shell_guard, {})),
+                        ("a shell copy in another workflow", (text, action, other))):
+        if args[0] == text and args[1] == action and not args[2]:
+            problems.append("self-check: the {0} mutation changed nothing".format(label))
+        elif not check_guard_single_home(*args):
+            problems.append("self-check: the single-home check did not notice {0}".format(label))
     return problems
 
 
@@ -584,7 +692,7 @@ def check_negatives(text):
         "agent step": text.replace("actions/checkout@v5", "anthropics/claude-code-action@v1", 1),
         "merge verb": text + "\n        run: gh pr merge 1\n",
         "no pause step": text.replace("WING_COMMANDER_MERGE_EVIDENCE_PAUSED", "SOMETHING_ELSE"),
-        "no refusal first": text.replace("Refuse a run off the default branch", "Something else", 1),
+        "no refusal first": text.replace("uses: " + GUARD_USES, "uses: ./.github/actions/something-else", 1),
         "no login default": text.replace(" || 'wing-commander-bot[bot]'", "", 1),
     }
     for label, mutated in broken.items():
@@ -607,6 +715,10 @@ def main():
     if os.path.exists(wf):
         text = read(WORKFLOW)
         problems += check_workflow(text) + check_shape(text) + check_no_reader() + check_negatives(text)
+        action = read(GUARD_ACTION) if os.path.exists(os.path.join(REPO, GUARD_ACTION)) else ""
+        problems += check_guard_single_home(text, action)
+        if action:
+            problems += check_guard_agreement(action) + check_guard_negatives(text, action)
     # Shown to fail: each check must notice a broken subject.
     notice = check_single_home(read(".github/scripts/wc_merge_evidence.py")
                                + "\ndef _checks_green(rollup):\n    return rollup\n")
