@@ -11,7 +11,9 @@
 `pr-conversation` and `board-loop` read only `model:opus`; `model:haiku` (also when
 mirrored onto the PR) has no effect on them.
 
-Bound: the shadow is enabled only while `today < SINCE + 60 days` and the count of
+Bound: the shadow is enabled only while `today < SINCE + 102 days` (through
+2027-01-31 UTC for the 2026-10-22 start; 60 days until the owner's 2026-11-22
+decision on #1098) and the count of
 compared shadow records since `SINCE` (by `emitted_at`; an undated record counts,
 and so do a comparator-error record and a shadow record with no readable `trial`
 object, see trial-record.md) is `< 300`. A `SINCE` that cannot be read, or that is

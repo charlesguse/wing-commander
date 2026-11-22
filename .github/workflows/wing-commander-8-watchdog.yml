@@ -81,7 +81,7 @@ jobs:
   # switch; while it is unset this job is skipped, so a repository that
   # never runs the trial pays no runner minute for it. When it is set,
   # wing-commander-trial-bound reads the metrics branch and says whether
-  # the trial is still inside 60 days and 300 compared runs; the watchdog
+  # the trial is still inside 102 days and 300 compared runs; the watchdog
   # job below passes that on as diagnose-shadow-enabled, and reads false
   # whenever this job was skipped or failed. Records reach the metrics
   # branch through metrics-persist's daily sweep (the watchdog is

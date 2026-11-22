@@ -164,7 +164,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | Usage window exhausted | one `usage-limit` issue instead of a finding per stalled run |
 | Turn-budget trend | flags a stage whose runs keep reaching their turn budget. It looks at the stage's last 10 runs and raises a trend finding: `watch` at 3 runs in a row at or over budget, `elevated` when any run in that window used 0.6 or more of the hard stop, `critical` when both hold (`WING_COMMANDER_TURN_BUDGET_*`) |
 | Watching itself | `wing-commander-8b-watchdog-self.yml` checks each watchdog run with no agent; a chain of the watchdog inspecting itself stops writing after 3 (`WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP`) |
-| Haiku shadow trial | off. Setting `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE` runs `claude-haiku-5-5` beside diagnose (turn budget 8) for 60 days or 300 compared runs. It is recorded and acts on nothing |
+| Haiku shadow trial | off. Setting `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE` runs `claude-haiku-5-5` beside diagnose (turn budget 8) for 102 days from that date or 300 compared runs. It is recorded and acts on nothing. Its summary gives a verdict from 50 compared runs |
 | Kill switch | `WING_COMMANDER_WATCHDOG_PAUSED` |
 
 ## Releases and upgrades
@@ -307,7 +307,7 @@ status" issue. Any variable not listed is unset and takes its default.*
 | `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` | off | off: a human merges every final PR |
 | `WING_COMMANDER_SPEC_REVIEW_PAUSED` | not paused | `true`: spec PR review is paused |
 | `WING_COMMANDER_WATCHDOG_PAUSED` | not paused | `false` |
-| `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE` | unset | `2026-10-22`: the Haiku shadow trial is running |
+| `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE` | unset | `2026-10-22`: the Haiku shadow trial is running, through 2027-01-31 (UTC) |
 | `WING_COMMANDER_CONTAINER_IMAGE` | no container | set to a digest of the reference image, so every stage job runs in the container |
 | `WING_COMMANDER_PRIVATE_IMAGE_DOGFOOD_IMAGE` | unset | set |
 | `WING_COMMANDER_AUTO_RELEASE_E2E_REPO` | unset | set, so auto-release runs |

@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """Decide whether the watchdog diagnose shadow is still inside its bound.
 
-enabled = SINCE set && today < SINCE + 60d && compared < 300
+enabled = SINCE set && today < SINCE + 102d && compared < 300
 where `compared` counts records on the metrics branch with top-level
 run_label == "diagnose-shadow", trial.outcome not in {error, no-baseline}
 and an emitted_at date >= SINCE. See specs/110-haiku-5-5-tier-trial/
-research.md D10. One kind of error does count: a trial whose
+research.md D10. The window was 60 days until the owner's 2026-11-22
+decision on #1098 kept the trial running through 2027-01-31 (UTC): 102
+days from its 2026-10-22 SINCE, so 2027-02-01 is the first day off. It
+stays a day count from SINCE, not a fixed end date, so a restart is still
+only a new SINCE (contracts/trial-switches.md). One kind of error does count: a trial whose
 error_source is "comparator" (wing-commander-trial-record) marks a defect
 in the comparator, not infrastructure, and the shadow still spent a run on
 it; left out, a broken comparator would keep the shadow running for the
-whole 60 days (contracts/trial-record.md). For the same reason a
+whole window (contracts/trial-record.md). For the same reason a
 diagnose-shadow record with no readable `trial` object counts.
 
 Usage: trial-bound.py --since ISO_DATE --records records.jsonl [--today ISO_DATE]
@@ -23,7 +27,7 @@ import json
 import os
 import sys
 
-WINDOW_DAYS = 60
+WINDOW_DAYS = 102
 MAX_COMPARED = 300
 NOT_COUNTED = {"error", "no-baseline"}
 

@@ -1,9 +1,10 @@
 name: wing-commander-trial-bound
 description: >
   Decides whether the watchdog diagnose shadow trial is still inside its
-  bound (spec 110, research D10): the switch variable is set, fewer than 60
-  days have passed since it, and fewer than 300 compared shadow runs are on
-  the metrics branch. The logic lives in _shared/trial-bound.py.
+  bound (spec 110, research D10): the switch variable is set, fewer than 102
+  days have passed since it (through 2027-01-31 for the 2026-10-22 start,
+  #1098), and fewer than 300 compared shadow runs are on the metrics
+  branch. The logic lives in _shared/trial-bound.py.
 
 inputs:
   since:
