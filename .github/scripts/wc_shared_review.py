@@ -415,6 +415,120 @@ def build_handoff(pr, confirmed_rounds, budget, run_id, reviewer_commit):
             "reviewer_commit": reviewer_commit}
 
 
+def finalize_round(state, find_out, check_out, code_run, purpose, head_sha, dismissals,
+                   run_id, reviewer_commit, pr_state, agent_ok=True):
+    """One round's whole record, from staged data only. Agent output is
+    read as data; every status, blocking flag and the verdict is code's."""
+    round_no = int(state.get("round") or 1)
+    prior, applied, notes = apply_dismissals(state.get("prior") or [], dismissals)
+    code_status = (code_run or {}).get("status") if (code_run or {}).get("status") == "staged" else "missing"
+    agent_ok = bool(agent_ok and isinstance(find_out, dict) and isinstance(check_out, dict))
+    findings, more = process_round(prior, (find_out or {}).get("candidates") or [],
+                                   (check_out or {}).get("checks") or [], round_no, code_status)
+    answers = (check_out or {}).get("answers") or {}
+    opened = open_set(findings)
+    for f in opened:
+        f["blocking"] = is_blocking(f)
+        f["non_blocking_rule"] = non_blocking_rule(f)
+    verdict = compute_verdict(agent_ok, opened, answers, code_status, has_purpose=bool(purpose))
+    return {"schema": SCHEMA, "reviewer": REVIEWER, "pr_kind": "fix", "round": round_no,
+            "head_sha": head_sha, "verdict": verdict, "pr_state": pr_state,
+            "purpose": {"source": purpose, "version_used": (purpose or {}).get("version_used", "current"),
+                        "answers": answers},
+            "open_set": opened, "findings": [f for f in findings if f not in opened],
+            "dismissals": applied, "notes": notes + more,
+            "reviewer_commit": reviewer_commit, "run_id": str(run_id)}
+
+
+# ------------------------------------------------- code-run and GitHub ---
+
+CODE_RUN_TIMEOUT = 600
+TAIL_CHARS = 4000
+
+
+def discover_named_check(added_files):
+    """The change's named check, found by code from the diff's ADDED files
+    (never chosen by an agent, research D8): the first added test file, run
+    through a fixed runner. Returns an argv list or None."""
+    for path in sorted(added_files or []):
+        if ".." in path.split("/") or path.startswith("/"):
+            continue
+        base = path.rsplit("/", 1)[-1]
+        if re.fullmatch(r"verify-[\w.-]+\.py", base):
+            return ["python3", "-I", path]
+        if re.fullmatch(r"test_[\w.-]+\.py", base):
+            # discover puts the file's directory on sys.path, which -I
+            # otherwise leaves out.
+            return ["python3", "-I", "-m", "unittest", "discover", "-v",
+                    "-s", path.rsplit("/", 1)[0] if "/" in path else ".", "-p", base]
+        if base == "run-tests.sh":
+            return ["bash", path]
+    return None
+
+
+def _run_staged(argv, cwd, timeout, env):
+    """One command, its exit code staged as data -- a non-zero exit, a
+    crash or a hang is never a job failure (FR-012, spec edge cases)."""
+    import subprocess
+    try:
+        proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        return {"exit": proc.returncode, "output_tail": out[-TAIL_CHARS:]}
+    except subprocess.TimeoutExpired:
+        return {"exit": 124, "output_tail": "timed out after {0}s".format(timeout)}
+    except OSError as exc:
+        return {"exit": 127, "output_tail": str(exc)[-TAIL_CHARS:]}
+
+
+def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT):
+    """The two commands the code-run job may run, nothing else: the named
+    check, and the default branch's gate runner against the PR tree. The
+    environment is scrubbed: no ACTIONS_*, token or secret variable
+    reaches PR code (SC-008)."""
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("TMPDIR", "/tmp"),
+           "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"}
+    argv = discover_named_check(added_files)
+    named = _run_staged(argv, pr_tree, timeout, env) if argv else None
+    gates = _run_staged(["python3", "-I", os.path.join(reviewer_tree, ".github/scripts/run-local-gates.py")],
+                        pr_tree, timeout, env)
+    return {"status": "staged", "named_check": named, "gate_suite": gates}
+
+
+def confirmed_from_github(pr, bot_login, default_branch, repository, gh):
+    """Round records of `pr` that confirm_record() accepts, oldest first.
+    `gh(args)` returns parsed JSON for a `gh api` path (None on failure,
+    which fails the record closed)."""
+    comments = gh(["repos/{0}/issues/{1}/comments".format(repository, pr), "--paginate", "--slurp"]) or []
+    flat = [c for page in comments for c in (page if isinstance(page, list) else [page])]
+    confirmed = []
+    for record in parse_records(flat, bot_login):
+        run_id = str(record.get("run_id") or "")
+        if not run_id.isdigit():
+            continue
+        run = gh(["repos/{0}/actions/runs/{1}".format(repository, run_id)])
+        arts = gh(["repos/{0}/actions/runs/{1}/artifacts".format(repository, run_id)])
+        if not isinstance(run, dict):
+            continue
+        run = dict(run)
+        run["repository"] = (run.get("repository") or {}).get("full_name") or repository
+        run["artifacts"] = [a.get("name") for a in (arts or {}).get("artifacts", [])]
+        run["referenced_workflows"] = [w.get("path") for w in run.get("referenced_workflows") or []]
+        if confirm_record(record, run, default_branch, repository):
+            confirmed.append(record)
+    return confirmed
+
+
+def _gh_api(args):
+    import subprocess
+    proc = subprocess.run(["gh", "api"] + args, capture_output=True, text=True)
+    if proc.returncode != 0:
+        return None
+    try:
+        return json.loads(proc.stdout)
+    except ValueError:
+        return None
+
+
 # ------------------------------------------------------------------ CLI ---
 
 def _load(path):
@@ -431,9 +545,21 @@ def main(argv=None):
     p = sub.add_parser("prepare")
     p.add_argument("--pr", required=True); p.add_argument("--body-file", required=True)
     p.add_argument("--head-branch", default=""); p.add_argument("--labels", default="")
+    s = sub.add_parser("state")
+    s.add_argument("--pr", required=True); s.add_argument("--bot-login", required=True)
+    s.add_argument("--default-branch", required=True); s.add_argument("--repository", required=True)
+    s.add_argument("--budget", default=str(DEFAULT_BUDGET))
+    c = sub.add_parser("code-run")
+    c.add_argument("--pr-tree", required=True); c.add_argument("--reviewer-tree", required=True)
+    c.add_argument("--added-files", required=True)
     r = sub.add_parser("record")
     r.add_argument("--input", required=True)
     r.add_argument("--handoff", action="store_true")
+    f = sub.add_parser("finalize")
+    for name in ("state", "find", "check", "code-run", "purpose", "dismissals"):
+        f.add_argument("--" + name, default=None)
+    f.add_argument("--head-sha", required=True); f.add_argument("--run-id", required=True)
+    f.add_argument("--reviewer-commit", required=True); f.add_argument("--pr-state", default="open")
     v = sub.add_parser("validate-output")
     v.add_argument("--input", required=True)
     args = parser.parse_args(argv)
@@ -447,6 +573,30 @@ def main(argv=None):
         labels = [x for x in args.labels.split(",") if x]
         print(json.dumps({"kind": derive_kind(args.head_branch, labels),
                           "purpose_source": resolve_purpose_source(args.pr, body)}))
+        return 0
+    if args.cmd == "finalize":
+        def opt(path):
+            try:
+                return _load(path) if path else None
+            except (OSError, ValueError):
+                return None
+        record = finalize_round(opt(args.state) or {}, opt(args.find), opt(args.check), opt(args.code_run),
+                                opt(args.purpose), args.head_sha, opt(args.dismissals) or [],
+                                args.run_id, args.reviewer_commit, args.pr_state)
+        print(build_record(record))
+        return 0
+    if args.cmd == "state":
+        confirmed = confirmed_from_github(args.pr, args.bot_login, args.default_branch,
+                                          args.repository, _gh_api)
+        spent, budget = budget_spent(confirmed, args.budget)
+        print(json.dumps({"rounds": len(confirmed), "round": len(confirmed) + 1, "budget": budget,
+                          "spent": spent, "open_set": open_set(fold_open_set(confirmed)),
+                          "prior": fold_open_set(confirmed), "confirmed": confirmed}))
+        return 0
+    if args.cmd == "code-run":
+        with open(args.added_files, encoding="utf-8") as fh:
+            added = [line.strip() for line in fh if line.strip()]
+        print(json.dumps(stage_code_run(args.pr_tree, args.reviewer_tree, added)))
         return 0
     if args.cmd == "validate-output":
         data = _load(args.input)

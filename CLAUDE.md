@@ -172,6 +172,8 @@ prove. Each step has a rule.
   scope becomes a new checklist line on the Maintenance backlog issue
   carrying `found by the code review of #N`, never a new issue and never
   an extra commit that widens the PR.
+- A session dispatches the shared reviewer on each of its fix PRs, on the
+  head its hand review covers, during report-only use.
 - Spec documents are not defects. An error in a spec's own spec.md,
   plan.md, tasks.md or research.md is corrected in that spec's open PR,
   or not at all once it has merged (see "Other repo-specific rules").

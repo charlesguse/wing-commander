@@ -269,5 +269,70 @@ class GuardAndBudget(unittest.TestCase):
         self.assertNotIn("verdict", ho)
 
 
+class CodeRun(unittest.TestCase):
+    def test_discover(self):
+        d = sr.discover_named_check
+        self.assertEqual(d(["README.md"]), None)
+        self.assertEqual(d(["x/test_a.py"]),
+                         ["python3", "-I", "-m", "unittest", "discover", "-v", "-s", "x", "-p", "test_a.py"])
+        self.assertEqual(d(["x/verify-a.py"]), ["python3", "-I", "x/verify-a.py"])
+        self.assertIsNone(d(["../test_a.py", "/abs/test_b.py"]))
+
+    def test_hostile_tree_stages_exit_codes_as_data(self):
+        import json
+        import tempfile
+        here = os.path.dirname(os.path.abspath(__file__))
+        tree = os.path.join(here, "fixtures", "shared-review-hostile")
+        with tempfile.TemporaryDirectory() as rev:
+            os.makedirs(os.path.join(rev, ".github", "scripts"))
+            with open(os.path.join(rev, ".github", "scripts", "run-local-gates.py"), "w") as fh:
+                fh.write("import sys\nsys.exit(3)\n")
+            os.environ["ACTIONS_RUNTIME_TOKEN"] = "secret"
+            os.environ["GITHUB_TOKEN"] = "secret"
+            try:
+                out = sr.stage_code_run(tree, rev, ["test_probe.py"], timeout=60)
+            finally:
+                del os.environ["ACTIONS_RUNTIME_TOKEN"], os.environ["GITHUB_TOKEN"]
+        self.assertEqual(out["status"], "staged")
+        self.assertNotEqual(out["named_check"]["exit"], 0)
+        self.assertIn("LEAKED:\n", out["named_check"]["output_tail"] + "\n")
+        self.assertNotIn("secret", json.dumps(out))
+        self.assertEqual(out["gate_suite"]["exit"], 3)
+
+    def test_no_named_check_is_none_not_failure(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as rev, tempfile.TemporaryDirectory() as tree:
+            os.makedirs(os.path.join(rev, ".github", "scripts"))
+            with open(os.path.join(rev, ".github", "scripts", "run-local-gates.py"), "w") as fh:
+                fh.write("print('ok')\n")
+            out = sr.stage_code_run(tree, rev, [], timeout=30)
+        self.assertIsNone(out["named_check"])
+        self.assertEqual(out["gate_suite"]["exit"], 0)
+
+
+class Finalize(unittest.TestCase):
+    def test_end_to_end_clean_and_findings(self):
+        answers = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
+        state = {"round": 1, "prior": []}
+        code = {"status": "staged"}
+        out = sr.finalize_round(state, {"candidates": []}, {"checks": [], "answers": answers}, code,
+                                {"type": "issue", "ref": "7"}, "a" * 40, [], 5, "b" * 40, "open")
+        self.assertEqual(out["verdict"], "clean")
+        cand = {"key": "k", "title": "t", "file": "a.py", "line": 1, "failing_case": {"state": "s", "wrong_result": "w"}}
+        chk = {"key": "k", "outcome": "upheld", "in_scope": True, "reachable": True}
+        out = sr.finalize_round(state, {"candidates": [cand]}, {"checks": [chk], "answers": answers}, code,
+                                {"type": "issue", "ref": "7"}, "a" * 40, [], 5, "b" * 40, "open")
+        self.assertEqual(out["verdict"], "findings")
+        self.assertTrue(out["open_set"][0]["blocking"])
+        # agent output missing -> incomplete, never clean
+        out = sr.finalize_round(state, None, None, code, None, "a" * 40, [], 5, "b" * 40, "open")
+        self.assertEqual(out["verdict"], "incomplete")
+        # code-run missing with an earlier open blocking finding stays findings
+        state2 = {"round": 2, "prior": [finding("F1-1")]}
+        out = sr.finalize_round(state2, {"candidates": []}, {"checks": [], "answers": answers}, None,
+                                {"type": "issue", "ref": "7"}, "a" * 40, [], 5, "b" * 40, "open")
+        self.assertEqual(out["verdict"], "findings")
+
+
 if __name__ == "__main__":
     unittest.main()
