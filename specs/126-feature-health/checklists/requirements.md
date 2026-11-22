@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,6 +31,6 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain, posted to #1137 for the clarify stage: the per-feature output signal (FR-003), the quiet threshold (FR-007), and show-only versus filing (FR-009). User Story 4's acceptance depends on the FR-009 answer.
+- All three clarifications were resolved by the owner's reply on #1137 (2026-11-22): the per-feature output signals (FR-003, option A), a per-feature quiet threshold with a 14-day default (FR-007, option C), and show-only with nothing filed (FR-009, option A; User Story 4 and FR-013 updated to match).
 - Names of repository artifacts (the "Board status" issue, `docs/reference.md`, the `WING_COMMANDER_*_PAUSED` family, the 1,000-run cap) are this repository's own vocabulary and the subject of the feature, not implementation choices; they are kept, as in earlier specs (124).
 - The issue's "where does it show" question is settled in Assumptions (both: call-outs above a collapsed full table) as it has a reasonable default and a precedent (spec 124 FR-021).

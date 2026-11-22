@@ -24,6 +24,14 @@ A first cut by hand, over 30 days of run history (2026-10-14 to 2026-11-12, read
 
 The daily "Board status" issue, rewritten by `board-status.yml`, is the natural home: it is already where the owner and sessions look first.
 
+## Clarifications
+
+### Session 2026-11-22
+
+- Q: Which output signal counts as "did its job" for each feature? → A: The proposed per-feature signals (option A); features without one are not measured and are judged on runs and cadence only (FR-003, FR-008).
+- Q: When is a feature quiet? → A: Each registry entry declares its own quiet threshold; 14 days is the default for an entry that declares none (option C; FR-007).
+- Q: Does a failing, quiet or not-running feature only show, or is something filed? → A: Show only in the Board status report and file nothing (option A), following #1143 and #1144 (FR-009, FR-013, User Story 4).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - See at a glance which features have gone quiet or keep failing (Priority: P1)
@@ -75,17 +83,17 @@ When the report cannot read what it needs for a feature — the run history is p
 
 ---
 
-### User Story 4 - A quiet or failing feature is acted on (Priority: P3)
+### User Story 4 - A quiet or failing feature is shown, not filed (Priority: P3)
 
-Depending on the owner's answer to FR-009, a feature that enters *failing*, *quiet* or *not running* is either only shown in the report, or is also put where the board loop and sessions pick up work.
+A feature that enters *failing*, *quiet* or *not running* is only shown in the report's call-outs (FR-009); the system files nothing for it. The owner, or a session reading Board status, decides whether it becomes a Maintenance backlog line.
 
-**Why this priority**: Showing it is the core value; filing it is a convenience that has costs (duplicates, noise, a backlog line for something already known).
+**Why this priority**: Showing it is the core value; filing it would cost duplicates, noise and backlog lines for things already known.
 
-**Independent Test**: Depends on FR-009's answer.
+**Independent Test**: Build the report over history in which one feature is *failing* across several consecutive builds, and confirm the feature is called out each time while no issue, comment or backlog line is created.
 
 **Acceptance Scenarios**:
 
-1. **Given** a feature that has been *failing* for several consecutive builds, **When** each report is built, **Then** at most one filing exists for that episode (if filing is chosen), and none at all is made if show-only is chosen.
+1. **Given** a feature that has been *failing* for several consecutive builds, **When** each report is built, **Then** the feature is called out in every build and no filing of any kind (issue, comment, Maintenance backlog line) is made.
 
 ---
 
@@ -108,23 +116,31 @@ Depending on the owner's answer to FR-009, a feature that enters *failing*, *qui
 
 - **FR-001**: The system MUST keep one feature registry with exactly one home. Each entry names a feature, the workflow or workflows whose runs belong to it, its cadence (a schedule, or event-driven), its kill switch if it has one, its output signal if one is declared (FR-003), and its quiet threshold (FR-007). The registry MUST cover at least the features of the issue's first cut: the feature lifecycle (with its stages: intake, clarify, plan, tasks, implement, finalize, cleanup), spec PR review, the lifecycle review gate, PR conversation, the board loop, the watchdog, auto-release, the Spec Kit updater, rebase, metrics, board status, the proof list, the private-image dogfood, and the gate suite.
 - **FR-002**: A gate MUST fail when a loop or workflow that `docs/reference.md`'s "At a glance", "Housekeeping and observability" or "Schedules" tables list has no registry entry, or a registry entry names a workflow that does not exist, so the registry cannot drift from the reference page.
-- **FR-003**: A registry entry MAY declare an output signal: an observable, countable event that shows the feature did its job, with the time it last occurred. The signals MUST be drawn from what the repository already records — a merged pull request of a given kind, an issue filed under a given label, a published release, a record on the metrics branch, a rewrite of a tracking issue. [NEEDS CLARIFICATION: Which output signal counts as "did its job" for each feature? The filing session proposed: feature lifecycle → a spec PR or final PR merged; Spec Kit updater → a bump PR merged; auto-release → a release published; watchdog → an issue filed or an inspected-run notice posted; board loop → a board-loop fix PR merged or an issue closed at triage; metrics → a record appended; board status / proof list → the issue or section rewritten; the others → not measured.]
+- **FR-003**: A registry entry MAY declare an output signal: an observable, countable event that shows the feature did its job, with the time it last occurred. The signals MUST be drawn from what the repository already records — a merged pull request of a given kind, an issue filed under a given label, a published release, a record on the metrics branch, a rewrite of a tracking issue. The registry MUST declare these signals (clarified 2026-11-22, Q1 option A):
+  - feature lifecycle → a spec PR or a final PR merged;
+  - Spec Kit updater → a bump PR merged;
+  - auto-release → a release published;
+  - watchdog → an issue filed or an inspected-run notice posted;
+  - board loop → a board-loop fix PR merged or an issue closed at triage;
+  - metrics → a record appended to the metrics branch;
+  - board status → the "Board status" issue rewritten; proof list → its section rewritten;
+  - every other feature → no signal declared: not measured, judged on runs and cadence only (FR-008).
 
 #### The states
 
 - **FR-004**: The system MUST place every registry feature in exactly one state, the first that fits, deterministically from its runs, its kill switch, its configuration and its output signal: *unreadable* (FR-010); *paused* (its kill switch is set); *not configured* (it is skipped by design because a variable it requires is unset); *failing* (FR-005); *not running* (FR-006); *quiet* (FR-007); *healthy*.
 - **FR-005**: A feature MUST be *failing* when its latest finished, non-cancelled run concluded in failure and so did every finished, non-cancelled run in its failing window: the last 3 such runs, or all of them if it has fewer. A single failed run between successes does not make a feature *failing*; the report still shows the date of its last failure.
 - **FR-006**: A scheduled feature MUST be *not running* when it has no run started within its schedule's interval plus a tolerance of one further interval. An event-driven feature is never *not running* on the absence of runs alone.
-- **FR-007**: A feature with a declared output signal MUST be *quiet* when that signal has not occurred within its quiet threshold. [NEEDS CLARIFICATION: When is a feature quiet? A fixed number of days for every feature, a threshold derived from each feature's own schedule, or a per-feature threshold declared in the registry?]
+- **FR-007**: A feature with a declared output signal MUST be *quiet* when that signal has not occurred within its quiet threshold. Each registry entry declares its own quiet threshold in days; an entry that declares none gets the default of 14 days (clarified 2026-11-22, Q2 option C). The report shows the threshold applied to each feature with a declared signal.
 - **FR-008**: The system MUST NOT read a green run as evidence that a feature did its job; only its declared output signal is that evidence. A feature with no declared signal is judged on runs and cadence only, and its row says the signal is not measured.
 
 #### Where it shows and what it does
 
-- **FR-009**: The report MUST be published in the open `disposition:tracking` issue titled "Board status", through that issue's one writer, as the proof list's section is (spec 124, FR-021): the health system supplies the content and never writes the issue itself. The report MUST show one row per feature with its state, its last success, its last failure and its last output signal, and MUST call out, above the rows, every feature in *failing*, *quiet*, *not running* or *unreadable*. [NEEDS CLARIFICATION: Does a feature in *failing*, *quiet* or *not running* only show in the report, or does the system also file something — a checklist line on the Maintenance backlog (#889), or an issue — once per episode?]
+- **FR-009**: The report MUST be published in the open `disposition:tracking` issue titled "Board status", through that issue's one writer, as the proof list's section is (spec 124, FR-021): the health system supplies the content and never writes the issue itself. The report MUST show one row per feature with its state, its last success, its last failure and its last output signal, and MUST call out, above the rows, every feature in *failing*, *quiet*, *not running* or *unreadable*. A feature in *failing*, *quiet* or *not running* is only shown in the report: the system files nothing — no Maintenance backlog line and no issue (clarified 2026-11-22, Q3 option A, following the precedent of #1143 and #1144, which report their verdict in Board status and file nothing).
 - **FR-010**: A read the system cannot complete for a feature — a run listing past the per-query cap that cannot be bounded by date, an output-signal query that fails, a kill switch or configuration variable it cannot read — MUST put that feature in *unreadable* with the reason, MUST NOT classify it from a partial read, and MUST NOT stop the other features from being classified (Principle VIII). The report MUST give the count of unreadable features. If the run history of every feature is unreadable, the build fails and the section says so with the date of the last good build.
 - **FR-011**: The window of history read MUST be long enough to cover every feature's quiet threshold and failing window, and MUST be read bounded by date so the 1,000-run cap of event-driven wrappers does not truncate it silently.
 - **FR-012**: The system MUST use no agent; every step is deterministic code (Principle IX), and it adds nothing to the shared usage window.
-- **FR-013**: The system MUST start no run, and, apart from whatever FR-009's answer allows, MUST make no durable write other than its report content: it never comments on, labels, closes or edits a pull request or an issue.
+- **FR-013**: The system MUST start no run, and MUST make no durable write other than its report content: it never comments on, labels, closes or edits a pull request or an issue.
 - **FR-014**: The section MUST show when it was built. When the latest build did not complete or was paused, the section MUST say so and give the date of the last good build; no rewrite of "Board status" shows an older report without that notice.
 - **FR-015**: The system MUST stand down with no new report when `WING_COMMANDER_BOARD_STATUS_PAUSED` is set (it lives inside the Board status rewrite); it adds no new kill switch of its own unless the plan needs a separate workflow, in which case it carries one in the `WING_COMMANDER_*_PAUSED` family, and creating that variable is the owner's.
 - **FR-016**: `docs/reference.md` MUST describe the feature-health section in its "Housekeeping and observability" entry for board status, and list any new workflow, schedule or kill switch the plan adds.
@@ -141,7 +157,7 @@ Depending on the owner's answer to FR-009, a feature that enters *failing*, *qui
 
 ### Measurable Outcomes
 
-- **SC-001**: Given a checked-in record of the run history, board and switches behind the issue's first cut (2026-10-14 to 2026-11-12), the report shows the private-image dogfood as *failing*, spec PR review as *paused*, the board loop as *quiet* (under any quiet threshold shorter than 27 days), and the Spec Kit updater, auto-release and the watchdog as *healthy*.
+- **SC-001**: Given a checked-in record of the run history, board and switches behind the issue's first cut (2026-10-14 to 2026-11-12), the report shows the private-image dogfood as *failing*, spec PR review as *paused*, the board loop as *quiet* (under the 14-day default, or any declared quiet threshold shorter than 27 days), and the Spec Kit updater, auto-release and the watchdog as *healthy*.
 - **SC-002**: 100% of registry features appear in the report exactly once, in exactly one state.
 - **SC-003**: Two builds over the same inputs give every feature the same state.
 - **SC-004**: A feature that stops producing its output signal is shown as *quiet* in the first daily report after its quiet threshold passes, without anyone going to look.
