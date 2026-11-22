@@ -142,9 +142,9 @@ def evaluate(pr_number, review_gate, kill_switch_paused):
 def main():
     """With --select, reads a bare `gh pr view --json
     headRefOid,statusCheckRollup,mergeable,mergeStateStatus` snapshot from
-    stdin and prints select_prefilter() as JSON. Otherwise reads {"snapshot": {...}, "review_gate": {...}|null,
-    "kill_switch_paused": bool} from stdin, prints the ReadinessDecision as
-    JSON."""
+    stdin and prints select_prefilter() as JSON. Otherwise reads
+    {"snapshot": {...}, "review_gate": {...}|null, "kill_switch_paused":
+    bool} from stdin, prints the ReadinessDecision as JSON."""
     if sys.argv[1:] == ["--select"]:
         print(json.dumps(select_prefilter(json.load(sys.stdin))))
         return
