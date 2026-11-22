@@ -524,6 +524,32 @@ def merge_evidence_half():
     check("paused: the switch is set, whatever the history",
           run([audit], {3: True}, {"merge_evidence_paused": "True "})["status"] == "paused")
     check("unreadable: the artifact is missing", run([audit], {3: True}, download="none")["status"] == "unreadable")
+
+    # #1173 review R3: ~25 runs a day, so the last good audit can sit past the
+    # first 30 runs; the reader pages until it finds it.
+    def paged(runs):
+        def gh_obj(path):
+            if path == "repos/o/r":
+                return {"default_branch": "main"}
+            per = int(re.search(r"per_page=(\d+)", path).group(1))
+            page = int((re.search(r"[?&]page=(\d+)", path) or re.search(r"()", path)).group(1) or 1)
+            return {"workflow_runs": runs[(page - 1) * per:page * per]}
+        return gh_obj
+    hourly_runs = [mk(100 + i, "2026-11-20T11:07:00Z", "merge-evidence verdicts") for i in range(140)]
+    late_good = mk(7, "2026-11-19T05:41:00Z")
+    failed_audit = mk(8, "2026-11-20T05:41:00Z", conclusion="failure")
+    deep = hourly_runs[:20] + [failed_audit] + hourly_runs[20:130] + [late_good]
+    snap = bs.merge_evidence_snapshot("o/r", {}, now, paged(deep), lambda rid: rid == 7, lambda *a: None)
+    check("a failed audit keeps the last good build from past the first 100 runs",
+          snap == {"status": "failed", "last_good_at": "2026-11-19T05:41:00Z"}, snap)
+    fresh = hourly_runs[:35] + [audit]
+    snap = bs.merge_evidence_snapshot("o/r", {}, now, paged(fresh), lambda rid: rid == 3,
+                                      lambda repo, rid, tmp: json.dump(section, open(
+                                          os.path.join(tmp, bs.MERGE_EVIDENCE_FILE), "w", encoding="utf-8")))
+    check("a good audit past the 30th run is still found (not 'never')", snap.get("status") == "built", snap)
+    forked = [dict(audit, id=21, event="pull_request"), dict(audit, id=22, head_repository={"full_name": "fork/r"})]
+    check("a pull_request or fork run is never the audit",
+          bs.merge_evidence_snapshot("o/r", {}, now, paged(forked), lambda rid: True, lambda *a: None)["status"] == "never")
     try:
         bs.merge_evidence_snapshot("o/r", {}, now, lambda path: (_ for _ in ()).throw(
             subprocess.CalledProcessError(1, "gh", "", "boom")), lambda rid: True)

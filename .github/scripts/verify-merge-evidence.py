@@ -429,6 +429,16 @@ def check_review_round3_open():
         problems.append("open verdicts: an unread PR state is not marked incomplete and named")
     if ledger["records"] != recs:
         problems.append("open verdicts: marking an unread state changed the ledger's own record")
+    # #1173 review R2: _is_open itself says "not read" (None) on a read error.
+    for label, fake, want in (("a failed read", lambda args: (_ for _ in ()).throw(
+                                  subprocess.CalledProcessError(1, args, "", "gh: Bad Gateway (HTTP 502)")), None),
+                              ("unparseable output", lambda args: "not json", None),
+                              ("an open PR", lambda args: json.dumps({"state": "open"}), True),
+                              ("a merged PR", lambda args: json.dumps({"state": "closed", "merged_at": NOW}), False)):
+        with _Patched(_gh_ok=fake):
+            got_state = me._is_open("o/r", {"pr": 2})
+        if got_state is not want:
+            problems.append("open verdicts: _is_open on {0} returned {1!r}, expected {2!r}".format(label, got_state, want))
     if 2 in by_pr:
         section = me.build_section([], [], got, me.window_bounds(NOW), NOW, me.empty_ledger())
         if "#2" not in section["full"] or "INCOMPLETE" not in section["full"] or "#2" not in section["names_only"]:
@@ -454,6 +464,10 @@ def _ledger_gh(mode, downloads):
                              artifact(5, "2026-11-13T07:07:00Z"),
                              artifact(4, "2026-11-12T07:07:00Z")]}
     paths = {6: ".github/workflows/other.yml"}
+    # #1173 review R1: a pull_request run and a fork's run (head branch
+    # `main`, same path) both upload a newer forged ledger; neither counts.
+    listing["artifacts"][2:2] = [artifact(11, "2026-11-19T04:07:00Z"), artifact(12, "2026-11-19T03:07:00Z")]
+    runs_extra = {11: {"event": "pull_request"}, 12: {"head_repository": {"full_name": "fork/r"}}}
 
     def fake(args):
         text = " ".join(args)
@@ -466,12 +480,15 @@ def _ledger_gh(mode, downloads):
         match = re.search(r"actions/runs/(\d+)$", text)
         if args[:2] == ["gh", "api"] and match:
             rid = int(match.group(1))
-            return _Done(stdout=json.dumps({"id": rid, "path": paths.get(rid, ".github/workflows/" + me.WORKFLOW_FILE)}))
+            run = {"id": rid, "path": paths.get(rid, ".github/workflows/" + me.WORKFLOW_FILE), "event": "schedule",
+                   "head_branch": "main", "head_repository": {"full_name": "o/r"}}
+            run.update(runs_extra.get(rid, {}))
+            return _Done(stdout=json.dumps(run))
         if args[:3] == ["gh", "run", "download"]:
             downloads.append(int(args[3]))
             if mode == "download-502":
                 return _Done(1, "", "gh: Bad Gateway (HTTP 502)")
-            if int(args[3]) == 5:
+            if int(args[3]) in (5, 11, 12):
                 return _Done()
             return _Done(1, "", "no valid artifacts found to download")
         return _Done(1, "", "unexpected call: " + text)
@@ -507,6 +524,9 @@ def check_download_errors():
 def check_single_home(source, exempt=()):
     """FR-008: no def of a reused rule, no terminal-state literal."""
     problems = []
+    # #1173 review R1: run provenance has one home, wc_board_status.
+    if "wc_board_status.trusted_watcher_run(" not in source or '"workflow_dispatch"' in source:
+        problems.append("wc_merge_evidence.py does not take run provenance from wc_board_status.trusted_watcher_run")
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.FunctionDef) and node.name in REUSED_RULE_NAMES and node.name not in exempt:
             problems.append("wc_merge_evidence.py defines {0}, a copy of a reused condition".format(node.name))

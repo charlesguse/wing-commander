@@ -480,6 +480,24 @@ def merge_evidence_snapshot(repo, switches, now=None, gh_obj=None, build_ok=None
                             download, titles=MERGE_EVIDENCE_AUDIT_TITLES, filename=MERGE_EVIDENCE_FILE)
 
 
+# The events a read-only watcher's own runs come from. A pull_request run
+# executes the PR's copy of the workflow (a fork's, with a head branch it
+# can name `main`), so its artifacts are never this repository's output.
+TRUSTED_RUN_EVENTS = ("schedule", "workflow_dispatch")
+# section_snapshot reads up to this many pages of 100 completed runs looking
+# for the latest good build: the merge evidence workflow has ~25 runs a day.
+SECTION_RUN_PAGES = 3
+
+
+def trusted_watcher_run(run, repo):
+    """The one home of "this run is the repository's own scheduled or
+    dispatched run" (the section readers here and
+    wc_merge_evidence.download_ledger): its event is a schedule or a
+    dispatch and its head repository is `repo`, never a fork."""
+    return ((run or {}).get("event") in TRUSTED_RUN_EVENTS
+            and ((run or {}).get("head_repository") or {}).get("full_name") == repo)
+
+
 def section_snapshot(repo, switches, workflow, artifact, switch_key, now, gh_obj, build_ok, download,
                      titles=None, filename="proof-list-section.json"):
     """The section's status (research D17): paused, never, failed, built or
@@ -491,22 +509,29 @@ def section_snapshot(repo, switches, workflow, artifact, switch_key, now, gh_obj
     last_good = "unknown"
     try:
         default = gh_obj("repos/{0}".format(repo))["default_branch"]
-        try:
-            runs = gh_obj("repos/{0}/actions/workflows/{1}/runs?status=completed&branch={2}&per_page=30".format(
-                repo, workflow, default)).get("workflow_runs") or []
-        except subprocess.CalledProcessError as exc:
-            if "HTTP 404" not in (exc.stderr or ""):
-                raise
-            runs = []
-        runs = [r for r in runs if r.get("event") in ("schedule", "workflow_dispatch")
-                and (r.get("head_repository") or {}).get("full_name") == repo
-                and (titles is None or r.get("display_title") in titles)]
-        last_good, good_ok = "never", {}
-        for run in runs:
-            good_ok[run["id"]] = build_ok(run["id"]) if run.get("conclusion") == "success" else False
-            if good_ok[run["id"]]:
-                last_good = run.get("run_started_at") or run.get("created_at") or "unknown"
+        # Pages of 100 until the latest good build is found (a page-count
+        # bound, not a run count of one day: #1173 review R3).
+        runs, found, good_ok = [], "never", {}
+        for page in range(1, SECTION_RUN_PAGES + 1):
+            try:
+                batch = gh_obj("repos/{0}/actions/workflows/{1}/runs?status=completed&branch={2}"
+                               "&per_page=100&page={3}".format(repo, workflow, default, page)).get("workflow_runs") or []
+            except subprocess.CalledProcessError as exc:
+                if "HTTP 404" not in (exc.stderr or ""):
+                    raise
+                batch = []
+            for run in batch:
+                if not trusted_watcher_run(run, repo) or (titles is not None and run.get("display_title") not in titles):
+                    continue
+                runs.append(run)
+                if found == "never":
+                    good_ok[run["id"]] = build_ok(run["id"]) if run.get("conclusion") == "success" else False
+                    if good_ok[run["id"]]:
+                        found = run.get("run_started_at") or run.get("created_at") or "unknown"
+            if found != "never" or len(batch) < 100:
                 break
+        # Set only once the history was read: a failed read leaves "unknown".
+        last_good = found
         if paused:
             return {"status": "paused", "last_good_at": last_good}
         if not runs:

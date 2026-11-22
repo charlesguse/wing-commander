@@ -35,6 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import board_merge  # noqa: E402
 import board_readiness  # noqa: E402
+import wc_board_status  # noqa: E402
 import lifecycle_merge_preconditions as lmp  # noqa: E402
 import wc_lifecycle_review_marker  # noqa: E402
 from board_item_marker import last_converged_review_head  # noqa: E402
@@ -576,7 +577,11 @@ def download_ledger(repo, default_branch, directory):
     for artifact in candidates:
         run_id = (artifact.get("workflow_run") or {}).get("id")
         run = _gh_json(["api", "repos/{0}/actions/runs/{1}".format(repo, run_id)], "gh api actions/runs")
-        if not run or not (run.get("path") or "").endswith("/" + WORKFLOW_FILE):
+        # Only this repository's own scheduled or dispatched run: a fork PR's
+        # run uses the same path and can name its head branch `main`
+        # (#1173 review R1).
+        if not run or not (run.get("path") or "").endswith("/" + WORKFLOW_FILE) \
+                or not wc_board_status.trusted_watcher_run(run, repo) or run.get("head_branch") != default_branch:
             continue
         r = _run(["gh", "run", "download", str(run_id), "-R", repo, "-n", LEDGER_ARTIFACT, "-D", directory])
         if r.returncode == 0:
