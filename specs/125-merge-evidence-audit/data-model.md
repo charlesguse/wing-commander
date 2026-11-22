@@ -36,7 +36,7 @@ Order: `checks_green_with_gate_suite` (every kind, FR-006), then the kind's own:
 
 ## Reported record
 
-`{url, author, kind: pass-report|decision-record|other, created_at}` — listed, never counted (FR-009). A comment starting `**Session decision (` is kind `decision-record` (FR-015).
+`{url, id, author, kind: pass-report|decision-record|other, created_at}` — listed, never counted (FR-009). `url` is the comment's link, built from its `id` on its thread when the read kept no `html_url` (an open PR's own comments). A comment starting `**Session decision (` is kind `decision-record` (FR-015).
 
 ## Audit entry
 

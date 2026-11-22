@@ -165,15 +165,29 @@ def reported_kind(comment, bot_login):
     return None
 
 
-def reported_records(comments, bot_login):
+def comment_url(comment, thread_url=None):
+    """The comment's link: REST's html_url, else built from its id on its
+    thread (board_merge.fetch_snapshot keeps only id, time, body and user;
+    #1173 final review F2)."""
+    url = comment.get("html_url") or comment.get("url")
+    if not url and thread_url and comment.get("id") is not None:
+        url = "{0}#issuecomment-{1}".format(thread_url, comment["id"])
+    return url or ""
+
+
+def reported_records(comments, bot_login, thread_url=None):
     out = []
     for comment in comments or []:
         kind = reported_kind(comment, bot_login)
         if kind:
-            out.append({"url": comment.get("html_url") or comment.get("url") or "",
+            out.append({"url": comment_url(comment, thread_url), "id": comment.get("id"),
                         "author": (comment.get("user") or {}).get("login"), "kind": kind,
                         "created_at": comment.get("created_at")})
     return out
+
+
+def pr_url(repo, number):
+    return "{0}/{1}/pull/{2}".format(os.environ.get("GITHUB_SERVER_URL") or "https://github.com", repo, number)
 
 
 def _bump_conditions(snap, bot_login):
@@ -301,11 +315,12 @@ def evaluate(snap, bot_login, now, final_prefix="spec/", spec_prefix="spec-draft
         why = "snapshot incomplete: " + "; ".join(not_read)
         conditions = [conditions[0]] + [_cond(c["name"], "not-read", why) if c["result"] == "met" else c
                                         for c in conditions[1:]]
-    comments = list(snap.get("comments") or []) + list(snap.get("issue_comments") or [])
+    reported = (reported_records(snap.get("comments"), bot_login, snap.get("pr_url"))
+                + reported_records(snap.get("issue_comments"), bot_login))
     return {"pr": snap.get("number"), "head": snap.get("headRefOid"), "kind": kind, "kind_facts": facts,
             "rule_applied": rule, "complete": complete, "not_read": not_read,
             "conditions": conditions, "first_unmet": first_unmet(conditions),
-            "reported": reported_records(comments, bot_login), "computed_at": now}
+            "reported": reported, "computed_at": now}
 
 
 def first_unmet(conditions):
@@ -688,6 +703,7 @@ def collect(repo, bot_login, actions_token=None, default_branch="main", final_pr
         try:
             snap = board_merge.fetch_snapshot(repo, pr["number"], bot_login, actions_token)
             snap["number"] = pr["number"]
+            snap["pr_url"] = pr_url(repo, pr["number"])
             snap["not_read"] = not_read
             _extend_with_evidence(repo, snap, bot_login, not_read, default_branch, final_prefix, spec_prefix)
             # When this PR's snapshot was read, taken after the read: the
@@ -789,7 +805,8 @@ def _merged_snapshot(repo, pull, bot_login, actions_token, final_prefix="spec/",
     fetch_snapshot() shapes an open one."""
     number, head = pull["number"], pull["head"]["sha"]
     not_read = []
-    snap = {"number": number, "headRefOid": head, "headRefName": pull["head"]["ref"],
+    snap = {"number": number, "pr_url": pull.get("html_url") or pr_url(repo, number),
+            "headRefOid": head, "headRefName": pull["head"]["ref"],
             "baseRefName": pull["base"]["ref"], "body": pull.get("body") or "",
             "author": {"login": (pull.get("user") or {}).get("login"),
                        "is_bot": (pull.get("user") or {}).get("type") == "Bot"},

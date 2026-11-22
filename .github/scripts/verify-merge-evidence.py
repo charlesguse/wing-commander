@@ -963,6 +963,29 @@ def check_final_review_markers(base_doc):
         problems.append("self-check: a re-typed marker comparison in _final_conditions was not noticed")
     return problems
 
+def check_final_review_links():
+    """#1173 final review F2: a reported record of an open PR's own comment,
+    read as board_merge.fetch_snapshot shapes it (no html_url), links to it."""
+    problems = []
+    comment = {"id": 77, "created_at": "2026-11-20T01:00:00Z", "body": "Review pass 2: clean.",
+               "user": {"login": "owner", "type": "User"}}
+
+    def fake_fetch(repo, number, bot_login, token):
+        return {"number": number, "headRefOid": "h" * 40, "headRefName": "feature/x", "baseRefName": "main",
+                "author": {"login": "owner", "is_bot": False}, "body": "", "statusCheckRollup": [],
+                "comments": [dict(comment)]}
+
+    with _Patched(board_merge__gh_items=lambda url: [{"number": 13}], board_merge__fetch_snapshot=fake_fetch,
+                  _extend_with_evidence=lambda repo, snap, *a, **k: snap):
+        snaps = me.collect("o/r", "wc[bot]")
+    rec = me.evaluate(snaps[0], "wc[bot]", NOW)
+    urls = [r["url"] for r in rec["reported"]]
+    if urls != ["https://github.com/o/r/pull/13#issuecomment-77"]:
+        problems.append("reported: an open PR's own pass report links {0}, not its comment".format(urls))
+    if [r.get("id") for r in rec["reported"]] != [77]:
+        problems.append("reported: the record does not keep the comment id")
+    return problems
+
 def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
@@ -970,6 +993,7 @@ def main():
         + check_review_round3_open() + check_review_round3_kind() + check_review_round3_linked_issue()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
     problems += check_review_round4() + check_sc003_pending()
+    problems += check_final_review_links()
     problems += check_final_review_markers(base_doc)
     problems += check_round5_record_time()
     problems += check_round5_login_seen(base_doc)
