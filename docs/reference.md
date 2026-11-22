@@ -270,8 +270,8 @@ All times UTC.
 | hourly at :27 | lifecycle review gate |
 | hourly at :41 | spec PR review |
 | 04:17 | rebase |
-| 05:43 | the gate suite on `main` |
 | 05:41 | merge evidence audit |
+| 05:43 | the gate suite on `main` |
 | 06:19 | proof list |
 | 06:37 | metrics-persist sweep |
 | 06:53 | cleanup |

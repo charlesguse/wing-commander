@@ -47,10 +47,11 @@ NO_READER_FILES = (".github/scripts/board_merge.py", ".github/scripts/lifecycle_
                    ".github/workflows/board-loop.yml", ".github/workflows/lifecycle-review-gate.yml")
 WORKFLOW = ".github/workflows/wing-commander-merge-evidence.yml"
 # SC-003 replay corpus: pending the maintainer capture (tasks.md T029). Tracked
-# by #1143 (gate 124 reads this entry); delete it when sc003/ lands.
+# by the Maintenance backlog, #889 (gate 124 reads this entry; the final PR
+# closes #1143, so it cannot be the tracker); delete it when sc003/ lands.
 EXEMPT_SC003_PENDING = {
     "sc003-replay": dict(reason="the corpus is captured from the saved 2026-11-16 lookup by the maintainer",
-                         issue=(1143,)),
+                         issue=(889,)),
 }
 
 
@@ -200,6 +201,33 @@ def check_ledger():
     return problems
 
 
+def check_review_round1():
+    """Review gate round 1: each fix fails this check without it."""
+    problems = []
+    head = "abc"
+    snap = {"headRefOid": head, "files": [{"path": "a"}], "commits": [{"sha": head}],
+            "comments": [{"created_at": "2026-11-01T00:00:00Z"}, {"created_at": "2026-11-03T00:00:00Z"}],
+            "counts": {"files": 1, "commits": 1, "comments": 2, "head_sha": head}}
+    cut = me.cut_snapshot(snap, "2026-11-02T00:00:00Z")
+    if len(cut["comments"]) != 1 or not me.board_merge.snapshot_complete(cut):
+        problems.append("cut: a post-merge comment left the cut snapshot incomplete")
+    recs = [{"pr": 1, "head": "h1", "computed_at": "2026-11-01T00:00:00Z"},
+            {"pr": 1, "head": "h2", "computed_at": "2026-11-02T00:00:00Z"},
+            {"pr": 2, "head": "h3", "computed_at": "2026-11-01T00:00:00Z"}]
+    calls = []
+    got = me.open_verdicts_latest("o/r", {"records": {"%s@%s" % (r["pr"], r["head"]): r for r in recs}},
+                                  lambda repo, r: calls.append(r["pr"]) or True)
+    if [r["head"] for r in got] != ["h2", "h3"] or sorted(calls) != [1, 2]:
+        problems.append("open verdicts: not the latest head of each PR, or a PR looked up twice")
+    if me.unpaired_commits([{"sha": "x"}, {"sha": "y"}, {"sha": "z"}],
+                           [{"merged_commit": "x", "commits": ["y"]}]) != [{"sha": "z"}]:
+        problems.append("unpaired: a rebase merge's other commits were listed")
+    if me.assign_kind({"headRefName": "spec/001-a", "cross_repository": False, "baseRefName": "trunk"},
+                      "bot", base_branch="trunk")[0] != "final":
+        problems.append("kind: the default branch parameter is ignored")
+    return problems
+
+
 def _stub_gh(directory, mode):
     list_arm = (gh_error_stub_arm("run list", "404", "Not Found") if mode == "404"
                 else gh_error_stub_arm("run list", "502", "Bad Gateway") if mode == "502"
@@ -330,7 +358,8 @@ def check_negatives(text):
 
 def main():
     base_doc = load("_base.json")
-    problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors()
+    problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
+        + check_review_round1()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
     wf = os.path.join(REPO, WORKFLOW)
     if os.path.exists(wf):

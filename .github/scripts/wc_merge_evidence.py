@@ -76,7 +76,7 @@ def _final_branch_re(prefix):
     return re.compile(r"{0}(?:[^/]+/)?\d+-[a-z0-9-]+".format(re.escape(prefix)))
 
 
-def assign_kind(snap, bot_login, final_prefix="spec/", spec_prefix="spec-draft/"):
+def assign_kind(snap, bot_login, final_prefix="spec/", spec_prefix="spec-draft/", base_branch=None):
     """FR-002: (kind, kind_facts), first match wins; never an agent."""
     branch = snap.get("headRefName") or ""
     facts = {"branch": branch, "author": (snap.get("author") or {}).get("login"),
@@ -86,7 +86,7 @@ def assign_kind(snap, bot_login, final_prefix="spec/", spec_prefix="spec-draft/"
     if board_merge.eligible_fix_class(snap, bot_login):
         return "board-fix", dict(facts, test="fix/<issue>-<slug> branch, bot author")
     same_repo = snap.get("cross_repository") is False
-    if same_repo and snap.get("baseRefName") == board_merge.BASE_BRANCH:
+    if same_repo and snap.get("baseRefName") == (base_branch or board_merge.BASE_BRANCH):
         if _final_branch_re(final_prefix).fullmatch(branch):
             return "final", dict(facts, test="head branch {0}[<P>/]<NNN-slug>".format(final_prefix))
         if _final_branch_re(spec_prefix).fullmatch(branch):
@@ -236,13 +236,13 @@ def _final_conditions(snap, bot_login):
     return out
 
 
-def evaluate(snap, bot_login, now, final_prefix="spec/", spec_prefix="spec-draft/"):
+def evaluate(snap, bot_login, now, final_prefix="spec/", spec_prefix="spec-draft/", base_branch=None):
     """One VerdictRecord (data-model.md) for `snap`, at its head."""
-    kind, facts = assign_kind(snap, bot_login, final_prefix, spec_prefix)
+    kind, facts = assign_kind(snap, bot_login, final_prefix, spec_prefix, base_branch)
     rule = RULE_NO_GATE if kind == "final" else RULE_ALL
     not_read = list(snap.get("not_read") or [])
     complete = board_merge.snapshot_complete(snap) and not not_read
-    if not board_merge.snapshot_complete(snap) and "snapshot lists" not in not_read:
+    if not board_merge.snapshot_complete(snap):
         not_read.append("snapshot lists (files, commits, comments)")
     if not bot_login:
         complete = False
@@ -318,6 +318,9 @@ def cut_snapshot(snap, merged_at):
             if not _after(event.get("created_at"), merged_at):
                 state[event.get("name")] = event.get("event") == "labeled"
         cut["labels"] = sorted(name for name, on in state.items() if on)
+    if isinstance(snap.get("counts"), dict) and cut.get("comments") is not None:
+        # The count described the full list; the cut list is whole by definition.
+        cut["counts"] = dict(snap["counts"], comments=len(cut["comments"]))
     cut["left_out"] = left_out
     return cut
 
@@ -396,7 +399,11 @@ def build_audit_entry(pr_info, verdict, ledger):
 
 def unpaired_commits(commits, merged_prs):
     """FR-014: first-parent commits on main that no merged PR produced."""
-    produced = {p["merged_commit"] for p in merged_prs if p.get("merged_commit")}
+    produced = set()
+    for p in merged_prs:
+        if p.get("merged_commit"):
+            produced.add(p["merged_commit"])
+        produced.update(p.get("commits") or [])  # a rebase merge lands several
     return [c for c in commits if c["sha"] not in produced]
 
 
@@ -499,10 +506,11 @@ def check_rate_limit(floor=RATE_LIMIT_FLOOR):
 
 
 def download_ledger(repo, default_branch, directory):
-    """The ledger of the latest successful default-branch run, or None when
-    there is none. A 404 is told apart from other failures by gh's stderr."""
+    """The ledger of the latest successful default-branch run that carries one
+    (audit and paused runs upload none), or None when there is none. A 404 is
+    told apart from other failures by gh's stderr."""
     r = _run(["gh", "run", "list", "-R", repo, "--workflow", WORKFLOW_FILE, "--branch", default_branch,
-              "--status", "success", "--limit", "1", "--json", "databaseId"])
+              "--status", "success", "--limit", "20", "--json", "databaseId"])
     if r.returncode != 0:
         if "(HTTP 404)" in (r.stderr or ""):
             return None
@@ -510,13 +518,15 @@ def download_ledger(repo, default_branch, directory):
     runs = json.loads(r.stdout or "[]")
     if not runs:
         return None
-    r = _run(["gh", "run", "download", str(runs[0]["databaseId"]), "-R", repo, "-n", LEDGER_ARTIFACT,
-              "-D", directory])
-    if r.returncode != 0:
+    for run in runs:
+        r = _run(["gh", "run", "download", str(run["databaseId"]), "-R", repo, "-n", LEDGER_ARTIFACT,
+                  "-D", directory])
+        if r.returncode == 0:
+            return os.path.join(directory, LEDGER_FILE)
         if "(HTTP 404)" in (r.stderr or "") or "no valid artifacts" in (r.stderr or ""):
-            return None
+            continue
         raise subprocess.CalledProcessError(r.returncode, "gh run download", r.stdout, r.stderr)
-    return os.path.join(directory, LEDGER_FILE)
+    return None
 
 
 def _issue_comments(repo, number):
@@ -526,10 +536,10 @@ def _issue_comments(repo, number):
             for c in board_merge.gh_items("repos/{0}/issues/{1}/comments?per_page=100".format(repo, number))]
 
 
-def _extend_with_evidence(repo, snap, bot_login, not_read):
+def _extend_with_evidence(repo, snap, bot_login, not_read, base_branch=None):
     """Reviews, labels and the kind's evidence issue; each part that cannot be
     read is named, never defaulted."""
-    kind, _facts = assign_kind(snap, bot_login)
+    kind, _facts = assign_kind(snap, bot_login, base_branch=base_branch)
     pull = json.loads(_gh_ok(["pr", "view", str(snap["number"]), "-R", repo, "--json",
                               "reviews,isCrossRepository"]))
     snap["reviews"] = pull.get("reviews") or []
@@ -550,20 +560,20 @@ def _extend_with_evidence(repo, snap, bot_login, not_read):
     return snap
 
 
-def collect(repo, bot_login, actions_token=None):
-    """FR-004: a fresh whole snapshot per open PR head into main."""
+def collect(repo, bot_login, actions_token=None, default_branch="main"):
+    """FR-004: a fresh whole snapshot per open PR head into the default branch."""
     snapshots = []
-    prs = board_merge.gh_items("repos/{0}/pulls?state=open&base=main&per_page=100".format(repo))
+    prs = board_merge.gh_items("repos/{0}/pulls?state=open&base={1}&per_page=100".format(repo, default_branch))
     for pr in prs:
         not_read = []
         try:
             snap = board_merge.fetch_snapshot(repo, pr["number"], bot_login, actions_token)
             snap["number"] = pr["number"]
             snap["not_read"] = not_read
-            _extend_with_evidence(repo, snap, bot_login, not_read)
+            _extend_with_evidence(repo, snap, bot_login, not_read, default_branch)
         except (subprocess.CalledProcessError, ValueError) as exc:
             snap = {"number": pr["number"], "headRefOid": (pr.get("head") or {}).get("sha"),
-                    "headRefName": (pr.get("head") or {}).get("ref"), "baseRefName": "main",
+                    "headRefName": (pr.get("head") or {}).get("ref"), "baseRefName": default_branch,
                     "statusCheckRollup": None,
                     "not_read": ["the snapshot: {0}".format((getattr(exc, "stderr", "") or str(exc)).strip())]}
         snapshots.append(snap)
@@ -589,9 +599,9 @@ def run_verdicts(repo, bot_login, default_branch, out_path, final_prefix, spec_p
         print("merge-evidence: no earlier ledger found; starting an empty one")
     now = _now()
     open_prs = set()
-    for snap in collect(repo, bot_login, os.environ.get("WC_ACTIONS_TOKEN") or None):
+    for snap in collect(repo, bot_login, os.environ.get("WC_ACTIONS_TOKEN") or None, default_branch):
         open_prs.add(snap["number"])
-        replace_record(ledger, evaluate(snap, bot_login, now, final_prefix, spec_prefix))
+        replace_record(ledger, evaluate(snap, bot_login, now, final_prefix, spec_prefix, default_branch))
     states = {}
     for pr in sorted({r["pr"] for r in ledger["records"].values()} - open_prs):
         try:
@@ -707,7 +717,7 @@ def run_audit(repo, bot_login, default_branch, out_path, final_prefix, spec_pref
                 "merged_by": (pull.get("merged_by") or {}).get("login")}
         merged.append(info)
         snap = cut_snapshot(_merged_snapshot(repo, pull, bot_login, token), pull["merged_at"])
-        entries.append(build_audit_entry(info, evaluate(snap, bot_login, now, final_prefix, spec_prefix), ledger))
+        entries.append(build_audit_entry(info, evaluate(snap, bot_login, now, final_prefix, spec_prefix, default_branch), ledger))
     entries.sort(key=lambda e: e["merged_at"], reverse=True)
     log = _run(["git", "log", "--first-parent", "--since", window["start"],
                                                 "--format=%H%x09%an%x09%cn%x09%cI", "origin/" + default_branch])
@@ -718,9 +728,9 @@ def run_audit(repo, bot_login, default_branch, out_path, final_prefix, spec_pref
             commits.append({"sha": parts[0], "author": parts[1], "committer": parts[2], "committed_at": parts[3]})
     if log.returncode != 0:
         raise RuntimeError("git log of the window failed: {0}".format(log.stderr.strip()))
-    open_verdicts = sorted((r for r in ledger["records"].values() if _is_open(repo, r)),
-                           key=lambda r: r["pr"])
-    section = build_section(entries, unpaired_commits(commits, merged), open_verdicts, window, now, ledger)
+    open_verdicts = open_verdicts_latest(repo, ledger)
+    unpaired = [c for c in unpaired_commits(commits, merged) if not _belongs_to_merged_pr(repo, c["sha"])]
+    section = build_section(entries, unpaired, open_verdicts, window, now, ledger)
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(section, fh, sort_keys=True, indent=1)
     return section
@@ -731,6 +741,31 @@ def _is_open(repo, record):
         return _pr_state(repo, record["pr"])["state"] == "open"
     except (subprocess.CalledProcessError, ValueError):
         return False
+
+
+def latest_per_pr(records):
+    """The newest record (by computed_at) of each pull request."""
+    latest = {}
+    for r in records:
+        if r["pr"] not in latest or (r.get("computed_at") or "") > (latest[r["pr"]].get("computed_at") or ""):
+            latest[r["pr"]] = r
+    return [latest[pr] for pr in sorted(latest)]
+
+
+def open_verdicts_latest(repo, ledger, is_open=None):
+    """One record per open PR: its latest head; each PR's state read once."""
+    is_open = is_open or _is_open
+    return [r for r in latest_per_pr(ledger["records"].values()) if is_open(repo, r)]
+
+
+def _belongs_to_merged_pr(repo, sha):
+    """A rebase merge puts several commits on main; the pull request that
+    produced one is told by GitHub, so a commit with a merged PR is paired."""
+    try:
+        pulls = json.loads(_gh_ok(["api", "repos/{0}/commits/{1}/pulls".format(repo, sha)]))
+    except (subprocess.CalledProcessError, ValueError):
+        return False
+    return any(p.get("merged_at") for p in pulls)
 
 
 def main(argv=None):
@@ -748,7 +783,8 @@ def main(argv=None):
     if not args.repo:
         parser.error("--repo or GITHUB_REPOSITORY is required")
     if args.command == "collect":
-        json.dump(collect(args.repo, args.bot_login, os.environ.get("WC_ACTIONS_TOKEN") or None), sys.stdout)
+        json.dump(collect(args.repo, args.bot_login, os.environ.get("WC_ACTIONS_TOKEN") or None,
+                          args.default_branch), sys.stdout)
     elif args.command == "verdicts":
         run_verdicts(args.repo, args.bot_login, args.default_branch, args.out, args.final_prefix,
                      args.spec_prefix, os.environ.get("GITHUB_RUN_ID"))
