@@ -40,7 +40,7 @@ The owner's direction (2026-11-16): keep the existing merge jobs, and add a work
 
 ### User Story 1 - See, for an open pull request into main, whether its merge evidence is there on the exact head (Priority: P1)
 
-The owner, or a session about to merge, looks up the verdict for a pull request into `main` and sees, for its current head commit: the kind the audit assigned it, every condition that kind needs with its result, and the first one unmet. The verdict was computed by deterministic code from a complete snapshot fetched fresh for that head, so it can be trusted to describe that commit and no earlier one.
+The owner reads each open pull request's latest verdict in the daily Board status section; a session about to merge reads the verdict for its current head from the latest verdict run's output with `gh` (FR-018). Either sees, for the current head commit: the kind the audit assigned it, every condition that kind needs with its result, and the first one unmet. The verdict was computed by deterministic code from a complete snapshot fetched fresh for that head, so it can be trusted to describe that commit and no earlier one.
 
 **Why this priority**: This is the one question the feature exists to answer. The daily audit (Story 2) reads these verdicts; without them it has nothing to list.
 
@@ -104,7 +104,7 @@ The owner and every merge path keep working exactly as today. The workflow never
 - **A pull request opened from a fork**: watched read-only like any other; the workflow never checks out its head.
 - **A merged pull request closed and reopened, or merged twice by revert-and-reapply**: each merge is its own audit entry.
 - **Where the verdict is written**: never on a lifecycle issue in `stage:spec` or `stage:clarify`, on a final PR, or on the Spec Kit tracking issue, because a comment there starts a pipeline run (FR-018).
-- **The 9th lifecycle condition (spec 119's hold label)**: checked by this verdict for final PRs even though the merge job does not yet check it at merge time; the verdict reports it as its own condition.
+- **The 9th lifecycle condition (spec 119's hold label)**: checked by this verdict for final PRs even though the merge job does not yet check it at merge time; the verdict reports it as its own condition. Spec 119 was parked on 2026-11-22 and nothing applies the label today, so the condition reads met; with no merge-time code to call, FR-008's "call it, never copy" applies only once such code exists (FR-007).
 
 ## Requirements *(mandatory)*
 
@@ -127,7 +127,7 @@ The owner and every merge path keep working exactly as today. The workflow never
 - **FR-007**: The verdict MUST then include the kind's own evidence condition:
   - *Spec Kit bump PR*: its verification record, counted only when the Actions run it names is confirmed by the Actions API as the expected workflow, on that head, successful — as the bump's merge conditions confirm it today.
   - *Board loop fix PR*: the board loop's own review verdict for that head commit, posted by the pipeline's App, with zero open findings.
-  - *Final PR*: the lifecycle review gate's round recorded at that head, clean, with zero open in-scope findings; plus no unresolved human changes-requested review and no hold label on the lifecycle issue (Principle X's nine conditions, reported as separate conditions).
+  - *Final PR*: the lifecycle review gate's round recorded at that head, clean, with zero open in-scope findings; plus no unresolved human changes-requested review and no hold label on the lifecycle issue (Principle X's nine conditions, reported as separate conditions). The hold label is defined by spec 119, which was parked on 2026-11-22; nothing applies the label today, so this condition reads met. The condition has no merge-time code to reuse, so FR-008's "call it, never copy" applies to it only once such code exists.
   - *Maintainer PR* and *spec PR*: the reviewer's round record proposed by #1142, counted only when the Actions run that wrote it is confirmed by the Actions API. Until #1142 exists, this condition is unmet for every such pull request, and any session pass report on it is listed as reported, not counted.
 - **FR-008**: The workflow MUST reuse the condition code that already exists — the board loop's merge conditions, its snapshot completeness check and its run-confirmation check, and the lifecycle merge preconditions — by calling it, and MUST NOT copy it. Where the two existing "checks green" rules differ, each kind MUST be judged by the rule its own merge path uses, and the verdict MUST name the rule applied. A gate MUST fail if a copy of either rule's logic appears in this feature's code (CLAUDE.md, "Shared logic has exactly one home").
 - **FR-009**: A record MUST count only when code can confirm where it came from: posted by the pipeline's App, or written by an Actions run the Actions API confirms. A record posted under a maintainer's account — a pass report, a decision record, a free-prose verdict — MUST be listed in the verdict as reported and MUST NOT make any condition met.
@@ -135,7 +135,7 @@ The owner and every merge path keep working exactly as today. The workflow never
 
 **Verdict record**
 
-- **FR-011**: The workflow MUST write one verdict record per head commit per pull request: the pull request, the head commit, the kind and the facts that decided it, each condition and its result with a one-line reason when unmet, the first condition unmet, whether the snapshot was complete, and the time it was computed. A later run for the same head MUST replace that head's record, not add a second.
+- **FR-011**: The workflow MUST write one verdict record per head commit per pull request: the pull request, the head commit, the kind and the facts that decided it, each condition and its result with a one-line reason when unmet, the first condition unmet, whether the snapshot was complete, and the time it was computed. A later run for the same head MUST replace that head's record, not add a second. Records MUST be kept in a store the workflow's own runs read and write (FR-018), and a head's record MUST survive until the audit that covers that pull request's merge has read it, so the audit can tell a recorded verdict from a reconstructed one (FR-013).
 
 **Daily audit**
 
@@ -143,12 +143,12 @@ The owner and every merge path keep working exactly as today. The workflow never
 - **FR-013**: When no verdict was recorded for a merged pull request's last head before it merged, the audit MUST reconstruct the verdict as FR-012 says and mark the entry as reconstructed.
 - **FR-014**: The audit MUST list every commit that reached `main` since the last completed audit without being the merge or squash commit of a merged pull request, with its author and committer.
 - **FR-015**: When a merged pull request carries a session decision record (a comment starting `**Session decision (`), the audit entry MUST link it, as reported and not counted; the entry's verdict is unchanged by it.
-- **FR-016**: The workflow MUST compute verdicts for every open pull request into `main` on an hourly schedule and on manual dispatch; it MUST NOT be chained to the CI workflow finishing. A pull request merged between two runs gets only a reconstructed verdict in the audit (FR-013). Hourly, not every 30 minutes, because every job counts as at least one Actions minute and a 30-minute schedule would use about 1,440 minutes a month (clarified 2026-11-22, #1143). The workflow MUST run the daily audit on a daily schedule and on manual dispatch.
+- **FR-016**: The workflow MUST compute verdicts for every open pull request into `main` on an hourly schedule and on manual dispatch, each run writing its verdict records to the store FR-018 names; it MUST NOT be chained to the CI workflow finishing. A pull request merged between two runs gets only a reconstructed verdict in the audit (FR-013). Hourly, not every 30 minutes, because every job counts as at least one Actions minute and a 30-minute schedule would use about 1,440 minutes a month (clarified 2026-11-22, #1143). The workflow MUST run the daily audit on a daily schedule and on manual dispatch.
 
 **Only watching**
 
 - **FR-017**: The workflow MUST NOT merge, approve, request changes, label, push, comment on a commit, create or update a check run or commit status, or edit any pull request. Its verdict MUST NOT appear among any commit's checks or statuses.
-- **FR-018**: The verdict records and the audit MUST be written to a single place that starts no pipeline run: a collapsed section of the "Board status" issue, written by that issue's one writer (`board-status.yml`), as the proof list of spec 124 already reports there. Nothing is written to a lifecycle issue, a final PR or the Spec Kit tracking issue.
+- **FR-018**: The verdict records MUST live in a store the workflow's own runs read and write, not in an issue, so each hourly run can record its verdicts without waiting on the daily report. The daily report MUST be a collapsed section of the "Board status" issue, written by that issue's one writer (`board-status.yml`), which only displays what this workflow built: the audit and each open pull request's latest verdict, as the proof list of spec 124 already reports there (its own workflow builds the section and uploads it; `board-status.yml` displays it). A session about to merge MUST be able to read the verdict for a pull request's current head from the latest verdict run's output with `gh`, without the Board status issue. Nothing is written to a lifecycle issue, a final PR or the Spec Kit tracking issue, because a comment there starts a pipeline run.
 - **FR-019**: No existing merge job or merge rule MUST read this feature's records; the two merge jobs keep their own decisions.
 - **FR-020**: Every step MUST be deterministic code; the workflow MUST invoke no agent.
 - **FR-021**: The workflow MUST refuse to run, before reading anything, when its ref is not the default branch.
@@ -167,7 +167,7 @@ The owner and every merge path keep working exactly as today. The workflow never
 
 - **Pull request kind**: one of *Spec Kit bump PR*, *board loop fix PR*, *final PR*, *spec PR*, *maintainer PR*, with the facts that decided it.
 - **Condition**: a named check of the snapshot with a result (met, unmet, not read) and a one-line reason when not met.
-- **Verdict record**: one per pull request head commit; the kind, every condition, the first unmet, snapshot completeness, computed-at time.
+- **Verdict record**: one per pull request head commit, kept in the workflow's own store until the audit covering that pull request's merge has read it; the kind, every condition, the first unmet, snapshot completeness, computed-at time.
 - **Counted record**: evidence whose origin code can confirm — posted by the App, or written by an Actions run the Actions API confirms.
 - **Reported record**: evidence under a maintainer's account, listed for the reader and never counted.
 - **Audit entry**: one per merge into `main` since the last audit — the pull request, merged commit, last head, verdict as of the merge (recorded or reconstructed), first unmet condition, merging account, and any linked session decision record.
@@ -179,7 +179,7 @@ The owner and every merge path keep working exactly as today. The workflow never
 
 - **SC-001**: For every pull request merged into `main` after the feature ships, the audit has an entry within one day of the merge: 100% of merges, none missing.
 - **SC-002**: Every commit that reaches `main` without a pull request appears in the audit within one day.
-- **SC-003**: Replayed over the 48 merges of 2026-10-15 to 2026-11-16, the audit's verdicts agree with the lookup's hand count: complete for the 6 with a pipeline-written record at the merged commit, and incomplete for the rest with the right first unmet condition — the 14 session-written clean records listed as reported, not counted.
+- **SC-003**: Replayed over the 48 merges of 2026-10-15 to 2026-11-16, the audit's verdicts agree with the lookup's hand count: met for the 6 with a pipeline-written record at the merged commit, and unmet, with the right first unmet condition, for the rest — the 14 session-written clean records listed as reported, not counted.
 - **SC-004**: Across the watching period, no check run, commit status, label, review, merge or push is ever attributable to the workflow — zero.
 - **SC-005**: Across the watching period, no merge by the board loop or the lifecycle review gate is delayed or changed by the workflow — zero.
 - **SC-006**: The workflow adds zero agent turns to the shared usage window.
@@ -190,7 +190,7 @@ The owner and every merge path keep working exactly as today. The workflow never
 - **Only `main`**: merges into a feature's own branch are not watched in this feature; #1141 would move spec PR approval there, and watching that is a follow-up.
 - **Kinds by existing facts**: a board loop fix PR and a bump are identified exactly as the board loop's merge code identifies them today; the owner's and a session's pull requests are one kind, because GitHub records the same account for both.
 - **Session pass reports before #1142**: shown as reported, never counted (FR-009). The verdict is therefore unmet for every maintainer PR until #1142's round record exists; that is the expected reading during watching, not a defect.
-- **Where it reports**: the Board status issue's collapsed section, as #1144 / spec 124 chose for its own report (FR-018). The run summary is not used, because `gh` cannot read it.
+- **Where it reports**: verdict records in a store of the workflow's own; the daily audit and each open pull request's latest verdict in the Board status issue's collapsed section, displayed by its one writer, as #1144 / spec 124 chose for its own report; a current verdict read from the latest run's output with `gh` (FR-018). The store's form is a plan decision. The run summary is not used, because `gh` cannot read it.
 - **Audit window**: "since the last completed audit", with the first audit covering the 30 days before it ran.
 - **Name**: "the merge evidence audit" — "gate" already names the `verify-*` checks, the gate suite and the lifecycle review gate.
 - **Out of scope, each the owner's call later**: the merge jobs and the session fix-PR rule reading this verdict in place of their own conditions; requiring the verdict before any merge.
