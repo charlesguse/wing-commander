@@ -1,0 +1,6 @@
+{"base": "maintainer", "patch": {},
+ "merge": {"pr": 13, "merged_commit": "cccccccccccccccccccccccccccccccccccccccc", "merged_at": "2026-11-10T12:00:00Z", "merged_by": "owner"},
+ "ledger": [],
+ "commits": [{"sha": "cccccccccccccccccccccccccccccccccccccccc", "author": "o", "committer": "web-flow", "committed_at": "2026-11-10T12:00:00Z"},
+             {"sha": "dddddddddddddddddddddddddddddddddddddddd", "author": "o", "committer": "o", "committed_at": "2026-11-11T08:00:00Z"}],
+ "expect": {"mark": "reconstructed", "unpaired": ["dddddddddddddddddddddddddddddddddddddddd"]}}

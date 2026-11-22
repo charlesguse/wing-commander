@@ -1,0 +1,82 @@
+{
+  "bot_login": "wc[bot]",
+  "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "bases": {
+    "board-fix": {
+      "number": 10,
+      "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "headRefName": "fix/55-thing",
+      "baseRefName": "main",
+      "author": {"login": "app/wc", "is_bot": true},
+      "body": "",
+      "cross_repository": false,
+      "statusCheckRollup": [
+        {"name": "lint", "conclusion": "SUCCESS", "workflowName": "lint · workflows", "completedAt": "2026-11-10T10:00:00Z"}
+      ],
+      "counts": {"files": 1, "commits": 1, "comments": 0, "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "files": [{"path": "a.py"}],
+      "commits": [{"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "author": {"login": "wc[bot]", "type": "Bot"}}],
+      "comments": [],
+      "reviews": [],
+      "issue_comments": [],
+      "labels": []
+    },
+    "bump": {
+      "number": 11,
+      "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "headRefName": "auto-update-spec-kit/v1.2.3",
+      "baseRefName": "main",
+      "author": {"login": "app/wc", "is_bot": true},
+      "body": "<!-- wing-commander-auto-update-spec-kit: version-bump -->\nCloses #7\n",
+      "cross_repository": false,
+      "statusCheckRollup": [
+        {"name": "lint", "conclusion": "SUCCESS", "workflowName": "lint · workflows", "completedAt": "2026-11-10T10:00:00Z"}
+      ],
+      "counts": {"files": 1, "commits": 1, "comments": 0, "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "files": [{"path": "a.py"}],
+      "commits": [{"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "author": {"login": "wc[bot]", "type": "Bot"}}],
+      "comments": [],
+      "reviews": [],
+      "verificationRun": null
+    },
+    "final": {
+      "number": 12,
+      "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "headRefName": "spec/125-merge-evidence-audit",
+      "baseRefName": "main",
+      "author": {"login": "app/wc", "is_bot": true},
+      "body": "Closes #1143",
+      "cross_repository": false,
+      "statusCheckRollup": [
+        {"name": "lint", "conclusion": "SUCCESS", "workflowName": "lint · workflows", "completedAt": "2026-11-10T10:00:00Z"},
+        {"context": "lifecycle-review-gate", "state": "FAILURE", "startedAt": "2026-11-10T10:05:00Z"}
+      ],
+      "counts": {"files": 1, "commits": 1, "comments": 0, "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "files": [{"path": "a.py"}],
+      "commits": [{"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "author": {"login": "wc[bot]", "type": "Bot"}}],
+      "comments": [],
+      "reviews": [],
+      "issue_comments": [],
+      "labels": []
+    },
+    "maintainer": {
+      "number": 13,
+      "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "headRefName": "feature/x",
+      "baseRefName": "main",
+      "author": {"login": "owner", "is_bot": false},
+      "body": "",
+      "cross_repository": false,
+      "statusCheckRollup": [
+        {"name": "lint", "conclusion": "SUCCESS", "workflowName": "lint · workflows", "completedAt": "2026-11-10T10:00:00Z"}
+      ],
+      "counts": {"files": 1, "commits": 1, "comments": 0, "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "files": [{"path": "a.py"}],
+      "commits": [{"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "author": {"login": "owner", "type": "User"}}],
+      "comments": [],
+      "reviews": [],
+      "issue_comments": null,
+      "labels": null
+    }
+  }
+}

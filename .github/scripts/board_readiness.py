@@ -58,6 +58,11 @@ def _gate_suite_green(rollup):
     return False
 
 
+# Public names for the merge-evidence audit (specs/125-merge-evidence-audit,
+# FR-008): it calls the "every status counts" rule, never copies it.
+checks_green = _checks_green
+gate_suite_green = _gate_suite_green
+
 # A legacy StatusContext carries `state` (PENDING/EXPECTED); an Actions
 # CheckRun that has not concluded carries `status` (QUEUED/IN_PROGRESS/
 # WAITING/REQUESTED/PENDING) with an empty `conclusion` and no `state`.

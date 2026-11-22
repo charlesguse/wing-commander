@@ -10,16 +10,16 @@ Run `python .github/scripts/run-local-gates.py` before pushing; every task leave
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the fixture directory `.github/scripts/fixtures/merge-evidence/` with a README line saying `sc003/` is filled only by the maintainer capture (T036).
-- [ ] T002 [P] Add public aliases for reused private names in `.github/scripts/board_merge.py` (fix-PR and bump evidence, snapshot completeness, run confirmation), with no behaviour change.
-- [ ] T003 [P] Add public aliases for `_checks_green` and `_gate_suite_green` in `.github/scripts/board_readiness.py`, with no behaviour change.
-- [ ] T004 [P] Add a public alias for the unresolved-human-review test in `.github/scripts/lifecycle_merge_preconditions.py`, with no behaviour change.
+- [x] T001 Create the fixture directory `.github/scripts/fixtures/merge-evidence/` with a README line saying `sc003/` is filled only by the maintainer capture (T036).
+- [x] T002 [P] Add public aliases for reused private names in `.github/scripts/board_merge.py` (fix-PR and bump evidence, snapshot completeness, run confirmation), with no behaviour change.
+- [x] T003 [P] Add public aliases for `_checks_green` and `_gate_suite_green` in `.github/scripts/board_readiness.py`, with no behaviour change.
+- [x] T004 [P] Add a public alias for the unresolved-human-review test in `.github/scripts/lifecycle_merge_preconditions.py`, with no behaviour change.
 
 ## Phase 2: Foundational (blocks all stories)
 
-- [ ] T005 Create `.github/scripts/wc_merge_evidence.py` pure half: kind assignment per FR-002 (`VerdictRecord.kind`, `VerdictRecord.kind_facts` in data-model.md), the ordered condition list per kind (`Condition.name`, `Condition.result`, `Condition.reason` in data-model.md), `first_unmet`, `rule_applied` (`VerdictRecord.rule_applied`), and the reported-record classifier (`Reported record.kind`). Condition logic calls the aliases from T002-T004; it copies none of it.
-- [ ] T006 Add to `.github/scripts/wc_merge_evidence.py` the ledger functions: replace per `(pr, head)` and prune at merge + 31 days / close + 7 days (data-model.md `Ledger.records`), and the unparseable-fails / absent-starts-empty load rule.
-- [ ] T007 Define `LEDGER_ARTIFACT = "merge-evidence-ledger"` and `SECTION_ARTIFACT = "merge-evidence-section"` as single constants in `.github/scripts/wc_merge_evidence.py`.
+- [x] T005 Create `.github/scripts/wc_merge_evidence.py` pure half: kind assignment per FR-002 (`VerdictRecord.kind`, `VerdictRecord.kind_facts` in data-model.md), the ordered condition list per kind (`Condition.name`, `Condition.result`, `Condition.reason` in data-model.md), `first_unmet`, `rule_applied` (`VerdictRecord.rule_applied`), and the reported-record classifier (`Reported record.kind`). Condition logic calls the aliases from T002-T004; it copies none of it.
+- [x] T006 Add to `.github/scripts/wc_merge_evidence.py` the ledger functions: replace per `(pr, head)` and prune at merge + 31 days / close + 7 days (data-model.md `Ledger.records`), and the unparseable-fails / absent-starts-empty load rule.
+- [x] T007 Define `LEDGER_ARTIFACT = "merge-evidence-ledger"` and `SECTION_ARTIFACT = "merge-evidence-section"` as single constants in `.github/scripts/wc_merge_evidence.py`.
 
 **Checkpoint**: pure half importable; existing gates pass unchanged.
 
@@ -29,11 +29,11 @@ Run `python .github/scripts/run-local-gates.py` before pushing; every task leave
 
 **Independent Test**: fixtures for each scenario of spec User Story 1 produce the expected `VerdictRecord`; the workflow runs read-only from the default branch.
 
-- [ ] T008 [P] [US1] Fixtures under `.github/scripts/fixtures/merge-evidence/verdict-*/` for: all-met board-fix PR; review verdict naming another commit; bump with unconfirmed run; clean final PR round at head; maintainer-account comment listed as reported and not counted (`Reported record`); incomplete snapshot (`VerdictRecord.complete`, `VerdictRecord.not_read`); no checks on head.
-- [ ] T009 [US1] Implement the runtime `collect` and `verdicts` subcommands in `.github/scripts/wc_merge_evidence.py`: fresh snapshot per head (FR-004), `gh api rate_limit` check failing below 600, incomplete marking (FR-005), ledger download via `gh run download` with 404 told apart by stderr `(HTTP 404)`, ledger write at `ledger.json`.
-- [ ] T010 [US1] Create `.github/workflows/wing-commander-merge-evidence.yml`: schedules `7 * * * *` and `41 5 * * *`, `workflow_dispatch` input `job`, first step refusing a non-default ref (FR-021), pause step using `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` (FR-022), read-only permissions, `GH_TOKEN: ${{ github.token }}`, `actions/checkout@v5`, concurrency group for one ledger writer, hourly job timeout 10, upload of `merge-evidence-ledger` with `overwrite: true`, no `always()`/`!cancelled()`, no agent step.
-- [ ] T011 [US1] Create `.github/scripts/verify-merge-evidence.py` with the verdict fixture checks from T008, the single-home checks (a copy of either "checks green" rule or the final-PR rule fails), and error-stub cases built with `wc_shell_harness.gh_error_stub_arm`.
-- [ ] T012 [US1] Add the unnumbered `verify-merge-evidence.py` step to `.github/workflows/lint-workflows.yml` and confirm `verify-gate-wiring.py` accepts it.
+- [x] T008 [P] [US1] Fixtures under `.github/scripts/fixtures/merge-evidence/verdict-*/` for: all-met board-fix PR; review verdict naming another commit; bump with unconfirmed run; clean final PR round at head; maintainer-account comment listed as reported and not counted (`Reported record`); incomplete snapshot (`VerdictRecord.complete`, `VerdictRecord.not_read`); no checks on head.
+- [x] T009 [US1] Implement the runtime `collect` and `verdicts` subcommands in `.github/scripts/wc_merge_evidence.py`: fresh snapshot per head (FR-004), `gh api rate_limit` check failing below 600, incomplete marking (FR-005), ledger download via `gh run download` with 404 told apart by stderr `(HTTP 404)`, ledger write at `ledger.json`.
+- [x] T010 [US1] Create `.github/workflows/wing-commander-merge-evidence.yml`: schedules `7 * * * *` and `41 5 * * *`, `workflow_dispatch` input `job`, first step refusing a non-default ref (FR-021), pause step using `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` (FR-022), read-only permissions, `GH_TOKEN: ${{ github.token }}`, `actions/checkout@v5`, concurrency group for one ledger writer, hourly job timeout 10, upload of `merge-evidence-ledger` with `overwrite: true`, no `always()`/`!cancelled()`, no agent step.
+- [x] T011 [US1] Create `.github/scripts/verify-merge-evidence.py` with the verdict fixture checks from T008, the single-home checks (a copy of either "checks green" rule or the final-PR rule fails), and error-stub cases built with `wc_shell_harness.gh_error_stub_arm`.
+- [x] T012 [US1] Add the unnumbered `verify-merge-evidence.py` step to `.github/workflows/lint-workflows.yml` and confirm `verify-gate-wiring.py` accepts it.
 
 **Checkpoint**: MVP — verdicts recorded hourly and readable via the contract's `gh run download` recipe.
 

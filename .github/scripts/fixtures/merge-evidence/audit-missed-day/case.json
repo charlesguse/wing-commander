@@ -1,0 +1,5 @@
+{"base": "maintainer", "patch": {},
+ "merge": {"pr": 13, "merged_commit": "cccccccccccccccccccccccccccccccccccccccc", "merged_at": "2026-11-10T12:00:00Z", "merged_by": "owner"},
+ "ledger": [],
+ "section_now": "2026-11-15T05:41:00Z",
+ "expect": {"mark": "reconstructed", "window_start": "2026-10-16T05:41:00Z", "section_entries": 3}}
