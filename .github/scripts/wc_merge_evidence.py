@@ -238,8 +238,12 @@ def _final_conditions(snap, bot_login):
 
 
 def evaluate(snap, bot_login, now, final_prefix="spec/", spec_prefix="spec-draft/", base_branch=None):
-    """One VerdictRecord (data-model.md) for `snap`, at its head."""
-    kind, facts = assign_kind(snap, bot_login, final_prefix, spec_prefix, base_branch)
+    """One VerdictRecord (data-model.md) for `snap`, at its head. A snapshot
+    the runtime half built carries the kind it assigned while choosing the
+    evidence issue to read (`assigned_kind`); that one is reused, so the
+    kind and the evidence read can never disagree."""
+    assigned = snap.get("assigned_kind")
+    kind, facts = assigned if assigned else assign_kind(snap, bot_login, final_prefix, spec_prefix, base_branch)
     rule = RULE_NO_GATE if kind == "final" else RULE_ALL
     not_read = list(snap.get("not_read") or [])
     complete = board_merge.snapshot_complete(snap) and not not_read
@@ -586,14 +590,23 @@ def _issue_comments(repo, number):
             for c in board_merge.gh_items("repos/{0}/issues/{1}/comments?per_page=100".format(repo, number))]
 
 
-def _extend_with_evidence(repo, snap, bot_login, not_read, base_branch=None):
+def _assign_once(snap, bot_login, final_prefix, spec_prefix, base_branch):
+    """The kind, computed once with the run's prefixes and base branch and
+    kept on the snapshot for evaluate()."""
+    kind, facts = assign_kind(snap, bot_login, final_prefix, spec_prefix, base_branch)
+    snap["assigned_kind"] = [kind, facts]
+    return kind
+
+
+def _extend_with_evidence(repo, snap, bot_login, not_read, base_branch=None, final_prefix="spec/",
+                          spec_prefix="spec-draft/"):
     """Reviews, labels and the kind's evidence issue; each part that cannot be
     read is named, never defaulted."""
     pull = json.loads(_gh_ok(["pr", "view", str(snap["number"]), "-R", repo, "--json",
                               "reviews,isCrossRepository"]))
     snap["reviews"] = pull.get("reviews") or []
     snap["cross_repository"] = bool(pull.get("isCrossRepository"))
-    kind, _facts = assign_kind(snap, bot_login, base_branch=base_branch)
+    kind = _assign_once(snap, bot_login, final_prefix, spec_prefix, base_branch)
     issue = linked_issue(kind, snap)
     snap["issue_comments"] = None
     snap["labels"] = None
@@ -610,7 +623,8 @@ def _extend_with_evidence(repo, snap, bot_login, not_read, base_branch=None):
     return snap
 
 
-def collect(repo, bot_login, actions_token=None, default_branch="main"):
+def collect(repo, bot_login, actions_token=None, default_branch="main", final_prefix="spec/",
+            spec_prefix="spec-draft/"):
     """FR-004: a fresh whole snapshot per open PR head into the default branch."""
     snapshots = []
     prs = board_merge.gh_items("repos/{0}/pulls?state=open&base={1}&per_page=100".format(repo, default_branch))
@@ -620,7 +634,7 @@ def collect(repo, bot_login, actions_token=None, default_branch="main"):
             snap = board_merge.fetch_snapshot(repo, pr["number"], bot_login, actions_token)
             snap["number"] = pr["number"]
             snap["not_read"] = not_read
-            _extend_with_evidence(repo, snap, bot_login, not_read, default_branch)
+            _extend_with_evidence(repo, snap, bot_login, not_read, default_branch, final_prefix, spec_prefix)
         except (subprocess.CalledProcessError, ValueError) as exc:
             snap = {"number": pr["number"], "headRefOid": (pr.get("head") or {}).get("sha"),
                     "headRefName": (pr.get("head") or {}).get("ref"), "baseRefName": default_branch,
@@ -649,7 +663,8 @@ def run_verdicts(repo, bot_login, default_branch, out_path, final_prefix, spec_p
         print("merge-evidence: no earlier ledger found; starting an empty one")
     now = _now()
     open_prs = set()
-    for snap in collect(repo, bot_login, os.environ.get("WC_ACTIONS_TOKEN") or None, default_branch):
+    for snap in collect(repo, bot_login, os.environ.get("WC_ACTIONS_TOKEN") or None, default_branch,
+                        final_prefix, spec_prefix):
         open_prs.add(snap["number"])
         replace_record(ledger, evaluate(snap, bot_login, now, final_prefix, spec_prefix, default_branch))
     states = {}
@@ -698,7 +713,8 @@ def _rest_rollup(repo, sha):
     return rollup
 
 
-def _merged_snapshot(repo, pull, bot_login, actions_token):
+def _merged_snapshot(repo, pull, bot_login, actions_token, final_prefix="spec/", spec_prefix="spec-draft/",
+                     base_branch=None):
     """A merged PR's snapshot at its last head, from REST, shaped as
     fetch_snapshot() shapes an open one."""
     number, head = pull["number"], pull["head"]["sha"]
@@ -731,7 +747,7 @@ def _merged_snapshot(repo, pull, bot_login, actions_token):
         record = board_merge.latest_record_at_head(board_merge.bump_records(snap["comments"], bot_login), head)
         if record is not None:
             snap["verificationRun"] = board_merge.fetch_verification_run(repo, record, actions_token)
-    kind, _facts = assign_kind(snap, bot_login)
+    kind = _assign_once(snap, bot_login, final_prefix, spec_prefix, base_branch)
     issue = linked_issue(kind, snap)
     snap["issue_comments"] = snap["labels"] = snap["label_events"] = None
     if issue is not None:
@@ -772,7 +788,8 @@ def run_audit(repo, bot_login, default_branch, out_path, final_prefix, spec_pref
                 "last_head": pull["head"]["sha"], "merged_at": pull["merged_at"],
                 "merged_by": (pull.get("merged_by") or {}).get("login")}
         merged.append(info)
-        snap = cut_snapshot(_merged_snapshot(repo, pull, bot_login, token), pull["merged_at"])
+        snap = cut_snapshot(_merged_snapshot(repo, pull, bot_login, token, final_prefix, spec_prefix, default_branch),
+                            pull["merged_at"])
         entries.append(build_audit_entry(info, evaluate(snap, bot_login, now, final_prefix, spec_prefix, default_branch), ledger))
     entries.sort(key=lambda e: e["merged_at"], reverse=True)
     log = _run(["git", "log", "--first-parent", "--since", window["start"],
@@ -851,7 +868,7 @@ def main(argv=None):
         parser.error("--repo or GITHUB_REPOSITORY is required")
     if args.command == "collect":
         json.dump(collect(args.repo, args.bot_login, os.environ.get("WC_ACTIONS_TOKEN") or None,
-                          args.default_branch), sys.stdout)
+                          args.default_branch, args.final_prefix, args.spec_prefix), sys.stdout)
     elif args.command == "verdicts":
         run_verdicts(args.repo, args.bot_login, args.default_branch, args.out, args.final_prefix,
                      args.spec_prefix, os.environ.get("GITHUB_RUN_ID"))

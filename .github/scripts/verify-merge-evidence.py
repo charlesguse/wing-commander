@@ -250,7 +250,7 @@ def check_review_round2():
     problems = []
     src = read(".github/scripts/wc_merge_evidence.py")
     ext = src[src.index("def _extend_with_evidence"):src.index("def collect")]
-    if ext.index('snap["cross_repository"]') > ext.index("assign_kind("):
+    if ext.index('snap["cross_repository"]') > ext.index("_assign_once("):
         problems.append("kind: assign_kind runs before cross_repository is set")
     if '"--limit", "20"' in src:
         problems.append("ledger: the run lookback is still 20 runs")
@@ -329,6 +329,51 @@ def check_review_round3_rollup():
     cut, _left = me.cut_rollup(rollup, "2026-11-10T12:00:00Z")
     if [e.get("state") for e in cut if e.get("context") == "ci/x"] != ["SUCCESS"]:
         problems.append("cut: the status as of the merge is not the latest set at or before it")
+    return problems
+
+
+def check_review_round3_kind():
+    """Finding 1 (round 3): the runtime half assigns each PR's kind once, with
+    the run's prefixes and base branch, and evaluate() reuses it, so a
+    custom-prefix final PR gets its lifecycle issue read."""
+    problems = []
+    reads = []
+
+    def fake_items(url):
+        return [{"filename": "a.py"}] if "/files" in url else []
+
+    def fake_comments(repo, number):
+        reads.append(number)
+        return []
+
+    def fake_gh_ok(args):
+        if args[:2] == ["pr", "view"]:
+            return json.dumps({"reviews": [], "isCrossRepository": False})
+        if args[0] == "api" and "/issues/" in args[1]:
+            return json.dumps({"labels": []})
+        raise subprocess.CalledProcessError(1, args, "", "unexpected call")
+
+    pull = {"number": 40, "head": {"sha": "h" * 40, "ref": "feature/125-thing", "repo": {"full_name": "o/r"}},
+            "base": {"ref": "trunk"}, "body": "Closes #5", "user": {"login": "wc[bot]", "type": "Bot"},
+            "changed_files": 1, "commits": 0, "comments": 0}
+    prefixes = {"final_prefix": "feature/", "spec_prefix": "draft/", "base_branch": "trunk"}
+    with _Patched(board_merge__gh_items=fake_items, _issue_comments=fake_comments, _gh_ok=fake_gh_ok,
+                  _rest_rollup=lambda repo, sha: []):
+        try:
+            merged = me._merged_snapshot("o/r", pull, "wc[bot]", None, **prefixes)
+            opened = {"number": 41, "headRefOid": "h" * 40, "headRefName": "feature/125-thing", "baseRefName": "trunk",
+                      "body": "Closes #6", "author": {"login": "app/wc", "is_bot": True}}
+            me._extend_with_evidence("o/r", opened, "wc[bot]", [], **prefixes)
+        except (TypeError, subprocess.CalledProcessError) as exc:
+            return ["kind: the runtime half cannot take the run's prefixes and base branch: {0}".format(exc)]
+    if not (5 in reads and 6 in reads):  # 40 is the merged PR's own thread
+        problems.append("kind: a custom-prefix final PR's lifecycle issue was not read (read {0})".format(reads))
+    for label, snap in (("merged", merged), ("open", opened)):
+        if any("no evidence issue" in n for n in snap.get("not_read") or []):
+            problems.append("kind: the {0} snapshot says no evidence issue is linked".format(label))
+        # Called with the default prefixes: the kind assigned while reading wins.
+        if me.evaluate(snap, "wc[bot]", NOW)["kind"] != "final":
+            problems.append("kind: evaluate() did not reuse the kind the {0} snapshot was read with".format(label))
     return problems
 
 
@@ -535,7 +580,7 @@ def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
         + check_review_round1() + check_review_round2() + check_review_round3_rollup() \
-        + check_review_round3_open()
+        + check_review_round3_open() + check_review_round3_kind()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
     wf = os.path.join(REPO, WORKFLOW)
     if os.path.exists(wf):
