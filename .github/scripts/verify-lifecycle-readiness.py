@@ -29,7 +29,8 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from lifecycle_readiness import OWN_STATUS_CONTEXT, evaluate_from_snapshot  # noqa: E402
+from lifecycle_readiness import (  # noqa: E402
+    OWN_STATUS_CONTEXT, SELECT_CONDITIONS, evaluate_from_snapshot, select_prefilter)
 from wc_lifecycle_review_marker import self_test as _marker_self_test  # noqa: E402
 
 FIXTURES_DIR = os.path.join(
@@ -107,6 +108,22 @@ def run():
         else:
             print("[ok] {0}: ready={1!r} unmet_reason={2!r}".format(
                 case, got["ready"], got.get("unmet_reason")))
+
+    # #889: select_prefilter() agrees with the full decision on every
+    # fixture whose unmet condition is one select applies, and accepts the
+    # ones that fail only a condition select leaves to its own filters.
+    for case in sorted(EXPECTED_CASES):
+        spec = _load(os.path.join(FIXTURES_DIR, case, "case.json"))
+        full = evaluate_from_snapshot(spec["snapshot"], spec.get("review_gate"),
+                                      spec["kill_switch_paused"])
+        want = full["unmet_reason"] if full["unmet_reason"] in SELECT_CONDITIONS else None
+        got = select_prefilter(spec["snapshot"])
+        if got != {"ready": want is None, "unmet_reason": want}:
+            failures += 1
+            print("::error::verify-lifecycle-readiness: {0}: select_prefilter "
+                  "returned {1!r}, expected unmet_reason {2!r}.".format(case, got, want))
+        else:
+            print("[ok] {0}: select_prefilter unmet_reason={1!r}".format(case, want))
 
     with open(WORKFLOW, encoding="utf-8") as fh:
         problems = context_pin_problems(fh.read())

@@ -99,7 +99,7 @@ three review rounds before the owner decides. That is a rule for sessions; the
 
 | Rule | Value |
 |---|---|
-| Reviews | one open final PR per run, oldest first: `spec/NNN-slug` → `main`, stage `review`, no buildable task left unchecked, head not yet reviewed |
+| Reviews | one open final PR per run, the oldest that is ready: `spec/NNN-slug` → `main`, stage `review`, no buildable task left unchecked, head not yet reviewed, checks green and mergeable. An older PR that is not ready yet is skipped for that run, not waited on |
 | Reviewer | `claude-sonnet-5-5`, turn budget 30 (`WING_COMMANDER_LIFECYCLE_REVIEW_GATE_MODEL`) |
 | Findings | in-scope findings are folded into `tasks.md` and built by one more implement cycle; the next round reviews the new head |
 | Rounds | 5. A round that fails to parse does not count |
