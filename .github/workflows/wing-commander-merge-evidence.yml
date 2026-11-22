@@ -23,9 +23,10 @@ run-name: >-
 #
 # Step gating: no always-style or cancellation-negating condition anywhere.
 # Each job checks out first, because the refusal and the pause test live in
-# the wing-commander-watch-guard composite, which runs from the checkout;
-# checkout reads only this repository's code at the ref, never a pull
-# request or a check. A refused run stops every later step; the pause output
+# the wing-commander-watch-guard composite, which runs from the checkout. The
+# checkout is pinned to the default branch, so a dispatch from another branch
+# runs only the default branch's code, and the guard still refuses it; it
+# reads no pull request or check. A refused run stops every later step; the pause output
 # gates build and upload under the default success(); a failed build stops
 # the upload, so the ledger keeps its last good state (research D3).
 on:
@@ -71,6 +72,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Refuse a run off the default branch, then check the pause switch
@@ -118,6 +120,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           persist-credentials: false
 

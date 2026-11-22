@@ -28,5 +28,5 @@ A collapsed `<details>` block: header (window, built time, watching-period end, 
 ## 4. Workflow surface
 
 - Triggers: `schedule` hourly (`7 * * * *`) and daily (`41 5 * * *`); `workflow_dispatch` with one input `job`.
-- Refuses on a non-default ref before reading any pull request, check or artifact (each job checks out first, because the refusal and the pause test live in the `wing-commander-watch-guard` composite); writes nothing while `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` is set.
+- Refuses on a non-default ref before reading any pull request, check or artifact (each job first checks out the default branch, never the dispatched ref, because the refusal and the pause test live in the `wing-commander-watch-guard` composite); writes nothing while `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` is set.
 - Permissions are read-only; artifacts: `merge-evidence-ledger`, `merge-evidence-section`.

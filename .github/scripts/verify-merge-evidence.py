@@ -48,6 +48,7 @@ WORKFLOW = ".github/workflows/wing-commander-merge-evidence.yml"
 # composite, whose pause test calls wc_board_status._switch_on.
 GUARD_USES = "./.github/actions/wing-commander-watch-guard"
 GUARD_ACTION = ".github/actions/wing-commander-watch-guard/action.yml"
+CHECKOUT_REF = "${{ github.event.repository.default_branch }}"
 # The one workflow that still carries its own shell copy of the pause test.
 # Its refusal applies to dispatches only, a different shape, so it was left
 # alone; moving it onto the composite is a follow-up of #1173's round-3 fixes.
@@ -562,6 +563,12 @@ def check_shape(text, write_verbs=WRITE_VERBS):
                 or steps[0].get("if") or steps[1].get("uses") != GUARD_USES:
             problems.append("job {0}: the steps do not open with checkout, then {1}, the refusal".format(
                 name, GUARD_USES))
+        # FR-021 (owner's session, 2026-11-22): the checkout is pinned to the
+        # default branch, so a refused dispatch never runs another ref's code.
+        elif (steps[0].get("with") or {}).get("ref") != CHECKOUT_REF \
+                or (steps[0].get("with") or {}).get("persist-credentials") is not False:
+            problems.append("job {0}: the checkout is not pinned to {1} with persist-credentials: false".format(
+                name, CHECKOUT_REF))
         if not any(s.get("id") == "pause" and "WING_COMMANDER_MERGE_EVIDENCE_PAUSED" in json.dumps(s) for s in steps):
             problems.append("job {0}: no pause step on WING_COMMANDER_MERGE_EVIDENCE_PAUSED".format(name))
         for s in steps:
@@ -695,6 +702,7 @@ def check_negatives(text):
         "no pause step": text.replace("WING_COMMANDER_MERGE_EVIDENCE_PAUSED", "SOMETHING_ELSE"),
         "no refusal first": text.replace("uses: " + GUARD_USES, "uses: ./.github/actions/something-else", 1),
         "no login default": text.replace(" || 'wing-commander-bot[bot]'", "", 1),
+        "unpinned checkout": text.replace("          ref: " + CHECKOUT_REF + "\n", "", 1),
     }
     for label, mutated in broken.items():
         if mutated == text or not check_shape(mutated):
