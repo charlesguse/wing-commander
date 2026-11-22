@@ -44,6 +44,9 @@ import tempfile
 
 import yaml
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_repo_files import git_env  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 FIXTURES = os.path.join(HERE, "fixtures", "095-hardened-push")
@@ -205,7 +208,7 @@ def idiom_paths(root=ROOT):
 
 
 def _git(args, cwd, env=None):
-    full = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    full = dict(git_env(), GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
     full.update(env or {})
     return subprocess.run(["git"] + args, cwd=cwd, env=full, check=True,
                           capture_output=True, text=True)
@@ -256,7 +259,7 @@ def check_preserves_caller_config(hardening=HARDENING):
     script = (". \"$1\"\nwc_harden_git_env\n"
               "printf '%s|%s\\n' \"$(git config --get user.name)\" "
               "\"$(git config --get core.hooksPath)\"\n")
-    env = dict(os.environ, GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="user.name",
+    env = dict(git_env(), GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="user.name",
                GIT_CONFIG_VALUE_0="caller-entry")
     with tempfile.TemporaryDirectory() as tmp:
         out = subprocess.run(["bash", "-c", script, "harness", hardening], cwd=tmp, env=env,
@@ -287,7 +290,7 @@ def check_shim_guards(hardening=HARDENING):
         _git(["-c", "user.email=t@x.invalid", "-c", "user.name=t", "commit", "--quiet",
               "--allow-empty", "-m", "in the linked worktree"], linked)
         head = _git(["rev-parse", "HEAD"], linked).stdout.strip()
-        env = dict(os.environ, PUSH_SERVER_URL="file://" + tmp)
+        env = dict(git_env(), PUSH_SERVER_URL="file://" + tmp)
 
         def push(branch, cwd):
             return subprocess.run(
@@ -315,7 +318,7 @@ def check_shim_guards(hardening=HARDENING):
 
 
 def hardened_push(work, env, head, branch, script=SCRIPT):
-    full = dict(os.environ, **env)
+    full = dict(git_env(), **env)
     subprocess.run(["bash", script, branch, head], cwd=work, env=full,
                    capture_output=True, text=True)
 
@@ -323,7 +326,7 @@ def hardened_push(work, env, head, branch, script=SCRIPT):
 def naive_push(work, env, head, branch):
     base = env["PUSH_SERVER_URL"] + "/" + env["GITHUB_REPOSITORY"] + ".git"
     subprocess.run(["git", "push", base, "HEAD:refs/heads/" + branch], cwd=work,
-                   env=dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull,
+                   env=dict(git_env(), GIT_CONFIG_GLOBAL=os.devnull,
                             GIT_CONFIG_NOSYSTEM="1"),
                    capture_output=True, text=True)
 
