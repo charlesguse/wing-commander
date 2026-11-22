@@ -76,6 +76,20 @@ verify-plan-tasks-cost-line.py), the two sites' rendered guidance strings
 are identical except for the substituted filename and the trailing
 extra-note sentence.
 
+PUSHING SITES ALSO RENDER THE NO-UPSTREAM SENTENCE (#1167)
+--------------------------------------------------------------
+An intake agent ran `git push -u`, which writes branch-tracking lines into
+.git/config; claude-code-action restored the file as one later steps trust
+and the watchdog filed the restore. The composite's `pushes: "true"` input
+appends one sentence saying how to push without -u/--set-upstream. A
+covered site whose tool args grant `Bash(git push:*)` -- inline
+--allowedTools, or the default-allowed-tools of the wing-commander-tool-args
+step it reads; wc_push_grant.is_push_capable decides, the predicate Gate
+122 uses too -- must set `pushes: "true"` on the guidance step its prompt
+interpolates. main() also renders the shipped composite both ways and
+checks the sentence appears only with pushes on, and fails if a copy of
+the push-capable predicate is defined outside wc_push_grant.py.
+
 Usage:
     python3 .github/scripts/verify-commit-message-scratch-path.py
     python3 .github/scripts/verify-commit-message-scratch-path.py --self-test
@@ -90,6 +104,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import resolve_bash, run_step, use_utf8_stdout, find_step  # noqa: E402
+from wc_push_grant import PREDICATE_NAMES, is_push_capable  # noqa: E402
 
 WORKFLOWS_GLOB = ".github/workflows/*.yml"
 GUIDANCE_ACTION_PATH = ".github/actions/wing-commander-commit-message-guidance/action.yml"
@@ -98,6 +113,13 @@ GUIDANCE_RENDER_STEP_NAME = "Render commit-message guidance"
 
 COMMIT_RE = re.compile(r"\bcommit\b", re.I)
 GUIDANCE_OUTPUT_RE = re.compile(r"steps\.([A-Za-z0-9_-]+)\.outputs\.guidance")
+# Whether a site may push is wc_push_grant.is_push_capable, the predicate
+# Gate 122 uses too; no other module under .github/scripts may define it.
+PUSH_GRANT_HOME = ".github/scripts/wc_push_grant.py"
+PREDICATE_DEF_RE = re.compile(
+    r"^\s*def\s+(" + "|".join(PREDICATE_NAMES) + r")\s*\(", re.M)
+# Phrases the pushes-on render must carry and the pushes-off render must not.
+PUSH_SENTENCE_MARKERS = ("--set-upstream", ".git/config", "git push origin <branch>")
 
 # Sites this gate's dynamic scan discovers (their prompt: mentions "commit")
 # but that do not need the scratch-path guidance -- each commented with why.
@@ -227,7 +249,7 @@ def check_site(path, job, step, step_name, prompt):
     ids_before = preceding_guidance_step_ids(job, step)
     m = GUIDANCE_OUTPUT_RE.search(prompt)
     if m and m.group(1) in ids_before:
-        return None
+        return check_push_guidance(path, job, step, step_name, m.group(1))
     return (
         f"instructs a commit but does not render the canonical commit-"
         f"message scratch-path guidance -- no step earlier in this job "
@@ -239,10 +261,82 @@ def check_site(path, job, step, step_name, prompt):
         f"(#440).")
 
 
+def check_push_guidance(path, job, step, step_name, guidance_id):
+    """-> None, or a failure message when a push-granted site's guidance
+    step does not set pushes: "true" (#1167)."""
+    steps_by_id = {s.get("id"): s for s in (job.get("steps") or [])
+                   if isinstance(s, dict) and s.get("id")}
+    if not is_push_capable(step, steps_by_id):
+        return None
+    guidance_step = steps_by_id.get(guidance_id) or {}
+    pushes = (guidance_step.get("with") or {}).get("pushes")
+    if str(pushes).strip().lower() == "true":
+        return None
+    return (
+        f"may push (its allowed tools grant `Bash(git push:*)`), but its "
+        f"guidance step {guidance_id!r} does not set `pushes: \"true\"` "
+        f"(got {pushes!r}), so the agent is never told to push without "
+        f"-u/--set-upstream, which writes .git/config (#1167).")
+
+
+def push_render_check(root):
+    """-> [failure message, ...]. Execute the shipped composite render
+    with pushes on and off: the no-upstream sentence must appear only with
+    it on, and a value other than true/false must fail the step."""
+    failures = []
+    runner_temp = os.path.join(tempfile.mkdtemp(dir=root), "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    renders = {}
+    for value in ("true", "false", "yes"):
+        renders[value] = render_guidance("x.txt", "", root, runner_temp, pushes=value)
+    rc, out, on = renders["true"]
+    missing = [m for m in PUSH_SENTENCE_MARKERS if m not in on]
+    if rc != 0 or missing:
+        failures.append(
+            f"rendering {GUIDANCE_ACTION_NAME} with pushes 'true' must carry "
+            f"the no-upstream push sentence (#1167); rc={rc}, missing "
+            f"{missing!r}, got {on!r}: {out}")
+    rc, out, off = renders["false"]
+    present = [m for m in PUSH_SENTENCE_MARKERS if m in off]
+    if rc != 0 or present:
+        failures.append(
+            f"rendering {GUIDANCE_ACTION_NAME} with pushes 'false' must not "
+            f"carry the push sentence; rc={rc}, present {present!r}: {out}")
+    rc, out, _ = renders["yes"]
+    if rc == 0:
+        failures.append(
+            f"rendering {GUIDANCE_ACTION_NAME} with pushes 'yes' must fail "
+            f"(only 'true' or 'false' are valid), it exited 0.")
+    return failures
+
+
+def push_predicate_home_check(root):
+    """-> [failure message, ...]. The push-capable predicate has one home,
+    wc_push_grant.py (CLAUDE.md, "Shared logic has exactly one home"): any
+    other module under .github/scripts/ defining one of its function names
+    is a copy that can drift, as the #1167 copy did when it read a
+    `--disallowedTools` list as a push grant."""
+    failures = []
+    scripts = os.path.join(root, ".github", "scripts")
+    home = os.path.normcase(os.path.abspath(os.path.join(root, PUSH_GRANT_HOME)))
+    for path in sorted(glob.glob(os.path.join(scripts, "**", "*.py"), recursive=True)):
+        if os.path.normcase(os.path.abspath(path)) == home:
+            continue
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+        for m in PREDICATE_DEF_RE.finditer(text):
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            failures.append(
+                f"{rel} defines {m.group(1)}(), a copy of the push-capable "
+                f"predicate whose one home is {PUSH_GRANT_HOME}; import it "
+                f"from there instead.")
+    return failures
+
+
 # --------------------------------------------------------------------------
 # implement.yml's deep, render-executing check (FR-013)
 # --------------------------------------------------------------------------
-def render_guidance(scratch_filename, extra_note, root, runner_temp):
+def render_guidance(scratch_filename, extra_note, root, runner_temp, pushes="false"):
     """Execute the composite action's shipped render step for real. ->
     (rc, output, guidance).
 
@@ -257,10 +351,24 @@ def render_guidance(scratch_filename, extra_note, root, runner_temp):
     env = {
         "SCRATCH_FILENAME": scratch_filename,
         "EXTRA_NOTE": extra_note,
+        "PUSHES": pushes,
+        # The push sentence's one home is the step's own env (#1167), so the
+        # render reads it from there rather than from a copy here.
+        "PUSH_NOTE": str((step.get("env") or {}).get("PUSH_NOTE") or ""),
         "RUNNER_TEMP_DIR": runner_temp,
     }
     rc, out, outputs, _ = run_step(BASH, str(step["run"]), workdir, env, runner_temp)
     return rc, out, outputs.get("guidance", "")
+
+
+def site_pushes(with_block):
+    """-> the `pushes` value a guidance step passes the composite, as the
+    runner would: a YAML boolean arrives as "true"/"false", absent is the
+    input's default "false"."""
+    value = with_block.get("pushes", "false")
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 def deep_check(path, job, root):
@@ -301,9 +409,12 @@ def deep_check(path, job, root):
                 f"{path}: {spec['guidance_step_name']!r}'s extra-note does "
                 f"not mention using a distinct filename from the cycle "
                 f"step's scratch file (FR-013).")
+        # Render with the site's own `pushes` (#1167): both implement.yml
+        # sites set it, so the string they ship carries the push sentence,
+        # and FR-009/FR-013 are checked on that string, not a pushes-off one.
         rc, out, guidance = render_guidance(
             actual_filename or spec["scratch_filename"], extra_note, root,
-            shared_runner_temp)
+            shared_runner_temp, pushes=site_pushes(with_block))
         if rc != 0:
             failures.append(
                 f"{path}: rendering {spec['guidance_step_name']!r}'s "
@@ -422,6 +533,10 @@ def main(argv):
     tmproot = tempfile.mkdtemp(prefix="verify_commit_scratch_path_")
     try:
         checked, failures = scan(WORKFLOWS_GLOB, tmproot)
+        for msg in push_render_check(tmproot):
+            failures.append(((GUIDANCE_ACTION_PATH, "-", GUIDANCE_RENDER_STEP_NAME), msg))
+        for msg in push_predicate_home_check(os.getcwd()):
+            failures.append(((PUSH_GRANT_HOME, "-", "-"), msg))
     finally:
         import shutil
         shutil.rmtree(tmproot, ignore_errors=True)
@@ -643,6 +758,120 @@ jobs:
                        "should FAIL (FR-013), it PASSED")
     else:
         print("ok    (6c) implement.yml's retry with a blanked extra-note fails")
+
+    # (6d)/(6e) #1167: the deep check renders each site with its own
+    # `pushes`. Cycle told how to push and retry not is a divergence the
+    # agents would read (FR-009); a pushes-off render of both hid it.
+    cycle_pushes = cycle_guidance.replace(
+        "scratch-filename: implement-commit-message-cycle.txt\n",
+        "scratch-filename: implement-commit-message-cycle.txt\n"
+        '          pushes: "true"\n')
+    assert cycle_pushes != cycle_guidance, "(6d) fixture edit did not apply"
+    implement_split = implement_ok.replace(cycle_guidance, cycle_pushes)
+    failures = _scan_fixture("implement.yml pushes split", "implement.yml",
+                              implement_split, root)
+    if not failures:
+        failed.append("(6d) implement.yml with pushes on for cycle only "
+                       "should FAIL the deep check (FR-009), it PASSED")
+    else:
+        print("ok    (6d) implement.yml's cycle/retry rendered with differing pushes fails")
+    retry_pushes = retry_guidance_ok.replace(
+        "scratch-filename: implement-commit-message-retry.txt\n",
+        "scratch-filename: implement-commit-message-retry.txt\n"
+        '          pushes: "true"\n')
+    implement_both = implement_split.replace(retry_guidance_ok, retry_pushes)
+    failures = _scan_fixture("implement.yml pushes both", "implement.yml",
+                              implement_both, root)
+    if failures:
+        failed.append(f"(6e) implement.yml with pushes on for both should "
+                       f"PASS the deep check, it FAILED: {failures!r}")
+    else:
+        print("ok    (6e) implement.yml's cycle/retry both rendered with pushes on pass")
+
+    # (7) #1167: a site whose tool args grant `Bash(git push:*)` must set
+    # pushes: "true" on its guidance step; one granted no push need not.
+    push_site = """\
+name: push-fixture
+on:
+  workflow_call: {{}}
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compose commit-message guidance (x)
+        id: commit-guidance-x
+        uses: ./.github/actions/wing-commander-commit-message-guidance
+        with:
+          scratch-filename: x-commit-message.txt
+{pushes}      - name: Compose tool args (x)
+        id: tool-args-x
+        uses: ./.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,{grant}Bash(git commit:*)"
+      - name: Do the work
+        id: agent
+        uses: anthropics/claude-code-action@v1
+        with:
+          prompt: |
+            Commit and push your work.
+
+            ${{{{ steps.commit-guidance-x.outputs.guidance }}}}
+          claude_args: |
+            --allowedTools "${{{{ steps.tool-args-x.outputs.allowed-tools }}}}"
+"""
+    pushes_on = '          pushes: "true"\n'
+    grant = "Bash(git push:*),"
+    check("(7a) a push-granted site with pushes: \"true\" passes",
+          "push-on.yml", push_site.format(pushes=pushes_on, grant=grant),
+          expect_fail=False)
+    check("(7b) a push-granted site without pushes: \"true\" fails",
+          "push-off.yml", push_site.format(pushes="", grant=grant),
+          expect_fail=True)
+    check("(7c) a push-granted site with pushes: \"false\" fails",
+          "push-false.yml",
+          push_site.format(pushes='          pushes: "false"\n', grant=grant),
+          expect_fail=True)
+    check("(7d) a site granted no push need not set pushes",
+          "no-push.yml", push_site.format(pushes="", grant=""),
+          expect_fail=False)
+    check("(7e) a push granted literally in claude_args counts too",
+          "push-literal.yml",
+          push_site.format(pushes="", grant="").replace(
+              '--allowedTools "${{ steps.tool-args-x.outputs.allowed-tools }}"',
+              '--allowedTools "Bash(git push:*)"'),
+          expect_fail=True)
+
+    check("(7f) a push only in claude_args' --disallowedTools is no grant",
+          "push-denied.yml",
+          push_site.format(pushes="", grant="").replace(
+              '--allowedTools "${{ steps.tool-args-x.outputs.allowed-tools }}"',
+              '--allowedTools "${{ steps.tool-args-x.outputs.allowed-tools }}"\n'
+              '            --disallowedTools "WebFetch,Bash(git push:*)"'),
+          expect_fail=False)
+
+    # (9) the push-capable predicate has one home (wc_push_grant.py).
+    home_root = tempfile.mkdtemp(dir=root)
+    os.makedirs(os.path.join(home_root, ".github", "scripts"))
+    with open(os.path.join(home_root, ".github", "scripts", "verify-copy.py"),
+              "w", encoding="utf-8") as fh:
+        fh.write("def grants_push(job, step):\n    return False\n")
+    if push_predicate_home_check(home_root):
+        print("ok    (9a) a copy of the push predicate outside wc_push_grant.py fails")
+    else:
+        failed.append("(9a) a copy of the push predicate outside wc_push_grant.py passed")
+    shipped_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    home_failures = push_predicate_home_check(shipped_root)
+    if home_failures:
+        failed.append(f"(9b) the shipped scripts carry a push-predicate copy: {home_failures!r}")
+    else:
+        print("ok    (9b) the shipped scripts define the push predicate only in wc_push_grant.py")
+
+    # (8) the shipped composite's push sentence renders only with pushes on.
+    render_failures = push_render_check(root)
+    if render_failures:
+        failed.append(f"(8) push render check on the shipped composite: {render_failures!r}")
+    else:
+        print("ok    (8) the shipped composite renders the push sentence only with pushes on")
 
     import shutil
     shutil.rmtree(root, ignore_errors=True)

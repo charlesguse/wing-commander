@@ -2280,6 +2280,7 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
         with:
           scratch-filename: pr-conversation-commit-message-fold.txt
+          pushes: "true"
 
       # specs/062-lifecycle-review-gate T033: the fold-route categories
       # (in-scope-change, new-functionality+current-spec) no longer commit

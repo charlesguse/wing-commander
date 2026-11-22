@@ -160,7 +160,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | Does | collects signals from the finished run, diagnoses them, and files, comments on or reopens one `pipeline-defect` issue per finding, titled `watchdog: <class>` and labelled `🐕 · <class>`. It reports every finding on the lifecycle issue |
 | Never | proposes a diff, opens a PR or fixes anything. The board loop picks its issues up |
 | Diagnose model | `claude-opus-5-5`, turn budget 30 (`WING_COMMANDER_DIAGNOSE_MODEL`) |
-| Reported but not filed | `denied-tool` and `narrative-drift` |
+| Reported but not filed | `denied-tool`, `narrative-drift` and `trusted-file-tampered` |
 | Usage window exhausted | one `usage-limit` issue instead of a finding per stalled run |
 | Turn-budget trend | flags a stage whose runs keep reaching their turn budget. It looks at the stage's last 10 runs and raises a trend finding: `watch` at 3 runs in a row at or over budget, `elevated` when any run in that window used 0.6 or more of the hard stop, `critical` when both hold (`WING_COMMANDER_TURN_BUDGET_*`) |
 | Watching itself | `wing-commander-8b-watchdog-self.yml` checks each watchdog run with no agent; a chain of the watchdog inspecting itself stops writing after 3 (`WING_COMMANDER_WATCHDOG_SELF_DISPATCH_CAP`) |

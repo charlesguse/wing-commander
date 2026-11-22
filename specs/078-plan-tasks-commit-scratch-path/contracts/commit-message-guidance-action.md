@@ -20,6 +20,10 @@ contract states behavior, not just shape.
   string, the action does the one substitution).
 - `extra-note` (optional, default `""`): appended verbatim, on its own
   sentence boundary, after the canonical paragraph, when non-empty.
+- `pushes` (optional, default `"false"`; only `"true"` or `"false"`, any
+  other value fails the step): `"true"` when the agent the guidance feeds
+  may push. Gate 121 requires `"true"` at every site whose tool args grant
+  `Bash(git push:*)` (#1167).
 
 ## Output
 
@@ -36,12 +40,17 @@ contract states behavior, not just shape.
      by trial (FR-004).
   4. That this only applies to messages longer than one line — an inline
      `-m` one-liner remains available (FR-005).
-  5. `extra-note`'s text, if supplied, as a trailing sentence.
+  5. When `pushes` is `"true"`: how to push without `-u` or
+     `--set-upstream`, which write tracking lines into `.git/config`
+     (#1167).
+  6. `extra-note`'s text, if supplied, as a trailing sentence, after
+     item 5.
 
 ## Behavioral guarantees
 
-- **Determinism**: for a fixed `(scratch-filename, extra-note)` pair, the
-  output is byte-identical on every invocation — no timestamp, run id, or
+- **Determinism**: for a fixed `(scratch-filename, extra-note, pushes)`
+  triple, the output is byte-identical on every invocation — no timestamp,
+  run id, or
   other non-reproducible content. This is what lets the gate compare two
   sites' rendered output and expect equality modulo the substituted fields
   (FR-009).
@@ -49,8 +58,11 @@ contract states behavior, not just shape.
   runs before the agent step it feeds, mirroring `wing-commander-tool-
   args`'s and `wing-commander-preflight`'s fail-fast-before-credentials
   position.
-- **Single home**: after this feature ships, this action's `run:` step is
-  the only place in the repository this paragraph's wording is written.
+- **Single home**: after this feature ships, this action's render step is
+  the only place in the repository this paragraph's wording is written (the
+  push sentence sits in that step's `env:` as `PUSH_NOTE`, not in its
+  `run:` text, because Gates 80 and 150 read a `git push` in `run:` as the
+  step pushing).
   Every one of the nine call sites (data-model.md's table) — including
   `implement.yml`'s two, converted from their own hand-written copies —
   consumes this output rather than embedding the sentence itself (FR-011,

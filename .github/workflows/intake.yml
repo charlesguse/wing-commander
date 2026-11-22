@@ -852,6 +852,7 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
         with:
           scratch-filename: intake-commit-message.txt
+          pushes: "true"
 
       - name: Compose tool args (intake)
         id: tool-args-intake
