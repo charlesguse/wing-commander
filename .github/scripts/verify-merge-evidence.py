@@ -818,6 +818,18 @@ def check_round5_base_branch(base_doc):
             problems.append("kind: a {0}-shaped PR into `main`, not the default `trunk`, is {1}".format(base_name, got))
     return problems
 
+def check_round5_truncated_comments():
+    """Round 5, finding 2: a comment read shorter than its count stays
+    incomplete after the as-of-merge cut."""
+    head = "abc"
+    snap = {"headRefOid": head, "files": [{"path": "a"}], "commits": [{"sha": head}],
+            "comments": [{"created_at": "2026-11-01T00:00:00Z"}],
+            "counts": {"files": 1, "commits": 1, "comments": 3, "head_sha": head}}
+    cut = me.cut_snapshot(snap, "2026-11-02T00:00:00Z")
+    if me.board_merge.snapshot_complete(cut):
+        return ["cut: a truncated comment read (1 of 3) reads complete after the cut"]
+    return []
+
 def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
@@ -825,6 +837,7 @@ def main():
         + check_review_round3_open() + check_review_round3_kind() + check_review_round3_linked_issue()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
     problems += check_review_round4() + check_sc003_pending()
+    problems += check_round5_truncated_comments()
     problems += check_round5_base_branch(base_doc)
     if not check_sc003_pending(pending={}, directory=os.path.join(FIXTURES, "_none_")):
         problems.append("self-check: a missing corpus with no exemption was not noticed")

@@ -361,8 +361,12 @@ def cut_snapshot(snap, merged_at):
                 state[event.get("name")] = event.get("event") == "labeled"
         cut["labels"] = sorted(name for name, on in state.items() if on)
     if isinstance(snap.get("counts"), dict) and cut.get("comments") is not None:
-        # The count described the full list; the cut list is whole by definition.
-        cut["counts"] = dict(snap["counts"], comments=len(cut["comments"]))
+        # The count described the full list. Only a whole read makes the cut
+        # list whole too; a truncated read keeps its count, so the snapshot
+        # stays incomplete (#1173 round 5, finding 2).
+        full = snap.get("comments") or []
+        if isinstance(snap["counts"].get("comments"), int) and len(full) >= snap["counts"]["comments"]:
+            cut["counts"] = dict(snap["counts"], comments=len(cut["comments"]))
     cut["left_out"] = left_out
     return cut
 
