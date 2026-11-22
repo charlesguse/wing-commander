@@ -802,6 +802,22 @@ def check_review_round4():
     return problems
 
 
+def check_round5_base_branch(base_doc):
+    """Round 5, finding 1: bump and board-fix PRs are told by the same base
+    branch as final and spec PRs, the run's default branch."""
+    problems = []
+    for base_name in ("board-fix", "bump"):
+        snap = copy.deepcopy(base_doc["bases"][base_name])
+        want = base_name
+        on_trunk = dict(snap, baseRefName="trunk")
+        got = me.assign_kind(on_trunk, base_doc["bot_login"], base_branch="trunk")[0]
+        if got != want:
+            problems.append("kind: a {0} PR into the default branch `trunk` is {1}".format(base_name, got))
+        got = me.assign_kind(snap, base_doc["bot_login"], base_branch="trunk")[0]
+        if got != "maintainer":
+            problems.append("kind: a {0}-shaped PR into `main`, not the default `trunk`, is {1}".format(base_name, got))
+    return problems
+
 def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
@@ -809,6 +825,7 @@ def main():
         + check_review_round3_open() + check_review_round3_kind() + check_review_round3_linked_issue()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
     problems += check_review_round4() + check_sc003_pending()
+    problems += check_round5_base_branch(base_doc)
     if not check_sc003_pending(pending={}, directory=os.path.join(FIXTURES, "_none_")):
         problems.append("self-check: a missing corpus with no exemption was not noticed")
     wf = os.path.join(REPO, WORKFLOW)

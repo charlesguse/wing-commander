@@ -86,12 +86,18 @@ def assign_kind(snap, bot_login, final_prefix="spec/", spec_prefix="spec-draft/"
     branch = snap.get("headRefName") or ""
     facts = {"branch": branch, "author": (snap.get("author") or {}).get("login"),
              "base": snap.get("baseRefName")}
-    if board_merge.attributed_to_auto_update(snap, bot_login):
+    # One base branch for every kind (#1173 round 5, finding 1): board_merge's
+    # bump and fix-PR tests compare against its own BASE_BRANCH, so they see
+    # the snapshot with the run's base mapped onto it, and anything else off it.
+    base = base_branch or board_merge.BASE_BRANCH
+    on_base = snap.get("baseRefName") == base
+    view = dict(snap, baseRefName=board_merge.BASE_BRANCH if on_base else None)
+    if board_merge.attributed_to_auto_update(view, bot_login):
         return "bump", dict(facts, test="auto-update branch, bot author, tracking marker")
-    if board_merge.eligible_fix_class(snap, bot_login):
+    if board_merge.eligible_fix_class(view, bot_login):
         return "board-fix", dict(facts, test="fix/<issue>-<slug> branch, bot author")
     same_repo = snap.get("cross_repository") is False
-    if same_repo and snap.get("baseRefName") == (base_branch or board_merge.BASE_BRANCH):
+    if same_repo and on_base:
         if _final_branch_re(final_prefix).fullmatch(branch):
             return "final", dict(facts, test="head branch {0}[<P>/]<NNN-slug>".format(final_prefix))
         if _final_branch_re(spec_prefix).fullmatch(branch):
