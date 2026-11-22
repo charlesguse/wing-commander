@@ -92,3 +92,59 @@ MVP is Phase 1–3 (US1): hourly verdicts in the ledger, gated. Then US2 for the
 
 - Total tasks: 30 (T001–T030)
 - Setup 4, Foundational 3, US1 5, US2 8, US3 4, Polish 4, Maintainer 2
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Ledger download can pick a successful run with no ledger artifact and reset history
+
+  download_ledger uses the latest successful run (limit 1); audit or paused runs upload no merge-evidence-ledger, so the next run starts empty and loses all recorded verdicts.
+
+  - .github/scripts/wc_merge_evidence.py
+
+  Detail: Pick the latest successful run that actually has the artifact, and treat 'no valid artifacts' as an error where one is expected.
+
+- [ ] Review finding: cut_snapshot leaves counts.comments stale so snapshot_complete fails
+
+  After dropping post-merge comments, counts['comments'] still holds the full count, so board_merge.snapshot_complete is false whenever a post-merge comment existed and entries show INCOMPLETE.
+
+  - .github/scripts/wc_merge_evidence.py
+
+  Detail: Set cut counts to the kept lengths and add a fixture with a post-merge comment.
+
+- [ ] Review finding: EXEMPT_SC003_PENDING cites #1143, which the final PR closes
+
+  Gate 124 runs on main and on the daily schedule, so closing #1143 while the waiver remains turns main red. Repoint the waiver to an issue that stays open, such as the Maintenance backlog.
+
+  - .github/scripts/verify-merge-evidence.py
+
+- [ ] Review finding: open_verdicts lists every ledger record for open PRs, not the latest head per PR
+
+  Each pushed head adds a record, so superseded heads show as open verdicts, with one API call per record.
+
+  - .github/scripts/wc_merge_evidence.py
+
+  Detail: Group by PR, keep the newest computed_at, and look up each PR's state once.
+
+- [ ] Review finding: collect hard-codes base=main and ignores --default-branch
+
+  The open-PR query and assign_kind use main/BASE_BRANCH rather than the default branch the workflow passes, so a repository with a different default branch gets verdicts for the wrong set.
+
+  - .github/scripts/wc_merge_evidence.py
+
+- [ ] Review finding: Unpaired-commit detection assumes one commit per PR
+
+  A rebase merge puts several commits on main, but only merge_commit_sha is excluded, so the others are reported as having reached main without a pull request.
+
+  - .github/scripts/wc_merge_evidence.py
+
+- [ ] Review finding: Dead guard 'snapshot lists' not in not_read
+
+  not_read holds whole strings, so the membership test is always true and a duplicate near-identical reason can be appended. Use a startswith check or drop the guard.
+
+  - .github/scripts/wc_merge_evidence.py
+
+- [ ] Review finding: Schedules table row for 05:41 is out of time order
+
+  The 05:41 merge evidence audit row sits after the 05:43 row in a time-ordered table. Move it above.
+
+  - docs/reference.md
