@@ -114,6 +114,11 @@ T002, T003 together; T027, T028 together.
 
 MVP = Phases 1-3 (registry, drift gate, classifier, renderer, fixtures): the verifiable core. Then US2 signals, US3 reads, US4 publication and docs, then maintainer follow-up.
 
+## Phase 9: Convergence
+
+- [ ] T033 Make `.github/scripts/wc_feature_health.py` reuse `wc_board_status._switch_on` for kill-switch values instead of its own `.strip().lower() == "true"` test in `collect`, with a fixture that fails if the two diverge, per FR-004 and T017 (partial)
+- [ ] T034 Import the triage close grounds from `.github/scripts/board_triage.py` for the `triage_close` reader instead of a registry-held literal list, and make `verify-feature-health.py` check the grounds against that script, per FR-003 and T013 (partial)
+
 ## Counts
 
 32 tasks: Setup 3, Foundational 4, US1 5, US2 3, US3 4, US4 6, SC-001/docs 4, Maintainer 3.
