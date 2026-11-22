@@ -1,0 +1,22 @@
+# Contract: shared reviewer request and record (127)
+
+Layer: consuming instrument. Not part of the published contract. Live: fixed like code.
+
+## Dispatch
+`wing-commander-shared-pr-reviewer.yml` `workflow_dispatch` inputs: `pr` (number, required), `dismissals` (JSON list of `{id, reason}`, optional, default `[]`). Runs only on the default branch; any other ref ends in the `guard` job with a summary refusal and no record. The callable `shared-pr-reviewer.yml` takes the same two inputs plus wrapper-supplied `default_branch`, models, turn limits, budget and paused flag; it declares only the secrets it uses.
+
+## Record comment
+Posted once per round by the `record` job as an issue comment on the PR, authored by the pipeline App. Body: one human header line, a findings table, then LAST:
+
+    <!-- wing-commander-shared-review-round: {json} -->
+
+Readers take only the last opener in a bot-authored body. A hand-off uses the same marker with `"kind": "handoff"` and no `verdict`. Fields: see data-model.md. A reader MUST ignore a record whose `run_id` fails confirmation (run id equals; path is the wrapper; default branch; completed success; calls this repository's `shared-pr-reviewer.yml`; artifact `shared-review-<head_sha>` exists).
+
+## Refusal / stop
+Written only to the run summary: `refused: <reason>` or `paused`. Never a record.
+
+## Invariants (each has a gate)
+1. The marker name differs from `wing-commander-convergence-round`; `read_round_records` never returns a shared record.
+2. No job that holds a secret runs PR code; `code-run` references no `secrets`/`vars` tokens.
+3. Neither agent job has a write-capable token or web tools.
+4. Verdict values are exactly the four above in the FR-014 order.
