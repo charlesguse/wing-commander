@@ -36,7 +36,7 @@ The daily "Board status" issue, rewritten by `board-status.yml`, is the natural 
 
 ### User Story 1 - See at a glance which features have gone quiet or keep failing (Priority: P1)
 
-The owner, or a session working the board, opens the "Board status" issue and sees, for each feature in the feature registry (FR-001), one health state, the date of its last successful run, the date of its last failed run, and the date of the last time it produced its output signal (FR-003). A feature that is failing, quiet, not running or paused is called out so it is noticed without reading every row.
+The owner, or a session working the board, opens the "Board status" issue and sees, for each feature in the feature registry (FR-001), one health state, the date of its last successful run, the date of its last failed run, and the date of the last time it produced its output signal (FR-003). A feature that is *failing*, *quiet*, *not running*, *paused* or *unreadable* is called out so it is noticed without reading every row (FR-009); *not configured* and *idle* are shown in their rows but not called out.
 
 **Why this priority**: This is the whole value of the feature. The dogfood that failed for a month and the board loop that merged nothing for a month were both findable only by someone going to look.
 
@@ -48,7 +48,8 @@ The owner, or a session working the board, opens the "Board status" issue and se
 2. **Given** a feature whose runs end green but whose output signal has not occurred within its quiet threshold, **When** the report is built, **Then** the feature shows *quiet*, not *healthy*, and gives the date of its last output signal (or says there has never been one in the window read).
 3. **Given** a scheduled feature with no run at all within its expected cadence plus its tolerance (FR-006), **When** the report is built, **Then** the feature shows *not running*.
 4. **Given** a feature whose kill switch is set, **When** the report is built, **Then** the feature shows *paused* and names the switch, and its green runs are not read as health.
-5. **Given** a feature that ran within its cadence, whose latest run succeeded, and whose output signal occurred within its quiet threshold, **When** the report is built, **Then** the feature shows *healthy*.
+5. **Given** a feature with at least one finished run in the window, that ran within its cadence, whose latest run succeeded, and whose output signal occurred within its quiet threshold (or which declares none), **When** the report is built, **Then** the feature shows *healthy*.
+6. **Given** a feature with no finished run in the window and no declared output signal, **When** the report is built, **Then** the feature shows *idle*, never *healthy*, and is not called out (FR-017).
 
 ---
 
@@ -62,7 +63,7 @@ Each feature declares the signal that shows it did its job — for example a mer
 
 **Acceptance Scenarios**:
 
-1. **Given** the board loop with hundreds of successful runs in the window and no merged board-loop fix pull request within its quiet threshold, **When** the report is built, **Then** the board loop is *quiet*.
+1. **Given** the board loop with hundreds of successful runs in the window, and within its quiet threshold no merged board-loop fix pull request and no issue closed on one of triage's code-derived grounds (FR-003), **When** the report is built, **Then** the board loop is *quiet*.
 2. **Given** a feature whose registry entry declares no output signal, **When** the report is built, **Then** its row says the signal is not measured and its state is decided from run results and cadence alone.
 3. **Given** the same run history, board and switches, **When** the report is built twice, **Then** every feature gets the same state both times.
 
@@ -85,7 +86,7 @@ When the report cannot read what it needs for a feature — the run history is p
 
 ### User Story 4 - A quiet or failing feature is shown, not filed (Priority: P3)
 
-A feature that enters *failing*, *quiet* or *not running* is only shown in the report's call-outs (FR-009); the system files nothing for it. The owner, or a session reading Board status, decides whether it becomes a Maintenance backlog line.
+A feature that enters a called-out state (*failing*, *quiet*, *not running*, *paused* or *unreadable*) is only shown in the report's call-outs (FR-009); the system files nothing for it. The owner, or a session reading Board status, decides whether it becomes a Maintenance backlog line.
 
 **Why this priority**: Showing it is the core value; filing it would cost duplicates, noise and backlog lines for things already known.
 
@@ -100,13 +101,15 @@ A feature that enters *failing*, *quiet* or *not running* is only shown in the r
 ### Edge Cases
 
 - **A paused loop with green runs.** Spec PR review runs hourly and ends green while paused; it shows *paused*, never *healthy* or *quiet* (FR-004).
-- **A feature that is event-driven and legitimately idle.** PR conversation or rebase may have nothing to do for days; their cadence is declared as event-driven, so the absence of runs alone does not make them *not running* (FR-006).
+- **A feature that is event-driven and legitimately idle.** PR conversation or rebase may have nothing to do for days; their cadence is declared as event-driven, so the absence of runs alone does not make them *not running* (FR-006). One with no finished run in the window and no declared signal shows *idle* (FR-017).
 - **A feature whose runs succeed while a step inside fails.** The report reads run conclusions; step-level failures inside a green run are out of scope (that defect is tracked on #889). Its output signal still catches a feature that produces nothing.
 - **A feature that is skipped by design.** The private-image dogfood is skipped while its image variable is unset; a run whose jobs were all skipped because the feature is not configured shows *not configured*, not *healthy* and not *failing*.
 - **A cancelled run.** Cancelled runs (for example by a concurrency group) are neither a success nor a failure for the state; they count only toward "ran within cadence".
 - **The report's own feature.** Board status is itself a feature in the registry; its row reflects the previous build, since the current build is the one writing it.
 - **A feature added to `docs/reference.md` without a registry entry.** A gate fails (FR-002), so the registry cannot silently fall behind.
-- **The lifecycle spans many workflows.** The feature lifecycle is reported as one feature with its stages beneath it, so a failure in one stage (for example implement) is visible without the whole lifecycle reading *failing* for a single stalled run.
+- **The lifecycle spans many workflows.** The feature lifecycle is reported as one feature with each stage as its own row and state beneath it, so a failure in one stage (for example implement) is visible in that stage's row; the lifecycle's own state is the worst of its stages' states (FR-018).
+- **A feature built from several workflows.** The watchdog (two wrappers), or a feature whose schedule is separate from its events, takes the worst state among its workflows, each classified from its own runs (FR-018).
+- **A workflow only other workflows call.** A called-only workflow such as `agent-startup-check` may have no finished run of its own in the window; with no declared signal it shows *idle*, never *healthy* (FR-017).
 
 ## Requirements *(mandatory)*
 
@@ -116,27 +119,29 @@ A feature that enters *failing*, *quiet* or *not running* is only shown in the r
 
 - **FR-001**: The system MUST keep one feature registry with exactly one home. Each entry names a feature, the workflow or workflows whose runs belong to it, its cadence (a schedule, or event-driven), its kill switch if it has one, its output signal if one is declared (FR-003), and its quiet threshold (FR-007). The registry MUST cover at least the features of the issue's first cut: the feature lifecycle (with its stages: intake, clarify, plan, tasks, implement, finalize, cleanup), spec PR review, the lifecycle review gate, PR conversation, the board loop, the watchdog, auto-release, the Spec Kit updater, rebase, metrics, board status, the proof list, the private-image dogfood, and the gate suite.
 - **FR-002**: A gate MUST fail when a loop or workflow that `docs/reference.md`'s "At a glance", "Housekeeping and observability" or "Schedules" tables list has no registry entry, or a registry entry names a workflow that does not exist, so the registry cannot drift from the reference page.
-- **FR-003**: A registry entry MAY declare an output signal: an observable, countable event that shows the feature did its job, with the time it last occurred. The signals MUST be drawn from what the repository already records — a merged pull request of a given kind, an issue filed under a given label, a published release, a record on the metrics branch, a rewrite of a tracking issue. The registry MUST declare these signals (clarified 2026-11-22, Q1 option A):
+- **FR-003**: A registry entry MAY declare an output signal: an observable, countable event that shows the feature did its job, with the time it last occurred. The signals MUST be drawn from what the repository already records, such as a merged pull request of a given kind, an issue filed under a given label, an issue closed, a comment posted, a published release, a record on the metrics branch, or a rewrite of a tracking issue. The registry MUST declare these signals (clarified 2026-11-22, Q1 option A):
   - feature lifecycle → a spec PR or a final PR merged;
   - Spec Kit updater → a bump PR merged;
   - auto-release → a release published;
   - watchdog → an issue filed or an inspected-run notice posted;
-  - board loop → a board-loop fix PR merged or an issue closed at triage;
+  - board loop → a board-loop fix PR merged or an issue closed at triage on one of triage's code-derived grounds (`board_triage.py`: a rate-limited run or an upstream action bump); a duplicate close at the route step does not count;
   - metrics → a record appended to the metrics branch;
   - board status → the "Board status" issue rewritten; proof list → its section rewritten;
   - every other feature → no signal declared: not measured, judged on runs and cadence only (FR-008).
 
 #### The states
 
-- **FR-004**: The system MUST place every registry feature in exactly one state, the first that fits, deterministically from its runs, its kill switch, its configuration and its output signal: *unreadable* (FR-010); *paused* (its kill switch is set); *not configured* (it is skipped by design because a variable it requires is unset); *failing* (FR-005); *not running* (FR-006); *quiet* (FR-007); *healthy*.
+- **FR-004**: The system MUST place every registry feature in exactly one state, the first that fits, deterministically from its runs, its kill switch, its configuration and its output signal: *unreadable* (FR-010); *paused* (its kill switch is set); *not configured* (it is skipped by design because a variable it requires is unset); *failing* (FR-005); *not running* (FR-006); *quiet* (FR-007); *idle* (FR-017); *healthy*. A feature built from several workflows is classified per FR-018.
 - **FR-005**: A feature MUST be *failing* when its latest finished, non-cancelled run concluded in failure and so did every finished, non-cancelled run in its failing window: the last 3 such runs, or all of them if it has fewer. A single failed run between successes does not make a feature *failing*; the report still shows the date of its last failure.
 - **FR-006**: A scheduled feature MUST be *not running* when it has no run started within its schedule's interval plus a tolerance of one further interval. An event-driven feature is never *not running* on the absence of runs alone.
 - **FR-007**: A feature with a declared output signal MUST be *quiet* when that signal has not occurred within its quiet threshold. Each registry entry declares its own quiet threshold in days; an entry that declares none gets the default of 14 days (clarified 2026-11-22, Q2 option C). The report shows the threshold applied to each feature with a declared signal.
 - **FR-008**: The system MUST NOT read a green run as evidence that a feature did its job; only its declared output signal is that evidence. A feature with no declared signal is judged on runs and cadence only, and its row says the signal is not measured.
+- **FR-017**: A feature MUST be *idle* when it has no finished run in the window and no declared output signal: there is no evidence either way, so it is never *healthy*. *Idle* is not called out (FR-009). (Spec review round 1 default, not an owner decision; see Assumptions.)
+- **FR-018**: Each stage of the feature lifecycle MUST get its own row and its own state beneath the lifecycle's row. A feature whose entry names several workflows (the lifecycle's stages, the watchdog's wrappers, a schedule separate from its events) MUST classify each workflow by FR-004 from that workflow's own runs, with the feature's kill switch, configuration and output signal; FR-005 and FR-006 apply to each workflow's own run stream, and runs are never pooled across workflows. The feature's own state is the worst of its workflows' states, worst meaning earliest in FR-004's order. (Spec review round 1 default, not an owner decision; see Assumptions.)
 
 #### Where it shows and what it does
 
-- **FR-009**: The report MUST be published in the open `disposition:tracking` issue titled "Board status", through that issue's one writer, as the proof list's section is (spec 124, FR-021): the health system supplies the content and never writes the issue itself. The report MUST show one row per feature with its state, its last success, its last failure and its last output signal, and MUST call out, above the rows, every feature in *failing*, *quiet*, *not running* or *unreadable*. A feature in *failing*, *quiet* or *not running* is only shown in the report: the system files nothing — no Maintenance backlog line and no issue (clarified 2026-11-22, Q3 option A, following the precedent of #1143 and #1144, which report their verdict in Board status and file nothing).
+- **FR-009**: The report MUST be published in the open `disposition:tracking` issue titled "Board status", through that issue's one writer, as the proof list's section is (spec 124, FR-021): the health system supplies the content and never writes the issue itself. The report MUST show one row per feature with its state, its last success, its last failure and its last output signal, and MUST call out, above the rows, every feature in *failing*, *quiet*, *not running*, *paused* or *unreadable*; *not configured* and *idle* are not called out. A feature in a called-out state is only shown in the report: the system files nothing — no Maintenance backlog line and no issue (clarified 2026-11-22, Q3 option A, following the precedent of #1143 and #1144, which report their verdict in Board status and file nothing).
 - **FR-010**: A read the system cannot complete for a feature — a run listing past the per-query cap that cannot be bounded by date, an output-signal query that fails, a kill switch or configuration variable it cannot read — MUST put that feature in *unreadable* with the reason, MUST NOT classify it from a partial read, and MUST NOT stop the other features from being classified (Principle VIII). The report MUST give the count of unreadable features. If the run history of every feature is unreadable, the build fails and the section says so with the date of the last good build.
 - **FR-011**: The window of history read MUST be long enough to cover every feature's quiet threshold and failing window, and MUST be read bounded by date so the 1,000-run cap of event-driven wrappers does not truncate it silently.
 - **FR-012**: The system MUST use no agent; every step is deterministic code (Principle IX), and it adds nothing to the shared usage window.
@@ -147,17 +152,17 @@ A feature that enters *failing*, *quiet* or *not running* is only shown in the r
 
 ### Key Entities
 
-- **Feature**: one entry of the registry — name, the workflows whose runs belong to it, cadence, kill switch, required configuration, output signal, quiet threshold, and, for the feature lifecycle, its stages.
+- **Feature**: one entry of the registry — name, the workflows whose runs belong to it, cadence, kill switch, required configuration, output signal, quiet threshold, and, for the feature lifecycle, its stages (each with its own row and state, FR-018).
 - **Run**: a finished run of a feature's workflow — workflow, run id, event, start time, conclusion.
 - **Output signal**: the declared event that shows a feature did its job, and the time it last occurred.
-- **Health state**: one of *unreadable*, *paused*, *not configured*, *failing*, *not running*, *quiet*, *healthy*.
-- **Report**: the published section — build time, the call-out list, one row per feature, and the count of unreadable features.
+- **Health state**: one of *unreadable*, *paused*, *not configured*, *failing*, *not running*, *quiet*, *idle*, *healthy*. The called-out states are *failing*, *quiet*, *not running*, *paused* and *unreadable*.
+- **Report**: the published section — build time, the call-out list, one row per feature (and one per lifecycle stage beneath the lifecycle), and the count of unreadable features.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
-- **SC-001**: Given a checked-in record of the run history, board and switches behind the issue's first cut (2026-10-14 to 2026-11-12), the report shows the private-image dogfood as *failing*, spec PR review as *paused*, the board loop as *quiet* (under the 14-day default, or any declared quiet threshold shorter than 27 days), and the Spec Kit updater, auto-release and the watchdog as *healthy*.
+- **SC-001**: Given a checked-in record of the run history, board and switches behind the issue's first cut (2026-10-14 to 2026-11-12), the report shows the private-image dogfood as *failing*, spec PR review as *paused*, the board loop as *quiet* (the window has no merged board-loop fix PR after 2026-10-16 and no issue closed on one of triage's code-derived grounds; the route-step duplicate closes of #1096, #1097, #1101, #1106 and #1116 do not count; under the 14-day default, or any declared quiet threshold shorter than 27 days), and the Spec Kit updater, auto-release and the watchdog as *healthy*.
 - **SC-002**: 100% of registry features appear in the report exactly once, in exactly one state.
 - **SC-003**: Two builds over the same inputs give every feature the same state.
 - **SC-004**: A feature that stops producing its output signal is shown as *quiet* in the first daily report after its quiet threshold passes, without anyone going to look.
@@ -171,6 +176,8 @@ A feature that enters *failing*, *quiet* or *not running* is only shown in the r
 - **Failing window**: the last 3 non-cancelled runs all failed. One failure among successes is shown by its date but does not change the state.
 - **Not running tolerance**: one extra schedule interval, so a single skipped or delayed scheduled run does not flag a feature.
 - **Event-driven features** (PR conversation, rebase on push, cleanup on PR close, the watchdog per stage run, metrics-persist per stage run, the gate suite on pull requests) are judged by their output signal and run results, never by the absence of runs; where they also have a schedule (rebase nightly, cleanup daily, metrics daily sweep, the gate suite daily on `main`), that schedule's cadence applies.
+- **No runs and no signal is *idle*** (FR-017; spec review round 1 default, not an owner decision): a feature with no finished run in the window and no declared signal shows *idle*, never *healthy*, and is not called out. The owner may change this, for example to *unreadable* or to a called-out state.
+- **Several workflows, worst state wins** (FR-018; spec review round 1 default, not an owner decision): each lifecycle stage gets its own row and state, and a feature built from several workflows takes the worst of its workflows' states, each classified from its own runs. The owner may change this, for example to pooling runs or to stage rows without a combined state.
 - **Run conclusions only**: step-level failures inside a green run are out of scope; that defect is already tracked on #889.
 - **Window read**: at least 30 days, the span of the first cut, extended as needed to cover the longest quiet threshold.
 - **Nothing changes about the features themselves**: this feature observes; it does not restart, re-run, unpause or fix anything.
