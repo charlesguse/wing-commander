@@ -102,6 +102,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_repo_files import repo_files  # noqa: E402
+from wc_push_grant import is_push_capable, step_text as _step_text  # noqa: E402
 
 AGENT_ACTION_RE = re.compile(r"^anthropics/claude-code-action@")
 PUBLISH_MARKER = "wing-commander-publish-stranded-commits"
@@ -111,9 +112,8 @@ CONTEXT_REMINT_MARKERS = ("wing-commander-context", "scoped-app-token")
 # any other prose in this repository.
 RETRY_PARAGRAPH_MARKER = "is a credential problem this pipeline is already handling"
 
-PUSH_GRANT_RE = re.compile(r"(?:^|,)\s*Bash\(git push:\*\)\s*(?:,|$)")
-ALLOWED_TOOLS_REF_RE = re.compile(r"steps\.([\w-]+)\.outputs\.allowed-tools")
-INLINE_ALLOWED_TOOLS_RE = re.compile(r"--allowedTools\s+\"([^\"]*)\"")
+# The push-capable predicate (PUSH_GRANT_RE and friends) lives in
+# wc_push_grant.py, shared with Gate 121.
 
 JWT_ALG_RE = re.compile(r'"alg"\s*:\s*"RS256"')
 JWT_TYP_RE = re.compile(r'"typ"\s*:\s*"JWT"')
@@ -154,40 +154,6 @@ SUBJECTS = {
 
 def _is_agent_step(step):
     return bool(AGENT_ACTION_RE.match(str((step or {}).get("uses", ""))))
-
-
-def _walk_strings(value):
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, dict):
-        for v in value.values():
-            yield from _walk_strings(v)
-    elif isinstance(value, list):
-        for v in value:
-            yield from _walk_strings(v)
-
-
-def _step_text(step):
-    return "\n".join(_walk_strings(step))
-
-
-def composed_allowed_tools(step, steps_by_id):
-    """-> the agent step's own composed --allowedTools text, or ''."""
-    text = _step_text(step)
-    m = ALLOWED_TOOLS_REF_RE.search(text)
-    if m:
-        ref_step = steps_by_id.get(m.group(1))
-        if ref_step is None:
-            return ""
-        return str((ref_step.get("with") or {}).get("default-allowed-tools", ""))
-    m2 = INLINE_ALLOWED_TOOLS_RE.search(text)
-    if m2:
-        return m2.group(1)
-    return ""
-
-
-def is_push_capable(step, steps_by_id):
-    return bool(PUSH_GRANT_RE.search(composed_allowed_tools(step, steps_by_id)))
 
 
 def _is_trusted_key_consumer(uses):

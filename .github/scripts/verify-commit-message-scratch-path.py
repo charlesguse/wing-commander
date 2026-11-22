@@ -82,11 +82,13 @@ An intake agent ran `git push -u`, which writes branch-tracking lines into
 .git/config; claude-code-action restored the file as one later steps trust
 and the watchdog filed the restore. The composite's `pushes: "true"` input
 appends one sentence saying how to push without -u/--set-upstream. A
-covered site whose tool args grant `Bash(git push:*)` -- its own
-claude_args, or the default-allowed-tools of the wing-commander-tool-args
-step its claude_args reads -- must set `pushes: "true"` on the guidance
-step its prompt interpolates. main() also renders the shipped composite
-both ways and checks the sentence appears only with pushes on.
+covered site whose tool args grant `Bash(git push:*)` -- inline
+--allowedTools, or the default-allowed-tools of the wing-commander-tool-args
+step it reads; wc_push_grant.is_push_capable decides, the predicate Gate
+122 uses too -- must set `pushes: "true"` on the guidance step its prompt
+interpolates. main() also renders the shipped composite both ways and
+checks the sentence appears only with pushes on, and fails if a copy of
+the push-capable predicate is defined outside wc_push_grant.py.
 
 Usage:
     python3 .github/scripts/verify-commit-message-scratch-path.py
@@ -102,6 +104,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import resolve_bash, run_step, use_utf8_stdout, find_step  # noqa: E402
+from wc_push_grant import PREDICATE_NAMES, is_push_capable  # noqa: E402
 
 WORKFLOWS_GLOB = ".github/workflows/*.yml"
 GUIDANCE_ACTION_PATH = ".github/actions/wing-commander-commit-message-guidance/action.yml"
@@ -110,9 +113,11 @@ GUIDANCE_RENDER_STEP_NAME = "Render commit-message guidance"
 
 COMMIT_RE = re.compile(r"\bcommit\b", re.I)
 GUIDANCE_OUTPUT_RE = re.compile(r"steps\.([A-Za-z0-9_-]+)\.outputs\.guidance")
-TOOL_ARGS_ACTION_NAME = "wing-commander-tool-args"
-TOOL_ARGS_OUTPUT_RE = re.compile(r"steps\.([A-Za-z0-9_-]+)\.outputs\.allowed-tools")
-PUSH_GRANT = "Bash(git push"
+# Whether a site may push is wc_push_grant.is_push_capable, the predicate
+# Gate 122 uses too; no other module under .github/scripts may define it.
+PUSH_GRANT_HOME = ".github/scripts/wc_push_grant.py"
+PREDICATE_DEF_RE = re.compile(
+    r"^\s*def\s+(" + "|".join(PREDICATE_NAMES) + r")\s*\(", re.M)
 # Phrases the pushes-on render must carry and the pushes-off render must not.
 PUSH_SENTENCE_MARKERS = ("--set-upstream", ".git/config", "git push origin <branch>")
 
@@ -256,36 +261,14 @@ def check_site(path, job, step, step_name, prompt):
         f"(#440).")
 
 
-def step_by_id(job, step_id):
-    for step in job.get("steps") or []:
-        if (step or {}).get("id") == step_id:
-            return step
-    return None
-
-
-def grants_push(job, step):
-    """True when the agent step's allowed tools include `Bash(git push:*)`:
-    literally in its own claude_args, or in the default-allowed-tools of a
-    wing-commander-tool-args step whose allowed-tools output it reads."""
-    claude_args = str((step.get("with") or {}).get("claude_args") or "")
-    if PUSH_GRANT in claude_args:
-        return True
-    for tool_args_id in TOOL_ARGS_OUTPUT_RE.findall(claude_args):
-        tool_args = step_by_id(job, tool_args_id) or {}
-        if TOOL_ARGS_ACTION_NAME not in str(tool_args.get("uses") or ""):
-            continue
-        allowed = str((tool_args.get("with") or {}).get("default-allowed-tools") or "")
-        if PUSH_GRANT in allowed:
-            return True
-    return False
-
-
 def check_push_guidance(path, job, step, step_name, guidance_id):
     """-> None, or a failure message when a push-granted site's guidance
     step does not set pushes: "true" (#1167)."""
-    if not grants_push(job, step):
+    steps_by_id = {s.get("id"): s for s in (job.get("steps") or [])
+                   if isinstance(s, dict) and s.get("id")}
+    if not is_push_capable(step, steps_by_id):
         return None
-    guidance_step = step_by_id(job, guidance_id) or {}
+    guidance_step = steps_by_id.get(guidance_id) or {}
     pushes = (guidance_step.get("with") or {}).get("pushes")
     if str(pushes).strip().lower() == "true":
         return None
@@ -324,6 +307,29 @@ def push_render_check(root):
         failures.append(
             f"rendering {GUIDANCE_ACTION_NAME} with pushes 'yes' must fail "
             f"(only 'true' or 'false' are valid), it exited 0.")
+    return failures
+
+
+def push_predicate_home_check(root):
+    """-> [failure message, ...]. The push-capable predicate has one home,
+    wc_push_grant.py (CLAUDE.md, "Shared logic has exactly one home"): any
+    other module under .github/scripts/ defining one of its function names
+    is a copy that can drift, as the #1167 copy did when it read a
+    `--disallowedTools` list as a push grant."""
+    failures = []
+    scripts = os.path.join(root, ".github", "scripts")
+    home = os.path.normcase(os.path.abspath(os.path.join(root, PUSH_GRANT_HOME)))
+    for path in sorted(glob.glob(os.path.join(scripts, "**", "*.py"), recursive=True)):
+        if os.path.normcase(os.path.abspath(path)) == home:
+            continue
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+        for m in PREDICATE_DEF_RE.finditer(text):
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
+            failures.append(
+                f"{rel} defines {m.group(1)}(), a copy of the push-capable "
+                f"predicate whose one home is {PUSH_GRANT_HOME}; import it "
+                f"from there instead.")
     return failures
 
 
@@ -516,6 +522,8 @@ def main(argv):
         checked, failures = scan(WORKFLOWS_GLOB, tmproot)
         for msg in push_render_check(tmproot):
             failures.append(((GUIDANCE_ACTION_PATH, "-", GUIDANCE_RENDER_STEP_NAME), msg))
+        for msg in push_predicate_home_check(os.getcwd()):
+            failures.append(((PUSH_GRANT_HOME, "-", "-"), msg))
     finally:
         import shutil
         shutil.rmtree(tmproot, ignore_errors=True)
@@ -790,6 +798,31 @@ jobs:
               '--allowedTools "${{ steps.tool-args-x.outputs.allowed-tools }}"',
               '--allowedTools "Bash(git push:*)"'),
           expect_fail=True)
+
+    check("(7f) a push only in claude_args' --disallowedTools is no grant",
+          "push-denied.yml",
+          push_site.format(pushes="", grant="").replace(
+              '--allowedTools "${{ steps.tool-args-x.outputs.allowed-tools }}"',
+              '--allowedTools "${{ steps.tool-args-x.outputs.allowed-tools }}"\n'
+              '            --disallowedTools "WebFetch,Bash(git push:*)"'),
+          expect_fail=False)
+
+    # (9) the push-capable predicate has one home (wc_push_grant.py).
+    home_root = tempfile.mkdtemp(dir=root)
+    os.makedirs(os.path.join(home_root, ".github", "scripts"))
+    with open(os.path.join(home_root, ".github", "scripts", "verify-copy.py"),
+              "w", encoding="utf-8") as fh:
+        fh.write("def grants_push(job, step):\n    return False\n")
+    if push_predicate_home_check(home_root):
+        print("ok    (9a) a copy of the push predicate outside wc_push_grant.py fails")
+    else:
+        failed.append("(9a) a copy of the push predicate outside wc_push_grant.py passed")
+    shipped_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    home_failures = push_predicate_home_check(shipped_root)
+    if home_failures:
+        failed.append(f"(9b) the shipped scripts carry a push-predicate copy: {home_failures!r}")
+    else:
+        print("ok    (9b) the shipped scripts define the push predicate only in wc_push_grant.py")
 
     # (8) the shipped composite's push sentence renders only with pushes on.
     render_failures = push_render_check(root)
