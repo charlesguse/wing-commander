@@ -467,9 +467,13 @@ def decide_line_item(request):
     gate passes); "none" otherwise, with `reason` the one-line refusal when
     there is one. `stand_down` lists line ids whose newest marker is still
     active but whose line is ticked by hand, deleted or duplicated -- each
-    gets one stand-down record (FR-016)."""
+    gets one stand-down record (FR-016). `released` lists line ids whose
+    newest marker is the hold's `stalled` one but that no line carries any
+    more: a maintainer released the hold (the release op, or the annotation
+    deleted by hand), so the caller closes that attempt's open PR
+    (release_attempt()) before anything is claimed (#1135, option (c))."""
     out = {"action": "none", "issue": None, "line_id": None, "text": None,
-           "reason": None, "stand_down": [], "pr": None, "awaiting": []}
+           "reason": None, "stand_down": [], "pr": None, "awaiting": [], "released": []}
     issue, reason = resolve_backlog(request.get("tracking_issues") or [],
                                     request.get("bot_login") or "")
     if issue is None:
@@ -483,10 +487,13 @@ def decide_line_item(request):
         if line["id"]:
             by_id.setdefault(line["id"], []).append(line)
     markers = _line_markers(request.get("comments") or [], request.get("bot_login") or "")
+    from board_item_marker import STALLED_STEP
     for line_id, marker in sorted(markers.items()):
+        hits = by_id.get(line_id, [])
+        if marker.get("step") == STALLED_STEP and not hits:
+            out["released"].append(line_id)
         if marker.get("step") not in ACTIVE_STEPS:
             continue
-        hits = by_id.get(line_id, [])
         # Gone, duplicated, or ticked by someone other than the loop (the
         # loop's own ticks carry `fixed` or `evidence`).
         if len(hits) != 1 or (hits[0]["checked"] and hits[0]["state"] not in ("fixed", "evidence")):
@@ -536,13 +543,23 @@ def pre_push_check(issue, line_id, body, commit_messages):
             "hits": [list(hit) for hit in closing_keyword_hits(title, "", commit_messages)]}
 
 
-def keyword_hold_comment(line_id, site, branch, hits):
+def release_instructions(issue, line_id):
+    """What a maintainer does to release a held line, and what releasing
+    does (FR-014; #1135 option (c), the owner's choice of 2026-11-22)."""
+    return ("The line is held. To release it, run `python .github/scripts/board_backlog_edit.py "
+            "--issue {0} --op release --line-id {1}` (or delete its `[wc:{1} held ...]` annotation "
+            "by hand). Releasing ends this attempt: the next board-loop run closes its open pull "
+            "request, if it has one, leaving branch `{2}` in place, and the line is then claimed "
+            "fresh under a new id and branch.").format(issue, line_id, branch_for(issue, line_id))
+
+
+def keyword_hold_comment(issue, line_id, site, branch, hits):
     """The backlog-issue comment a closing-keyword refusal posts (FR-017)."""
     listed = "\n".join("- {0}: `{1}`".format(where, str(text).replace("`", "'")) for where, text in hits)
     return ("Backlog line `{0}`: the {1} step on {2} was refused -- its PR title, body or a commit "
             "message carries a closing keyword, and a line fix must close no issue "
-            "(specs/121 FR-017):\n\n{3}\n\nThe line is held; removing its hold annotation is "
-            "the sole re-eligibility condition.".format(line_id, site, branch, listed))
+            "(specs/121 FR-017):\n\n{3}\n\n{4}".format(
+                line_id, site, branch, listed, release_instructions(issue, line_id)))
 
 
 def keyword_hold(issue, line_id, site, branch, base_sha, run=None, fetch=None, commits=None):
@@ -595,7 +612,7 @@ def hold_for_keywords(issue, line_id, site, branch, base_sha, hits, run=None):
     if not bim.add_stalled_label(issue, "board:stalled", run=run):
         return None
     marker = bim.write_marker(bim.STALLED_STEP, 0, None, branch or None, base_sha)
-    body = "{0}\n\n{1}".format(keyword_hold_comment(line_id, site, branch, hits), marker)
+    body = "{0}\n\n{1}".format(keyword_hold_comment(issue, line_id, site, branch, hits), marker)
     proc = run(["gh", "issue", "comment", str(issue), "-R", os.environ.get("GITHUB_REPOSITORY", ""),
                 "--body", body], stdout=sys.stderr)
     if proc.returncode != 0:
@@ -604,6 +621,86 @@ def hold_for_keywords(issue, line_id, site, branch, base_sha, hits, run=None):
         return None
     bim.record_stall_summary(issue, "{0} (closing keyword)".format(site))
     return "held"
+
+
+def release_attempt(issue, line_id, run=None, repository=None):
+    """#1135 option (c): a released line's held attempt ends. Its open pull
+    request -- head `branch_for(issue, line_id)` in this repository, body
+    citing this line (pr_cites_line()) -- is closed with a comment saying
+    the line was released, and its branch is left in place, so it can never
+    merge against a line that has moved on. Then one record goes on the
+    backlog issue, whose stood-down marker ends the id's `stalled` state so
+    no later run does this again (decide_line_item()'s `released`). A pull
+    request the token could not close is named in that record with the
+    command a maintainer runs, as the hold comment names the release.
+    Idempotent: with no open pull request (closed already, merged, or never
+    opened) only the record is posted. Returns the one-line outcome, or
+    None when the pull requests could not be read or the record could not
+    be posted; nothing is final then, and the next run retries."""
+    import os
+    import subprocess
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import board_item_marker as bim
+    run = run or subprocess.run
+    repository = repository or os.environ.get("GITHUB_REPOSITORY", "")
+    branch = branch_for(issue, line_id)
+    proc = run(["gh", "api", "repos/{0}/pulls".format(repository), "-X", "GET", "--paginate",
+                "-f", "state=open", "-f", "head={0}:{1}".format(repository.split("/")[0], branch),
+                "--jq", '.[] | {number, body: (.body // ""), repo: (.head.repo.full_name // "")}'],
+               capture_output=True, text=True)
+    if proc.returncode != 0:
+        print("::error::board_backlog_lines: could not list the open pull requests on {0} -- "
+              "released line {1}'s attempt is left for the next run ({2}).".format(
+                  branch, line_id, (proc.stderr or "").strip()), file=sys.stderr)
+        return None
+    try:
+        prs = [json.loads(row) for row in (proc.stdout or "").splitlines() if row.strip()]
+    except ValueError:
+        print("::error::board_backlog_lines: unreadable pull request list for {0}.".format(branch),
+              file=sys.stderr)
+        return None
+    prs = [pr for pr in prs if pr.get("repo") == repository and pr_cites_line(pr.get("body"), issue, line_id)]
+    pr_note = ("Board loop: backlog line `{0}` on #{1} was released from its hold, so this attempt "
+               "is closed: its merge could no longer tick the line, which can now be claimed fresh "
+               "under a new id and branch. Branch `{2}` is left in place.").format(line_id, issue, branch)
+    closed, refused = [], []
+    for pr in prs:
+        shut = run(["gh", "pr", "close", str(pr["number"]), "-R", repository, "--comment", pr_note],
+                   capture_output=True, text=True)
+        if shut.returncode == 0:
+            closed.append(pr["number"])
+        else:
+            refused.append((pr["number"], ((shut.stderr or "").strip().splitlines() or [""])[-1]))
+    lines = ["Board loop: backlog line `{0}` was released from its hold, so its held attempt "
+             "ends (#1135).".format(line_id)]
+    if closed:
+        lines.append("Closed its pull request {0}; branch `{1}` is left in place.".format(
+            ", ".join("#{0}".format(n) for n in closed), branch))
+    if refused:
+        for number, why in refused:
+            lines.append(
+                "Pull request #{0} could not be closed with the board loop's token ({1}), so it is "
+                "still open, and its merge would tick nothing. A maintainer closes it, keeping its "
+                "branch: `gh pr close {0} -R {2} --comment \"Backlog line {3} was released.\"`".format(
+                    number, _sanitise(why).replace("`", "'") or "no reason given",
+                    repository, line_id))
+    if not prs:
+        lines.append("It has no open pull request to close.")
+    lines.append("The line can now be claimed fresh under a new id and branch.")
+    marker = bim.write_marker(STOOD_DOWN_STEP, 0, (closed or [None])[0], branch, None, line=line_id)
+    post = run(["gh", "issue", "comment", str(issue), "-R", repository,
+                "--body", "{0}\n\n{1}".format(" ".join(lines), marker)], stdout=sys.stderr)
+    if post.returncode != 0:
+        print("::error::board_backlog_lines: released line {0}'s record could not be posted on "
+              "#{1} -- the next run retries.".format(line_id, issue), file=sys.stderr)
+        return None
+    if refused:
+        return "pull request {0} could not be closed; a maintainer is asked to".format(
+            ", ".join("#{0}".format(n) for n, _ in refused))
+    if closed:
+        return "closed pull request {0}, branch {1} kept".format(
+            ", ".join("#{0}".format(n) for n in closed), branch)
+    return "no open pull request to close"
 
 
 def _commit_messages(base_sha):
@@ -626,6 +723,15 @@ def main():
         # clear|held; exit 1 when the hold could not be recorded.
         _flag, issue, line_id, site, branch, base_sha = sys.argv[1:7]
         result = keyword_hold(int(issue), line_id, site, branch, base_sha)
+        if result is None:
+            sys.exit(1)
+        print(result)
+        return
+    if sys.argv[1:2] == ["--release-attempt"]:
+        # `--release-attempt ISSUE LINE_ID`: prints the outcome; exit 1
+        # when nothing was final (the next run retries) (#1135).
+        _flag, issue, line_id = sys.argv[1:4]
+        result = release_attempt(int(issue), line_id)
         if result is None:
             sys.exit(1)
         print(result)

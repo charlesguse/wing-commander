@@ -1,0 +1,22 @@
+{
+  "op": "release-attempt",
+  "line_id": "bl-0a1b2c3d",
+  "prs": [
+    {
+      "number": 41,
+      "body": "Backlog line: #889 bl-0a1b2c3d\n\nWorks the Maintenance backlog line below.",
+      "repo": "o/r"
+    }
+  ],
+  "expect": "closed pull request #41",
+  "expect_closes": [
+    41
+  ],
+  "expect_record": true,
+  "record_contains": [
+    "#41",
+    "fix/889-bl-0a1b2c3d",
+    "left in place",
+    "claimed fresh"
+  ]
+}

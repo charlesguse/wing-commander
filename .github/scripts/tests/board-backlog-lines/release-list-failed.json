@@ -1,0 +1,8 @@
+{
+  "op": "release-attempt",
+  "line_id": "bl-0a1b2c3d",
+  "list_rc": 1,
+  "expect": null,
+  "expect_closes": [],
+  "expect_record": false
+}

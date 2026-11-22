@@ -148,7 +148,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | Fix PR merge needs | switch on, kill switch clear, a complete snapshot of the head, an eligible fix PR (the App's own, `fix/<number>-…` → `main`, not touching the constitution), checks green, gate suite green, review converged, backstop holds |
 | Spec Kit bump merge needs | switch on, kill switch clear, a complete snapshot, the updater's own PR, checks green, gate suite green, verification passed at that head. No size limit |
 | Merge switch | `WING_COMMANDER_BOARD_AUTO_MERGE`, default off. Off, the loop still fixes, reviews and reports, and a human merges |
-| Maintenance backlog lines | off. With `WING_COMMANDER_BOARD_BACKLOG_LINES` set to `true`, the loop takes one unchecked line from the "Maintenance backlog" issue when no issue is eligible |
+| Maintenance backlog lines | off. With `WING_COMMANDER_BOARD_BACKLOG_LINES` set to `true`, the loop takes one unchecked line from the "Maintenance backlog" issue when no issue is eligible. A held line is released with `python .github/scripts/board_backlog_edit.py --issue N --op release --line-id ID` or by deleting its hold annotation; the next run closes the held attempt's open PR (its branch is kept) before it claims anything, and the line is then claimed fresh under a new id and branch |
 | Kill switch | `WING_COMMANDER_BOARD_LOOP_PAUSED` |
 
 ## Watchdog

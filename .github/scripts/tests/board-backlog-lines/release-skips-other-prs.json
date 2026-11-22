@@ -1,0 +1,24 @@
+{
+  "op": "release-attempt",
+  "line_id": "bl-0a1b2c3d",
+  "prs": [
+    {
+      "number": 42,
+      "body": "Backlog line: #889 bl-99999999",
+      "repo": "o/r"
+    },
+    {
+      "number": 43,
+      "body": "Backlog line: #889 bl-0a1b2c3d\n\nWorks the Maintenance backlog line below.",
+      "repo": "fork/r"
+    },
+    {
+      "number": 44,
+      "body": "a hand-opened PR on the line's branch",
+      "repo": "o/r"
+    }
+  ],
+  "expect": "no open pull request",
+  "expect_closes": [],
+  "expect_record": true
+}

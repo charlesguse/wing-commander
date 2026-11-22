@@ -11,6 +11,9 @@
     "action": "claim",
     "text": "a released by a maintainer",
     "stand_down": [],
-    "line_id_minted": true
+    "line_id_minted": true,
+    "released": [
+      "bl-33333333"
+    ]
   }
 }

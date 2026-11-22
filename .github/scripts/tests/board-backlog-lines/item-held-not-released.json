@@ -1,0 +1,17 @@
+{
+  "op": "line-item",
+  "body": "- [ ] a [wc:bl-33333333 held board:stalled from fix]\n- [ ] b\n",
+  "markers": [
+    [
+      "stalled",
+      "bl-33333333"
+    ]
+  ],
+  "expect": {
+    "action": "claim",
+    "text": "b",
+    "released": [],
+    "stand_down": [],
+    "line_id_minted": true
+  }
+}
