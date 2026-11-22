@@ -171,7 +171,7 @@ repository has switched on, are in
 | Decision record | a comment starting `**Session decision**`: what a session chose without asking, the options, the evidence and how to undo it |
 | Gate | a deterministic check in the lint suite (`verify-*.py`). A *human gate* is a point where the pipeline waits for a person; the *review gate* is the workflow that reviews final PRs |
 | Prove | re-driving a run after a merge to show the fix took effect |
-| Finding, signal | a finding is something the watchdog or a reviewer reports, filed as an issue or posted on the pull request; a signal is a watchdog class (`denied-tool`, `narrative-drift`) that is reported on the lifecycle issue and not filed |
+| Finding, signal | a finding is something the watchdog or a reviewer reports, filed as an issue or posted on the pull request; a signal is a watchdog class (`denied-tool`, `narrative-drift`, `trusted-file-tampered`) that is reported on the lifecycle issue and not filed |
 | Kill switch | a `WING_COMMANDER_*_PAUSED` repository variable that stops one loop |
 | Parked | a lifecycle closed with the `parked` label while it waits on the owner |
 

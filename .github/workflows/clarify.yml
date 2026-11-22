@@ -636,6 +636,7 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
         with:
           scratch-filename: clarify-commit-message.txt
+          pushes: "true"
 
       - name: Compose tool args (clarify)
         id: tool-args-clarify

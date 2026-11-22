@@ -1250,6 +1250,7 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
         with:
           scratch-filename: implement-commit-message-cycle.txt
+          pushes: "true"
 
       - name: Compose tool args (implement.cycle)
         id: tool-args-cycle
@@ -2250,6 +2251,7 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
         with:
           scratch-filename: implement-commit-message-retry.txt
+          pushes: "true"
           extra-note: >-
             Use a name distinct from the cycle step's scratch file above --
             the cycle attempt may have left one behind, and this is a fresh

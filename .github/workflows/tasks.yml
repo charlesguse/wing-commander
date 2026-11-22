@@ -790,6 +790,7 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
         with:
           scratch-filename: tasks-commit-message-direct.txt
+          pushes: "true"
 
       - name: Compose tool args (tasks.direct-commit)
         id: tool-args-tasks-direct-commit
@@ -1068,6 +1069,7 @@ jobs:
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
         with:
           scratch-filename: tasks-commit-message-pr.txt
+          pushes: "true"
 
       - name: Compose tool args (tasks.pr)
         id: tool-args-tasks-pr

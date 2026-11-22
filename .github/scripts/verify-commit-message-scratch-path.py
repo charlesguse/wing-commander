@@ -76,6 +76,18 @@ verify-plan-tasks-cost-line.py), the two sites' rendered guidance strings
 are identical except for the substituted filename and the trailing
 extra-note sentence.
 
+PUSHING SITES ALSO RENDER THE NO-UPSTREAM SENTENCE (#1167)
+--------------------------------------------------------------
+An intake agent ran `git push -u`, which writes branch-tracking lines into
+.git/config; claude-code-action restored the file as one later steps trust
+and the watchdog filed the restore. The composite's `pushes: "true"` input
+appends one sentence saying how to push without -u/--set-upstream. A
+covered site whose tool args grant `Bash(git push:*)` -- its own
+claude_args, or the default-allowed-tools of the wing-commander-tool-args
+step its claude_args reads -- must set `pushes: "true"` on the guidance
+step its prompt interpolates. main() also renders the shipped composite
+both ways and checks the sentence appears only with pushes on.
+
 Usage:
     python3 .github/scripts/verify-commit-message-scratch-path.py
     python3 .github/scripts/verify-commit-message-scratch-path.py --self-test
@@ -98,6 +110,11 @@ GUIDANCE_RENDER_STEP_NAME = "Render commit-message guidance"
 
 COMMIT_RE = re.compile(r"\bcommit\b", re.I)
 GUIDANCE_OUTPUT_RE = re.compile(r"steps\.([A-Za-z0-9_-]+)\.outputs\.guidance")
+TOOL_ARGS_ACTION_NAME = "wing-commander-tool-args"
+TOOL_ARGS_OUTPUT_RE = re.compile(r"steps\.([A-Za-z0-9_-]+)\.outputs\.allowed-tools")
+PUSH_GRANT = "Bash(git push"
+# Phrases the pushes-on render must carry and the pushes-off render must not.
+PUSH_SENTENCE_MARKERS = ("--set-upstream", ".git/config", "git push origin <branch>")
 
 # Sites this gate's dynamic scan discovers (their prompt: mentions "commit")
 # but that do not need the scratch-path guidance -- each commented with why.
@@ -227,7 +244,7 @@ def check_site(path, job, step, step_name, prompt):
     ids_before = preceding_guidance_step_ids(job, step)
     m = GUIDANCE_OUTPUT_RE.search(prompt)
     if m and m.group(1) in ids_before:
-        return None
+        return check_push_guidance(path, job, step, step_name, m.group(1))
     return (
         f"instructs a commit but does not render the canonical commit-"
         f"message scratch-path guidance -- no step earlier in this job "
@@ -239,10 +256,81 @@ def check_site(path, job, step, step_name, prompt):
         f"(#440).")
 
 
+def step_by_id(job, step_id):
+    for step in job.get("steps") or []:
+        if (step or {}).get("id") == step_id:
+            return step
+    return None
+
+
+def grants_push(job, step):
+    """True when the agent step's allowed tools include `Bash(git push:*)`:
+    literally in its own claude_args, or in the default-allowed-tools of a
+    wing-commander-tool-args step whose allowed-tools output it reads."""
+    claude_args = str((step.get("with") or {}).get("claude_args") or "")
+    if PUSH_GRANT in claude_args:
+        return True
+    for tool_args_id in TOOL_ARGS_OUTPUT_RE.findall(claude_args):
+        tool_args = step_by_id(job, tool_args_id) or {}
+        if TOOL_ARGS_ACTION_NAME not in str(tool_args.get("uses") or ""):
+            continue
+        allowed = str((tool_args.get("with") or {}).get("default-allowed-tools") or "")
+        if PUSH_GRANT in allowed:
+            return True
+    return False
+
+
+def check_push_guidance(path, job, step, step_name, guidance_id):
+    """-> None, or a failure message when a push-granted site's guidance
+    step does not set pushes: "true" (#1167)."""
+    if not grants_push(job, step):
+        return None
+    guidance_step = step_by_id(job, guidance_id) or {}
+    pushes = (guidance_step.get("with") or {}).get("pushes")
+    if str(pushes).strip().lower() == "true":
+        return None
+    return (
+        f"may push (its allowed tools grant `Bash(git push:*)`), but its "
+        f"guidance step {guidance_id!r} does not set `pushes: \"true\"` "
+        f"(got {pushes!r}), so the agent is never told to push without "
+        f"-u/--set-upstream, which writes .git/config (#1167).")
+
+
+def push_render_check(root):
+    """-> [failure message, ...]. Execute the shipped composite render
+    with pushes on and off: the no-upstream sentence must appear only with
+    it on, and a value other than true/false must fail the step."""
+    failures = []
+    runner_temp = os.path.join(tempfile.mkdtemp(dir=root), "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    renders = {}
+    for value in ("true", "false", "yes"):
+        renders[value] = render_guidance("x.txt", "", root, runner_temp, pushes=value)
+    rc, out, on = renders["true"]
+    missing = [m for m in PUSH_SENTENCE_MARKERS if m not in on]
+    if rc != 0 or missing:
+        failures.append(
+            f"rendering {GUIDANCE_ACTION_NAME} with pushes 'true' must carry "
+            f"the no-upstream push sentence (#1167); rc={rc}, missing "
+            f"{missing!r}, got {on!r}: {out}")
+    rc, out, off = renders["false"]
+    present = [m for m in PUSH_SENTENCE_MARKERS if m in off]
+    if rc != 0 or present:
+        failures.append(
+            f"rendering {GUIDANCE_ACTION_NAME} with pushes 'false' must not "
+            f"carry the push sentence; rc={rc}, present {present!r}: {out}")
+    rc, out, _ = renders["yes"]
+    if rc == 0:
+        failures.append(
+            f"rendering {GUIDANCE_ACTION_NAME} with pushes 'yes' must fail "
+            f"(only 'true' or 'false' are valid), it exited 0.")
+    return failures
+
+
 # --------------------------------------------------------------------------
 # implement.yml's deep, render-executing check (FR-013)
 # --------------------------------------------------------------------------
-def render_guidance(scratch_filename, extra_note, root, runner_temp):
+def render_guidance(scratch_filename, extra_note, root, runner_temp, pushes="false"):
     """Execute the composite action's shipped render step for real. ->
     (rc, output, guidance).
 
@@ -257,6 +345,7 @@ def render_guidance(scratch_filename, extra_note, root, runner_temp):
     env = {
         "SCRATCH_FILENAME": scratch_filename,
         "EXTRA_NOTE": extra_note,
+        "PUSHES": pushes,
         "RUNNER_TEMP_DIR": runner_temp,
     }
     rc, out, outputs, _ = run_step(BASH, str(step["run"]), workdir, env, runner_temp)
@@ -422,6 +511,8 @@ def main(argv):
     tmproot = tempfile.mkdtemp(prefix="verify_commit_scratch_path_")
     try:
         checked, failures = scan(WORKFLOWS_GLOB, tmproot)
+        for msg in push_render_check(tmproot):
+            failures.append(((GUIDANCE_ACTION_PATH, "-", GUIDANCE_RENDER_STEP_NAME), msg))
     finally:
         import shutil
         shutil.rmtree(tmproot, ignore_errors=True)
@@ -643,6 +734,66 @@ jobs:
                        "should FAIL (FR-013), it PASSED")
     else:
         print("ok    (6c) implement.yml's retry with a blanked extra-note fails")
+
+    # (7) #1167: a site whose tool args grant `Bash(git push:*)` must set
+    # pushes: "true" on its guidance step; one granted no push need not.
+    push_site = """\
+name: push-fixture
+on:
+  workflow_call: {{}}
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compose commit-message guidance (x)
+        id: commit-guidance-x
+        uses: ./.github/actions/wing-commander-commit-message-guidance
+        with:
+          scratch-filename: x-commit-message.txt
+{pushes}      - name: Compose tool args (x)
+        id: tool-args-x
+        uses: ./.github/actions/wing-commander-tool-args
+        with:
+          default-allowed-tools: "Read,{grant}Bash(git commit:*)"
+      - name: Do the work
+        id: agent
+        uses: anthropics/claude-code-action@v1
+        with:
+          prompt: |
+            Commit and push your work.
+
+            ${{{{ steps.commit-guidance-x.outputs.guidance }}}}
+          claude_args: |
+            --allowedTools "${{{{ steps.tool-args-x.outputs.allowed-tools }}}}"
+"""
+    pushes_on = '          pushes: "true"\n'
+    grant = "Bash(git push:*),"
+    check("(7a) a push-granted site with pushes: \"true\" passes",
+          "push-on.yml", push_site.format(pushes=pushes_on, grant=grant),
+          expect_fail=False)
+    check("(7b) a push-granted site without pushes: \"true\" fails",
+          "push-off.yml", push_site.format(pushes="", grant=grant),
+          expect_fail=True)
+    check("(7c) a push-granted site with pushes: \"false\" fails",
+          "push-false.yml",
+          push_site.format(pushes='          pushes: "false"\n', grant=grant),
+          expect_fail=True)
+    check("(7d) a site granted no push need not set pushes",
+          "no-push.yml", push_site.format(pushes="", grant=""),
+          expect_fail=False)
+    check("(7e) a push granted literally in claude_args counts too",
+          "push-literal.yml",
+          push_site.format(pushes="", grant="").replace(
+              '--allowedTools "${{ steps.tool-args-x.outputs.allowed-tools }}"',
+              '--allowedTools "Bash(git push:*)"'),
+          expect_fail=True)
+
+    # (8) the shipped composite's push sentence renders only with pushes on.
+    render_failures = push_render_check(root)
+    if render_failures:
+        failed.append(f"(8) push render check on the shipped composite: {render_failures!r}")
+    else:
+        print("ok    (8) the shipped composite renders the push sentence only with pushes on")
 
     import shutil
     shutil.rmtree(root, ignore_errors=True)

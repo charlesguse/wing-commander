@@ -30,6 +30,13 @@ inputs:
       canonical paragraph. Only implement.yml's retry site sets this today.
     required: false
     default: ""
+  pushes:
+    description: >
+      "true" when the agent this guidance feeds may push; the paragraph then
+      also says how to push without writing to .git/config (#1167). Gate 121
+      requires "true" at every site whose tool args grant `Bash(git push:*)`.
+    required: false
+    default: "false"
 
 outputs:
   guidance:
@@ -47,6 +54,7 @@ runs:
       env:
         SCRATCH_FILENAME: ${{ inputs.scratch-filename }}
         EXTRA_NOTE: ${{ inputs.extra-note }}
+        PUSHES: ${{ inputs.pushes }}
         RUNNER_TEMP_DIR: ${{ runner.temp }}
       run: |
         set -uo pipefail
@@ -65,9 +73,25 @@ runs:
             ;;
         esac
 
+        case "$PUSHES" in
+          true|false) ;;
+          *)
+            fail "pushes must be 'true' or 'false': got '$PUSHES'."
+            ;;
+        esac
+
         scratch_path="$RUNNER_TEMP_DIR/$SCRATCH_FILENAME"
 
         guidance="A commit message longer than one line goes through the Write tool to exactly $scratch_path and then git commit -F with that path; never a heredoc or \$(cat ...) on the command line, which the permission layer denies, and never a file under the repository (a path inside .git/ is denied outright, and any other path there would be swept into the commit)."
+
+        # #1167: `git push -u` writes branch-tracking lines into .git/config,
+        # which claude-code-action restores after the session as a file later
+        # steps trust, and the watchdog reports. A bare push fails on a new
+        # branch with a hint naming --set-upstream, hence "even when git
+        # suggests it".
+        if [ "$PUSHES" = "true" ]; then
+          guidance="$guidance"' Push with `git push`, or with `git push origin <branch>` for a branch the remote does not have yet; never add -u or --set-upstream, even when git suggests it: they write tracking lines into .git/config, a file later steps trust, so the run restores it and reports the change.'
+        fi
 
         if [ -n "$EXTRA_NOTE" ]; then
           guidance="$guidance $EXTRA_NOTE"

@@ -3798,6 +3798,11 @@ jobs:
       #                      issue per exact command buried real defects
       #                      (eight open at once before the 2026-10-01
       #                      board reset). Widening grants is #827's call.
+      #   trusted-file-tampered  claude-code-action restored a file later
+      #                      steps trust (.git/config after an agent's
+      #                      `git push -u`, #1167); the pipeline's own push
+      #                      names its destination, so the restore is a
+      #                      recovery, not a defect.
       # turn-budget-trend is deliberately NOT exempt: closing its issue is
       # how a maintainer acknowledges a trend (collect-turn-budget's
       # suppression pre-check reads closed issues by fingerprint), so an
@@ -3812,7 +3817,7 @@ jobs:
         run: |
           set -uo pipefail
           case "$FINDING_CLASS" in
-            narrative-drift|denied-tool)
+            narrative-drift|denied-tool|trusted-file-tampered)
               echo "issueless=true" >> "$GITHUB_OUTPUT" ;;
             *)
               echo "issueless=false" >> "$GITHUB_OUTPUT" ;;
