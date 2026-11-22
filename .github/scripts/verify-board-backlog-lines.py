@@ -369,14 +369,22 @@ def run_release_attempt(case):
             return _Proc(case.get("list_rc", 0),
                          "".join(json.dumps(pr) + "\n" for pr in case.get("prs", [])))
         if cmd[:3] == ["gh", "pr", "close"]:
-            return _Proc(case.get("close_rc", 0))
+            # `close_rcs`: the exit of each close in turn (the last repeats).
+            rcs = case.get("close_rcs") or [case.get("close_rc", 0)]
+            tries = sum(1 for c in calls if c[:3] == ["gh", "pr", "close"])
+            return _Proc(rcs[min(tries, len(rcs)) - 1])
         if cmd[:3] == ["gh", "issue", "comment"]:
             return _Proc(case.get("post_rc", 0))
         return _Proc(1)
 
     line_id = case["line_id"]
-    with contextlib.redirect_stderr(io.StringIO()):
-        got = fn(889, line_id, run=run, repository="o/r")
+    import time
+    real_sleep, time.sleep = time.sleep, lambda _s: None  # a retried close waits for nothing here
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            got = fn(889, line_id, run=run, repository="o/r")
+    finally:
+        time.sleep = real_sleep
     errors = []
     want = case["expect"]
     if (got is None) != (want is None) or (want is not None and want not in got):

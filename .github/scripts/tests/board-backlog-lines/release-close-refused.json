@@ -11,6 +11,8 @@
   "close_rc": 1,
   "expect": "could not be closed",
   "expect_closes": [
+    41,
+    41,
     41
   ],
   "expect_record": true,

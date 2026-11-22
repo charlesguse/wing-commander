@@ -623,7 +623,7 @@ def hold_for_keywords(issue, line_id, site, branch, base_sha, hits, run=None):
     return "held"
 
 
-def release_attempt(issue, line_id, run=None, repository=None):
+def release_attempt(issue, line_id, run=None, repository=None, sleep=None, close_attempts=3):
     """#1135 option (c): a released line's held attempt ends. Its open pull
     request -- head `branch_for(issue, line_id)` in this repository, body
     citing this line (pr_cites_line()) -- is closed with a comment saying
@@ -633,6 +633,9 @@ def release_attempt(issue, line_id, run=None, repository=None):
     no later run does this again (decide_line_item()'s `released`). A pull
     request the token could not close is named in that record with the
     command a maintainer runs, as the hold comment names the release.
+    A failed close is tried `close_attempts` times in all before it
+    counts as refused: the record makes a refusal final, so one transient
+    API error must not leave the PR open beside the fresh claim.
     Idempotent: with no open pull request (closed already, merged, or never
     opened) only the record is posted. Returns the one-line outcome, or
     None when the pull requests could not be read or the record could not
@@ -664,9 +667,15 @@ def release_attempt(issue, line_id, run=None, repository=None):
                "is closed: its merge could no longer tick the line, which can now be claimed fresh "
                "under a new id and branch. Branch `{2}` is left in place.").format(line_id, issue, branch)
     closed, refused = [], []
+    sleep = sleep or __import__("time").sleep
     for pr in prs:
-        shut = run(["gh", "pr", "close", str(pr["number"]), "-R", repository, "--comment", pr_note],
-                   capture_output=True, text=True)
+        for attempt in range(max(1, close_attempts)):
+            if attempt:
+                sleep(5 * attempt)
+            shut = run(["gh", "pr", "close", str(pr["number"]), "-R", repository, "--comment", pr_note],
+                       capture_output=True, text=True)
+            if shut.returncode == 0:
+                break
         if shut.returncode == 0:
             closed.append(pr["number"])
         else:
