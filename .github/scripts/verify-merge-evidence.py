@@ -251,6 +251,70 @@ def check_review_round2():
     return problems
 
 
+class _Patched:
+    """Swaps module attributes for in-process fakes and puts them back."""
+
+    def __init__(self, **swaps):
+        self.swaps = swaps
+        self.saved = {}
+
+    def __enter__(self):
+        for dotted, value in self.swaps.items():
+            owner, name = self._owner(dotted)
+            self.saved[dotted] = getattr(owner, name)
+            setattr(owner, name, value)
+        return self
+
+    def __exit__(self, *exc):
+        for dotted, value in self.saved.items():
+            owner, name = self._owner(dotted)
+            setattr(owner, name, value)
+
+    @staticmethod
+    def _owner(dotted):
+        if dotted.startswith("board_merge__"):
+            return me.board_merge, dotted[len("board_merge__"):]
+        return me, dotted
+
+
+def check_review_round3_rollup():
+    """Finding 3 (round 3): the merged head's statuses come from their full
+    history and its check runs from every attempt, so cut_rollup() can pick
+    what stood at the merge."""
+    problems = []
+    calls = []
+
+    def fake_gh_ok(args):
+        url = args[1]
+        calls.append(url)
+        if "/actions/runs?" in url:
+            return json.dumps({"check_suite_id": 7, "name": "lint · workflows"}) + "\n"
+        if "/check-runs" in url:
+            return json.dumps({"name": "lint", "status": "completed", "conclusion": "success",
+                               "started_at": "2026-11-10T09:00:00Z", "completed_at": "2026-11-10T09:30:00Z",
+                               "check_suite": {"id": 7}}) + "\n"
+        if "/statuses" in url and "--jq" in args and args[args.index("--jq") + 1].startswith(".[]"):
+            return "\n".join(json.dumps({"context": "ci/x", "state": s, "created_at": t})
+                             for s, t in (("failure", "2026-11-10T13:00:00Z"), ("success", "2026-11-10T11:00:00Z"))) + "\n"
+        raise subprocess.CalledProcessError(1, args, "", "unexpected call {0}".format(args))
+
+    with _Patched(_gh_ok=fake_gh_ok):
+        try:
+            rollup = me._rest_rollup("o/r", "abc")
+        except subprocess.CalledProcessError as exc:
+            return ["rollup: {0}".format(exc.stderr)]
+    if not any("/check-runs?" in u and "filter=all" in u for u in calls):
+        problems.append("rollup: check runs are read without filter=all, so a re-run hides the attempt at the merge")
+    if not any("/statuses?" in u for u in calls):
+        problems.append("rollup: commit statuses come from the combined status, not their history")
+    if len([e for e in rollup if e.get("context") == "ci/x"]) != 2:
+        problems.append("rollup: not every status in the history is kept for the cut")
+    cut, _left = me.cut_rollup(rollup, "2026-11-10T12:00:00Z")
+    if [e.get("state") for e in cut if e.get("context") == "ci/x"] != ["SUCCESS"]:
+        problems.append("cut: the status as of the merge is not the latest set at or before it")
+    return problems
+
+
 def _stub_gh(directory, mode):
     list_arm = (gh_error_stub_arm("run list", "404", "Not Found") if mode == "404"
                 else gh_error_stub_arm("run list", "502", "Bad Gateway") if mode == "502"
@@ -390,7 +454,7 @@ def check_negatives(text):
 def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
-        + check_review_round1() + check_review_round2()
+        + check_review_round1() + check_review_round2() + check_review_round3_rollup()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
     wf = os.path.join(REPO, WORKFLOW)
     if os.path.exists(wf):

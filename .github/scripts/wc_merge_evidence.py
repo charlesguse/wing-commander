@@ -282,6 +282,33 @@ def _after(stamp, merged_at):
     return not stamp or str(stamp) > merged_at
 
 
+def cut_rollup(rollup, merged_at):
+    """-> (entries as of `merged_at`, how many were left out as later).
+
+    `rollup` holds every check run (all attempts) and every commit status
+    ever set on the head, as _rest_rollup() reads them. A commit status
+    (`context`) counts as its latest state set at or before the merge; a
+    check run as the latest attempt of its (workflow, name) started at or
+    before it, and one that had not finished by the merge counts as not
+    finished, whatever it concluded later. Entries started after the merge
+    are left out."""
+    left_out = 0
+    latest = {}
+    for index, entry in enumerate(rollup):
+        status = "context" in entry
+        stamp = entry.get("startedAt") if status else (entry.get("startedAt") or entry.get("completedAt"))
+        if _after(stamp, merged_at):
+            left_out += 1
+            continue
+        if not status and _after(entry.get("completedAt"), merged_at):
+            entry = dict(entry, status="IN_PROGRESS", conclusion="")
+        key = ("status", entry.get("context")) if status else ("check", entry.get("workflowName"), entry.get("name"))
+        # Ties keep the first seen: GitHub lists statuses newest first.
+        if key not in latest or str(stamp) > str(latest[key][0]):
+            latest[key] = (stamp, index, entry)
+    return [entry for _stamp, _index, entry in sorted(latest.values(), key=lambda t: t[1])], left_out
+
+
 def cut_snapshot(snap, merged_at):
     """FR-012: the snapshot with everything dated after `merged_at` left out,
     so the same evaluators judge the merge as of the moment it happened."""
@@ -297,13 +324,8 @@ def cut_snapshot(snap, merged_at):
         return kept
 
     if snap.get("statusCheckRollup") is not None:
-        rollup = []
-        for entry in snap["statusCheckRollup"]:
-            stamp = entry.get("startedAt") or entry.get("completedAt")
-            if _after(stamp, merged_at):
-                left_out += 1
-            else:
-                rollup.append(entry)
+        rollup, left_out_checks = cut_rollup(snap["statusCheckRollup"], merged_at)
+        left_out += left_out_checks
         cut["statusCheckRollup"] = rollup
     cut["comments"] = keep(snap.get("comments"), "created_at")
     if snap.get("issue_comments") is not None:
@@ -617,8 +639,10 @@ def run_verdicts(repo, bot_login, default_branch, out_path, final_prefix, spec_p
 
 
 def _rest_rollup(repo, sha):
-    """The head commit's check runs and statuses in the rollup shape the
-    reused evaluators read, each with the time the audit cuts on."""
+    """Every check run (all attempts, `filter=all`) and every commit status
+    ever set on the head (the full statuses history, not the combined
+    latest-per-context status), in the rollup shape the reused evaluators
+    read, each with its times. cut_rollup() picks what stood at the merge."""
     runs = _gh_ok(["api", "repos/{0}/actions/runs?head_sha={1}&per_page=100".format(repo, sha), "--paginate",
                    "--jq", ".workflow_runs[] | {check_suite_id, name} | tojson"])
     suites = {}
@@ -627,7 +651,7 @@ def _rest_rollup(repo, sha):
             item = json.loads(line)
             suites[item["check_suite_id"]] = item["name"]
     rollup = []
-    for line in _gh_ok(["api", "repos/{0}/commits/{1}/check-runs?per_page=100".format(repo, sha), "--paginate",
+    for line in _gh_ok(["api", "repos/{0}/commits/{1}/check-runs?filter=all&per_page=100".format(repo, sha), "--paginate",
                         "--jq", ".check_runs[] | tojson"]).splitlines():
         if not line.strip():
             continue
@@ -636,8 +660,8 @@ def _rest_rollup(repo, sha):
                        "conclusion": (c.get("conclusion") or "").upper(),
                        "completedAt": c.get("completed_at"), "startedAt": c.get("started_at"),
                        "workflowName": suites.get((c.get("check_suite") or {}).get("id"), "")})
-    for line in _gh_ok(["api", "repos/{0}/commits/{1}/status?per_page=100".format(repo, sha), "--paginate",
-                        "--jq", ".statuses[] | tojson"]).splitlines():
+    for line in _gh_ok(["api", "repos/{0}/commits/{1}/statuses?per_page=100".format(repo, sha), "--paginate",
+                        "--jq", ".[] | tojson"]).splitlines():
         if not line.strip():
             continue
         s = json.loads(line)
