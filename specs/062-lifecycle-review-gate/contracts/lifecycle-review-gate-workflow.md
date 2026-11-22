@@ -23,7 +23,10 @@ window").
    issue's own marker, `wc_lifecycle_review_marker.py` — nothing this gate
    does ever commits to the reviewed branch, so no peel is needed;
    T069/T075's commit-subject peel, `wc_review_gate_settled_head.py`, is
-   deleted), picks the oldest. Outputs `pr-number`, `issue`, `spec-dir`,
+   deleted), then picks the oldest whose checks and mergeability
+   `lifecycle_readiness.py`'s `select_prefilter()` accepts (#889), or the
+   oldest outright when none is ready, so `readiness` states its unmet
+   condition. Outputs `pr-number`, `issue`, `spec-dir`,
    `head-sha` (the PR's raw current head), `review-gate-head-sha` (the
    RECORDED value read off the marker, threaded through for `readiness` to
    compare against its own fresh snapshot rather than comparing `head-sha`
@@ -116,7 +119,7 @@ equivalent to apply).
   `wing-commander-board-stop-check` applies to board-loop issues (that
   composite itself is not used here; see job 7).
 - **Two lifecycle PRs ready at once**: the single concurrency group
-  serializes them; `select` picks the oldest each run.
+  serializes them; `select` picks the oldest ready one each run.
 - **Human changes-requested review during a round**: `disposition` and
   `merge` both re-read `gh pr view --json reviews` fresh (D6) rather than
   a value cached earlier in the same run — a round that completes after a

@@ -278,7 +278,10 @@ jobs:
           # `readiness` job re-evaluates all five on a fresh snapshot and
           # stays the last word. A failed snapshot read skips the candidate
           # rather than stop select: unlike the marker read above, skipping
-          # can only delay a review, never repeat one.
+          # can only delay a review, never repeat one. When no candidate is
+          # ready, the oldest is selected anyway, as before #889, so
+          # `readiness` still posts its unmet condition on the lifecycle
+          # issue (spec 062 US1 scenario 4).
           mapfile -t ordered < <(printf '%s\n' "${candidates[@]}" | sort)
           for cand in "${ordered[@]}"; do
             [ -z "$cand" ] && continue
@@ -300,6 +303,10 @@ jobs:
             best_review_gate_head_sha="$recorded_head_sha"
             break
           done
+          if [ -z "$best_number" ] && [ -n "${ordered[0]:-}" ]; then
+            IFS=$'\t' read -r _created best_number best_issue best_spec_dir best_head_sha best_review_gate_head_sha <<< "${ordered[0]}"
+            echo "lifecycle-review-gate: no candidate is ready -- PR #$best_number, the oldest, goes to readiness to post its unmet condition." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
           if [ -z "$best_number" ]; then
             echo "lifecycle-review-gate: nothing to do -- no lifecycle PR is ready for a new review round." >> "$GITHUB_STEP_SUMMARY"

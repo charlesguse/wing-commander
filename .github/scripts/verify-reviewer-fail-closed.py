@@ -1994,8 +1994,10 @@ SELECT_READY_CASES = (
     # (title, pending, view_fail, expected pr-number, summary text)
     ("an older candidate with checks running falls through to a younger ready one",
      "3", "", "4", "PR #3 skipped -- not ready yet (checks_green unmet)"),
-    ("no ready candidate selects nothing", "3 4", "", "",
-     "PR #4 skipped -- not ready yet (checks_green unmet)"),
+    # Spec 062 US1 scenario 4: with none ready, the oldest still goes to
+    # readiness, which posts its unmet condition on the lifecycle issue.
+    ("no ready candidate selects the oldest for readiness to report", "3 4", "", "3",
+     "PR #3, the oldest, goes to readiness to post its unmet condition"),
     ("a failed snapshot read skips that candidate only", "", "3", "4",
      "PR #3 skipped -- its checks and mergeability could not be read"),
     ("the oldest ready candidate still wins", "", "", "3", "selected PR #3"),
@@ -2022,7 +2024,7 @@ def check_lifecycle_select_readiness(select_script, tmproot):
     failures = select_ready_failures(select_script, tmproot)
     if not failures:
         print("[ok] #889 lifecycle select: an unready older candidate is skipped "
-              "for a younger ready one; none ready selects nothing")
+              "for a younger ready one; none ready selects the oldest for readiness")
     return failures
 
 
@@ -2031,6 +2033,8 @@ SELECT_READY_MUTATIONS = (
     ("readiness skip removed", "jq -r '.ready')\" != \"true\"",
      "jq -r '.ready')\" = \"never\"", SELECT_READY_CASES[0]),
     ("oldest-first order reversed", "| sort)", "| sort -r)", SELECT_READY_CASES[3]),
+    ("none-ready fallback removed", "if [ -z \"$best_number\" ] && [ -n \"${ordered[0]:-}\" ]; then",
+     "if false; then", SELECT_READY_CASES[1]),
 )
 
 
