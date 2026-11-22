@@ -1,7 +1,8 @@
 name: wing-commander-watch-guard
 description: >
   The two opening steps of a read-only watcher job (wing-commander-merge-evidence.yml,
-  both jobs): refuse a run whose ref is not the default branch, then read
+  both jobs, and wing-commander-proof-list.yml): refuse a run whose ref is
+  not the default branch (every run, or only a dispatch), then read
   the job's pause switch with wc_board_status._switch_on, the one home of
   that test, and say whether the job stands down. It reads nothing from
   GitHub, so the refusal still comes before every step that does. Needs the
@@ -19,6 +20,13 @@ inputs:
   switch-name:
     description: The pause variable's name, for the log line.
     required: true
+  refuse-on:
+    description: >
+      `every-run` (the default) refuses any run off the default branch;
+      `dispatch` refuses only a workflow_dispatch off it, as the proof list
+      always has. Any other value fails the step.
+    required: false
+    default: every-run
   switch-value:
     description: >
       The pause variable's value (vars.<switch-name>). A composite cannot
@@ -40,9 +48,16 @@ runs:
       shell: bash
       env:
         REF: ${{ github.ref }}
+        EVENT: ${{ github.event_name }}
         DEFAULT_BRANCH: ${{ inputs.default-branch }}
         WHAT: ${{ inputs.what }}
+        REFUSE_ON: ${{ inputs.refuse-on }}
       run: |
+        case "$REFUSE_ON" in
+          every-run) ;;
+          dispatch) [ "$EVENT" = "workflow_dispatch" ] || exit 0 ;;
+          *) echo "::error::wing-commander-watch-guard: refuse-on must be every-run or dispatch, not '$REFUSE_ON'"; exit 1 ;;
+        esac
         if [ -z "$DEFAULT_BRANCH" ] || [ "$REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
           echo "::error::$WHAT only on the default branch (ref '$REF', default '$DEFAULT_BRANCH')"
           exit 1

@@ -7,9 +7,12 @@ name: "wing-commander-proof-list"
 # shows it, in the "Board status" issue. No agent, no App token, no dispatch,
 # no comment, label, close or issue edit.
 #
-# Step gating (research D17): no always() or !cancelled() anywhere. A refused
-# run stops every later step; the pause output gates checkout, build and upload
-# under the default success(); a failed build stops the upload.
+# Step gating (research D17): no always() or !cancelled() anywhere. The job
+# checks out the default branch first, because the refusal and the pause
+# test live in the wing-commander-watch-guard composite (one home with the
+# merge evidence audit); its refusal stays dispatch-only. A refused run stops
+# every later step; the pause output gates build and upload under the default
+# success(); a failed build stops the upload.
 on:
   schedule:
     - cron: "19 6 * * *"
@@ -30,40 +33,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Refuse a dispatch off the default branch
-        shell: bash
-        env:
-          EVENT: ${{ github.event_name }}
-          REF: ${{ github.ref }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          if [ "$EVENT" = "workflow_dispatch" ] \
-            && { [ -z "$DEFAULT_BRANCH" ] || [ "$REF" != "refs/heads/$DEFAULT_BRANCH" ]; }; then
-            echo "::error::the proof list builds only on the default branch (ref '$REF', default '$DEFAULT_BRANCH')"
-            exit 1
-          fi
-
-      - name: Check the pause switch
-        id: pause
-        shell: bash
-        env:
-          PAUSED: ${{ vars.WING_COMMANDER_PROOF_LIST_PAUSED }}
-        run: |
-          # Same test as wc_board_status._switch_on: trimmed, case-folded `true`.
-          value=$(printf '%s' "$PAUSED" | tr '[:upper:]' '[:lower:]' | xargs)
-          if [ "$value" = "true" ]; then
-            echo "paused=true" >> "$GITHUB_OUTPUT"
-            echo "WING_COMMANDER_PROOF_LIST_PAUSED is set; standing down."
-          else
-            echo "paused=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Checkout
-        if: steps.pause.outputs.paused != 'true'
         uses: actions/checkout@v5
         with:
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Refuse a dispatch off the default branch, then check the pause switch
+        id: pause
+        uses: ./.github/actions/wing-commander-watch-guard
+        with:
+          what: the proof list builds
+          default-branch: ${{ github.event.repository.default_branch }}
+          refuse-on: dispatch
+          switch-name: WING_COMMANDER_PROOF_LIST_PAUSED
+          switch-value: ${{ vars.WING_COMMANDER_PROOF_LIST_PAUSED }}
 
       - name: Build the proof list
         if: steps.pause.outputs.paused != 'true'

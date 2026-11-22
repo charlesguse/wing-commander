@@ -52,16 +52,9 @@ WORKFLOW = ".github/workflows/wing-commander-merge-evidence.yml"
 GUARD_USES = "./.github/actions/wing-commander-watch-guard"
 GUARD_ACTION = ".github/actions/wing-commander-watch-guard/action.yml"
 CHECKOUT_REF = "${{ github.event.repository.default_branch }}"
-# The one workflow that still carries its own shell copy of the pause test.
-# Its refusal applies to dispatches only, a different shape, so it was left
-# alone; moving it onto the composite is a follow-up of #1173's round-3 fixes.
-PAUSE_SHELL_COPIES_LEFT = (".github/workflows/wing-commander-proof-list.yml",)
-# Tracked by the Maintenance backlog, #889 (gate 124 reads this entry); delete
-# both when proof-list moves onto the watch-guard composite.
-EXEMPT_PAUSE_SHELL_COPY = {
-    "proof-list-pause-copy": dict(reason="its refusal applies to dispatches only, a different shape",
-                                  issue=(889,)),
-}
+# The proof list uses the guard too, with its dispatch-only refusal
+# (#1173 round 5, finding 7); no workflow keeps a shell copy of the test.
+PROOF_LIST_WORKFLOW = ".github/workflows/wing-commander-proof-list.yml"
 # SC-003 replay corpus: pending the maintainer capture (tasks.md T029). Tracked
 # by the Maintenance backlog, #889 (gate 124 reads this entry; the final PR
 # closes #1143, so it cannot be the tracker); delete it when sc003/ lands.
@@ -630,7 +623,7 @@ def _run_blocks(doc):
 _PAUSE_SHELL_RE = re.compile(r"tr\s+'\[:upper:\]'\s+'\[:lower:\]'[^\n]*xargs")
 
 
-def check_guard_single_home(workflow_text, action_text, workflows=None, copies_left=PAUSE_SHELL_COPIES_LEFT):
+def check_guard_single_home(workflow_text, action_text, workflows=None, copies_left=()):
     """Finding 8 (round 3), CLAUDE.md "Shared logic has exactly one home":
     the merge-evidence workflow pastes neither the refusal nor the pause
     test; the guard's pause test calls wc_board_status._switch_on rather
@@ -664,6 +657,45 @@ def check_guard_single_home(workflow_text, action_text, workflows=None, copies_l
         if any(_PAUSE_SHELL_RE.search(b) and "paused=" in b for b in _run_blocks(other_doc)):
             problems.append("{0}: a shell copy of the pause test; call {1} or wc_board_status._switch_on".format(
                 rel, GUARD_USES))
+    return problems
+
+
+def check_proof_list_guard(text):
+    """Round 5, finding 7: the proof list opens with a pinned checkout, then
+    the guard with its dispatch-only refusal and its own switch."""
+    import yaml
+    steps = next(iter(((yaml.safe_load(text) or {}).get("jobs") or {}).values()), {}).get("steps") or []
+    guard = steps[1] if len(steps) > 1 else {}
+    with_ = guard.get("with") or {}
+    if not steps or not str(steps[0].get("uses") or "").startswith("actions/checkout@") or steps[0].get("if") \
+            or (steps[0].get("with") or {}).get("ref") != CHECKOUT_REF:
+        return ["{0}: the job does not open with a checkout pinned to the default branch".format(PROOF_LIST_WORKFLOW)]
+    if guard.get("uses") != GUARD_USES or guard.get("id") != "pause" or with_.get("refuse-on") != "dispatch" \
+            or "WING_COMMANDER_PROOF_LIST_PAUSED" not in str(with_.get("switch-value")):
+        return ["{0}: the second step is not {1} (id pause, refuse-on: dispatch, the proof list's switch)".format(
+            PROOF_LIST_WORKFLOW, GUARD_USES)]
+    return []
+
+
+def check_guard_refusal_modes(action_text):
+    """The guard's refusal, run as the runner would: `every-run` refuses any
+    run off the default branch, `dispatch` only a dispatch, and another
+    mode fails."""
+    import yaml
+    step = next((st for st in yaml.safe_load(action_text)["runs"]["steps"] if "REFUSE_ON" in str(st.get("env"))), None)
+    if step is None:
+        return ["{0}: the refusal step takes no refuse-on mode".format(GUARD_ACTION)]
+    problems = []
+    for mode, event, ref, want in (("every-run", "schedule", "refs/heads/topic", 1),
+                                   ("every-run", "schedule", "refs/heads/main", 0),
+                                   ("dispatch", "schedule", "refs/heads/topic", 0),
+                                   ("dispatch", "workflow_dispatch", "refs/heads/topic", 1),
+                                   ("dispatch", "workflow_dispatch", "refs/heads/main", 0),
+                                   ("sometimes", "schedule", "refs/heads/main", 1)):
+        env = dict(os.environ, REF=ref, EVENT=event, DEFAULT_BRANCH="main", WHAT="x runs", REFUSE_ON=mode)
+        got = subprocess.run(["bash", "-c", step["run"]], capture_output=True, text=True, env=env).returncode
+        if (got != 0) != bool(want):
+            problems.append("{0}: refuse-on {1}, {2} on {3} exits {4}".format(GUARD_ACTION, mode, event, ref, got))
     return problems
 
 
@@ -913,6 +945,14 @@ def main():
         problems += check_workflow(text) + check_shape(text) + check_no_reader() + check_negatives(text)
         action = read(GUARD_ACTION) if os.path.exists(os.path.join(REPO, GUARD_ACTION)) else ""
         problems += check_guard_single_home(text, action)
+        if action:
+            problems += check_guard_refusal_modes(action)
+        proof_list = read(PROOF_LIST_WORKFLOW)
+        problems += check_proof_list_guard(proof_list)
+        for label, mutated in (("the dispatch-only input dropped", proof_list.replace("          refuse-on: dispatch\n", "")),
+                               ("the guard swapped out", proof_list.replace("uses: " + GUARD_USES, "uses: ./x", 1))):
+            if mutated == proof_list or not check_proof_list_guard(mutated):
+                problems.append("self-check: the proof-list guard check did not notice {0}".format(label))
         if action:
             problems += check_guard_agreement(action) + check_guard_negatives(text, action)
     # Shown to fail: each check must notice a broken subject.
