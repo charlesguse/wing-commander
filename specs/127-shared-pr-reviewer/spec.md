@@ -20,6 +20,14 @@ Two read-only trials on 2026-11-15 (a finding agent and a checking agent each) s
 
 **Layer**: This specification describes a new reviewer for this repository (the consuming instrument), built as a callable workflow plus a thin wrapper so that later publication is a decision, not a rewrite. It does not add to or change the published contract in this feature.
 
+## Scope
+
+In scope: the shared reviewer (callable workflow and thin wrapper), its round record and memory, its run confirmation, and **one line added to CLAUDE.md's fix-PR section**:
+
+> A session dispatches the shared reviewer on each of its fix PRs, on the head its hand review covers, during report-only use.
+
+That line changes the rules agents run under, so it is approved with this spec; it is written by the implement stage, not in the spec PR (FR-004). Out of scope: any change to the existing reviewers (FR-005) and any round for a pull request that is not a fix PR (FR-001). *(Spec review round 1, owner decision 2026-11-22.)*
+
 ## Clarifications
 
 ### Session 2026-11-22
@@ -45,7 +53,7 @@ A session opens a fix PR for a defect recorded before the change (an issue, a Ma
 1. **Given** a session fix PR that cites its originating issue, **When** the reviewer is started for it from the default branch, **Then** the finding job is given the originating issue's text as the statement of purpose, and the PR description only as the author's claim to be checked.
 2. **Given** a fix PR that fixes a real problem and carries a check that fails without the fix, and no other defect, **When** a round runs, **Then** the record's verdict is clean, with the three purpose answers recorded as upheld.
 3. **Given** a fix PR whose added check would pass without the fix, **When** a round runs, **Then** the record carries an upheld finding saying so, and the verdict is not clean.
-4. **Given** the finding job proposes a breakage claim with no concrete failing case, or one the checking job cannot reproduce from the code, **When** the checking job evaluates it, **Then** it is recorded as not upheld and does not affect the verdict.
+4. **Given** the finding job proposes a breakage claim with no concrete failing case, or one the checking job cannot reproduce from the code, **When** the checking job evaluates it, **Then** it is recorded as dismissed, with its reason, and does not affect the verdict. *(Spec review round 1, owner decision 2026-11-22.)*
 5. **Given** any round on any pull request, **When** it finishes, **Then** the pull request's branch, labels, merge state, review approval state and linked issue are unchanged by the reviewer, apart from the one posted record.
 
 ---
@@ -83,6 +91,8 @@ Any later consumer (a session, a future proposal that moves an existing reviewer
 1. **Given** a record naming a run of this reviewer's workflow, on the default branch, that reviewed the commit the record names and finished, **When** it is read back, **Then** it is confirmed.
 2. **Given** a record naming a run of another workflow, a run on another branch, a run for another commit, a run that cannot be fetched, or no run, **When** it is read back, **Then** it is unconfirmed and counts for nothing.
 3. **Given** several confirmed records on one pull request, **When** they are read, **Then** the latest round for a given commit is identifiable without parsing prose.
+4. **Given** a final PR with lifecycle review gate rounds, and a shared-reviewer round record on it carrying the shared reviewer's reviewer field, **When** the lifecycle review gate reads its convergence history (`read_round_records`), **Then** the shared-reviewer record is not counted and the gate's convergence count is the same as without it. *(Spec review round 1, owner decision 2026-11-22.)*
+5. **Given** a dispatch naming a pull request that is not a fix PR (a spec, plan or final PR), **When** the run starts, **Then** it refuses before any agent runs, writes no round record, and says in the run's summary that only the fix round is defined in this feature (FR-001). *(Spec review round 1, owner decision 2026-11-22.)*
 
 ---
 
@@ -98,6 +108,7 @@ The reviewer runs only from the default branch. A dispatch that targets any othe
 
 1. **Given** a dispatch on a non-default ref, **When** the run starts, **Then** it refuses before any agent step and writes no record.
 2. **Given** a pull request that modifies the reviewer's own workflow, prompts or scripts, **When** it is reviewed, **Then** the round uses the default branch's copies, not the pull request's.
+3. **Given** a pull request whose named check or gate-suite code tries to read a model credential or App token, or to overwrite the checking job's results, **When** that code runs in the code-run job (FR-012), **Then** no secret is reachable to it, and the checking job's recorded results change only through the exit codes and output staged to it as data. *(Spec review round 1, owner decision 2026-11-22.)*
 
 ---
 
@@ -111,13 +122,13 @@ Re-dispatching the reviewer on one pull request cannot run without limit. When t
 
 **Acceptance Scenarios**:
 
-1. **Given** a pull request whose confirmed rounds equal the budget, **When** the reviewer is started for it again, **Then** no agent runs and a hand-off record lists the open findings.
+1. **Given** a pull request whose confirmed rounds equal the budget, **When** the reviewer is started for it again, **Then** no agent runs and a hand-off record lists the open findings, as FR-015 defines them, and carries no verdict (FR-025). *(Spec review round 1, owner decision 2026-11-22.)*
 
 ---
 
 ### Edge Cases
 
-- **No pre-existing statement of purpose**: the fix PR cites no issue, backlog line or run. The round runs the breakage questions only, records the purpose answers as "no source of purpose", and the verdict cannot be clean.
+- **No pre-existing statement of purpose**: the fix PR cites no issue, backlog line or run. The round runs the breakage questions only, records the purpose answers as "no source of purpose", and the verdict is `undetermined` unless a blocking finding makes it `findings` (FR-014). *(Spec review round 1, owner decision 2026-11-22.)*
 - **Purpose source is a failing run**: the run's step results and error messages are staged for the finding job, since the diff alone does not show what failed.
 - **The cited purpose source changed after the pull request opened** (edited issue, edited backlog line): the reviewer uses the text as it stood when the pull request was opened where that is recoverable, and says in the record which version it used.
 - **A new commit is pushed while a round runs**: the record names the commit actually reviewed; it never claims the new head.
@@ -126,8 +137,9 @@ Re-dispatching the reviewer on one pull request cannot run without limit. When t
 - **Rate limit or usage-window exhaustion mid-round**: same as a failed checking job; incomplete, stated.
 - **Pull request closed or merged before the round posts**: the record is still posted (it is evidence for the report-only comparison), marked with the state the pull request was in.
 - **Two dispatches for the same pull request at once**: they serialize per pull request; the second sees the first's record as an earlier round.
+- **The reviewer is refused or stopped** (non-default ref, a pull request that is not a fix PR, or the kill switch): no agent runs, no round record is written, and the refusal or stop is stated in the run's summary only; `refused` is never a round verdict (FR-014, FR-022, FR-026). *(Spec review round 1, owner decision 2026-11-22.)*
 - **A forged record in a human or bot comment**: unconfirmed, ignored for memory and for counting (Story 3).
-- **A finding cites only a merged spec's spec.md, plan.md, tasks.md or research.md**: it is not a defect under this repository's rules, and is recorded as not upheld with that reason; contracts under `specs/*/contracts/` remain reviewable like code.
+- **A finding cites only a merged spec's spec.md, plan.md, tasks.md or research.md**: it is not a defect under this repository's rules, and is recorded as dismissed with that reason; contracts under `specs/*/contracts/` remain reviewable like code.
 
 ## Requirements *(mandatory)*
 
@@ -135,10 +147,10 @@ Re-dispatching the reviewer on one pull request cannot run without limit. When t
 
 **Scope and invocation**
 
-- **FR-001**: The repository MUST gain one new reviewer that can review a pull request of any kind (session fix PR, board loop fix PR, spec PR, plan PR, final PR), given a pull request number. In this feature it is put to use only on session fix PRs.
+- **FR-001**: The repository MUST gain one new reviewer, given a pull request number. Its request and record formats MUST accept and record every kind of pull request (session fix PR, board loop fix PR, spec PR, plan PR, final PR). In this feature only the fix round is defined: a request for any other kind MUST be refused visibly, before any agent runs and with no round record (FR-022). Each later proposal defines its own kind's purpose questions. In this feature the reviewer is put to use only on session fix PRs. *(Spec review round 1, owner decision 2026-11-22.)*
 - **FR-002**: The reviewer MUST be built as a callable workflow with a thin wrapper that owns its trigger(s) and repository-specific inputs, so publishing it later changes no behaviour. It is not added to the published contract in this feature.
 - **FR-003**: The reviewer MUST be startable by a manual dispatch naming a pull request number, and by another workflow calling it with one.
-- **FR-004**: On a session's fix PR, the reviewer MUST be started by the session dispatching it explicitly, on the same head commit its hand review covers, so the FR-029 comparison gets exact same-commit pairs at the least spend. It MUST NOT start automatically on pull requests a session opens. A forgotten dispatch leaves that pull request out of the comparison; this gap is accepted, and moving to automatic starts is left to a later decision.
+- **FR-004**: On a session's fix PR, the reviewer MUST be started by the session dispatching it explicitly, on the same head commit its hand review covers, so the FR-029 comparison gets exact same-commit pairs at the least spend. It MUST NOT start automatically on pull requests a session opens. A forgotten dispatch leaves that pull request out of the comparison; this gap is accepted, and moving to automatic starts is left to a later decision. The duty lives in one line this feature adds to CLAUDE.md's fix-PR section (see Scope): "A session dispatches the shared reviewer on each of its fix PRs, on the head its hand review covers, during report-only use." That line changes the rules agents run under and is approved with this spec; the implement stage writes it. *(Spec review round 1, owner decision 2026-11-22.)*
 - **FR-005**: The existing review workflows (spec PR review, lifecycle review gate, board loop review job) and the `review-until-clean` procedure MUST be unchanged by this feature. Moving each onto the shared reviewer is a later proposal each.
 
 **Purpose first**
@@ -150,33 +162,44 @@ Re-dispatching the reviewer on one pull request cannot run without limit. When t
 
 **Two jobs per round**
 
-- **FR-010**: A round MUST consist of two separate jobs: a finding job that produces the purpose answers and candidate findings, and a checking job that shares no conversational context with it and evaluates each answer and each candidate against the code and against the pull request's earlier confirmed rounds.
-- **FR-011**: Only answers and findings the checking job upholds MUST count toward the verdict. Each candidate the checking job does not uphold MUST still be recorded, as not upheld, with its reason.
-- **FR-012**: The checking job MAY run exactly two kinds of code: the change's own named check (the check FR-008(c) asks about) and the repository's gate suite. It MUST run no other code. It MUST run in an isolated job that holds no write credential. Both the isolation and the absence of any write credential MUST be proven as part of this feature (SC-008).
+- **FR-010**: A round MUST consist of two separate agent jobs (plus FR-012's code-run job, which runs no agent): a finding job that produces the purpose answers and candidate findings, and a checking job that shares no conversational context with it and evaluates each answer and each candidate against the code and against the pull request's earlier confirmed rounds. *(Spec review round 1, owner decision 2026-11-22.)*
+- **FR-011**: Only answers and findings the checking job upholds MUST count toward the verdict. Each candidate the checking job does not uphold MUST still be recorded, as dismissed, with its reason (FR-015). *(Spec review round 1, owner decision 2026-11-22.)*
+- **FR-012**: A round MAY run exactly two kinds of the pull request's code: the change's own named check (the check FR-008(c) asks about) and the repository's gate suite. It MUST run no other code. That code MUST run in its own code-run job, separate from both agent jobs, that holds no secret of any kind: no model credential and no App token. The code-run job's exit codes and output MUST be staged to the checking job as data, and nothing else the code-run job writes may reach the checking job or its recorded results. The isolation and the absence of every secret MUST be proven as part of this feature (SC-008). *(Spec review round 1, owner decision 2026-11-22.)*
 - **FR-013**: Whether an upheld finding is blocking MUST be decided by deterministic rules applied to fields the checking job reports, not by the agent's own label. A finding is blocking when it is upheld, it is in the pull request's scope, and its failing case is reachable in this repository's configuration as checked; otherwise it is recorded as non-blocking with the rule that made it so.
-- **FR-014**: The verdict MUST be one of a fixed set: clean (all purpose answers upheld positively and no blocking finding), findings (at least one blocking finding, or a purpose answer upheld negatively), incomplete (a job failed or its output could not be read), or refused (the run was not permitted, FR-022). The verdict MUST be computed by deterministic code from the checked results.
+- **FR-014**: A round record's verdict MUST be one of a fixed set, taken in this order: `incomplete` (a job failed or its output could not be read); else `findings` (at least one blocking finding, or a purpose answer upheld negatively); else `undetermined` (a purpose answer is not determinable, or there is no source of purpose); else `clean` (all purpose answers upheld positively and no blocking finding). The verdict MUST be computed by deterministic code from the checked results. `refused` (the run was not permitted, FR-001, FR-022) and the kill-switch stop (FR-026) are recorded in the run's summary only, never in a round record; the hand-off record (FR-025) carries no verdict. *(Spec review round 1, owner decision 2026-11-22.)*
 
 **Memory (folded from #1110)**
 
-- **FR-015**: Each round MUST be given every finding from the pull request's earlier confirmed rounds, with its identity, its status (open, upheld, not upheld, dismissed, reopened, resolved) and, for a dismissal, its reason.
+- **FR-015**: Each round MUST be given every finding from the pull request's earlier confirmed rounds and recorded dismissals, with its identity, its status and, for a dismissal or reopening, its reason. A finding's status is one of `upheld`, `dismissed`, `reopened` or `resolved`, and changes only as this table allows:
+
+  | Actor | Sets | From | When |
+  |---|---|---|---|
+  | Finding job | nothing | — | It proposes candidates and may cite an earlier id (FR-016); it sets no status. |
+  | Checking job | `upheld` | new candidate | It upholds the candidate. |
+  | Checking job | `dismissed`, with reason | new candidate | It does not uphold the candidate (FR-011). |
+  | Checking job | `reopened`, with reason | `dismissed` or `resolved` | It upholds a cited repeat's showing that the dismissal was wrong (FR-017), or that a resolved defect is back. |
+  | Checking job | `resolved` | `upheld` or `reopened` | On a later commit, it checks the earlier finding and its failing case no longer reproduces. |
+  | Requester | `dismissed`, with reason | `upheld` or `reopened` | It records a dismissal in the form FR-018 defines. |
+
+  Any other change, and a cited repeat that shows nothing new, leaves the status as it was. A finding is **resolved** only by the checking job's row above; not being raised again does not resolve it. A finding is **open** when its latest status, taken from the confirmed round records in round order and the requester's recorded dismissals after them, is `upheld` or `reopened`. Deterministic code MUST compute the open set this way, for the next round's memory and for the hand-off record (FR-025). *(Spec review round 1, owner decision 2026-11-22.)*
 - **FR-016**: A finding that repeats an earlier one MUST keep the earlier finding's identity even when its title, wording or anchor differs. A finding keeps an earlier finding's identity only when the finding job cites that earlier id and deterministic code verifies that the cited id exists among the pull request's earlier confirmed findings; a citation of an id that does not exist is ignored and the finding gets a new identity. In addition, deterministic code MUST record a "possible repeat of <id>" flag on a new finding whenever its file and line range overlap an earlier finding's; the flag is visible in the record and given to the next round, but identities MUST NEVER be merged on location alone. The identity written into the record MUST be assigned by deterministic code. (Rationale: an uncited repeat shows as a visible overcount, which is preferred to the risk of merging a new real defect into a dismissed finding, which would hide it under FR-017.)
 - **FR-017**: A dismissed finding MUST NOT count toward the verdict, and MUST be reopened only when the round shows why the dismissal was wrong and the checking job upholds that showing. The reopening MUST keep the original identity and record the reason.
-- **FR-018**: A dismissal MUST be recordable by the checking job (a not-upheld candidate is a dismissal with its reason) and by whatever asked for the review, in a form the next round reads. This feature MUST NOT require any existing reviewer to write dismissals.
+- **FR-018**: A dismissal MUST be recordable by the checking job (a candidate it does not uphold is dismissed with its reason) and by whatever asked for the review, in a form the next round reads, under FR-015's table. This feature MUST NOT require any existing reviewer to write dismissals. *(Spec review round 1, owner decision 2026-11-22.)*
 
 **The record**
 
 - **FR-019**: Each round MUST write exactly one record on the pull request, containing: the commit reviewed, the verdict, the round number, each finding with its identity and status, the purpose answers, the reviewer's own commit (the default-branch commit the reviewer ran from), and the id of the Actions run that wrote it.
-- **FR-020**: The record MUST be machine-readable in one form for every kind of pull request, so "was this commit reviewed, by this reviewer, with what verdict" is answerable without parsing prose. The record SHOULD extend, not fork, the round record the existing Actions reviewers share (spec 116).
+- **FR-020**: The record MUST be machine-readable in one form for every kind of pull request, so "was this commit reviewed, by this reviewer, with what verdict" is answerable without parsing prose. The record SHOULD extend, not fork, the round record the existing Actions reviewers share (spec 116). The record MUST carry a reviewer field naming this reviewer, and existing readers of spec 116's round record (`read_round_records` in `wc_convergence.py`, including the lifecycle review gate's convergence history) MUST never count a shared-reviewer record in this feature. FR-005 still holds: those readers' behaviour on their own records is unchanged. *(Spec review round 1, owner decision 2026-11-22.)*
 - **FR-021**: A record MUST count only after its named run is read back and confirmed as a run of this reviewer's workflow, on the default branch, for the commit the record names, in the manner of `verification_run_confirms` in `board_merge.py`. An unconfirmed record MUST count for nothing, for memory (FR-015) and for any reader.
 
 **Trust and limits**
 
-- **FR-022**: The reviewer MUST refuse, before any agent runs, a run that is not on the default branch, and MUST write no round record for it; the refusal MUST be visible in the run's summary.
+- **FR-022**: The reviewer MUST refuse, before any agent runs, a run that is not on the default branch, and MUST write no round record for it; the refusal MUST be visible in the run's summary, and `refused` is never written into a round record (FR-014). *(Spec review round 1, owner decision 2026-11-22.)*
 - **FR-023**: The reviewer MUST only report. It MUST NOT push, fix, merge, approve, request changes in a way that blocks a merge, label, close or retitle anything. What happens to its findings stays with whatever asked for the review.
-- **FR-024**: Each agent job MUST declare an explicit model and a bounded turn budget, per the constitution's Principle II. The models default to `claude-sonnet-5-5` for both jobs and are overridable by repository variable.
-- **FR-025**: Rounds on one pull request MUST be bounded by a per-pull-request budget, defaulting to 5 confirmed rounds; when it is spent, a further start MUST run no agent and write a hand-off record listing the open findings (Story 5).
-- **FR-026**: Rounds on one pull request MUST serialize, and the reviewer MUST carry a repository-level kill switch in the `WING_COMMANDER_*_PAUSED` family that stops it before any agent runs.
-- **FR-027**: Issue, pull request and comment text given to either job MUST be framed as untrusted data, and neither job may have web tools or any write credential.
+- **FR-024**: Each agent job MUST declare an explicit model and a bounded turn budget, per the constitution's Principle II. The models default to `claude-sonnet-5-5` for both jobs and are overridable by repository variable. No effort level is set: neither job passes an effort override unless a repository variable sets one. *(Spec review round 1, owner decision 2026-11-22.)*
+- **FR-025**: Rounds on one pull request MUST be bounded by a per-pull-request budget, defaulting to 5 confirmed rounds; when it is spent, a further start MUST run no agent and write a hand-off record listing the open findings (FR-015) (Story 5). The hand-off record carries no verdict. *(Spec review round 1, owner decision 2026-11-22.)*
+- **FR-026**: Rounds on one pull request MUST serialize, and the reviewer MUST carry a repository-level kill switch in the `WING_COMMANDER_*_PAUSED` family that stops it before any agent runs. A kill-switch stop writes no round record and no verdict; it is stated in the run's summary only (FR-014). *(Spec review round 1, owner decision 2026-11-22.)*
+- **FR-027**: Issue, pull request and comment text, and the code-run job's staged output, given to either agent job MUST be framed as untrusted data, and neither agent job may have web tools or any write credential. The code-run job holds no secret of any kind (FR-012). *(Spec review round 1, owner decision 2026-11-22.)*
 
 **Report-only period**
 
@@ -186,13 +209,14 @@ Re-dispatching the reviewer on one pull request cannot run without limit. When t
 ### Key Entities
 
 - **Review request**: a pull request number, the kind of pull request, the purpose source (issue, backlog line or run) and who asked for the review.
-- **Round**: one finding job and one checking job against one commit of one pull request; has a number within that pull request.
+- **Round**: one finding job, one checking job and, when the change's check or the gate suite is run, one code-run job (FR-012), against one commit of one pull request; has a number within that pull request.
+- **Code-run results**: the exit codes and output of the code-run job, staged to the checking job as data (FR-012).
 - **Candidate finding**: what the finding job proposes: a claim, an anchor, a failing case and, when it repeats one, the earlier identity it cites.
-- **Checked finding**: a candidate after the checking job: upheld or not, with a reason, a blocking/non-blocking result from the deterministic rule, a status, a stable identity and, when its location overlaps an earlier finding's without citing it, a "possible repeat of <id>" flag.
-- **Purpose answers**: the three fix questions (problem real, change fixes it, check fails without the fix), each upheld positively, negatively or not determinable.
-- **Round record**: the one machine-readable record a round posts (FR-019), with the run id that makes it confirmable.
-- **Dismissal**: a finding's not-upheld or refuted status with its reason, carried forward to later rounds.
-- **Hand-off record**: what the reviewer posts instead of a round when the budget is spent.
+- **Checked finding**: a candidate after the checking job: a status from FR-015's table, with a reason, a blocking/non-blocking result from the deterministic rule, a status, a stable identity and, when its location overlaps an earlier finding's without citing it, a "possible repeat of <id>" flag.
+- **Purpose answers**: the three fix questions (problem real, change fixes it, check fails without the fix), each upheld positively, negatively or not determinable; a not-determinable answer, or no source of purpose, makes the verdict `undetermined` unless a higher verdict applies (FR-014).
+- **Round record**: the one machine-readable record a round posts (FR-019), with the run id that makes it confirmable and the reviewer field that keeps spec 116's existing readers from counting it (FR-020).
+- **Dismissal**: a finding's `dismissed` status with its reason, set by the checking job or the requester (FR-015), carried forward to later rounds.
+- **Hand-off record**: what the reviewer posts instead of a round when the budget is spent: the open findings (FR-015), and no verdict.
 
 ## Success Criteria *(mandatory)*
 
@@ -201,16 +225,16 @@ Re-dispatching the reviewer on one pull request cannot run without limit. When t
 - **SC-001**: On at least 5 session fix PRs reviewed during the report-only period, every round posts exactly one confirmed record and makes no other change to the pull request (zero pushes, labels, merges or approvals by the reviewer).
 - **SC-002**: A record whose named run is not a default-branch run of this reviewer for the named commit is reported unconfirmed in 100% of checked-in test cases (wrong workflow, wrong branch, wrong commit, missing run, unfetchable run).
 - **SC-003**: A dispatch on a non-default ref ends with zero agent runs and zero records in 100% of attempts.
-- **SC-004**: In a seeded test where round 2 re-raises a round-1 finding under a different title and anchor and cites its id, the round-2 record carries the round-1 identity and adds no new finding for it; a dismissed finding re-raised with a citation but without a showing stays dismissed; an uncited round-2 finding overlapping a round-1 finding's location gets a new identity with a "possible repeat of <id>" flag and never the round-1 identity; a citation of a non-existent id yields a new identity.
+- **SC-004**: In a seeded test where round 2 re-raises a round-1 finding under a different title and anchor and cites its id, the round-2 record carries the round-1 identity and adds no new finding for it; a dismissed finding re-raised with a citation but without a showing stays dismissed; an uncited round-2 finding overlapping a round-1 finding's location gets a new identity with a "possible repeat of <id>" flag and never the round-1 identity; a citation of a non-existent id yields a new identity; and the open set computed from the records follows FR-015's table (an upheld finding not raised again stays open; one the checking job marks resolved does not). *(Spec review round 1, owner decision 2026-11-22.)*
 - **SC-005**: On a fix PR seeded with a known defect (for example, an added check that passes without the fix), the round's verdict is not clean, and the defect is recorded as an upheld finding.
-- **SC-006**: In a seeded test, the checking job records at least one candidate as not upheld (for example, a breakage claim with no reproducible failing case), so a round where the checking job upholds everything is not the only observed outcome.
+- **SC-006**: In a seeded test, the checking job dismisses at least one candidate (for example, a breakage claim with no reproducible failing case), so a round where the checking job upholds everything is not the only observed outcome. *(Spec review round 1, owner decision 2026-11-22.)*
 - **SC-007**: Shared-reviewer and hand-review results can be laid side by side for every session fix PR that got both, without reading run logs.
-- **SC-008**: Checked-in evidence shows that the checking job (a) holds no write credential (a write attempt from within it fails), (b) is isolated from the finding job and from any job holding a write credential, and (c) runs no code other than the change's own named check and the gate suite (an attempt to run anything else is refused or absent from its allowed tools), in 100% of tested cases.
+- **SC-008**: Checked-in evidence shows, in 100% of tested cases, that (a) no secret of any kind (model credential, App token or other) is reachable from the job that runs the pull request's code (an attempt to read one from within it finds nothing); (b) nothing that job writes can change the checking job's recorded results except through the staged exit codes and output (an attempt to overwrite them has no effect); (c) neither agent job holds a write credential (a write attempt from within either fails); and (d) no code of the pull request runs other than the change's own named check and the gate suite (an attempt to run anything else is refused or absent from the allowed tools). *(Spec review round 1, owner decision 2026-11-22.)*
 
 ## Assumptions
 
 - The originating issue, backlog line or failing run of a session fix PR is identifiable from the pull request (a cited `#N`, a backlog line reference, or a run URL); when none is, the edge case above applies.
-- Both jobs default to Sonnet; spend and model tier are the owner's call and the clarify stage may revisit them. The 5-round per-pull-request budget is a default, overridable by repository variable.
+- Sonnet for both agent jobs, no effort override, and a 5-round per-pull-request budget are defaults the owner confirms by approving this spec; each is overridable by a repository variable (FR-024, FR-025). *(Spec review round 1, owner decision 2026-11-22.)*
 - "Blocking" follows the deterministic rule in FR-013; on #1102 two of five blocking calls were arguable (a gate not enforcing what its spec says; a failure only in a private repository, not verified). Under FR-013 the latter is non-blocking until its reachability is checked.
 - The report-only period ends by a later owner decision, informed by the FR-029 comparison; this feature sets no automatic end.
 - The reviewer counts as the fix-PR merge rule's "separate session" only if a later decision says so; this feature does not change that rule (FR-028).
