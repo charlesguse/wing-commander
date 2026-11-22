@@ -528,9 +528,18 @@ def check_download_errors():
     return problems
 
 
+# #1173 final review F1: comparing the review gate's marker fields is the
+# lifecycle merge preconditions' job; a copy of it fails.
+MARKER_COMPARISON_RE = re.compile(r"""\.get\(\s*["'](?:head_sha|outcome|findings_open)["']\s*\)\s*[!=]=""")
+
+
 def check_single_home(source, exempt=()):
-    """FR-008: no def of a reused rule, no terminal-state literal."""
+    """FR-008: no def of a reused rule, no terminal-state literal, no
+    re-typed comparison of the review gate's marker."""
     problems = []
+    for match in MARKER_COMPARISON_RE.finditer(source):
+        problems.append("wc_merge_evidence.py compares a review-gate marker field ({0}); call "
+                        "lifecycle_merge_preconditions.evaluate_from_snapshot".format(match.group(0)))
     # #1173 review R1: run provenance has one home, wc_board_status.
     if "wc_board_status.trusted_watcher_run(" not in source or '"workflow_dispatch"' in source:
         problems.append("wc_merge_evidence.py does not take run provenance from wc_board_status.trusted_watcher_run")
@@ -928,6 +937,32 @@ def check_round5_record_time():
         problems.append("record time: a record is stamped before its own evidence was read: {0}".format(times))
     return problems
 
+def check_final_review_markers(base_doc):
+    """#1173 final review F1: the reviewer's five markers give the same three
+    review-gate results through lifecycle_merge_preconditions as before, and
+    a re-typed marker comparison in _final_conditions fails the gate."""
+    problems = []
+    head = base_doc["head"]
+    other = "b" * 40
+    cases = (({"round": 1, "head_sha": head, "outcome": "clean", "findings_open": 0}, ("met", "met", "met")),
+             ({"round": 1, "head_sha": other, "outcome": "clean", "findings_open": 0}, ("unmet", "unmet", "unmet")),
+             ({"round": 3, "head_sha": head, "outcome": "budget-exhausted", "findings_open": 3},
+              ("met", "unmet", "unmet")),
+             ({"round": 2, "head_sha": head, "outcome": "clean", "findings_open": 1}, ("met", "met", "unmet")),
+             (None, ("unmet", "unmet", "unmet")))
+    for marker, want in cases:
+        case = {"base": "final", "patch": {"gate_marker": marker} if marker else {}}
+        snap = build_snapshot(base_doc, case)
+        conds = {c["name"]: c["result"] for c in me._final_conditions(snap, base_doc["bot_login"])}
+        got = tuple(conds[n] for n in ("gate_round_at_head", "round_clean", "zero_open_in_scope"))
+        if got != want:
+            problems.append("final conditions: marker {0} gives {1}, expected {2}".format(marker, got, want))
+    src = read(".github/scripts/wc_merge_evidence.py")
+    mutated = src.replace('at_head and pre["round_clean"]', 'at_head and marker.get("outcome") == "clean"', 1)
+    if mutated == src or not check_single_home(mutated):
+        problems.append("self-check: a re-typed marker comparison in _final_conditions was not noticed")
+    return problems
+
 def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
@@ -935,6 +970,7 @@ def main():
         + check_review_round3_open() + check_review_round3_kind() + check_review_round3_linked_issue()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
     problems += check_review_round4() + check_sc003_pending()
+    problems += check_final_review_markers(base_doc)
     problems += check_round5_record_time()
     problems += check_round5_login_seen(base_doc)
     problems += check_round5_truncated_comments()

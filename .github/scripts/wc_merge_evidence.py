@@ -219,18 +219,22 @@ def _final_conditions(snap, bot_login):
     else:
         marker = wc_lifecycle_review_marker.read_marker(comments, bot_login) or {}
         head = snap.get("headRefOid")
+        # FR-008: the review gate's reading of its own marker is the lifecycle
+        # merge preconditions' (called, never re-typed; #1173 final review F1).
+        pre = lmp.evaluate_from_snapshot({"headRefOid": head, "statusCheckRollup": []}, marker, False, [],
+                                         bot_login)
+        # Evidence naming another commit counts for nothing (FR-010).
+        at_head = bool(pre["reviewed_at_this_head"]) and bool(head)
         if not marker:
             out.append(_cond(names[0], "unmet", "no lifecycle review gate round recorded"))
-        elif marker.get("head_sha") != head:
+        elif not at_head:
             out.append(_cond(names[0], "unmet", "the latest round names another commit ({0})".format(
                 (marker.get("head_sha") or "?")[:12])))
         else:
             out.append(_cond(names[0], "met"))
-        # Evidence naming another commit counts for nothing (FR-010).
-        at_head = marker.get("head_sha") == head and bool(head)
-        out.append(_cond(names[1], "met") if at_head and marker.get("outcome") == "clean"
+        out.append(_cond(names[1], "met") if at_head and pre["round_clean"]
                    else _cond(names[1], "unmet", "no clean round at this head"))
-        out.append(_cond(names[2], "met") if at_head and marker.get("findings_open") == 0
+        out.append(_cond(names[2], "met") if at_head and pre["no_open_findings"]
                    else _cond(names[2], "unmet", "open in-scope findings, or no round at this head"))
     reviews = snap.get("reviews")
     if reviews is None:
