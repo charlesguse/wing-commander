@@ -59,6 +59,7 @@ HOLD_LABEL = "hold"
 DECISION_RECORD_PREFIX = "**Session decision ("
 RULE_ALL = "all-statuses"
 RULE_NO_GATE = "without-gate-status"
+UNREAD_STATE = "whether the pull request is still open (its state could not be read)"
 NO_ROUND_RECORD_REASON = "no counted round record exists for this kind (#1142 not built)"
 _PASS_REPORT_RE = re.compile(r"(?i)\b(review|validat\w*|verif\w*) (pass|report|verdict)\b|\bclean pass\b")
 _LINKED_ISSUE_RE = re.compile(r"(?i)\b(?:closes|fixes|resolves|refs?|for)\s+#(\d+)")
@@ -481,8 +482,9 @@ def render_markdown(section, names_only=False):
     out += ["", "**Open pull requests ({0})**".format(len(section["open_verdicts"])), ""]
     for v in section["open_verdicts"]:
         out.append("- #{0} head `{1}` {2}".format(v["pr"], (v["head"] or "")[:12], result_of(v)) if names_only
-                   else "- #{0} {1} head `{2}`: {3}, first unmet: {4}".format(
-                       v["pr"], v["kind"], (v["head"] or "")[:12], result_of(v), v["first_unmet"] or "none"))
+                   else "- #{0} {1} head `{2}`: {3}, first unmet: {4}{5}".format(
+                       v["pr"], v["kind"], (v["head"] or "")[:12], result_of(v), v["first_unmet"] or "none",
+                       "" if v.get("complete") else "; INCOMPLETE ({0})".format("; ".join(v.get("not_read") or []))))
     if not section["open_verdicts"]:
         out.append("None.")
     return "\n".join(out) + "\n"
@@ -791,10 +793,11 @@ def run_audit(repo, bot_login, default_branch, out_path, final_prefix, spec_pref
 
 
 def _is_open(repo, record):
+    """True or False; None when the pull request's state could not be read."""
     try:
         return _pr_state(repo, record["pr"])["state"] == "open"
     except (subprocess.CalledProcessError, ValueError):
-        return False
+        return None
 
 
 def latest_per_pr(records):
@@ -807,9 +810,19 @@ def latest_per_pr(records):
 
 
 def open_verdicts_latest(repo, ledger, is_open=None):
-    """One record per open PR: its latest head; each PR's state read once."""
+    """One record per open PR: its latest head; each PR's state read once.
+    A PR whose state cannot be read is kept, as a copy marked incomplete
+    that names what was not read (FR-005), never silently dropped."""
     is_open = is_open or _is_open
-    return [r for r in latest_per_pr(ledger["records"].values()) if is_open(repo, r)]
+    out = []
+    for record in latest_per_pr(ledger["records"].values()):
+        state = is_open(repo, record)
+        if state is None:
+            out.append(dict(record, complete=False,
+                            not_read=list(record.get("not_read") or []) + [UNREAD_STATE]))
+        elif state:
+            out.append(record)
+    return out
 
 
 def _belongs_to_merged_pr(repo, sha):

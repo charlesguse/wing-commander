@@ -332,6 +332,34 @@ def check_review_round3_rollup():
     return problems
 
 
+def check_review_round3_open():
+    """Finding 4 (round 3): an open PR whose state cannot be read stays in
+    the report, marked incomplete and naming what was not read (FR-005)."""
+    problems = []
+    recs = {"1@h1": {"pr": 1, "head": "h1", "kind": "maintainer", "computed_at": NOW, "complete": True,
+                     "not_read": [], "first_unmet": "review_round_record"},
+            "2@h2": {"pr": 2, "head": "h2", "kind": "maintainer", "computed_at": NOW, "complete": True,
+                     "not_read": [], "first_unmet": "review_round_record"},
+            "3@h3": {"pr": 3, "head": "h3", "kind": "maintainer", "computed_at": NOW, "complete": True,
+                     "not_read": [], "first_unmet": None}}
+    ledger = {"records": copy.deepcopy(recs)}
+    states = {1: True, 2: None, 3: False}
+    got = me.open_verdicts_latest("o/r", ledger, lambda repo, r: states[r["pr"]])
+    by_pr = {r["pr"]: r for r in got}
+    if sorted(by_pr) != [1, 2]:
+        problems.append("open verdicts: a PR whose state could not be read was dropped, or a closed one kept: {0}".format(
+            sorted(by_pr)))
+    elif by_pr[2].get("complete") is not False or not any("still open" in n for n in by_pr[2].get("not_read") or []):
+        problems.append("open verdicts: an unread PR state is not marked incomplete and named")
+    if ledger["records"] != recs:
+        problems.append("open verdicts: marking an unread state changed the ledger's own record")
+    if 2 in by_pr:
+        section = me.build_section([], [], got, me.window_bounds(NOW), NOW, me.empty_ledger())
+        if "#2" not in section["full"] or "INCOMPLETE" not in section["full"] or "#2" not in section["names_only"]:
+            problems.append("open verdicts: the rendered section does not name the unread PR as incomplete")
+    return problems
+
+
 class _Done:
     def __init__(self, returncode=0, stdout="", stderr=""):
         self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
@@ -506,7 +534,8 @@ def check_negatives(text):
 def main():
     base_doc = load("_base.json")
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
-        + check_review_round1() + check_review_round2() + check_review_round3_rollup()
+        + check_review_round1() + check_review_round2() + check_review_round3_rollup() \
+        + check_review_round3_open()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
     wf = os.path.join(REPO, WORKFLOW)
     if os.path.exists(wf):
