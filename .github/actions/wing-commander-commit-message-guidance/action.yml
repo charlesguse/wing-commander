@@ -56,6 +56,18 @@ runs:
         EXTRA_NOTE: ${{ inputs.extra-note }}
         PUSHES: ${{ inputs.pushes }}
         RUNNER_TEMP_DIR: ${{ runner.temp }}
+        # #1167: `git push -u` writes branch-tracking lines into .git/config,
+        # which claude-code-action restores after the session as a file later
+        # steps trust, and the watchdog reports. A bare push fails on a new
+        # branch with a hint naming --set-upstream, hence "even when git
+        # suggests it". The sentence lives here, not in run:, because Gates
+        # 80 and 150 read a `git push` in run: text as this step pushing.
+        PUSH_NOTE: >-
+          Push with `git push`, or with `git push origin <branch>` for a
+          branch the remote does not have yet; never add -u or
+          --set-upstream, even when git suggests it: they write tracking
+          lines into .git/config, a file later steps trust, so the run
+          restores it and reports the change.
       run: |
         set -uo pipefail
 
@@ -84,13 +96,8 @@ runs:
 
         guidance="A commit message longer than one line goes through the Write tool to exactly $scratch_path and then git commit -F with that path; never a heredoc or \$(cat ...) on the command line, which the permission layer denies, and never a file under the repository (a path inside .git/ is denied outright, and any other path there would be swept into the commit)."
 
-        # #1167: `git push -u` writes branch-tracking lines into .git/config,
-        # which claude-code-action restores after the session as a file later
-        # steps trust, and the watchdog reports. A bare push fails on a new
-        # branch with a hint naming --set-upstream, hence "even when git
-        # suggests it".
         if [ "$PUSHES" = "true" ]; then
-          guidance="$guidance"' Push with `git push`, or with `git push origin <branch>` for a branch the remote does not have yet; never add -u or --set-upstream, even when git suggests it: they write tracking lines into .git/config, a file later steps trust, so the run restores it and reports the change.'
+          guidance="$guidance $PUSH_NOTE"
         fi
 
         if [ -n "$EXTRA_NOTE" ]; then

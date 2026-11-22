@@ -346,6 +346,9 @@ def render_guidance(scratch_filename, extra_note, root, runner_temp, pushes="fal
         "SCRATCH_FILENAME": scratch_filename,
         "EXTRA_NOTE": extra_note,
         "PUSHES": pushes,
+        # The push sentence's one home is the step's own env (#1167), so the
+        # render reads it from there rather than from a copy here.
+        "PUSH_NOTE": str((step.get("env") or {}).get("PUSH_NOTE") or ""),
         "RUNNER_TEMP_DIR": runner_temp,
     }
     rc, out, outputs, _ = run_step(BASH, str(step["run"]), workdir, env, runner_temp)
