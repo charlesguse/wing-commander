@@ -5,7 +5,8 @@ Reads records.jsonl (one metrics record per line) and prints Markdown:
 
 * Diagnose shadow: runs, agreement, refusal / exhaustion / malformed counts,
   median turns and cost per run on each model, and meets / misses / sample
-  too small against the FR-017 bar (200 compared runs; (a) >= 95% filing
+  too small against the FR-017 bar (50 compared runs, lowered from 200 by
+  the owner's 2026-11-22 decision on #1098; (a) >= 95% filing
   agreement, (b) >= 90% class agreement over shared findings, (c) refused +
   exhausted + malformed <= 2% of compared runs; error and no-baseline runs
   are excluded from every denominator).
@@ -40,7 +41,7 @@ import statistics
 import sys
 
 HAIKU = "claude-haiku-5-5"
-MIN_COMPARED = 200
+MIN_COMPARED = 50
 FAILED = {"refused", "exhausted", "malformed"}
 IMPLEMENT_LABELS = {"cycle", "retry"}
 

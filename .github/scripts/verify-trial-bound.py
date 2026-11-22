@@ -2,7 +2,8 @@
 """Gate: trial-bound.py stops the diagnose shadow at its bound (spec 110).
 
 Builds a records.jsonl per checked-in fixture case and runs trial-bound.py:
-unset SINCE, expiry by the 60-day window, expiry by the 300-run count,
+unset SINCE, expiry by the 102-day window (on 2027-01-31, off 2027-02-01 for the
+2026-10-22 start), expiry by the 300-run count,
 error/no-baseline records not counted, comparator errors, undated
 compared records and shadow records with no trial object counted (fail
 closed), and the enabled case. Fails when any

@@ -1289,10 +1289,12 @@ ceiling subtracts the shadow's steps.
 
 The switch is one repository variable, `WING_COMMANDER_DIAGNOSE_SHADOW_SINCE`.
 The wrapper's `trial-bound` job reads the metrics branch and enables the
-shadow only for 60 days from that date and fewer than 300 compared runs;
+shadow only for 102 days from that date (through 2027-01-31 UTC for the
+2026-10-22 start) and fewer than 300 compared runs;
 records reach the branch through the daily sweep, so the count lags by up
 to a day. `wing-commander-trial-summary.yml` reports the same window
-against the bar the owner set (200 compared runs; 95% filing agreement,
+against the bar the owner set (50 compared runs, lowered from 200 on
+2026-11-22; 95% filing agreement,
 90% class agreement, at most 2% refused, exhausted or malformed). No
 default model moves on the result; that is a later amendment.
 

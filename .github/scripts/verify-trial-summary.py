@@ -79,17 +79,23 @@ WINDOW = ([dated(shadow("agreed"), "2026-08-01")] * 50
                    "2026-10-06")])
 
 CASES = {
-    "meets": ([shadow("agreed")] * 200, "**Diagnose bar (200 compared runs): meets**", None),
+    "meets": ([shadow("agreed")] * 200, "**Diagnose bar (50 compared runs): meets**", None),
     # (b) vacuous: a meets with no shared finding says (b) went unmeasured.
     "meets-b-unmeasured": ([dict(shadow("agreed"), trial={
         "outcome": "agreed", "filing_agree": True, "class_shared": 0,
-        "class_agree": 0})] * 200, "**Diagnose bar (200 compared runs): meets**",
+        "class_agree": 0})] * 200, "**Diagnose bar (50 compared runs): meets**",
         "Bar (b) was not measured"),
     "misses": ([shadow("agreed")] * 180 + [shadow("disagreed", False)] * 20,
-               "**Diagnose bar (200 compared runs): misses**", None),
+               "**Diagnose bar (50 compared runs): misses**", None),
     "too-small": ([shadow("agreed")] * 10, "sample too small", None),
-    "no-baseline-excluded": ([shadow("agreed")] * 199 + [shadow("no-baseline")] * 50,
-                             "sample too small", "Compared runs (error and no-baseline excluded): 199"),
+    # The bar is 50 compared runs (owner, 2026-11-22, #1098): exactly 50
+    # reaches a verdict, 49 does not.
+    "bar-at-50": ([shadow("agreed")] * 50,
+                  "**Diagnose bar (50 compared runs): meets**", None),
+    "bar-below-50": ([shadow("agreed")] * 49,
+                     "**Diagnose bar (50 compared runs): sample too small**", None),
+    "no-baseline-excluded": ([shadow("agreed")] * 49 + [shadow("no-baseline")] * 50,
+                             "sample too small", "Compared runs (error and no-baseline excluded): 49"),
     "helper-not-counted": ([sonnet_with_helper()], None, "| none | | | | | |"),
     # A Sonnet lifecycle's Haiku-tier progress comment and its branch-advance
     # record are not implement cycles: it stays the Sonnet baseline.

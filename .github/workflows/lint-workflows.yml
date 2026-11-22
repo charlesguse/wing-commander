@@ -4865,7 +4865,7 @@ jobs:
       # has a checked-in fixture under .github/scripts/fixtures/.
       - name: "Gate 142 — compare-diagnose-shadow classifies every trial outcome"
         run: python3 .github/scripts/verify-compare-diagnose-shadow.py
-      - name: "Gate 143 — trial-bound stops the diagnose shadow at 60 days or 300 compared runs"
+      - name: "Gate 143 — trial-bound stops the diagnose shadow at 102 days or 300 compared runs"
         run: python3 .github/scripts/verify-trial-bound.py
       - name: "Gate 144 — trial-summary reports meets, misses or sample too small from records alone"
         run: python3 .github/scripts/verify-trial-summary.py
