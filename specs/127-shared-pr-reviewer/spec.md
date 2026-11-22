@@ -20,6 +20,16 @@ Two read-only trials on 2026-11-15 (a finding agent and a checking agent each) s
 
 **Layer**: This specification describes a new reviewer for this repository (the consuming instrument), built as a callable workflow plus a thin wrapper so that later publication is a decision, not a rewrite. It does not add to or change the published contract in this feature.
 
+## Clarifications
+
+### Session 2026-11-22
+
+Owner's choices, made in chat on 2026-11-22 and posted on #1142; no precedent settled any of them.
+
+- Q: What starts the reviewer on a session's fix PR? → A: (a) The session dispatches it explicitly, on the same head its hand review covers. A forgotten dispatch leaves a gap in the comparison; that is accepted, and automatic starts are a later decision (FR-004).
+- Q: May the checking job run code? → A: (b) Only the change's own named check and the gate suite, in an isolated job with no write credential; no other code. Isolation and credential stripping must be proven in this feature (FR-012, SC-008).
+- Q: How is a new finding matched to an earlier one? → A: (a) plus a location-overlap flag. Identity carries over only when the finding job cites an earlier id that deterministic code verifies exists; deterministic code also flags "possible repeat of <id>" on location overlap but never merges identities on location alone; the flag is in the record and given to the next round (FR-016).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Review a session's fix PR, report-only (Priority: P1)
@@ -42,19 +52,21 @@ A session opens a fix PR for a defect recorded before the change (an issue, a Ma
 
 ### User Story 2 - A later round remembers earlier rounds (Priority: P1)
 
-When the same pull request is reviewed again (after a fix, or a re-dispatch), the new round is given every earlier finding on that pull request with its identity and status, open or dismissed, and each dismissal's reason. A finding that repeats an earlier one, however it is reworded or re-anchored, is matched to the earlier finding rather than counted as new. A dismissed finding is reopened only when the round shows why the dismissal was wrong, and the checking job upholds that showing.
+When the same pull request is reviewed again (after a fix, or a re-dispatch), the new round is given every earlier finding on that pull request with its identity and status, open or dismissed, and each dismissal's reason. A finding that repeats an earlier one and cites its id, however it is reworded or re-anchored, keeps the earlier finding's identity rather than being counted as new. An uncited finding whose location overlaps an earlier one is flagged as a possible repeat but keeps its own identity. A dismissed finding is reopened only when the round shows why the dismissal was wrong, and the checking job upholds that showing.
 
 **Why this priority**: This is the part of #1110 the owner folded in. Without it, rounds do not converge: reworded repeats count as new findings and refuted findings come back.
 
-**Independent Test**: Run round 1 on a pull request and dismiss one finding with a reason; run round 2 with the finding job prompted (or seeded) to raise the same defect under a different title and file; confirm round 2's record shows the earlier finding's identity with its dismissed status and no new finding for it.
+**Independent Test**: Run round 1 on a pull request and dismiss one finding with a reason; run round 2 with the finding job prompted (or seeded) to raise the same defect under a different title and file, citing the earlier id; confirm round 2's record shows the earlier finding's identity with its dismissed status and no new finding for it. Seed a second repeat that overlaps the earlier finding's location without citing it; confirm it gets a new identity carrying a "possible repeat of <id>" flag.
 
 **Acceptance Scenarios**:
 
-1. **Given** round N recorded a finding F as open, **When** round N+1 raises the same defect under a different title, **Then** round N+1's record lists it under F's identity, not under a new one.
-2. **Given** F was dismissed with a reason, **When** round N+1 re-raises it without showing the dismissal was wrong, **Then** F stays dismissed and does not count toward the verdict.
+1. **Given** round N recorded a finding F as open, **When** round N+1 raises the same defect under a different title and cites F's id, **Then** round N+1's record lists it under F's identity, not under a new one.
+2. **Given** F was dismissed with a reason, **When** round N+1 re-raises it citing F's id without showing the dismissal was wrong, **Then** F stays dismissed and does not count toward the verdict.
 3. **Given** F was dismissed, **When** round N+1 shows (and the checking job upholds) that the dismissal was wrong, **Then** F is recorded reopened under its original identity, with the reason.
-4. **Given** round N+1 raises a defect distinct from every earlier finding, **When** it is upheld, **Then** it gets a new identity.
+4. **Given** round N+1 raises a defect that cites no earlier id, **When** it is upheld, **Then** it gets a new identity.
 5. **Given** a round record exists on the pull request that was not written by a confirmed run of this reviewer, **When** a later round assembles the earlier findings, **Then** that record is ignored.
+6. **Given** round N+1 raises an uncited finding whose file and line range overlap an earlier finding F's, **When** the record is written, **Then** the new finding has its own new identity and carries a "possible repeat of F" flag, F's identity and status are unchanged, and the flag is given to the next round.
+7. **Given** round N+1 cites an id that no earlier confirmed finding on the pull request has, **When** identities are assigned, **Then** the citation is ignored and the finding gets a new identity.
 
 ---
 
@@ -126,7 +138,7 @@ Re-dispatching the reviewer on one pull request cannot run without limit. When t
 - **FR-001**: The repository MUST gain one new reviewer that can review a pull request of any kind (session fix PR, board loop fix PR, spec PR, plan PR, final PR), given a pull request number. In this feature it is put to use only on session fix PRs.
 - **FR-002**: The reviewer MUST be built as a callable workflow with a thin wrapper that owns its trigger(s) and repository-specific inputs, so publishing it later changes no behaviour. It is not added to the published contract in this feature.
 - **FR-003**: The reviewer MUST be startable by a manual dispatch naming a pull request number, and by another workflow calling it with one.
-- **FR-004**: On a session's fix PR, the reviewer MUST be started by [NEEDS CLARIFICATION: what starts it on a session's fix PR — (a) the session dispatches it explicitly, (b) it starts automatically on every pull request a session opens, or (c) both, with automatic start the default?].
+- **FR-004**: On a session's fix PR, the reviewer MUST be started by the session dispatching it explicitly, on the same head commit its hand review covers, so the FR-029 comparison gets exact same-commit pairs at the least spend. It MUST NOT start automatically on pull requests a session opens. A forgotten dispatch leaves that pull request out of the comparison; this gap is accepted, and moving to automatic starts is left to a later decision.
 - **FR-005**: The existing review workflows (spec PR review, lifecycle review gate, board loop review job) and the `review-until-clean` procedure MUST be unchanged by this feature. Moving each onto the shared reviewer is a later proposal each.
 
 **Purpose first**
@@ -140,14 +152,14 @@ Re-dispatching the reviewer on one pull request cannot run without limit. When t
 
 - **FR-010**: A round MUST consist of two separate jobs: a finding job that produces the purpose answers and candidate findings, and a checking job that shares no conversational context with it and evaluates each answer and each candidate against the code and against the pull request's earlier confirmed rounds.
 - **FR-011**: Only answers and findings the checking job upholds MUST count toward the verdict. Each candidate the checking job does not uphold MUST still be recorded, as not upheld, with its reason.
-- **FR-012**: The checking job MUST be able to run code (for example the change's own check and its self-test) only if [NEEDS CLARIFICATION: may the checking job run code — (a) no, read-only like today's reviewers, with run results staged for it; (b) yes, only the change's own named check and the gate suite, in an isolated job with no write credential; (c) yes, general code execution in an isolated job with no write credential?].
+- **FR-012**: The checking job MAY run exactly two kinds of code: the change's own named check (the check FR-008(c) asks about) and the repository's gate suite. It MUST run no other code. It MUST run in an isolated job that holds no write credential. Both the isolation and the absence of any write credential MUST be proven as part of this feature (SC-008).
 - **FR-013**: Whether an upheld finding is blocking MUST be decided by deterministic rules applied to fields the checking job reports, not by the agent's own label. A finding is blocking when it is upheld, it is in the pull request's scope, and its failing case is reachable in this repository's configuration as checked; otherwise it is recorded as non-blocking with the rule that made it so.
 - **FR-014**: The verdict MUST be one of a fixed set: clean (all purpose answers upheld positively and no blocking finding), findings (at least one blocking finding, or a purpose answer upheld negatively), incomplete (a job failed or its output could not be read), or refused (the run was not permitted, FR-022). The verdict MUST be computed by deterministic code from the checked results.
 
 **Memory (folded from #1110)**
 
 - **FR-015**: Each round MUST be given every finding from the pull request's earlier confirmed rounds, with its identity, its status (open, upheld, not upheld, dismissed, reopened, resolved) and, for a dismissal, its reason.
-- **FR-016**: A finding that repeats an earlier one MUST keep the earlier finding's identity even when its title, wording or anchor differs. The match MUST be made by [NEEDS CLARIFICATION: how is a new finding matched to an earlier one — (a) the finding job must cite the earlier finding's id, and deterministic code verifies the cited id exists; (b) a semantic-match judgement by the checking job; (c) location (file plus line range) matching in deterministic code; or a stated combination?]. Whatever the method, the identity written into the record MUST be assigned by deterministic code.
+- **FR-016**: A finding that repeats an earlier one MUST keep the earlier finding's identity even when its title, wording or anchor differs. A finding keeps an earlier finding's identity only when the finding job cites that earlier id and deterministic code verifies that the cited id exists among the pull request's earlier confirmed findings; a citation of an id that does not exist is ignored and the finding gets a new identity. In addition, deterministic code MUST record a "possible repeat of <id>" flag on a new finding whenever its file and line range overlap an earlier finding's; the flag is visible in the record and given to the next round, but identities MUST NEVER be merged on location alone. The identity written into the record MUST be assigned by deterministic code. (Rationale: an uncited repeat shows as a visible overcount, which is preferred to the risk of merging a new real defect into a dismissed finding, which would hide it under FR-017.)
 - **FR-017**: A dismissed finding MUST NOT count toward the verdict, and MUST be reopened only when the round shows why the dismissal was wrong and the checking job upholds that showing. The reopening MUST keep the original identity and record the reason.
 - **FR-018**: A dismissal MUST be recordable by the checking job (a not-upheld candidate is a dismissal with its reason) and by whatever asked for the review, in a form the next round reads. This feature MUST NOT require any existing reviewer to write dismissals.
 
@@ -176,7 +188,7 @@ Re-dispatching the reviewer on one pull request cannot run without limit. When t
 - **Review request**: a pull request number, the kind of pull request, the purpose source (issue, backlog line or run) and who asked for the review.
 - **Round**: one finding job and one checking job against one commit of one pull request; has a number within that pull request.
 - **Candidate finding**: what the finding job proposes: a claim, an anchor, a failing case and, when it repeats one, the earlier identity it cites.
-- **Checked finding**: a candidate after the checking job: upheld or not, with a reason, a blocking/non-blocking result from the deterministic rule, a status and a stable identity.
+- **Checked finding**: a candidate after the checking job: upheld or not, with a reason, a blocking/non-blocking result from the deterministic rule, a status, a stable identity and, when its location overlaps an earlier finding's without citing it, a "possible repeat of <id>" flag.
 - **Purpose answers**: the three fix questions (problem real, change fixes it, check fails without the fix), each upheld positively, negatively or not determinable.
 - **Round record**: the one machine-readable record a round posts (FR-019), with the run id that makes it confirmable.
 - **Dismissal**: a finding's not-upheld or refuted status with its reason, carried forward to later rounds.
@@ -189,10 +201,11 @@ Re-dispatching the reviewer on one pull request cannot run without limit. When t
 - **SC-001**: On at least 5 session fix PRs reviewed during the report-only period, every round posts exactly one confirmed record and makes no other change to the pull request (zero pushes, labels, merges or approvals by the reviewer).
 - **SC-002**: A record whose named run is not a default-branch run of this reviewer for the named commit is reported unconfirmed in 100% of checked-in test cases (wrong workflow, wrong branch, wrong commit, missing run, unfetchable run).
 - **SC-003**: A dispatch on a non-default ref ends with zero agent runs and zero records in 100% of attempts.
-- **SC-004**: In a seeded test where round 2 re-raises a round-1 finding under a different title and anchor, the round-2 record carries the round-1 identity and adds no new finding for it; a dismissed finding re-raised without a showing stays dismissed.
+- **SC-004**: In a seeded test where round 2 re-raises a round-1 finding under a different title and anchor and cites its id, the round-2 record carries the round-1 identity and adds no new finding for it; a dismissed finding re-raised with a citation but without a showing stays dismissed; an uncited round-2 finding overlapping a round-1 finding's location gets a new identity with a "possible repeat of <id>" flag and never the round-1 identity; a citation of a non-existent id yields a new identity.
 - **SC-005**: On a fix PR seeded with a known defect (for example, an added check that passes without the fix), the round's verdict is not clean, and the defect is recorded as an upheld finding.
 - **SC-006**: In a seeded test, the checking job records at least one candidate as not upheld (for example, a breakage claim with no reproducible failing case), so a round where the checking job upholds everything is not the only observed outcome.
 - **SC-007**: Shared-reviewer and hand-review results can be laid side by side for every session fix PR that got both, without reading run logs.
+- **SC-008**: Checked-in evidence shows that the checking job (a) holds no write credential (a write attempt from within it fails), (b) is isolated from the finding job and from any job holding a write credential, and (c) runs no code other than the change's own named check and the gate suite (an attempt to run anything else is refused or absent from its allowed tools), in 100% of tested cases.
 
 ## Assumptions
 
