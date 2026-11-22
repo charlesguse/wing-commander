@@ -35,6 +35,12 @@ on:
           - audit
         default: both
 
+# The pipeline App's login as REST shows it on its comments. Unset, it falls
+# back to this repository's App; wc_merge_evidence.py still marks every
+# verdict incomplete when it ends up empty.
+env:
+  BOT_LOGIN: ${{ vars.WING_COMMANDER_BOT_LOGIN || 'wing-commander-bot[bot]' }}
+
 permissions:
   contents: read
   actions: read
@@ -92,7 +98,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          BOT_LOGIN: ${{ vars.WING_COMMANDER_BOT_LOGIN }}
           FINAL_PREFIX: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
           SPEC_PREFIX: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -159,7 +164,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          BOT_LOGIN: ${{ vars.WING_COMMANDER_BOT_LOGIN }}
           FINAL_PREFIX: ${{ vars.WING_COMMANDER_SPEC_PREFIX }}
           SPEC_PREFIX: ${{ vars.WING_COMMANDER_SPEC_DRAFT_PREFIX }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}

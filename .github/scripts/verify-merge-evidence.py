@@ -322,6 +322,13 @@ def check_shape(text, write_verbs=WRITE_VERBS):
         doc = yaml.safe_load(text)
     except Exception as exc:  # unparseable is a failure of its own
         return ["the workflow does not parse: {0}".format(exc)]
+    # Finding 2 (round 3): the App's login has a default, set once for every
+    # job, so an unset variable does not make every verdict incomplete.
+    login = ((doc.get("env") or {}).get("BOT_LOGIN") or "")
+    if not re.fullmatch(r"\$\{\{ vars\.WING_COMMANDER_BOT_LOGIN \|\| '[a-z0-9-]+\[bot\]' \}\}", login):
+        problems.append("BOT_LOGIN is not set once at workflow level with a `<slug>[bot]` default: {0!r}".format(login))
+    if re.search(r"^\s+BOT_LOGIN:", text.split("\njobs:", 1)[-1], re.M):
+        problems.append("a job or step sets BOT_LOGIN again, past the workflow-level default")
     perms = doc.get("permissions") or {}
     writes = [k for k, v in perms.items() if v != "read"] if isinstance(perms, dict) else ["(not a mapping)"]
     if writes:
@@ -368,6 +375,7 @@ def check_negatives(text):
         "merge verb": text + "\n        run: gh pr merge 1\n",
         "no pause step": text.replace("WING_COMMANDER_MERGE_EVIDENCE_PAUSED", "SOMETHING_ELSE"),
         "no refusal first": text.replace("Refuse a run off the default branch", "Something else", 1),
+        "no login default": text.replace(" || 'wing-commander-bot[bot]'", "", 1),
     }
     for label, mutated in broken.items():
         if mutated == text or not check_shape(mutated):
