@@ -4879,6 +4879,18 @@ jobs:
       - name: Gate 171 fixtures — shared reviewer records, verdict, blocking rule, identity, confirmation and budget
         if: "!cancelled()"
         run: python3 .github/scripts/verify-shared-review-fixtures.py
+      - name: Gate 171 isolation — code-run holds no permission or secret, the agents hold no write token, web or Bash tool
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-shared-review-isolation.py
+      - name: Gate 171 isolation self-test — each mutation fails
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-shared-review-isolation.py --self-test
+      - name: Gate 171 wiring — record is the only poster, downstream jobs wait on the guard, models and turns are explicit, nothing else reads the verdict
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-shared-review-wiring.py
+      - name: Gate 171 wiring self-test — each mutation fails
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-shared-review-wiring.py --self-test
 
       # Gate 165 — specs/115-board-loop-self-merge (FR-013, FR-015): every
       # merge-blocking condition and every refusal branch of board_merge.py
