@@ -484,9 +484,13 @@ def merge_evidence_snapshot(repo, switches, now=None, gh_obj=None, build_ok=None
 # executes the PR's copy of the workflow (a fork's, with a head branch it
 # can name `main`), so its artifacts are never this repository's output.
 TRUSTED_RUN_EVENTS = ("schedule", "workflow_dispatch")
-# section_snapshot reads up to this many pages of 100 completed runs looking
-# for the latest good build: the merge evidence workflow has ~25 runs a day.
-SECTION_RUN_PAGES = 3
+# section_snapshot pages 100 completed runs at a time looking for the latest
+# good build, and stops at the end of the history, once a page's runs are all
+# older than SECTION_LOOKBACK_DAYS, or at SECTION_RUN_PAGES pages (the merge
+# evidence workflow has ~25 runs a day). Stopping early is said as "not found
+# within ...", never as "never" (#1173 round 5, finding 8).
+SECTION_RUN_PAGES = 10
+SECTION_LOOKBACK_DAYS = 31
 
 
 def trusted_watcher_run(run, repo):
@@ -511,7 +515,9 @@ def section_snapshot(repo, switches, workflow, artifact, switch_key, now, gh_obj
         default = gh_obj("repos/{0}".format(repo))["default_branch"]
         # Pages of 100 until the latest good build is found (a page-count
         # bound, not a run count of one day: #1173 review R3).
-        runs, found, good_ok = [], "never", {}
+        runs, found, good_ok, cut_short = [], "never", {}, None
+        oldest_kept = (now.replace(tzinfo=None) - datetime.timedelta(days=SECTION_LOOKBACK_DAYS)).strftime(
+            "%Y-%m-%dT%H:%M:%S")
         for page in range(1, SECTION_RUN_PAGES + 1):
             try:
                 batch = gh_obj("repos/{0}/actions/workflows/{1}/runs?status=completed&branch={2}"
@@ -530,12 +536,21 @@ def section_snapshot(repo, switches, workflow, artifact, switch_key, now, gh_obj
                         found = run.get("run_started_at") or run.get("created_at") or "unknown"
             if found != "never" or len(batch) < 100:
                 break
+            if max((r.get("run_started_at") or r.get("created_at") or "")[:19] for r in batch) < oldest_kept:
+                cut_short = "not found in the last {0} days".format(SECTION_LOOKBACK_DAYS)
+                break
+            if page == SECTION_RUN_PAGES:
+                cut_short = "not found within the newest {0} runs".format(SECTION_RUN_PAGES * 100)
+        if found == "never" and cut_short:
+            found = cut_short
         # Set only once the history was read: a failed read leaves "unknown".
         last_good = found
         if paused:
             return {"status": "paused", "last_good_at": last_good}
         if not runs:
-            return {"status": "never", "last_good_at": "never"}
+            # No audit within the bound is not "never built": older runs exist.
+            return {"status": "failed", "last_good_at": cut_short} if cut_short else \
+                {"status": "never", "last_good_at": "never"}
         latest = runs[0]
         if latest.get("conclusion") != "success":
             return {"status": "failed", "last_good_at": last_good}

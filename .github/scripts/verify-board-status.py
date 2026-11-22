@@ -547,6 +547,24 @@ def merge_evidence_half():
                                       lambda repo, rid, tmp: json.dump(section, open(
                                           os.path.join(tmp, bs.MERGE_EVIDENCE_FILE), "w", encoding="utf-8")))
     check("a good audit past the 30th run is still found (not 'never')", snap.get("status") == "built", snap)
+    # Round 5, finding 8: past three pages the reader keeps going, and a
+    # bound it stops at is said as "not found within ...", never "never".
+    mid = hourly_runs[:5] + [failed_audit] + [mk(200 + i, "2026-11-20T11:07:00Z", "merge-evidence verdicts")
+                                              for i in range(440)] + [late_good]
+    snap = bs.merge_evidence_snapshot("o/r", {}, now, paged(mid), lambda rid: rid == 7, lambda *a: None)
+    check("the last good audit past three pages (the 447th run) is still found",
+          snap == {"status": "failed", "last_good_at": "2026-11-19T05:41:00Z"}, snap)
+    capped = [mk(1000 + i, "2026-11-20T11:07:00Z", "merge-evidence verdicts") for i in range(1050)] + [late_good]
+    snap = bs.merge_evidence_snapshot("o/r", {}, now, paged(capped), lambda rid: True, lambda *a: None)
+    check("no audit within the run cap is 'not found within N runs', not 'never'",
+          snap.get("status") == "failed" and "not found within the newest" in str(snap.get("last_good_at")), snap)
+    aged = [mk(3000 + i, "2026-09-01T11:07:00Z", "merge-evidence verdicts") for i in range(150)] + [late_good]
+    snap = bs.merge_evidence_snapshot("o/r", {}, now, paged(aged), lambda rid: True, lambda *a: None)
+    check("runs older than the lookback stop the reader with 'not found in the last N days'",
+          snap.get("status") == "failed" and "not found in the last" in str(snap.get("last_good_at")), snap)
+    check("the notice for a bound reads as a sentence",
+          "The last good build was not found within the newest 1000 runs." in bs.merge_evidence_block(
+              {"status": "failed", "last_good_at": "not found within the newest 1000 runs"}, "body\n"))
     forked = [dict(audit, id=21, event="pull_request"), dict(audit, id=22, head_repository={"full_name": "fork/r"})]
     check("a pull_request or fork run is never the audit",
           bs.merge_evidence_snapshot("o/r", {}, now, paged(forked), lambda rid: True, lambda *a: None)["status"] == "never")
