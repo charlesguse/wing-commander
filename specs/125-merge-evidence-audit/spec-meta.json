@@ -2,7 +2,7 @@
   "issue": 1143,
   "spec_dir": "specs/125-merge-evidence-audit",
   "feature_num": "125",
-  "stage": "review",
+  "stage": "implement",
   "iteration": 4,
   "spec_branch": "spec/125-merge-evidence-audit",
   "truncated_count": 0,
