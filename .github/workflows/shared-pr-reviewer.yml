@@ -114,6 +114,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
+      actions: read
     outputs:
       proceed: ${{ steps.state.outputs.proceed }}
       spent: ${{ steps.state.outputs.spent }}
@@ -139,7 +140,6 @@ jobs:
           permission-contents: read
           permission-issues: read
           permission-pull-requests: read
-          permission-actions: read
 
       - name: Read the pull request as data
         id: pr
@@ -187,6 +187,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
+          RUN_TOKEN: ${{ github.token }}
           PR: ${{ inputs.pr }}
           REPO: ${{ github.repository }}
           REF: ${{ github.ref }}
@@ -217,7 +218,7 @@ jobs:
             issue)
               gh issue view "$pref" -R "$REPO" --json title,body --jq '"# " + .title + "\n\n" + (.body // "")' > input/purpose.md || true ;;
             run)
-              gh run view "$pref" -R "$REPO" --log-failed 2>/dev/null | tail -c 20000 > input/purpose.md || true ;;
+              GH_TOKEN="$RUN_TOKEN" gh run view "$pref" -R "$REPO" --log-failed 2>/dev/null | tail -c 20000 > input/purpose.md || true ;;
             backlog)
               gh issue list -R "$REPO" --label disposition:tracking --state open --search "Maintenance backlog in:title" \
                 --json body --jq ".[0].body // \"\"" | grep -F -- "$pref" > input/purpose.md || true ;;

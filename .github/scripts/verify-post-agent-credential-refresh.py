@@ -494,6 +494,29 @@ def _wall_clock_bound_ok(job, max_minutes=10):
     return True
 
 
+def _credential_free_ok(job):
+    """The job mints and holds no App credential at all (spec 127, FR-022):
+    `permissions` is exactly `contents: read`, no step mints an App token
+    (create-github-app-token, wing-commander-context, scoped-app-token) and
+    no step reads an App secret. With no credential minted before the agent
+    there is none to go stale after it, so the post-agent re-mint, refresh
+    and agent-ran signal this gate otherwise demands have nothing to
+    refresh."""
+    perms = (job or {}).get("permissions")
+    if perms != {"contents": "read"}:
+        return False
+    steps = list((job or {}).get("steps") or [])
+    if not any(_is_agent_step(s) for s in steps):
+        return False
+    for step in steps:
+        text = _step_text(step)
+        if ("create-github-app-token" in text or "wing-commander-context" in text
+                or "scoped-app-token" in text or "app-private-key" in text
+                or "app-id" in text):
+            return False
+    return True
+
+
 # path -> set of job names -- the checked-in floor a derived subject's
 # disappearance is compared against (research.md D3; contract Section 2).
 # Nine pre-existing entries (spec 052's FR-007 stages) plus seven this
@@ -522,6 +545,32 @@ SUBJECT_FLOOR = {
 # subject resolves to instead of full_subject, each with a mechanically
 # asserted condition (FR-007; contract "Entries this feature adds").
 EXEMPT_JOBS = {
+    (".github/workflows/shared-pr-reviewer.yml", "find"): ExemptionEntry(
+        reason=(
+            "credential-free agent job (permissions: contents: read, no App "
+            "token minted) -- nothing to re-mint or refresh after the agent "
+            "(spec 127, FR-022)"),
+        issue=(),
+        permanent=True,
+        permanent_reason=(
+            "The shared reviewer's agents hold no write credential by "
+            "design; a credential-free job has no stale credential."),
+        decided_by=(1142,),
+        condition=_credential_free_ok,
+    ),
+    (".github/workflows/shared-pr-reviewer.yml", "check"): ExemptionEntry(
+        reason=(
+            "credential-free agent job (permissions: contents: read, no App "
+            "token minted) -- nothing to re-mint or refresh after the agent "
+            "(spec 127, FR-022)"),
+        issue=(),
+        permanent=True,
+        permanent_reason=(
+            "The shared reviewer's agents hold no write credential by "
+            "design; a credential-free job has no stale credential."),
+        decided_by=(1142,),
+        condition=_credential_free_ok,
+    ),
     (".github/workflows/cleanup.yml", "teardown-done"): ExemptionEntry(
         reason=(
             "wall-clock bound (timeout-minutes: 10) instead of the full "
