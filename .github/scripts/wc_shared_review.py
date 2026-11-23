@@ -256,10 +256,17 @@ def process_round(prior, candidates, checks, round_no, code_run_status):
     reason, in_scope, reachable, files, needs_code_run}.
     Returns (findings, notes): every finding with its latest status."""
     by_id = {f["id"]: dict(f) for f in prior}
-    check_for = {}
+    # Two namespaces: a candidate's `key` is the find agent's free text, so
+    # it may equal a prior finding's id (F1-1); one dict would let a check
+    # meant for one apply to the other.
+    check_for_key, check_for_id = {}, {}
     for c in checks or []:
-        if isinstance(c, dict):
-            check_for[c.get("id") or c.get("key")] = c
+        if not isinstance(c, dict):
+            continue
+        if isinstance(c.get("id"), str) and c["id"]:
+            check_for_id[c["id"]] = c
+        if isinstance(c.get("key"), str) and c["key"]:
+            check_for_key[c["key"]] = c
     notes, serial = [], 0
 
     def settle(f, c):
@@ -267,7 +274,7 @@ def process_round(prior, candidates, checks, round_no, code_run_status):
         f["reachable"] = c.get("reachable") is True
 
     for cand in candidates or []:
-        c = check_for.get(cand.get("key")) or {}
+        c = check_for_key.get(cand.get("key")) or {}
         cited = cand.get("cites")
         base = {k: cand.get(k) for k in ("title", "claim", "file", "line", "line_end", "failing_case")}
         spec_only = c.get("cites_only_spec_docs") is True or _only_spec_docs(c.get("files"))
@@ -302,9 +309,9 @@ def process_round(prior, candidates, checks, round_no, code_run_status):
         settle(f, c)
         by_id[f["id"]] = f
     for fid, f in list(by_id.items()):
-        if f.get("status") not in OPEN_STATUSES or not fid in check_for or fid.startswith("F%d-" % round_no):
+        if f.get("status") not in OPEN_STATUSES or fid not in check_for_id or fid.startswith("F%d-" % round_no):
             continue
-        c = check_for[fid]
+        c = check_for_id[fid]
         if c.get("needs_code_run") and code_run_status != "staged":
             f["note"] = NOT_RECHECKED
             continue

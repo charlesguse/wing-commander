@@ -367,5 +367,22 @@ class ReviewRound2Fixes(unittest.TestCase):
             sr.confirmed_from_github(1, "bot", "main", "o/r", lambda a: None)
 
 
+class ReviewRound3Fixes(unittest.TestCase):
+    """Gate round 3 findings on #1184, built by hand."""
+
+    def test_candidate_key_equal_to_prior_id_keeps_its_own_check(self):
+        # R3-F8: a candidate keyed "F1-1" and the prior finding F1-1 each
+        # keep their own check entry.
+        prior = [finding("F1-1")]
+        cand = {"key": "F1-1", "title": "new", "file": "b.py", "line": 1,
+                "failing_case": {"state": "s", "wrong_result": "w"}}
+        checks = [{"id": "F1-1", "outcome": "resolved", "reason": "gone"},
+                  {"key": "F1-1", "outcome": "upheld", "in_scope": True, "reachable": True}]
+        out, _ = sr.process_round(prior, [cand], checks, 2, "staged")
+        by = {f["id"]: f for f in out}
+        self.assertEqual(by["F1-1"]["status"], "resolved")
+        self.assertEqual(by["F2-1"]["status"], "upheld")
+
+
 if __name__ == "__main__":
     unittest.main()
