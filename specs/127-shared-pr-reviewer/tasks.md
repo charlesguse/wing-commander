@@ -159,3 +159,78 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
 - [x] T046 Add an "unpublished callable" exclusion form (a registry with a reason per entry, read by `wc_published_stages.py` and by Gates 7, 22, 23, 12, `verify-stage-tool-lists.py` and `verify-stage-shell-lint.py`'s inline derivations) so `shared-pr-reviewer.yml` can exist without being a published stage, per FR-002 and T020 (missing)
 - [x] T047 Move the parked drafts `specs/127-shared-pr-reviewer/draft-shared-pr-reviewer.yml.txt` and `draft-wing-commander-shared-pr-reviewer.yml.txt` to `.github/workflows/shared-pr-reviewer.yml` and `wing-commander-shared-pr-reviewer.yml` once T046 lands, then finish T014, T015, T018, T019, T025, T029, T033 against them and rerun the gate suite (partial)
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: App token lacks actions:read for run/artifact lookups
+
+  The read-only App token in prepare omits actions:read, so the gh api actions/runs and artifacts calls fail and confirm_record skips every record, so round memory, dismissals and the budget never take effect.
+
+  - .github/workflows/shared-pr-reviewer.yml
+
+  Detail: Add permission-actions: read to the token step, or use github.token for those calls. A failed API read should stop the round, not count as zero rounds.
+
+- [ ] Review finding: shared-review-trees artifact likely drops .github hidden files
+
+  upload-artifact v4.4+ excludes hidden paths by default and include-hidden-files is not set, so reviewer-tree/.github/scripts is probably missing and code-run silently reports missing every round.
+
+  - .github/workflows/shared-pr-reviewer.yml
+
+  Detail: Set include-hidden-files: true. The '|| echo status missing' fallback hides the failure.
+
+- [ ] Review finding: code-run executes PR code in the runner job with only env scrubbing
+
+  The PR's check runs in the same job and as the same user as the runner steps. It can reach GITHUB_ENV/GITHUB_OUTPUT files, forge out/code-run.json, or leave a detached process behind.
+
+  - .github/workflows/shared-pr-reviewer.yml
+
+  Detail: Run the PR check in a separate throwaway job or sandbox that emits only a capped exit-code artifact. SC-008 only covers env-var leakage.
+
+- [ ] Review finding: Incomplete round from a failed job is posted but never confirmed
+
+  If validate-output exits 1 and the job fails, record still posts an incomplete round. confirm_record requires the run conclusion to be success, so the record is treated as unconfirmed and does not count toward the budget.
+
+  - .github/workflows/shared-pr-reviewer.yml
+
+  Detail: Make agent and validation failures non-fatal so the output degrades to missing, or accept the record when the record job succeeded.
+
+- [ ] Review finding: Empty purpose text still counts as having a purpose
+
+  When the purpose fetch fails, purpose.md is truncated and the error is swallowed with || true, but purpose.json keeps the source, so has_purpose is true and the verdict can be clean instead of undetermined.
+
+  - .github/workflows/shared-pr-reviewer.yml
+
+  Detail: Null purpose.json, or write 'no source of purpose', when the fetched text is empty.
+
+- [ ] Review finding: Unpublished-callables loader pasted into three lint gates
+
+  Gates 7, 22 and 23 re-parse unpublished-callables.json inline and do not drop empty-reason entries, unlike wc_published_stages.unpublished_callables. This breaks the single-home rule and the copies can drift.
+
+  - .github/workflows/lint-workflows.yml
+  - .github/scripts/wc_published_stages.py
+
+  Detail: Call the helper from each gate and add a single-home check to an existing gate.
+
+- [ ] Review finding: Hostile fixture is named test_probe.py and fails on purpose
+
+  The file matches the test_*.py collection pattern, so pytest or discover runs would report a permanent failure and run unscrubbed network code.
+
+  - .github/scripts/tests/fixtures/shared-review-hostile/test_probe.py
+
+  Detail: Rename it to a non-collected name and update verify-shared-review-isolation.py and the tests that reference it.
+
+- [ ] Review finding: shared_review_compare indexes review record keys directly
+
+  compare uses rec['pass'] and rec['verdict'] directly, so one record missing a key raises KeyError and aborts the comparison. main also advertises a [<pr>] argument it never reads.
+
+  - .github/scripts/shared_review_compare.py
+
+  Detail: Use .get() and drop or implement the pr argument.
+
+- [ ] Review finding: wc_shared_review has a stale docstring, an unused constant and an always-0 return
+
+  The module docstring says the unpublished exclusion does not exist yet, but this change adds it. UNPUBLISHED_REASON is unused, and the guard branch ends in 'return 0 if ok else 0'.
+
+  - .github/scripts/wc_shared_review.py
+
+  Detail: Update the docstring, remove the dead constant, and return 0 plainly or document that refusal exits 0.
