@@ -665,7 +665,13 @@ def feature_health_half():
     check("a section whose call-outs do not fit falls back to the too-large notice",
           "too large" in over and utf16_len(roomy) + 1 + utf16_len(over) <= MAX_BODY_UNITS, over[:200])
     full = "b" * (MAX_BODY_UNITS - 20)
-    none = bs.feature_health_block({"status": "built", "section": callouts, "last_good_at": "2026-11-19"}, full)
+    import contextlib
+    import io
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        none = bs.feature_health_block({"status": "built", "section": callouts, "last_good_at": "2026-11-19"}, full)
+    check("dropping the section when nothing fits is logged, not silent",
+          none == "" and "left out" in err.getvalue(), err.getvalue())
     check("when not even the too-large notice fits, the body stays within the limit",
           utf16_len(full) + 1 + utf16_len(none) <= MAX_BODY_UNITS, utf16_len(none))
     for status, last, text in (("paused", "2026-11-19T06:29:00Z", "WING_COMMANDER_FEATURE_HEALTH_PAUSED"),

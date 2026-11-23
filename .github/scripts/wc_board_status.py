@@ -345,7 +345,11 @@ def feature_health_block(fhs, body):
             FEATURE_HEALTH_MARKER, last_good, FEATURE_HEALTH_MARKER_END)
         # Not even the notice fits: leave the section out rather than push the
         # whole body past the limit and fail the publish.
-        return block + "\n" if utf16_len(body) + 1 + utf16_len(block) <= MAX_BODY_UNITS else ""
+        if utf16_len(body) + 1 + utf16_len(block) <= MAX_BODY_UNITS:
+            return block + "\n"
+        print("board-status: the feature-health section was left out; the body has no room even for its notice",
+              file=sys.stderr)
+        return ""
     notice = FEATURE_HEALTH_NOTICES.get(status, FEATURE_HEALTH_NOTICES["unreadable"])
     if status != "never":
         notice += " The last good build was {0}.".format(last_good)

@@ -464,6 +464,16 @@ def check_shared_sources():
                             'ctx[kind][name] = environ[env].strip().lower() == "true"', 1)
     if copied == fh_src or not check_switch_source(copied):
         problems.append("self-check: a switch reader reimplemented inside collect is not noticed")
+    base = ("import wc_board_status\n"
+            "def collect(env):\n    {body}\n")
+    helper = ("def _parse(v):\n    return v.strip().lower() in ('true', '1')\n"
+              "def collect(env):\n    wc_board_status._switch_on(env)\n    return _parse(env)\n")
+    for label, src, want in (
+            ("a module-level helper called from collect", helper, True),
+            ("an unrelated '1' constant", base.format(body="wc_board_status._switch_on(env)\n    return env.get('n', '1')"), False),
+            ("a version string compared elsewhere", base.format(body="wc_board_status._switch_on(env)\n    return env == 'v2'"), False)):
+        if bool(check_switch_source(src)) != want:
+            problems.append("self-check: check_switch_source on {0} gave {1}".format(label, check_switch_source(src)))
     # A switch value must read the same through both modules.
     for value in ("true", " TRUE ", "false", "", "1", "yes"):
         env = {"BOARD_X": value}
@@ -493,10 +503,35 @@ def check_switch_source(src):
               and isinstance(c.func.value, ast.Name) and c.func.value.id == "wc_board_status"]
     if not shared:
         problems.append("collect does not read switches through wc_board_status._switch_on")
-    for node in ast.walk(coll) if coll else []:
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.lower() in (
-                "true", "1", "yes", "on"):
-            problems.append("collect compares a switch against the literal {0!r}".format(node.value))
+    truthy = ("true", "1", "yes", "on")
+
+    def is_truthy_const(n):
+        return isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value.strip().lower() in truthy
+
+    def parses_switch(node):
+        """A comparison (==, !=, in) against a truthy string or a collection of them."""
+        if not isinstance(node, ast.Compare):
+            return None
+        for comp in node.comparators:
+            if is_truthy_const(comp):
+                return comp.value
+            if isinstance(comp, (ast.Tuple, ast.List, ast.Set)) and any(is_truthy_const(e) for e in comp.elts):
+                return next(e.value for e in comp.elts if is_truthy_const(e))
+        return None
+
+    # collect plus every module-level helper it reaches by name.
+    seen, todo = set(), ["collect"] if coll else []
+    while todo:
+        fn = todo.pop()
+        if fn in seen or fn not in defs:
+            continue
+        seen.add(fn)
+        for node in ast.walk(defs[fn]):
+            lit = parses_switch(node)
+            if lit is not None:
+                problems.append("{0} compares a switch against the literal {1!r}".format(fn, lit))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id != "_switch_on":
+                todo.append(node.func.id)
     return problems
 
 
@@ -505,21 +540,33 @@ def check_review_round_three():
     problems = []
     for text, want in (("    - cron: 0 */4 * * *\n", 4),
                        ("    - cron: 17 6 * * *   # daily\n", 24),
-                       ('    - cron: "0 9-17 * * *"\n', 24 / 9),
+                       ('    - cron: "0 9-17 * * *"\n', 16),
                        ('    - cron: "0 0-23/6 * * *"\n', 6),
-                       ('    - cron: "0 1,9-11 * * *"\n', 6)):
+                       ('    - cron: "0 1,9-11 * * *"\n', 14),
+                       ('    - cron: "0 5-5/2 * * *"\n', 24),
+                       ('    - cron: "0 5/6 * * *"\n', 6)):
         try:
             got = fh.schedule_interval_hours(text)
         except ValueError as exc:
             got = "ValueError: {0}".format(exc)
         if got != want:
             problems.append("cron parsing: {0!r} gave {1}, expected {2}".format(text.strip(), got, want))
-    for bad in ('    - cron: "0 25 * * *"\n', '    - cron: "0 5-2 * * *"\n', '    - cron: "0 */0 * * *"\n'):
+    for bad in ('    - cron: "0 25 * * *"\n', '    - cron: "0 5-2 * * *"\n', '    - cron: "0 */0 * * *"\n',
+                '    - cron: "0 5-2/2 * * *"\n'):
         try:
             fh.schedule_interval_hours(bad)
             problems.append("cron parsing: {0!r} did not raise".format(bad.strip()))
         except ValueError:
             pass
+    # A daily 9-17 cron whose last run was 13.5 h ago is not "not running".
+    now = fh.parse_time("2026-11-20T23:30:00Z")
+    state, _d = fh.classify_workflow(
+        {"file": "x.yml", "cadence": "schedule"}, {"name": "f"},
+        {"runs": [{"started_at": "2026-11-20T10:00:00Z", "conclusion": "success"}],
+         "interval_hours": fh.schedule_interval_hours('    - cron: "0 9-17 * * *"\n')},
+        {}, now)
+    if state != "healthy":
+        problems.append("a 9-17 daily cron with a run 13.5 h ago classed {0!r}, expected healthy".format(state))
 
     since = fh.parse_time("2026-10-20T00:00:00Z")
     calls = []
@@ -546,6 +593,17 @@ def check_review_round_three():
         problems.append("triage_close on a busy repository: got {0}, expected 2026-11-08T00:00:00Z".format(got))
     if any("/issues/2/comments" in c for c in calls):
         problems.append("triage_close read an issue updated before the newest close already found")
+
+    def limited(path):
+        if path.startswith("search/issues"):
+            raise RuntimeError("gh: API rate limit exceeded (HTTP 403)")
+        return []
+    try:
+        fh.read_signal({"kind": "triage_close"}, "own/repo", since, limited, {})
+        problems.append("triage_close: a search 403 did not raise")
+    except RuntimeError as exc:
+        if "search quota is separate" not in str(exc):
+            problems.append("triage_close: a search 403 reads as a generic failure: {0}".format(exc))
 
     def unresolved(path):
         if path.startswith("search/issues"):

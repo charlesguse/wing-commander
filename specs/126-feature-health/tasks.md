@@ -237,13 +237,13 @@ MVP = Phases 1-3 (registry, drift gate, classifier, renderer, fixtures): the ver
 
 ## Maintainer Feedback
 
-- [ ] FH-FB-A1 (fix-pass review a49cfa6, finding A, important): In `.github/scripts/wc_feature_health.py` (~:285), make `_cron_hours` return the largest gap between consecutive firing hours, counting the wrap from the last hour of the day to the first, instead of `24 / per_day`.
-- [ ] FH-FB-A2: Update the tests and fixtures in `.github/scripts/verify-feature-health.py` (~:508-510) that assert the averaged values (`24 / 9`, `6`). Expect 16 for `0 9-17 * * *` and 14 for `0 1,9-11 * * *`. Each test must fail against the current averaging code.
-- [ ] FH-FB-A3: Add a case showing a daily `9-17` cron is not classed 'not running' when the last run was 13.5 h ago.
+- [X] FH-FB-A1 (fix-pass review a49cfa6, finding A, important): In `.github/scripts/wc_feature_health.py` (~:285), make `_cron_hours` return the largest gap between consecutive firing hours, counting the wrap from the last hour of the day to the first, instead of `24 / per_day`.
+- [X] FH-FB-A2: Update the tests and fixtures in `.github/scripts/verify-feature-health.py` (~:508-510) that assert the averaged values (`24 / 9`, `6`). Expect 16 for `0 9-17 * * *` and 14 for `0 1,9-11 * * *`. Each test must fail against the current averaging code.
+- [X] FH-FB-A3: Add a case showing a daily `9-17` cron is not classed 'not running' when the last run was 13.5 h ago.
 
 ## Maintainer Feedback
 
-- [ ] FH-FB-B (nit B): In `wc_feature_health.py` (~:270), widen `hi = 23` only for the bare `N/step` form (no `-` in the span). `5-2/2` must raise like `5-2`, and `5-5/2` must read as once a day. Add tests.
-- [ ] FH-FB-C (nit C): In `wc_board_status.py` (~:348), when not even the too-large notice fits, log the drop or leave a marker instead of dropping the feature-health section silently. Add a test.
-- [ ] FH-FB-D (nit D): In `verify-feature-health.py` (~:497), make `check_switch_source` flag only a truthy-string comparison used as the switch parse, not any `"1"` constant. It should also catch a module-level helper called from `collect`. Add positive and negative cases.
-- [ ] FH-FB-E (nit E): Make the triage-close read tolerate a search-API 403/429 and its separate quota. Either check the `search` rate-limit bucket in `check_rate_limit` or report a distinct degraded state, not 'unreadable' while core calls are plentiful. Add a test.
+- [X] FH-FB-B (nit B): In `wc_feature_health.py` (~:270), widen `hi = 23` only for the bare `N/step` form (no `-` in the span). `5-2/2` must raise like `5-2`, and `5-5/2` must read as once a day. Add tests.
+- [X] FH-FB-C (nit C): In `wc_board_status.py` (~:348), when not even the too-large notice fits, log the drop or leave a marker instead of dropping the feature-health section silently. Add a test.
+- [X] FH-FB-D (nit D): In `verify-feature-health.py` (~:497), make `check_switch_source` flag only a truthy-string comparison used as the switch parse, not any `"1"` constant. It should also catch a module-level helper called from `collect`. Add positive and negative cases.
+- [X] FH-FB-E (nit E): Make the triage-close read tolerate a search-API 403/429 and its separate quota. Either check the `search` rate-limit bucket in `check_rate_limit` or report a distinct degraded state, not 'unreadable' while core calls are plentiful. Add a test.

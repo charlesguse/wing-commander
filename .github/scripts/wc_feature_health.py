@@ -266,7 +266,7 @@ def _cron_hour_set(hour, expr):
         span, step = m.group(1), int(m.group(2) or 1)
         lo, _sep, hi = ("0-23" if span == "*" else span).partition("-")
         lo, hi = int(lo), int(hi or lo)
-        if m.group(2) is not None and span != "*" and not hi > lo:
+        if m.group(2) is not None and span != "*" and "-" not in span:
             hi = 23
         if not 0 <= lo <= hi <= 23:
             raise ValueError("unparseable cron: {0}".format(expr))
@@ -280,9 +280,11 @@ def _cron_hours(expr):
         raise ValueError("unparseable cron: {0}".format(expr))
     if fields[1] == "*":
         return 1
-    per_day = len(_cron_hour_set(fields[1], expr))
+    hours = sorted(_cron_hour_set(fields[1], expr))
     if fields[2:] == ["*", "*", "*"]:
-        return 24 / per_day
+        # Largest gap between consecutive firings, counting the wrap past midnight.
+        gaps = [b - a for a, b in zip(hours, hours[1:])] + [hours[0] + 24 - hours[-1]]
+        return max(gaps)
     return 24 * 7 if fields[4] != "*" else 24 * 31
 
 
@@ -363,7 +365,15 @@ def _triage_close_times(gh, repo, base, since):
     path = "search/issues?q={0}&sort=updated&order=desc&per_page=100".format(urllib.parse.quote(q))
     times = []
     for page in range(1, SEARCH_PAGES + 1):
-        got = gh(path + "&page={0}".format(page))
+        try:
+            got = gh(path + "&page={0}".format(page))
+        except RuntimeError as exc:
+            # The search API has its own, much smaller quota; say so rather than
+            # report a generic failure while core calls are plentiful.
+            if re.search(r"\b(403|429)\b|rate limit|abuse", str(exc), re.I):
+                raise RuntimeError("triage close search is rate limited (the search quota is separate "
+                                   "from the core quota): {0}".format(exc))
+            raise
         if not isinstance(got, dict) or got.get("incomplete_results"):
             raise RuntimeError("triage close search returned an incomplete result")
         items = got.get("items") or []
