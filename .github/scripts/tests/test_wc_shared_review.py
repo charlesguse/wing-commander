@@ -435,6 +435,16 @@ class ReviewRound3Fixes(unittest.TestCase):
                                 "b" * 40, "open")
         self.assertEqual(out["verdict"], "incomplete")
 
+    def test_named_check_skips_fixtures_specs_and_dash_paths(self):
+        # R3-F9: a fixture or a spec file sorted first is not the change's
+        # own check, and no path component may read as an option.
+        d = sr.discover_named_check
+        self.assertEqual(d(["a/fixtures/x/test_probe.py", "b/test_fix.py"])[-1], "test_fix.py")
+        self.assertEqual(d(["specs/127-x/verify-a.py", "z/verify-b.py"]), ["python3", "-I", "z/verify-b.py"])
+        self.assertIsNone(d(["-s/test_a.py"]))
+        self.assertIsNone(d(["x/--help/verify-a.py"]))
+        self.assertIsNone(d(["fixtures/sub/run-tests.sh"]))
+
 
 if __name__ == "__main__":
     unittest.main()

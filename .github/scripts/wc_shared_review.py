@@ -563,9 +563,17 @@ TAIL_CHARS = 4000
 def discover_named_check(added_files):
     """The change's named check, found by code from the diff's ADDED files
     (never chosen by an agent, research D8): the first added test file, run
-    through a fixed runner. Returns an argv list or None."""
+    through a fixed runner. Returns an argv list or None.
+
+    The change's own check is a test the change adds to exercise its fix,
+    not a file it adds as test data: a path under a `fixtures` directory or
+    a spec's directory is never chosen. A path component starting with `-`
+    is refused, so no part of the path reads as an option to the runner."""
     for path in sorted(added_files or []):
-        if ".." in path.split("/") or path.startswith("/"):
+        parts = path.split("/")
+        if ".." in parts or path.startswith("/") or any(p.startswith("-") for p in parts):
+            continue
+        if "fixtures" in parts[:-1] or parts[0] == "specs":
             continue
         base = path.rsplit("/", 1)[-1]
         if re.fullmatch(r"verify-[\w.-]+\.py", base):
