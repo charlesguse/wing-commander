@@ -588,33 +588,199 @@ def discover_named_check(added_files):
     return None
 
 
-def _run_staged(argv, cwd, timeout, env):
-    """One command, its exit code staged as data -- a non-zero exit, a
-    crash or a hang is never a job failure (FR-012, spec edge cases)."""
+# The PR's code runs as this throwaway system user, never as the runner's
+# own user (FR-012, SC-008(b)). Being another uid is the boundary: that user
+# cannot write the runner's files (the staged result, GITHUB_ENV,
+# GITHUB_OUTPUT, GITHUB_STEP_SUMMARY), cannot read the runner's processes'
+# environments, holds no sudo, and every process it owns, detached or not,
+# is killed before the result is written.
+SANDBOX_USER = "wc-code-run"
+SANDBOX_ENV_PATH = "/usr/local/bin:/usr/bin:/bin"
+KILL_ATTEMPTS = 50
+
+
+class SandboxUnavailable(RuntimeError):
+    """The code-run sandbox cannot be set up here: nothing of the PR runs."""
+
+
+def _sh(argv, **kw):
     import subprocess
-    try:
-        proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
-        out = (proc.stdout or "") + (proc.stderr or "")
-        return {"exit": proc.returncode, "output_tail": out[-TAIL_CHARS:]}
-    except subprocess.TimeoutExpired:
-        return {"exit": 124, "output_tail": "timed out after {0}s".format(timeout)}
-    except OSError as exc:
-        return {"exit": 127, "output_tail": str(exc)[-TAIL_CHARS:]}
+    kw.setdefault("stdin", subprocess.DEVNULL)
+    kw.setdefault("capture_output", True)
+    return subprocess.run(argv, **kw)
 
 
-def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT):
+class UidSandbox:
+    """Runs PR code as SANDBOX_USER through passwordless sudo (GitHub-hosted
+    Linux runners). Each command gets a fresh copy of the PR tree, extracted
+    by the sandbox user itself so nothing is chowned by root, and writes its
+    output to a runner-private file through an inherited descriptor. After
+    the command, every process of the sandbox user is killed and the kill
+    is confirmed before the output is read."""
+
+    def __init__(self, user=SANDBOX_USER):
+        self.user = user
+        self.work = self.private = self.reviewer = None
+
+    def _sudo(self, *argv, **kw):
+        return _sh(["sudo", "-n"] + list(argv), **kw)
+
+    def _check_host(self):
+        import shutil
+        if os.name != "posix" or not hasattr(os, "geteuid") or os.geteuid() == 0:
+            raise SandboxUnavailable("needs a non-root POSIX runner user")
+        for tool in ("sudo", "tar", "env", "pkill", "ps", "install"):
+            if not shutil.which(tool):
+                raise SandboxUnavailable("{0} is not installed".format(tool))
+        if self._sudo("true").returncode != 0:
+            raise SandboxUnavailable("passwordless sudo is not available")
+        if _sh(["id", "-u", self.user]).returncode != 0:
+            made = self._sudo("useradd", "--system", "--no-create-home", "--home-dir", "/nonexistent",
+                              "--user-group", "--shell", "/usr/sbin/nologin", self.user)
+            if made.returncode != 0:
+                raise SandboxUnavailable("could not create " + self.user)
+        groups = _sh(["id", "-nG", self.user]).stdout.decode().split()
+        if groups != [self.user]:
+            raise SandboxUnavailable("{0} is in groups {1}".format(self.user, groups))
+        listed = self._sudo("-l", "-U", self.user)
+        if b"not allowed" not in listed.stdout + listed.stderr:
+            raise SandboxUnavailable(self.user + " may run sudo")
+
+    def open(self, pr_tree, reviewer_tree):
+        import shutil
+        import tempfile
+        self._check_host()
+        self.pr_tree = pr_tree
+        # work/: runner-owned 0755, so the sandbox user can enter but never
+        # create, rename or remove an entry in it. private/: runner-only.
+        self.work = tempfile.mkdtemp(prefix="wc-code-run-")
+        os.chmod(self.work, 0o755)
+        self.private = tempfile.mkdtemp(prefix="wc-code-run-out-")
+        # The default branch's gate runner: readable, never writable, by the
+        # sandbox user, so the named check cannot rewrite it.
+        self.reviewer = os.path.join(self.work, "reviewer")
+        shutil.copytree(reviewer_tree, self.reviewer, symlinks=True)
+        for root, dirs, files in os.walk(self.reviewer):
+            for name in dirs:
+                os.chmod(os.path.join(root, name), 0o755)
+            for name in files:
+                path = os.path.join(root, name)
+                if not os.path.islink(path):
+                    os.chmod(path, 0o755 if os.access(path, os.X_OK) else 0o644)
+        os.chmod(self.reviewer, 0o755)
+        self._kill_all()
+        return self
+
+    def gate_runner(self):
+        return os.path.join(self.reviewer, ".github", "scripts", "run-local-gates.py")
+
+    def live_pids(self):
+        """Processes of the sandbox user that can still run code. A zombie
+        (state Z) is dead and only waits to be reaped by its new parent,
+        which a container's bare PID 1 may never do, so it does not count."""
+        listed = self._sudo("ps", "-o", "pid=,stat=", "-u", self.user)
+        if listed.returncode not in (0, 1):
+            raise SandboxUnavailable("cannot list the processes of " + self.user)
+        live = []
+        for line in listed.stdout.decode("utf-8", "replace").splitlines():
+            parts = line.split()
+            if len(parts) == 2 and not parts[1].startswith("Z"):
+                live.append(int(parts[0]))
+        return live
+
+    def _kill_all(self):
+        import time
+        for _ in range(KILL_ATTEMPTS):
+            self._sudo("pkill", "-KILL", "-u", self.user)
+            if not self.live_pids():
+                return
+            time.sleep(0.1)
+        raise SandboxUnavailable("processes of {0} survived the kill".format(self.user))
+
+    def _fresh_tree(self, n):
+        import subprocess
+        tree = os.path.join(self.work, "tree-{0}".format(n))
+        home = os.path.join(self.work, "home-{0}".format(n))
+        for path in (tree, home):
+            if self._sudo("install", "-d", "-o", self.user, "-g", self.user, "-m", "0700", path).returncode:
+                raise SandboxUnavailable("could not create " + path)
+        pack = subprocess.Popen(["tar", "-C", self.pr_tree, "-cf", "-", "."], stdout=subprocess.PIPE)
+        unpack = self._sudo("-u", self.user, "--", "tar", "-C", tree, "-xf", "-", stdin=pack.stdout)
+        pack.stdout.close()
+        if pack.wait() != 0 or unpack.returncode != 0:
+            raise SandboxUnavailable("could not copy the PR tree for " + self.user)
+        return tree, home
+
+    def run(self, argv, timeout, n):
+        import subprocess
+        tree, home = self._fresh_tree(n)
+        log = os.path.join(self.private, "out-{0}.log".format(n))
+        env = ["PATH=" + SANDBOX_ENV_PATH, "HOME=" + home, "TMPDIR=" + home,
+               "LANG=C.UTF-8", "PYTHONDONTWRITEBYTECODE=1"]
+        with open(log, "wb") as fh:
+            proc = subprocess.Popen(["sudo", "-n", "-u", self.user, "--", "env", "-i", "-C", tree]
+                                    + env + list(argv),
+                                    stdin=subprocess.DEVNULL, stdout=fh, stderr=subprocess.STDOUT)
+            timed_out = False
+            try:
+                code = proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out, code = True, 124
+            # Detached and background processes die here, before anything
+            # is read: none outlives the command.
+            self._kill_all()
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                self._sudo("kill", "-KILL", str(proc.pid))
+                proc.wait(timeout=30)
+        with open(log, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - TAIL_CHARS * 4))
+            out = fh.read().decode("utf-8", "replace")
+        if timed_out:
+            out += "\ntimed out after {0}s".format(timeout)
+        self._sudo("rm", "-rf", "--one-file-system", tree, home)
+        return {"exit": code, "output_tail": out[-TAIL_CHARS:]}
+
+    def close(self):
+        import shutil
+        if self.work:
+            try:
+                self._kill_all()
+            except SandboxUnavailable:
+                pass
+            self._sudo("rm", "-rf", "--one-file-system", self.work)
+        if self.private:
+            shutil.rmtree(self.private, ignore_errors=True)
+
+
+def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT, sandbox=None):
     """The two commands the code-run job may run, nothing else: the named
-    check, and the default branch's gate runner against the PR tree. The
-    environment is scrubbed: no ACTIONS_*, token or secret variable
-    reaches PR code (SC-008)."""
+    check, and the default branch's gate runner against the PR tree, both
+    inside `sandbox` (UidSandbox by default). Their exit codes are staged as
+    data. When the sandbox cannot be set up, or a process survives it,
+    nothing is staged: `missing`, never an unisolated run (FR-012)."""
     pr_tree, reviewer_tree = os.path.abspath(pr_tree), os.path.abspath(reviewer_tree)
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("TMPDIR", "/tmp"),
-           "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"}
+    box = sandbox if sandbox is not None else UidSandbox()
     argv = discover_named_check(added_files)
-    named = _run_staged(argv, pr_tree, timeout, env) if argv else None
-    gates = _run_staged(["python3", "-I", os.path.join(reviewer_tree, ".github/scripts/run-local-gates.py")],
-                        pr_tree, timeout, env)
+    try:
+        box.open(pr_tree, reviewer_tree)
+        named = box.run(argv, timeout, 1) if argv else None
+        gates = box.run(["python3", "-I", box.gate_runner()], timeout, 2)
+    except (SandboxUnavailable, OSError) as exc:
+        return {"status": "missing", "reason": "code-run sandbox: {0}".format(exc)[:500]}
+    finally:
+        box.close()
     return {"status": "staged", "named_check": named, "gate_suite": gates}
+
+
+def write_private(path, text):
+    """The staged result, written by the runner once the sandbox user has
+    no process left, mode 0600."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
 
 
 def confirmed_from_github(pr, bot_login, default_branch, repository, gh):
@@ -690,6 +856,7 @@ def main(argv=None):
     c = sub.add_parser("code-run")
     c.add_argument("--pr-tree", required=True); c.add_argument("--reviewer-tree", required=True)
     c.add_argument("--added-files", required=True)
+    c.add_argument("--out", required=True)
     r = sub.add_parser("record")
     r.add_argument("--input", required=True)
     r.add_argument("--handoff", action="store_true")
@@ -738,7 +905,7 @@ def main(argv=None):
     if args.cmd == "code-run":
         with open(args.added_files, encoding="utf-8") as fh:
             added = [line.strip() for line in fh if line.strip()]
-        print(json.dumps(stage_code_run(args.pr_tree, args.reviewer_tree, added)))
+        write_private(args.out, json.dumps(stage_code_run(args.pr_tree, args.reviewer_tree, added)))
         return 0
     if args.cmd == "validate-output":
         try:

@@ -271,14 +271,21 @@ jobs:
         with:
           name: shared-review-input
           path: input
+      # The PR's code runs as a throwaway user with no sudo
+      # (wc_shared_review.UidSandbox), never as the runner's own user: it
+      # cannot write out/, GITHUB_ENV, GITHUB_OUTPUT or GITHUB_STEP_SUMMARY,
+      # and every process it leaves, detached or not, is killed before the
+      # runner writes the result. Where the sandbox cannot be set up the
+      # result is `missing` and nothing of the PR runs (FR-012, SC-008(b)).
       - name: Run the named check and the gate suite as data
         shell: bash
         run: |
           set -uo pipefail
-          mkdir -p out
+          mkdir -m 700 out
           python3 -I trees/reviewer-tree/.github/scripts/wc_shared_review.py code-run \
             --pr-tree trees/pr-tree --reviewer-tree trees/reviewer-tree \
-            --added-files input/added-files.txt > out/code-run.json || echo '{"status":"missing"}' > out/code-run.json
+            --added-files input/added-files.txt --out out/code-run.json \
+            || echo '{"status":"missing"}' > out/code-run.json
       - name: Upload the staged result
         uses: actions/upload-artifact@v6
         with:

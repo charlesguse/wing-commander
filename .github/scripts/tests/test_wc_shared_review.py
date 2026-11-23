@@ -278,36 +278,86 @@ class CodeRun(unittest.TestCase):
         self.assertEqual(d(["x/verify-a.py"]), ["python3", "-I", "x/verify-a.py"])
         self.assertIsNone(d(["../test_a.py", "/abs/test_b.py"]))
 
-    def test_hostile_tree_stages_exit_codes_as_data(self):
-        import json
-        import tempfile
-        here = os.path.dirname(os.path.abspath(__file__))
-        tree = os.path.join(here, "fixtures", "shared-review-hostile")
-        with tempfile.TemporaryDirectory() as rev:
-            os.makedirs(os.path.join(rev, ".github", "scripts"))
-            with open(os.path.join(rev, ".github", "scripts", "run-local-gates.py"), "w") as fh:
-                fh.write("import sys\nsys.exit(3)\n")
-            os.environ["ACTIONS_RUNTIME_TOKEN"] = "secret"
-            os.environ["GITHUB_TOKEN"] = "secret"
-            try:
-                out = sr.stage_code_run(tree, rev, ["verify-probe-check.py"], timeout=60)
-            finally:
-                del os.environ["ACTIONS_RUNTIME_TOKEN"], os.environ["GITHUB_TOKEN"]
+    def test_stages_exit_codes_as_data_inside_the_sandbox(self):
+        # The real hostile run is verify-shared-review-isolation.py's; here
+        # the sandbox is faked, so this checks what stage_code_run asks it
+        # to run and how it stages the answers.
+        box = FakeSandbox({1: {"exit": 1, "output_tail": "LEAKED:\n"}, 2: {"exit": 3, "output_tail": ""}})
+        out = sr.stage_code_run("tree", "rev", ["verify-probe-check.py"], timeout=60, sandbox=box)
         self.assertEqual(out["status"], "staged")
-        self.assertNotEqual(out["named_check"]["exit"], 0)
-        self.assertIn("LEAKED:\n", out["named_check"]["output_tail"] + "\n")
-        self.assertNotIn("secret", json.dumps(out))
+        self.assertEqual(out["named_check"]["exit"], 1)
         self.assertEqual(out["gate_suite"]["exit"], 3)
+        self.assertEqual(box.opened, (os.path.abspath("tree"), os.path.abspath("rev")))
+        self.assertEqual(box.ran[0], (["python3", "-I", "verify-probe-check.py"], 60, 1))
+        self.assertEqual(box.ran[1], (["python3", "-I", "/box/run-local-gates.py"], 60, 2))
+        self.assertTrue(box.closed)
 
     def test_no_named_check_is_none_not_failure(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as rev, tempfile.TemporaryDirectory() as tree:
-            os.makedirs(os.path.join(rev, ".github", "scripts"))
-            with open(os.path.join(rev, ".github", "scripts", "run-local-gates.py"), "w") as fh:
-                fh.write("print('ok')\n")
-            out = sr.stage_code_run(tree, rev, [], timeout=30)
+        box = FakeSandbox({2: {"exit": 0, "output_tail": "ok"}})
+        out = sr.stage_code_run("tree", "rev", [], timeout=30, sandbox=box)
         self.assertIsNone(out["named_check"])
         self.assertEqual(out["gate_suite"]["exit"], 0)
+        self.assertEqual(len(box.ran), 1)
+
+    def test_no_sandbox_runs_nothing_and_is_missing(self):
+        # R3-F6: where the sandbox cannot be set up, or a process survives
+        # its kill, nothing is staged and nothing of the PR runs unisolated.
+        for where in ("open", "run"):
+            box = FakeSandbox({}, fail=where)
+            out = sr.stage_code_run("tree", "rev", ["x/verify-a.py"], timeout=30, sandbox=box)
+            self.assertEqual(out["status"], "missing", where)
+            self.assertIn("sandbox", out["reason"])
+            self.assertTrue(box.closed)
+        self.assertNotEqual(sr.SANDBOX_USER, "runner")
+
+    def test_kill_check_ignores_zombies_but_not_live_processes(self):
+        # A killed process whose new parent never reaps it (a container's
+        # bare PID 1) stays listed as a zombie; it runs no code.
+        class Box(sr.UidSandbox):
+            listing = b""
+
+            def _sudo(self, *argv, **kw):
+                import subprocess
+                if argv[0] == "ps":
+                    return subprocess.CompletedProcess(argv, 0, self.listing, b"")
+                return subprocess.CompletedProcess(argv, 0, b"", b"")
+        saved = sr.KILL_ATTEMPTS
+        sr.KILL_ATTEMPTS = 2
+        try:
+            box = Box()
+            box.listing = b"   37 Z\n   61 Zs\n"
+            box._kill_all()
+            self.assertEqual(box.live_pids(), [])
+            box.listing = b"   37 Z\n   62 S\n"
+            self.assertEqual(box.live_pids(), [62])
+            with self.assertRaises(sr.SandboxUnavailable):
+                box._kill_all()
+        finally:
+            sr.KILL_ATTEMPTS = saved
+
+
+class FakeSandbox:
+    def __init__(self, results, fail=None):
+        self.results, self.fail = results, fail
+        self.opened, self.ran, self.closed = None, [], False
+
+    def open(self, pr_tree, reviewer_tree):
+        if self.fail == "open":
+            raise sr.SandboxUnavailable("no sudo")
+        self.opened = (pr_tree, reviewer_tree)
+        return self
+
+    def gate_runner(self):
+        return "/box/run-local-gates.py"
+
+    def run(self, argv, timeout, n):
+        if self.fail == "run":
+            raise sr.SandboxUnavailable("processes survived the kill")
+        self.ran.append((argv, timeout, n))
+        return self.results[n]
+
+    def close(self):
+        self.closed = True
 
 
 class Finalize(unittest.TestCase):
@@ -349,19 +399,9 @@ class ReviewRound2Fixes(unittest.TestCase):
             self.assertEqual(out[0]["status"], "upheld")
 
     def test_code_run_relative_trees(self):
-        import tempfile
-        cwd = os.getcwd()
-        with tempfile.TemporaryDirectory() as d:
-            os.makedirs(os.path.join(d, "trees/pr-tree"))
-            os.makedirs(os.path.join(d, "trees/rev/.github/scripts"))
-            with open(os.path.join(d, "trees/rev/.github/scripts/run-local-gates.py"), "w") as fh:
-                fh.write("print('ok')\n")
-            os.chdir(d)
-            try:
-                out = sr.stage_code_run("trees/pr-tree", "trees/rev", [])
-            finally:
-                os.chdir(cwd)
-        self.assertEqual(out["gate_suite"]["exit"], 0)
+        box = FakeSandbox({2: {"exit": 0, "output_tail": "ok"}})
+        sr.stage_code_run("trees/pr-tree", "trees/rev", [], sandbox=box)
+        self.assertEqual(box.opened, (os.path.abspath("trees/pr-tree"), os.path.abspath("trees/rev")))
 
     def test_failed_reads_raise(self):
         with self.assertRaises(sr.GhReadError):
