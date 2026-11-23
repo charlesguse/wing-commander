@@ -620,13 +620,15 @@ jobs:
       - name: Gate 7 — every job of every published stage carries the environment binding
         run: |
           python3 - <<'PYEOF'
-          import glob, json, os, sys, yaml
+          import glob, os, sys, yaml
 
-          try:
-              UNPUBLISHED = json.load(open(".github/scripts/unpublished-callables.json",
-                                           encoding="utf-8"))
-          except (OSError, ValueError):
-              UNPUBLISHED = {}
+          # Callables registered in unpublished-callables.json (spec 127) are
+          # internal, not stages. The registry's one reader is
+          # wc_published_stages.unpublished_callables() (single home:
+          # verify-gate-7.py fails on a second loader in a workflow).
+          sys.path.insert(0, os.path.join(".github", "scripts"))
+          from wc_published_stages import unpublished_callables
+          UNPUBLISHED = unpublished_callables()
 
           # sub-key -> the workflow_call input it must forward.
           BINDINGS = {"name": "environment", "deployment": "environment-deployment"}
@@ -1573,13 +1575,10 @@ jobs:
                   return DOLLAR_OPEN + " " + re.sub(r"\s+", " ", m.group(1).strip()) + " " + DOLLAR_CLOSE
               return GH_EXPR_RE.sub(repl, s.strip())
 
-          # Callables registered in unpublished-callables.json (spec 127) are
-          # internal, not stages — see wc_published_stages.py.
-          try:
-              UNPUBLISHED = __import__("json").load(open(
-                  ".github/scripts/unpublished-callables.json", encoding="utf-8"))
-          except (OSError, ValueError):
-              UNPUBLISHED = {}
+          # Registered unpublished callables are skipped -- see Gate 7.
+          sys.path.insert(0, os.path.join(".github", "scripts"))
+          from wc_published_stages import unpublished_callables
+          UNPUBLISHED = unpublished_callables()
 
           failures = 0
           stages = bound = 0
@@ -1901,13 +1900,10 @@ jobs:
               ("agent-startup-check.yml", "classify-startup"),
           }
 
-          # Callables registered in unpublished-callables.json (spec 127) are
-          # internal, not stages — see wc_published_stages.py.
-          try:
-              UNPUBLISHED = __import__("json").load(open(
-                  ".github/scripts/unpublished-callables.json", encoding="utf-8"))
-          except (OSError, ValueError):
-              UNPUBLISHED = {}
+          # Registered unpublished callables are skipped -- see Gate 7.
+          sys.path.insert(0, os.path.join(".github", "scripts"))
+          from wc_published_stages import unpublished_callables
+          UNPUBLISHED = unpublished_callables()
 
           failures = 0
           stages = 0
