@@ -175,9 +175,12 @@ jobs:
           cd reviewer
           git fetch --no-tags origin "refs/pull/${PR}/head"
           [ "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA" ] || { echo "::error::PR head moved while preparing"; exit 1; }
-          git diff "origin/${DEFAULT_BRANCH}...FETCH_HEAD" > ../input/pr.diff || true
-          git diff --name-only --diff-filter=A "origin/${DEFAULT_BRANCH}...FETCH_HEAD" > ../input/added-files.txt || true
-          git log --format='%H %s' "origin/${DEFAULT_BRANCH}..FETCH_HEAD" > ../input/commits.txt || true
+          # A failed read stops the round: an empty diff would be reviewed as
+          # a change with nothing wrong in it. No added file is a real case.
+          git diff "origin/${DEFAULT_BRANCH}...FETCH_HEAD" > ../input/pr.diff
+          git diff --name-only --diff-filter=A "origin/${DEFAULT_BRANCH}...FETCH_HEAD" > ../input/added-files.txt
+          git log --format='%H %s' "origin/${DEFAULT_BRANCH}..FETCH_HEAD" > ../input/commits.txt
+          [ -s ../input/pr.diff ] || { echo "::error::the PR's diff against ${DEFAULT_BRANCH} is empty"; exit 1; }
           mkdir -p ../pr-tree
           git archive FETCH_HEAD | tar -x -C ../pr-tree
           mkdir -p ../reviewer-tree

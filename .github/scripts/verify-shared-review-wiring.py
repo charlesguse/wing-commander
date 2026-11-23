@@ -14,6 +14,7 @@ FR-003, FR-005, FR-024, FR-026, FR-027, FR-028).
 import copy
 import glob
 import os
+import re
 import sys
 
 import yaml
@@ -60,6 +61,23 @@ def callable_problems(wf):
     return problems
 
 
+def diff_read_problems(wf):
+    """R3-F5: the PR's diff, added files and commits are read with no
+    `|| true` to swallow a failure, and an empty diff stops the round."""
+    problems = []
+    steps = ((wf.get("jobs") or {}).get("prepare") or {}).get("steps") or []
+    runs = [str((s or {}).get("run") or "") for s in steps]
+    reader = [r for r in runs if "pr.diff" in r]
+    if not reader:
+        return ["prepare no longer writes the PR's diff"]
+    for line in reader[0].splitlines():
+        if re.search(r"\bgit (diff|log)\b", line) and re.search(r"\|\|\s*(true|:)\b", line):
+            problems.append("prepare swallows a failed git read: " + line.strip())
+    if not re.search(r"\[ -s [^\]]*pr\.diff \]", reader[0]):
+        problems.append("prepare does not stop the round on an empty diff")
+    return problems
+
+
 def wrapper_problems(wf):
     problems = []
     conc = wf.get("concurrency") or {}
@@ -87,10 +105,24 @@ def readers_problems(root=ROOT):
     return problems
 
 
+def _prepare_diff_step(wf):
+    return next(s for s in wf["jobs"]["prepare"]["steps"] if "pr.diff" in str(s.get("run") or ""))
+
+
+def _swallow_diff(wf):
+    step = _prepare_diff_step(wf)
+    step["run"] = step["run"].replace("> ../input/pr.diff", "> ../input/pr.diff || true", 1)
+
+
+def _drop_empty_diff_stop(wf):
+    step = _prepare_diff_step(wf)
+    step["run"] = "\n".join(l for l in step["run"].splitlines() if "[ -s " not in l)
+
+
 def main():
     cal = yaml.safe_load(open(CALLABLE, encoding="utf-8")) or {}
     wrap = yaml.safe_load(open(WRAPPER, encoding="utf-8")) or {}
-    problems = callable_problems(cal) + wrapper_problems(wrap) + readers_problems()
+    problems = callable_problems(cal) + diff_read_problems(cal) + wrapper_problems(wrap) + readers_problems()
     if "--self-test" in sys.argv:
         bad = 0
         muts = {
@@ -102,6 +134,14 @@ def main():
             clone = copy.deepcopy(cal)
             mutate(clone)
             if not callable_problems(clone):
+                print("::error::self-test: mutation not caught: " + label)
+                bad += 1
+        for label, mutate, check in (
+                ("a git read swallowed with || true", _swallow_diff, diff_read_problems),
+                ("the empty-diff stop removed", _drop_empty_diff_stop, diff_read_problems)):
+            clone = copy.deepcopy(cal)
+            mutate(clone)
+            if not check(clone):
                 print("::error::self-test: mutation not caught: " + label)
                 bad += 1
         wclone = copy.deepcopy(wrap)
