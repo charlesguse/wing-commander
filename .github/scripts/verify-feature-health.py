@@ -357,7 +357,30 @@ def check_workflow():
     with open(path, encoding="utf-8") as fp:
         text = fp.read()
     artifact = bs.FEATURE_HEALTH_ARTIFACT
-    return check_workflow_text(text, artifact) + check_workflow_fixtures(text, artifact)
+    registry = fh.load_registry()
+    problems = check_workflow_env(text, registry)
+    if not check_workflow_env(re.sub(r"^\s*METRICS_BRANCH:.*$", "", text, flags=re.M), registry):
+        problems.append("self-check: a workflow env missing a registry switch is not noticed")
+    return problems + check_workflow_text(text, artifact) + check_workflow_fixtures(text, artifact)
+
+
+def check_workflow_env(text, registry):
+    """Every kill switch and required variable the registry names must be
+    supplied in the workflow's env as `KEY: ${{ vars.WING_COMMANDER_KEY }}`
+    (the key is the name without its prefix, which is what collect reads)."""
+    names = set()
+    for e in registry:
+        names.update(n for n in (e.get("kill_switch"), e.get("requires_var")) if n)
+        sig = e.get("signal") or {}
+        if sig.get("kind") == "branch_commit":
+            names.add("WING_COMMANDER_METRICS_BRANCH")
+    problems = []
+    for name in sorted(names):
+        key = name[len(fh.SWITCH_PREFIX):] if name.startswith(fh.SWITCH_PREFIX) else name
+        if not re.search(r"^\s*{0}:\s*\$\{{\{{\s*vars\.{1}\s*\}}\}}".format(re.escape(key), re.escape(name)),
+                         text, re.M):
+            problems.append("the workflow env does not supply {0} as {1}".format(name, key))
+    return problems
 
 
 # --------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 {
   "since": "2026-10-20T00:00:00Z",
-  "environ": {},
+  "environ": {"METRICS_BRANCH": "alt"},
   "cases": [
     {"label": "merged_pr: occurred", "signal": {"kind": "merged_pr", "head_prefixes": ["fix/"]},
      "responses": {"/pulls?": [{"merged_at": "2026-11-10T01:00:00Z", "head": {"ref": "fix/1-a"}}, {"merged_at": "2026-11-12T01:00:00Z", "head": {"ref": "other/x"}}]},
@@ -22,7 +22,7 @@
      "responses": [["/comments", [{"body": "closed at the route step: rate_limit", "created_at": "2026-11-06T00:00:00Z"}]], ["/issues?state=closed", [{"number": 5}]]],
      "expect": null},
     {"label": "branch_commit: occurred", "signal": {"kind": "branch_commit", "branch": "metrics"},
-     "responses": {"/commits/metrics": {"commit": {"committer": {"date": "2026-11-20T00:00:00Z"}}}}, "expect": "2026-11-20T00:00:00Z"},
+     "responses": {"/commits/alt": {"commit": {"committer": {"date": "2026-11-20T00:00:00Z"}}}}, "expect": "2026-11-20T00:00:00Z"},
     {"label": "issue_updated: occurred", "signal": {"kind": "issue_updated", "title": "Board status"},
      "responses": {"/issues?state=open": [{"title": "Board status", "updated_at": "2026-11-21T00:00:00Z"}, {"title": "Roadmap", "updated_at": "2026-11-22T00:00:00Z"}]},
      "expect": "2026-11-21T00:00:00Z"},
@@ -30,7 +30,13 @@
      "responses": {"/issues?state=open": [{"title": "Board status", "updated_at": "2026-11-21T00:00:00Z", "body": "no section"}]},
      "expect": null},
     {"label": "issue_section: the marker is present", "signal": {"kind": "issue_section", "title": "Board status", "marker": "wc-proof-list:begin"},
-     "responses": {"/issues?state=open": [{"title": "Board status", "updated_at": "2026-11-21T00:00:00Z", "body": "<!-- wc-proof-list:begin -->"}]},
-     "expect": "2026-11-21T00:00:00Z"}
+     "responses": {"/issues?state=open": [{"title": "Board status", "updated_at": "2026-11-21T00:00:00Z", "body": "<!-- wc-proof-list:begin status=\"built\" built=\"x\" -->"}]},
+     "expect": "2026-11-21T00:00:00Z"},
+    {"label": "issue_section: a failed notice carries the marker but is not a build", "signal": {"kind": "issue_section", "title": "Board status", "marker": "wc-proof-list:begin"},
+     "responses": {"/issues?state=open": [{"title": "Board status", "updated_at": "2026-11-21T00:00:00Z", "body": "<!-- wc-proof-list:begin status=\"failed\" built=\"none\" -->"}]},
+     "expect": null},
+    {"label": "issue_section: a feature-health notice is not a build", "signal": {"kind": "issue_section", "title": "Board status", "marker": "wing-commander-feature-health"},
+     "responses": {"/issues?state=open": [{"title": "Board status", "updated_at": "2026-11-21T00:00:00Z", "body": "<!-- wing-commander-feature-health -->\nFeature health is paused.\n<!-- /wing-commander-feature-health -->"}]},
+     "expect": null}
   ]
 }

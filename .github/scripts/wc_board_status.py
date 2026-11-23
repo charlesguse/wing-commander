@@ -311,6 +311,7 @@ FEATURE_HEALTH_ARTIFACT = "feature-health-section"
 FEATURE_HEALTH_BUILD_STEP = "Build the feature health section"
 FEATURE_HEALTH_STALE_HOURS = 48
 FEATURE_HEALTH_MARKER = "<!-- wing-commander-feature-health -->"
+FEATURE_HEALTH_MARKER_END = "<!-- /wing-commander-feature-health -->"
 FEATURE_HEALTH_NOTICES = {
     "paused": "Feature health is paused (`WING_COMMANDER_FEATURE_HEALTH_PAUSED`).",
     "failed": "Feature health's latest build failed.",
@@ -322,24 +323,50 @@ FEATURE_HEALTH_NOTICES = {
 def feature_health_block(fhs, body):
     """The section for snapshot entry `fhs`, placed after `body`. The table is
     dropped (call-outs kept) when the whole section would not fit."""
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
     from board_spec_request_body import MAX_BODY_UNITS, utf16_len
-    import wc_feature_health
     status = fhs.get("status", "unreadable")
     last_good = (fhs.get("last_good_at") or "never")[:10]
     if status in ("built", "stale"):
         text = fhs["section"].rstrip("\n")
+        stale = ""
         if status == "stale":
-            text += "\n\n_Stale: this build is from {0}, more than {1} hours old._".format(
+            stale = "\n\n_Stale: this build is from {0}, more than {1} hours old._".format(
                 (fhs.get("built_at") or "an unknown date")[:10], FEATURE_HEALTH_STALE_HOURS)
-        for candidate in (text, wc_feature_health.shorten_section(text).rstrip("\n")):
-            if utf16_len(body) + 1 + utf16_len(candidate) <= MAX_BODY_UNITS:
-                return candidate + "\n"
-        status = "failed"
+        for candidate in (text, shorten_feature_health(text)):
+            # The stale line goes inside the end marker so a consumer replacing
+            # the marker-delimited block takes it along.
+            block = _with_stale(candidate, stale)
+            if utf16_len(body) + 1 + utf16_len(block) <= MAX_BODY_UNITS:
+                return block + "\n"
+        status, notice = "oversize", "Feature health's section was too large for this issue's body."
+        return "{0}\n{1} The last good build was {2}.\n{3}\n".format(
+            FEATURE_HEALTH_MARKER, notice, last_good, FEATURE_HEALTH_MARKER_END)
     notice = FEATURE_HEALTH_NOTICES.get(status, FEATURE_HEALTH_NOTICES["unreadable"])
     if status != "never":
         notice += " The last good build was {0}.".format(last_good)
-    return "{0}\n{1}\n<!-- /wing-commander-feature-health -->\n".format(FEATURE_HEALTH_MARKER, notice)
+    return "{0}\n{1}\n{2}\n".format(FEATURE_HEALTH_MARKER, notice, FEATURE_HEALTH_MARKER_END)
+
+
+def _with_stale(text, stale):
+    """`text` (a marker-delimited section) with `stale` placed before its end marker."""
+    text = text.rstrip("\n")
+    if not stale:
+        return text
+    if text.endswith(FEATURE_HEALTH_MARKER_END):
+        return text[:-len(FEATURE_HEALTH_MARKER_END)].rstrip("\n") + stale + "\n" + FEATURE_HEALTH_MARKER_END
+    return text + stale
+
+
+def shorten_feature_health(text):
+    """Drop the table, keep the call-outs (over-size body, research D8). The one
+    home; wc_feature_health.shorten_section is this function."""
+    head, _sep, tail = text.partition("<details>")
+    end = tail.partition("</details>")[2]
+    return (head.rstrip("\n") + "\n\n_Table shortened: it did not fit this issue's body._\n"
+            + end.lstrip("\n")).rstrip("\n")
 
 
 def _pl_block(status, built, last_good, summary, content, tag="wc-proof-list"):

@@ -230,9 +230,7 @@ def render_section(rows, now, registry_size=None):
 
 def shorten_section(text):
     """Drop the table, keep the call-outs (over-size body, research D8)."""
-    head, _sep, tail = text.partition("<details>")
-    end = tail.partition("</details>")[2]
-    return head.rstrip("\n") + "\n\n_Table shortened: it did not fit this issue's body._\n" + end.lstrip("\n")
+    return wc_board_status.shorten_feature_health(text) + "\n"
 
 
 # --------------------------------------------------------------------------
@@ -299,6 +297,33 @@ def fetch_runs(gh, repo, filename, start, end, events=None):
     return out
 
 
+def _pages(gh, path, max_pages=10):
+    """Every item of a list endpoint, page by page, up to `max_pages` pages."""
+    items = []
+    for page in range(1, max_pages + 1):
+        got = gh(path + "&page={0}".format(page))
+        items.extend(got)
+        if len(got) < 100:
+            break
+    return items
+
+
+def section_built(body, marker):
+    """True when `marker` opens a section carrying built content, not a
+    paused/failed/never/stale notice (those carry the marker too, so the marker
+    alone would let a broken section read as seen)."""
+    idx = body.find(marker)
+    if idx < 0:
+        return False
+    line_end = body.find("-->", idx)
+    opener = body[idx:line_end if line_end >= 0 else len(body)]
+    if 'status="' in opener:
+        return 'status="built"' in opener
+    nxt = body.find("<!-- /", idx)
+    block = body[idx:nxt if nxt >= 0 else len(body)]
+    return "<details>" in block and "_Stale:" not in block
+
+
 def read_signal(signal, repo, since, gh, environ):
     """The newest occurrence time (ISO) of a declared signal in the window, or
     None (FR-003). Marker and selector strings live in the registry or in the
@@ -319,20 +344,22 @@ def read_signal(signal, repo, since, gh, environ):
         times = [i["created_at"] for i in gh("{0}/issues?state=all&labels={1}&since={2}&per_page=100".format(
             base, signal["label_name"], s)) if i["created_at"] >= s]
     elif kind == "triage_close":
-        for i in gh("{0}/issues?state=closed&since={1}&per_page=30".format(base, s)):
-            for c in gh("{0}/issues/{1}/comments?per_page=100".format(base, i["number"])):
+        for i in _pages(gh, "{0}/issues?state=closed&since={1}&per_page=100".format(base, s)):
+            if i.get("pull_request"):
+                continue
+            for c in _pages(gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s)):
                 body = c.get("body") or ""
                 if any(g in body for g in TRIAGE_CLOSE_GROUNDS) and not any(
                         d in body for d in signal.get("duplicate_markers", ())):
                     times.append(c["created_at"])
     elif kind == "branch_commit":
-        branch = environ.get("WING_COMMANDER_METRICS_BRANCH") or signal["branch"]
+        branch = environ.get("METRICS_BRANCH") or signal["branch"]
         times = [gh("{0}/commits/{1}".format(base, branch))["commit"]["committer"]["date"]]
     elif kind in ("issue_updated", "issue_section"):
         for i in gh("{0}/issues?state=open&labels=disposition:tracking&per_page=100".format(base)):
             if not i["title"].startswith(signal["title"]):
                 continue
-            if kind == "issue_section" and signal["marker"] not in (i.get("body") or ""):
+            if kind == "issue_section" and not section_built(i.get("body") or "", signal["marker"]):
                 continue
             times.append(i["updated_at"])
     else:
@@ -380,7 +407,7 @@ def collect(registry, repo, now, gh=gh_json, environ=None, read_text=None):
 def build(repo, now=None, gh=gh_json, environ=None, read_text=None, registry=None):
     """Collect, classify, render. Exits non-zero when every feature's run
     history is unreadable (FR-010)."""
-    now = now or datetime.datetime.utcnow().replace(microsecond=0)
+    now = now or datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0, tzinfo=None)
     registry = registry or load_registry()
     check_rate_limit(gh)
     readings, signals, ctx = collect(registry, repo, now, gh, environ, read_text)
