@@ -162,7 +162,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
 ## Review Gate Round 1 Findings
 
-- [ ] Review finding: App token lacks actions:read for run/artifact lookups
+- [x] Review finding: App token lacks actions:read for run/artifact lookups
 
   The read-only App token in prepare omits actions:read, so the gh api actions/runs and artifacts calls fail and confirm_record skips every record, so round memory, dismissals and the budget never take effect.
 
@@ -170,7 +170,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Add permission-actions: read to the token step, or use github.token for those calls. A failed API read should stop the round, not count as zero rounds.
 
-- [ ] Review finding: shared-review-trees artifact likely drops .github hidden files
+- [x] Review finding: shared-review-trees artifact likely drops .github hidden files
 
   upload-artifact v4.4+ excludes hidden paths by default and include-hidden-files is not set, so reviewer-tree/.github/scripts is probably missing and code-run silently reports missing every round.
 
@@ -186,7 +186,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Run the PR check in a separate throwaway job or sandbox that emits only a capped exit-code artifact. SC-008 only covers env-var leakage.
 
-- [ ] Review finding: Incomplete round from a failed job is posted but never confirmed
+- [x] Review finding: Incomplete round from a failed job is posted but never confirmed
 
   If validate-output exits 1 and the job fails, record still posts an incomplete round. confirm_record requires the run conclusion to be success, so the record is treated as unconfirmed and does not count toward the budget.
 
@@ -194,7 +194,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Make agent and validation failures non-fatal so the output degrades to missing, or accept the record when the record job succeeded.
 
-- [ ] Review finding: Empty purpose text still counts as having a purpose
+- [x] Review finding: Empty purpose text still counts as having a purpose
 
   When the purpose fetch fails, purpose.md is truncated and the error is swallowed with || true, but purpose.json keeps the source, so has_purpose is true and the verdict can be clean instead of undetermined.
 
@@ -211,7 +211,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Call the helper from each gate and add a single-home check to an existing gate.
 
-- [ ] Review finding: Hostile fixture is named test_probe.py and fails on purpose
+- [x] Review finding: Hostile fixture is named test_probe.py and fails on purpose
 
   The file matches the test_*.py collection pattern, so pytest or discover runs would report a permanent failure and run unscrubbed network code.
 
@@ -219,7 +219,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Rename it to a non-collected name and update verify-shared-review-isolation.py and the tests that reference it.
 
-- [ ] Review finding: shared_review_compare indexes review record keys directly
+- [x] Review finding: shared_review_compare indexes review record keys directly
 
   compare uses rec['pass'] and rec['verdict'] directly, so one record missing a key raises KeyError and aborts the comparison. main also advertises a [<pr>] argument it never reads.
 
@@ -227,7 +227,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Use .get() and drop or implement the pr argument.
 
-- [ ] Review finding: wc_shared_review has a stale docstring, an unused constant and an always-0 return
+- [x] Review finding: wc_shared_review has a stale docstring, an unused constant and an always-0 return
 
   The module docstring says the unpublished exclusion does not exist yet, but this change adds it. UNPUBLISHED_REASON is unused, and the guard branch ends in 'return 0 if ok else 0'.
 

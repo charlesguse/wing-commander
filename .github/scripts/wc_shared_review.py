@@ -7,11 +7,10 @@ FR-015 transition table, the open-set fold, the blocking rule, the verdict,
 request validation, run confirmation, the round budget and the hand-off.
 shared-pr-reviewer.yml stays thin and calls the CLI at the bottom.
 
-Gate registration (T002, research D3): wc_published_stages.published_stages()
-derives "published" as every workflow declaring on.workflow_call, with no
-exclusion form. An unpublished callable needs one added to that derivation
-(see UNPUBLISHED_REASON for the reason string); until it exists the callable
-is not registered as unpublished (T020).
+Gate registration (T002, research D3): an unpublished callable is listed,
+with a reason, in unpublished-callables.json, which
+wc_published_stages.unpublished_callables() reads; shared-pr-reviewer.yml
+is registered there (T020).
 
 The marker is `wing-commander-shared-review-round`, disjoint from
 wc_convergence.ROUND_MARKER, so read_round_records() never counts a record
@@ -35,7 +34,6 @@ SCHEMA = 1
 WORKFLOW_PATH = ".github/workflows/shared-pr-reviewer.yml"
 WRAPPER_PATH = ".github/workflows/wing-commander-shared-pr-reviewer.yml"
 ARTIFACT_PREFIX = "shared-review-"
-UNPUBLISHED_REASON = "internal callable of the report-only shared reviewer (spec 127), not published"
 MAX_RECORD_CHARS = 20000
 DEFAULT_BUDGET = 5
 
@@ -566,7 +564,8 @@ def main(argv=None):
     if args.cmd == "guard":
         ok, reason = guard(args.ref, args.default_branch, args.kind, args.paused)
         print(json.dumps({"proceed": ok, "reason": reason}))
-        return 0 if ok else 0
+        # A refusal is a decision, not a failure: the workflow reads `proceed`.
+        return 0
     if args.cmd == "prepare":
         with open(args.body_file, encoding="utf-8") as fh:
             body = fh.read()

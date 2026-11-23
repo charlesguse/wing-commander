@@ -72,7 +72,7 @@ def dynamic_problems():
     try:
         with tempfile.TemporaryDirectory() as reviewer:
             result = wc_shared_review.stage_code_run(
-                HOSTILE, reviewer, [os.path.relpath(os.path.join(HOSTILE, "test_probe.py"), HOSTILE)],
+                HOSTILE, reviewer, [os.path.relpath(os.path.join(HOSTILE, "verify-probe-check.py"), HOSTILE)],
                 timeout=60)
     finally:
         for k, v in saved.items():

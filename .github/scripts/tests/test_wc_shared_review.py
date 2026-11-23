@@ -290,7 +290,7 @@ class CodeRun(unittest.TestCase):
             os.environ["ACTIONS_RUNTIME_TOKEN"] = "secret"
             os.environ["GITHUB_TOKEN"] = "secret"
             try:
-                out = sr.stage_code_run(tree, rev, ["test_probe.py"], timeout=60)
+                out = sr.stage_code_run(tree, rev, ["verify-probe-check.py"], timeout=60)
             finally:
                 del os.environ["ACTIONS_RUNTIME_TOKEN"], os.environ["GITHUB_TOKEN"]
         self.assertEqual(out["status"], "staged")

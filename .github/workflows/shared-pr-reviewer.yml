@@ -137,6 +137,7 @@ jobs:
         with:
           client-id: ${{ secrets.app-id }}
           private-key: ${{ secrets.app-private-key }}
+          permission-actions: read
           permission-contents: read
           permission-issues: read
           permission-pull-requests: read
@@ -223,6 +224,11 @@ jobs:
               gh issue list -R "$REPO" --label disposition:tracking --state open --search "Maintenance backlog in:title" \
                 --json body --jq ".[0].body // \"\"" | grep -F -- "$pref" > input/purpose.md || true ;;
           esac
+          # An empty fetch is no source of purpose, whatever the resolver said.
+          if ! grep -q '[^[:space:]]' input/purpose.md; then
+            printf 'no source of purpose\n' > input/purpose.md
+            echo null > input/purpose.json
+          fi
           echo "proceed=true" >> "$GITHUB_OUTPUT"
           echo "spent=$(jq -r .spent input/state.json)" >> "$GITHUB_OUTPUT"
           jq '{prior: .prior}' input/state.json > input/memory.json
@@ -238,6 +244,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: shared-review-trees
+          include-hidden-files: true
           path: |
             pr-tree/
             reviewer-tree/
@@ -370,7 +377,9 @@ jobs:
           set -euo pipefail
           mkdir -p out
           printf '%s' "$OUT" > out/find.json
-          python3 -I .github/scripts/wc_shared_review.py validate-output --input out/find.json
+          # A malformed output degrades to missing: the round is recorded
+          # incomplete by a job that succeeds, so it can be confirmed.
+          python3 -I .github/scripts/wc_shared_review.py validate-output --input out/find.json || rm -f out/find.json
       - name: Upload the find output
         if: "!cancelled() && steps.agent.outcome == 'success'"
         uses: actions/upload-artifact@v6
@@ -479,7 +488,8 @@ jobs:
           set -euo pipefail
           mkdir -p out
           printf '%s' "$OUT" > out/check.json
-          python3 -I .github/scripts/wc_shared_review.py validate-output --input out/check.json
+          # Degrades to missing, as in find, so the record job still confirms.
+          python3 -I .github/scripts/wc_shared_review.py validate-output --input out/check.json || rm -f out/check.json
       - name: Upload the check output
         if: "!cancelled() && steps.agent.outcome == 'success'"
         uses: actions/upload-artifact@v6

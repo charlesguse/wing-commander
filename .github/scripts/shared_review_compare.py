@@ -6,7 +6,7 @@ hand-review comment (review-until-clean's record) that cover the same head,
 so the owner can compare the two before deciding when the report-only
 period ends. Reads only; the review-until-clean skill is not changed.
 
-usage: shared_review_compare.py <comments.json> <confirmed.json> [<pr>]
+usage: shared_review_compare.py <comments.json> <confirmed.json>
   comments.json   the PR's issue comments (REST shape)
   confirmed.json  confirmed round records (`wc_shared_review.py state` .confirmed)
 """
@@ -39,15 +39,16 @@ def compare(comments, confirmed):
     rows = {}
     for rec in confirmed or []:
         row = rows.setdefault(rec.get("head_sha"), {"head": rec.get("head_sha"), "shared": None, "hand": None})
-        if row["shared"] is None or rec["round"] > row["shared"]["round"]:
-            row["shared"] = {"round": rec["round"], "verdict": rec.get("verdict")}
+        rnd = rec.get("round") or 0
+        if row["shared"] is None or rnd > (row["shared"]["round"] or 0):
+            row["shared"] = {"round": rec.get("round"), "verdict": rec.get("verdict")}
     for head, rec in hand_reviews(comments):
         for key in rows:
             if head and key and (key.startswith(head) or head.startswith(key)):
                 head = key
                 break
         row = rows.setdefault(head, {"head": head, "shared": None, "hand": None})
-        row["hand"] = {"pass": rec["pass"], "verdict": rec["verdict"]}
+        row["hand"] = {"pass": rec.get("pass"), "verdict": rec.get("verdict")}
     return sorted(rows.values(), key=lambda r: str(r["head"]))
 
 

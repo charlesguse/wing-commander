@@ -21,3 +21,9 @@ class Probe(unittest.TestCase):
         except Exception:
             pass
         self.fail("a failing named check is data, not a job failure")
+
+
+# Named verify-*.py so the code-run discovery runs it as a script and test
+# collection (test_*.py) never picks it up.
+if __name__ == "__main__":
+    unittest.main()
