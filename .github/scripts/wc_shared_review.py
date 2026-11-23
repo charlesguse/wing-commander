@@ -35,6 +35,8 @@ WORKFLOW_PATH = ".github/workflows/shared-pr-reviewer.yml"
 WRAPPER_PATH = ".github/workflows/wing-commander-shared-pr-reviewer.yml"
 ARTIFACT_PREFIX = "shared-review-"
 MAX_RECORD_CHARS = 20000
+# What a size-capped `findings` entry keeps (build_record).
+STUB_KEYS = ("id", "status")
 DEFAULT_BUDGET = 5
 
 VERDICTS = ("clean", "findings", "undetermined", "incomplete")
@@ -80,7 +82,11 @@ def build_record(record, handoff=False):
     """The comment body for one round (or hand-off): header, a findings
     table, then the marker LAST. The marker is capped at MAX_RECORD_CHARS:
     `findings` is truncated first (with `findings_truncated` counting what
-    was dropped); `open_set` is never truncated."""
+    was cut); `open_set` is never truncated. A cut entry keeps its id and
+    status as a stub, because fold_open_set takes each finding's latest
+    status from these records: dropping a resolved or dismissed entry
+    would let an earlier round's `upheld` reopen it. Whole entries are
+    dropped only if the stubs alone still do not fit."""
     payload = dict(record)
     payload.setdefault("schema", SCHEMA)
     payload.setdefault("reviewer", REVIEWER)
@@ -89,11 +95,19 @@ def build_record(record, handoff=False):
         payload.pop("verdict", None)
     findings = list(payload.get("findings") or [])
     payload["findings"] = findings
-    dropped = 0
+    cut = 0
+    i = len(findings) - 1
+    while len(_marker(payload)) > MAX_RECORD_CHARS and i >= 0:
+        f = findings[i]
+        if isinstance(f, dict) and set(f) - set(STUB_KEYS):
+            findings[i] = {k: f.get(k) for k in STUB_KEYS}
+            cut += 1
+            payload["findings_truncated"] = cut
+        i -= 1
     while len(_marker(payload)) > MAX_RECORD_CHARS and payload["findings"]:
         payload["findings"].pop()
-        dropped += 1
-        payload["findings_truncated"] = dropped
+        cut += 1
+        payload["findings_truncated"] = cut
     if handoff:
         head = "Shared reviewer \u2014 hand-off after {0} of {1} rounds \u2014 {2} open".format(
             payload.get("rounds_used"), payload.get("budget"), len(payload.get("open_set") or []))
@@ -329,12 +343,15 @@ def open_set(findings):
 
 def fold_open_set(confirmed_rounds):
     """The open set after the last confirmed round: each round record's
-    `open_set` and `findings` carry the statuses; later rounds win."""
+    `open_set` and `findings` carry the statuses; later rounds win. A
+    size-capped stub (id and status only, build_record) updates the status
+    and keeps the detail an earlier round recorded."""
     state = {}
     for rec in sorted(confirmed_rounds, key=lambda r: r["round"]):
         for f in (rec.get("findings") or []) + (rec.get("open_set") or []):
             if isinstance(f, dict) and f.get("id"):
-                state[f["id"]] = f
+                prev = state.get(f["id"])
+                state[f["id"]] = dict(prev, **f) if prev and set(f) <= set(STUB_KEYS) else f
     return list(state.values())
 
 

@@ -383,6 +383,21 @@ class ReviewRound3Fixes(unittest.TestCase):
         self.assertEqual(by["F1-1"]["status"], "resolved")
         self.assertEqual(by["F2-1"]["status"], "upheld")
 
+    def test_size_cap_never_reopens_a_resolved_finding(self):
+        # R3-F2: round 2 resolves F1-1, but its record is over the cap and
+        # F1-1 sits at the end of `findings`. The fold must still see it
+        # resolved, not fall back to round 1's `upheld`.
+        r1 = rec(1, "findings", open_set=[finding("F1-1", title="kept detail")])
+        filler = [finding("F2-%d" % i, "dismissed", title="y" * 200) for i in range(150)]
+        body = sr.build_record(rec(2, "clean", findings=filler + [finding("F1-1", "resolved")]))
+        self.assertLessEqual(len(body[body.index("<!--"):]), sr.MAX_RECORD_CHARS)
+        r2 = sr.parse_records([comment(body)], BOT)[0]
+        self.assertGreater(r2["findings_truncated"], 0)
+        state = {f["id"]: f for f in sr.fold_open_set([r1, r2])}
+        self.assertEqual(state["F1-1"]["status"], "resolved")
+        self.assertEqual(state["F1-1"]["title"], "kept detail")
+        self.assertEqual(sr.open_set(list(state.values())), [])
+
 
 if __name__ == "__main__":
     unittest.main()
