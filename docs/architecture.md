@@ -767,7 +767,9 @@ never overlaps a prior one.
 `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED` is set) → `select` (the one
 open pull request at `spec-meta.json.stage == "review"`, same repository,
 default base, whose recorded head SHA differs from its current one — the
-cheapest read, so a repository with nothing to review spends nothing) →
+cheapest read, so a repository with nothing to review spends nothing — and,
+of those, the oldest whose checks and mergeability `lifecycle_readiness.py`'s
+`select_prefilter()` accepts, else the oldest) →
 `readiness` (`lifecycle_readiness.py`: checks green, the gate suite green,
 mergeable, not yet reviewed at this head, kill switch clear) → `review`
 (Claude Code's `code-review` capability via the `Skill` tool, an explicit

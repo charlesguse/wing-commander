@@ -26,7 +26,8 @@ import wc_lifecycle_review_marker as wc_marker  # noqa: E402
 LIFECYCLE = os.path.join(ROOT, ".github", "workflows", "lifecycle-review-gate.yml")
 BOARD = os.path.join(ROOT, ".github", "workflows", "board-loop.yml")
 HELPERS = ("wc_convergence.py", "wc_review_finding_fingerprint.py", "board_item_marker.py",
-           "board_spec_request_body.py", "wc_lifecycle_review_marker.py")
+           "board_spec_request_body.py", "wc_lifecycle_review_marker.py",
+           "lifecycle_readiness.py")
 BOT = "wing-commander-bot[bot]"
 ISSUE = "42"
 BASH = resolve_bash()
@@ -396,6 +397,11 @@ class LifecycleSelect(LoopRepo):
                      "  'pr list') jq -r '@base64' '{pr}' ;;\n"
                      "  'api repos/o/r/issues/{issue}/comments') jq -c . '{comment}' ;;\n"
                      "  'api repos/o/r/pulls/7/reviews') jq -c . '{review}' ;;\n"
+                     # #889: select's readiness snapshot -- green and mergeable,
+                     # so these cases turn on the re-arm rule alone.
+                     "  'pr view') echo '{{\"mergeable\": \"MERGEABLE\", \"statusCheckRollup\": "
+                     "[{{\"name\": \"lint\", \"workflowName\": \"lint-workflows\", "
+                     "\"conclusion\": \"SUCCESS\"}}]}}' ;;\n"
                      "  *) exit 1 ;;\n"
                      "esac\n".format(issue=ISSUE, **data))
         os.chmod(stub, os.stat(stub).st_mode | stat.S_IEXEC)

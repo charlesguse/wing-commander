@@ -59,7 +59,9 @@ jobs:
   # filters to spec-meta.json.stage == "review", keeps those whose
   # review_gate.head_sha (if any) differs from the PR's current
   # headRefOid (and, after a not-converging stop, whose diff against main
-  # differs from the stopped round's -- spec 116 FR-008), picks the oldest. Outputs are all empty on the common,
+  # differs from the stopped round's -- spec 116 FR-008), then picks the
+  # oldest whose checks and mergeability lifecycle_readiness.py's
+  # select_prefilter() accepts (#889). Outputs are all empty on the common,
   # cheapest-read case (nothing qualifies) -- SC-009's "at most one round
   # per SHA" starts here, before any billable step runs.
   select:
@@ -137,8 +139,8 @@ jobs:
           best_spec_dir=""
           best_head_sha=""
           best_review_gate_head_sha=""
-          best_created=""
           main_fetched=""
+          candidates=()
 
           mapfile -t prs < <(gh pr list --state open \
             --json number,headRefName,headRefOid,createdAt,isCrossRepository,baseRefName \
@@ -264,15 +266,47 @@ jobs:
               fi
             fi
 
-            if [ -z "$best_created" ] || [[ "$created" < "$best_created" ]]; then
-              best_number="$number"
-              best_issue="$meta_issue"
-              best_spec_dir="specs/$slug"
-              best_head_sha="$head_sha"
-              best_review_gate_head_sha="$recorded_head_sha"
-              best_created="$created"
-            fi
+            candidates+=("$created"$'\t'"$number"$'\t'"$meta_issue"$'\t'"specs/$slug"$'\t'"$head_sha"$'\t'"$recorded_head_sha")
           done
+
+          # #889: oldest first, the first candidate whose checks and
+          # mergeability are ready wins. Picking the oldest before asking
+          # stood every run down on an older PR with checks still running
+          # while a younger, green one was never reviewed. The conditions
+          # are lifecycle_readiness.py's own (select_prefilter() and its
+          # SELECT_CONDITIONS say which, and why), never re-typed here; the
+          # `readiness` job re-evaluates all five on a fresh snapshot and
+          # stays the last word. A failed snapshot read skips the candidate
+          # rather than stop select: unlike the marker read above, skipping
+          # can only delay a review, never repeat one. When no candidate is
+          # ready, the oldest is selected anyway, as before #889, so
+          # `readiness` still posts its unmet condition on the lifecycle
+          # issue (spec 062 US1 scenario 4).
+          mapfile -t ordered < <(printf '%s\n' "${candidates[@]}" | sort)
+          for cand in "${ordered[@]}"; do
+            [ -z "$cand" ] && continue
+            IFS=$'\t' read -r _created number meta_issue spec_dir head_sha recorded_head_sha <<< "$cand"
+            if ! prefilter="$(gh pr view "$number" --json headRefOid,statusCheckRollup,mergeable,mergeStateStatus \
+              | python3 .wc-pristine-repo/.github/scripts/lifecycle_readiness.py --select)"; then
+              echo "::warning::lifecycle-review-gate select: could not read PR #$number's checks and mergeability -- PR #$number is skipped this run."
+              echo "lifecycle-review-gate: PR #$number skipped -- its checks and mergeability could not be read." >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            if [ "$(printf '%s' "$prefilter" | jq -r '.ready')" != "true" ]; then
+              echo "lifecycle-review-gate: PR #$number skipped -- not ready yet ($(printf '%s' "$prefilter" | jq -r '.unmet_reason // "unknown"') unmet)." >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            best_number="$number"
+            best_issue="$meta_issue"
+            best_spec_dir="$spec_dir"
+            best_head_sha="$head_sha"
+            best_review_gate_head_sha="$recorded_head_sha"
+            break
+          done
+          if [ -z "$best_number" ] && [ -n "${ordered[0]:-}" ]; then
+            IFS=$'\t' read -r _created best_number best_issue best_spec_dir best_head_sha best_review_gate_head_sha <<< "${ordered[0]}"
+            echo "lifecycle-review-gate: no candidate is ready -- PR #$best_number, the oldest, goes to readiness to post its unmet condition." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
           if [ -z "$best_number" ]; then
             echo "lifecycle-review-gate: nothing to do -- no lifecycle PR is ready for a new review round." >> "$GITHUB_STEP_SUMMARY"

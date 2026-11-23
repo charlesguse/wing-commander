@@ -105,6 +105,28 @@ def evaluate_from_snapshot(snapshot, review_gate, kill_switch_paused):
     }
 
 
+# The conditions the workflow's `select` job applies to each candidate,
+# oldest first, so an older PR that is not ready yet does not stand the
+# whole run down while a younger, ready one waits (#889). Only the
+# conditions that are facts about the PR's current head are here:
+# not_yet_reviewed is select's own marker filter already (with the
+# not-converging re-arm rule this module does not know), and
+# kill_switch_clear is every job's own `if:`. The `readiness` job still
+# evaluates all five on a fresh snapshot, and stays the last word before a
+# review, so a PR whose checks change between select and readiness is
+# still stood down there.
+SELECT_CONDITIONS = ("checks_green", "gate_suite_green", "mergeable")
+
+
+def select_prefilter(snapshot):
+    """select's per-candidate check: evaluate_from_snapshot() restricted to
+    SELECT_CONDITIONS, so the rules keep one home. Returns {"ready": bool,
+    "unmet_reason": the first unmet SELECT_CONDITIONS name or None}."""
+    decision = evaluate_from_snapshot(snapshot, None, False)
+    unmet = next((c for c in SELECT_CONDITIONS if not decision[c]), None)
+    return {"ready": unmet is None, "unmet_reason": unmet}
+
+
 def evaluate(pr_number, review_gate, kill_switch_paused):
     """Runtime entry point: `gh pr view <pr_number> --json
     headRefOid,statusCheckRollup,mergeable,mergeStateStatus`, fresh at this
@@ -118,9 +140,16 @@ def evaluate(pr_number, review_gate, kill_switch_paused):
 
 
 def main():
-    """Reads {"snapshot": {...}, "review_gate": {...}|null,
-    "kill_switch_paused": bool} from stdin, prints the ReadinessDecision as
-    JSON."""
+    """With --select, reads a bare `gh pr view --json
+    headRefOid,statusCheckRollup,mergeable,mergeStateStatus` snapshot from
+    stdin and prints select_prefilter() as JSON. Otherwise reads
+    {"snapshot": {...}, "review_gate": {...}|null, "kill_switch_paused":
+    bool} from stdin, prints the ReadinessDecision as JSON."""
+    if sys.argv[1:] == ["--select"]:
+        print(json.dumps(select_prefilter(json.load(sys.stdin))))
+        return
+    if sys.argv[1:]:
+        sys.exit("usage: lifecycle_readiness.py [--select] < payload.json")
     payload = json.load(sys.stdin)
     decision = evaluate_from_snapshot(
         payload["snapshot"], payload.get("review_gate"),

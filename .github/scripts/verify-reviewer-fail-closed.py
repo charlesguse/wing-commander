@@ -1803,9 +1803,22 @@ if [ "$1 $2" = "pr list" ]; then
 [
   {{"number": 1, "headRefName": "spec/{slug}", "headRefOid": "cross0001", "createdAt": "2026-01-01T00:00:00Z", "isCrossRepository": true, "baseRefName": "main"}},
   {{"number": 2, "headRefName": "spec/{slug}", "headRefOid": "base00002", "createdAt": "2026-01-02T00:00:00Z", "isCrossRepository": false, "baseRefName": "develop"}},
+  {{"number": 4, "headRefName": "spec/{slug}", "headRefOid": "valid0004", "createdAt": "2026-01-04T00:00:00Z", "isCrossRepository": false, "baseRefName": "main"}},
   {{"number": 3, "headRefName": "spec/{slug}", "headRefOid": "valid0003", "createdAt": "2026-01-03T00:00:00Z", "isCrossRepository": false, "baseRefName": "main"}}
 ]
 JSON
+  exit 0
+fi
+# #889: select's per-candidate readiness snapshot. Every PR is green and
+# mergeable unless named in STUB_PENDING (its lint check still running) or
+# STUB_VIEW_FAIL (the read fails).
+if [ "$1 $2" = "pr view" ]; then
+  case " ${{STUB_VIEW_FAIL:-}} " in *" $3 "*) echo 'gh: Server Error (HTTP 502)' >&2; exit 1 ;; esac
+  case " ${{STUB_PENDING:-}} " in
+    *" $3 "*) state='"status": "IN_PROGRESS", "conclusion": ""' ;;
+    *) state='"status": "COMPLETED", "conclusion": "SUCCESS"' ;;
+  esac
+  printf '{{"headRefOid": "valid%04d", "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "statusCheckRollup": [{{"name": "lint", "workflowName": "lint-workflows", %s}}]}}\n' "$3" "$state"
   exit 0
 fi
 # #826: the review_gate marker is read through REST. STUB_COMMENTS picks
@@ -1868,8 +1881,8 @@ def _sh_select(script, cwd):
 
 def _stage_select_trusted_copy(repo):
     """Copies the real _shared/read-spec-meta.sh (+ the project-name.sh
-    parser it reads names with, spec 114, and the kv.sh helper it sources) and wc_lifecycle_review_marker.py
-    (+ its board_item_marker.py dependency) into .wc-pristine-repo -- the
+    parser it reads names with, spec 114, and the kv.sh helper it sources), wc_lifecycle_review_marker.py
+    (+ its board_item_marker.py dependency) and lifecycle_readiness.py (#889) into .wc-pristine-repo -- the
     step under test resolves both from there, never the workspace root
     (T073)."""
     actions_dir = os.path.join(repo, ".wc-pristine-repo", ".github", "actions", "_shared")
@@ -1880,12 +1893,14 @@ def _stage_select_trusted_copy(repo):
         shutil.copyfile(
             os.path.join(".github", "actions", "_shared", name),
             os.path.join(actions_dir, name))
-    for name in ("wc_lifecycle_review_marker.py", "board_item_marker.py"):
+    for name in ("wc_lifecycle_review_marker.py", "board_item_marker.py",
+                 "lifecycle_readiness.py"):
         shutil.copyfile(os.path.join(".github", "scripts", name),
                         os.path.join(scripts_dir, name))
 
 
-def run_lifecycle_select(select_script, tmproot, comments="ok", issue=SELECT_ISSUE):
+def run_lifecycle_select(select_script, tmproot, comments="ok", issue=SELECT_ISSUE,
+                         pending="", view_fail="", summary=False):
     repo = _make_select_repo(tmproot, issue=issue)
     _stage_select_trusted_copy(repo)
     bindir = os.path.join(tmproot, "select-bin")
@@ -1896,16 +1911,19 @@ def run_lifecycle_select(select_script, tmproot, comments="ok", issue=SELECT_ISS
     runner_temp = tempfile.mkdtemp(dir=tmproot)
     env = {"GH_TOKEN": "x", "BOT_LOGIN": "wing-commander-bot[bot]",
           "GITHUB_REPOSITORY": "example/example", "STUB_COMMENTS": comments,
+          "STUB_PENDING": pending, "STUB_VIEW_FAIL": view_fail,
           "PATH": bindir + os.pathsep + os.environ.get("PATH", "")}
-    rc, out, outputs, _summary = run_step(BASH, select_script, repo, env, runner_temp)
+    rc, out, outputs, step_summary = run_step(BASH, select_script, repo, env, runner_temp)
+    if summary:
+        return rc, out, outputs, step_summary
     return rc, out, outputs
 
 
 # #826: select's review_gate marker read. A candidate with no lifecycle
 # issue number, or whose issue is gone (404/410), is skipped; any other
-# failed read stops select with ::error:: and no decision output. PR #3 is
-# the only candidate the fork/base guards leave, so "skipped" reads as an
-# empty pr-number on a successful step.
+# failed read stops select with ::error:: and no decision output. PRs #3
+# and #4 share the one candidate branch, so both are skipped together and
+# "skipped" reads as an empty pr-number on a successful step.
 SELECT_READ_CASES = (
     # (title, comments mode, spec-meta issue, expect success, text in output)
     ("no lifecycle issue number is skipped", "ok", None, True, None),
@@ -1964,6 +1982,74 @@ def check_lifecycle_select_marker_read_mutations(select_script, tmproot):
             failures.append("mutation 'lifecycle select #826: {0}' was NOT caught".format(title))
         else:
             print("note: mutation 'lifecycle select #826: {0}' confirmed caught.".format(title))
+    return failures
+
+
+# #889: select asks lifecycle_readiness.py's select_prefilter() about each
+# candidate, oldest first, and takes the first ready one. Before the fix it
+# took the oldest and left readiness to stand the run down on it, so a
+# younger green PR (#1177, #1184 behind #1173 on 2026-11-22) was never
+# reviewed.
+SELECT_READY_CASES = (
+    # (title, pending, view_fail, expected pr-number, summary text)
+    ("an older candidate with checks running falls through to a younger ready one",
+     "3", "", "4", "PR #3 skipped -- not ready yet (checks_green unmet)"),
+    # Spec 062 US1 scenario 4: with none ready, the oldest still goes to
+    # readiness, which posts its unmet condition on the lifecycle issue.
+    ("no ready candidate selects the oldest for readiness to report", "3 4", "", "3",
+     "PR #3, the oldest, goes to readiness to post its unmet condition"),
+    ("a failed snapshot read skips that candidate only", "", "3", "4",
+     "PR #3 skipped -- its checks and mergeability could not be read"),
+    ("the oldest ready candidate still wins", "", "", "3", "selected PR #3"),
+)
+
+
+def select_ready_failures(select_script, tmproot, cases=SELECT_READY_CASES):
+    failures = []
+    for title, pending, view_fail, want, text in cases:
+        rc, out, outputs, summary = run_lifecycle_select(
+            select_script, tmproot, pending=pending, view_fail=view_fail, summary=True)
+        if rc != 0 or outputs.get("pr-number") != want or text not in summary:
+            failures.append("lifecycle select #889 `{0}`: rc={1} pr-number={2!r} "
+                            "(want {3!r}); summary: {4}".format(
+                                title, rc, outputs.get("pr-number"), want,
+                                summary.strip()[-400:] or out.strip()[-400:]))
+        elif want and outputs.get("head-sha") != "valid000" + want:
+            failures.append("lifecycle select #889 `{0}`: head-sha={1!r}".format(
+                title, outputs.get("head-sha")))
+    return failures
+
+
+def check_lifecycle_select_readiness(select_script, tmproot):
+    failures = select_ready_failures(select_script, tmproot)
+    if not failures:
+        print("[ok] #889 lifecycle select: an unready older candidate is skipped "
+              "for a younger ready one; none ready selects the oldest for readiness")
+    return failures
+
+
+SELECT_READY_MUTATIONS = (
+    # (title, old, new, the case that must then fail)
+    ("readiness skip removed", "jq -r '.ready')\" != \"true\"",
+     "jq -r '.ready')\" = \"never\"", SELECT_READY_CASES[0]),
+    ("oldest-first order reversed", "| sort)", "| sort -r)", SELECT_READY_CASES[3]),
+    ("none-ready fallback removed", "if [ -z \"$best_number\" ] && [ -n \"${ordered[0]:-}\" ]; then",
+     "if false; then", SELECT_READY_CASES[1]),
+)
+
+
+def check_lifecycle_select_readiness_mutations(select_script, tmproot):
+    failures = []
+    for title, old, new, case in SELECT_READY_MUTATIONS:
+        if select_script.count(old) != 1:
+            failures.append("lifecycle select #889 mutation {0!r}: expected one "
+                            "{1!r} in the select step; update this harness.".format(title, old))
+            continue
+        if not select_ready_failures(select_script.replace(old, new, 1), tmproot,
+                                     cases=(case,)):
+            failures.append("mutation 'lifecycle select #889: {0}' was NOT caught".format(title))
+        else:
+            print("note: mutation 'lifecycle select #889: {0}' confirmed caught.".format(title))
     return failures
 
 
@@ -2290,6 +2376,8 @@ def main():
         failures += check_lifecycle_select_excludes_forks_mutation(lifecycle_select_script, tmproot)
         failures += check_lifecycle_select_marker_read(lifecycle_select_script, tmproot)
         failures += check_lifecycle_select_marker_read_mutations(lifecycle_select_script, tmproot)
+        failures += check_lifecycle_select_readiness(lifecycle_select_script, tmproot)
+        failures += check_lifecycle_select_readiness_mutations(lifecycle_select_script, tmproot)
         failures += check_lifecycle_disposition_failed_reports_error(
             lifecycle_outcome_script, tmproot, lifecycle_status_script)
         failures += check_lifecycle_disposition_failed_status_mutation(
