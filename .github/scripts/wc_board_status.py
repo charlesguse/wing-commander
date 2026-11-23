@@ -341,9 +341,11 @@ def feature_health_block(fhs, body):
             block = _with_stale(candidate, stale)
             if utf16_len(body) + 1 + utf16_len(block) <= MAX_BODY_UNITS:
                 return block + "\n"
-        status, notice = "oversize", "Feature health's section was too large for this issue's body."
-        return "{0}\n{1} The last good build was {2}.\n{3}\n".format(
-            FEATURE_HEALTH_MARKER, notice, last_good, FEATURE_HEALTH_MARKER_END)
+        block = "{0}\nFeature health's section was too large for this issue's body. The last good build was {1}.\n{2}".format(
+            FEATURE_HEALTH_MARKER, last_good, FEATURE_HEALTH_MARKER_END)
+        # Not even the notice fits: leave the section out rather than push the
+        # whole body past the limit and fail the publish.
+        return block + "\n" if utf16_len(body) + 1 + utf16_len(block) <= MAX_BODY_UNITS else ""
     notice = FEATURE_HEALTH_NOTICES.get(status, FEATURE_HEALTH_NOTICES["unreadable"])
     if status != "never":
         notice += " The last good build was {0}.".format(last_good)
@@ -362,7 +364,10 @@ def _with_stale(text, stale):
 
 def shorten_feature_health(text):
     """Drop the table, keep the call-outs (over-size body, research D8). The one
-    home; wc_feature_health.shorten_section is this function."""
+    home; wc_feature_health.shorten_section is this function. Text with no
+    table is returned as it is, end marker included."""
+    if "<details>" not in text:
+        return text.rstrip("\n")
     head, _sep, tail = text.partition("<details>")
     end = tail.partition("</details>")[2]
     return (head.rstrip("\n") + "\n\n_Table shortened: it did not fit this issue's body._\n"

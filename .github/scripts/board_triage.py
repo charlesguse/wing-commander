@@ -468,6 +468,10 @@ def triage(issue, cited_run):
 #: wc_feature_health's triage_close signal; verify-feature-health.py checks
 #: each one still appears as a closed outcome in this file.
 TRIAGE_CLOSE_GROUNDS = ("rate_limit", "action_bump")
+#: How board-loop.yml's triage step opens the comment it closes an issue with
+#: (followed by the ground and a comma). verify-feature-health.py checks the
+#: workflow still writes it.
+TRIAGE_CLOSE_COMMENT_PREFIX = "Triage closed this issue on ground "
 
 
 def defer_on_rate_limit(verdict, agent_verdict):

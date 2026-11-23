@@ -35,6 +35,7 @@ from board_prove import Exemption  # noqa: E402
 FIXTURES = os.path.join(HERE, "fixtures", "feature-health")
 WORKFLOW = "wing-commander-feature-health.yml"
 REFERENCE_TABLES = ("At a glance", "Housekeeping and observability", "Schedules")
+CADENCES = ("schedule", "event")  # data-model.md "Workflow ref"
 
 # Reference rows that are not a feature of their own (Gate 124 reads `issue=`).
 EXEMPT_UNREGISTERED = {
@@ -87,7 +88,12 @@ def check_registry(registry, ref_text, workflow_files, exempt):
     problems += ["duplicate registry name: {0}".format(n) for n, c in sorted(names.items()) if c > 1]
     switches = kill_switches(ref_text)
     for e in registry:
-        for ref in e["workflows"]:
+        if not e.get("workflows"):
+            problems.append("{0}: workflows must list at least one workflow".format(e["name"]))
+        for ref in e.get("workflows") or []:
+            if ref.get("cadence") not in CADENCES:
+                problems.append("{0}: {1} has cadence {2!r}, not one of {3}".format(
+                    e["name"], ref["file"], ref.get("cadence"), "/".join(CADENCES)))
             if ref["file"] not in workflow_files:
                 problems.append("{0}: workflow file {1} does not exist".format(e["name"], ref["file"]))
         if e.get("kill_switch") and e["kill_switch"] not in switches:
@@ -128,6 +134,10 @@ def check_registry_fixtures(registry, ref_text, files):
             reg[1]["name"] = reg[0]["name"]
         elif kind == "quiet_zero":
             reg[1]["quiet_days"] = 0
+        elif kind == "empty_workflows":
+            reg[1]["workflows"] = []
+        elif kind == "bad_cadence":
+            reg[1]["workflows"][0]["cadence"] = "schedul"
         got = check_registry(reg, text, fl, EXEMPT_UNREGISTERED)
         if not any(case["expect"] in p for p in got):
             problems.append("registry fixture '{0}': no problem containing '{1}' (got {2})".format(
@@ -242,9 +252,12 @@ def check_signals(sx):
     environ = sx.get("environ", {})
     since = fh.parse_time(sx["since"])
     for case in sx["cases"]:
-        got = fh.read_signal(case["signal"], "own/repo", since, StubGh(case["responses"].items()
-                                                                       if isinstance(case["responses"], dict)
-                                                                       else case["responses"]), environ)
+        try:
+            got = fh.read_signal(case["signal"], "own/repo", since, StubGh(case["responses"].items()
+                                                                           if isinstance(case["responses"], dict)
+                                                                           else case["responses"]), environ)
+        except RuntimeError as exc:
+            got = {"error": str(exc)}
         if got != case["expect"]:
             problems.append("signal {0}: got {1}, expected {2}".format(case["label"], got, case["expect"]))
     return problems
@@ -266,6 +279,7 @@ def stub_script(scenario):
             "  *rate_limit*) printf '{\"resources\":{\"core\":{\"remaining\":%s}}}\\n' '" + str(
                 scenario.get("rate_remaining", 5000)) + "' ;;\n"
             + "".join(arms)
+            + "  *search/issues*) printf '{\"total_count\":0,\"incomplete_results\":false,\"items\":[]}\\n' ;;\n"
             + "  */commits/*) printf '{\"commit\":{\"committer\":{\"date\":\"2026-11-20T00:00:00Z\"}}}\\n' ;;\n"
             "  *actions/workflows/*) printf '{\"total_count\":0,\"workflow_runs\":[]}\\n' ;;\n"
             "  *) printf '[]\\n' ;;\nesac\n")
@@ -436,6 +450,20 @@ def check_shared_sources():
             problems.append("board_triage.py no longer closes on ground {0}".format(g))
     if re.search(r'"grounds"\s*:', json.dumps(fh.load_registry())):
         problems.append("registry holds a literal triage grounds list")
+    if fh.TRIAGE_CLOSE_COMMENT_PREFIX is not board_triage.TRIAGE_CLOSE_COMMENT_PREFIX:
+        problems.append("the triage close sentence is not imported from board_triage.py")
+    with open(os.path.join(REPO, ".github", "workflows", "board-loop.yml"), encoding="utf-8") as fp:
+        loop = fp.read()
+    if "'{0}%s,".format(board_triage.TRIAGE_CLOSE_COMMENT_PREFIX) not in loop:
+        problems.append("board-loop.yml no longer closes with '{0}<ground>,' (TRIAGE_CLOSE_COMMENT_PREFIX)".format(
+            board_triage.TRIAGE_CLOSE_COMMENT_PREFIX))
+    with open(os.path.join(HERE, "wc_feature_health.py"), encoding="utf-8") as fp:
+        fh_src = fp.read()
+    problems += check_switch_source(fh_src)
+    copied = fh_src.replace("ctx[kind][name] = wc_board_status._switch_on(environ[env])",
+                            'ctx[kind][name] = environ[env].strip().lower() == "true"', 1)
+    if copied == fh_src or not check_switch_source(copied):
+        problems.append("self-check: a switch reader reimplemented inside collect is not noticed")
     # A switch value must read the same through both modules.
     for value in ("true", " TRUE ", "false", "", "1", "yes"):
         env = {"BOARD_X": value}
@@ -445,6 +473,105 @@ def check_shared_sources():
         ctx = got[2] if isinstance(got, tuple) else got
         if ctx["switches"]["WING_COMMANDER_BOARD_X"] != bs._switch_on(value):
             problems.append("switch value {0!r} reads differently from wc_board_status".format(value))
+    return problems
+
+
+def check_switch_source(src):
+    """FR-004 single home, read from the source: collect reads switches only
+    through wc_board_status._switch_on, and wc_feature_health defines no switch
+    parser of its own. The value-parity loop above cannot see a copy that
+    happens to agree on its sample values."""
+    import ast
+    tree = ast.parse(src)
+    problems = []
+    defs = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    if "_switch_on" in defs:
+        problems.append("wc_feature_health.py defines its own _switch_on")
+    coll = defs.get("collect")
+    calls = [n for n in ast.walk(coll) if isinstance(n, ast.Call)] if coll else []
+    shared = [c for c in calls if isinstance(c.func, ast.Attribute) and c.func.attr == "_switch_on"
+              and isinstance(c.func.value, ast.Name) and c.func.value.id == "wc_board_status"]
+    if not shared:
+        problems.append("collect does not read switches through wc_board_status._switch_on")
+    for node in ast.walk(coll) if coll else []:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.lower() in (
+                "true", "1", "yes", "on"):
+            problems.append("collect compares a switch against the literal {0!r}".format(node.value))
+    return problems
+
+
+def check_review_round_three():
+    """Unquoted and ranged cron, bounded triage and comment reads."""
+    problems = []
+    for text, want in (("    - cron: 0 */4 * * *\n", 4),
+                       ("    - cron: 17 6 * * *   # daily\n", 24),
+                       ('    - cron: "0 9-17 * * *"\n', 24 / 9),
+                       ('    - cron: "0 0-23/6 * * *"\n', 6),
+                       ('    - cron: "0 1,9-11 * * *"\n', 6)):
+        try:
+            got = fh.schedule_interval_hours(text)
+        except ValueError as exc:
+            got = "ValueError: {0}".format(exc)
+        if got != want:
+            problems.append("cron parsing: {0!r} gave {1}, expected {2}".format(text.strip(), got, want))
+    for bad in ('    - cron: "0 25 * * *"\n', '    - cron: "0 5-2 * * *"\n', '    - cron: "0 */0 * * *"\n'):
+        try:
+            fh.schedule_interval_hours(bad)
+            problems.append("cron parsing: {0!r} did not raise".format(bad.strip()))
+        except ValueError:
+            pass
+
+    since = fh.parse_time("2026-10-20T00:00:00Z")
+    calls = []
+
+    def busy(path):
+        """A repository with 300+ closed issues and two triage closes."""
+        calls.append(path)
+        if path.startswith("search/issues"):
+            return {"total_count": 2, "incomplete_results": False,
+                    "items": [{"number": 1, "updated_at": "2026-11-09T00:00:00Z"},
+                              {"number": 2, "updated_at": "2026-11-01T00:00:00Z"}]}
+        if "/issues/1/comments" in path:
+            return [{"body": "Triage closed this issue on ground rate_limit, x", "created_at": "2026-11-08T00:00:00Z"}]
+        if "/issues/2/comments" in path:
+            return [{"body": "Triage closed this issue on ground action_bump, x", "created_at": "2026-10-30T00:00:00Z"}]
+        if "issues?state=closed" in path:
+            return [{"number": n} for n in range(100)]
+        return []
+    try:
+        got = fh.read_signal({"kind": "triage_close"}, "own/repo", since, busy, {})
+    except RuntimeError as exc:
+        got = "RuntimeError: {0}".format(exc)
+    if got != "2026-11-08T00:00:00Z":
+        problems.append("triage_close on a busy repository: got {0}, expected 2026-11-08T00:00:00Z".format(got))
+    if any("/issues/2/comments" in c for c in calls):
+        problems.append("triage_close read an issue updated before the newest close already found")
+
+    def unresolved(path):
+        if path.startswith("search/issues"):
+            return {"total_count": 900, "incomplete_results": False,
+                    "items": [{"number": n, "updated_at": "2026-11-09T00:00:00Z"} for n in range(100)]}
+        return []
+    for label, stub in (("a search that never resolves", unresolved),
+                        ("an incomplete search", lambda p: {"incomplete_results": True, "items": []}
+                         if p.startswith("search/") else [])):
+        try:
+            fh.read_signal({"kind": "triage_close"}, "own/repo", since, stub, {})
+            problems.append("triage_close: {0} did not raise".format(label))
+        except RuntimeError:
+            pass
+
+    def many_labeled(path):
+        if "labels=" in path:
+            page = int(re.search(r"&page=(\d+)", path).group(1))
+            return [{"number": n, "created_at": "2026-11-01T00:00:00Z"}
+                    for n in range(100 if page == 1 else 51 if page == 2 else 0)]
+        return []
+    try:
+        fh.read_signal({"kind": "issue_or_comment", "label_name": "x"}, "own/repo", since, many_labeled, {})
+        problems.append("issue_or_comment: {0} labeled issues read without raising".format(151))
+    except RuntimeError:
+        pass
     return problems
 
 
@@ -489,6 +616,7 @@ def main():
     problems += check_workflow()
     problems += check_shared_sources()
     problems += check_review_round_two()
+    problems += check_review_round_three()
     real, note = check_sc001(os.path.join(FIXTURES, "sc001"), EXEMPT_SC001_PENDING)
     problems += real + self_check(fx)
     if note:

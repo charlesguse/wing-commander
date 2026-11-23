@@ -654,6 +654,20 @@ def feature_health_half():
     table = content + "\n<details><summary>All features</summary>\n\n" + "| row |\n" * 20000 + "</details>\n"
     short = bs.feature_health_block({"status": "built", "section": table}, body)
     check("an over-size table is dropped and the call-outs stay", "Table shortened" in short and "| row |" not in short, short[:200])
+    no_table = bs.FEATURE_HEALTH_MARKER + "\n**Feature health** — built x\n" + bs.FEATURE_HEALTH_MARKER_END + "\n"
+    cut = bs.shorten_feature_health(no_table)
+    check("shortening a section with no table keeps its end marker and adds no shortened line",
+          cut.endswith(bs.FEATURE_HEALTH_MARKER_END) and "Table shortened" not in cut, cut)
+    from board_spec_request_body import MAX_BODY_UNITS, utf16_len
+    callouts = bs.FEATURE_HEALTH_MARKER + "\n" + "- `x` — failing\n" * 400 + bs.FEATURE_HEALTH_MARKER_END
+    roomy = "b" * (MAX_BODY_UNITS - 1000)
+    over = bs.feature_health_block({"status": "built", "section": callouts, "last_good_at": "2026-11-19"}, roomy)
+    check("a section whose call-outs do not fit falls back to the too-large notice",
+          "too large" in over and utf16_len(roomy) + 1 + utf16_len(over) <= MAX_BODY_UNITS, over[:200])
+    full = "b" * (MAX_BODY_UNITS - 20)
+    none = bs.feature_health_block({"status": "built", "section": callouts, "last_good_at": "2026-11-19"}, full)
+    check("when not even the too-large notice fits, the body stays within the limit",
+          utf16_len(full) + 1 + utf16_len(none) <= MAX_BODY_UNITS, utf16_len(none))
     for status, last, text in (("paused", "2026-11-19T06:29:00Z", "WING_COMMANDER_FEATURE_HEALTH_PAUSED"),
                                ("failed", "2026-11-19T06:29:00Z", "latest build failed"),
                                ("never", "never", "not yet built"),

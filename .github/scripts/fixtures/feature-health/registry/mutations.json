@@ -3,5 +3,7 @@
   {"label": "an entry names a missing workflow file", "kind": "missing_file", "expect": "does not exist"},
   {"label": "an entry names an unknown kill switch", "kind": "unknown_switch", "expect": "Kill switches table"},
   {"label": "two entries share a name", "kind": "duplicate", "expect": "duplicate registry name"},
-  {"label": "quiet_days of 0", "kind": "quiet_zero", "expect": "quiet_days"}
+  {"label": "quiet_days of 0", "kind": "quiet_zero", "expect": "quiet_days"},
+  {"label": "an entry lists no workflows", "kind": "empty_workflows", "expect": "at least one workflow"},
+  {"label": "a workflow ref has a misspelt cadence", "kind": "bad_cadence", "expect": "cadence"}
 ]

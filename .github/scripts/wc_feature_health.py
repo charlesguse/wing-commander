@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -25,7 +26,7 @@ REGISTRY_PATH = os.path.join(HERE, "feature-health-registry.json")
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import wc_board_status  # noqa: E402
-from board_triage import TRIAGE_CLOSE_GROUNDS  # noqa: E402
+from board_triage import TRIAGE_CLOSE_COMMENT_PREFIX, TRIAGE_CLOSE_GROUNDS  # noqa: E402
 
 # data-model.md "Health state": earliest wins.
 STATE_ORDER = ["unreadable", "paused", "not configured", "failing", "not running",
@@ -36,7 +37,8 @@ WINDOW_DAYS = 30
 FAILING_WINDOW = 3
 RUN_CAP = 1000
 RATE_LIMIT_FLOOR = 300
-TRIAGE_ISSUE_CAP = 150
+COMMENT_READ_CAP = 150
+SEARCH_PAGES = 3
 MARKER_BEGIN = "<!-- wing-commander-feature-health -->"
 MARKER_END = "<!-- /wing-commander-feature-health -->"
 SWITCH_PREFIX = "WING_COMMANDER_"
@@ -253,19 +255,32 @@ def check_rate_limit(gh=gh_json, floor=RATE_LIMIT_FLOOR):
     return remaining
 
 
+def _cron_hour_set(hour, expr):
+    """The hours (0-23) a cron hour field fires on: `*`, `N`, `A-B`, and a
+    `/step` on `*` or a range, comma-joined. ValueError otherwise."""
+    hours = set()
+    for part in hour.split(","):
+        m = re.fullmatch(r"(\*|\d+(?:-\d+)?)(?:/(\d+))?", part)
+        if not m or (m.group(2) is not None and int(m.group(2)) < 1):
+            raise ValueError("unparseable cron: {0}".format(expr))
+        span, step = m.group(1), int(m.group(2) or 1)
+        lo, _sep, hi = ("0-23" if span == "*" else span).partition("-")
+        lo, hi = int(lo), int(hi or lo)
+        if m.group(2) is not None and span != "*" and not hi > lo:
+            hi = 23
+        if not 0 <= lo <= hi <= 23:
+            raise ValueError("unparseable cron: {0}".format(expr))
+        hours.update(range(lo, hi + 1, step))
+    return hours
+
+
 def _cron_hours(expr):
     fields = expr.split()
     if len(fields) != 5:
         raise ValueError("unparseable cron: {0}".format(expr))
-    hour = fields[1]
-    if hour == "*":
+    if fields[1] == "*":
         return 1
-    step = re.fullmatch(r"\*/(\d+)", hour)
-    if step and int(step.group(1)) > 0:
-        return int(step.group(1))
-    if not re.fullmatch(r"[\d,]+", hour):
-        raise ValueError("unparseable cron: {0}".format(expr))
-    per_day = len([h for h in hour.split(",") if h])
+    per_day = len(_cron_hour_set(fields[1], expr))
     if fields[2:] == ["*", "*", "*"]:
         return 24 / per_day
     return 24 * 7 if fields[4] != "*" else 24 * 31
@@ -273,13 +288,13 @@ def _cron_hours(expr):
 
 def schedule_interval_hours(workflow_text):
     """Smallest hours between scheduled runs across every uncommented `cron:`
-    entry (single or double quoted); None if none; ValueError if one cannot
-    be parsed, which makes the workflow unreadable."""
+    entry (double quoted, single quoted or plain); None if none; ValueError
+    if one cannot be parsed, which makes the workflow unreadable."""
     crons = []
     for line in workflow_text.splitlines():
-        m = re.match(r"""^\s*-?\s*cron:\s*(?:"([^"]+)"|'([^']+)')\s*(?:#.*)?$""", line)
+        m = re.match(r"""^\s*-?\s*cron:\s*(?:"([^"]+)"|'([^']+)'|([^"'#\s][^#]*?))\s*(?:#.*)?$""", line)
         if m:
-            crons.append(m.group(1) or m.group(2))
+            crons.append(m.group(1) or m.group(2) or m.group(3))
     if not crons:
         return None
     return min(_cron_hours(c) for c in crons)
@@ -325,6 +340,42 @@ def _pages(gh, path, max_pages=10):
         if len(got) < 100:
             return items
     raise RuntimeError("more than {0} items: read truncated".format(max_pages * 100))
+
+
+# The comment board-loop.yml's triage step closes an issue with starts a line
+# with board_triage.TRIAGE_CLOSE_COMMENT_PREFIX and the ground, then a comma.
+# Anything else (a duplicate close at the route step, a deferral, a comment
+# that merely quotes a ground) is not a triage close (FR-003).
+TRIAGE_CLOSE_RE = re.compile(r"^{0}({1}),".format(
+    re.escape(TRIAGE_CLOSE_COMMENT_PREFIX), "|".join(re.escape(g) for g in TRIAGE_CLOSE_GROUNDS)), re.M)
+
+
+def _triage_close_times(gh, repo, base, since):
+    """Times of triage closes in the window. The search API names the closed
+    issues whose comments carry the close sentence, newest update first, so
+    the read does not grow with the number of closed issues; each candidate's
+    comments are then matched exactly. A candidate updated before the newest
+    match found so far cannot hold a newer one, so the read stops there; a
+    search still unresolved after SEARCH_PAGES pages raises (FR-010/011)."""
+    s = fmt_time(since)
+    q = 'repo:{0} is:issue is:closed updated:>={1} "{2}"'.format(
+        repo, s[:10], TRIAGE_CLOSE_COMMENT_PREFIX.strip())
+    path = "search/issues?q={0}&sort=updated&order=desc&per_page=100".format(urllib.parse.quote(q))
+    times = []
+    for page in range(1, SEARCH_PAGES + 1):
+        got = gh(path + "&page={0}".format(page))
+        if not isinstance(got, dict) or got.get("incomplete_results"):
+            raise RuntimeError("triage close search returned an incomplete result")
+        items = got.get("items") or []
+        for i in items:
+            if times and i.get("updated_at", "") < max(times):
+                return times
+            for c in _pages(gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s), 1):
+                if TRIAGE_CLOSE_RE.search(c.get("body") or ""):
+                    times.append(c["created_at"])
+        if len(items) < 100:
+            return times
+    raise RuntimeError("triage close search not resolved in {0} pages".format(SEARCH_PAGES))
 
 
 def section_built(body, marker):
@@ -374,22 +425,16 @@ def read_signal(signal, repo, since, gh, environ):
         # Labeled issues and comments on them both count (the registry text).
         issues = _pages(gh, "{0}/issues?state=all&labels={1}&since={2}&per_page=100".format(
             base, signal["label_name"], s))
+        if len(issues) > COMMENT_READ_CAP:
+            raise RuntimeError("more than {0} labeled issues in window; comment read bounded".format(
+                COMMENT_READ_CAP))
         for i in issues:
             times.append(i["created_at"])
-        for i in issues[:TRIAGE_ISSUE_CAP]:
+        for i in issues:
             times.extend(c["created_at"] for c in _pages(
                 gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s), 1))
     elif kind == "triage_close":
-        closed = [i for i in _pages(gh, "{0}/issues?state=closed&since={1}&per_page=100".format(base, s), 3)
-                  if not i.get("pull_request")]
-        if len(closed) > TRIAGE_ISSUE_CAP:
-            raise RuntimeError("more than {0} closed issues in window; triage read bounded".format(TRIAGE_ISSUE_CAP))
-        for i in closed:
-            for c in _pages(gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s), 1):
-                body = c.get("body") or ""
-                if any(g in body for g in TRIAGE_CLOSE_GROUNDS) and not any(
-                        d in body for d in signal.get("duplicate_markers", ())):
-                    times.append(c["created_at"])
+        times = _triage_close_times(gh, repo, base, since)
     elif kind == "branch_commit":
         branch = environ.get("METRICS_BRANCH") or signal["branch"]
         times = [gh("{0}/commits/{1}".format(base, branch))["commit"]["committer"]["date"]]
