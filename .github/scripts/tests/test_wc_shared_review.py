@@ -334,5 +334,38 @@ class Finalize(unittest.TestCase):
         self.assertEqual(out["verdict"], "findings")
 
 
+class ReviewRound2Fixes(unittest.TestCase):
+    def test_unknown_branch_is_not_fix(self):
+        self.assertEqual(sr.derive_kind("whatever"), "unknown")
+        ok, _ = sr.validate_request(1, sr.derive_kind("whatever"), None)
+        self.assertFalse(ok)
+
+    def test_non_list_dismissals_ignored(self):
+        prior = [{"id": "F1-1", "status": "upheld"}]
+        for bad in ({"id": "F1-1"}, "x", ["str", None]):
+            out, applied, _ = sr.apply_dismissals(prior, bad)
+            self.assertEqual(applied, [])
+            self.assertEqual(out[0]["status"], "upheld")
+
+    def test_code_run_relative_trees(self):
+        import tempfile
+        cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "trees/pr-tree"))
+            os.makedirs(os.path.join(d, "trees/rev/.github/scripts"))
+            with open(os.path.join(d, "trees/rev/.github/scripts/run-local-gates.py"), "w") as fh:
+                fh.write("print('ok')\n")
+            os.chdir(d)
+            try:
+                out = sr.stage_code_run("trees/pr-tree", "trees/rev", [])
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(out["gate_suite"]["exit"], 0)
+
+    def test_failed_reads_raise(self):
+        with self.assertRaises(sr.GhReadError):
+            sr.confirmed_from_github(1, "bot", "main", "o/r", lambda a: None)
+
+
 if __name__ == "__main__":
     unittest.main()

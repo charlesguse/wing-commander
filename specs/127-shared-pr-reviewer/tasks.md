@@ -237,7 +237,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
 ## Review Gate Round 2 Findings
 
-- [ ] Review finding: Gate suite path breaks with relative trees in code-run
+- [x] Review finding: Gate suite path breaks with relative trees in code-run
 
   stage_code_run builds the run-local-gates path from reviewer_tree but runs it with cwd=pr_tree; the workflow passes relative trees, so the path does not resolve and every round reports a failing gate suite.
 
@@ -253,7 +253,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Add continue-on-error to the download or always upload a find artifact and gate check on its presence.
 
-- [ ] Review finding: Failed GitHub API reads treated as zero earlier rounds
+- [x] Review finding: Failed GitHub API reads treated as zero earlier rounds
 
   _gh_api returns None on any error and confirmed_from_github treats it as empty or skips the record, silently dropping prior findings, dismissals and budget.
 
@@ -261,7 +261,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Raise or exit non-zero on None from comments, run or artifact calls; only a real 404 on a run means unconfirmed.
 
-- [ ] Review finding: Non-list dismissals crashes finalize
+- [x] Review finding: Non-list dismissals crashes finalize
 
   finalize passes a truthy non-list dismissals value to apply_dismissals, which calls .get on non-dict entries and raises AttributeError, so no record is posted.
 
@@ -277,7 +277,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Gate check on the find artifact being present or upload an explicit empty candidates marker with agent_ok false.
 
-- [ ] Review finding: Prompts cite pr-tree/ but workflow uses trees/pr-tree/
+- [x] Review finding: Prompts cite pr-tree/ but workflow uses trees/pr-tree/
 
   The find and check prompt files point agents at pr-tree/ while the workflow downloads the tree to trees/pr-tree/, so the instructions contradict each other.
 
@@ -294,7 +294,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Call the shared helper from each gate and add a single-home check.
 
-- [ ] Review finding: derive_kind defaults unknown PRs to fix
+- [x] Review finding: derive_kind defaults unknown PRs to fix
 
   derive_kind returns fix for any PR without spec/plan branch or lifecycle/kind label, so non-fix lifecycle branches would be executed and reviewed instead of refused.
 

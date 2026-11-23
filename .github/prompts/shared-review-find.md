@@ -13,7 +13,7 @@ Read `input/pr.diff`, `input/commits.txt`, `input/pr-body.md`,
 `input/code-run.json` (exit codes of the change's named check and the gate
 suite; a non-zero exit is data, and a check that fails on the unfixed tree is
 the expected answer) and `input/memory.json` (earlier findings with their ids,
-status and reason; may be empty). The PR's files are under `pr-tree/`.
+status and reason; may be empty). The PR's files are under `trees/pr-tree/`.
 
 Answer, in this order:
 

@@ -230,8 +230,12 @@ def apply_dismissals(prior, dismissals):
     open in `prior` count. Returns (new prior list, applied, notes)."""
     by_id = {f["id"]: dict(f) for f in prior}
     applied, notes = [], []
-    for d in dismissals or []:
-        fid = (d or {}).get("id")
+    if not isinstance(dismissals, list):
+        dismissals = []
+    for d in dismissals:
+        if not isinstance(d, dict):
+            continue
+        fid = d.get("id")
         f = by_id.get(fid)
         if f is None or f.get("status") not in OPEN_STATUSES or not (d.get("reason") or "").strip():
             notes.append("dismissal of {0} dropped: not open at round start or no reason".format(fid))
@@ -344,7 +348,9 @@ def derive_kind(head_branch, labels=()):
         return "board-fix"
     if LIFECYCLE_BRANCH_RE.match(branch):
         return "spec"
-    return "fix"
+    if re.match(r"^(fix|claude)/", branch):
+        return "fix"
+    return "unknown"
 
 
 def validate_request(pr, kind, dismissals):
@@ -483,6 +489,7 @@ def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT
     check, and the default branch's gate runner against the PR tree. The
     environment is scrubbed: no ACTIONS_*, token or secret variable
     reaches PR code (SC-008)."""
+    pr_tree, reviewer_tree = os.path.abspath(pr_tree), os.path.abspath(reviewer_tree)
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("TMPDIR", "/tmp"),
            "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"}
     argv = discover_named_check(added_files)
@@ -496,17 +503,22 @@ def confirmed_from_github(pr, bot_login, default_branch, repository, gh):
     """Round records of `pr` that confirm_record() accepts, oldest first.
     `gh(args)` returns parsed JSON for a `gh api` path (None on failure,
     which fails the record closed)."""
-    comments = gh(["repos/{0}/issues/{1}/comments".format(repository, pr), "--paginate", "--slurp"]) or []
+    comments = gh(["repos/{0}/issues/{1}/comments".format(repository, pr), "--paginate", "--slurp"])
+    if comments is None:
+        raise GhReadError("comments read failed")
     flat = [c for page in comments for c in (page if isinstance(page, list) else [page])]
     confirmed = []
     for record in parse_records(flat, bot_login):
         run_id = str(record.get("run_id") or "")
         if not run_id.isdigit():
             continue
-        run = gh(["repos/{0}/actions/runs/{1}".format(repository, run_id)])
+        try:
+            run = gh(["repos/{0}/actions/runs/{1}".format(repository, run_id)])
+        except GhNotFound:
+            continue  # a real 404: the run does not exist, so unconfirmed
         arts = gh(["repos/{0}/actions/runs/{1}/artifacts".format(repository, run_id)])
-        if not isinstance(run, dict):
-            continue
+        if not isinstance(run, dict) or arts is None:
+            raise GhReadError("run or artifacts read failed for run " + run_id)
         run = dict(run)
         run["repository"] = (run.get("repository") or {}).get("full_name") or repository
         run["artifacts"] = [a.get("name") for a in (arts or {}).get("artifacts", [])]
@@ -516,10 +528,20 @@ def confirmed_from_github(pr, bot_login, default_branch, repository, gh):
     return confirmed
 
 
+class GhReadError(RuntimeError):
+    """A GitHub read failed: the round stops rather than counting zero."""
+
+
+class GhNotFound(GhReadError):
+    pass
+
+
 def _gh_api(args):
     import subprocess
     proc = subprocess.run(["gh", "api"] + args, capture_output=True, text=True)
     if proc.returncode != 0:
+        if "404" in (proc.stderr or "") or "Not Found" in (proc.stderr or ""):
+            raise GhNotFound(args[0])
         return None
     try:
         return json.loads(proc.stdout)
@@ -580,7 +602,8 @@ def main(argv=None):
             except (OSError, ValueError):
                 return None
         record = finalize_round(opt(args.state) or {}, opt(args.find), opt(args.check), opt(args.code_run),
-                                opt(args.purpose), args.head_sha, opt(args.dismissals) or [],
+                                opt(args.purpose), args.head_sha,
+                                (lambda d: d if isinstance(d, list) else [])(opt(args.dismissals)),
                                 args.run_id, args.reviewer_commit, args.pr_state)
         print(build_record(record))
         return 0

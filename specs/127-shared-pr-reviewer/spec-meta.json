@@ -3,7 +3,7 @@
   "spec_dir": "specs/127-shared-pr-reviewer",
   "feature_num": "127",
   "stage": "implement",
-  "iteration": 6,
+  "iteration": 7,
   "spec_branch": "spec/127-shared-pr-reviewer",
   "truncated_count": 0,
   "truncated_tier": null,
