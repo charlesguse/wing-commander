@@ -2,7 +2,7 @@
   "issue": 1137,
   "spec_dir": "specs/126-feature-health",
   "feature_num": "126",
-  "stage": "review",
+  "stage": "implement",
   "iteration": 3,
   "spec_branch": "spec/126-feature-health",
   "truncated_count": 0,

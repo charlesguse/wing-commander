@@ -176,3 +176,61 @@ MVP = Phases 1-3 (registry, drift gate, classifier, renderer, fixtures): the ver
   utcnow is deprecated since Python 3.12 and returns a naive datetime; use now(timezone.utc) stripped of tzinfo.
 
   - .github/scripts/wc_feature_health.py
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: Cron parsing for 'not running' check is fragile
+
+  schedule_interval_hours reads only the first double-quoted cron line, treats */6 or list hour fields as daily, returns None for single-quoted crons, and can match commented-out lines, so dead scheduled features are missed or flagged late.
+
+  - .github/scripts/wc_feature_health.py
+
+  Detail: Parse on.schedule with PyYAML, take the smallest interval across crons, and treat unparseable entries as unreadable.
+
+- [ ] Review finding: Truncated signal reads are not marked unreadable
+
+  _pages caps at 10 pages, merged_pr reads 3 pages of 100 and release reads 30, so a cut-off read can classify a feature as quiet (violating FR-010/011); triage_close makes up to ~1000 calls against a rate-limit floor checked once.
+
+  - /.github/scripts/wc_feature_health.py
+
+  Detail: Raise RuntimeError when the last page is still full and bound the triage_close call count.
+
+- [ ] Review finding: Shortened Board status drops details and marks feature-health section not built
+
+  section_built requires <details>, which shorten_feature_health removes on oversize bodies, so the feature-health entry reads its own published section as not built and goes quiet on every run.
+
+  - .github/scripts/wc_feature_health.py
+
+  Detail: Test for the '**Feature health** — built' header or accept 'Table shortened'.
+
+- [ ] Review finding: Board loop signal ignores triage closes
+
+  The registry counts only merged fix/ PRs for the board loop, although the plan counts triage closes; the triage_close reader and TRIAGE_CLOSE_GROUNDS are never used by any registry entry, and the schema allows only one signal per feature.
+
+  - .github/scripts/feature-health-registry.json
+
+  Detail: Allow signal to be a list taking the newest occurrence, or remove the dead reader and its gate check.
+
+- [ ] Review finding: Single failed run classified as failing contradicts quickstart
+
+  Code and cases.json call one qualifying failure 'failing' while quickstart.md says single-failure is not failing; neutral/stale conclusions also count as failures.
+
+  - .github/scripts/wc_feature_health.py
+
+  Detail: Decide the intended rule, align quickstart or code, and treat neutral as non-failing.
+
+- [ ] Review finding: issue_or_comment signal never reads comments
+
+  The signal kind reads only labeled issues, though the registry text says it also matches comment markers, so comment-only output reads as never seen.
+
+  - .github/scripts/wc_feature_health.py
+
+  Detail: Read comments or rename the kind to issue_labeled.
+
+- [ ] Review finding: Unclosed file handle in verify-board-status check
+
+  The board-status.yml env line check uses a bare open().read() inside check(...) without closing the file, unlike the with blocks elsewhere in the function.
+
+  - .github/scripts/verify-board-status.py
+
+  Detail: Read via a context manager into a variable first.
