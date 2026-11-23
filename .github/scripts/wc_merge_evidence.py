@@ -40,6 +40,7 @@ import lifecycle_merge_preconditions as lmp  # noqa: E402
 import lifecycle_readiness  # noqa: E402
 import wc_lifecycle_review_marker  # noqa: E402
 from board_item_marker import last_converged_review_head  # noqa: E402
+from board_triage import any_run_url_pattern  # noqa: E402
 
 # The one home of both artifact names (T007); verify-merge-evidence.py checks
 # them against the workflow's upload steps and wc_board_status.py reads the
@@ -64,6 +65,16 @@ RULE_NO_GATE = "without-gate-status"
 UNREAD_STATE = "whether the pull request is still open (its state could not be read)"
 NO_ROUND_RECORD_REASON = "no counted round record exists for this kind (#1142 not built)"
 _PASS_REPORT_RE = re.compile(r"(?i)\b(review|validat\w*|verif\w*) (pass|report|verdict)\b|\bclean pass\b")
+# A pass report also names itself in its title: the heading, or the leading
+# bold span, that opens the comment after any HTML markers says review, pass,
+# validation or verification, or the title line links an Actions run (a
+# validator's evidence). Recall first: a reported record is never counted.
+# Found by the SC-003 replay (T029): "Independent review:", "confirming
+# pass", "post-split pass N" and a pre-merge run report went unlisted.
+_TITLE_RE = re.compile(r"\A(?:[ \t]*<!--.*?-->[ \t]*\r?\n|[ \t]*\r?\n)*[ \t]*"
+                       r"(?:#{1,6}[ \t]+(?P<heading>[^\n]*)|\*\*(?P<bold>[^\n]*?)\*\*(?P<rest>[^\n]*))")
+_TITLE_NAMES_RE = re.compile(r"(?i)\b(?:review\w*|pass(?:es|ed)?|validat\w*|verif\w*)\b")
+_RUN_LINK_RE = re.compile(any_run_url_pattern())
 # A final PR's lifecycle issue: finalize.yml's own closing line first, else a
 # GitHub closing keyword. A mention ("refs #N", "for #N") never links one.
 _LIFECYCLE_LINE_RE = re.compile(r"(?m)^Lifecycle issue: #(\d+)[ \t\r]*$")
@@ -160,9 +171,18 @@ def reported_kind(comment, bot_login):
     body = (comment.get("body") or "").lstrip()
     if body.startswith(DECISION_RECORD_PREFIX):
         return "decision-record"
-    if _PASS_REPORT_RE.search(body):
+    if _PASS_REPORT_RE.search(body) or _titled_pass_report(body):
         return "pass-report"
     return None
+
+
+def _titled_pass_report(body):
+    title = _TITLE_RE.match(body)
+    if not title:
+        return False
+    named = title.group("heading") if title.group("heading") is not None else title.group("bold")
+    line = "".join(title.group(g) or "" for g in ("heading", "bold", "rest"))
+    return bool(_TITLE_NAMES_RE.search(named)) or bool(_RUN_LINK_RE.search(line))
 
 
 def comment_url(comment, thread_url=None):
@@ -853,6 +873,34 @@ def _merged_snapshot(repo, pull, bot_login, actions_token, final_prefix="spec/",
     return snap
 
 
+def _merge_info(pull):
+    """The audit entry's merge facts, from the merged pull's REST object."""
+    return {"pr": pull["number"], "merged_commit": pull.get("merge_commit_sha"),
+            "last_head": pull["head"]["sha"], "merged_at": pull["merged_at"],
+            "merged_by": (pull.get("merged_by") or {}).get("login")}
+
+
+def capture_corpus(repo, bot_login, window, default_branch="main", final_prefix="spec/", spec_prefix="spec-draft/",
+                   actions_token=None):
+    """The SC-003 replay corpus (maintainer only, specs/125 tasks.md T029):
+    every merge into the default branch with start <= merged_at < end, its
+    merge facts and its _merged_snapshot() before the as-of-merge cut. The
+    kind the capture assigned is dropped, so the replay runs assign_kind()
+    and cut_snapshot() itself. Never run by the workflow (FR-012)."""
+    check_rate_limit()
+    merges = []
+    for item in _closed_pulls_since(repo, default_branch, window["start"]):
+        if not item.get("merged_at") or not window["start"] <= item["merged_at"] < window["end"]:
+            continue
+        pull = json.loads(_gh_ok(["api", "repos/{0}/pulls/{1}".format(repo, item["number"])]))
+        snap = _merged_snapshot(repo, pull, bot_login, actions_token, final_prefix, spec_prefix, default_branch)
+        snap.pop("assigned_kind", None)
+        merges.append({"merge": _merge_info(pull), "snapshot": snap})
+    merges.sort(key=lambda m: m["merge"]["pr"])
+    return {"schema": 1, "repository": repo, "bot_login": bot_login, "default_branch": default_branch,
+            "window": window, "captured_at": _now(), "merges": merges}
+
+
 def run_audit(repo, bot_login, default_branch, out_path, final_prefix, spec_prefix, window=None):
     """Rebuilds the whole window; `window` is supplied by a test only (FR-012)."""
     check_rate_limit()
@@ -870,9 +918,7 @@ def run_audit(repo, bot_login, default_branch, out_path, final_prefix, spec_pref
         pull = json.loads(_gh_ok(["api", "repos/{0}/pulls/{1}".format(repo, item["number"])]))
         if not pull.get("merged_at") or not (window["start"] <= pull["merged_at"] <= window["end"]):
             continue
-        info = {"pr": pull["number"], "merged_commit": pull.get("merge_commit_sha"),
-                "last_head": pull["head"]["sha"], "merged_at": pull["merged_at"],
-                "merged_by": (pull.get("merged_by") or {}).get("login")}
+        info = _merge_info(pull)
         merged.append(info)
         snap = cut_snapshot(_merged_snapshot(repo, pull, bot_login, token, final_prefix, spec_prefix, default_branch),
                             pull["merged_at"])
@@ -974,10 +1020,25 @@ def main(argv=None):
         p.add_argument("--final-prefix", default=os.environ.get("FINAL_PREFIX") or "spec/")
         p.add_argument("--spec-prefix", default=os.environ.get("SPEC_PREFIX") or "spec-draft/")
         p.add_argument("--out", default={"verdicts": LEDGER_FILE, "audit": SECTION_FILE}.get(name, "-"))
+    # The SC-003 corpus (maintainer only); its window is the replay's, never a report's.
+    cap = sub.add_parser("capture", help="write the SC-003 replay corpus (maintainer only)")
+    cap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
+    cap.add_argument("--bot-login", required=True)
+    cap.add_argument("--default-branch", default="main")
+    cap.add_argument("--start", required=True)
+    cap.add_argument("--end", required=True)
+    cap.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     if not args.repo:
         parser.error("--repo or GITHUB_REPOSITORY is required")
-    if args.command == "collect":
+    if args.command == "capture":
+        doc = capture_corpus(args.repo, args.bot_login, {"start": args.start, "end": args.end}, args.default_branch,
+                             actions_token=os.environ.get("WC_ACTIONS_TOKEN") or None)
+        with open(args.out, "w", encoding="utf-8", newline="\n") as fh:
+            json.dump(doc, fh, sort_keys=True, indent=1, ensure_ascii=False)
+            fh.write("\n")
+        print("wrote {0}: {1} merges".format(args.out, len(doc["merges"])))
+    elif args.command == "collect":
         json.dump(collect(args.repo, args.bot_login, os.environ.get("WC_ACTIONS_TOKEN") or None,
                           args.default_branch, args.final_prefix, args.spec_prefix), sys.stdout)
     elif args.command == "verdicts":
