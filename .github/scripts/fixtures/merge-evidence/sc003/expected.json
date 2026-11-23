@@ -1,0 +1,715 @@
+{
+  "window": {
+    "start": "2026-10-15T00:00:00Z",
+    "end": "2026-11-17T00:00:00Z"
+  },
+  "source": "hand lookup 2026-11-23, made without wc_merge_evidence.py or any condition code; rows #983 and #1065 amended to kind maintainer by the owner's decision of 2026-11-23 (FR-002: a bump branch carrying a commit the App did not author is not a bump)",
+  "totals": {
+    "merges": 48,
+    "kinds": {
+      "spec": 9,
+      "final": 9,
+      "maintainer": 23,
+      "bump": 4,
+      "board-fix": 3
+    },
+    "met": 6,
+    "classes": {
+      "pipeline-record": 6,
+      "session-record": 16,
+      "pass-pushed-after": 3,
+      "neither": 23
+    }
+  },
+  "pulls": [
+    {
+      "pr": 983,
+      "kind": "maintainer",
+      "merged_at": "2026-10-17T00:47:38Z",
+      "head": "cb9a618c95bf68358e7173d04ffa301227244d7c",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/983#issuecomment-6227357548"
+      ],
+      "why": "maintainer, not bump (owner decision 2026-11-23): the last head is a 'Merge main' commit the App did not author, and FR-002 assigns the bump kind by the board loop's facts, which require every commit to be the App's; no counted review round record exists for this kind"
+    },
+    {
+      "pr": 1022,
+      "kind": "final",
+      "merged_at": "2026-10-15T11:44:45Z",
+      "head": "f35d22837b2bd82b6fd97bd7ea000c648177c4c7",
+      "result": "unmet",
+      "first_unmet": "round_clean",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "gate round 6 is recorded at the last head f35d2283 but ended budget-exhausted with 4 in-scope findings open (status lifecycle-review-gate failure)"
+    },
+    {
+      "pr": 1044,
+      "kind": "board-fix",
+      "merged_at": "2026-10-16T14:00:25Z",
+      "head": "8fce59d82ff67ef56d71d7d0e3f72f25bb034a9e",
+      "result": "unmet",
+      "first_unmet": "review_verdict_at_head",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1044#issuecomment-6215827760",
+        "https://github.com/charlesguse/wing-commander/pull/1044#issuecomment-6216384759",
+        "https://github.com/charlesguse/wing-commander/pull/1044#issuecomment-6216844738"
+      ],
+      "why": "the App's only board-loop review names 615f01e3, not the last head 8fce59d8, and was inconclusive; the last head was pushed by a maintainer-account session"
+    },
+    {
+      "pr": 1051,
+      "kind": "board-fix",
+      "merged_at": "2026-10-16T12:34:06Z",
+      "head": "ce5813c6e7c1ac00766e155a56ee6e4939aec9df",
+      "result": "met",
+      "first_unmet": null,
+      "first_unmet_state": null,
+      "class": "pipeline-record",
+      "reported": [],
+      "why": "App board-loop review at the last head ce5813c6 says 'No findings'; App readiness record names ce5813c6 with open_findings 0"
+    },
+    {
+      "pr": 1052,
+      "kind": "board-fix",
+      "merged_at": "2026-10-16T12:33:51Z",
+      "head": "ed3b997b4491840680f1ad3cd7544c0a479d6fd8",
+      "result": "met",
+      "first_unmet": null,
+      "first_unmet_state": null,
+      "class": "pipeline-record",
+      "reported": [],
+      "why": "App board-loop review at the last head ed3b997b says 'No findings'; App readiness record names ed3b997b with open_findings 0"
+    },
+    {
+      "pr": 1056,
+      "kind": "spec",
+      "merged_at": "2026-10-17T02:11:36Z",
+      "head": "48f65ff51cb6507076d4f426827aacc728d2fa9d",
+      "result": "unmet",
+      "first_unmet": "checks_green_with_gate_suite",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "no check run or commit status on the head started before the merge (no checks at all, per the 2026-11-22 clarification)"
+    },
+    {
+      "pr": 1057,
+      "kind": "spec",
+      "merged_at": "2026-10-17T02:14:02Z",
+      "head": "32697cbddcb97deabd1b399433908053b930ba37",
+      "result": "unmet",
+      "first_unmet": "checks_green_with_gate_suite",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "no check run or commit status on the head started before the merge (no checks at all, per the 2026-11-22 clarification)"
+    },
+    {
+      "pr": 1058,
+      "kind": "spec",
+      "merged_at": "2026-10-17T02:17:54Z",
+      "head": "52e27266ef12ce8ca3e4a216ca7da3348ddcb10c",
+      "result": "unmet",
+      "first_unmet": "checks_green_with_gate_suite",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "no check run or commit status on the head started before the merge (no checks at all, per the 2026-11-22 clarification)"
+    },
+    {
+      "pr": 1059,
+      "kind": "final",
+      "merged_at": "2026-10-20T01:57:55Z",
+      "head": "eefecbe2ace25c809b32563074b7c0be4265acbd",
+      "result": "unmet",
+      "first_unmet": "gate_round_at_head",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/issues/903#issuecomment-6238522533",
+        "https://github.com/charlesguse/wing-commander/issues/903#issuecomment-6241357691",
+        "https://github.com/charlesguse/wing-commander/issues/903#issuecomment-6242442552",
+        "https://github.com/charlesguse/wing-commander/issues/903#issuecomment-6242824967",
+        "https://github.com/charlesguse/wing-commander/issues/903#issuecomment-6243545820",
+        "https://github.com/charlesguse/wing-commander/issues/903#issuecomment-6244246514",
+        "https://github.com/charlesguse/wing-commander/issues/903#issuecomment-6258774305",
+        "https://github.com/charlesguse/wing-commander/issues/903#issuecomment-6259334498",
+        "https://github.com/charlesguse/wing-commander/issues/903#issuecomment-6260401395"
+      ],
+      "why": "the latest lifecycle-review-gate round before the merge (round 10) names 50b0123e, not the last head; no gate round and no lifecycle-review-gate status at the last head"
+    },
+    {
+      "pr": 1060,
+      "kind": "final",
+      "merged_at": "2026-10-20T02:25:27Z",
+      "head": "4dcb36df31254924f0c06383df47ea96596b212a",
+      "result": "unmet",
+      "first_unmet": "gate_round_at_head",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/issues/992#issuecomment-6250329927",
+        "https://github.com/charlesguse/wing-commander/issues/992#issuecomment-6251509851",
+        "https://github.com/charlesguse/wing-commander/issues/992#issuecomment-6252592234",
+        "https://github.com/charlesguse/wing-commander/issues/992#issuecomment-6253758190",
+        "https://github.com/charlesguse/wing-commander/issues/992#issuecomment-6254329957",
+        "https://github.com/charlesguse/wing-commander/issues/992#issuecomment-6260466481",
+        "https://github.com/charlesguse/wing-commander/issues/992#issuecomment-6260715794",
+        "https://github.com/charlesguse/wing-commander/issues/992#issuecomment-6261065042"
+      ],
+      "why": "the latest lifecycle-review-gate round before the merge (round 6) names 52e6d2fa, not the last head; no gate round and no lifecycle-review-gate status at the last head"
+    },
+    {
+      "pr": 1062,
+      "kind": "final",
+      "merged_at": "2026-10-22T03:55:46Z",
+      "head": "3aeb1e18d4f759d3f9fa2e9eb9f0bd04965d267a",
+      "result": "unmet",
+      "first_unmet": "gate_round_at_head",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6241371703",
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6241939577",
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6242857478",
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6243547322",
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6243943640",
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6250393251",
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6251759543",
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6252493688",
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6253309641",
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6253842307",
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6259368307",
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6305385031",
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6318584826",
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6319771310",
+        "https://github.com/charlesguse/wing-commander/issues/994#issuecomment-6320628060"
+      ],
+      "why": "the latest lifecycle-review-gate round before the merge (round 3) names 515eef38, not the last head; no gate round and no lifecycle-review-gate status at the last head"
+    },
+    {
+      "pr": 1064,
+      "kind": "maintainer",
+      "merged_at": "2026-10-19T04:19:52Z",
+      "head": "b85f39ec5fc8122bb800802d01a7ecb2d39d9996",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1064#issuecomment-6240697277",
+        "https://github.com/charlesguse/wing-commander/pull/1064#issuecomment-6241931681",
+        "https://github.com/charlesguse/wing-commander/pull/1064#issuecomment-6250781540",
+        "https://github.com/charlesguse/wing-commander/pull/1064#issuecomment-6251936016",
+        "https://github.com/charlesguse/wing-commander/pull/1064#issuecomment-6252787690",
+        "https://github.com/charlesguse/wing-commander/pull/1064#issuecomment-6253300427"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1065,
+      "kind": "maintainer",
+      "merged_at": "2026-10-22T14:20:35Z",
+      "head": "8bb097339dec44a9629a5ad03c4cba19dc8338f7",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1065#issuecomment-6342630725"
+      ],
+      "why": "maintainer, not bump (owner decision 2026-11-23): the last head is a 'Merge main' commit the App did not author, and FR-002 assigns the bump kind by the board loop's facts, which require every commit to be the App's; no counted review round record exists for this kind"
+    },
+    {
+      "pr": 1067,
+      "kind": "maintainer",
+      "merged_at": "2026-10-20T03:17:50Z",
+      "head": "b416236fd3422a75cfec8fe33b78023928858bfc",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1067#issuecomment-6282019912"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1073,
+      "kind": "maintainer",
+      "merged_at": "2026-10-20T23:16:23Z",
+      "head": "54615dea14ab2651e22913af63f6fb839fb98a4b",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1073#issuecomment-6303300632",
+        "https://github.com/charlesguse/wing-commander/pull/1073#issuecomment-6303729060"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1075,
+      "kind": "spec",
+      "merged_at": "2026-10-24T14:07:22Z",
+      "head": "66786b598523f8d56a9a406860baa89fd7322d12",
+      "result": "unmet",
+      "first_unmet": "checks_green_with_gate_suite",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "no check run or commit status on the head started before the merge (no checks at all, per the 2026-11-22 clarification)"
+    },
+    {
+      "pr": 1077,
+      "kind": "maintainer",
+      "merged_at": "2026-10-22T05:19:34Z",
+      "head": "260f928ab2712ecea93f68c1d01c22756903d4be",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1077#issuecomment-6333175539"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1078,
+      "kind": "spec",
+      "merged_at": "2026-11-03T03:51:02Z",
+      "head": "c42f2d62602657a833affaab54552086081cee59",
+      "result": "unmet",
+      "first_unmet": "checks_green_with_gate_suite",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "no check run or commit status on the head started before the merge (no checks at all, per the 2026-11-22 clarification)"
+    },
+    {
+      "pr": 1079,
+      "kind": "maintainer",
+      "merged_at": "2026-10-22T06:47:06Z",
+      "head": "11862708999c41d9bd99c8523e0a203f2c389e86",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1079#issuecomment-6333715890",
+        "https://github.com/charlesguse/wing-commander/pull/1079#issuecomment-6334174494",
+        "https://github.com/charlesguse/wing-commander/pull/1079#issuecomment-6334394758"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1081,
+      "kind": "maintainer",
+      "merged_at": "2026-10-22T10:01:45Z",
+      "head": "4ea8e03b507b45607f545d0c11fc8a3cfd07dbdd",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1081#issuecomment-6334072358",
+        "https://github.com/charlesguse/wing-commander/pull/1081#issuecomment-6334553549"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1082,
+      "kind": "maintainer",
+      "merged_at": "2026-10-22T13:40:50Z",
+      "head": "e173efbe15dbd7a2197cce7b8671ec5ffeb6bb52",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1082#issuecomment-6338073944",
+        "https://github.com/charlesguse/wing-commander/pull/1082#issuecomment-6338493160",
+        "https://github.com/charlesguse/wing-commander/pull/1082#issuecomment-6341362437"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1084,
+      "kind": "maintainer",
+      "merged_at": "2026-10-22T17:05:07Z",
+      "head": "a38cb7f9edfea5d34e69b1f4899134f345f0f75d",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "pass-pushed-after",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1084#issuecomment-6345187489",
+        "https://github.com/charlesguse/wing-commander/pull/1084#issuecomment-6346074499"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1086,
+      "kind": "spec",
+      "merged_at": "2026-11-03T03:51:06Z",
+      "head": "e3a6658fa56e9531794c7d2e4c1d3238a9af03ea",
+      "result": "unmet",
+      "first_unmet": "checks_green_with_gate_suite",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "no check run or commit status on the head started before the merge (no checks at all, per the 2026-11-22 clarification)"
+    },
+    {
+      "pr": 1087,
+      "kind": "final",
+      "merged_at": "2026-11-06T06:18:46Z",
+      "head": "2f3e6cf71523a9de6c15300306bb95986e476d8e",
+      "result": "unmet",
+      "first_unmet": "gate_round_at_head",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "the latest lifecycle-review-gate round before the merge (round 5) names e93ee287, not the last head; no gate round and no lifecycle-review-gate status at the last head"
+    },
+    {
+      "pr": 1088,
+      "kind": "maintainer",
+      "merged_at": "2026-10-24T18:30:29Z",
+      "head": "baa01b4480966913100cf1d8ec94909b53738c17",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1088#issuecomment-6386686275",
+        "https://github.com/charlesguse/wing-commander/pull/1088#issuecomment-6387110654",
+        "https://github.com/charlesguse/wing-commander/pull/1088#issuecomment-6387484484",
+        "https://github.com/charlesguse/wing-commander/pull/1088#issuecomment-6387774519"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1089,
+      "kind": "bump",
+      "merged_at": "2026-11-03T04:19:18Z",
+      "head": "cf6e2e4ae2d71b94bf8aca704d4468cecd47b703",
+      "result": "met",
+      "first_unmet": null,
+      "first_unmet_state": null,
+      "class": "pipeline-record",
+      "reported": [],
+      "why": "App verification record (wc-bump-verification, result passed) names the last head and run 40172709641; the Actions API confirms run 40172709641 is the spec-kit updater workflow, completed success, before the merge"
+    },
+    {
+      "pr": 1090,
+      "kind": "maintainer",
+      "merged_at": "2026-11-03T02:48:51Z",
+      "head": "92a0611da66becec27687477bd84224381e915eb",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1090#issuecomment-6593212216",
+        "https://github.com/charlesguse/wing-commander/pull/1090#issuecomment-6593693747",
+        "https://github.com/charlesguse/wing-commander/pull/1090#issuecomment-6594159120"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1091,
+      "kind": "spec",
+      "merged_at": "2026-11-07T01:19:58Z",
+      "head": "02ccc15fee26dcae20b6fa3b66f3df0c05d7a66b",
+      "result": "unmet",
+      "first_unmet": "checks_green_with_gate_suite",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "no check run or commit status on the head started before the merge (no checks at all, per the 2026-11-22 clarification)"
+    },
+    {
+      "pr": 1092,
+      "kind": "maintainer",
+      "merged_at": "2026-11-03T04:45:59Z",
+      "head": "893af2c52b031bce8dc98978c61177dd7c157a54",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "pass-pushed-after",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1092#issuecomment-6595331485"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1095,
+      "kind": "spec",
+      "merged_at": "2026-11-07T00:23:29Z",
+      "head": "71fced79cd09d4f0ac93e2f72a739797c31506ff",
+      "result": "unmet",
+      "first_unmet": "checks_green_with_gate_suite",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "no check run or commit status on the head started before the merge (no checks at all, per the 2026-11-22 clarification)"
+    },
+    {
+      "pr": 1100,
+      "kind": "final",
+      "merged_at": "2026-11-08T23:21:21Z",
+      "head": "c3cdc77c7ff3e565f050393c6e0ee0910015f1c3",
+      "result": "unmet",
+      "first_unmet": "gate_round_at_head",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "the latest lifecycle-review-gate round before the merge (round 4) names 18e23425, not the last head; no gate round and no lifecycle-review-gate status at the last head"
+    },
+    {
+      "pr": 1107,
+      "kind": "maintainer",
+      "merged_at": "2026-11-04T14:41:53Z",
+      "head": "b90f189999132a83e500e912f7e920e37b5939c5",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "pass-pushed-after",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1107#issuecomment-6630648193",
+        "https://github.com/charlesguse/wing-commander/pull/1107#issuecomment-6631247290",
+        "https://github.com/charlesguse/wing-commander/pull/1107#issuecomment-6631958704",
+        "https://github.com/charlesguse/wing-commander/pull/1107#issuecomment-6632776733"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1109,
+      "kind": "bump",
+      "merged_at": "2026-11-05T08:22:57Z",
+      "head": "d79f71cc7987950a44445a0b5e58fc2ca23d3315",
+      "result": "met",
+      "first_unmet": null,
+      "first_unmet_state": null,
+      "class": "pipeline-record",
+      "reported": [],
+      "why": "App verification record (wc-bump-verification, result passed) names the last head and run 41986173185; the Actions API confirms run 41986173185 is the spec-kit updater workflow, completed success, before the merge"
+    },
+    {
+      "pr": 1112,
+      "kind": "maintainer",
+      "merged_at": "2026-11-06T04:10:10Z",
+      "head": "f6c53f4074d51be4136a61c25091404d4a4e5f19",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1112#issuecomment-6675108187",
+        "https://github.com/charlesguse/wing-commander/pull/1112#issuecomment-6675581342",
+        "https://github.com/charlesguse/wing-commander/pull/1112#issuecomment-6676045992",
+        "https://github.com/charlesguse/wing-commander/pull/1112#issuecomment-6676543206"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1113,
+      "kind": "spec",
+      "merged_at": "2026-11-06T06:43:06Z",
+      "head": "3500b9a89716f040dc0516fbb471ac59dc95bf0d",
+      "result": "unmet",
+      "first_unmet": "checks_green_with_gate_suite",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "no check run or commit status on the head started before the merge (no checks at all, per the 2026-11-22 clarification)"
+    },
+    {
+      "pr": 1114,
+      "kind": "maintainer",
+      "merged_at": "2026-11-06T05:27:18Z",
+      "head": "95b6fffcf32f9718e49449f7169b5ba11d30c9d7",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1115,
+      "kind": "maintainer",
+      "merged_at": "2026-11-07T18:08:49Z",
+      "head": "3f9a90159a2304800b97edce606e3de6bea01fbc",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1119,
+      "kind": "final",
+      "merged_at": "2026-11-08T18:52:12Z",
+      "head": "8fe13d62e3b7fe992ce8deb674cb19c97f589723",
+      "result": "unmet",
+      "first_unmet": "gate_round_at_head",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "the latest lifecycle-review-gate round before the merge (round 4) names b6d85779, not the last head; no gate round and no lifecycle-review-gate status at the last head"
+    },
+    {
+      "pr": 1120,
+      "kind": "final",
+      "merged_at": "2026-11-08T20:29:40Z",
+      "head": "c57eea9305ed36dea93ae4ec674a3ee5992ae392",
+      "result": "unmet",
+      "first_unmet": "gate_round_at_head",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "the latest lifecycle-review-gate round before the merge (round 4) names 8d3e3736, not the last head; no gate round and no lifecycle-review-gate status at the last head"
+    },
+    {
+      "pr": 1121,
+      "kind": "final",
+      "merged_at": "2026-11-09T05:53:05Z",
+      "head": "ac68d2d29361e5ded07d0bc24f42335d78031e46",
+      "result": "unmet",
+      "first_unmet": "gate_round_at_head",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "the only round at the last head (round 4) 'failed': no parseable findings, 'retryable', 'does not count against the round budget'; its issue record has no round marker and the PR review's convergence marker is empty, so no counted round is recorded at the head (alternative reading: round_clean)"
+    },
+    {
+      "pr": 1124,
+      "kind": "bump",
+      "merged_at": "2026-11-08T08:19:24Z",
+      "head": "92cbdcc53411419625f458316decf4288d3356ab",
+      "result": "met",
+      "first_unmet": null,
+      "first_unmet_state": null,
+      "class": "pipeline-record",
+      "reported": [],
+      "why": "App verification record (wc-bump-verification, result passed) names the last head and run 42458052146; the Actions API confirms run 42458052146 is the spec-kit updater workflow, completed success, before the merge"
+    },
+    {
+      "pr": 1126,
+      "kind": "maintainer",
+      "merged_at": "2026-11-08T18:19:48Z",
+      "head": "d926a27e54f3166d71ac84becf105ada6ea338e5",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1131,
+      "kind": "maintainer",
+      "merged_at": "2026-11-12T06:13:03Z",
+      "head": "078731bd83f3df59b0ed2a32e2622a8ebc931b19",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1131#issuecomment-6815940576"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1133,
+      "kind": "maintainer",
+      "merged_at": "2026-11-12T05:28:22Z",
+      "head": "e67f8cb57557d22203ed57059f1c4a3286dce799",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1133#issuecomment-6787824336",
+        "https://github.com/charlesguse/wing-commander/pull/1133#issuecomment-6787898067",
+        "https://github.com/charlesguse/wing-commander/pull/1133#issuecomment-6788072725"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1136,
+      "kind": "bump",
+      "merged_at": "2026-11-12T08:21:50Z",
+      "head": "4eafbb881a211cf31dd90a2a6558278d9399f5f3",
+      "result": "met",
+      "first_unmet": null,
+      "first_unmet_state": null,
+      "class": "pipeline-record",
+      "reported": [],
+      "why": "App verification record (wc-bump-verification, result passed) names the last head and run 43174150641; the Actions API confirms run 43174150641 is the spec-kit updater workflow, completed success, before the merge"
+    },
+    {
+      "pr": 1138,
+      "kind": "maintainer",
+      "merged_at": "2026-11-14T20:17:25Z",
+      "head": "bbbbef57691e37e34b9b8a9f9553cd2934ff61f2",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1138#issuecomment-6843414503",
+        "https://github.com/charlesguse/wing-commander/pull/1138#issuecomment-6845055578",
+        "https://github.com/charlesguse/wing-commander/pull/1138#issuecomment-6879473995",
+        "https://github.com/charlesguse/wing-commander/pull/1138#issuecomment-6880000457",
+        "https://github.com/charlesguse/wing-commander/pull/1138#issuecomment-6882675330"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1139,
+      "kind": "maintainer",
+      "merged_at": "2026-11-14T15:44:59Z",
+      "head": "d487c29895bb7c16ff3d0e896b1498f60f6a8464",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "session-record",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1139#issuecomment-6879120284",
+        "https://github.com/charlesguse/wing-commander/pull/1139#issuecomment-6879240581",
+        "https://github.com/charlesguse/wing-commander/pull/1139#issuecomment-6879936103",
+        "https://github.com/charlesguse/wing-commander/pull/1139#issuecomment-6845052590"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    },
+    {
+      "pr": 1140,
+      "kind": "maintainer",
+      "merged_at": "2026-11-14T20:06:19Z",
+      "head": "5677971384f147b725d7e3cdef1e582bed7e0771",
+      "result": "unmet",
+      "first_unmet": "review_round_record",
+      "first_unmet_state": "unmet",
+      "class": "neither",
+      "reported": [
+        "https://github.com/charlesguse/wing-commander/pull/1140#issuecomment-6882283846",
+        "https://github.com/charlesguse/wing-commander/pull/1140#issuecomment-6882638987",
+        "https://github.com/charlesguse/wing-commander/pull/1140#issuecomment-6883050588"
+      ],
+      "why": "checks green with lint; no reviewer round record exists (#1142 not built), so the condition is unmet for every maintainer PR; maintainer-account reports are listed, not counted"
+    }
+  ]
+}

@@ -5,8 +5,9 @@ and only watches (specs/125-merge-evidence-audit).
 Drives .github/scripts/fixtures/merge-evidence/ through the pure half of
 wc_merge_evidence.py (one fixture per branch), fails a copy of the reused
 condition code (FR-008 "one home"), checks the ledger rules and the ledger
-download's error handling with a stubbed `gh`, and checks the workflow's shape.
-Each check is shown to fail by mutating a copy of its subject in memory.
+download's error handling with a stubbed `gh`, checks the workflow's shape,
+and replays the SC-003 corpus (fixtures/merge-evidence/sc003/) against an
+expected file written by hand, without this code. Each check is shown to fail by mutating a copy of its subject in memory.
 """
 import ast
 import copy
@@ -55,13 +56,11 @@ CHECKOUT_REF = "${{ github.event.repository.default_branch }}"
 # The proof list uses the guard too, with its dispatch-only refusal
 # (#1173 round 5, finding 7); no workflow keeps a shell copy of the test.
 PROOF_LIST_WORKFLOW = ".github/workflows/wing-commander-proof-list.yml"
-# SC-003 replay corpus: pending the maintainer capture (tasks.md T029). Tracked
-# by the Maintenance backlog, #889 (gate 124 reads this entry; the final PR
-# closes #1143, so it cannot be the tracker); delete it when sc003/ lands.
-EXEMPT_SC003_PENDING = {
-    "sc003-replay": dict(reason="the corpus is captured from the saved 2026-11-16 lookup by the maintainer",
-                         issue=(889,)),
-}
+# SC-003 (tasks.md T029): the replay supplies its own window (FR-012; the
+# report never does), spec 124's SC-001 window, and the 48 merges in it.
+SC003_DIR = os.path.join(FIXTURES, "sc003")
+SC003_WINDOW = {"start": "2026-10-15T00:00:00Z", "end": "2026-11-17T00:00:00Z"}
+SC003_MERGES = 48
 
 
 def load(*parts):
@@ -791,18 +790,207 @@ def check_negatives(text):
     return problems
 
 
-def check_sc003_pending(pending=None, directory=None):
-    """The SC-003 corpus directory is empty exactly while the exemption entry
-    exists: landing the corpus without deleting the entry, or deleting the
-    entry without the corpus, fails."""
-    pending = EXEMPT_SC003_PENDING if pending is None else pending
-    directory = directory or os.path.join(FIXTURES, "sc003")
-    filled = os.path.isdir(directory) and any(not n.startswith(".") for n in os.listdir(directory))
-    if filled and pending:
-        return ["sc003/ holds the corpus but EXEMPT_SC003_PENDING still exists: delete the entry (T029)"]
-    if not filled and not pending:
-        return ["EXEMPT_SC003_PENDING is gone but sc003/ holds no corpus: the SC-003 replay has nothing to read"]
+SC003_CLASSES = ("pipeline-record", "session-record", "pass-pushed-after", "neither")
+
+
+def sc003_totals(expected):
+    """The expected file's totals agree with its own rows, and each row is
+    whole: met exactly when no condition is named as first unmet."""
+    rows = expected.get("pulls") or []
+    problems = []
+    for row in rows:
+        pr = row.get("pr")
+        if row.get("kind") not in me.KINDS or row.get("class") not in SC003_CLASSES \
+                or row.get("result") not in ("met", "unmet"):
+            problems.append("SC-003 #{0}: the expected row has an unknown kind, class or result".format(pr))
+        met = row.get("result") == "met"
+        if met != (row.get("first_unmet") is None) or met != (row.get("first_unmet_state") is None) \
+                or row.get("first_unmet_state") not in (None, "unmet", "not-read"):
+            problems.append("SC-003 #{0}: the expected row's result, first_unmet and first_unmet_state "
+                            "disagree".format(pr))
+    totals = expected.get("totals") or {}
+    want = {"merges": len(rows),
+            "kinds": {k: sum(1 for r in rows if r.get("kind") == k) for k in me.KINDS},
+            "met": sum(1 for r in rows if r.get("result") == "met"),
+            "classes": {c: sum(1 for r in rows if r.get("class") == c) for c in SC003_CLASSES}}
+    for key, value in want.items():
+        if totals.get(key) != value:
+            problems.append("SC-003: the expected file's totals give {0} {1}, its rows give {2}".format(
+                key, totals.get(key), value))
+    return problems
+
+
+def sc003_replay(corpus, expected, window=SC003_WINDOW, merges=SC003_MERGES, evaluate=None):
+    """SC-003: every captured merge judged as of its merge -- cut_snapshot(),
+    then evaluate() (which assigns the kind itself; the corpus keeps none)
+    at the corpus's capture time, never the clock -- against the independent
+    hand lookup. Uses no gh and no git. Names every PR that differs."""
+    evaluate = evaluate or me.evaluate
+    problems = []
+    for label, doc in (("corpus", corpus), ("expected file", expected)):
+        if doc.get("window") != window:
+            problems.append("SC-003: the {0}'s window is {1}, not the replay's {2}".format(label, doc.get("window"), window))
+    rows, captured = {}, {}
+    for row in expected.get("pulls") or []:
+        if row.get("pr") in rows:
+            problems.append("SC-003 #{0}: listed twice in the expected file".format(row.get("pr")))
+        rows[row.get("pr")] = row
+    for item in corpus.get("merges") or []:
+        merge = item["merge"]
+        if merge["pr"] in captured:
+            problems.append("SC-003 #{0}: captured twice".format(merge["pr"]))
+        captured[merge["pr"]] = item
+        if not window["start"] <= (merge.get("merged_at") or "") < window["end"]:
+            problems.append("SC-003 #{0}: merged at {1}, outside the window".format(merge["pr"], merge.get("merged_at")))
+    for pr in sorted(set(rows) - set(captured), key=str):
+        problems.append("SC-003 #{0}: in the expected file but not in the corpus".format(pr))
+    for pr in sorted(set(captured) - set(rows), key=str):
+        problems.append("SC-003 #{0}: in the corpus but not in the expected file".format(pr))
+    if len(captured) != merges:
+        problems.append("SC-003: the corpus holds {0} merges, not {1}".format(len(captured), merges))
+    problems += sc003_totals(expected)
+    now = corpus.get("captured_at")
+    if not now:
+        return problems + ["SC-003: the corpus has no captured_at to pin the replay's time to"]
+    for pr in sorted(set(rows) & set(captured)):
+        merge, row = captured[pr]["merge"], rows[pr]
+        snap = copy.deepcopy(captured[pr]["snapshot"])
+        if snap.pop("assigned_kind", None) is not None:
+            problems.append("SC-003 #{0}: the corpus keeps the captured kind; the replay must assign it".format(pr))
+        for field, have in (("head", merge["last_head"]), ("merged_at", merge["merged_at"])):
+            if row.get(field) != have:
+                problems.append("SC-003 #{0}: the hand lookup's {1} is {2}, the corpus's {3}".format(
+                    pr, field, row.get(field), have))
+        verdict = evaluate(me.cut_snapshot(snap, merge["merged_at"]), corpus.get("bot_login"), now,
+                           base_branch="main")
+        first = verdict["first_unmet"]
+        state = next((c["result"] for c in verdict["conditions"] if c["name"] == first), None) if first else None
+        got = {"kind": verdict["kind"], "result": me.result_of(verdict), "first_unmet": first,
+               "first_unmet_state": state}
+        for key, value in got.items():
+            if row.get(key) != value:
+                problems.append("SC-003 #{0}: {1} is {2!r}; the hand lookup says {3!r}".format(pr, key, value, row.get(key)))
+        urls = {r["url"] for r in verdict["reported"]}
+        for url in row.get("reported") or []:
+            if url not in urls:
+                problems.append("SC-003 #{0}: the hand lookup's reported record {1} is not among the audit's "
+                                "reported records".format(pr, url))
+    return problems
+
+
+# T029: pass-report forms the SC-003 replay found unlisted, each a title, and
+# titles that must stay unlisted. (label, body, expected reported kind)
+PASS_REPORT_TITLES = (
+    ("independent review heading", "<!-- independent-review -->\n## Independent review: PR #7\n\nNo findings.",
+     "pass-report"),
+    ("confirming pass heading", "<!-- review-until-clean confirming 2 -->\n## review-until-clean confirming pass 2: "
+     "PR #7\n\nClean.", "pass-report"),
+    ("post-split pass heading", "<!-- review-until-clean post-split pass 5 -->\n## review-until-clean: post-split "
+     "pass 5, PR #7\n\nCLEAN.", "pass-report"),
+    ("pre-merge run report", "**Pre-merge run of this branch's wrapper:** [run 123](https://github.com/o/r/actions/"
+     "runs/123) on `abc`.\n\nThe change does what it says.", "pass-report"),
+    ("bold lead naming no review", "**Owner decision (2026-10-21):** post-split pass 2 stands.", None),
+    ("prose that mentions a review", "Please finish this PR before review; lint is red.", None),
+    ("heading naming no review", "## Local finish: lint made green", None),
+)
+
+
+def check_pass_report_titles(cases=PASS_REPORT_TITLES):
+    problems = []
+    for label, body, want in cases:
+        got = me.reported_kind({"body": body, "user": {"login": "owner", "type": "User"}}, "wc[bot]")
+        if got != want:
+            problems.append("reported: {0} is listed as {1}, expected {2}".format(label, got, want))
+    return problems
+
+
+def check_pass_report_titles_noticed():
+    """The title rule is shown to be needed: without it the forms go unlisted."""
+    with _Patched(_titled_pass_report=lambda body: False):
+        if not check_pass_report_titles():
+            return ["self-check: the pass-report title cases pass without the title rule"]
     return []
+
+
+def load_sc003(directory=None):
+    """-> ({name: document}, problems): both files, or why the replay has nothing to read."""
+    directory = directory or SC003_DIR
+    docs, problems = {}, []
+    for name in ("corpus.json", "expected.json"):
+        path = os.path.join(directory, name)
+        if not os.path.isfile(path):
+            problems.append("sc003/{0} is missing: the SC-003 replay has nothing to read (T029)".format(name))
+            continue
+        with open(path, encoding="utf-8") as fh:
+            docs[name] = json.load(fh)
+    return docs, problems
+
+
+def check_sc003_noticed(corpus, expected):
+    """The replay is shown to fail: each broken subject below must be noticed,
+    and the replay must run cut_snapshot() and assign_kind() for every merge."""
+    problems = []
+
+    def always_met(snap, bot, now, **kw):
+        rec = me.evaluate(snap, bot, now, **kw)
+        return dict(rec, first_unmet=None, complete=True,
+                    conditions=[dict(c, result="met", reason="") for c in rec["conditions"]])
+
+    def other_kind(snap, bot, now, **kw):
+        rec = me.evaluate(snap, bot, now, **kw)
+        return dict(rec, kind=me.KINDS[(me.KINDS.index(rec["kind"]) + 1) % len(me.KINDS)])
+
+    def mutated(doc, change):
+        doc = copy.deepcopy(doc)
+        change(doc)
+        return doc
+
+    rows = expected.get("pulls") or []
+    first_reported = next((i for i, r in enumerate(rows) if r.get("reported")), None)
+    broken = [("an evaluate that always reports met", corpus, expected, always_met),
+              ("an evaluate that names another kind", corpus, expected, other_kind),
+              ("an expected row's first unmet condition changed", corpus,
+               mutated(expected, lambda d: d["pulls"][0].update(first_unmet="no_such_condition")), None),
+              ("an expected row dropped", corpus, mutated(expected, lambda d: d["pulls"].pop()), None),
+              ("the expected totals changed", corpus,
+               mutated(expected, lambda d: d["totals"].update(met=(d["totals"].get("met") or 0) + 1)), None),
+              ("a corpus that keeps the captured kind",
+               mutated(corpus, lambda d: d["merges"][0]["snapshot"].update(assigned_kind=["maintainer", {}])),
+               expected, None),
+              ("another window", mutated(corpus, lambda d: d.update(window=dict(d["window"], end="2026-11-16T00:00:00Z"))),
+               expected, None)]
+    if first_reported is not None:
+        broken.append(("a reported URL the audit never lists", corpus, mutated(
+            expected, lambda d: d["pulls"][first_reported]["reported"].append("https://example.invalid/x")), None))
+    for label, c, e, evaluate in broken:
+        if not sc003_replay(c, e, evaluate=evaluate):
+            problems.append("self-check: the SC-003 replay did not notice {0}".format(label))
+    calls = {"cut_snapshot": 0, "assign_kind": 0}
+
+    def counting(name):
+        real = getattr(me, name)
+
+        def wrapper(*a, **k):
+            calls[name] += 1
+            return real(*a, **k)
+        return wrapper
+    with _Patched(cut_snapshot=counting("cut_snapshot"), assign_kind=counting("assign_kind")):
+        sc003_replay(corpus, expected)
+    merges = len(corpus.get("merges") or [])
+    if calls["cut_snapshot"] < merges or calls["assign_kind"] < merges:
+        problems.append("self-check: the SC-003 replay ran cut_snapshot {0} and assign_kind {1} times for {2} "
+                        "merges".format(calls["cut_snapshot"], calls["assign_kind"], merges))
+    return problems
+
+
+def check_sc003(directory=None):
+    """SC-003 (T029): the corpus and the expected file exist, the replay
+    agrees with the expected file, and the replay is shown to fail."""
+    docs, problems = load_sc003(directory)
+    if problems:
+        return problems
+    corpus, expected = docs["corpus.json"], docs["expected.json"]
+    return sc003_replay(corpus, expected) + check_sc003_noticed(corpus, expected)
 
 
 def check_review_round4():
@@ -992,15 +1180,15 @@ def main():
         + check_review_round1() + check_review_round2() + check_review_round3_rollup() \
         + check_review_round3_open() + check_review_round3_kind() + check_review_round3_linked_issue()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
-    problems += check_review_round4() + check_sc003_pending()
+    problems += check_review_round4() + check_pass_report_titles() + check_pass_report_titles_noticed() + check_sc003()
     problems += check_final_review_links()
     problems += check_final_review_markers(base_doc)
     problems += check_round5_record_time()
     problems += check_round5_login_seen(base_doc)
     problems += check_round5_truncated_comments()
     problems += check_round5_base_branch(base_doc)
-    if not check_sc003_pending(pending={}, directory=os.path.join(FIXTURES, "_none_")):
-        problems.append("self-check: a missing corpus with no exemption was not noticed")
+    if not check_sc003(directory=os.path.join(FIXTURES, "_none_")):
+        problems.append("self-check: a missing SC-003 corpus and expected file were not noticed")
     wf = os.path.join(REPO, WORKFLOW)
     if os.path.exists(wf):
         text = read(WORKFLOW)
@@ -1033,9 +1221,8 @@ def main():
     if problems:
         return 1
     print("verify-merge-evidence: {0} verdict and {1} audit fixtures, ledger and download checks pass; "
-          "SC-003 replay pending the maintainer capture ({2})".format(
-              len(case_dirs("verdict-")), len(case_dirs("audit-")),
-              "#{0}".format(EXEMPT_SC003_PENDING["sc003-replay"]["issue"][0])))
+          "SC-003 replay of {2} merges agrees with the hand lookup".format(
+              len(case_dirs("verdict-")), len(case_dirs("audit-")), SC003_MERGES))
     return 0
 
 
