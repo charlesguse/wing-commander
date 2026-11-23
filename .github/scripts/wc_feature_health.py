@@ -116,6 +116,11 @@ def classify_workflow(ref, entry, reading, ctx, now):
     if last and all(r["conclusion"] != "success" for r in last):
         return "failing", detail
     interval = reading.get("interval_hours")
+    if ref.get("cadence") == "schedule" and interval is None:
+        # A schedule ref whose cron could not be found would otherwise skip
+        # the not-running test silently and read as healthy or idle.
+        detail["reason"] = "{0}: no cron found".format(ref["file"])
+        return "unreadable", detail
     if ref.get("cadence") == "schedule" and interval:
         cutoff = now - datetime.timedelta(hours=2 * interval)
         if not runs or parse_time(runs[0]["started_at"]) < cutoff:
@@ -153,9 +158,14 @@ def classify_feature(entry, readings, signal_reading, ctx, now):
     state = min((s for _r, s, _d in counted), key=_rank)
     reason = next((d["reason"] for _r, s, d in counted if s == "unreadable"), None)
     sig = signal_state(entry, signal_reading, now)
-    if sig == "unreadable" and _rank(state) > _rank("unreadable"):
-        state = "unreadable"
-        reason = "signal: {0}".format((signal_reading or {}).get("unreadable", "no reading"))
+    if sig == "unreadable" and state != "unreadable":
+        # A signal read failure must not hide a stronger call-out: keep
+        # paused / not configured / failing / not running and note it.
+        sig_reason = "signal: {0}".format((signal_reading or {}).get("unreadable", "no reading"))
+        if _rank(state) > _rank("not running"):
+            state, reason = "unreadable", sig_reason
+        else:
+            reason = "; ".join(r for r in (reason, sig_reason) if r)
     elif sig == "quiet" and _rank(state) > _rank("quiet"):
         state = "quiet"
     successes = [d["last_success"] for _r, _s, d in results if d["last_success"]]

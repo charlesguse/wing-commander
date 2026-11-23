@@ -198,6 +198,9 @@ def check_states(fx):
         rows = run_state_case(fx, case)
         if rows[0]["state"] != case["expect"]:
             problems.append("{0}: state {1}, expected {2}".format(case["label"], rows[0]["state"], case["expect"]))
+        if case.get("expect_reason") and case["expect_reason"] not in (rows[0]["reason"] or ""):
+            problems.append("{0}: reason {1!r} does not name {2!r}".format(
+                case["label"], rows[0]["reason"], case["expect_reason"]))
         for stage, want in (case.get("expect_stages") or {}).items():
             got = next((r["state"] for r in rows if r["stage"] == stage), None)
             if got != want:
