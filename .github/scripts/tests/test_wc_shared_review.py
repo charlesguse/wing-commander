@@ -315,12 +315,12 @@ class Finalize(unittest.TestCase):
         answers = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
         state = {"round": 1, "prior": []}
         code = {"status": "staged"}
-        out = sr.finalize_round(state, {"candidates": []}, {"checks": [], "answers": answers}, code,
+        out = sr.finalize_round(state, {"answers": {}, "candidates": []}, {"checks": [], "answers": answers}, code,
                                 {"type": "issue", "ref": "7"}, "a" * 40, [], 5, "b" * 40, "open")
         self.assertEqual(out["verdict"], "clean")
         cand = {"key": "k", "title": "t", "file": "a.py", "line": 1, "failing_case": {"state": "s", "wrong_result": "w"}}
         chk = {"key": "k", "outcome": "upheld", "in_scope": True, "reachable": True}
-        out = sr.finalize_round(state, {"candidates": [cand]}, {"checks": [chk], "answers": answers}, code,
+        out = sr.finalize_round(state, {"answers": {}, "candidates": [cand]}, {"checks": [chk], "answers": answers}, code,
                                 {"type": "issue", "ref": "7"}, "a" * 40, [], 5, "b" * 40, "open")
         self.assertEqual(out["verdict"], "findings")
         self.assertTrue(out["open_set"][0]["blocking"])
@@ -329,7 +329,8 @@ class Finalize(unittest.TestCase):
         self.assertEqual(out["verdict"], "incomplete")
         # code-run missing with an earlier open blocking finding stays findings
         state2 = {"round": 2, "prior": [finding("F1-1")]}
-        out = sr.finalize_round(state2, {"candidates": []}, {"checks": [], "answers": answers}, None,
+        recheck = {"id": "F1-1", "outcome": "confirmed", "needs_code_run": True}
+        out = sr.finalize_round(state2, {"answers": {}, "candidates": []}, {"checks": [recheck], "answers": answers}, None,
                                 {"type": "issue", "ref": "7"}, "a" * 40, [], 5, "b" * 40, "open")
         self.assertEqual(out["verdict"], "findings")
 
@@ -397,6 +398,42 @@ class ReviewRound3Fixes(unittest.TestCase):
         self.assertEqual(state["F1-1"]["status"], "resolved")
         self.assertEqual(state["F1-1"]["title"], "kept detail")
         self.assertEqual(sr.open_set(list(state.values())), [])
+
+    def test_validate_output_has_a_schema_per_role(self):
+        # R3-F7: an empty object, the wrong job's schema, a non-object entry
+        # or an unevaluated open finding is malformed.
+        answers = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
+        good_find = {"answers": {}, "candidates": [{"key": "k", "title": "t", "file": "a.py", "line": 3}]}
+        good_check = {"answers": answers, "checks": [{"key": "k", "outcome": "upheld", "in_scope": True}]}
+        self.assertEqual(sr.validate_output(good_find, "find"), [])
+        self.assertEqual(sr.validate_output(good_check, "check"), [])
+        for bad, role in (({}, "find"), ({}, "check"), (good_check, "find"), (good_find, "check"),
+                          ({"answers": {}, "candidates": ["x"]}, "find"),
+                          ({"answers": {}, "candidates": [{"key": "k", "title": "t", "file": "a", "line": "3"}]}, "find"),
+                          ({"answers": answers, "checks": [{"key": "k", "outcome": "maybe"}]}, "check"),
+                          ({"answers": {}, "checks": []}, "check"), ([], "find")):
+            self.assertNotEqual(sr.validate_output(bad, role), [], (bad, role))
+        # FR-010: every finding open in the round's memory must be evaluated.
+        prior = [finding("F1-1"), finding("F1-2", "resolved")]
+        self.assertNotEqual(sr.validate_output(good_check, "check", prior), [])
+        covered = dict(good_check, checks=good_check["checks"] + [{"id": "F1-1", "outcome": "confirmed"}])
+        self.assertEqual(sr.validate_output(covered, "check", prior), [])
+
+    def test_validate_output_cli_refuses_an_empty_object(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "find.json")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({}, fh)
+            self.assertEqual(sr.main(["validate-output", "--input", path, "--role", "find"]), 1)
+
+    def test_finalize_reads_a_malformed_output_as_missing(self):
+        answers = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
+        out = sr.finalize_round({"round": 1, "prior": []}, {}, {"checks": [], "answers": answers},
+                                {"status": "staged"}, {"type": "issue", "ref": "7"}, "a" * 40, [], 5,
+                                "b" * 40, "open")
+        self.assertEqual(out["verdict"], "incomplete")
 
 
 if __name__ == "__main__":

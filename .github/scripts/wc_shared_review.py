@@ -443,11 +443,97 @@ def build_handoff(pr, confirmed_rounds, budget, run_id, reviewer_commit):
             "reviewer_commit": reviewer_commit}
 
 
+CHECK_OUTCOMES = ("upheld", "dismissed", "resolved", "confirmed")
+ANSWER_VALUES = (POSITIVE, NEGATIVE, UNDETERMINABLE)
+
+
+def _nonempty_str(value):
+    return isinstance(value, str) and value.strip() != ""
+
+
+def _opt(value, kinds):
+    return value is None or (isinstance(value, kinds) and not isinstance(value, bool))
+
+
+def validate_output(data, role, prior=None):
+    """Problems with one agent job's output, [] when it is well-formed.
+
+    `role` is "find" or "check"; each has its own schema, the same one its
+    --json-schema states plus the types process_round relies on. Output
+    that fails is malformed, so the round is `incomplete` (FR-014), never
+    a quieter verdict from a half-read output. For `check`, `prior` is the
+    round's memory: every finding open in it must be evaluated by id
+    (FR-010)."""
+    if role not in ("find", "check"):
+        return ["unknown role {0!r}".format(role)]
+    if not isinstance(data, dict):
+        return ["output is not a JSON object"]
+    problems = []
+    if not isinstance(data.get("answers"), dict):
+        problems.append("answers is not an object")
+    if role == "find":
+        items = data.get("candidates")
+        if not isinstance(items, list):
+            return problems + ["candidates is not a list"]
+        for n, c in enumerate(items):
+            if not isinstance(c, dict):
+                problems.append("candidate {0} is not an object".format(n))
+                continue
+            for k in ("key", "title", "file"):
+                if not _nonempty_str(c.get(k)):
+                    problems.append("candidate {0} has no {1}".format(n, k))
+            for k in ("line", "line_end"):
+                if not _opt(c.get(k), int):
+                    problems.append("candidate {0} {1} is not an integer".format(n, k))
+            if not _opt(c.get("failing_case"), dict):
+                problems.append("candidate {0} failing_case is not an object".format(n))
+            if not _opt(c.get("cites"), str):
+                problems.append("candidate {0} cites is not a string".format(n))
+        return problems
+    answers = data.get("answers") if isinstance(data.get("answers"), dict) else {}
+    for k in ANSWER_KEYS:
+        if answers.get(k) not in ANSWER_VALUES:
+            problems.append("purpose answer {0} is not one of {1}".format(k, "/".join(ANSWER_VALUES)))
+    items = data.get("checks")
+    if not isinstance(items, list):
+        return problems + ["checks is not a list"]
+    evaluated = set()
+    for n, c in enumerate(items):
+        if not isinstance(c, dict):
+            problems.append("check {0} is not an object".format(n))
+            continue
+        if not (_nonempty_str(c.get("id")) or _nonempty_str(c.get("key"))):
+            problems.append("check {0} names neither an id nor a key".format(n))
+        for k in ("id", "key", "reason"):
+            if not _opt(c.get(k), str):
+                problems.append("check {0} {1} is not a string".format(n, k))
+        if c.get("outcome") not in CHECK_OUTCOMES:
+            problems.append("check {0} outcome is not one of {1}".format(n, "/".join(CHECK_OUTCOMES)))
+        for k in ("in_scope", "reachable", "cites_only_spec_docs", "needs_code_run"):
+            if c.get(k) is not None and not isinstance(c.get(k), bool):
+                problems.append("check {0} {1} is not a boolean".format(n, k))
+        files = c.get("files")
+        if files is not None and not (isinstance(files, list) and all(isinstance(x, str) for x in files)):
+            problems.append("check {0} files is not a list of strings".format(n))
+        if _nonempty_str(c.get("id")):
+            evaluated.add(c["id"])
+    for f in prior or []:
+        if isinstance(f, dict) and f.get("status") in OPEN_STATUSES and f.get("id") not in evaluated:
+            problems.append("open finding {0} was not evaluated (FR-010)".format(f.get("id")))
+    return problems
+
+
 def finalize_round(state, find_out, check_out, code_run, purpose, head_sha, dismissals,
                    run_id, reviewer_commit, pr_state, agent_ok=True):
     """One round's whole record, from staged data only. Agent output is
     read as data; every status, blocking flag and the verdict is code's."""
     round_no = int(state.get("round") or 1)
+    # The same per-role schema the agent jobs' validate-output step applies:
+    # a malformed output is read as missing, so the round is `incomplete`.
+    if validate_output(find_out, "find"):
+        find_out = None
+    if validate_output(check_out, "check", state.get("prior")):
+        check_out = None
     prior, applied, notes = apply_dismissals(state.get("prior") or [], dismissals)
     code_status = (code_run or {}).get("status") if (code_run or {}).get("status") == "staged" else "missing"
     agent_ok = bool(agent_ok and isinstance(find_out, dict) and isinstance(check_out, dict))
@@ -606,6 +692,8 @@ def main(argv=None):
     f.add_argument("--reviewer-commit", required=True); f.add_argument("--pr-state", default="open")
     v = sub.add_parser("validate-output")
     v.add_argument("--input", required=True)
+    v.add_argument("--role", required=True, choices=("find", "check"))
+    v.add_argument("--memory", default=None)
     args = parser.parse_args(argv)
     if args.cmd == "guard":
         ok, reason = guard(args.ref, args.default_branch, args.kind, args.paused)
@@ -645,10 +733,19 @@ def main(argv=None):
         print(json.dumps(stage_code_run(args.pr_tree, args.reviewer_tree, added)))
         return 0
     if args.cmd == "validate-output":
-        data = _load(args.input)
-        ok = isinstance(data, dict) and isinstance(data.get("candidates", data.get("checks", [])), list)
-        print(json.dumps({"ok": ok}))
-        return 0 if ok else 1
+        try:
+            data = _load(args.input)
+        except (OSError, ValueError):
+            data = None
+        prior, problems = None, []
+        if args.memory:
+            try:
+                prior = _load(args.memory).get("prior")
+            except (OSError, ValueError, AttributeError):
+                problems.append("the round's memory could not be read")
+        problems += validate_output(data, args.role, prior)
+        print(json.dumps({"ok": not problems, "problems": problems}))
+        return 1 if problems else 0
     print(build_record(_load(args.input), handoff=args.handoff))
     return 0
 
