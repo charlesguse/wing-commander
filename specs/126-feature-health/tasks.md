@@ -122,3 +122,57 @@ MVP = Phases 1-3 (registry, drift gate, classifier, renderer, fixtures): the ver
 ## Counts
 
 32 tasks: Setup 3, Foundational 4, US1 5, US2 3, US3 4, US4 6, SC-001/docs 4, Maintainer 3.
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Custom metrics branch env var never read
+
+  read_signal reads WING_COMMANDER_METRICS_BRANCH but collect and the workflow key variables with the prefix stripped (METRICS_BRANCH), so a custom branch is ignored and the metrics feature can show unreadable.
+
+  - .github/scripts/wc_feature_health.py
+
+  Detail: Fixture uses environ {} so nothing catches it.
+
+- [ ] Review finding: issue_section signal uses whole issue updated_at
+
+  The signal checks that the marker is in the body and uses the Board status issue's updated_at, so failed/paused notices that carry the marker and the daily rewrite make a broken section read as seen today and never quiet.
+
+  - .github/scripts/wc_feature_health.py
+
+  Detail: Affects proof-list, merge-evidence and feature-health section features.
+
+- [ ] Review finding: triage_close signal samples only one page
+
+  It reads only the first 30 closed issues (PRs included) and the first 100 comments each, so real triage closes can be missed and the feature wrongly reported quiet.
+
+  - .github/scripts/wc_feature_health.py
+
+- [ ] Review finding: Oversize section reported as build failed
+
+  When the section does not fit the body after shortening, status is set to failed and the notice says the latest build failed, though the build succeeded.
+
+  - .github/scripts/wc_board_status.py
+
+- [ ] Review finding: Stale notice placed outside section end marker
+
+  The stale line is appended after the closing marker, outside the marker-delimited block, so consumers replacing the block miss or orphan it.
+
+  - .github/scripts/wc_board_status.py
+
+- [ ] Review finding: Circular lazy import with repeated sys.path insert
+
+  feature_health_block inserts into sys.path and imports wc_feature_health on every call, which itself imports wc_board_status, forming a fragile circular import.
+
+  - .github/scripts/wc_board_status.py
+
+- [ ] Review finding: Gate does not check workflow env supplies registry switches
+
+  check_workflow_text does not verify the build step env contains every kill_switch and requires_var in the registry, so a missing key passes PR gates and shows unreadable in production.
+
+  - .github/scripts/verify-feature-health.py
+
+- [ ] Review finding: Deprecated datetime.utcnow used
+
+  utcnow is deprecated since Python 3.12 and returns a naive datetime; use now(timezone.utc) stripped of tzinfo.
+
+  - .github/scripts/wc_feature_health.py
