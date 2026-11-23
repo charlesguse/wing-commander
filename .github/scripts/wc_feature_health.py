@@ -36,6 +36,7 @@ WINDOW_DAYS = 30
 FAILING_WINDOW = 3
 RUN_CAP = 1000
 RATE_LIMIT_FLOOR = 300
+TRIAGE_ISSUE_CAP = 150
 MARKER_BEGIN = "<!-- wing-commander-feature-health -->"
 MARKER_END = "<!-- /wing-commander-feature-health -->"
 SWITCH_PREFIX = "WING_COMMANDER_"
@@ -43,7 +44,7 @@ SIGNAL_KINDS = ("merged_pr", "release", "issue_or_comment", "triage_close",
                 "branch_commit", "issue_updated", "issue_section")
 NEVER = "never in window"
 NOT_MEASURED = "not measured"
-NOT_QUALIFYING = ("skipped", "cancelled")
+NOT_QUALIFYING = ("skipped", "cancelled", "neutral")
 
 
 def parse_time(text):
@@ -252,19 +253,36 @@ def check_rate_limit(gh=gh_json, floor=RATE_LIMIT_FLOOR):
     return remaining
 
 
-def schedule_interval_hours(workflow_text):
-    """Hours between scheduled runs, from the first `cron:` line; None if none."""
-    m = re.search(r'cron:\s*"([^"]+)"', workflow_text)
-    if not m:
-        return None
-    fields = m.group(1).split()
+def _cron_hours(expr):
+    fields = expr.split()
     if len(fields) != 5:
-        return None
-    if fields[1] == "*":
+        raise ValueError("unparseable cron: {0}".format(expr))
+    hour = fields[1]
+    if hour == "*":
         return 1
+    step = re.fullmatch(r"\*/(\d+)", hour)
+    if step and int(step.group(1)) > 0:
+        return int(step.group(1))
+    if not re.fullmatch(r"[\d,]+", hour):
+        raise ValueError("unparseable cron: {0}".format(expr))
+    per_day = len([h for h in hour.split(",") if h])
     if fields[2:] == ["*", "*", "*"]:
-        return 24
+        return 24 / per_day
     return 24 * 7 if fields[4] != "*" else 24 * 31
+
+
+def schedule_interval_hours(workflow_text):
+    """Smallest hours between scheduled runs across every uncommented `cron:`
+    entry (single or double quoted); None if none; ValueError if one cannot
+    be parsed, which makes the workflow unreadable."""
+    crons = []
+    for line in workflow_text.splitlines():
+        m = re.match(r"""^\s*-?\s*cron:\s*(?:"([^"]+)"|'([^']+)')\s*(?:#.*)?$""", line)
+        if m:
+            crons.append(m.group(1) or m.group(2))
+    if not crons:
+        return None
+    return min(_cron_hours(c) for c in crons)
 
 
 def fetch_runs(gh, repo, filename, start, end, events=None):
@@ -298,14 +316,15 @@ def fetch_runs(gh, repo, filename, start, end, events=None):
 
 
 def _pages(gh, path, max_pages=10):
-    """Every item of a list endpoint, page by page, up to `max_pages` pages."""
+    """Every item of a list endpoint, page by page. Raises when the last
+    allowed page is still full: a cut-off read must not classify (FR-010/011)."""
     items = []
     for page in range(1, max_pages + 1):
         got = gh(path + "&page={0}".format(page))
         items.extend(got)
         if len(got) < 100:
-            break
-    return items
+            return items
+    raise RuntimeError("more than {0} items: read truncated".format(max_pages * 100))
 
 
 def section_built(body, marker):
@@ -321,7 +340,10 @@ def section_built(body, marker):
         return 'status="built"' in opener
     nxt = body.find("<!-- /", idx)
     block = body[idx:nxt if nxt >= 0 else len(body)]
-    return "<details>" in block and "_Stale:" not in block
+    if "_Stale:" in block:
+        return False
+    return ("<details>" in block or "_Table shortened" in block
+            or "**Feature health** — built" in block)
 
 
 def read_signal(signal, repo, since, gh, environ):
@@ -334,20 +356,36 @@ def read_signal(signal, repo, since, gh, environ):
     times = []
     if kind == "merged_pr":
         for page in (1, 2, 3):
-            for p in gh("{0}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page={1}".format(base, page)):
+            got = gh("{0}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page={1}".format(base, page))
+            for p in got:
                 if p.get("merged_at") and p["merged_at"] >= s and any(
                         p["head"]["ref"].startswith(x) for x in signal.get("head_prefixes", [])):
                     times.append(p["merged_at"])
+            if len(got) < 100 or got[-1].get("updated_at", "") < s:
+                break
+        else:
+            raise RuntimeError("merged PR read truncated at 300 PRs")
     elif kind == "release":
-        times = [r["published_at"] for r in gh("{0}/releases?per_page=30".format(base)) if r.get("published_at")]
+        got = gh("{0}/releases?per_page=30".format(base))
+        if len(got) >= 30 and all((r.get("published_at") or "") >= s for r in got):
+            raise RuntimeError("release read truncated at 30 releases")
+        times = [r["published_at"] for r in got if r.get("published_at")]
     elif kind == "issue_or_comment":
-        times = [i["created_at"] for i in gh("{0}/issues?state=all&labels={1}&since={2}&per_page=100".format(
-            base, signal["label_name"], s)) if i["created_at"] >= s]
+        # Labeled issues and comments on them both count (the registry text).
+        issues = _pages(gh, "{0}/issues?state=all&labels={1}&since={2}&per_page=100".format(
+            base, signal["label_name"], s))
+        for i in issues:
+            times.append(i["created_at"])
+        for i in issues[:TRIAGE_ISSUE_CAP]:
+            times.extend(c["created_at"] for c in _pages(
+                gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s), 1))
     elif kind == "triage_close":
-        for i in _pages(gh, "{0}/issues?state=closed&since={1}&per_page=100".format(base, s)):
-            if i.get("pull_request"):
-                continue
-            for c in _pages(gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s)):
+        closed = [i for i in _pages(gh, "{0}/issues?state=closed&since={1}&per_page=100".format(base, s), 3)
+                  if not i.get("pull_request")]
+        if len(closed) > TRIAGE_ISSUE_CAP:
+            raise RuntimeError("more than {0} closed issues in window; triage read bounded".format(TRIAGE_ISSUE_CAP))
+        for i in closed:
+            for c in _pages(gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s), 1):
                 body = c.get("body") or ""
                 if any(g in body for g in TRIAGE_CLOSE_GROUNDS) and not any(
                         d in body for d in signal.get("duplicate_markers", ())):
@@ -398,7 +436,11 @@ def collect(registry, repo, now, gh=gh_json, environ=None, read_text=None):
                 readings[ref["file"]] = {"unreadable": str(exc) or "read failed"}
         if entry.get("signal"):
             try:
-                signals[entry["name"]] = {"signal_at": read_signal(entry["signal"], repo, start, gh, environ)}
+                # A signal may list `also` readers; the newest occurrence of any counts.
+                found = [read_signal(s, repo, start, gh, environ)
+                         for s in [entry["signal"]] + list(entry["signal"].get("also") or [])]
+                found = [t for t in found if t]
+                signals[entry["name"]] = {"signal_at": max(found) if found else None}
             except (RuntimeError, OSError, ValueError, KeyError, TypeError) as exc:
                 signals[entry["name"]] = {"unreadable": str(exc) or "read failed"}
     return readings, signals, ctx

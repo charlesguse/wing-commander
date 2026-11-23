@@ -14,8 +14,8 @@ Expected: all pass. The fixtures under `.github/scripts/fixtures/feature-health/
 
 | Fixture | Expected |
 |---|---|
-| `failing` (last 3 runs failed) | *failing* with last success/failure dates |
-| `single-failure` | not *failing*; last failure shown |
+| `failing` (last 3 qualifying runs, or fewer when that is all there are, all failed) | *failing* with last success/failure dates |
+| `single-failure` (one failure after a success) | not *failing*; last failure shown |
 | `quiet` (green runs, signal older than threshold) | *quiet* |
 | `not-running` (scheduled, no run in interval + 1) | *not running* |
 | `event-idle` (event-driven, no runs) | *idle*, not called out |

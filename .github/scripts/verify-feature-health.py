@@ -448,6 +448,32 @@ def check_shared_sources():
     return problems
 
 
+def check_review_round_two():
+    """Cron parsing, truncated reads, shortened-section detection."""
+    problems = []
+    wf = "on:\n  schedule:\n    - cron: '0 */6 * * *'\n    # - cron: \"0 1 * * *\"\n    - cron: \"0 3,15 * * *\"\n"
+    if fh.schedule_interval_hours(wf) != 6:
+        problems.append("cron parsing: expected the smallest interval 6, got {0}".format(
+            fh.schedule_interval_hours(wf)))
+    if fh.schedule_interval_hours('on:\n  schedule:\n    - cron: "0 1 * * *"\n') != 24:
+        problems.append("cron parsing: a daily cron is not 24 hours")
+    try:
+        fh.schedule_interval_hours('    - cron: "bad"\n')
+        problems.append("cron parsing: an unparseable cron did not raise")
+    except ValueError:
+        pass
+    try:
+        fh._pages(lambda _p: [{}] * 100, "x?a=1", 2)
+        problems.append("_pages: a full last page did not raise")
+    except RuntimeError:
+        pass
+    shortened = ("<!-- wing-commander-feature-health -->\n**Feature health** — built x\n\n"
+                 "_Table shortened: it did not fit._\n<!-- /wing-commander-feature-health -->")
+    if not fh.section_built(shortened, fh.MARKER_BEGIN):
+        problems.append("section_built: a shortened section reads as not built")
+    return problems
+
+
 def main():
     with open(os.path.join(REPO, "docs", "reference.md"), encoding="utf-8") as fp:
         ref_text = fp.read()
@@ -462,6 +488,7 @@ def main():
     problems += check_unreadable(load("unreadable", "scenarios.json"))
     problems += check_workflow()
     problems += check_shared_sources()
+    problems += check_review_round_two()
     real, note = check_sc001(os.path.join(FIXTURES, "sc001"), EXEMPT_SC001_PENDING)
     problems += real + self_check(fx)
     if note:

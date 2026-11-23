@@ -604,9 +604,10 @@ def feature_health_half():
           "- name: {0}\n".format(bs.FEATURE_HEALTH_BUILD_STEP) in wf)
     check("feature_health_paused is in SWITCH_ENV",
           bs.SWITCH_ENV.get("feature_health_paused") == "FEATURE_HEALTH_PAUSED")
+    with open(os.path.join(root, ".github", "workflows", "board-status.yml"), encoding="utf-8") as fh:
+        bs_text = fh.read()
     check("board-status.yml passes the feature-health switch",
-          "FEATURE_HEALTH_PAUSED: ${{ vars.WING_COMMANDER_FEATURE_HEALTH_PAUSED }}" in open(
-              os.path.join(root, ".github", "workflows", "board-status.yml"), encoding="utf-8").read())
+          "FEATURE_HEALTH_PAUSED: ${{ vars.WING_COMMANDER_FEATURE_HEALTH_PAUSED }}" in bs_text)
 
     now = datetime.datetime(2026, 11, 20, 12, 0, 0)
     content = bs.FEATURE_HEALTH_MARKER + "\n**Feature health** — built 2026-11-20 06:29Z · 1 features · 0 unreadable\n"
