@@ -110,6 +110,14 @@
     "signal": {"kind": "issue_section", "label": "proof list section", "title": "Board status", "marker": "wc-proof-list:begin"}
   },
   {
+    "name": "merge evidence audit",
+    "reference_names": ["wing-commander-merge-evidence.yml", "merge evidence verdicts", "merge evidence audit"],
+    "workflows": [{"file": "wing-commander-merge-evidence.yml", "cadence": "schedule"}],
+    "kill_switch": "WING_COMMANDER_MERGE_EVIDENCE_PAUSED",
+    "requires_var": null,
+    "signal": {"kind": "issue_section", "label": "merge evidence section", "title": "Board status", "marker": "wc-merge-evidence:begin"}
+  },
+  {
     "name": "feature health",
     "reference_names": ["wing-commander-feature-health.yml"],
     "workflows": [{"file": "wing-commander-feature-health.yml", "cadence": "schedule"}],
