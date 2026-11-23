@@ -286,6 +286,10 @@ jobs:
           path: out/code-run.json
           retention-days: 7
 
+  # Every failure in an agent job degrades to a missing output, never a job
+  # failure: the run stays green, so record's `incomplete` round can be
+  # confirmed (confirm_record needs a successful run). Each agent step has a
+  # step timeout under the job's, and only a healthy, valid output is staged.
   find:
     needs: [prepare, code-run]
     if: "!cancelled() && needs.prepare.outputs.proceed == 'true' && needs.prepare.outputs.spent != 'true'"
@@ -293,6 +297,8 @@ jobs:
     permissions:
       contents: read
     timeout-minutes: 30
+    outputs:
+      ok: ${{ steps.upload.outcome == 'success' }}
     steps:
       - name: Checkout the default branch (prompts and composites)
         uses: actions/checkout@v5
@@ -330,6 +336,7 @@ jobs:
       - name: Find
         id: agent
         continue-on-error: true
+        timeout-minutes: 22
         uses: anthropics/claude-code-action@v1
         env:
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
@@ -348,6 +355,7 @@ jobs:
             --disallowedTools "${{ steps.tool-args.outputs.disallowed-tools }}"
       - name: Upload the agent execution log (find)
         if: always() && steps.agent.outcome != 'skipped'
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output-find
@@ -357,6 +365,7 @@ jobs:
       - name: Compute agent run verdict (find)
         id: find-verdict
         if: always() && steps.agent.outcome != 'skipped'
+        continue-on-error: true
         uses: ./.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: ${{ inputs.find-max-turns }}
@@ -372,7 +381,9 @@ jobs:
           echo "::error::shared-pr-reviewer find: agent step rejected -- verdict=$VERDICT: $REASON"
           exit 1
       - name: Stage the find output
-        if: "!cancelled() && steps.agent.outcome == 'success'"
+        id: stage
+        if: "!cancelled() && steps.agent.outcome == 'success' && steps.find-verdict.outputs.verdict == 'healthy'"
+        continue-on-error: true
         shell: bash
         env:
           OUT: ${{ steps.agent.outputs.structured_output }}
@@ -380,11 +391,17 @@ jobs:
           set -euo pipefail
           mkdir -p out
           printf '%s' "$OUT" > out/find.json
-          # A malformed output degrades to missing: the round is recorded
-          # incomplete by a job that succeeds, so it can be confirmed.
-          python3 -I .github/scripts/wc_shared_review.py validate-output --role find --input out/find.json || rm -f out/find.json
+          # A malformed output degrades to missing (no `ok`), so check never
+          # runs on it and record writes an incomplete round.
+          if python3 -I .github/scripts/wc_shared_review.py validate-output --role find --input out/find.json; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            rm -f out/find.json
+          fi
       - name: Upload the find output
-        if: "!cancelled() && steps.agent.outcome == 'success'"
+        id: upload
+        if: "!cancelled() && steps.stage.outputs.ok == 'true'"
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: shared-review-find
@@ -392,9 +409,11 @@ jobs:
           retention-days: 7
 
   # Shares no context with `find`: it reads that job's output as data only.
+  # It runs only when find staged a healthy, valid output; otherwise it is
+  # skipped and record writes an incomplete round.
   check:
     needs: [prepare, find]
-    if: "!cancelled() && needs.find.result == 'success'"
+    if: "!cancelled() && needs.find.outputs.ok == 'true'"
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
@@ -441,6 +460,7 @@ jobs:
       - name: Check
         id: agent
         continue-on-error: true
+        timeout-minutes: 22
         uses: anthropics/claude-code-action@v1
         env:
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
@@ -459,6 +479,7 @@ jobs:
             --disallowedTools "${{ steps.tool-args.outputs.disallowed-tools }}"
       - name: Upload the agent execution log (check)
         if: always() && steps.agent.outcome != 'skipped'
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: claude-execution-output-check
@@ -468,6 +489,7 @@ jobs:
       - name: Compute agent run verdict (check)
         id: check-verdict
         if: always() && steps.agent.outcome != 'skipped'
+        continue-on-error: true
         uses: ./.github/actions/wing-commander-agent-verdict
         with:
           intended-turns: ${{ inputs.check-max-turns }}
@@ -483,7 +505,9 @@ jobs:
           echo "::error::shared-pr-reviewer check: agent step rejected -- verdict=$VERDICT: $REASON"
           exit 1
       - name: Stage the check output
-        if: "!cancelled() && steps.agent.outcome == 'success'"
+        id: stage
+        if: "!cancelled() && steps.agent.outcome == 'success' && steps.check-verdict.outputs.verdict == 'healthy'"
+        continue-on-error: true
         shell: bash
         env:
           OUT: ${{ steps.agent.outputs.structured_output }}
@@ -491,11 +515,17 @@ jobs:
           set -euo pipefail
           mkdir -p out
           printf '%s' "$OUT" > out/check.json
-          # Degrades to missing, as in find, so the record job still confirms.
-          python3 -I .github/scripts/wc_shared_review.py validate-output --role check --memory input/memory.json \
-            --input out/check.json || rm -f out/check.json
+          # Degrades to missing, as in find.
+          if python3 -I .github/scripts/wc_shared_review.py validate-output --role check --memory input/memory.json \
+            --input out/check.json; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            rm -f out/check.json
+          fi
       - name: Upload the check output
-        if: "!cancelled() && steps.agent.outcome == 'success'"
+        id: upload
+        if: "!cancelled() && steps.stage.outputs.ok == 'true'"
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: shared-review-check

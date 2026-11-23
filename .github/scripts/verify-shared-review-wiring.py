@@ -78,6 +78,51 @@ def diff_read_problems(wf):
     return problems
 
 
+def _true(value):
+    return value is True or str(value).lower() == "true"
+
+
+def failure_path_problems(wf):
+    """R3-F1, R3-F3 and the round-2 lines: an agent job's failure degrades
+    to a missing output and never fails the job, nothing an unhealthy agent
+    wrote is staged, and check runs only on find's healthy, valid output.
+    A failed job would turn the run red, and confirm_record never confirms
+    the incomplete round of a run that did not succeed."""
+    problems = []
+    jobs = wf.get("jobs") or {}
+    if "needs.find.outputs.ok == 'true'" not in str((jobs.get("check") or {}).get("if", "")):
+        problems.append("check does not wait for find's staged output (needs.find.outputs.ok)")
+    if "steps.upload.outcome" not in str(((jobs.get("find") or {}).get("outputs") or {}).get("ok", "")):
+        problems.append("find's `ok` output is not its output upload's outcome")
+    for role in ("find", "check"):
+        job = jobs.get(role) or {}
+        steps = [s or {} for s in job.get("steps") or []]
+        agent = next((s for s in steps if s.get("id") == "agent"), {})
+        try:
+            if not int(agent.get("timeout-minutes")) < int(job.get("timeout-minutes")):
+                raise ValueError
+        except (TypeError, ValueError):
+            problems.append("{0}'s agent step has no step timeout under the job's".format(role))
+        for s in steps:
+            sid = s.get("id")
+            if (sid == role + "-verdict" or "claude-execution-output" in str((s.get("with") or {}).get("name"))) \
+                    and not _true(s.get("continue-on-error")):
+                problems.append("{0}: step {1!r} can fail the job".format(role, s.get("name")))
+        stage = next((s for s in steps if "validate-output" in str(s.get("run") or "")), None)
+        if stage is None:
+            problems.append("{0} no longer validates its output".format(role))
+        else:
+            if "steps.{0}-verdict.outputs.verdict == 'healthy'".format(role) not in str(stage.get("if", "")):
+                problems.append("{0} stages output from an agent whose verdict is not healthy".format(role))
+            if not _true(stage.get("continue-on-error")):
+                problems.append("{0}: the stage step can fail the job".format(role))
+        upload = next((s for s in steps if (s.get("with") or {}).get("name") == "shared-review-" + role), None)
+        if upload is None or "steps.stage.outputs.ok == 'true'" not in str(upload.get("if", "")) \
+                or not _true(upload.get("continue-on-error")):
+            problems.append("{0} uploads an output that was not staged as valid, or can fail on it".format(role))
+    return problems
+
+
 def wrapper_problems(wf):
     problems = []
     conc = wf.get("concurrency") or {}
@@ -119,10 +164,37 @@ def _drop_empty_diff_stop(wf):
     step["run"] = "\n".join(l for l in step["run"].splitlines() if "[ -s " not in l)
 
 
+def _step(wf, job, pred):
+    return next(s for s in wf["jobs"][job]["steps"] if pred(s))
+
+
+def _check_on_find_result(wf):
+    wf["jobs"]["check"]["if"] = "!cancelled() && needs.find.result == 'success'"
+
+
+def _stage_unhealthy_find(wf):
+    _step(wf, "find", lambda s: "validate-output" in str(s.get("run")))["if"] = \
+        "!cancelled() && steps.agent.outcome == 'success'"
+
+
+def _upload_unstaged_check(wf):
+    _step(wf, "check", lambda s: (s.get("with") or {}).get("name") == "shared-review-check")["if"] = \
+        "!cancelled() && steps.agent.outcome == 'success'"
+
+
+def _agent_without_step_timeout(wf):
+    _step(wf, "find", lambda s: s.get("id") == "agent").pop("timeout-minutes", None)
+
+
+def _verdict_can_fail(wf):
+    _step(wf, "check", lambda s: s.get("id") == "check-verdict").pop("continue-on-error", None)
+
+
 def main():
     cal = yaml.safe_load(open(CALLABLE, encoding="utf-8")) or {}
     wrap = yaml.safe_load(open(WRAPPER, encoding="utf-8")) or {}
-    problems = callable_problems(cal) + diff_read_problems(cal) + wrapper_problems(wrap) + readers_problems()
+    problems = (callable_problems(cal) + diff_read_problems(cal) + failure_path_problems(cal)
+                + wrapper_problems(wrap) + readers_problems())
     if "--self-test" in sys.argv:
         bad = 0
         muts = {
@@ -138,7 +210,12 @@ def main():
                 bad += 1
         for label, mutate, check in (
                 ("a git read swallowed with || true", _swallow_diff, diff_read_problems),
-                ("the empty-diff stop removed", _drop_empty_diff_stop, diff_read_problems)):
+                ("the empty-diff stop removed", _drop_empty_diff_stop, diff_read_problems),
+                ("check runs on find's job result", _check_on_find_result, failure_path_problems),
+                ("find stages an unhealthy agent's output", _stage_unhealthy_find, failure_path_problems),
+                ("check uploads an unstaged output", _upload_unstaged_check, failure_path_problems),
+                ("the find agent has no step timeout", _agent_without_step_timeout, failure_path_problems),
+                ("the check verdict step can fail the job", _verdict_can_fail, failure_path_problems)):
             clone = copy.deepcopy(cal)
             mutate(clone)
             if not check(clone):
