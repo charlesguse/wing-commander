@@ -234,3 +234,9 @@ MVP = Phases 1-3 (registry, drift gate, classifier, renderer, fixtures): the ver
   - .github/scripts/verify-board-status.py
 
   Detail: Read via a context manager into a variable first.
+
+## Maintainer Feedback
+
+- [ ] FH-FB-A1 (fix-pass review a49cfa6, finding A, important): In `.github/scripts/wc_feature_health.py` (~:285), make `_cron_hours` return the largest gap between consecutive firing hours, counting the wrap from the last hour of the day to the first, instead of `24 / per_day`.
+- [ ] FH-FB-A2: Update the tests and fixtures in `.github/scripts/verify-feature-health.py` (~:508-510) that assert the averaged values (`24 / 9`, `6`). Expect 16 for `0 9-17 * * *` and 14 for `0 1,9-11 * * *`. Each test must fail against the current averaging code.
+- [ ] FH-FB-A3: Add a case showing a daily `9-17` cron is not classed 'not running' when the last run was 13.5 h ago.
