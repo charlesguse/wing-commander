@@ -35,5 +35,24 @@ class Compare(unittest.TestCase):
         self.assertEqual(sorted(r["shared"] is None for r in rows), [False, True])
 
 
+    def test_main_takes_the_whole_state_object(self):
+        # Round 4: `wc_shared_review.py state` output is a dict whose
+        # `confirmed` key holds the records; main must not crash on it.
+        import io
+        import json
+        import tempfile
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as d:
+            comments, state = os.path.join(d, "c.json"), os.path.join(d, "s.json")
+            with open(comments, "w", encoding="utf-8") as fh:
+                json.dump([], fh)
+            with open(state, "w", encoding="utf-8") as fh:
+                json.dump({"rounds": 1, "confirmed": [{"round": 1, "head_sha": HEAD, "verdict": "clean"}]}, fh)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(cmp.main([comments, state]), 0)
+        self.assertIn("aaaaaaa", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

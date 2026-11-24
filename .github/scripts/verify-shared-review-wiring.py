@@ -145,6 +145,33 @@ def failure_path_problems(wf):
     return problems
 
 
+CONFIRMATION_RETENTION_DAYS = 90  # GitHub's maximum
+
+
+def retention_problems(wf):
+    """Round 4: a record counts only while its run still lists the
+    shared-review-<head> artifact, so that artifact is kept as long as
+    GitHub allows."""
+    steps = ((wf.get("jobs") or {}).get("record") or {}).get("steps") or []
+    for s in steps:
+        name = str(((s or {}).get("with") or {}).get("name") or "")
+        if name.startswith("shared-review-") and "head-sha" in name:
+            if str(s["with"].get("retention-days")) != str(CONFIRMATION_RETENTION_DAYS):
+                return ["the confirmation artifact is kept {0} days, not {1}".format(
+                    s["with"].get("retention-days"), CONFIRMATION_RETENTION_DAYS)]
+            return []
+    return ["record no longer uploads the confirmation artifact"]
+
+
+def queued_dispatch_note_problems(wrapper_text):
+    """Round 4: GitHub keeps one pending run per concurrency group, so the
+    wrapper must say that a third dispatch cancels a queued second one."""
+    prose = " ".join(re.sub(r"\n\s*#", " ", wrapper_text).split())
+    if "third dispatch cancels a queued second one" not in prose:
+        return ["the wrapper no longer warns that a third dispatch cancels a queued one"]
+    return []
+
+
 def wrapper_problems(wf):
     problems = []
     conc = wf.get("concurrency") or {}
@@ -232,7 +259,8 @@ def main():
     cal = yaml.safe_load(open(CALLABLE, encoding="utf-8")) or {}
     wrap = yaml.safe_load(open(WRAPPER, encoding="utf-8")) or {}
     problems = (callable_problems(cal) + diff_read_problems(cal) + failure_path_problems(cal)
-                + head_fetch_problems(cal)
+                + head_fetch_problems(cal) + retention_problems(cal)
+                + queued_dispatch_note_problems(open(WRAPPER, encoding="utf-8").read())
                 + wrapper_problems(wrap) + readers_problems())
     if "--self-test" in sys.argv:
         bad = 0
@@ -262,6 +290,15 @@ def main():
             if not check(clone):
                 print("::error::self-test: mutation not caught: " + label)
                 bad += 1
+        rclone = copy.deepcopy(cal)
+        next(x for x in rclone["jobs"]["record"]["steps"]
+             if "head-sha" in str((x.get("with") or {}).get("name")))["with"]["retention-days"] = 30
+        if not retention_problems(rclone):
+            print("::error::self-test: mutation not caught: confirmation artifact kept 30 days")
+            bad += 1
+        if not queued_dispatch_note_problems("# One round at a time per pull request.\n"):
+            print("::error::self-test: mutation not caught: the queued-dispatch note removed")
+            bad += 1
         wclone = copy.deepcopy(wrap)
         wclone["concurrency"] = {}
         if not wrapper_problems(wclone):

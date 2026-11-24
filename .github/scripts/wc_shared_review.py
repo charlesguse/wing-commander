@@ -522,7 +522,11 @@ def validate_output(data, role, prior=None):
         for k in ("in_scope", "reachable", "cites_only_spec_docs", "needs_code_run"):
             if c.get(k) is not None and not isinstance(c.get(k), bool):
                 problems.append("check {0} {1} is not a boolean".format(n, k))
-        if c.get("outcome") in ("upheld", "confirmed"):
+        # An upheld candidate is new, so its flags must be stated. A
+        # confirmed recheck may omit them: settle() keeps the previous
+        # flags, and a recheck that needed missing code-run results
+        # (FR-010) cannot restate them.
+        if c.get("outcome") == "upheld":
             for k in ("in_scope", "reachable"):
                 if not isinstance(c.get(k), bool):
                     problems.append("check {0} {1} is required (boolean) when outcome is {2}".format(

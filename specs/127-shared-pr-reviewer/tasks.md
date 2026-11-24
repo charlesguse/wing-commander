@@ -395,7 +395,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Accept both shapes, or state that the caller must extract .confirmed first.
 
-- [x] Review finding: Verdict, fail-loud and log-upload steps use always() where !cancelled() is meant (not changed: Gate 23 requires `if: always()` on the agent-verdict and fail-loud steps, so always() stays)
+- [ ] Review finding: Verdict, fail-loud and log-upload steps use always() where !cancelled() is meant (refuted, not built: Gate 23 (verify-gate-23.py requirements (c) and (d)) requires `if:` containing `always()` on the agent-verdict and fail-loud steps, and the log upload keeps the same `always() && steps.agent.outcome != 'skipped'` guard as every other agent site so a cancelled run still keeps its transcript)
 
   These steps also run on a cancelled run, which adds wasted work and spurious fail-loud annotations. The review-step-gating skill asks for !cancelled() && steps.agent.outcome != 'skipped'. The same applies to the check job.
 

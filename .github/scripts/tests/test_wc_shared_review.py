@@ -419,6 +419,22 @@ class ReviewRound2Fixes(unittest.TestCase):
         sr.stage_code_run("trees/pr-tree", "trees/rev", [], sandbox=box)
         self.assertEqual(box.opened, (os.path.abspath("trees/pr-tree"), os.path.abspath("trees/rev")))
 
+    def test_gh_api_404_only_on_a_real_http_404(self):
+        # Round 4: a transient error whose text merely contains "404" is a
+        # failed read (None), never "the run does not exist".
+        import subprocess
+        from unittest import mock
+
+        def fake(stderr):
+            return lambda *a, **k: subprocess.CompletedProcess(a[0], 1, "", stderr)
+        with mock.patch.object(subprocess, "run", fake("gh: Not Found (HTTP 404)\n")):
+            with self.assertRaises(sr.GhNotFound):
+                sr._gh_api(["repos/o/r/actions/runs/404"])
+        for transient in ("HTTP 502: Bad Gateway (https://api.github.com/repos/o/r/actions/runs/404)\n",
+                          "error connecting to api.github.com: dial tcp 140.82.114.404\n"):
+            with mock.patch.object(subprocess, "run", fake(transient)):
+                self.assertIsNone(sr._gh_api(["repos/o/r/actions/runs/404"]))
+
     def test_failed_reads_raise(self):
         with self.assertRaises(sr.GhReadError):
             sr.confirmed_from_github(1, "bot", "main", "o/r", lambda a: None)
@@ -479,9 +495,11 @@ class ReviewRound3Fixes(unittest.TestCase):
     def test_round4_validator_and_settle_hardening(self):
         answers = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
         # upheld/confirmed without in_scope/reachable is malformed
-        for outcome in ("upheld", "confirmed"):
-            bad = {"answers": answers, "checks": [{"key": "k", "outcome": outcome}]}
-            self.assertNotEqual(sr.validate_output(bad, "check"), [])
+        bad = {"answers": answers, "checks": [{"key": "k", "outcome": "upheld"}]}
+        self.assertNotEqual(sr.validate_output(bad, "check"), [])
+        # a confirmed recheck may omit them (settle keeps the previous flags)
+        ok = {"answers": answers, "checks": [{"id": "F1-1", "outcome": "confirmed"}]}
+        self.assertEqual(sr.validate_output(ok, "check", [finding("F1-1")]), [])
         # duplicate candidate keys are refused
         cand = {"key": "k", "title": "t", "file": "a.py"}
         self.assertNotEqual(sr.validate_output({"answers": {}, "candidates": [cand, dict(cand)]}, "find"), [])
