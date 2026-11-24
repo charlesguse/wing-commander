@@ -178,7 +178,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Set include-hidden-files: true. The '|| echo status missing' fallback hides the failure.
 
-- [ ] Review finding: code-run executes PR code in the runner job with only env scrubbing
+- [x] Review finding: code-run executes PR code in the runner job with only env scrubbing
 
   The PR's check runs in the same job and as the same user as the runner steps. It can reach GITHUB_ENV/GITHUB_OUTPUT files, forge out/code-run.json, or leave a detached process behind.
 
@@ -202,7 +202,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Null purpose.json, or write 'no source of purpose', when the fetched text is empty.
 
-- [ ] Review finding: Unpublished-callables loader pasted into three lint gates
+- [x] Review finding: Unpublished-callables loader pasted into three lint gates
 
   Gates 7, 22 and 23 re-parse unpublished-callables.json inline and do not drop empty-reason entries, unlike wc_published_stages.unpublished_callables. This breaks the single-home rule and the copies can drift.
 
@@ -245,7 +245,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Workflow passes trees/pr-tree and trees/reviewer-tree; abspath them at the top of stage_code_run and add a test with relative trees.
 
-- [ ] Review finding: Missing find artifact fails check job and hides incomplete round
+- [x] Review finding: Missing find artifact fails check job and hides incomplete round
 
   When find output is failed or malformed no shared-review-find artifact exists, the check job's download step fails, the run concludes failure, and confirm_record never confirms the incomplete record.
 
@@ -269,7 +269,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Coerce non-list or non-dict entries to [] in finalize and skip non-dicts in apply_dismissals.
 
-- [ ] Review finding: Failed find agent still launches check agent
+- [x] Review finding: Failed find agent still launches check agent
 
   A failed find agent step leaves the find job green so check runs against a missing find input, wasting an agent run before failing at the download.
 
@@ -286,7 +286,7 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Change both prompt files to trees/pr-tree/.
 
-- [ ] Review finding: unpublished-callables loader pasted into three gates
+- [x] Review finding: unpublished-callables loader pasted into three gates
 
   The registry loader is inlined in Gates 7, 22 and 23 and none drops empty or non-string reasons as wc_published_stages.unpublished_callables does, violating the single-home rule.
 
@@ -301,3 +301,48 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
   - .github/scripts/wc_shared_review.py
 
   Detail: Accept only positively identified fix shapes and return an unknown kind that validate_request refuses.
+
+## Review Gate Round 3 Findings (built by hand)
+
+- [x] Review finding (gate round 3, built by hand): Record size cap can truncate status transitions so a resolved finding reappears as open
+
+  build_record now cuts a findings entry to an {id, status} stub instead of dropping it, and fold_open_set merges a stub's status over the earlier detail.
+
+  - .github/scripts/wc_shared_review.py
+
+- [x] Review finding (gate round 3, built by hand): Unhealthy agent verdict does not gate staging of the find and check output
+
+  Each stage step now requires the agent's verdict to be healthy, and the output upload runs only on a valid staged output.
+
+  - .github/workflows/shared-pr-reviewer.yml
+
+- [x] Review finding (gate round 3, built by hand): Diff and file-list commands use '|| true' and can silently review an empty change
+
+  The git reads fail the prepare step, and an empty pr.diff stops it too.
+
+  - .github/workflows/shared-pr-reviewer.yml
+
+- [x] Review finding (gate round 3, built by hand): validate-output accepts nearly any JSON object
+
+  validate-output takes --role find|check with a schema per role, and for check the round's memory (every open finding must be evaluated, FR-010); finalize applies the same validator.
+
+  - .github/scripts/wc_shared_review.py
+  - .github/workflows/shared-pr-reviewer.yml
+
+- [x] Review finding (gate round 3, built by hand): Candidate keys and prior finding ids share one namespace in check_for
+
+  process_round keeps one dict keyed by candidate key and one keyed by finding id.
+
+  - .github/scripts/wc_shared_review.py
+
+- [x] Review finding (gate round 3, built by hand): discover_named_check picks the first sorted added file, which may be a fixture, and does not sanitize the path
+
+  Paths under a fixtures directory or specs/ are never the named check, and a path component starting with '-' is refused.
+
+  - .github/scripts/wc_shared_review.py
+
+- [x] Review finding (gate round 3, built by hand): PR-head fetch is unauthenticated after a persist-credentials:false checkout
+
+  The fetch gets prepare's read-only App token through git's environment config, never argv or .git/config; prepare runs no PR code and both trees leave it without a .git.
+
+  - .github/workflows/shared-pr-reviewer.yml
