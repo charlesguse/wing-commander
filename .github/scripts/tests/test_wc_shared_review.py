@@ -646,6 +646,27 @@ class ReviewRound3Fixes(unittest.TestCase):
         out = sr.stage_code_run("tree", "rev", ["x/test_fix.py"], timeout=60, sandbox=box)
         self.assertIsNone(out["named_check_without_fix"])
 
+    def test_a_modified_check_is_the_named_check_when_none_is_added(self):
+        # R1: most fixes extend an existing test; added still wins.
+        f = sr.named_check_file
+        self.assertEqual(f([], ["a/test_old.py"]), "a/test_old.py")
+        self.assertEqual(f(["z/test_new.py"], ["a/test_old.py"]), "z/test_new.py")
+        self.assertEqual(f(["README.md"], ["b/verify-x.py", "a/fixtures/test_f.py", "specs/1/test_s.py"]),
+                         "b/verify-x.py")
+        self.assertIsNone(f([], ["-x/test_a.py", "src/mod.py"]))
+        import tempfile
+        with tempfile.TemporaryDirectory() as base:
+            box = FakeSandbox({1: {"exit": 0, "output_tail": ""}, 3: {"exit": 1, "output_tail": "fails"},
+                               2: {"exit": 0, "output_tail": ""}})
+            out = sr.stage_code_run("tree", "rev", [], timeout=60, sandbox=box, base_tree=base,
+                                    modified_files=["x/test_old.py"])
+            self.assertEqual(box.trees[3], (os.path.abspath(base), ["x/test_old.py"]))
+        answers = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
+        rec_ = sr.finalize_round({"round": 1, "prior": []}, {"answers": {}, "candidates": []},
+                                 {"checks": [], "answers": answers}, out, {"type": "issue", "ref": "7"},
+                                 "a" * 40, [], 5, "b" * 40, "open")
+        self.assertEqual(rec_["verdict"], "clean")
+
     def test_check_fails_without_fix_is_decided_by_code_where_it_can_be(self):
         d = sr.check_fails_without_fix
         ok = {"exit": 0, "output_tail": ""}

@@ -186,6 +186,7 @@ jobs:
           # a change with nothing wrong in it. No added file is a real case.
           git diff "origin/${DEFAULT_BRANCH}...FETCH_HEAD" > ../input/pr.diff
           git diff --name-only --diff-filter=A "origin/${DEFAULT_BRANCH}...FETCH_HEAD" > ../input/added-files.txt
+          git diff --name-only --diff-filter=M "origin/${DEFAULT_BRANCH}...FETCH_HEAD" > ../input/modified-files.txt
           git log --format='%H %s' "origin/${DEFAULT_BRANCH}..FETCH_HEAD" > ../input/commits.txt
           [ -s ../input/pr.diff ] || { echo "::error::the PR's diff against ${DEFAULT_BRANCH} is empty"; exit 1; }
           mkdir -p ../review-trees/pr-tree ../review-trees/reviewer-tree ../review-trees/base-tree
@@ -307,7 +308,8 @@ jobs:
           mkdir -m 700 out
           python3 -I trees/reviewer-tree/.github/scripts/wc_shared_review.py code-run \
             --pr-tree trees/pr-tree --reviewer-tree trees/reviewer-tree --base-tree trees/base-tree \
-            --added-files input/added-files.txt --out out/code-run.json \
+            --added-files input/added-files.txt --modified-files input/modified-files.txt \
+            --out out/code-run.json \
             --origin-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" \
             || echo '{"status":"missing"}' > out/code-run.json
       - name: Upload the staged result

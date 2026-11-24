@@ -166,6 +166,21 @@ class T(unittest.TestCase):
         self.assertEqual(mod.f(), 2)
 """
 
+_OLD_TEST = """import os, sys, unittest
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import mod
+
+
+class T(unittest.TestCase):
+    def test_old(self):
+        self.assertIn(mod.f(), (1, 2))
+"""
+
+_EXTENDED_TEST = _OLD_TEST + """
+    def test_new_case(self):
+        self.assertEqual(mod.f(), 2)
+"""
+
 _WEAK_TEST = """import unittest
 
 
@@ -188,14 +203,21 @@ def without_fix_proof_problems():
             os.makedirs(os.path.join(root, "tests"))
             with open(os.path.join(root, "mod.py"), "w", encoding="utf-8") as fh:
                 fh.write("def f():\n    return {0}\n".format(value))
-        for name, body in (("test_fix.py", _FIX_TEST), ("test_weak.py", _WEAK_TEST)):
+        for name, body in (("test_fix.py", _FIX_TEST), ("test_weak.py", _WEAK_TEST),
+                           ("test_existing.py", _EXTENDED_TEST)):
             with open(os.path.join(pr, "tests", name), "w", encoding="utf-8") as fh:
                 fh.write(body)
+        with open(os.path.join(base, "tests", "test_existing.py"), "w", encoding="utf-8") as fh:
+            fh.write(_OLD_TEST)
         _reviewer_tree(rev)
-        for added, want_with, want_without, answer in (
-                ("tests/test_fix.py", 0, "non-zero", None),
-                ("tests/test_weak.py", 0, 0, wc_shared_review.NEGATIVE)):
-            out = wc_shared_review.stage_code_run(pr, rev, [added], timeout=120, base_tree=base)
+        for added, modified, want_with, want_without, answer in (
+                ("tests/test_fix.py", None, 0, "non-zero", None),
+                ("tests/test_weak.py", None, 0, 0, wc_shared_review.NEGATIVE),
+                # R1: a fix that extends an existing test (no test added).
+                (None, "tests/test_existing.py", 0, "non-zero", None)):
+            out = wc_shared_review.stage_code_run(pr, rev, [added] if added else [], timeout=120,
+                                                  base_tree=base, modified_files=[modified] if modified else [])
+            added = added or modified
             named = (out.get("named_check") or {}).get("exit")
             without = (out.get("named_check_without_fix") or {}).get("exit")
             if out.get("status") != "staged" or named != want_with:
@@ -247,6 +269,13 @@ def base_tree_problems(wf):
         problems.append("prepare does not archive the merge-base tree into ../{0}/base-tree".format(TREES_ROOT))
     if "--base-tree trees/base-tree" not in str((code_run_step(wf) or {}).get("run") or ""):
         problems.append("code-run does not run the named check without the fix (--base-tree)")
+    # R1: a fix that extends an existing check names it through the
+    # modified-files list.
+    if "--diff-filter=M" not in builder.replace("git diff --name-only --diff-filter=A", "") \
+            or "modified-files.txt" not in builder:
+        problems.append("prepare does not list the PR's modified files")
+    if "--modified-files input/modified-files.txt" not in str((code_run_step(wf) or {}).get("run") or ""):
+        problems.append("code-run does not consider a modified check (--modified-files)")
     return problems
 
 
@@ -348,6 +377,7 @@ def dynamic_problems(wf):
         os.makedirs(os.path.join(work, "input"))
         with open(os.path.join(work, "input", "added-files.txt"), "w", encoding="utf-8") as fh:
             fh.write(PROBE + "\n")
+        open(os.path.join(work, "input", "modified-files.txt"), "w").close()
         env = dict(os.environ)
         runner_files = {}
         fake = os.path.join(work, "_runner_file_commands")
@@ -440,6 +470,8 @@ def main():
                 st["with"].update({"path": "review-trees/\nreviewer/\n"})
                 for st in w["jobs"]["prepare"]["steps"]
                 if (st.get("with") or {}).get("name") == "shared-review-trees"],
+            "code-run ignores modified checks": lambda w: code_run_step(w).update(
+                {"run": code_run_step(w)["run"].replace(" --modified-files input/modified-files.txt", "")}),
             "code-run stops running the named check without the fix": lambda w: code_run_step(w).update(
                 {"run": code_run_step(w)["run"].replace(" --base-tree trees/base-tree", "")}),
             "code-run's result goes back to a shell redirect": lambda w: code_run_step(w).update(

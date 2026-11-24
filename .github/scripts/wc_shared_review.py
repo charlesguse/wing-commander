@@ -607,14 +607,20 @@ def named_check_argv(path):
     return ["bash", path]
 
 
-def named_check_file(added_files):
-    """The path of the change's named check among the ADDED files, or None.
+def named_check_file(added_files, modified_files=None):
+    """The path of the change's named check, or None.
+
+    Preference order, deterministic: an ADDED file first, else a MODIFIED
+    one (a fix usually extends an existing test or verify script, R1), each
+    tier in sorted order. Its run without the fix overlays the PR's version
+    of that one file on the merge-base tree, so a modified check runs its
+    new case against the unfixed code.
 
     The change's own check is a test the change adds to exercise its fix,
     not a file it adds as test data: a path under a `fixtures` directory or
     a spec's directory is never chosen. A path component starting with `-`
     is refused, so no part of the path reads as an option to the runner."""
-    for path in sorted(added_files or []):
+    for path in sorted(added_files or []) + sorted(modified_files or []):
         parts = path.split("/")
         if ".." in parts or path.startswith("/") or any(p.startswith("-") for p in parts):
             continue
@@ -839,7 +845,7 @@ class UidSandbox:
 
 
 def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT, sandbox=None,
-                   base_tree=None, origin_url=None):
+                   base_tree=None, origin_url=None, modified_files=None):
     """The two kinds of PR code the code-run job may run, nothing else, all
     inside `sandbox` (UidSandbox by default): the change's named check, on
     the PR tree and again without the fix (FR-008(c): on `base_tree`, the
@@ -850,7 +856,7 @@ def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT
     run (FR-012)."""
     pr_tree, reviewer_tree = os.path.abspath(pr_tree), os.path.abspath(reviewer_tree)
     box = sandbox if sandbox is not None else UidSandbox(origin_url=origin_url)
-    path = named_check_file(added_files)
+    path = named_check_file(added_files, modified_files)
     argv = named_check_argv(path) if path else None
     try:
         box.open(pr_tree, reviewer_tree)
@@ -881,7 +887,7 @@ def check_fails_without_fix(code_run):
     if (code_run or {}).get("status") != "staged":
         return UNDETERMINABLE, "code-run results missing"
     if not code_run.get("named_check"):
-        return UNDETERMINABLE, "the change adds no named check"
+        return UNDETERMINABLE, "the change adds or changes no named check"
     without = code_run.get("named_check_without_fix")
     if not isinstance(without, dict) or not isinstance(without.get("exit"), int):
         return UNDETERMINABLE, "the named check was not run without the fix"
@@ -1058,6 +1064,7 @@ def main(argv=None):
     c.add_argument("--out", required=True)
     c.add_argument("--base-tree", default=None)
     c.add_argument("--origin-url", default=None)
+    c.add_argument("--modified-files", default=None)
     r = sub.add_parser("record")
     r.add_argument("--input", required=True)
     r.add_argument("--handoff", action="store_true")
@@ -1112,9 +1119,14 @@ def main(argv=None):
     if args.cmd == "code-run":
         with open(args.added_files, encoding="utf-8") as fh:
             added = [line.strip() for line in fh if line.strip()]
+        modified = []
+        if args.modified_files:
+            with open(args.modified_files, encoding="utf-8") as fh:
+                modified = [line.strip() for line in fh if line.strip()]
         write_private(args.out, json.dumps(stage_code_run(args.pr_tree, args.reviewer_tree, added,
                                                          base_tree=args.base_tree,
-                                                         origin_url=args.origin_url)))
+                                                         origin_url=args.origin_url,
+                                                         modified_files=modified)))
         return 0
     if args.cmd == "defuse-agent-config":
         renamed = defuse_agent_config(args.root)
