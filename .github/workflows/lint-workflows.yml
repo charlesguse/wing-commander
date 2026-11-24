@@ -4827,6 +4827,19 @@ jobs:
       - name: Gate 172 self-test — no block, the bare string form, no cancel, a per-sha, per-run, run-number, head-branch, constant, per-ref or unprefixed group, and an unmodelled context each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lint-supersedes-pr-runs.py --self-test
+      # Gate 172 — specs/129-maintainer-only-comments: comment-triggered
+      # stages admit a comment only from a non-bot OWNER, MEMBER or
+      # COLLABORATOR (constitution 3.0.0, Principle V). It checks every
+      # comment-triggered wrapper, clarify's own check and its grant, the
+      # shared comment filter, the Spec Kit updater's gate, the e2e clarify
+      # decision and the relay paragraph's single home, and runs the
+      # shipped clarify check and relay composite against a stub gh.
+      - name: Gate 172 — comment-triggered stages act only on maintainers
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-maintainer-only-comments.py
+      - name: Gate 172 self-test — each surface admitting the issue's author, a moved or unconditioned check, a widened grant and a copied relay paragraph each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-maintainer-only-comments.py --self-test
       # Gate 165 — specs/116-review-convergence-analyze. It keeps the review
       # loops' convergence arithmetic and thresholds in wc_convergence.py
       # alone (FR-010, FR-018, FR-019); its fixtures run the rules, the

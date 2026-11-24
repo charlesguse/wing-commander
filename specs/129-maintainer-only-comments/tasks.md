@@ -22,18 +22,18 @@ description: "Task list for spec 129: comment-triggered stages act only on maint
 
 ## Phase 1: Setup
 
-- [ ] T001 Build the inventory and record it under "Notes" in `specs/129-maintainer-only-comments/tasks.md`. It covers every live site that admits a comment by identity or describes the issue-author exception, across `.github/workflows/`, `.github/actions/` (including `_shared/`), `.github/scripts/`, `docs/` and `specs/*/contracts/`. Expected sites are plan.md's Source Code list plus `verify-clarification-gating.py`, `verify-issue-context-single-home.py`, `verify-diagnose-shadow-acts-on-nothing.py`, the four auto-release e2e decision gates, and the specs/029 `notice-callout.md`, specs/055 and specs/057 contracts. Also record the next free gate number from `.github/workflows/lint-workflows.yml`.
+- [X] T001 Build the inventory and record it under "Notes" in `specs/129-maintainer-only-comments/tasks.md`. It covers every live site that admits a comment by identity or describes the issue-author exception, across `.github/workflows/`, `.github/actions/` (including `_shared/`), `.github/scripts/`, `docs/` and `specs/*/contracts/`. Expected sites are plan.md's Source Code list plus `verify-clarification-gating.py`, `verify-issue-context-single-home.py`, `verify-diagnose-shadow-acts-on-nothing.py`, the four auto-release e2e decision gates, and the specs/029 `notice-callout.md`, specs/055 and specs/057 contracts. Also record the next free gate number from `.github/workflows/lint-workflows.yml`.
 
 ---
 
 ## Phase 2: Foundational (blocks every story)
 
-- [ ] T002 Write the gate `.github/scripts/verify-maintainer-only-comments.py` (FR-010, research D7, contract `contracts/comment-author-rule.md`).
+- [X] T002 Write the gate `.github/scripts/verify-maintainer-only-comments.py` (FR-010, research D7, contract `contracts/comment-author-rule.md`).
   - Checks (a)–(f), plus the single-home check for the relay paragraph's literal.
   - `--self-test` gets one mutant per check. Each mutant reintroduces the exception, or moves the literal into a second file, and must be caught.
   - The maintainer set is read from data-model.md "Maintainer set". Do not restate it.
   - Run the gate on today's tree. It MUST fail on (a), (c), (d), (e) and (f), and on (b)'s missing step. That proves the gate sees today's behaviour.
-- [ ] T003 Register the gate in `.github/workflows/lint-workflows.yml` under the number recorded in T001, and add its row to `docs/reference.md`. Fails without it: `run-local-gates.py` does not list the gate.
+- [X] T003 Register the gate in `.github/workflows/lint-workflows.yml` under the number recorded in T001. (`docs/reference.md` lists loops, defaults and switches, not gates, so there is no row to add.) Fails without it: `run-local-gates.py` does not list the gate.
 
 **Checkpoint**: the new gate exists and is red. Story work turns it green.
 
@@ -153,3 +153,38 @@ description: "Task list for spec 129: comment-triggered stages act only on maint
 ## Notes
 
 (T001 inventory, T017 gate results and T020 scratch evidence are recorded here.)
+
+### T001 inventory (2026-11-24)
+
+- **Gate number:** 172. Gate 171 is claimed by open PR #1184; re-check at T021.
+- **Code:**
+  - `wing-commander-2-clarify.yml` (if: and header);
+  - `clarify.yml` (new check, grant, follow-up relay);
+  - `intake.yml` (callout text at ~816, the comment at ~776, first-question relay);
+  - `auto-update-spec-kit.yml` (comment-reply if:, the comment at ~3466, the `issue-author-id` and `commenter-id` input descriptions);
+  - `wing-commander-auto-update-spec-kit.yml` (stops passing `issue-author-id` and `commenter-id`);
+  - `wing-commander-issue-context/action.yml` (three filters, header and input description);
+  - `_shared/auto-release-e2e-clarify-decision.sh` with `auto-release.yml` (author-id parameter and reads);
+  - `board-loop.yml` agent prompts at ~2087, ~2564 and ~3286 ("or one from the issue's own author"; lines ~575 and ~1961 are Principle X's maintainer-authorship entry, unchanged);
+  - `pr-conversation.yml` ~730 and `wing-commander-9-pr-conversation.yml` ~11–12 (the "unlike clarify/intake" contrast).
+- **Gates and fixtures:**
+  - `verify-issue-context-trust-filter.py` (Gate 96: author fixture and mutation invert);
+  - `verify-auto-release-e2e-gate-decisions.py`, plus the other e2e decision gates that call the script;
+  - `auto-update-spec-kit-tests/t7_gating.py`;
+  - `verify-clarification-gating.py`;
+  - `verify-gate-106.py`;
+  - `fixtures/project-root-compat/interface.json`.
+- **Docs:** `docs/adoption.md`, `docs/architecture.md`, `docs/reference.md` (one line).
+- **Live contracts:**
+  - specs/010 `stage-interfaces.md`;
+  - specs/027 `auto-update-spec-kit-workflow.md`;
+  - specs/029 `comment-trust-gate.md` and `notice-callout.md`;
+  - specs/032 `decision-points.md` and `clarification-schema.md`;
+  - specs/033 `wrapper-gate.md` and `reusable-pr-conversation.md`;
+  - specs/055 `gate-decision-scripts.md`;
+  - specs/057 `triage.md`;
+  - specs/063 `e2e-clarification-label-assertion.md`;
+  - specs/115 `board-merge.md`.
+
+  Each is checked at T015, and changed only where it describes the exception as current behaviour.
+
