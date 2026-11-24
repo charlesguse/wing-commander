@@ -298,6 +298,9 @@ jobs:
       # runner writes the result. Where the sandbox cannot be set up the
       # result is `missing` and nothing of the PR runs (FR-012, SC-008(b)).
       - name: Run the named check and the gate suite as data
+        # Under the job's limit: a step timeout is a step failure the
+        # job-level continue-on-error tolerates; a job timeout cancels.
+        timeout-minutes: 36
         shell: bash
         run: |
           set -uo pipefail

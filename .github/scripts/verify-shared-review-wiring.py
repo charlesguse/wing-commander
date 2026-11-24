@@ -123,6 +123,18 @@ def tolerated_job_problems(wf):
         if re.search(r"needs\.{0}\.result".format(re.escape(name)), text):
             problems.append("a condition reads needs.{0}.result, which a tolerated job always "
                             "reports as success".format(name))
+    # A job timeout cancels rather than fails, so each long step has its
+    # own timeout under the job's: code-run's run step and both agents.
+    for name, pick in (("code-run", lambda x: " code-run " in " " + " ".join(str(x.get("run") or "").split()) + " "),
+                       ("find", lambda x: x.get("id") == "agent"), ("check", lambda x: x.get("id") == "agent")):
+        job = jobs.get(name) or {}
+        step = next((x for x in job.get("steps") or [] if pick(x or {})), {})
+        try:
+            ok = int(step.get("timeout-minutes")) < int(job.get("timeout-minutes"))
+        except (TypeError, ValueError):
+            ok = False
+        if not ok:
+            problems.append("{0}'s long step has no timeout under the job's".format(name))
     return problems
 
 
@@ -355,6 +367,9 @@ def main():
                  tolerated_job_problems),
                 ("find can fail the run", lambda w: w["jobs"]["find"].pop("continue-on-error"),
                  tolerated_job_problems),
+                ("code-run's run step loses its timeout", lambda w: _step(
+                    w, "code-run", lambda x: "--out out/code-run.json" in str(x.get("run") or ""))
+                    .pop("timeout-minutes"), tolerated_job_problems),
                 ("find unpacks the trees in its working directory", lambda w: _step(
                     w, "find", lambda x: (x.get("with") or {}).get("name") == "shared-review-trees")
                     ["with"].update({"path": "trees"}), agent_tree_problems),
