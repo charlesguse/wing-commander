@@ -120,7 +120,7 @@ description: "Task list for spec 129: comment-triggered stages act only on maint
 - [X] T015 [P] Update the remaining live contracts to the rule (FR-009): `specs/010-reusable-pipeline/contracts/stage-interfaces.md`, `specs/033-pr-conversation-commands/contracts/wrapper-gate.md` (its "unlike clarify" contrast) and `specs/057-autonomous-board-loop/contracts/triage.md`.
 - [X] T016 [P] Rewrite the workflow comments that contrast pr-conversation with clarify and intake in `.github/workflows/pr-conversation.yml` (near 730) and `.github/workflows/wing-commander-9-pr-conversation.yml` (near 12). Re-run Gate 47 (`verify-comment-canonical-pointers.py`).
 - [ ] T017 Run quickstart §1, the new gate and every gate T001 listed, then `run-local-gates.py` filtered as usual. Compare each failure with an `origin/main` worktree, and record the results in `specs/129-maintainer-only-comments/tasks.md` "Notes". Confirm FR-011 from the diff: no edit to intake's `spec-request` entry, to pr-conversation's actor gate, or to Principle X's board-loop entry.
-- [ ] T018 Run the `review-step-gating` skill on the `if:` changes in `.github/workflows/clarify.yml`, `.github/workflows/auto-update-spec-kit.yml` and `.github/workflows/wing-commander-2-clarify.yml`. Run the `container-shell-safety` skill on the new `run:` step in clarify's container job.
+- [X] T018 Run the `review-step-gating` skill on the `if:` changes in `.github/workflows/clarify.yml`, `.github/workflows/auto-update-spec-kit.yml` and `.github/workflows/wing-commander-2-clarify.yml`. Run the `container-shell-safety` skill on the new `run:` step in clarify's container job.
 - [ ] T019 Review the local branch with separate local sessions until a pass comes back clean (the review-until-clean procedure, without a PR). Fix each real finding with a test that fails without it.
 - [ ] T020 Run the scratch-repository proof (quickstart §3) in `charlesguse/wing-commander-auto-release-scratch`, outside auto-release's 09:09 UTC run, and restore the wrapper pins afterwards. Record the evidence in `specs/129-maintainer-only-comments/tasks.md` "Notes".
 - [ ] T021 Prepare the publish:
@@ -187,4 +187,30 @@ description: "Task list for spec 129: comment-triggered stages act only on maint
   - specs/115 `board-merge.md`.
 
   Each is checked at T015, and changed only where it describes the exception as current behaviour.
+
+### T018 review skills (2026-11-24)
+
+- **review-step-gating:**
+  - Gate 24: 0 failures.
+  - `stranded-steps.py`, compared with origin/main: the only new entry is the relay step. It is stranded only together with the callout it feeds, which has the same `if:` (Gate 172 (g)); that is clarify's hard-exit-in-place design.
+  - A refused comment ends the clarify job successfully, so `stalled` does not fire.
+  - Low note, kept by design: a failed comment read fails the job and `stalled` posts its notice, like any infrastructure failure.
+- **container-shell-safety:**
+  - Gate 43: pass.
+  - `unpinned-container-steps.py`: 0 unpinned steps in clarify.yml and intake.yml. The new check step's bash constructs are covered by the workflow-level `shell: bash -e {0}`, and the relay composite pins `shell: bash`.
+
+### Gates run by hand during T002–T016
+
+| Gate | Result |
+|---|---|
+| Gate 172 | pass; self-test catches all 12 mutants |
+| Gate 66 (e2e decisions) | pass, plus self-test |
+| Gate 115 (poll credential) | pass, plus self-test |
+| Gate 91 (specs fallback) | pass |
+| Spec Kit tests | 574 passed |
+| board-merge gate | pass |
+| Gate 47 (canonical pointers) | pass, plus self-test |
+| Gate 113 / 141 / 116 | pass (constitution PR) |
+
+Same failures as origin/main (Windows-only): Gate 96 (3 file-staging cases under `/tmp`), Gate 93 self-test (1), `verify-auto-release-gate-waits-for-stage.py` (5), `verify-clarification-gating.py` (symlink privilege). On this tree, Gate 96's count assertions pass and its re-added author-clause mutation is caught.
 
