@@ -502,9 +502,21 @@ def check_capture_bounds():
              {"merged_at": "2026-10-16T14:00:25Z", "updated_at": "2026-10-16T14:00:25Z", "head": {"ref": "fix/b"}}]
     releases = [{"published_at": "2026-11-15T00:00:00Z"}, {"published_at": "2026-11-11T00:00:00Z"}]
     calls = []
+    # Issue 2 closed by triage after `now` and updated last; issue 1 closed in
+    # the window and updated before that later close. The read must not stop
+    # at issue 1 because of a close it will drop.
+    close = fh.TRIAGE_CLOSE_COMMENT_PREFIX + fh.TRIAGE_CLOSE_GROUNDS[0] + ", see the run."
+    closes = {2: "2026-11-20T00:00:00Z", 1: "2026-11-01T00:00:00Z"}
 
     def gh(path):
         calls.append(path)
+        if path.startswith("search/issues?"):
+            return {"incomplete_results": False,
+                    "items": [{"number": 2, "updated_at": "2026-11-21T00:00:00Z"},
+                              {"number": 1, "updated_at": "2026-11-02T00:00:00Z"}]}
+        m = re.search(r"/issues/(\d+)/comments\?", path)
+        if m:
+            return [{"created_at": closes[int(m.group(1))], "body": close}]
         if "/pulls?" in path:
             return pulls if "page=1" in path else []
         if "/releases" in path:
@@ -517,7 +529,8 @@ def check_capture_bounds():
     for signal, capped, live in (
             ({"kind": "merged_pr", "head_prefixes": ["fix/"]}, "2026-10-16T14:00:25Z", "2026-11-20T00:00:00Z"),
             ({"kind": "release"}, "2026-11-11T00:00:00Z", "2026-11-15T00:00:00Z"),
-            ({"kind": "branch_commit", "branch": "metrics"}, "2026-11-12T06:00:00Z", "2026-11-23T06:00:00Z")):
+            ({"kind": "branch_commit", "branch": "metrics"}, "2026-11-12T06:00:00Z", "2026-11-23T06:00:00Z"),
+            ({"kind": "triage_close"}, "2026-11-01T00:00:00Z", "2026-11-20T00:00:00Z")):
         for bound, want in ((until, capped), (None, live)):
             got = fh.read_signal(signal, "own/repo", since, gh, {}, until=bound)
             if got != want:
@@ -530,6 +543,21 @@ def check_capture_bounds():
             problems.append("capture bound: {0} answered for a past day".format(kind))
         except RuntimeError:
             pass
+    # A run re-run after `now` reports its later attempt; the capture refuses.
+    now = until
+    kept = {"a.yml": {"runs": [{"id": 1, "event": "push", "started_at": "2026-11-12T08:00:00Z",
+                                "conclusion": "failure"}], "interval_hours": 24}}
+    fh._runs_as_of(kept, now)
+    if kept["a.yml"]["runs"] != [{"started_at": "2026-11-12T08:00:00Z", "conclusion": "failure"}]:
+        problems.append("capture bound: runs kept {0}, not started_at and conclusion only".format(
+            kept["a.yml"]["runs"]))
+    rerun = {"a.yml": {"runs": [{"id": 1, "event": "push", "started_at": "2026-11-15T08:00:00Z",
+                                 "conclusion": "success"}], "interval_hours": 24}}
+    try:
+        fh._runs_as_of(rerun, now)
+        problems.append("capture bound: a run attempt started after now was recorded")
+    except SystemExit:
+        pass
     return problems
 
 

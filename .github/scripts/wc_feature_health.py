@@ -384,14 +384,18 @@ TRIAGE_CLOSE_RE = re.compile(r"^{0}({1}),".format(
     re.escape(TRIAGE_CLOSE_COMMENT_PREFIX), "|".join(re.escape(g) for g in TRIAGE_CLOSE_GROUNDS)), re.M)
 
 
-def _triage_close_times(gh, repo, base, since):
+def _triage_close_times(gh, repo, base, since, until=None):
     """Times of triage closes in the window. The search API names the closed
     issues whose comments carry the close sentence, newest update first, so
     the read does not grow with the number of closed issues; each candidate's
     comments are then matched exactly. A candidate updated before the newest
     match found so far cannot hold a newer one, so the read stops there; a
-    search still unresolved after SEARCH_PAGES pages raises (FR-010/011)."""
+    search still unresolved after SEARCH_PAGES pages raises (FR-010/011).
+    `until` (the capture only) drops a close after it before the stop rule
+    sees it, so a later close cannot end the read early and hide one in the
+    window."""
     s = fmt_time(since)
+    u = fmt_time(until) if until else None
     q = 'repo:{0} is:issue is:closed updated:>={1} "{2}"'.format(
         repo, s[:10], TRIAGE_CLOSE_COMMENT_PREFIX.strip())
     path = "search/issues?q={0}&sort=updated&order=desc&per_page=100".format(urllib.parse.quote(q))
@@ -413,7 +417,7 @@ def _triage_close_times(gh, repo, base, since):
             if times and i.get("updated_at", "") < max(times):
                 return times
             for c in _pages(gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s), 1):
-                if TRIAGE_CLOSE_RE.search(c.get("body") or ""):
+                if TRIAGE_CLOSE_RE.search(c.get("body") or "") and (u is None or c["created_at"] <= u):
                     times.append(c["created_at"])
         if len(items) < 100:
             return times
@@ -486,7 +490,7 @@ def read_signal(signal, repo, since, gh, environ, until=None):
             times.extend(c["created_at"] for c in _pages(
                 gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s), 1))
     elif kind == "triage_close":
-        times = _triage_close_times(gh, repo, base, since)
+        times = _triage_close_times(gh, repo, base, since, until)
     elif kind == "branch_commit":
         branch = environ.get("METRICS_BRANCH") or signal["branch"]
         if u:
@@ -587,6 +591,21 @@ def _workflow_text_at(commit):
     return read
 
 
+def _runs_as_of(readings, now):
+    """Keep only what classify_workflow reads of each run, in place. A run
+    created before `now` but re-run after it reports its later attempt's
+    start and conclusion, and what it showed at `now` cannot be read back, so
+    the capture refuses rather than record a later result as the window's."""
+    for name, reading in readings.items():
+        late = [r["started_at"] for r in reading.get("runs") or [] if parse_time(r["started_at"]) > now]
+        if late:
+            raise SystemExit("feature-health capture: {0} has a run attempt started at {1}, after {2}; "
+                             "its state then cannot be read".format(name, max(late), fmt_time(now)))
+        if "runs" in reading:
+            reading["runs"] = sorted(({"started_at": r["started_at"], "conclusion": r["conclusion"]}
+                                      for r in reading["runs"]), key=lambda r: r["started_at"])
+
+
 def capture_corpus(repo, now, start, ref="origin/main", gh=gh_json, registry=None):
     """The SC-001 replay corpus (maintainer only, specs/126 tasks.md T030):
     collect() over [start, now] with `now` pinned in the past, the registry
@@ -603,10 +622,7 @@ def capture_corpus(repo, now, start, ref="origin/main", gh=gh_json, registry=Non
     environ = _environ_as_of(registry, repo, now, gh)
     readings, signals, ctx = collect(registry, repo, now, gh, environ, _workflow_text_at(commit),
                                      start=start, until=now)
-    for reading in readings.values():
-        if "runs" in reading:
-            reading["runs"] = sorted(({"started_at": r["started_at"], "conclusion": r["conclusion"]}
-                                      for r in reading["runs"]), key=lambda r: r["started_at"])
+    _runs_as_of(readings, now)
     return {"schema": 1, "repository": repo, "window": {"start": fmt_time(start), "now": fmt_time(now)},
             "now": fmt_time(now), "workflow_commit": commit,
             "captured_at": fmt_time(datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)),
