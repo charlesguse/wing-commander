@@ -7,10 +7,10 @@
 # (spec/<slug> -> default branch) is classified and routed by
 # pr-conversation.yml. Deliberately NO workflow_dispatch entry point
 # (contracts/wrapper-gate.md Non-goals) — this wrapper is purely
-# event-triggered, unlike the chained stages. Deliberately NO
-# `|| actor.id == issue.author.id` carve-out, unlike clarify/intake
-# (FR-019) — a non-maintainer, including the original requester, cannot
-# command this stage directly. All stage logic lives in pr-conversation.yml
+# event-triggered, unlike the chained stages. As with every
+# comment-triggered stage, the issue's author gets no carve-out (FR-019;
+# constitution 3.0.0) — a non-maintainer, including the original
+# requester, cannot command this stage directly. All stage logic lives in pr-conversation.yml
 # (docs/adoption.md), called by local path.
 name: "Wing Commander · 9 pr conversation"
 

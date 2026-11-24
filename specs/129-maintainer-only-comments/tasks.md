@@ -114,11 +114,11 @@ description: "Task list for spec 129: comment-triggered stages act only on maint
 
 ## Phase 6: Polish and cross-cutting
 
-- [ ] T014 [P] Update `docs/adoption.md` (lines near 166, 238–244, 1535 and 1560) and `docs/architecture.md` (near 392, 455 and 1326) to the maintainers-only rule (FR-009).
+- [X] T014 [P] Update `docs/adoption.md` (lines near 166, 238–244, 1535 and 1560) and `docs/architecture.md` (near 392, 455 and 1326) to the maintainers-only rule (FR-009).
   - Include the published behaviour change: clarify now checks the comment itself (FR-006).
   - Explain why adopters should not add `gh issue view` back through `extra-allowed-tools` (research D6).
-- [ ] T015 [P] Update the remaining live contracts to the rule (FR-009): `specs/010-reusable-pipeline/contracts/stage-interfaces.md`, `specs/033-pr-conversation-commands/contracts/wrapper-gate.md` (its "unlike clarify" contrast) and `specs/057-autonomous-board-loop/contracts/triage.md`.
-- [ ] T016 [P] Rewrite the workflow comments that contrast pr-conversation with clarify and intake in `.github/workflows/pr-conversation.yml` (near 730) and `.github/workflows/wing-commander-9-pr-conversation.yml` (near 12). Re-run Gate 47 (`verify-comment-canonical-pointers.py`).
+- [X] T015 [P] Update the remaining live contracts to the rule (FR-009): `specs/010-reusable-pipeline/contracts/stage-interfaces.md`, `specs/033-pr-conversation-commands/contracts/wrapper-gate.md` (its "unlike clarify" contrast) and `specs/057-autonomous-board-loop/contracts/triage.md`.
+- [X] T016 [P] Rewrite the workflow comments that contrast pr-conversation with clarify and intake in `.github/workflows/pr-conversation.yml` (near 730) and `.github/workflows/wing-commander-9-pr-conversation.yml` (near 12). Re-run Gate 47 (`verify-comment-canonical-pointers.py`).
 - [ ] T017 Run quickstart §1, the new gate and every gate T001 listed, then `run-local-gates.py` filtered as usual. Compare each failure with an `origin/main` worktree, and record the results in `specs/129-maintainer-only-comments/tasks.md` "Notes". Confirm FR-011 from the diff: no edit to intake's `spec-request` entry, to pr-conversation's actor gate, or to Principle X's board-loop entry.
 - [ ] T018 Run the `review-step-gating` skill on the `if:` changes in `.github/workflows/clarify.yml`, `.github/workflows/auto-update-spec-kit.yml` and `.github/workflows/wing-commander-2-clarify.yml`. Run the `container-shell-safety` skill on the new `run:` step in clarify's container job.
 - [ ] T019 Review the local branch with separate local sessions until a pass comes back clean (the review-until-clean procedure, without a PR). Fix each real finding with a test that fails without it.

@@ -388,12 +388,15 @@ change to the tiering above.
   the loop cannot push (a workflow file, while the App holds no Workflows
   permission) is held under `board:stalled` for a maintainer, never filed
   as a spec.
-- Comment triggers: commenter must be OWNER/MEMBER/COLLABORATOR **or** the
-  original issue author; `Bot`-type users never trigger. Stage 10
-  (`pr-conversation`) is the one exception to the author carve-out —
-  maintainers only, no requester standing (FR-019) — and it checks the
-  association in the stage rather than the wrapper `if:`, so that an
-  unauthorized human gets a reply instead of silence (see Stage 10 below).
+- Comment triggers: commenter must be OWNER/MEMBER/COLLABORATOR; `Bot`-type
+  users never trigger, and the issue's own author gets no exception
+  (constitution 3.0.0, Principle V; specs/129-maintainer-only-comments).
+  Clarify checks the triggering comment again inside the stage and ends a
+  refused run with no reaction or notice; its clarification questions tell
+  a requester who is not a maintainer to answer through one. Stage 10
+  (`pr-conversation`) checks the association in the stage rather than the
+  wrapper `if:`, so that an unauthorized human gets a reply instead of
+  silence (see Stage 10 below).
 - Issue/comment bodies are never interpolated into prompts or shell — they are
   fetched by the agent (`gh issue view`) or staged into files via env-var
   indirection, and framed as untrusted data.
@@ -452,8 +455,8 @@ Specified in [`specs/001-spec-intake/`](../specs/001-spec-intake/spec.md),
 [`specs/032-structured-clarification-gate/`](../specs/032-structured-clarification-gate/spec.md).
 
 **Trigger**: maintainer applies the `spec-request` label to an issue (intake);
-a reply on that issue from a maintainer or the original requester, while it
-carries a `spec:` label plus `stage:spec` or `stage:clarify` (clarify).
+a reply on that issue from a maintainer, while it carries a `spec:` label
+plus `stage:spec` or `stage:clarify` (clarify).
 
 Intake runs the specify skill, opens the spec PR, and then makes one
 either/or decision: post **"Answer the open clarification questions"** (the
@@ -1321,10 +1324,9 @@ The split is what makes FR-021's first sentence possible: a wrapper `if:`
 cannot post a reply, so duplicating the association check there would
 silently skip the job and leave an unauthorized human with no response at
 all (SC-006). Adopters writing their own wrapper must copy the
-bot-exclusion-only form in `docs/adoption.md`. As with the shipped wrapper,
-there is (unlike clarify/intake) no `|| actor.id == issue.author.id`
-carve-out — the lifecycle issue's original requester gets no special
-standing with this stage. A
+bot-exclusion-only form in `docs/adoption.md`. As with every
+comment-triggered stage, the lifecycle issue's original requester gets no
+special standing. A
 `resolve-model` pre-job mirrors `wing-commander-5-implement.yml`'s tiering
 (`WING_COMMANDER_PR_CONVERSATION_MODEL`, `model:opus` label escalation).
 

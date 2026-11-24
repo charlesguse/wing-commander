@@ -66,10 +66,11 @@ SNAPSHOT_FIELDS = "number,createdAt,headRefOid,statusCheckRollup,author,headRefN
 AUTO_UPDATE_WRAPPER_PATH = ".github/workflows/wing-commander-auto-update-spec-kit.yml"
 AUTO_UPDATE_STAGE_PATH = ".github/workflows/auto-update-spec-kit.yml"
 # issue_comment is deliberately not among them: the comment-reply path
-# resumes prepare, verify and act in that run, but its actor gate also admits
-# an issue's own author, so anyone can start one from an issue they opened
-# carrying the settle marker. A bump PR opened by a comment-reply run awaits
-# a human merge.
+# resumes prepare, verify and act in that run, from a comment rather than a
+# schedule or a maintainer's dispatch. Its actor gate admits maintainers only
+# since specs/129-maintainer-only-comments (it once also admitted an issue's
+# own author), and a bump PR opened by a comment-reply run still awaits a
+# human merge.
 AUTO_UPDATE_RUN_EVENTS = ("schedule", "workflow_dispatch")
 BUMP_VERIFICATION_ARTIFACT_PREFIX = "wc-bump-verification-"
 # Appended to every merge announcement on the PR: which head, which outcome,

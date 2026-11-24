@@ -45,7 +45,7 @@ checks it against the workflows yet (see [Keeping this current](#keeping-this-cu
 | Stage | Starts when (wrapper) | Model default | Turn budget | Produces |
 |---|---|---|---|---|
 | intake | a maintainer applies `spec-request` to an issue | `claude-opus-5-5` | 50 | draft spec PR (`spec-draft/NNN-slug` → `main`), `spec:NNN-slug` and `stage:spec` labels, clarification questions on the issue |
-| clarify | a maintainer or the requester comments on a lifecycle issue in `stage:spec` or `stage:clarify` | `claude-opus-5-5` | 65 | the answers folded into the draft spec PR |
+| clarify | a maintainer comments on a lifecycle issue in `stage:spec` or `stage:clarify` | `claude-opus-5-5` | 65 | the answers folded into the draft spec PR |
 | plan | the spec PR merges | `claude-sonnet-5-5` | 110 | the plan on `spec/NNN-slug`; a plan PR, or a direct commit (see `plan-review`) |
 | tasks | the plan lands | `claude-sonnet-5-5` | 60 | `tasks.md`, then a dispatch of implement |
 | implement | dispatched by tasks, by itself for the next cycle, or by a review fold | `claude-sonnet-5-5` | 180 | one implement ⟲ converge cycle; then the next cycle or a dispatch of finalize |

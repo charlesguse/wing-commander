@@ -163,8 +163,17 @@ gates. The examples below include them; keep them when you customize:
   label (e.g. `spec-request`) admits an issue into the pipeline. Issue text
   is user data, never an instruction to run anything.
 - **Commenter gate before clarify** — react only when the commenter is a
-  maintainer (`OWNER`/`MEMBER`/`COLLABORATOR`) or the original issue author,
-  and never a bot.
+  maintainer (`OWNER`/`MEMBER`/`COLLABORATOR`), and never a bot. The issue's
+  own author gets no exception (constitution 3.0.0, Principle V): a
+  requester who is not a maintainer answers through one, and the questions
+  comment tells them so. The clarify stage also checks the triggering
+  comment itself, so a wrapper that still admits the issue's author is
+  refused there; since the release that shipped
+  specs/129-maintainer-only-comments, such a comment ends the run with no
+  reaction, no notice and no change. Do not add `gh issue view` back to the
+  clarify agent through `extra-allowed-tools`: the stage hands the agent
+  the one comment it is answering, and the thread may hold text from people
+  who cannot direct the stage.
 - **Never pass fork-PR head refs** as checkout targets or slugs. The
   full-lifecycle triggers below only fire on same-repo pipeline branches.
 - **Bot-actor loop guard on rebase** — skip runs triggered by your App's own
@@ -234,14 +243,13 @@ permissions: {}
 jobs:
   clarify:
     # Security gates, all must hold: a real issue in the spec-drafting stage,
-    # owned by the pipeline, and a human commenter who is a maintainer or the
-    # original requester.
+    # owned by the pipeline, and a human commenter who is a maintainer.
     if: >-
       !github.event.issue.pull_request &&
       contains(join(github.event.issue.labels.*.name, ','), 'spec:') &&
       (contains(github.event.issue.labels.*.name, 'stage:spec') || contains(github.event.issue.labels.*.name, 'stage:clarify')) &&
       github.event.comment.user.type != 'Bot' &&
-      (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) || github.event.comment.user.id == github.event.issue.user.id)
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     permissions:
       contents: write
       pull-requests: write
@@ -1531,9 +1539,8 @@ job checks `OWNER`/`MEMBER`/`COLLABORATOR` association as its own first
 deterministic step, posting a notice-and-stop reply when it fails. Do not
 move the association check up into the wrapper `if:` — a wrapper `if:`
 cannot post a reply, so an unauthorized human would get silence instead of
-that notice. What *is* absent at both layers, unlike clarify/intake, is any
-requester carve-out: the lifecycle issue's own author gets no special
-standing here.
+that notice. As with every comment-triggered stage, the lifecycle issue's
+own author gets no special standing here.
 
 ```yaml
 name: "Wing Commander · 9 pr conversation"
@@ -1556,10 +1563,9 @@ jobs:
     # commenter with no response at all, violating FR-021/SC-006. The
     # association check belongs to the stage: pr-conversation.yml's
     # classify-and-announce job runs it as its own first deterministic step
-    # and posts the notice-and-stop reply when it fails. There is also no
-    # `|| actor.id == issue.author.id` requester carve-out here (unlike the
-    # clarify and intake wrappers) — the lifecycle issue's own author gets
-    # no special standing with this stage.
+    # and posts the notice-and-stop reply when it fails. As with every
+    # comment-triggered stage, the lifecycle issue's own author gets no
+    # special standing.
     if: >-
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request != null &&
