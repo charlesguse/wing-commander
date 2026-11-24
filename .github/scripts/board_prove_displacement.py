@@ -22,6 +22,7 @@ job graph can resolve it): both shapes read identically here -- no later
 own directed recovery dispatch (research.md D3/D5/D6).
 """
 import sys
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, ".github/scripts")
 from board_item_marker import read_marker_with_timestamp
@@ -36,9 +37,20 @@ RECORDED_REASON = "prove run displaced"
 # anything for this specific merge.
 PROVEN_STEPS = ("prove", "proven")
 
+# A tick can fire in the seconds between a merge and GitHub creating that
+# merge's own `pull_request: closed` run: no run exists yet, so
+# in_progress_head_refs cannot name it and the merge would be falsely
+# reported as displaced. A merge younger than this is deferred to the next
+# tick (found by the code review of #893).
+MERGE_GRACE = timedelta(minutes=5)
+
+
+def _parse_utc(stamp):
+    return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(timezone.utc)
+
 
 def find_undetected_merges(merged_prs, issues_by_number, bot_login,
-                           in_progress_head_refs=(), stalled_issue_numbers=()):
+                           in_progress_head_refs=(), stalled_issue_numbers=(), now=None):
     """research.md D8, FR-010b: an issue whose most recently merged,
     loop-labeled fix PR left no later `prove`/`proven` marker -- the
     signature of a `pull_request: closed` run displaced from its own
@@ -68,6 +80,10 @@ def find_undetected_merges(merged_prs, issues_by_number, bot_login,
     double-counted as recoverable either, since no marker has been written
     for it yet.
 
+    `now`: the current time (aware datetime; default the real clock). A row
+    merged less than MERGE_GRACE before `now` is deferred to the next tick,
+    since its own `pull_request` run may not exist yet.
+
     Returns `[{"issue": int, "merged_pr": int, "recorded_reason":
     "prove run displaced"}, ...]`, deterministic and code-derived
     (Principle IX) -- never an agent's read of the issue thread."""
@@ -76,8 +92,11 @@ def find_undetected_merges(merged_prs, issues_by_number, bot_login,
     # honoured stop request, spec 097): never re-marked as displaced while
     # held; removing the label lets the next tick pick it up again (FR-008).
     stalled_issue_numbers = set(stalled_issue_numbers)
+    now = now or datetime.now(timezone.utc)
     undetected = []
     for row in merged_prs:
+        if now - _parse_utc(row["merged_at"]) < MERGE_GRACE:
+            continue
         if row.get("head_ref") and row["head_ref"] in in_progress_head_refs:
             continue
         issue_number = row["issue"]
