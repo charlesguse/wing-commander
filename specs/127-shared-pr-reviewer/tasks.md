@@ -344,3 +344,69 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
   The fetch gets prepare's read-only App token through git's environment config, never argv or .git/config; prepare runs no PR code and both trees leave it without a .git.
 
   - .github/workflows/shared-pr-reviewer.yml
+
+## Review Gate Round 4 Findings
+
+- [ ] Review finding: settle() clears in_scope/reachable when the check agent omits them, so a blocking finding can stop blocking
+
+  settle() sets in_scope and reachable with `c.get(...) is True`, and the check schema and validate_output require only `outcome`. A confirmed or upheld check without those keys turns a blocking finding non-blocking, and compute_verdict can return clean.
+
+  - .github/scripts/wc_shared_review.py
+
+  Detail: Require boolean in_scope and reachable in the schema and in validate_output when outcome is upheld or confirmed. Otherwise keep the previous flags on a confirmed recheck.
+
+- [ ] Review finding: Round memory, dismissals and the budget reset after the 30-day artifact retention
+
+  A round record counts only if its run still lists the artifact shared-review-<head_sha>, which has retention-days 30. After expiry confirm_record rejects the record, so the next dispatch is round 1 with an empty open set.
+
+  - .github/workflows/shared-pr-reviewer.yml
+
+  Detail: Raise retention to the longest supported PR lifetime (90 days maximum), or confirm from the run and head SHA without needing the artifact.
+
+- [ ] Review finding: A queued dispatch carrying dismissals can be replaced and cancelled by a later dispatch
+
+  The concurrency group has cancel-in-progress false, but GitHub keeps only one pending run per group. A third dispatch cancels the queued second one, so its dismissals are never applied.
+
+  - .github/workflows/wing-commander-shared-pr-reviewer.yml
+
+  Detail: Document that dispatches must be serialized, or fail visibly when a run is already queued.
+
+- [ ] Review finding: Duplicate candidate keys share one check result
+
+  check_for_key keeps the last entry per key and validate_output does not enforce unique candidate keys. A second candidate with the same key inherits the first one's upheld, in_scope and reachable without being checked.
+
+  - .github/scripts/wc_shared_review.py
+
+  Detail: Reject duplicate candidate keys in validate_output for the find role.
+
+- [ ] Review finding: _gh_api substring-matches '404' in stderr, so transient errors drop a round record
+
+  Any gh failure whose stderr contains '404' or 'Not Found' is treated as a real 404, and the record is skipped as unconfirmed. This undercounts rounds and the budget.
+
+  - .github/scripts/wc_shared_review.py
+
+  Detail: Parse the HTTP status from gh api output (HTTP 404) instead of matching substrings.
+
+- [ ] Review finding: shared_review_compare.py crashes if given the whole state object instead of the .confirmed list
+
+  The script iterates confirmed.json as a list of records. A state dict yields string keys and rec.get raises AttributeError, although its docstring suggests the state output is the input.
+
+  - .github/scripts/shared_review_compare.py
+
+  Detail: Accept both shapes, or state that the caller must extract .confirmed first.
+
+- [ ] Review finding: Verdict, fail-loud and log-upload steps use always() where !cancelled() is meant
+
+  These steps also run on a cancelled run, which adds wasted work and spurious fail-loud annotations. The review-step-gating skill asks for !cancelled() && steps.agent.outcome != 'skipped'. The same applies to the check job.
+
+  - .github/workflows/shared-pr-reviewer.yml
+
+  Detail: Replace always() with !cancelled() plus the agent-outcome guard.
+
+- [ ] Review finding: finalize_round hardcodes pr_kind 'fix' although derive_kind can return board-fix
+
+  The posted record always says pr_kind fix, so it misreports the kind that was computed.
+
+  - .github/scripts/wc_shared_review.py
+
+  Detail: Pass the derived kind through prepare and the CLI, and write it into the record.
