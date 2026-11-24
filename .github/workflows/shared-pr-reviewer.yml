@@ -301,6 +301,7 @@ jobs:
           python3 -I trees/reviewer-tree/.github/scripts/wc_shared_review.py code-run \
             --pr-tree trees/pr-tree --reviewer-tree trees/reviewer-tree \
             --added-files input/added-files.txt --out out/code-run.json \
+            --origin-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" \
             || echo '{"status":"missing"}' > out/code-run.json
       - name: Upload the staged result
         uses: actions/upload-artifact@v6

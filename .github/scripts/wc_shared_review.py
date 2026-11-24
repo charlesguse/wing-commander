@@ -640,8 +640,9 @@ class UidSandbox:
     the command, every process of the sandbox user is killed and the kill
     is confirmed before the output is read."""
 
-    def __init__(self, user=SANDBOX_USER):
+    def __init__(self, user=SANDBOX_USER, origin_url=None):
         self.user = user
+        self.origin_url = origin_url
         self.work = self.private = self.reviewer = None
 
     def _sudo(self, *argv, **kw):
@@ -735,7 +736,29 @@ class UidSandbox:
         pack.stdout.close()
         if pack.wait() != 0 or unpack.returncode != 0:
             raise SandboxUnavailable("could not copy the PR tree for " + self.user)
+        self._git_init(tree, home)
         return tree, home
+
+    def _git_init(self, tree, home):
+        """The copy is an archive with no .git, and gates that find the
+        repository root through git (git rev-parse --show-toplevel) read
+        `/` without one (A4). The sandbox user makes it a repository with
+        one commit, so the root resolves to the copy, and gives it the
+        repository's own URL as `origin` for gates that read OWNER/NAME from
+        the remote (provision-e2e-target.sh). Nothing is fetched or pushed,
+        no credential is configured and no hook runs."""
+        git = ["sudo", "-n", "-u", self.user, "--", "env", "-i", "PATH=" + SANDBOX_ENV_PATH,
+               "HOME=" + home, "LANG=C.UTF-8", "GIT_CONFIG_NOSYSTEM=1",
+               "git", "-C", tree, "-c", "init.defaultBranch=main", "-c", "user.name=" + self.user,
+               "-c", "user.email={0}@localhost".format(self.user), "-c", "commit.gpgsign=false",
+               "-c", "core.hooksPath=/dev/null"]
+        steps = [["init", "-q"], ["add", "-A"], ["commit", "-q", "--no-verify", "--allow-empty",
+                                                 "-m", "code-run tree"]]
+        if self.origin_url:
+            steps.append(["remote", "add", "origin", self.origin_url])
+        for args in steps:
+            if _sh(git + args).returncode != 0:
+                raise SandboxUnavailable("could not make the PR tree a git repository")
 
     def run(self, argv, timeout, n):
         import subprocess
@@ -789,14 +812,15 @@ class UidSandbox:
             shutil.rmtree(self.private, ignore_errors=True)
 
 
-def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT, sandbox=None):
+def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT, sandbox=None,
+                   origin_url=None):
     """The two commands the code-run job may run, nothing else: the named
     check, and the default branch's gate runner against the PR tree, both
     inside `sandbox` (UidSandbox by default). Their exit codes are staged as
     data. When the sandbox cannot be set up, or a process survives it,
     nothing is staged: `missing`, never an unisolated run (FR-012)."""
     pr_tree, reviewer_tree = os.path.abspath(pr_tree), os.path.abspath(reviewer_tree)
-    box = sandbox if sandbox is not None else UidSandbox()
+    box = sandbox if sandbox is not None else UidSandbox(origin_url=origin_url)
     argv = discover_named_check(added_files)
     try:
         box.open(pr_tree, reviewer_tree)
@@ -974,6 +998,7 @@ def main(argv=None):
     c.add_argument("--pr-tree", required=True); c.add_argument("--reviewer-tree", required=True)
     c.add_argument("--added-files", required=True)
     c.add_argument("--out", required=True)
+    c.add_argument("--origin-url", default=None)
     r = sub.add_parser("record")
     r.add_argument("--input", required=True)
     r.add_argument("--handoff", action="store_true")
@@ -1028,7 +1053,8 @@ def main(argv=None):
     if args.cmd == "code-run":
         with open(args.added_files, encoding="utf-8") as fh:
             added = [line.strip() for line in fh if line.strip()]
-        write_private(args.out, json.dumps(stage_code_run(args.pr_tree, args.reviewer_tree, added)))
+        write_private(args.out, json.dumps(stage_code_run(args.pr_tree, args.reviewer_tree, added,
+                                                         origin_url=args.origin_url)))
         return 0
     if args.cmd == "defuse-agent-config":
         renamed = defuse_agent_config(args.root)

@@ -156,6 +156,30 @@ def link_proof_problems():
     return problems
 
 
+def git_root_proof_problems():
+    """A4 through the real sandbox: a named check sees its tree as a git
+    repository whose root is the tree, with the repository's own origin,
+    so gates that resolve the root through git do not read `/`."""
+    work = tempfile.mkdtemp(prefix="wc-a4-")
+    url = "https://github.com/wc-fixture/repo.git"
+    try:
+        pr, rev = os.path.join(work, "pr"), os.path.join(work, "rev")
+        os.makedirs(pr)
+        with open(os.path.join(pr, "run-tests.sh"), "w", encoding="utf-8") as fh:
+            fh.write('set -e\n[ "$(git rev-parse --show-toplevel)" = "$(pwd)" ]\n'
+                     'echo "ORIGIN:$(git remote get-url origin)"\n')
+        _reviewer_tree(rev)
+        out = wc_shared_review.stage_code_run(pr, rev, ["run-tests.sh"], timeout=60, origin_url=url)
+        named = out.get("named_check") or {}
+        if named.get("exit") != 0 or "ORIGIN:" + url not in named.get("output_tail", ""):
+            return ["the sandbox tree is not a git repository rooted at itself with origin "
+                    "({0!r})".format(named)[:400]]
+        return []
+    finally:
+        subprocess.run(["sudo", "-n", "rm", "-rf", "--one-file-system", work], capture_output=True)
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def static_problems(wf):
     problems = []
     jobs = wf.get("jobs") or {}
@@ -272,6 +296,9 @@ def dynamic_problems(wf):
             json.dump(targets, fh)
         # Secrets in the step's own environment must not reach the probe.
         env.update({"GH_TOKEN": "x", "ACTIONS_RUNTIME_TOKEN": "x", "ANTHROPIC_API_KEY": "x"})
+        # Set on every Actions runner; the step reads them under set -u.
+        env.setdefault("GITHUB_SERVER_URL", "https://github.com")
+        env.setdefault("GITHUB_REPOSITORY", "wc-fixture/repo")
         script = os.path.join(work, "step.sh")
         with open(script, "w", encoding="utf-8") as fh:
             fh.write(str(step.get("run")))
@@ -364,6 +391,7 @@ def main():
     reason = sandbox_unavailable_reason()
     if reason is None:
         problems += dynamic_problems(wf)
+        problems += git_root_proof_problems()
     elif proof_required(os.environ):
         problems.append("the code-run sandbox cannot be set up on this runner ({0}), "
                         "so SC-008 (a)/(b) is unproven".format(reason))

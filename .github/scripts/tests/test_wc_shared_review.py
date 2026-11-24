@@ -369,6 +369,27 @@ class CodeRun(unittest.TestCase):
             self.assertTrue(box.closed)
         self.assertNotEqual(sr.SANDBOX_USER, "runner")
 
+    def test_tree_copy_is_a_git_repository_with_origin(self):
+        # A4: gates find the repository root through git, and one reads
+        # OWNER/NAME from origin; the sandbox user makes each copy a repo.
+        import subprocess
+        calls = []
+
+        def fake_sh(argv, **kw):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, b"", b"")
+        saved = sr._sh
+        sr._sh = fake_sh
+        try:
+            sr.UidSandbox(origin_url="https://github.com/o/r.git")._git_init("/t", "/h")
+        finally:
+            sr._sh = saved
+        tails = [c[c.index("-C") + 2:] for c in calls]
+        self.assertTrue(all(c[:5] == ["sudo", "-n", "-u", sr.SANDBOX_USER, "--"] for c in calls))
+        self.assertIn(["-c", "core.hooksPath=/dev/null", "init", "-q"], [t[-4:] for t in tails])
+        self.assertIn(["remote", "add", "origin", "https://github.com/o/r.git"], [c[-4:] for c in calls])
+        self.assertTrue(any("commit" in c for c in calls))
+
     def test_kill_and_listing_match_effective_and_real_uid(self):
         # A sandbox process inside a setuid program keeps its real uid only.
         calls = []
