@@ -23,16 +23,17 @@ GitHub would, and fails when:
   * two pull_request runs of the same PR (opened, then synchronize on a
     new head) land in different groups, so the newer push cancels nothing;
   * two different PRs share a group, so a push to one cancels the other;
-  * cancel-in-progress is not truthy for a pull_request run;
+  * cancel-in-progress is not the boolean true for a pull_request run
+    (a quoted 'false' is a non-empty string, truthy, and still wrong);
   * two runs that are not for a pull request (a push to main, the daily
     schedule, a dispatch) share a group with each other or with a PR run.
     Such a run would be cancelled, or would wait behind another, and those
     runs are what prove main is green;
   * a job carries its own concurrency: block, which this gate does not
     model;
-  * the expression uses a context or function the evaluator below does
-    not model. That fails loudly rather than guessing: extend the
-    evaluator in the same PR.
+  * the expression uses a context or function the shared evaluator
+    (wc_gha_expr.py) or this gate's simulated runs do not model. That
+    fails loudly rather than guessing: extend them in the same PR.
 
 It checks behaviour, not text: `pr.number || run_id` passes as well as
 the shipped `event_name == 'pull_request' && format(...)` form.
@@ -43,227 +44,52 @@ Usage:
 """
 import argparse
 import os
-import re
 import sys
 
 import yaml
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import wc_gha_expr  # noqa: E402
+from wc_gha_expr import to_str  # noqa: E402
 
 WORKFLOW = os.path.join(".github", "workflows", "lint-workflows.yml")
 
 
 class ExprError(Exception):
-    """An expression this evaluator does not model, or cannot parse."""
+    """An expression this gate cannot evaluate: unmodelled, or unparsable."""
 
 
 # ---------------------------------------------------------------------------
-# A small GitHub Actions expression evaluator: literals, github.* context
-# paths, ! == != && || and parentheses, and format(). Semantics follow
-# GitHub's documentation: && and || return an operand, not a boolean;
-# string comparison ignores case; a missing event property is null.
+# Evaluation goes through the shared evaluator, wc_gha_expr (CLAUDE.md,
+# "Shared logic has exactly one home"): its &&/|| stop as GitHub's do, a
+# NaN is falsy, and a string comparison ignores case. A simulated run is
+# flattened into the dotted names it reads. github.event.* is the one
+# open prefix, so a payload property the run lacks is null, as on GitHub;
+# any other name the run does not carry is unmodelled and fails the gate.
 # ---------------------------------------------------------------------------
-
-TOKEN_RE = re.compile(r"""
-    \s*(?:
-      (?P<str>'(?:[^']|'')*')
-    | (?P<num>-?\d+(?:\.\d+)?)
-    | (?P<op>==|!=|&&|\|\||!|\(|\)|,)
-    | (?P<ident>[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*)
-    )""", re.VERBOSE)
 
 # The github.* keys a run of this workflow is simulated with. A group that
 # reads any other one fails as unmodelled instead of evaluating to null.
 GITHUB_KEYS = ("event_name", "event", "ref", "sha", "head_ref", "base_ref",
                "run_id", "run_number", "run_attempt", "workflow",
                "repository")
+OPEN_PREFIXES = ("github.event.",)
 
 
-def tokenize(text):
-    pos, out = 0, []
-    text = text.rstrip()
-    while pos < len(text):
-        m = TOKEN_RE.match(text, pos)
-        if not m or m.end() == pos:
-            raise ExprError("cannot parse expression at {0!r}".format(
-                text[pos:]))
-        pos = m.end()
-        kind = m.lastgroup
-        out.append((kind, m.group(kind)))
+def _flatten(value, prefix, out):
+    out[prefix] = value
+    if isinstance(value, dict):
+        for k, v in value.items():
+            _flatten(v, prefix + "." + k, out)
     return out
 
 
-def truthy(v):
-    if v is None or v is False:
-        return False
-    if isinstance(v, (int, float)) and not isinstance(v, bool):
-        return v != 0
-    if isinstance(v, str):
-        return v != ""
-    return True
-
-
-def to_str(v):
-    if v is None:
-        return ""
-    if v is True:
-        return "true"
-    if v is False:
-        return "false"
-    if isinstance(v, float) and v.is_integer():
-        return str(int(v))
-    return str(v)
-
-
-def _to_num(v):
-    if v is None or v is False:
-        return 0.0
-    if v is True:
-        return 1.0
-    if isinstance(v, (int, float)):
-        return float(v)
-    try:
-        return float(v.strip()) if v.strip() else 0.0
-    except ValueError:
-        return float("nan")
-
-
-def equal(a, b):
-    if isinstance(a, str) and isinstance(b, str):
-        return a.casefold() == b.casefold()
-    if type(a) is type(b):
-        return a == b
-    return _to_num(a) == _to_num(b)
-
-
-def gh_format(fmt, args):
-    if not isinstance(fmt, str):
-        raise ExprError("format()'s first argument must be a string")
-    out, i = [], 0
-    while i < len(fmt):
-        c = fmt[i]
-        if fmt.startswith("{{", i):
-            out.append("{")
-            i += 2
-        elif fmt.startswith("}}", i):
-            out.append("}")
-            i += 2
-        elif c == "{":
-            end = fmt.find("}", i)
-            idx = fmt[i + 1:end] if end > i else ""
-            if not idx.isdigit() or int(idx) >= len(args):
-                raise ExprError("format() placeholder {0!r} in {1!r} has "
-                                "no argument".format(fmt[i:end + 1], fmt))
-            out.append(to_str(args[int(idx)]))
-            i = end + 1
-        else:
-            out.append(c)
-            i += 1
-    return "".join(out)
-
-
-def resolve(path, ctx):
-    parts = path.split(".")
-    if parts[0] in ("true", "false", "null") and len(parts) == 1:
-        return {"true": True, "false": False, "null": None}[parts[0]]
-    if parts[0] != "github":
-        raise ExprError("context {0!r} is not modelled (only github.* is)"
-                        .format(path))
-    if len(parts) < 2 or parts[1] not in GITHUB_KEYS:
-        raise ExprError("context {0!r} is not modelled; model it in "
-                        "GITHUB_KEYS and the simulated runs".format(path))
-    value = ctx["github"]
-    for i, part in enumerate(parts[1:], start=1):
-        if isinstance(value, dict) and part in value:
-            value = value[part]
-        elif i >= 2 and parts[1] == "event":
-            return None  # a missing payload property is null, as on GitHub
-        else:
-            raise ExprError("context {0!r} does not resolve".format(path))
-    return value
-
-
-class _Parser(object):
-    def __init__(self, tokens, ctx):
-        self.toks, self.i, self.ctx = tokens, 0, ctx
-
-    def peek(self):
-        return self.toks[self.i] if self.i < len(self.toks) else (None, None)
-
-    def take(self, value=None):
-        tok = self.peek()
-        if tok[0] is None or (value is not None and tok[1] != value):
-            raise ExprError("expected {0!r}, found {1!r}".format(
-                value, tok[1]))
-        self.i += 1
-        return tok
-
-    def parse(self):
-        v = self.or_()
-        if self.i != len(self.toks):
-            raise ExprError("unexpected {0!r}".format(self.peek()[1]))
-        return v
-
-    def or_(self):
-        v = self.and_()
-        while self.peek() == ("op", "||"):
-            self.take()
-            rhs = self.and_()
-            v = v if truthy(v) else rhs
-        return v
-
-    def and_(self):
-        v = self.eq()
-        while self.peek() == ("op", "&&"):
-            self.take()
-            rhs = self.eq()
-            v = rhs if truthy(v) else v
-        return v
-
-    def eq(self):
-        v = self.unary()
-        while self.peek() in (("op", "=="), ("op", "!=")):
-            op = self.take()[1]
-            rhs = self.unary()
-            v = equal(v, rhs) if op == "==" else not equal(v, rhs)
-        return v
-
-    def unary(self):
-        if self.peek() == ("op", "!"):
-            self.take()
-            return not truthy(self.unary())
-        return self.primary()
-
-    def primary(self):
-        kind, val = self.peek()
-        if kind == "str":
-            self.take()
-            return val[1:-1].replace("''", "'")
-        if kind == "num":
-            self.take()
-            return float(val)
-        if (kind, val) == ("op", "("):
-            self.take()
-            v = self.or_()
-            self.take(")")
-            return v
-        if kind == "ident":
-            self.take()
-            if self.peek() == ("op", "("):
-                if val != "format":
-                    raise ExprError("function {0}() is not modelled; only "
-                                    "format() is".format(val))
-                self.take("(")
-                args = [self.or_()]
-                while self.peek() == ("op", ","):
-                    self.take()
-                    args.append(self.or_())
-                self.take(")")
-                return gh_format(args[0], args[1:])
-            return resolve(val, self.ctx)
-        raise ExprError("unexpected {0!r}".format(val))
-
-
 def evaluate_expr(expr, ctx):
-    return _Parser(tokenize(expr), ctx).parse()
+    flat = _flatten(ctx["github"], "github", {})
+    try:
+        return wc_gha_expr.evaluate(expr, flat, OPEN_PREFIXES)
+    except (ValueError, IndexError) as e:
+        raise ExprError(str(e)) from None
 
 
 def evaluate_value(value, ctx):
@@ -360,23 +186,25 @@ def check(doc):
             "a superseded run")
         return failures
 
+    unreadable = object()
+
     def ev(label, run, key):
         try:
             return evaluate_value(conc.get(key, False), run)
         except ExprError as e:
             failures.append("{0} for {1}: {2}".format(key, label, e))
-            return None
+            return unreadable
 
     pr_groups = []
     for label, run in PR_SAME + [PR_OTHER]:
         group = ev(label, run, "group")
         cancel = ev(label, run, "cancel-in-progress")
         pr_groups.append((label, to_str(group)))
-        if cancel is not None and not truthy(cancel):
+        if cancel is not unreadable and cancel is not True:
             failures.append(
-                "cancel-in-progress is not true for {0}, so a newer push "
-                "queues behind the older run instead of cancelling it"
-                .format(label))
+                "cancel-in-progress is {0!r}, not the boolean true, for {1}, "
+                "so a newer push queues behind the older run instead of "
+                "cancelling it".format(cancel, label))
     if failures:
         return failures
     same = {g for _, g in pr_groups[:len(PR_SAME)]}
@@ -394,7 +222,7 @@ def check(doc):
     seen = {g: l for l, g in pr_groups}
     for label, run in NON_PR:
         group = ev(label, run, "group")
-        if group is None:
+        if group is unreadable:
             continue
         group = to_str(group)
         if group in seen:
@@ -466,6 +294,12 @@ def self_test():
               "${{ github.event.pull_request.number }}", push, None)
     expr_case("format() unescapes doubled braces",
               "${{ format('{{x}}-{0}', 1) }}", pr5, "{x}-1")
+    expr_case("|| stops at a truthy left side, as on GitHub: the right "
+              "side's bad format() index is never evaluated",
+              "${{ true || format('{1}', github.run_id) }}", pr5, True)
+    expr_case("&& stops at a falsy left side the same way",
+              "${{ github.event.pull_request.number && "
+              "format('{1}', github.run_id) }}", push, None)
 
     case("the event_name && format() || format() form passes",
          {"group": event_form, "cancel-in-progress": True}, None)
@@ -480,7 +314,11 @@ def self_test():
          "lint-${{ github.event.pull_request.number }}", "bare string form")
     case("cancel-in-progress false fails",
          {"group": event_form, "cancel-in-progress": False},
-         "cancel-in-progress is not true")
+         "not the boolean true")
+    case("a quoted 'false' fails: a non-empty string is not the boolean "
+         "true",
+         {"group": event_form, "cancel-in-progress": "false"},
+         "cancel-in-progress is 'false', not the boolean true")
     case("a group keyed by the head sha fails: a new push cancels nothing",
          {"group": "lint-${{ github.event.pull_request.head.sha || "
                    "github.run_id }}", "cancel-in-progress": True},
@@ -502,13 +340,13 @@ def self_test():
          "daily schedule run shares group")
     case("an unmodelled context fails loudly",
          {"group": "lint-${{ vars.LINT_GROUP }}", "cancel-in-progress": True},
-         "is not modelled")
+         "unmodelled context reference 'vars.LINT_GROUP'")
     case("an unmodelled github key fails loudly",
          {"group": "lint-${{ github.actor }}", "cancel-in-progress": True},
-         "is not modelled")
+         "unmodelled context reference 'github.actor'")
     case("an unmodelled function fails loudly",
          {"group": "lint-${{ toJSON(github.event) }}",
-          "cancel-in-progress": True}, "toJSON() is not modelled")
+          "cancel-in-progress": True}, "unsupported function toJSON()")
     case("a job-level concurrency block fails",
          {"group": event_form, "cancel-in-progress": True},
          "has its own concurrency", jobs={"lint": {"concurrency": "x"}})

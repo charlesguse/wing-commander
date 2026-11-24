@@ -4818,8 +4818,8 @@ jobs:
         run: python3 .github/scripts/verify-action-runtime-pins.py --self-test
       # Gate 172 — this workflow's own concurrency: block. A newer push to a
       # pull request cancels the lint run for its older head, and a push,
-      # schedule or dispatch run is never cancelled or queued. Nothing failed
-      # while the block was missing and PR #1184 had three runs in flight.
+      # schedule or dispatch run is never cancelled or queued. Why the block
+      # is needed -- see the concurrency: block above in this file.
       # Numbered 172 because PR #1184 claims 171.
       - name: Gate 172 — a newer push to a pull request cancels lint's run for the older head, and nothing else
         if: "!cancelled()"
