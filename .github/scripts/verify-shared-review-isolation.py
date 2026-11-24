@@ -181,6 +181,11 @@ _EXTENDED_TEST = _OLD_TEST + """
         self.assertEqual(mod.f(), 2)
 """
 
+# N1: the check is itself the file the fix changes (a verify script whose
+# own bug is the fix), so on the overlay tree it is the fixed version.
+_SELF_FIXED_BASE = "import sys\nsys.exit(1)\n"
+_SELF_FIXED_PR = "import sys\nsys.exit(0)\n"
+
 _WEAK_TEST = """import unittest
 
 
@@ -209,12 +214,18 @@ def without_fix_proof_problems():
                 fh.write(body)
         with open(os.path.join(base, "tests", "test_existing.py"), "w", encoding="utf-8") as fh:
             fh.write(_OLD_TEST)
+        for root, body in ((base, _SELF_FIXED_BASE), (pr, _SELF_FIXED_PR)):
+            with open(os.path.join(root, "tests", "verify-thing.py"), "w", encoding="utf-8") as fh:
+                fh.write(body)
         _reviewer_tree(rev)
         for added, modified, want_with, want_without, answer in (
                 ("tests/test_fix.py", None, 0, "non-zero", None),
                 ("tests/test_weak.py", None, 0, 0, wc_shared_review.NEGATIVE),
                 # R1: a fix that extends an existing test (no test added).
-                (None, "tests/test_existing.py", 0, "non-zero", None)):
+                (None, "tests/test_existing.py", 0, "non-zero", None),
+                # N1: a modified check the fix itself changes passes on the
+                # overlay tree, and code must not call that negative.
+                (None, "tests/verify-thing.py", 0, 0, None)):
             out = wc_shared_review.stage_code_run(pr, rev, [added] if added else [], timeout=120,
                                                   base_tree=base, modified_files=[modified] if modified else [])
             added = added or modified

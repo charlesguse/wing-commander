@@ -567,6 +567,8 @@ def finalize_round(state, find_out, check_out, code_run, purpose, head_sha, dism
             if answers.get("check_fails_without_fix") != decided:
                 more.append("check_fails_without_fix is {0} by code: {1}".format(decided, why))
             answers["check_fails_without_fix"] = decided
+        elif why:
+            more.append("check_fails_without_fix left to the checking job: " + why)
     opened = open_set(findings)
     for f in opened:
         f["blocking"] = is_blocking(f)
@@ -870,8 +872,9 @@ def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT
             type(exc).__name__, exc)[:500]}
     finally:
         box.close()
-    return {"status": "staged", "named_check": named, "named_check_without_fix": without,
-            "gate_suite": gates}
+    tier = None if not path else ("added" if path in (added_files or []) else "modified")
+    return {"status": "staged", "named_check": named, "named_check_tier": tier,
+            "named_check_without_fix": without, "gate_suite": gates}
 
 
 def check_fails_without_fix(code_run):
@@ -879,8 +882,11 @@ def check_fails_without_fix(code_run):
     (answer, why), or (None, None) to leave the answer to the check agent.
 
     Missing results, no named check, no run without the fix, or a run that
-    timed out (124) or could not start (127) is not determinable; a named
-    check that passes without the fix (exit 0) is negative. Any other
+    timed out (124) or could not start (127) is not determinable; an
+    ADDED named check that passes without the fix (exit 0) is negative,
+    while a MODIFIED one that passes there is left to the agent, with a
+    note, because the fix may change that file or a fixture it reads. Any
+    other
     failure without the fix is for the agent to judge from the output: it
     is positive only if the check fails for the reason the fix addresses,
     not because a helper the PR also adds is absent."""
@@ -892,6 +898,13 @@ def check_fails_without_fix(code_run):
     if not isinstance(without, dict) or not isinstance(without.get("exit"), int):
         return UNDETERMINABLE, "the named check was not run without the fix"
     if without["exit"] == 0:
+        if code_run.get("named_check_tier") == "modified":
+            # A modified check can be a file the fix itself changes, or read
+            # a fixture the overlay leaves at the fixed version, so passing
+            # on the overlay tree is no evidence (N1): the agent judges.
+            return None, ("the modified named check passes on the merge-base tree with its own "
+                          "file overlaid; the fix may change that file or a fixture it reads, so "
+                          "the checking job's answer stands")
         return NEGATIVE, "the named check passes without the fix"
     if without["exit"] in (124, 127):
         return UNDETERMINABLE, "the named check without the fix timed out or could not start"

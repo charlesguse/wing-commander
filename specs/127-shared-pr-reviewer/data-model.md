@@ -33,7 +33,7 @@ Transitions (code-enforced): new→upheld/dismissed; dismissed|resolved→reopen
 `problem_real`, `change_fixes`, `check_fails_without_fix`: each `positive`/`negative`/`not_determinable`, with a short basis. A reserved `requirements_unmet` slot (FR-009) is allowed and null.
 
 ## CodeRunResults (staged data)
-`{status: staged|missing, named_check: {exit, output_tail}|null, named_check_without_fix: {exit, output_tail}|null, gate_suite: {exit, output_tail}|null}`. Non-zero exits are data. `missing` only when nothing could be staged. `named_check_without_fix` is the named check run on the merge-base tree with only its own file taken from the PR (FR-008(c)); null when there is no named check or no merge-base tree. The named check is an added test file, else a modified one (research D8), so a fix that extends an existing test is run against the unfixed code with its new case.
+`{status: staged|missing, named_check: {exit, output_tail}|null, named_check_tier: added|modified|null, named_check_without_fix: {exit, output_tail}|null, gate_suite: {exit, output_tail}|null}`. Non-zero exits are data. `missing` only when nothing could be staged. `named_check_without_fix` is the named check run on the merge-base tree with only its own file taken from the PR (FR-008(c)); null when there is no named check or no merge-base tree. The named check is an added test file, else a modified one (research D8), so a fix that extends an existing test is run against the unfixed code with its new case.
 
 ## RoundRecord (marker `wing-commander-shared-review-round`)
 | Field | Rule |
@@ -60,5 +60,5 @@ Size: capped like `MAX_RECORD_CHARS`; the open set is never truncated, other fin
 - ConfirmedRecords: records whose `run_id` passes `confirm_record` (research D5).
 - OpenSet: fold of confirmed records in round order.
 - Verdict: `compute_verdict(agent_ok, open_set, answers, code_run)`.
-- `check_fails_without_fix`, where code can decide it (`check_fails_without_fix(code_run)`): `not_determinable` when the code-run results are missing, there is no named check, no run without the fix, or that run timed out (124) or could not start (127); `negative` when the named check passes without the fix (exit 0). Any other failure without the fix leaves the checking job's answer. The decision overrides the agent's answer and is noted in the record.
+- `check_fails_without_fix`, where code can decide it (`check_fails_without_fix(code_run)`): `not_determinable` when the code-run results are missing, there is no named check, no run without the fix, or that run timed out (124) or could not start (127); `negative` when an added-tier named check passes without the fix (exit 0); a modified-tier check that passes there is left to the checking job, with a note, because the fix may change that file or a fixture it reads. Any other failure without the fix leaves the checking job's answer. The decision overrides the agent's answer and is noted in the record.
 - Budget used: count of confirmed round records.

@@ -667,6 +667,28 @@ class ReviewRound3Fixes(unittest.TestCase):
                                  "a" * 40, [], 5, "b" * 40, "open")
         self.assertEqual(rec_["verdict"], "clean")
 
+    def test_a_modified_check_passing_without_the_fix_is_left_to_the_agent(self):
+        # N1: a modified check may be the very file the fix changes, so its
+        # exit 0 on the overlay tree is no evidence; code decides nothing.
+        ok = {"exit": 0, "output_tail": ""}
+        mod = {"status": "staged", "named_check": ok, "named_check_tier": "modified",
+               "named_check_without_fix": ok}
+        answer, why = sr.check_fails_without_fix(mod)
+        self.assertIsNone(answer)
+        self.assertIn("modified", why)
+        self.assertEqual(sr.check_fails_without_fix(dict(mod, named_check_tier="added"))[0], sr.NEGATIVE)
+        answers = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
+
+        def finalize(ans):
+            return sr.finalize_round({"round": 1, "prior": []}, {"answers": {}, "candidates": []},
+                                     {"checks": [], "answers": ans}, mod, {"type": "issue", "ref": "7"},
+                                     "a" * 40, [], 5, "b" * 40, "open")
+        out = finalize(answers)
+        self.assertEqual(out["verdict"], "clean")
+        self.assertTrue(any("left to the checking job" in n for n in out["notes"]))
+        out = finalize(dict(answers, check_fails_without_fix=sr.NEGATIVE))
+        self.assertEqual(out["verdict"], "findings")
+
     def test_check_fails_without_fix_is_decided_by_code_where_it_can_be(self):
         d = sr.check_fails_without_fix
         ok = {"exit": 0, "output_tail": ""}

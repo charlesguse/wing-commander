@@ -23,8 +23,10 @@ For `check_fails_without_fix`, read `named_check_without_fix` in
 `input/code-run.json`: the named check run on the merge-base tree with only
 its own file from the PR. Uphold `positive` only when it fails there for the
 reason the fix addresses, not because a file the PR also adds is absent.
-Code records `negative` when it passes there and `not_determinable` when it is
-missing, timed out or could not start, whatever you answer.
+Code records `negative` when an added check passes there and `not_determinable`
+when the run is missing, timed out or could not start, whatever you answer. When
+`named_check_tier` is `modified` and it passes there, the answer is yours: the
+fix may change that check file, or a fixture it reads, so read the diff.
 
 Finally restate the three purpose answers (`problem_real`, `change_fixes`,
 `check_fails_without_fix`) after your own check: `positive`, `negative` or

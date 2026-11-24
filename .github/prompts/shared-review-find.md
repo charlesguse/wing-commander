@@ -26,8 +26,10 @@ Answer, in this order:
    named check run on the merge-base tree with only its own file taken from
    the PR. It is `positive` only when that run fails for the reason the fix
    addresses, not because a helper or fixture the PR also adds is absent.
-   Code records `negative` when it passes there, and `not_determinable` when
-   it is missing, timed out or could not start.
+   Code records `negative` when an added check passes there, and
+   `not_determinable` when it is missing, timed out or could not start. A
+   modified check (`named_check_tier`) that passes there is for you to judge
+   from the diff: the fix may change that file or a fixture it reads.
 4. What does the change break?
 
 Each answer is `positive`, `negative` or `not_determinable`, with a short
