@@ -19,8 +19,10 @@ import wc_session_record  # noqa: E402
 
 
 def hand_reviews(comments):
-    """(head_sha, record) for each review-until-clean pass comment: the
-    head a pass covers is what it pushed, else what it started from."""
+    """(head_sha, record) for each review-until-clean pass comment. The
+    head a pass covers is the one it started from and reviewed (`started`,
+    the review-until-clean skill's H(n-1)); a commit it then pushed is the
+    next pass's subject, never this one's."""
     out = []
     for comment in comments or []:
         try:
@@ -28,7 +30,7 @@ def hand_reviews(comments):
         except wc_session_record.RecordError:
             continue
         if rec and rec.get("kind") == "review":
-            out.append((rec.get("pushed") or rec.get("started"), rec))
+            out.append((rec.get("started"), rec))
     return out
 
 

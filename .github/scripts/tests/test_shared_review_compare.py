@@ -35,6 +35,18 @@ class Compare(unittest.TestCase):
         self.assertEqual(sorted(r["shared"] is None for r in rows), [False, True])
 
 
+    def test_a_pass_that_pushed_pairs_on_the_head_it_reviewed(self):
+        # A2: pass 1 reviewed A, found defects and pushed B; the shared
+        # reviewer was dispatched on A. They are one same-commit pair.
+        a, b = "a" * 40, "b" * 40
+
+        def read(body):
+            return {"kind": "review", "pass": 1, "verdict": "findings", "started": a[:7], "pushed": b[:7]}
+        with mock.patch.object(wc_session_record, "read", read):
+            rows = cmp.compare([{"body": "review"}], [{"round": 1, "head_sha": a, "verdict": "findings"}])
+        self.assertEqual(rows, [{"head": a, "shared": {"round": 1, "verdict": "findings"},
+                                 "hand": {"pass": 1, "verdict": "findings"}}])
+
     def test_main_takes_the_whole_state_object(self):
         # Round 4: `wc_shared_review.py state` output is a dict whose
         # `confirmed` key holds the records; main must not crash on it.
