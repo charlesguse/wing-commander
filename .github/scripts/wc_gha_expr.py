@@ -302,10 +302,49 @@ def evaluate_if(expr, ctx, known=None):
     return truthy(evaluate(expr, ctx, known))
 
 
-def interpolate(template, ctx):
+def segments(template):
+    """A string field -> [("text", s) | ("expr", src), ...]. A `}}` inside a
+    quoted literal does not end the expression, as on GitHub; an
+    unterminated `${{` is a ValueError."""
+    pieces, pos = [], 0
+    while True:
+        start = template.find("${{", pos)
+        if start < 0:
+            pieces.append(("text", template[pos:]))
+            return pieces
+        pieces.append(("text", template[pos:start]))
+        j, quoted = start + 3, False
+        while j < len(template):
+            if template[j] == "'":
+                quoted = not quoted
+            elif not quoted and template.startswith("}}", j):
+                break
+            j += 1
+        else:
+            raise ValueError(f"unterminated ${{{{ in {template!r}")
+        pieces.append(("expr", template[start + 3:j]))
+        pos = j + 2
+
+
+def interpolate(template, ctx, known=None):
     """A string field like run-name -> the string GitHub would render."""
-    return re.sub(r"\$\{\{(.*?)\}\}", lambda m: to_str(Parser(m.group(1), ctx).parse()),
-                  template, flags=re.S)
+    return "".join(s if kind == "text" else to_str(Parser(s, ctx, known).parse())
+                   for kind, s in segments(template))
+
+
+def evaluate_value(value, ctx, known=None):
+    """A YAML value as GitHub reads it (a concurrency group, a
+    cancel-in-progress): a non-string as itself, a string that is exactly
+    one ${{ }} as that expression's typed value, any other string as
+    interpolate renders it."""
+    if not isinstance(value, str):
+        return value
+    pieces = segments(value)
+    exprs = [s for kind, s in pieces if kind == "expr"]
+    if len(exprs) == 1 and "".join(s for kind, s in pieces
+                                   if kind == "text").strip() == "":
+        return Parser(exprs[0], ctx, known).parse()
+    return interpolate(value, ctx, known)
 
 
 if __name__ == "__main__":

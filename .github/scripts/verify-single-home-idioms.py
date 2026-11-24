@@ -154,6 +154,8 @@ SIX CHECKS, per contracts/single-home-gate.md (plus a spec 052 addition)
    `__builtins__`; or `.split("&&")` in a file that also compiles an
    `(==|!=)` alternation. A pattern-matching gate that only reads
    comparisons (verify-gate-24.py) splits on nothing and is not matched.
+   A fourth sign (code review of #1196): a `${{ }}` scanner of its own,
+   `.find("${{"`, where wc_gha_expr.segments is the one quote-aware split.
 
 9. repo-files (code review of spec 101's Gate 93 check 6): a gate script
    that decides "which files are the repository" itself instead of
@@ -767,6 +769,7 @@ GHA_EXPR_EVAL_RE = re.compile(r"\beval\s*\(")
 GHA_EXPR_SPLIT_RE = re.compile(r"""\.split\(\s*["']&&["']\s*\)""")
 GHA_EXPR_TERM_RE = re.compile(
     r"\((?:\?P<\w+>|\?:)?(?:==\\?\|!=|!=\\?\|==)\)")
+GHA_EXPR_SCAN_RE = re.compile(r"""\.find\(\s*["']\$\{\{["']""")
 
 
 def script_files(root="."):
@@ -795,6 +798,8 @@ def check_gha_expr_evaluator(root="."):
             m = GHA_EXPR_EVAL_RE.search(text)
         if m is None and GHA_EXPR_TERM_RE.search(text):
             m = GHA_EXPR_SPLIT_RE.search(text)
+        if m is None:
+            m = GHA_EXPR_SCAN_RE.search(text)
         if m is not None:
             findings.append(Finding(path, "gha-expr-evaluator",
                                     line_of(text, m.start()), m.group(0)))
@@ -3019,6 +3024,8 @@ def run_selftest():
         ("named-term-split",
          "TERM = re.compile(r\"(?P<lhs>\\w+)\\s*(?P<op>==|!=)\")\n"
          "for term in expr.split(\"&&\"):\n    pass\n"),
+        ("expr-scanner",
+         "start = value.find(\"${{\", pos)\n"),
     ):
         selftest_third_paste_fails(
             "gha-expr-evaluator", f".github/scripts/verify-third-{slug}.py",

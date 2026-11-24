@@ -85,44 +85,13 @@ def _flatten(value, prefix, out):
     return out
 
 
-def evaluate_expr(expr, ctx):
+def evaluate_value(value, ctx):
+    """A YAML value as GitHub sees it, through wc_gha_expr.evaluate_value."""
     flat = _flatten(ctx["github"], "github", {})
     try:
-        return wc_gha_expr.evaluate(expr, flat, OPEN_PREFIXES)
+        return wc_gha_expr.evaluate_value(value, flat, OPEN_PREFIXES)
     except (ValueError, IndexError) as e:
         raise ExprError(str(e)) from None
-
-
-def evaluate_value(value, ctx):
-    """A YAML value as GitHub sees it: a non-string as itself, a string
-    that is exactly one ${{ }} as that expression's value, and any other
-    string as text with each ${{ }} interpolated."""
-    if not isinstance(value, str):
-        return value
-    pieces, pos = [], 0
-    while True:
-        start = value.find("${{", pos)
-        if start < 0:
-            pieces.append(("text", value[pos:]))
-            break
-        pieces.append(("text", value[pos:start]))
-        j, quoted = start + 3, False
-        while j < len(value):
-            if value[j] == "'":
-                quoted = not quoted
-            elif not quoted and value.startswith("}}", j):
-                break
-            j += 1
-        else:
-            raise ExprError("unterminated ${{ in {0!r}".format(value))
-        pieces.append(("expr", value[start + 3:j]))
-        pos = j + 2
-    exprs = [p for p in pieces if p[0] == "expr"]
-    texts = "".join(p[1] for p in pieces if p[0] == "text")
-    if len(exprs) == 1 and texts.strip() == "":
-        return evaluate_expr(exprs[0][1], ctx)
-    return "".join(p[1] if p[0] == "text" else to_str(evaluate_expr(p[1], ctx))
-                   for p in pieces)
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +327,8 @@ def self_test():
               "${{ 'PULL_REQUEST' == github.event_name }}", pr5, True)
     expr_case("a missing event property is null",
               "${{ github.event.pull_request.number }}", push, None)
+    expr_case("a quoted '}}' does not end the expression, as on GitHub",
+              "x-${{ format('{0}}}', 'a') }}-y", pr5, "x-a}-y")
     expr_case("format() unescapes doubled braces",
               "${{ format('{{x}}-{0}', 1) }}", pr5, "{x}-1")
     expr_case("|| stops at a truthy left side, as on GitHub: the right "
