@@ -302,8 +302,6 @@ MVP is Phases 1-3 (US1): a report-only round runs end to end. Then US2 (memory, 
 
   Detail: Accept only positively identified fix shapes and return an unknown kind that validate_request refuses.
 
-## Review Gate Round 3 Findings (built by hand)
-
 - [x] Review finding (gate round 3, built by hand): Record size cap can truncate status transitions so a resolved finding reappears as open
 
   build_record now cuts a findings entry to an {id, status} stub instead of dropping it, and fold_open_set merges a stub's status over the earlier detail.
