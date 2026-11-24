@@ -78,6 +78,28 @@ def diff_read_problems(wf):
     return problems
 
 
+def head_fetch_problems(wf):
+    """R3-F10: the PR-head fetch is authenticated with prepare's read-only
+    App token, passed only through git's environment config (never argv,
+    never persisted), and the token never leaves prepare."""
+    problems = []
+    jobs = wf.get("jobs") or {}
+    steps = (jobs.get("prepare") or {}).get("steps") or []
+    fetch = next((s for s in steps if "refs/pull/" in str((s or {}).get("run") or "")), None)
+    if fetch is None:
+        return ["prepare no longer fetches the PR head"]
+    run = str(fetch.get("run"))
+    if str((fetch.get("env") or {}).get("GH_TOKEN", "")).replace(" ", "") != "${{steps.app.outputs.token}}":
+        problems.append("the PR-head fetch does not get prepare's read-only App token")
+    if "GIT_CONFIG_VALUE_0=\"AUTHORIZATION: basic" not in run or ".extraheader" not in run:
+        problems.append("the PR-head fetch is not authenticated through git's environment config")
+    if re.search(r"git\s+config\b|git\s+-c\b|remote set-url|x-access-token:\$\{?GH_TOKEN\}?@", run):
+        problems.append("the PR-head fetch puts the token in argv, the remote URL or .git/config")
+    if "steps.app.outputs.token" in yaml.safe_dump((jobs.get("prepare") or {}).get("outputs") or {}):
+        problems.append("prepare exposes its App token as a job output")
+    return problems
+
+
 def _true(value):
     return value is True or str(value).lower() == "true"
 
@@ -190,10 +212,27 @@ def _verdict_can_fail(wf):
     _step(wf, "check", lambda s: s.get("id") == "check-verdict").pop("continue-on-error", None)
 
 
+def _head_fetch_step(wf):
+    return _step(wf, "prepare", lambda s: "refs/pull/" in str(s.get("run") or ""))
+
+
+def _unauthenticated_fetch(wf):
+    step = _head_fetch_step(wf)
+    step["env"].pop("GH_TOKEN", None)
+    step["run"] = "cd reviewer\ngit fetch --no-tags origin \"refs/pull/${PR}/head\"\n"
+
+
+def _persisted_fetch_token(wf):
+    step = _head_fetch_step(wf)
+    step["run"] = ("git config --local http.https://github.com/.extraheader \"AUTHORIZATION: basic x\"\n"
+                   + step["run"])
+
+
 def main():
     cal = yaml.safe_load(open(CALLABLE, encoding="utf-8")) or {}
     wrap = yaml.safe_load(open(WRAPPER, encoding="utf-8")) or {}
     problems = (callable_problems(cal) + diff_read_problems(cal) + failure_path_problems(cal)
+                + head_fetch_problems(cal)
                 + wrapper_problems(wrap) + readers_problems())
     if "--self-test" in sys.argv:
         bad = 0
@@ -215,7 +254,9 @@ def main():
                 ("find stages an unhealthy agent's output", _stage_unhealthy_find, failure_path_problems),
                 ("check uploads an unstaged output", _upload_unstaged_check, failure_path_problems),
                 ("the find agent has no step timeout", _agent_without_step_timeout, failure_path_problems),
-                ("the check verdict step can fail the job", _verdict_can_fail, failure_path_problems)):
+                ("the check verdict step can fail the job", _verdict_can_fail, failure_path_problems),
+                ("the PR-head fetch loses its token", _unauthenticated_fetch, head_fetch_problems),
+                ("the PR-head fetch persists its token", _persisted_fetch_token, head_fetch_problems)):
             clone = copy.deepcopy(cal)
             mutate(clone)
             if not check(clone):

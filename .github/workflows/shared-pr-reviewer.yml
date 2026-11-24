@@ -164,16 +164,23 @@ jobs:
           jq -r '.headRefName' input/pr.json > input/head-branch.txt
           jq -r '[.labels[].name] | join(",")' input/pr.json > input/labels.txt
 
+      # The read-only App token authenticates this one fetch through git's
+      # environment config: never in argv, never written to .git/config,
+      # and neither tree leaves this job with a .git (both are archives).
       - name: Fetch the PR head as data and build the review inputs
         shell: bash
         env:
           PR: ${{ inputs.pr }}
           HEAD_SHA: ${{ steps.pr.outputs.head-sha }}
           DEFAULT_BRANCH: ${{ inputs.default-branch }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           set -euo pipefail
           cd reviewer
-          git fetch --no-tags origin "refs/pull/${PR}/head"
+          basic="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader" \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${basic}" \
+            git fetch --no-tags origin "refs/pull/${PR}/head"
           [ "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA" ] || { echo "::error::PR head moved while preparing"; exit 1; }
           # A failed read stops the round: an empty diff would be reviewed as
           # a change with nothing wrong in it. No added file is a real case.
