@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Gate 172 -- comment-triggered stages act only on maintainers
-(specs/129-maintainer-only-comments, contracts/comment-author-rule.md).
+"""Gate 174 -- comment-triggered stages act only on maintainers
+(specs/130-maintainer-only-comments, contracts/comment-author-rule.md).
 
 WHY THIS EXISTS
 ---------------
 Constitution 3.0.0 (Principle V): a comment admits a stage run, or reaches
 an agent as context, only when its author is not a bot and its
 author_association is OWNER, MEMBER or COLLABORATOR. Nothing about
-authorship or user id is consulted. Before spec 129 several surfaces also
+authorship or user id is consulted. Before spec 130 several surfaces also
 admitted the issue's own author, and nothing would have stopped that clause
 from coming back.
 
@@ -56,7 +56,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (  # noqa: E402
     ensure_jq, resolve_bash, run_step, use_utf8_stdout)
 
-GATE = "Gate 172"
+GATE = "Gate 174"
 WF = os.path.join(".github", "workflows")
 CLARIFY = os.path.join(WF, "clarify.yml")
 INTAKE = os.path.join(WF, "intake.yml")
@@ -234,7 +234,7 @@ STATIC_CHECKS = (check_a, check_b, check_c, check_d, check_e, check_f, check_g, 
 # --------------------------------------------------------------------------
 
 STUB_GH = r'''#!/usr/bin/env bash
-# Stub gh for Gate 172: `gh api <path> [--jq EXPR]` only.
+# Stub gh for Gate 174: `gh api <path> [--jq EXPR]` only.
 [ "$1" = "api" ] || { echo "stub gh: unexpected: $*" >&2; exit 2; }
 shift
 path=""; expr="."

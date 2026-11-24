@@ -390,7 +390,7 @@ change to the tiering above.
   as a spec.
 - Comment triggers: commenter must be OWNER/MEMBER/COLLABORATOR; `Bot`-type
   users never trigger, and the issue's own author gets no exception
-  (constitution 3.0.0, Principle V; specs/129-maintainer-only-comments).
+  (constitution 3.0.0, Principle V; specs/130-maintainer-only-comments).
   Clarify checks the triggering comment again inside the stage and ends a
   refused run with no reaction or notice; its clarification questions tell
   a requester who is not a maintainer to answer through one. Stage 10

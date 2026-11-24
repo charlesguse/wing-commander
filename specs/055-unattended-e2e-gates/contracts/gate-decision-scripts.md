@@ -32,7 +32,7 @@ bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh markers <<<"$C
 A comment QUALIFIES as an answer exactly when it would pass intake.yml's
 own comment-trust-gate: `user.type != "Bot"`, and `author_association`
 is `OWNER`/`MEMBER`/`COLLABORATOR` (constitution 3.0.0, Principle V;
-specs/129-maintainer-only-comments). No user id is consulted. A comment that does not qualify — a bot
+specs/130-maintainer-only-comments). No user id is consulted. A comment that does not qualify — a bot
 notice (metrics rollup, watchdog), or a human with no standing to answer
 — is never read as a reply. This closes the deadlock the original "any
 later comment" rule allowed.

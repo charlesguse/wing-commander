@@ -775,7 +775,7 @@ jobs:
       # Foundational filter (specs/029-intake-issue-comments): fetch every
       # comment, apply the same maintainer-association and bot rule
       # wing-commander-2-clarify.yml's wrapper already applies to its single
-      # triggering comment (no user id, specs/129-maintainer-only-comments),
+      # triggering comment (no user id, specs/130-maintainer-only-comments),
       # and stage only the qualifying
       # comments — ordered oldest to newest — for the agent step to read.
       # Comment bodies move only between gh api/jq and files, never through
@@ -1692,10 +1692,10 @@ jobs:
             | join("\n")
           ' > "$RUNNER_TEMP/intake-clarification.md"
 
-      # FR-008 (specs/129-maintainer-only-comments): when the issue's author
+      # FR-008 (specs/130-maintainer-only-comments): when the issue's author
       # is not a maintainer, the questions say up front that only a
       # maintainer's reply is folded in. The paragraph's single home is the
-      # composite (Gate 172).
+      # composite (Gate 174).
       - name: Add the maintainer-relay note for a requester who is not a maintainer
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.needed == 'true'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-requester-relay-note

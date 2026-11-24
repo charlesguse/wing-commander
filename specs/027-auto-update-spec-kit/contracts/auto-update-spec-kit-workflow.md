@@ -173,7 +173,7 @@ this job — nothing to record.
    `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
    inputs.commenter-association)` (the exact condition
    `wing-commander-2-clarify.yml` already uses; since
-   specs/129-maintainer-only-comments no user id is compared, and the
+   specs/130-maintainer-only-comments no user id is compared, and the
    `commenter-id` and `issue-author-id` inputs are accepted and ignored). Fails → no-op, no
    comment, no error surfaced (never react to an untrusted commenter,
    constitution V).

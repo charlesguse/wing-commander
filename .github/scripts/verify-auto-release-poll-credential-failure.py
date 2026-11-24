@@ -489,7 +489,7 @@ EXPIRY_SCENARIOS = [
     # ran under it they would keep succeeding, and the revoked maintainer
     # credential would surface only at the spec-draft PR list (or not at
     # all before the terminal view) -- never as a "clarification" verdict.
-    # Three maintainer-credential calls, not four: since spec 129 the
+    # Three maintainer-credential calls, not four: since spec 130 the
     # clarification gate no longer reads the issue author's id, so its
     # first iteration makes one read fewer, and the fourth call is the
     # first rejected one (a clarification read).

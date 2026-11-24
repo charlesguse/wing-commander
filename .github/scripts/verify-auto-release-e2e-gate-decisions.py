@@ -103,7 +103,7 @@ CLARIFY_DECIDE_SCENARIOS = [
                            association="COLLABORATOR")],
          rounds="1", expect_head="wait"),
     dict(name="marker open, the issue's own author with NONE association replies: still "
-              "unanswered (reply) -- only a maintainer's reply qualifies (spec 129)",
+              "unanswered (reply) -- only a maintainer's reply qualifies (spec 130)",
          comments=[marker("c1", "2026-01-01T00:00:00Z"),
                    comment("c2", "the-reporter", ISSUE_AUTHOR_ID, "2026-01-01T00:05:00Z",
                            association="NONE")],

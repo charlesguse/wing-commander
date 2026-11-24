@@ -1,8 +1,8 @@
 # Implementation Plan: Comment-Triggered Stages Act Only on Maintainers
 
-**Branch**: `129-maintainer-only-comments` | **Date**: 2026-11-23 | **Spec**: [spec.md](spec.md)
+**Branch**: `130-maintainer-only-comments` | **Date**: 2026-11-23 | **Spec**: [spec.md](spec.md)
 
-**Input**: Feature specification from `/specs/129-maintainer-only-comments/spec.md`
+**Input**: Feature specification from `/specs/130-maintainer-only-comments/spec.md`
 
 ## Summary
 
@@ -69,7 +69,7 @@ Post-design re-check: still all Pass, because D1–D7 add no job, no input and n
 ### Documentation (this feature)
 
 ```text
-specs/129-maintainer-only-comments/
+specs/130-maintainer-only-comments/
 ├── spec.md
 ├── plan.md               # this file
 ├── research.md           # D1–D7

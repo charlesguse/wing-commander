@@ -68,7 +68,7 @@ AUTO_UPDATE_STAGE_PATH = ".github/workflows/auto-update-spec-kit.yml"
 # issue_comment is deliberately not among them: the comment-reply path
 # resumes prepare, verify and act in that run, from a comment rather than a
 # schedule or a maintainer's dispatch. Its actor gate admits maintainers only
-# since specs/129-maintainer-only-comments (it once also admitted an issue's
+# since specs/130-maintainer-only-comments (it once also admitted an issue's
 # own author), and a bump PR opened by a comment-reply run still awaits a
 # human merge.
 AUTO_UPDATE_RUN_EVENTS = ("schedule", "workflow_dispatch")
