@@ -1,9 +1,10 @@
 # Single home (#499 code review of board-loop.yml) for the trust filter
 # intake.yml's own inline "Compute comment trust gate" step originated
 # (specs/029-intake-issue-comments/contracts/comment-trust-gate.md): a
-# comment qualifies only when `user.type != "Bot"` AND (its
-# `author_association` is OWNER/MEMBER/COLLABORATOR OR its author is the
-# issue's own author, compared by id). Every caller gets the SAME filtered
+# comment qualifies only when `user.type != "Bot"` AND its
+# `author_association` is OWNER/MEMBER/COLLABORATOR (constitution 3.0.0,
+# Principle V; specs/129-maintainer-only-comments: no user id is
+# consulted, the issue's author included). Every caller gets the SAME filtered
 # comment set from the SAME code instead of writing, or forgetting to
 # write, its own inline copy -- exactly the gap board-loop.yml shipped
 # with (triage/route/reviewer had no comment filter, and no comment
@@ -68,8 +69,8 @@
 name: wing-commander-issue-context
 description: >
   Fetch an issue's title, body and comments and stage a trust-filtered
-  context file (OWNER/MEMBER/COLLABORATOR or the issue's own author,
-  never a bot) for an agent step to Read, so no agent step needs its own
+  context file (OWNER/MEMBER/COLLABORATOR only, never a bot) for an
+  agent step to Read, so no agent step needs its own
   `gh issue` tool grant.
 
 inputs:
@@ -157,17 +158,16 @@ runs:
         mkdir -p "$DIR"
 
         gh api "repos/${REPOSITORY}/issues/${ISSUE}" > "$DIR/issue-raw.json"
-        AUTHOR_ID=$(jq '.user.id' "$DIR/issue-raw.json")
 
         gh api "repos/${REPOSITORY}/issues/${ISSUE}/comments" --paginate --jq '.[]' \
           | jq -s '.' > "$DIR/comments-raw.json"
 
         TOTAL_COUNT=$(jq 'length' "$DIR/comments-raw.json")
-        QUALIFYING_COUNT=$(jq --argjson aid "$AUTHOR_ID" \
-          '[.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR" or .user.id == $aid)] | length' \
+        QUALIFYING_COUNT=$(jq \
+          '[.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")] | length' \
           "$DIR/comments-raw.json")
-        EXCLUDED_HUMAN_COUNT=$(jq --argjson aid "$AUTHOR_ID" \
-          '[.[] | select(.user.type != "Bot") | select((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR" or .user.id == $aid) | not)] | length' \
+        EXCLUDED_HUMAN_COUNT=$(jq \
+          '[.[] | select(.user.type != "Bot") | select((.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | not)] | length' \
           "$DIR/comments-raw.json")
 
         {
@@ -177,8 +177,8 @@ runs:
         } >> "$GITHUB_OUTPUT"
 
         if [ "$QUALIFYING_COUNT" -gt 0 ]; then
-          jq -r --argjson aid "$AUTHOR_ID" \
-            '[.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR" or .user.id == $aid)] | sort_by(.created_at) | .[] | "## Comment by @\(.user.login) (\(.created_at))\n\n\(.body)\n"' \
+          jq -r \
+            '[.[] | select(.user.type != "Bot") | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")] | sort_by(.created_at) | .[] | "## Comment by @\(.user.login) (\(.created_at))\n\n\(.body)\n"' \
             "$DIR/comments-raw.json" \
             > "$DIR/comments.md"
           echo "comments-file=$DIR/comments.md" >> "$GITHUB_OUTPUT"

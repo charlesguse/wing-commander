@@ -81,14 +81,14 @@ description: "Task list for spec 129: comment-triggered stages act only on maint
 
 **Independent Test**: quickstart §2, comment filter.
 
-- [ ] T010 [P] [US2] In `.github/actions/wing-commander-issue-context/action.yml`:
+- [X] T010 [P] [US2] In `.github/actions/wing-commander-issue-context/action.yml`:
   - remove the identity clause from the qualifying, excluded and staging filters;
   - drop the unused `AUTHOR_ID` read;
   - keep the data-model.md Outputs (`qualifying-count`, `excluded-human-count`, `comments-file`) and their formats unchanged;
   - update the header comment.
 
   Fails without it: gate check (c) and its mutant, and a harness case with comments from a maintainer, a non-maintainer author and a bot. Only the maintainer's comment is staged, and `excluded-human-count=1`. Update `verify-issue-context-single-home.py`'s fixtures to match.
-- [ ] T011 [US2] In `.github/workflows/intake.yml`, change the "did not qualify" callout to "not from a maintainer" (FR-004). Update `specs/029-intake-issue-comments/contracts/notice-callout.md` and `contracts/comment-trust-gate.md`. Fails without it: the callout-text assertion in `verify-clarification-gating.py`, or the gate T001 finds pinning that text, updated to the new wording.
+- [X] T011 [US2] In `.github/workflows/intake.yml`, change the "did not qualify" callout to "not from a maintainer" (FR-004). Update `specs/029-intake-issue-comments/contracts/notice-callout.md` and `contracts/comment-trust-gate.md`. Fails without it: the callout-text assertion in `verify-clarification-gating.py`, or the gate T001 finds pinning that text, updated to the new wording.
 
 **Checkpoint**: gate check (c) is green, and SC-003 holds (maintainer-only fixtures are byte-identical).
 
