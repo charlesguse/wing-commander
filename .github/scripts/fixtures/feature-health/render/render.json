@@ -24,15 +24,16 @@
       "absent": ["Nothing needs a look.", "- `zeta`", "- `beta`"]
     },
     {
-      "label": "a signal failure shows in the call-out of a not running and a not configured feature",
+      "label": "a signal failure shows in a not running call-out; a not configured feature is not called out (FR-009)",
       "features": [
         {"name": "late", "entry": {"signal": {"kind": "release"}}, "signal_days_ago": {"unreadable": "HTTP 502"}, "runs": {"a.yml": []}},
         {"name": "unset", "entry": {"requires_var": "WING_COMMANDER_Y", "signal": {"kind": "release"}}, "ctx": {"vars_set": {"WING_COMMANDER_Y": false}}, "signal_days_ago": {"unreadable": "HTTP 502"}, "runs": {"a.yml": [[3, "skipped"]]}}
       ],
       "contains": [
         "- `late` — not running: no run in the window (signal unreadable: HTTP 502)",
-        "- `unset` — not configured (signal unreadable: HTTP 502)"
-      ]
+        "| unset | not configured |"
+      ],
+      "absent": ["- `unset`"]
     },
     {
       "label": "nothing needs a look",

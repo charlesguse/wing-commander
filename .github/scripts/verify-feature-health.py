@@ -676,6 +676,23 @@ def check_review_round_two():
     return problems
 
 
+def check_review_round_five(registry):
+    """section_built with the registry's own marker: a title mentioning the
+    workflow file must not stand in for the section's opener."""
+    problems = []
+    marker = next(e["signal"]["marker"] for e in registry
+                  if (e.get("signal") or {}).get("label") == "feature health section")
+    body = ("| #1 | Fix wing-commander-feature-health.yml paused check | open |\n\n"
+            "<!-- wc-proof-list:begin status=\"built\" built=\"2026-11-22\" -->\nproofs\n"
+            "<!-- wc-proof-list:end -->\n"
+            "<!-- wing-commander-feature-health -->\nFeature health's latest build failed.\n"
+            "<!-- /wing-commander-feature-health -->\n")
+    if fh.section_built(body, marker):
+        problems.append("section_built: a failed feature-health notice reads as built when a "
+                        "title mentions the workflow file")
+    return problems
+
+
 def main():
     with open(os.path.join(REPO, "docs", "reference.md"), encoding="utf-8") as fp:
         ref_text = fp.read()
@@ -692,6 +709,7 @@ def main():
     problems += check_shared_sources()
     problems += check_review_round_two()
     problems += check_review_round_three()
+    problems += check_review_round_five(registry)
     real, note = check_sc001(os.path.join(FIXTURES, "sc001"), EXEMPT_SC001_PENDING)
     problems += real + self_check(fx)
     if note:

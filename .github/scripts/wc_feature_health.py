@@ -211,8 +211,6 @@ def _callout(row):
 
 def _callout_line(row):
     name, state = row["feature"], row["state"]
-    if state == "not configured":
-        return "- `{0}` — not configured".format(name)
     if state == "failing":
         return "- `{0}` — failing: last success {1}, last failure {2}".format(
             name, day(row["last_success"]), day(row["last_failure"]))
@@ -241,8 +239,7 @@ def render_section(rows, now, registry_size=None):
            "**Feature health** — built {0} · {1} features · {2} unreadable".format(
                now.strftime("%Y-%m-%d %H:%MZ"), registry_size or len(features), unreadable),
            "", "**Needs a look:**"]
-    called = sorted((r for r in features if r["state"] in CALLED_OUT
-                     or (r["state"] == "not configured" and "signal: " in (r["reason"] or ""))),
+    called = sorted((r for r in features if r["state"] in CALLED_OUT),
                     key=lambda r: (_rank(r["state"]), r["feature"]))
     out.extend(_callout(r) for r in called) if called else out.append("Nothing needs a look.")
     out += ["", "<details><summary>All features</summary>", "",

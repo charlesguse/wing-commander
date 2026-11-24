@@ -21,6 +21,7 @@ Layer: consuming instrument. This is not part of the `workflow_call` published c
 - `<feature>` — paused: <WING_COMMANDER_..._PAUSED>
 - `<feature>` — unreadable: <reason>
 (or "Nothing needs a look.")
+(a failing, not running or paused call-out whose signal read failed ends with " (signal unreadable: <reason>)")
 
 <details><summary>All features</summary>
 
@@ -33,8 +34,8 @@ Layer: consuming instrument. This is not part of the `workflow_call` published c
 ```
 
 Rules:
-- Dates are `YYYY-MM-DD`; a missing date is `never in window`; a feature with no declared signal says `not measured`.
-- Call-outs list only *failing*, *quiet*, *not running*, *paused*, *unreadable*; sorted by state order then name.
+- Dates are `YYYY-MM-DD`; a missing date is `never in window`; a feature with no declared signal says `not measured`, and so does a feature whose signal read failed.
+- Call-outs list only *failing*, *quiet*, *not running*, *paused*, *unreadable*; sorted by state order then name. A *failing*, *not running* or *paused* call-out whose signal read failed ends with ` (signal unreadable: <reason>)`; *not configured* is never called out, even then.
 - Stage rows sit directly beneath the lifecycle row.
 - Every registry feature appears exactly once in the table (SC-002).
 - Deterministic: the same input JSON and `now` give byte-identical output (SC-003).

@@ -31,7 +31,7 @@ Ordered, earliest wins: `unreadable` < `paused` < `not configured` < `failing` <
 
 State rules (per workflow, then per feature):
 
-1. any unreadable read for the workflow, its switch or its required variable, or a scheduled workflow with no cron found → `unreadable` with reason (checked before `paused`); an unreadable signal read makes the feature `unreadable` only when its state would otherwise be `quiet`, `idle` or `healthy`, else the state stays and the reason gains `signal: ...` (call-outs append `(signal unreadable: ...)`; a `not configured` feature with such a reason is called out too);
+1. any unreadable read for the workflow, its switch or its required variable, or a scheduled workflow with no cron found → `unreadable` with reason (checked before `paused`); an unreadable signal read makes the feature `unreadable` only when its state would otherwise be `quiet`, `idle` or `healthy`, else the state stays and the reason gains `signal: ...` (call-outs append `(signal unreadable: ...)`);
 2. kill switch on → `paused`;
 3. `requires_var` unset and every run skipped → `not configured`;
 4. last 3 qualifying runs (or fewer) all failed, latest included → `failing`;

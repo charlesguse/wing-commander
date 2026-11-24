@@ -80,7 +80,7 @@ When the report cannot read what it needs for a feature — the run history is p
 **Acceptance Scenarios**:
 
 1. **Given** an event-driven feature whose wrapper has more than 1,000 runs, **When** its runs are read, **Then** the read is bounded by date so the window is read completely, or, if it cannot be, the feature is *unreadable*, never classified from a partial read.
-2. **Given** one feature's output signal query fails, **When** the report is built, **Then** that feature is *unreadable* unless a stronger state (*paused*, *not configured*, *failing* or *not running*) applies, in which case it keeps that state and the failure is recorded in the row's reason and shown in its call-out; the others are classified normally, and the report gives the count of unreadable features.
+2. **Given** one feature's output signal query fails, **When** the report is built, **Then** that feature is *unreadable* unless a stronger state (*paused*, *not configured*, *failing* or *not running*) applies, in which case it keeps that state and the failure is recorded in the row's reason and shown in its call-out when that state is called out (*not configured* is not); the others are classified normally, and the report gives the count of unreadable features.
 
 ---
 
