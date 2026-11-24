@@ -279,6 +279,43 @@ def base_tree_problems(wf):
     return problems
 
 
+AGENT_READ_SCOPES = ("Read(./**)", "Read(/${{ runner.temp }}/shared-review-trees/**)")
+AGENT_READ_DENIES = ("Read(//proc/**)", "Read(//sys/**)", "Read(//dev/**)")
+
+
+def _tools(value):
+    return [t.strip() for t in str(value or "").split(",") if t.strip()]
+
+
+def agent_read_problems(wf):
+    """C2: neither agent can Read outside the workspace and the trees.
+    Checked with Claude Code 2.1.319 headless: a bare Read allow rule lets
+    a Read and a Grep reach any path; with these scoped rules, the deny
+    rules and blockReadsOutsideWorkingDirectories, the tree file is read
+    and a file elsewhere or under a denied path is refused."""
+    import json
+    problems = []
+    for name in ("find", "check"):
+        steps = [x or {} for x in ((wf.get("jobs") or {}).get(name) or {}).get("steps") or []]
+        args = next((x.get("with") for x in steps if "default-allowed-tools" in (x.get("with") or {})), {})
+        allowed, denied = _tools(args.get("default-allowed-tools")), _tools(args.get("default-disallowed-tools"))
+        reads = [t for t in allowed if t == "Read" or t.startswith("Read(")]
+        if "Read" in reads or sorted(reads) != sorted(AGENT_READ_SCOPES):
+            problems.append("{0}'s Read is not scoped to the workspace and the trees: {1}".format(name, reads))
+        missing = [d for d in AGENT_READ_DENIES if d not in denied]
+        if missing:
+            problems.append("{0} does not deny {1}".format(name, ", ".join(missing)))
+        agent = next((x for x in steps if x.get("id") == "agent"), {})
+        try:
+            block = json.loads((agent.get("with") or {}).get("settings") or "{}")
+            block = (block.get("permissions") or {}).get("blockReadsOutsideWorkingDirectories")
+        except (ValueError, AttributeError):
+            block = None
+        if block is not True:
+            problems.append("{0}'s agent does not set blockReadsOutsideWorkingDirectories".format(name))
+    return problems
+
+
 def static_problems(wf):
     problems = []
     jobs = wf.get("jobs") or {}
@@ -302,6 +339,7 @@ def static_problems(wf):
             problems.append("code-run's result is a shell redirect open while PR code runs")
     problems += tree_link_problems(wf)
     problems += base_tree_problems(wf)
+    problems += agent_read_problems(wf)
     for name in ("find", "check"):
         job = jobs.get(name)
         if not isinstance(job, dict):
@@ -470,6 +508,15 @@ def main():
                 st["with"].update({"path": "review-trees/\nreviewer/\n"})
                 for st in w["jobs"]["prepare"]["steps"]
                 if (st.get("with") or {}).get("name") == "shared-review-trees"],
+            "find's Read is bare again": lambda w: [
+                x["with"].update({"default-allowed-tools": "Read,Grep,Glob"})
+                for x in w["jobs"]["find"]["steps"] if "default-allowed-tools" in (x.get("with") or {})],
+            "check no longer denies /proc": lambda w: [
+                x["with"].update({"default-disallowed-tools": x["with"]["default-disallowed-tools"].replace(
+                    ",Read(//proc/**)", "")})
+                for x in w["jobs"]["check"]["steps"] if "default-disallowed-tools" in (x.get("with") or {})],
+            "check's agent drops blockReadsOutsideWorkingDirectories": lambda w: [
+                x["with"].pop("settings") for x in w["jobs"]["check"]["steps"] if x.get("id") == "agent"],
             "code-run ignores modified checks": lambda w: code_run_step(w).update(
                 {"run": code_run_step(w)["run"].replace(" --modified-files input/modified-files.txt", "")}),
             "code-run stops running the named check without the fix": lambda w: code_run_step(w).update(
