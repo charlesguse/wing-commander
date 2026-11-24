@@ -188,9 +188,12 @@ jobs:
           git diff --name-only --diff-filter=A "origin/${DEFAULT_BRANCH}...FETCH_HEAD" > ../input/added-files.txt
           git log --format='%H %s' "origin/${DEFAULT_BRANCH}..FETCH_HEAD" > ../input/commits.txt
           [ -s ../input/pr.diff ] || { echo "::error::the PR's diff against ${DEFAULT_BRANCH} is empty"; exit 1; }
-          mkdir -p ../review-trees/pr-tree ../review-trees/reviewer-tree
+          mkdir -p ../review-trees/pr-tree ../review-trees/reviewer-tree ../review-trees/base-tree
           git archive FETCH_HEAD | tar -x -C ../review-trees/pr-tree
           git archive HEAD | tar -x -C ../review-trees/reviewer-tree
+          # The tree without the fix (FR-008(c)): code-run runs the named
+          # check on the merge base with only that check's file from the PR.
+          git archive "$(git merge-base "origin/${DEFAULT_BRANCH}" FETCH_HEAD)" | tar -x -C ../review-trees/base-tree
           # No symlink leaves this job: the upload would store its target's
           # content (a link to /proc/self/environ is this job's runtime
           # token). Each becomes a file naming its target; any left fails.
@@ -275,7 +278,8 @@ jobs:
     runs-on: ${{ inputs.runner }}
     permissions: {}
     continue-on-error: true
-    timeout-minutes: 25
+    # Three commands of at most 600 s each, plus the tree copies.
+    timeout-minutes: 40
     steps:
       - name: Download the trees
         uses: actions/download-artifact@v7
@@ -299,7 +303,7 @@ jobs:
           set -uo pipefail
           mkdir -m 700 out
           python3 -I trees/reviewer-tree/.github/scripts/wc_shared_review.py code-run \
-            --pr-tree trees/pr-tree --reviewer-tree trees/reviewer-tree \
+            --pr-tree trees/pr-tree --reviewer-tree trees/reviewer-tree --base-tree trees/base-tree \
             --added-files input/added-files.txt --out out/code-run.json \
             --origin-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" \
             || echo '{"status":"missing"}' > out/code-run.json

@@ -334,7 +334,7 @@ class CodeRun(unittest.TestCase):
         seen = {}
 
         class Box(sr.UidSandbox):
-            def _fresh_tree(self, n):
+            def _fresh_tree(self, n, src=None, overlay=()):
                 return "/t", "/h"
 
             def _kill_all(self):
@@ -446,10 +446,12 @@ class FakeSandbox:
     def gate_runner(self):
         return "/box/run-local-gates.py"
 
-    def run(self, argv, timeout, n):
+    def run(self, argv, timeout, n, src=None, overlay=()):
         if self.fail == "run":
             raise sr.SandboxUnavailable("processes survived the kill")
         self.ran.append((argv, timeout, n))
+        self.trees = getattr(self, "trees", {})
+        self.trees[n] = (src, list(overlay))
         return self.results[n]
 
     def close(self):
@@ -460,7 +462,8 @@ class Finalize(unittest.TestCase):
     def test_end_to_end_clean_and_findings(self):
         answers = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
         state = {"round": 1, "prior": []}
-        code = {"status": "staged"}
+        code = {"status": "staged", "named_check": {"exit": 0, "output_tail": ""},
+                "named_check_without_fix": {"exit": 1, "output_tail": "fails"}}
         out = sr.finalize_round(state, {"answers": {}, "candidates": []}, {"checks": [], "answers": answers}, code,
                                 {"type": "issue", "ref": "7"}, "a" * 40, [], 5, "b" * 40, "open")
         self.assertEqual(out["verdict"], "clean")
@@ -626,6 +629,53 @@ class ReviewRound3Fixes(unittest.TestCase):
                                 {"status": "staged"}, {"type": "issue", "ref": "7"}, "a" * 40, [], 5,
                                 "b" * 40, "open")
         self.assertEqual(out["verdict"], "incomplete")
+
+    def test_named_check_also_runs_without_the_fix(self):
+        # A3 (FR-008(c)): the named check runs a second time on the merge
+        # base with only its own file taken from the PR.
+        import tempfile
+        with tempfile.TemporaryDirectory() as base:
+            box = FakeSandbox({1: {"exit": 0, "output_tail": ""}, 3: {"exit": 1, "output_tail": "fails"},
+                               2: {"exit": 0, "output_tail": ""}})
+            out = sr.stage_code_run("tree", "rev", ["x/test_fix.py"], timeout=60, sandbox=box, base_tree=base)
+            self.assertEqual(out["named_check_without_fix"], {"exit": 1, "output_tail": "fails"})
+            self.assertEqual(box.trees[3], (os.path.abspath(base), ["x/test_fix.py"]))
+            self.assertEqual(box.trees[1], (None, []))
+        # no base tree, or no named check: nothing is run without the fix
+        box = FakeSandbox({1: {"exit": 0, "output_tail": ""}, 2: {"exit": 0, "output_tail": ""}})
+        out = sr.stage_code_run("tree", "rev", ["x/test_fix.py"], timeout=60, sandbox=box)
+        self.assertIsNone(out["named_check_without_fix"])
+
+    def test_check_fails_without_fix_is_decided_by_code_where_it_can_be(self):
+        d = sr.check_fails_without_fix
+        ok = {"exit": 0, "output_tail": ""}
+        self.assertEqual(d(None)[0], sr.UNDETERMINABLE)
+        self.assertEqual(d({"status": "staged", "named_check": None})[0], sr.UNDETERMINABLE)
+        self.assertEqual(d({"status": "staged", "named_check": ok})[0], sr.UNDETERMINABLE)
+        self.assertEqual(d({"status": "staged", "named_check": ok, "named_check_without_fix": ok})[0],
+                         sr.NEGATIVE)
+        for code in (124, 127):
+            self.assertEqual(d({"status": "staged", "named_check": ok,
+                                "named_check_without_fix": {"exit": code}})[0], sr.UNDETERMINABLE)
+        self.assertEqual(d({"status": "staged", "named_check": ok, "named_check_without_fix": {"exit": 1}}),
+                         (None, None))
+
+    def test_verdict_reads_the_run_without_the_fix(self):
+        # SC-005: an added check that passes without the fix is never clean.
+        answers = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
+        ok = {"exit": 0, "output_tail": ""}
+
+        def verdict(code_run):
+            out = sr.finalize_round({"round": 1, "prior": []}, {"answers": {}, "candidates": []},
+                                    {"checks": [], "answers": answers}, code_run, {"type": "issue", "ref": "7"},
+                                    "a" * 40, [], 5, "b" * 40, "open")
+            return out["verdict"], out["purpose"]["answers"]["check_fails_without_fix"]
+        self.assertEqual(verdict({"status": "staged", "named_check": ok, "named_check_without_fix": ok}),
+                         ("findings", sr.NEGATIVE))
+        self.assertEqual(verdict({"status": "staged", "named_check": ok}), ("undetermined", sr.UNDETERMINABLE))
+        self.assertEqual(verdict({"status": "staged", "named_check": ok,
+                                  "named_check_without_fix": {"exit": 1, "output_tail": "AssertionError"}}),
+                         ("clean", sr.POSITIVE))
 
     def test_defuse_renames_everything_an_agent_could_load(self):
         # P1: at every depth, whatever the case, and without clobbering a

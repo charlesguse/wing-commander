@@ -20,3 +20,4 @@ Written only to the run summary: `refused: <reason>` or `paused`. Never a record
 2. No job that holds a secret runs PR code; `code-run` references no `secrets`/`vars` tokens.
 3. Neither agent job has a write-capable token or web tools.
 4. Verdict values are exactly the four above in the FR-014 order.
+5. `purpose.answers.check_fails_without_fix` is decided by code from the staged run of the named check without the fix wherever that run settles it (data-model.md, Derived); a note in `notes` says when it overrides the checking job's answer.

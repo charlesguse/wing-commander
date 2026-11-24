@@ -558,7 +558,15 @@ def finalize_round(state, find_out, check_out, code_run, purpose, head_sha, dism
     agent_ok = bool(agent_ok and isinstance(find_out, dict) and isinstance(check_out, dict))
     findings, more = process_round(prior, (find_out or {}).get("candidates") or [],
                                    (check_out or {}).get("checks") or [], round_no, code_status)
-    answers = (check_out or {}).get("answers") or {}
+    answers = dict((check_out or {}).get("answers") or {})
+    if check_out is not None:
+        # FR-008(c) is answered from the staged results where code can
+        # decide it, whatever the agent said.
+        decided, why = check_fails_without_fix(code_run)
+        if decided is not None:
+            if answers.get("check_fails_without_fix") != decided:
+                more.append("check_fails_without_fix is {0} by code: {1}".format(decided, why))
+            answers["check_fails_without_fix"] = decided
     opened = open_set(findings)
     for f in opened:
         f["blocking"] = is_blocking(f)
@@ -582,7 +590,25 @@ TAIL_CHARS = 4000
 def discover_named_check(added_files):
     """The change's named check, found by code from the diff's ADDED files
     (never chosen by an agent, research D8): the first added test file, run
-    through a fixed runner. Returns an argv list or None.
+    through a fixed runner. Returns an argv list or None."""
+    path = named_check_file(added_files)
+    return named_check_argv(path) if path else None
+
+
+def named_check_argv(path):
+    base = path.rsplit("/", 1)[-1]
+    if re.fullmatch(r"verify-[\w.-]+\.py", base):
+        return ["python3", "-I", path]
+    if re.fullmatch(r"test_[\w.-]+\.py", base):
+        # discover puts the file's directory on sys.path, which -I
+        # otherwise leaves out.
+        return ["python3", "-I", "-m", "unittest", "discover", "-v",
+                "-s", path.rsplit("/", 1)[0] if "/" in path else ".", "-p", base]
+    return ["bash", path]
+
+
+def named_check_file(added_files):
+    """The path of the change's named check among the ADDED files, or None.
 
     The change's own check is a test the change adds to exercise its fix,
     not a file it adds as test data: a path under a `fixtures` directory or
@@ -595,15 +621,8 @@ def discover_named_check(added_files):
         if "fixtures" in parts[:-1] or parts[0] == "specs":
             continue
         base = path.rsplit("/", 1)[-1]
-        if re.fullmatch(r"verify-[\w.-]+\.py", base):
-            return ["python3", "-I", path]
-        if re.fullmatch(r"test_[\w.-]+\.py", base):
-            # discover puts the file's directory on sys.path, which -I
-            # otherwise leaves out.
-            return ["python3", "-I", "-m", "unittest", "discover", "-v",
-                    "-s", path.rsplit("/", 1)[0] if "/" in path else ".", "-p", base]
-        if base == "run-tests.sh":
-            return ["bash", path]
+        if re.fullmatch(r"(verify-[\w.-]+|test_[\w.-]+)\.py", base) or base == "run-tests.sh":
+            return path
     return None
 
 
@@ -724,18 +743,25 @@ class UidSandbox:
             time.sleep(0.1)
         raise SandboxUnavailable("processes of {0} survived the kill".format(self.user))
 
-    def _fresh_tree(self, n):
+    def _fresh_tree(self, n, src=None, overlay=()):
+        """A fresh copy of `src` (the PR tree by default), owned by the
+        sandbox user, with each path in `overlay` copied over it from the
+        PR tree, and made a git repository."""
         import subprocess
         tree = os.path.join(self.work, "tree-{0}".format(n))
         home = os.path.join(self.work, "home-{0}".format(n))
         for path in (tree, home):
             if self._sudo("install", "-d", "-o", self.user, "-g", self.user, "-m", "0700", path).returncode:
                 raise SandboxUnavailable("could not create " + path)
-        pack = subprocess.Popen(["tar", "-C", self.pr_tree, "-cf", "-", "."], stdout=subprocess.PIPE)
-        unpack = self._sudo("-u", self.user, "--", "tar", "-C", tree, "-xf", "-", stdin=pack.stdout)
-        pack.stdout.close()
-        if pack.wait() != 0 or unpack.returncode != 0:
-            raise SandboxUnavailable("could not copy the PR tree for " + self.user)
+        copies = [(src or self.pr_tree, ["."])]
+        if overlay:
+            copies.append((self.pr_tree, ["--"] + list(overlay)))
+        for root, members in copies:
+            pack = subprocess.Popen(["tar", "-C", root, "-cf", "-"] + members, stdout=subprocess.PIPE)
+            unpack = self._sudo("-u", self.user, "--", "tar", "-C", tree, "-xf", "-", stdin=pack.stdout)
+            pack.stdout.close()
+            if pack.wait() != 0 or unpack.returncode != 0:
+                raise SandboxUnavailable("could not copy a tree for " + self.user)
         self._git_init(tree, home)
         return tree, home
 
@@ -760,9 +786,9 @@ class UidSandbox:
             if _sh(git + args).returncode != 0:
                 raise SandboxUnavailable("could not make the PR tree a git repository")
 
-    def run(self, argv, timeout, n):
+    def run(self, argv, timeout, n, src=None, overlay=()):
         import subprocess
-        tree, home = self._fresh_tree(n)
+        tree, home = self._fresh_tree(n, src, overlay)
         log = os.path.join(self.private, "out-{0}.log".format(n))
         env = ["PATH=" + SANDBOX_ENV_PATH, "HOME=" + home, "TMPDIR=" + home,
                "LANG=C.UTF-8", "PYTHONDONTWRITEBYTECODE=1"]
@@ -813,25 +839,57 @@ class UidSandbox:
 
 
 def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT, sandbox=None,
-                   origin_url=None):
-    """The two commands the code-run job may run, nothing else: the named
-    check, and the default branch's gate runner against the PR tree, both
-    inside `sandbox` (UidSandbox by default). Their exit codes are staged as
-    data. When the sandbox cannot be set up, or a process survives it,
-    nothing is staged: `missing`, never an unisolated run (FR-012)."""
+                   base_tree=None, origin_url=None):
+    """The two kinds of PR code the code-run job may run, nothing else, all
+    inside `sandbox` (UidSandbox by default): the change's named check, on
+    the PR tree and again without the fix (FR-008(c): on `base_tree`, the
+    merge-base tree, with only the named check's own file taken from the
+    PR), and the default branch's gate runner against the PR tree. Their
+    exit codes are staged as data. When the sandbox cannot be set up, or a
+    process survives it, nothing is staged: `missing`, never an unisolated
+    run (FR-012)."""
     pr_tree, reviewer_tree = os.path.abspath(pr_tree), os.path.abspath(reviewer_tree)
     box = sandbox if sandbox is not None else UidSandbox(origin_url=origin_url)
-    argv = discover_named_check(added_files)
+    path = named_check_file(added_files)
+    argv = named_check_argv(path) if path else None
     try:
         box.open(pr_tree, reviewer_tree)
         named = box.run(argv, timeout, 1) if argv else None
+        without = None
+        if argv and base_tree and os.path.isdir(base_tree):
+            without = box.run(argv, timeout, 3, src=os.path.abspath(base_tree), overlay=[path])
         gates = box.run(["python3", "-I", box.gate_runner()], timeout, 2)
     except Exception as exc:  # noqa: BLE001 -- any failure is `missing`, never a crash (P2)
         return {"status": "missing", "reason": "code-run sandbox: {0}: {1}".format(
             type(exc).__name__, exc)[:500]}
     finally:
         box.close()
-    return {"status": "staged", "named_check": named, "gate_suite": gates}
+    return {"status": "staged", "named_check": named, "named_check_without_fix": without,
+            "gate_suite": gates}
+
+
+def check_fails_without_fix(code_run):
+    """FR-008(c) from the staged results, where code can decide it:
+    (answer, why), or (None, None) to leave the answer to the check agent.
+
+    Missing results, no named check, no run without the fix, or a run that
+    timed out (124) or could not start (127) is not determinable; a named
+    check that passes without the fix (exit 0) is negative. Any other
+    failure without the fix is for the agent to judge from the output: it
+    is positive only if the check fails for the reason the fix addresses,
+    not because a helper the PR also adds is absent."""
+    if (code_run or {}).get("status") != "staged":
+        return UNDETERMINABLE, "code-run results missing"
+    if not code_run.get("named_check"):
+        return UNDETERMINABLE, "the change adds no named check"
+    without = code_run.get("named_check_without_fix")
+    if not isinstance(without, dict) or not isinstance(without.get("exit"), int):
+        return UNDETERMINABLE, "the named check was not run without the fix"
+    if without["exit"] == 0:
+        return NEGATIVE, "the named check passes without the fix"
+    if without["exit"] in (124, 127):
+        return UNDETERMINABLE, "the named check without the fix timed out or could not start"
+    return None, None
 
 
 LINK_NOTE = "symlink to: {0}\n"
@@ -998,6 +1056,7 @@ def main(argv=None):
     c.add_argument("--pr-tree", required=True); c.add_argument("--reviewer-tree", required=True)
     c.add_argument("--added-files", required=True)
     c.add_argument("--out", required=True)
+    c.add_argument("--base-tree", default=None)
     c.add_argument("--origin-url", default=None)
     r = sub.add_parser("record")
     r.add_argument("--input", required=True)
@@ -1054,6 +1113,7 @@ def main(argv=None):
         with open(args.added_files, encoding="utf-8") as fh:
             added = [line.strip() for line in fh if line.strip()]
         write_private(args.out, json.dumps(stage_code_run(args.pr_tree, args.reviewer_tree, added,
+                                                         base_tree=args.base_tree,
                                                          origin_url=args.origin_url)))
         return 0
     if args.cmd == "defuse-agent-config":

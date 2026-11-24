@@ -156,6 +156,62 @@ def link_proof_problems():
     return problems
 
 
+_FIX_TEST = """import os, sys, unittest
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import mod
+
+
+class T(unittest.TestCase):
+    def test(self):
+        self.assertEqual(mod.f(), 2)
+"""
+
+_WEAK_TEST = """import unittest
+
+
+class T(unittest.TestCase):
+    def test(self):
+        self.assertTrue(True)
+"""
+
+
+def without_fix_proof_problems():
+    """A3 (FR-008(c)) through the real sandbox: the named check also runs
+    on the merge-base tree with only its own file from the PR. A check that
+    passes only with the fix fails there; one that passes on both trees is
+    staged as passing without the fix, which code records as negative."""
+    problems = []
+    work = tempfile.mkdtemp(prefix="wc-a3-")
+    try:
+        base, pr, rev = (os.path.join(work, x) for x in ("base", "pr", "rev"))
+        for root, value in ((base, 1), (pr, 2)):
+            os.makedirs(os.path.join(root, "tests"))
+            with open(os.path.join(root, "mod.py"), "w", encoding="utf-8") as fh:
+                fh.write("def f():\n    return {0}\n".format(value))
+        for name, body in (("test_fix.py", _FIX_TEST), ("test_weak.py", _WEAK_TEST)):
+            with open(os.path.join(pr, "tests", name), "w", encoding="utf-8") as fh:
+                fh.write(body)
+        _reviewer_tree(rev)
+        for added, want_with, want_without, answer in (
+                ("tests/test_fix.py", 0, "non-zero", None),
+                ("tests/test_weak.py", 0, 0, wc_shared_review.NEGATIVE)):
+            out = wc_shared_review.stage_code_run(pr, rev, [added], timeout=120, base_tree=base)
+            named = (out.get("named_check") or {}).get("exit")
+            without = (out.get("named_check_without_fix") or {}).get("exit")
+            if out.get("status") != "staged" or named != want_with:
+                problems.append("{0} with the fix: {1!r}".format(added, out)[:400])
+                continue
+            if (want_without == 0 and without != 0) or (want_without != 0 and without in (0, None)):
+                problems.append("{0} without the fix exited {1!r}, wanted {2}".format(added, without, want_without))
+            if wc_shared_review.check_fails_without_fix(out)[0] != answer:
+                problems.append("{0}: check_fails_without_fix by code is {1!r}, wanted {2!r}".format(
+                    added, wc_shared_review.check_fails_without_fix(out)[0], answer))
+    finally:
+        subprocess.run(["sudo", "-n", "rm", "-rf", "--one-file-system", work], capture_output=True)
+        shutil.rmtree(work, ignore_errors=True)
+    return problems
+
+
 def git_root_proof_problems():
     """A4 through the real sandbox: a named check sees its tree as a git
     repository whose root is the tree, with the repository's own origin,
@@ -180,6 +236,20 @@ def git_root_proof_problems():
         shutil.rmtree(work, ignore_errors=True)
 
 
+def base_tree_problems(wf):
+    """A3 (FR-008(c)): prepare archives the merge-base tree into the
+    neutralised root, and code-run hands it to the named check's run
+    without the fix."""
+    problems = []
+    steps = ((wf.get("jobs") or {}).get("prepare") or {}).get("steps") or []
+    builder = str(next((x.get("run") for x in steps if "git archive" in str((x or {}).get("run") or "")), ""))
+    if not ("git merge-base" in builder and "tar -x -C ../{0}/base-tree".format(TREES_ROOT) in builder):
+        problems.append("prepare does not archive the merge-base tree into ../{0}/base-tree".format(TREES_ROOT))
+    if "--base-tree trees/base-tree" not in str((code_run_step(wf) or {}).get("run") or ""):
+        problems.append("code-run does not run the named check without the fix (--base-tree)")
+    return problems
+
+
 def static_problems(wf):
     problems = []
     jobs = wf.get("jobs") or {}
@@ -202,6 +272,7 @@ def static_problems(wf):
         if "> out/code-run.json" in run.split("||")[0]:
             problems.append("code-run's result is a shell redirect open while PR code runs")
     problems += tree_link_problems(wf)
+    problems += base_tree_problems(wf)
     for name in ("find", "check"):
         job = jobs.get(name)
         if not isinstance(job, dict):
@@ -272,6 +343,7 @@ def dynamic_problems(wf):
         os.chmod(work, 0o755)
         trees = os.path.join(work, "trees")
         shutil.copytree(HOSTILE, os.path.join(trees, "pr-tree"))
+        os.makedirs(os.path.join(trees, "base-tree"))
         _reviewer_tree(os.path.join(trees, "reviewer-tree"))
         os.makedirs(os.path.join(work, "input"))
         with open(os.path.join(work, "input", "added-files.txt"), "w", encoding="utf-8") as fh:
@@ -368,6 +440,8 @@ def main():
                 st["with"].update({"path": "review-trees/\nreviewer/\n"})
                 for st in w["jobs"]["prepare"]["steps"]
                 if (st.get("with") or {}).get("name") == "shared-review-trees"],
+            "code-run stops running the named check without the fix": lambda w: code_run_step(w).update(
+                {"run": code_run_step(w)["run"].replace(" --base-tree trees/base-tree", "")}),
             "code-run's result goes back to a shell redirect": lambda w: code_run_step(w).update(
                 {"run": "mkdir -p out\npython3 -I x.py code-run --pr-tree a --reviewer-tree b "
                         "--added-files c > out/code-run.json || true\n"}),
@@ -392,6 +466,7 @@ def main():
     if reason is None:
         problems += dynamic_problems(wf)
         problems += git_root_proof_problems()
+        problems += without_fix_proof_problems()
     elif proof_required(os.environ):
         problems.append("the code-run sandbox cannot be set up on this runner ({0}), "
                         "so SC-008 (a)/(b) is unproven".format(reason))

@@ -19,6 +19,13 @@ or `confirmed` when it still does. Set `needs_code_run` true when only a
 code-run result could decide it; when the code-run results are missing, say so
 instead of resolving it.
 
+For `check_fails_without_fix`, read `named_check_without_fix` in
+`input/code-run.json`: the named check run on the merge-base tree with only
+its own file from the PR. Uphold `positive` only when it fails there for the
+reason the fix addresses, not because a file the PR also adds is absent.
+Code records `negative` when it passes there and `not_determinable` when it is
+missing, timed out or could not start, whatever you answer.
+
 Finally restate the three purpose answers (`problem_real`, `change_fixes`,
 `check_fails_without_fix`) after your own check: `positive`, `negative` or
 `not_determinable`. A claim you cannot reproduce is dismissed, never upheld on

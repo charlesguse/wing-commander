@@ -22,6 +22,12 @@ Answer, in this order:
 1. Is the problem the change addresses real? (`problem_real`)
 2. Does the change fix it? (`change_fixes`)
 3. Does the added check fail without the fix? (`check_fails_without_fix`)
+   Answer it from `named_check_without_fix` in `input/code-run.json`: the
+   named check run on the merge-base tree with only its own file taken from
+   the PR. It is `positive` only when that run fails for the reason the fix
+   addresses, not because a helper or fixture the PR also adds is absent.
+   Code records `negative` when it passes there, and `not_determinable` when
+   it is missing, timed out or could not start.
 4. What does the change break?
 
 Each answer is `positive`, `negative` or `not_determinable`, with a short
