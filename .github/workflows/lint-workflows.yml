@@ -4824,7 +4824,7 @@ jobs:
       - name: Gate 172 — a newer push to a pull request cancels lint's run for the older head, and nothing else
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lint-supersedes-pr-runs.py
-      - name: Gate 172 self-test — no block, the bare string form, no cancel, a per-sha, per-run, constant or per-ref group, and an unmodelled context each fail
+      - name: Gate 172 self-test — no block, the bare string form, no cancel, a per-sha, per-run, run-number, head-branch, constant, per-ref or unprefixed group, and an unmodelled context each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lint-supersedes-pr-runs.py --self-test
       # Gate 165 — specs/116-review-convergence-analyze. It keeps the review

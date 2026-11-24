@@ -23,12 +23,16 @@ GitHub would, and fails when:
   * two pull_request runs of the same PR (opened, then synchronize on a
     new head) land in different groups, so the newer push cancels nothing;
   * two different PRs share a group, so a push to one cancels the other;
-  * cancel-in-progress is not the boolean true for a pull_request run
-    (a quoted 'false' is a non-empty string, truthy, and still wrong);
+  * cancel-in-progress is not the YAML boolean true for a pull_request
+    run. A quoted 'true' or 'false' is a string, and this gate does not
+    guess how GitHub coerces one: write the boolean;
   * two runs that are not for a pull request (a push to main, the daily
     schedule, a dispatch) share a group with each other or with a PR run.
     Such a run would be cancelled, or would wait behind another, and those
     runs are what prove main is green;
+  * a group does not start with `lint-workflows-`, or another workflow's
+    group does. Concurrency groups are shared by every workflow in the
+    repository, so the prefix is what keeps lint's groups its own;
   * a job carries its own concurrency: block, which this gate does not
     model;
   * the expression uses a context or function the shared evaluator
@@ -53,6 +57,8 @@ import wc_gha_expr  # noqa: E402
 from wc_gha_expr import to_str  # noqa: E402
 
 WORKFLOW = os.path.join(".github", "workflows", "lint-workflows.yml")
+WORKFLOWS_DIR = os.path.join(".github", "workflows")
+GROUP_PREFIX = "lint-workflows-"
 
 
 class ExprError(Exception):
@@ -68,11 +74,6 @@ class ExprError(Exception):
 # any other name the run does not carry is unmodelled and fails the gate.
 # ---------------------------------------------------------------------------
 
-# The github.* keys a run of this workflow is simulated with. A group that
-# reads any other one fails as unmodelled instead of evaluating to null.
-GITHUB_KEYS = ("event_name", "event", "ref", "sha", "head_ref", "base_ref",
-               "run_id", "run_number", "run_attempt", "workflow",
-               "repository")
 OPEN_PREFIXES = ("github.event.",)
 
 
@@ -128,44 +129,67 @@ def evaluate_value(value, ctx):
 # The simulated runs
 # ---------------------------------------------------------------------------
 
-def _github(event_name, run_id, ref, sha, event, head_ref="", base_ref=""):
+# A run carries exactly the github.* keys _github() sets; a group that reads
+# any other one fails as unmodelled instead of evaluating to null.
+def _github(event_name, run_id, run_number, ref, sha, event, head_ref="",
+            base_ref=""):
     return {"github": {
         "event_name": event_name, "event": event, "ref": ref, "sha": sha,
         "head_ref": head_ref, "base_ref": base_ref, "run_id": run_id,
-        "run_number": run_id % 10000, "run_attempt": 1,
+        "run_number": run_number, "run_attempt": 1,
         "workflow": "lint · workflows", "repository": "owner/repo"}}
 
 
-def pr_run(number, head_sha, run_id, action="synchronize"):
+# Both PRs come from forks with the same branch name, as fork PRs often
+# do, so a group keyed by the head branch puts them together.
+def pr_run(number, head_sha, run_id, run_number, fork,
+           action="synchronize"):
     event = {"action": action, "number": number, "pull_request": {
         "number": number,
-        "head": {"sha": head_sha, "ref": "branch-{0}".format(number)},
-        "base": {"sha": "base0", "ref": "main"}}}
-    return _github("pull_request", run_id,
+        "head": {"sha": head_sha, "ref": "patch-1",
+                 "repo": {"full_name": fork + "/repo"}},
+        "base": {"sha": "base0", "ref": "main",
+                 "repo": {"full_name": "owner/repo"}}}}
+    return _github("pull_request", run_id, run_number,
                    "refs/pull/{0}/merge".format(number),
                    "merge-" + head_sha, event,
-                   head_ref="branch-{0}".format(number), base_ref="main")
+                   head_ref="patch-1", base_ref="main")
 
 
-def other_run(event_name, run_id, sha):
+def other_run(event_name, run_id, run_number, sha):
     event = {"after": sha} if event_name == "push" else {}
-    return _github(event_name, run_id, "refs/heads/main", sha, event)
+    return _github(event_name, run_id, run_number, "refs/heads/main", sha,
+                   event)
 
 
-PR_SAME = [("PR #5 opened", pr_run(5, "aaa1", 45300000001, "opened")),
-           ("PR #5 pushed", pr_run(5, "bbb2", 45300000002)),
-           ("PR #5 pushed again", pr_run(5, "ccc3", 45300000003))]
-PR_OTHER = ("PR #6 pushed", pr_run(6, "ddd4", 45300000004))
-NON_PR = [("push to main", other_run("push", 45300000011, "e1")),
-          ("another push to main", other_run("push", 45300000012, "e2")),
-          ("daily schedule", other_run("schedule", 45300000013, "e2")),
-          ("next daily schedule", other_run("schedule", 45300000014, "e2")),
-          ("dispatch", other_run("workflow_dispatch", 45300000015, "e2"))]
+# Run numbers count from 1 for each workflow, in the same range as PR
+# numbers, so the non-PR runs are numbered 5 and 6 like the two PRs: a
+# group that falls back to github.run_number collides on GitHub.
+PR_SAME = [("PR #5 opened", pr_run(5, "aaa1", 45300000001, 1, "fork-a",
+                                   "opened")),
+           ("PR #5 pushed", pr_run(5, "bbb2", 45300000002, 2, "fork-a")),
+           ("PR #5 pushed again", pr_run(5, "ccc3", 45300000003, 3,
+                                         "fork-a"))]
+PR_OTHER = ("PR #6 pushed", pr_run(6, "ddd4", 45300000004, 4, "fork-b"))
+NON_PR = [("push to main", other_run("push", 45300000011, 5, "e1")),
+          ("another push to main", other_run("push", 45300000012, 6, "e2")),
+          ("daily schedule", other_run("schedule", 45300000013, 7, "e2")),
+          ("next daily schedule", other_run("schedule", 45300000014, 8,
+                                            "e2")),
+          ("dispatch", other_run("workflow_dispatch", 45300000015, 9, "e2"))]
 
 
-def check(doc):
-    """Failures (a list of strings) for a parsed lint-workflows.yml."""
+def check(doc, other_groups=()):
+    """Failures (a list of strings) for a parsed lint-workflows.yml.
+    other_groups is (file, group text) for every other workflow's
+    concurrency group, workflow- or job-level."""
     failures = []
+    for path, group in other_groups:
+        if str(group).startswith(GROUP_PREFIX.rstrip("-")):
+            failures.append(
+                "{0} has concurrency group {1!r}; the {2!r} prefix is "
+                "lint-workflows.yml's own, so that workflow could cancel or "
+                "queue a lint run".format(path, group, GROUP_PREFIX))
     for name, job in sorted((doc.get("jobs") or {}).items()):
         if isinstance(job, dict) and "concurrency" in job:
             failures.append(
@@ -187,25 +211,31 @@ def check(doc):
         return failures
 
     unreadable = object()
+    unread = []
 
     def ev(label, run, key):
         try:
             return evaluate_value(conc.get(key, False), run)
         except ExprError as e:
             failures.append("{0} for {1}: {2}".format(key, label, e))
+            unread.append(label)
             return unreadable
 
-    pr_groups = []
+    pr_groups, bad_cancel = [], []
     for label, run in PR_SAME + [PR_OTHER]:
         group = ev(label, run, "group")
         cancel = ev(label, run, "cancel-in-progress")
         pr_groups.append((label, to_str(group)))
         if cancel is not unreadable and cancel is not True:
-            failures.append(
-                "cancel-in-progress is {0!r}, not the boolean true, for {1}, "
-                "so a newer push queues behind the older run instead of "
-                "cancelling it".format(cancel, label))
-    if failures:
+            bad_cancel.append((label, cancel))
+    if bad_cancel:
+        failures.append(
+            "cancel-in-progress is not the YAML boolean true for {0}, so a "
+            "newer push is not sure to cancel the older run".format(
+                ", ".join("{0} ({1!r})".format(l, c) for l, c in bad_cancel)))
+    # Only an unreadable group stops here; any other failure above still
+    # lets the group rules below report, so one CI round shows them all.
+    if unread:
         return failures
     same = {g for _, g in pr_groups[:len(PR_SAME)]}
     if len(same) != 1:
@@ -233,14 +263,46 @@ def check(doc):
                 .format(label, group, seen[group]))
         else:
             seen[group] = label
+    unprefixed = sorted(g for g in set(g for _, g in pr_groups) | set(seen)
+                        if not g.startswith(GROUP_PREFIX))
+    if unprefixed:
+        failures.append(
+            "group {0} does not start with {1!r}; groups are shared by "
+            "every workflow in the repository, so an unprefixed one can "
+            "collide with another workflow's".format(
+                ", ".join(repr(g) for g in unprefixed[:3])
+                + (" and {0} more".format(len(unprefixed) - 3)
+                   if len(unprefixed) > 3 else ""), GROUP_PREFIX))
     return failures
+
+
+def other_workflow_groups(root):
+    """(file, group) for every concurrency group in the other workflows."""
+    out = []
+    wdir = os.path.join(root, WORKFLOWS_DIR)
+    for fn in sorted(os.listdir(wdir)):
+        path = os.path.join(WORKFLOWS_DIR, fn)
+        if not fn.endswith((".yml", ".yaml")) or path == WORKFLOW:
+            continue
+        with open(os.path.join(root, path), encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+        if not isinstance(doc, dict):
+            continue
+        blocks = [doc.get("concurrency")] + [
+            j.get("concurrency") for j in (doc.get("jobs") or {}).values()
+            if isinstance(j, dict)]
+        for c in blocks:
+            group = c.get("group") if isinstance(c, dict) else c
+            if group is not None:
+                out.append((path, group))
+    return out
 
 
 def run(root="."):
     path = os.path.join(root, WORKFLOW)
     with open(path, encoding="utf-8") as fh:
         doc = yaml.safe_load(fh)
-    return check(doc)
+    return check(doc, other_workflow_groups(root))
 
 
 # ---------------------------------------------------------------------------
@@ -250,14 +312,18 @@ def run(root="."):
 def self_test():
     results = []
 
-    def case(label, conc, expect, jobs=None):
+    def case(label, conc, expect, jobs=None, other_groups=(),
+             count=None):
         doc = {"jobs": jobs or {"lint": {"runs-on": "ubuntu-latest"}}}
         if conc is not None:
             doc["concurrency"] = conc
-        failures = check(doc)
+        failures = check(doc, other_groups)
         text = "\n".join(failures)
+        expects = [expect] if isinstance(expect, str) else expect
         ok = (not failures) if expect is None else (
-            bool(failures) and expect in text)
+            bool(failures) and all(e in text for e in expects))
+        if ok and count is not None:
+            ok = text.count(count[0]) == count[1]
         results.append(ok)
         print("[{0}] {1}{2}".format("ok" if ok else "FAIL", label,
                                     "" if ok else " -- got: " + repr(text)))
@@ -275,7 +341,7 @@ def self_test():
     # The real file's block is checked by the plain run, not here: these
     # cases exercise the checker, so they carry their own expressions and
     # never a copy of the shipped one.
-    event_form = ("lint-${{ github.event_name == 'pull_request' && "
+    event_form = ("lint-workflows-${{ github.event_name == 'pull_request' && "
                   "format('pr-{0}', github.event.pull_request.number) || "
                   "format('run-{0}', github.run_id) }}")
     pr5, push = PR_SAME[1][1], NON_PR[0][1]
@@ -304,7 +370,7 @@ def self_test():
     case("the event_name && format() || format() form passes",
          {"group": event_form, "cancel-in-progress": True}, None)
     case("an equivalent form passes: the gate reads behaviour, not text",
-         {"group": "lint-${{ github.event.pull_request.number || "
+         {"group": "lint-workflows-${{ github.event.pull_request.number || "
                    "github.run_id }}",
           "cancel-in-progress": "${{ github.event_name == 'pull_request' }}"},
          None)
@@ -314,42 +380,76 @@ def self_test():
          "lint-${{ github.event.pull_request.number }}", "bare string form")
     case("cancel-in-progress false fails",
          {"group": event_form, "cancel-in-progress": False},
-         "not the boolean true")
+         "not the YAML boolean true")
     case("a quoted 'false' fails: a non-empty string is not the boolean "
          "true",
          {"group": event_form, "cancel-in-progress": "false"},
-         "cancel-in-progress is 'false', not the boolean true")
+         "PR #5 opened ('false')")
     case("a group keyed by the head sha fails: a new push cancels nothing",
-         {"group": "lint-${{ github.event.pull_request.head.sha || "
+         {"group": "lint-workflows-${{ github.event.pull_request.head.sha || "
                    "github.run_id }}", "cancel-in-progress": True},
          "land in different groups")
     case("a group keyed by run id alone fails the same way",
-         {"group": "lint-${{ github.run_id }}", "cancel-in-progress": True},
+         {"group": "lint-workflows-${{ github.run_id }}", "cancel-in-progress": True},
          "land in different groups")
     case("a constant group fails: PR #5 cancels PR #6",
-         {"group": "lint-workflows", "cancel-in-progress": True},
+         {"group": "lint-workflows-all", "cancel-in-progress": True},
          "PR #5 and PR #6 share group")
     case("a group keyed by github.ref fails: pushes to main cancel each "
          "other",
-         {"group": "lint-${{ github.ref }}", "cancel-in-progress": True},
-         "shares group 'lint-refs/heads/main'")
+         {"group": "lint-workflows-${{ github.ref }}", "cancel-in-progress": True},
+         "shares group 'lint-workflows-refs/heads/main'")
     case("a group whose non-PR arm is the event name fails: two "
          "schedules collide",
-         {"group": "lint-${{ github.event.pull_request.number || "
+         {"group": "lint-workflows-${{ github.event.pull_request.number || "
                    "github.event_name }}", "cancel-in-progress": True},
          "daily schedule run shares group")
     case("an unmodelled context fails loudly",
-         {"group": "lint-${{ vars.LINT_GROUP }}", "cancel-in-progress": True},
+         {"group": "lint-workflows-${{ vars.LINT_GROUP }}", "cancel-in-progress": True},
          "unmodelled context reference 'vars.LINT_GROUP'")
     case("an unmodelled github key fails loudly",
-         {"group": "lint-${{ github.actor }}", "cancel-in-progress": True},
+         {"group": "lint-workflows-${{ github.actor }}", "cancel-in-progress": True},
          "unmodelled context reference 'github.actor'")
     case("an unmodelled function fails loudly",
-         {"group": "lint-${{ toJSON(github.event) }}",
+         {"group": "lint-workflows-${{ toJSON(github.event) }}",
           "cancel-in-progress": True}, "unsupported function toJSON()")
     case("a job-level concurrency block fails",
          {"group": event_form, "cancel-in-progress": True},
          "has its own concurrency", jobs={"lint": {"concurrency": "x"}})
+    case("a job-level block does not hide a broken group: both are "
+         "reported in one run",
+         {"group": "lint-workflows-${{ github.run_id }}",
+          "cancel-in-progress": True},
+         ["has its own concurrency", "land in different groups"],
+         jobs={"lint": {"concurrency": "x"}})
+    case("a wrong cancel-in-progress is reported once, not once per run, "
+         "and the group rules still run",
+         {"group": "lint-workflows-${{ github.run_id }}",
+          "cancel-in-progress": False},
+         ["not the YAML boolean true", "land in different groups"],
+         count=("cancel-in-progress is not", 1))
+    case("a group that falls back to github.run_number fails: push run #5 "
+         "shares PR #5's group",
+         {"group": "lint-workflows-${{ github.event.pull_request.number "
+                   "|| github.run_number }}", "cancel-in-progress": True},
+         "push to main run shares group 'lint-workflows-5' with the PR #5")
+    case("a group keyed by the head branch fails: two fork PRs from "
+         "patch-1 share it",
+         {"group": "lint-workflows-${{ github.head_ref || github.run_id }}",
+          "cancel-in-progress": True}, "PR #5 and PR #6 share group")
+    case("a group keyed by pull_request.head.ref fails the same way",
+         {"group": "lint-workflows-${{ github.event.pull_request.head.ref "
+                   "|| github.run_id }}", "cancel-in-progress": True},
+         "PR #5 and PR #6 share group")
+    case("an unprefixed group fails: another workflow's bare-number group "
+         "could share it",
+         {"group": "${{ github.event.pull_request.number || "
+                   "github.run_id }}", "cancel-in-progress": True},
+         "does not start with 'lint-workflows-'")
+    case("another workflow using the lint-workflows prefix fails",
+         {"group": event_form, "cancel-in-progress": True},
+         "other.yml has concurrency group 'lint-workflows-x'",
+         other_groups=[(".github/workflows/other.yml", "lint-workflows-x")])
 
     passed = sum(results)
     print("verify-lint-supersedes-pr-runs self-test: {0}/{1} passed".format(
