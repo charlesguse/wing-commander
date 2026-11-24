@@ -1,0 +1,58 @@
+# The single home of the relay paragraph a clarification-question comment
+# carries when the lifecycle issue's own author is not a maintainer
+# (specs/129-maintainer-only-comments, FR-008, research.md D3; constitution
+# 3.0.0, Principle IV). Comment-triggered stages act only on a maintainer's
+# reply, so a requester who is not one is told up front to ask a maintainer
+# to relay their answers. A reply from a non-maintainer is never answered.
+# Gate 172 (verify-maintainer-only-comments.py) runs this step against a
+# stub gh, and fails if the paragraph's text appears in any other file.
+#
+# Like every shared composite, this action is resolved from the pipeline
+# repository's own checkout (see the header of
+# .github/actions/wing-commander-context/action.yml), so it never assumes
+# it lives in the workspace-root repository.
+name: wing-commander-requester-relay-note
+description: >
+  Append the relay paragraph to a clarification-question body file when the
+  lifecycle issue's author is not OWNER, MEMBER or COLLABORATOR, or when
+  their association cannot be read. The file is left untouched otherwise.
+
+inputs:
+  issue-number:
+    description: The lifecycle issue whose author's association decides.
+    required: true
+  token:
+    description: A token that can read the issue.
+    required: true
+  body-file:
+    description: The comment body file the caller is about to post.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Append the relay paragraph when the requester is not a maintainer
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+        BODY_FILE: ${{ inputs.body-file }}
+        RELAY_PARAGRAPH: >-
+          Only a reply from a maintainer of this repository (an owner,
+          member or collaborator) is folded into the spec. If you opened
+          this issue and are not one, ask a maintainer to post your answers
+          for you.
+      run: |
+        set -uo pipefail
+        if [ ! -f "$BODY_FILE" ]; then
+          echo "::error::wing-commander-requester-relay-note: body file not found: $BODY_FILE"
+          exit 1
+        fi
+        if ! association="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" --jq '.author_association // ""')"; then
+          association="unreadable"
+          echo "::warning::wing-commander-requester-relay-note: could not read the issue author's association; the relay paragraph is included."
+        fi
+        case "$association" in
+          OWNER|MEMBER|COLLABORATOR) exit 0 ;;
+        esac
+        printf '\n\n%s\n' "$RELAY_PARAGRAPH" >> "$BODY_FILE"

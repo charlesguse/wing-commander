@@ -1,10 +1,11 @@
 # Stage 1b — Clarification loop (thin wrapper).
 # While a spec is in stage:spec / stage:clarify, replies on the lifecycle
-# issue from the original requester or trusted members are folded into the
-# draft spec. This is the one deliberately narrow path that lets a requester
-# WITHOUT write access steer the pipeline — hence the tight actor gate, which
-# is trigger-side and therefore lives HERE (constitution V). All stage logic
-# lives in clarify.yml (docs/adoption.md), called by local path.
+# issue from a maintainer (OWNER/MEMBER/COLLABORATOR) are folded into the
+# draft spec. A requester who is not a maintainer answers through one
+# (constitution 3.0.0, Principle V). The actor gate is trigger-side and
+# therefore lives HERE; clarify.yml checks the triggering comment again
+# itself (specs/129-maintainer-only-comments). All stage logic lives in
+# clarify.yml (docs/adoption.md), called by local path.
 name: "Wing Commander · 2 clarify"
 
 on:
@@ -18,13 +19,13 @@ jobs:
     # Gates, all must hold:
     #  - a real issue (not a PR comment thread)
     #  - issue is in the spec drafting stage and owned by the pipeline (spec:* label)
-    #  - commenter is human, and is a maintainer OR the original requester
+    #  - commenter is human, and is a maintainer
     if: >-
       !github.event.issue.pull_request &&
       contains(join(github.event.issue.labels.*.name, ','), 'spec:') &&
       (contains(github.event.issue.labels.*.name, 'stage:spec') || contains(github.event.issue.labels.*.name, 'stage:clarify')) &&
       github.event.comment.user.type != 'Bot' &&
-      (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) || github.event.comment.user.id == github.event.issue.user.id)
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     permissions:
       contents: write
       pull-requests: write
