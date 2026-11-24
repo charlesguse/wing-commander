@@ -31,7 +31,7 @@ Ordered, earliest wins: `unreadable` < `paused` < `not configured` < `failing` <
 
 State rules (per workflow, then per feature):
 
-1. any unreadable read for the workflow, its signal, its switch or its required variable → `unreadable` with reason;
+1. any unreadable read for the workflow, its switch or its required variable, or a scheduled workflow with no cron found → `unreadable` with reason (checked before `paused`); an unreadable signal read makes the feature `unreadable` only when its state would otherwise be `quiet`, `idle` or `healthy`, else the state stays and the reason gains `signal: ...` (call-outs append `(signal unreadable: ...)`; a `not configured` feature with such a reason is called out too);
 2. kill switch on → `paused`;
 3. `requires_var` unset and every run skipped → `not configured`;
 4. last 3 qualifying runs (or fewer) all failed, latest included → `failing`;
@@ -44,7 +44,7 @@ Feature state = worst across its workflows, ignoring `idle` workflows when a sib
 
 ## Report rows
 
-`feature`, `stage` (optional), `state`, `last_success`, `last_failure`, `last_signal` (date, `never in window`, or `not measured`), `threshold_days` (when a signal is declared), `reason` (unreadable only). Report header: `built_at`, `unreadable_count`, call-out list (called-out states only).
+`feature`, `stage` (optional), `state`, `last_success`, `last_failure`, `last_signal` (date, `never in window`, or `not measured`), `threshold_days` (when a signal is declared), `reason` (unreadable states, and any state that kept its rank over a failed signal read; `unreadable_count` counts only `unreadable` rows). Report header: `built_at`, `unreadable_count`, call-out list (called-out states only).
 
 ## Publication status (writer side)
 

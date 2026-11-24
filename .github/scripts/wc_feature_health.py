@@ -99,6 +99,13 @@ def classify_workflow(ref, entry, reading, ctx, now):
         detail["reason"] = "{0}: could not read {1}".format(
             ref["file"], kill if switch == "unreadable" else var)
         return "unreadable", detail
+    interval = reading.get("interval_hours")
+    if ref.get("cadence") == "schedule" and interval is None:
+        # A schedule ref whose cron could not be found would otherwise skip
+        # the not-running test silently and read as healthy or idle; it ranks
+        # with the other unreadable reads, above paused.
+        detail["reason"] = "{0}: no cron found".format(ref["file"])
+        return "unreadable", detail
     runs = sorted(reading.get("runs") or [], key=lambda r: r["started_at"], reverse=True)
     qualifying = [r for r in runs if r.get("conclusion") not in NOT_QUALIFYING]
     detail["qualifying"] = len(qualifying)
@@ -115,12 +122,6 @@ def classify_workflow(ref, entry, reading, ctx, now):
     last = qualifying[:FAILING_WINDOW]
     if last and all(r["conclusion"] != "success" for r in last):
         return "failing", detail
-    interval = reading.get("interval_hours")
-    if ref.get("cadence") == "schedule" and interval is None:
-        # A schedule ref whose cron could not be found would otherwise skip
-        # the not-running test silently and read as healthy or idle.
-        detail["reason"] = "{0}: no cron found".format(ref["file"])
-        return "unreadable", detail
     if ref.get("cadence") == "schedule" and interval:
         cutoff = now - datetime.timedelta(hours=2 * interval)
         if not runs or parse_time(runs[0]["started_at"]) < cutoff:
@@ -201,7 +202,17 @@ def classify_all(registry, readings, signals, ctx, now):
 
 
 def _callout(row):
+    line = _callout_line(row)
+    reason = row.get("reason") or ""
+    if row["state"] != "unreadable" and "signal: " in reason:
+        line += " (signal unreadable: {0})".format(reason.split("signal: ", 1)[1])
+    return line
+
+
+def _callout_line(row):
     name, state = row["feature"], row["state"]
+    if state == "not configured":
+        return "- `{0}` — not configured".format(name)
     if state == "failing":
         return "- `{0}` — failing: last success {1}, last failure {2}".format(
             name, day(row["last_success"]), day(row["last_failure"]))
@@ -224,7 +235,8 @@ def render_section(rows, now, registry_size=None):
            "**Feature health** — built {0} · {1} features · {2} unreadable".format(
                now.strftime("%Y-%m-%d %H:%MZ"), registry_size or len(features), unreadable),
            "", "**Needs a look:**"]
-    called = sorted((r for r in features if r["state"] in CALLED_OUT),
+    called = sorted((r for r in features if r["state"] in CALLED_OUT
+                     or (r["state"] == "not configured" and "signal: " in (r["reason"] or ""))),
                     key=lambda r: (_rank(r["state"]), r["feature"]))
     out.extend(_callout(r) for r in called) if called else out.append("Nothing needs a look.")
     out += ["", "<details><summary>All features</summary>", "",

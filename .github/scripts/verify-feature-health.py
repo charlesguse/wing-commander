@@ -278,6 +278,10 @@ def stub_script(scenario):
             body = harness.gh_error_stub_arm("*{0}*".format(fail["match"]), fail.get("status", 500),
                                              fail.get("message", "Server Error"))
         arms.append("  *{0}*)\n{1}    ;;\n".format(fail["match"], body))
+    for fresh in scenario.get("fresh_runs", []):
+        arms.append("  *actions/workflows/{0}/*)\n    printf '%s\\n' '{{\"total_count\":1,\"workflow_runs\":"
+                    "[{{\"id\":1,\"event\":\"schedule\",\"conclusion\":\"success\",\"run_started_at\":\"{1}\","
+                    "\"created_at\":\"{1}\"}}]}}'\n    ;;\n".format(fresh, scenario["fresh_at"]))
     return ("#!/usr/bin/env bash\ncase \"$*\" in\n"
             "  *rate_limit*) printf '{\"resources\":{\"core\":{\"remaining\":%s}}}\\n' '" + str(
                 scenario.get("rate_remaining", 5000)) + "' ;;\n"

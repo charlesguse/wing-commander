@@ -250,22 +250,22 @@ MVP = Phases 1-3 (registry, drift gate, classifier, renderer, fixtures): the ver
 
 ## Maintainer Feedback
 
-- [ ] T-MF1 Amend specs/126-feature-health/spec.md US3 acceptance 2 to say a failed output-signal query makes the feature unreadable only when no stronger state (paused, not configured, failing, not running) applies; otherwise the failure is recorded in the row's reason (review of c6a748d, finding 1).
-- [ ] T-MF2 Amend spec.md FR-004 (precedence) and FR-010 (signal failure handling) to match the same rule, and state what the header unreadable count covers.
-- [ ] T-MF3 Amend specs/126-feature-health/data-model.md rule 1 and the Report rows `reason` field (no longer 'unreadable only') to match wc_feature_health.py classify_feature.
+- [X] T-MF1 Amend specs/126-feature-health/spec.md US3 acceptance 2 to say a failed output-signal query makes the feature unreadable only when no stronger state (paused, not configured, failing, not running) applies; otherwise the failure is recorded in the row's reason (review of c6a748d, finding 1).
+- [X] T-MF2 Amend spec.md FR-004 (precedence) and FR-010 (signal failure handling) to match the same rule, and state what the header unreadable count covers.
+- [X] T-MF3 Amend specs/126-feature-health/data-model.md rule 1 and the Report rows `reason` field (no longer 'unreadable only') to match wc_feature_health.py classify_feature.
 
 ## Maintainer Feedback
 
-- [ ] T-MF4 In wc_feature_health.py `_callout`, append ` (signal unreadable: ...)` to the call-out when the row carries a signal reason, including a not-configured feature (review of c6a748d, finding 2).
-- [ ] T-MF5 Add a verify-feature-health.py / fixture case that fails without T-MF4: /releases returns 502 while the feature is not running, and the report shows the signal failure.
-- [ ] T-MF6 Make the amended FR-010 say what the header unreadable count covers (see T-MF2).
+- [X] T-MF4 In wc_feature_health.py `_callout`, append ` (signal unreadable: ...)` to the call-out when the row carries a signal reason, including a not-configured feature (review of c6a748d, finding 2).
+- [X] T-MF5 Add a verify-feature-health.py / fixture case that fails without T-MF4: /releases returns 502 while the feature is not running, and the report shows the signal failure.
+- [X] T-MF6 Make the amended FR-010 say what the header unreadable count covers (see T-MF2).
 
 ## Maintainer Feedback
 
-- [ ] T-MF7 In wc_feature_health.py `classify_workflow`, move the 'no cron found' unreadable check up beside the switch/var unreadable read so it ranks the same as a cron that raises ValueError (review of c6a748d, finding 3).
-- [ ] T-MF8 Add a state case that fails without T-MF7: a paused workflow with a cadence schedule ref and no parsable cron is unreadable. Then update precedence notes in spec/data-model if they list the order.
+- [X] T-MF7 In wc_feature_health.py `classify_workflow`, move the 'no cron found' unreadable check up beside the switch/var unreadable read so it ranks the same as a cron that raises ValueError (review of c6a748d, finding 3).
+- [X] T-MF8 Add a state case that fails without T-MF7: a paused workflow with a cadence schedule ref and no parsable cron is unreadable. Then update precedence notes in spec/data-model if they list the order.
 
 ## Maintainer Feedback
 
-- [ ] T-MF9 Add `"expect_reason": "signal:"` to the `unreadable: signal` state case (healthy runs) in the feature-health fixtures (review of c6a748d, finding 4).
-- [ ] T-MF10 Add an e2e scenario in fixtures/feature-health/unreadable/scenarios.json where /releases fails for a feature with fresh successful runs, asserting state unreadable and the 'signal:' reason.
+- [X] T-MF9 Add `"expect_reason": "signal:"` to the `unreadable: signal` state case (healthy runs) in the feature-health fixtures (review of c6a748d, finding 4).
+- [X] T-MF10 Add an e2e scenario in fixtures/feature-health/unreadable/scenarios.json where /releases fails for a feature with fresh successful runs, asserting state unreadable and the 'signal:' reason.
