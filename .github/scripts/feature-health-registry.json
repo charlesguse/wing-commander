@@ -25,6 +25,14 @@
     "signal": null
   },
   {
+    "name": "shared PR reviewer",
+    "reference_names": [],
+    "workflows": [{"file": "wing-commander-shared-pr-reviewer.yml", "cadence": "event"}],
+    "kill_switch": "WING_COMMANDER_SHARED_REVIEWER_PAUSED",
+    "requires_var": null,
+    "signal": null
+  },
+  {
     "name": "lifecycle review gate",
     "reference_names": [],
     "workflows": [{"file": "lifecycle-review-gate.yml", "cadence": "schedule"}],

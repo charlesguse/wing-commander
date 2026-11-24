@@ -265,6 +265,7 @@ means running. A pause takes effect no later than the next run.
 | `WING_COMMANDER_BOARD_LOOP_PAUSED` | the board loop, including its merges |
 | `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED` | the lifecycle review gate's reviews and merges |
 | `WING_COMMANDER_SPEC_REVIEW_PAUSED` | spec PR review |
+| `WING_COMMANDER_SHARED_REVIEWER_PAUSED` | the shared PR reviewer's rounds; a stopped dispatch writes a run-summary line and no record |
 | `WING_COMMANDER_WATCHDOG_PAUSED` | the watchdog and its self-check |
 | `WING_COMMANDER_AUTO_RELEASE_PAUSED` | auto-release (set it by dispatching `auto-release-switch.yml`) |
 | `WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED` | only auto-release's container runs |
