@@ -37,7 +37,7 @@ Several docs and live contracts describe that exception. Pipeline entry (the mai
 
 A lifecycle issue in `stage:spec` or `stage:clarify` was opened by someone who is not a maintainer. That author replies with answers to the clarification questions. No clarify run folds those answers into the draft spec. A maintainer's reply on the same issue still starts a clarify run.
 
-**Why this priority**: This is the rule the constitution now states. It is the only path by which someone without maintainer access steers an agent run.
+**Why this priority**: This is the rule the constitution now states (Principle V).
 
 **Independent Test**: Post a reply from the issue's author with association `NONE`, and check that no clarify agent step runs. Post a reply from a maintainer, and check that clarify runs and folds it.
 
