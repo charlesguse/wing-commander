@@ -13,7 +13,7 @@
     ],
     "kill_switch": null,
     "requires_var": null,
-    "signal": {"kind": "merged_pr", "label": "merged final PR", "head_prefixes": ["spec/"]},
+    "signal": {"kind": "merged_pr", "label": "merged spec-lifecycle PR", "head_prefixes": ["spec/"]},
     "quiet_days": 30
   },
   {

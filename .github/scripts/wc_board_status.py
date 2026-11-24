@@ -655,8 +655,10 @@ def section_snapshot(repo, switches, workflow, artifact, switch_key, now, gh_obj
                         raise ValueError("malformed section")
         except (OSError, ValueError, TypeError, AttributeError, subprocess.CalledProcessError):
             return {"status": "unreadable", "last_good_at": last_good}
-        return {"status": "stale" if stale else "built", "last_good_at": last_good, "section": section,
-                "built_at": latest.get("run_started_at")}
+        snap = {"status": "stale" if stale else "built", "last_good_at": last_good, "section": section}
+        if stale_keeps_section:
+            snap["built_at"] = latest.get("run_started_at")
+        return snap
     except (subprocess.CalledProcessError, ValueError, KeyError, OSError, TypeError, AttributeError):
         return {"status": "paused" if paused else "unreadable", "last_good_at": last_good}
 

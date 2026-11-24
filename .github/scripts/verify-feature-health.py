@@ -663,6 +663,16 @@ def check_review_round_two():
                  "_Table shortened: it did not fit._\n<!-- /wing-commander-feature-health -->")
     if not fh.section_built(shortened, fh.MARKER_BEGIN):
         problems.append("section_built: a shortened section reads as not built")
+    if fh.section_built("see wing-commander-feature-health here\n_Stale: x_\n<details>x</details>\n",
+                        "wing-commander-feature-health"):
+        problems.append("section_built: a bare earlier mention read as the section")
+    for expr, want in (("0 * * * 1", 168), ("0 6 1 */3 *", 24 * 31 * 3), ("0 * * * *", 1)):
+        got = fh.schedule_interval_hours('on:\n  schedule:\n    - cron: "{0}"\n'.format(expr))
+        if got < want if want > 1 else got != want:
+            problems.append("cron {0}: interval {1}h, want >= {2}h".format(expr, got, want))
+    snap_src = open(os.path.join(REPO, ".github", "scripts", "wc_board_status.py"), encoding="utf-8").read()
+    if 'if stale_keeps_section:\n            snap["built_at"]' not in snap_src:
+        problems.append("section_snapshot: built_at must be gated on stale_keeps_section")
     return problems
 
 

@@ -217,10 +217,16 @@ def _callout_line(row):
         return "- `{0}` — failing: last success {1}, last failure {2}".format(
             name, day(row["last_success"]), day(row["last_failure"]))
     if state == "quiet":
+        if row["last_signal"] in (NOT_MEASURED, NEVER, None):
+            return "- `{0}` — quiet: no {1} in the last {2} days".format(
+                name, row["signal_label"], row["threshold_days"])
         return "- `{0}` — quiet: no {1} since {2} (threshold {3} days)".format(
             name, row["signal_label"], row["last_signal"], row["threshold_days"])
     if state == "not running":
-        return "- `{0}` — not running: no run since {1}".format(name, day(row["last_run"]))
+        last = day(row["last_run"])
+        if last == NEVER:
+            return "- `{0}` — not running: no run in the window".format(name)
+        return "- `{0}` — not running: no run since {1}".format(name, last)
     if state == "paused":
         return "- `{0}` — paused: {1}".format(name, row["kill_switch"])
     return "- `{0}` — unreadable: {1}".format(name, row["reason"] or "no reason recorded")
@@ -300,13 +306,18 @@ def _cron_hours(expr):
     fields = expr.split()
     if len(fields) != 5:
         raise ValueError("unparseable cron: {0}".format(expr))
-    if fields[1] == "*":
+    unrestricted = fields[2:] == ["*", "*", "*"]
+    if fields[1] == "*" and unrestricted:
         return 1
     hours = sorted(_cron_hour_set(fields[1], expr))
-    if fields[2:] == ["*", "*", "*"]:
+    if unrestricted:
         # Largest gap between consecutive firings, counting the wrap past midnight.
         gaps = [b - a for a, b in zip(hours, hours[1:])] + [hours[0] + 24 - hours[-1]]
         return max(gaps)
+    month = fields[3]
+    if month != "*":
+        step = re.fullmatch(r"\*/(\d+)", month)
+        return 24 * 31 * int(step.group(1)) if step and int(step.group(1)) >= 1 else 24 * 366
     return 24 * 7 if fields[4] != "*" else 24 * 31
 
 
@@ -414,9 +425,13 @@ def section_built(body, marker):
     """True when `marker` opens a section carrying built content, not a
     paused/failed/never/stale notice (those carry the marker too, so the marker
     alone would let a broken section read as seen)."""
-    idx = body.find(marker)
-    if idx < 0:
+    # Anchor on the opener comment: a bare mention of the marker text earlier
+    # in the body is not the section.
+    lead = "" if marker.startswith("<!--") else r"<!--\s*"
+    opener_match = re.search(lead + re.escape(marker), body)
+    if not opener_match:
         return False
+    idx = opener_match.start()
     line_end = body.find("-->", idx)
     opener = body[idx:line_end if line_end >= 0 else len(body)]
     if 'status="' in opener:

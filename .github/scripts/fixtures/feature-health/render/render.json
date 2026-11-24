@@ -30,7 +30,7 @@
         {"name": "unset", "entry": {"requires_var": "WING_COMMANDER_Y", "signal": {"kind": "release"}}, "ctx": {"vars_set": {"WING_COMMANDER_Y": false}}, "signal_days_ago": {"unreadable": "HTTP 502"}, "runs": {"a.yml": [[3, "skipped"]]}}
       ],
       "contains": [
-        "- `late` — not running: no run since never in window (signal unreadable: HTTP 502)",
+        "- `late` — not running: no run in the window (signal unreadable: HTTP 502)",
         "- `unset` — not configured (signal unreadable: HTTP 502)"
       ]
     },
