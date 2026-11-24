@@ -269,3 +269,53 @@ MVP = Phases 1-3 (registry, drift gate, classifier, renderer, fixtures): the ver
 
 - [X] T-MF9 Add `"expect_reason": "signal:"` to the `unreadable: signal` state case (healthy runs) in the feature-health fixtures (review of c6a748d, finding 4).
 - [X] T-MF10 Add an e2e scenario in fixtures/feature-health/unreadable/scenarios.json where /releases fails for a feature with fresh successful runs, asserting state unreadable and the 'signal:' reason.
+
+## Review Gate Round 5 Findings
+
+- [ ] Review finding: Cron with '*' hour treated as hourly even when dom/dow restricts it
+
+  The fields[1]=="*" shortcut ignores day-of-month/month/day-of-week, so a cron like '0 * * * 1' is flagged 'not running' about two hours after its last run.
+
+  - .github/scripts/wc_feature_health.py
+
+  Detail: Take the shortcut only when fields[2:] are all '*'.
+
+- [ ] Review finding: Restricted dom/dow/month cron uses flat 7/31-day interval
+
+  A quarterly cron such as '0 6 1 */3 *' is treated as monthly, so it is falsely reported 'not running' for most of each quarter. Weekday lists are likewise treated as weekly.
+
+  - .github/scripts/wc_feature_health.py
+
+  Detail: Derive the interval from the month field, or return None so the workflow shows as unreadable.
+
+- [ ] Review finding: section_built fallback accepts any <details> block
+
+  find(marker) returns the first occurrence of the marker anywhere in the body, and the fallback treats any <details> as built content. An earlier mention of the marker can make a notice section read as seen.
+
+  - .github/scripts/wc_feature_health.py
+
+  Detail: Anchor the match on the full opener comment and require the built line.
+
+- [ ] Review finding: Lifecycle signal labelled 'merged final PR' counts any spec/ PR
+
+  The selector matches any merged PR whose head starts with spec/, which includes spec and plan PRs. A lifecycle that stalls after its spec PR merges therefore reads as healthy.
+
+  - .github/scripts/feature-health-registry.json
+
+  Detail: Narrow the selector to the final PR, or relabel the signal.
+
+- [ ] Review finding: Quiet and not-running lines read 'since never in window'
+
+  When a signal was never seen, last_signal is interpolated directly, giving 'no release since never in window', which is ungrammatical and misleading. The fixtures assert this wording.
+
+  - .github/scripts/wc_feature_health.py
+
+  Detail: Phrase the never case separately, e.g. 'no X in the last N days'.
+
+- [ ] Review finding: section_snapshot adds built_at to every built section
+
+  The shared snapshot now returns built_at for proof-list and merge-evidence sections too, though only feature health uses it. Equality comparisons against the old snapshot shape would fail.
+
+  - .github/scripts/wc_board_status.py
+
+  Detail: Add built_at only when stale_keeps_section is set.
