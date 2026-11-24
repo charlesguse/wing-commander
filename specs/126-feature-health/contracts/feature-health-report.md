@@ -17,7 +17,9 @@ Layer: consuming instrument. This is not part of the `workflow_call` published c
 **Needs a look:**
 - `<feature>` — failing: last success D1, last failure D2
 - `<feature>` — quiet: no <signal> since D (threshold T days)
+- `<feature>` — quiet: no <signal> in the last T days
 - `<feature>` — not running: no run since D
+- `<feature>` — not running: no run in the window
 - `<feature>` — paused: <WING_COMMANDER_..._PAUSED>
 - `<feature>` — unreadable: <reason>
 (or "Nothing needs a look.")
@@ -34,7 +36,7 @@ Layer: consuming instrument. This is not part of the `workflow_call` published c
 ```
 
 Rules:
-- Dates are `YYYY-MM-DD`; a missing date is `never in window`; a feature with no declared signal says `not measured`, and so does a feature whose signal read failed.
+- Dates are `YYYY-MM-DD`; in the table a missing date is `never in window` (a call-out uses the "in the last T days" or "in the window" form instead); a feature with no declared signal says `not measured`, and so does a feature whose signal read failed.
 - Call-outs list only *failing*, *quiet*, *not running*, *paused*, *unreadable*; sorted by state order then name. A *failing*, *not running* or *paused* call-out whose signal read failed ends with ` (signal unreadable: <reason>)`; *not configured* is never called out, even then.
 - Stage rows sit directly beneath the lifecycle row.
 - Every registry feature appears exactly once in the table (SC-002).
