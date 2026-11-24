@@ -643,8 +643,12 @@ def run_step(bash, script, workdir, env_extra, runner_temp, path_prepend=None,
     with open(script_file, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(preamble)
         fh.write(script)
-    argv = [{"bash": bash, "sh": shutil.which("sh") or "sh"}.get(arg, arg)
-            for arg in shell_template]
+    # The program is swapped for the resolved bash/sh by its bare name, so a
+    # custom shell whose program is a path (`/usr/bin/bash -e {0}`) runs the
+    # resolved bash too, not the path as written.
+    resolved = {"bash": bash, "sh": shutil.which("sh") or "sh"}
+    argv = [resolved.get(arg, arg) for arg in shell_template]
+    argv[0] = resolved[_shell_program(shell_template)]
     argv = [arg.replace("{0}", script_file.replace("\\", "/"))
             for arg in argv]
     proc = subprocess.run(argv,
