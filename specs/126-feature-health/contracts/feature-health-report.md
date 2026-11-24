@@ -36,7 +36,7 @@ Layer: consuming instrument. This is not part of the `workflow_call` published c
 ```
 
 Rules:
-- Dates are `YYYY-MM-DD`; a missing date is `never in window`, except in a *quiet* or *not running* call-out, which uses the "in the last T days" or "in the window" form instead; a feature with no declared signal says `not measured`, and so does a feature whose signal read failed.
+- Dates are `YYYY-MM-DD`; a missing date is `never in window`, except that a *quiet* call-out says "in the last T days" and a *not running* call-out says "in the window" instead (a *failing* call-out keeps `never in window`); a feature with no declared signal says `not measured`, and so does a feature whose signal read failed.
 - Call-outs list only *failing*, *quiet*, *not running*, *paused*, *unreadable*; sorted by state order then name. A *failing*, *not running* or *paused* call-out whose signal read failed ends with ` (signal unreadable: <reason>)`; *not configured* is never called out, even then.
 - Stage rows sit directly beneath the lifecycle row.
 - Every registry feature appears exactly once in the table (SC-002).
