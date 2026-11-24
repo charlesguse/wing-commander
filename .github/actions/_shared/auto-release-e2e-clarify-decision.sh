@@ -8,8 +8,8 @@
 # specs/055-unattended-e2e-gates/contracts/gate-decision-scripts.md.
 #
 # Usage:
-#   bash auto-release-e2e-clarify-decision.sh decide "$ISSUE_AUTHOR_ID" "$ROUNDS_ANSWERED" <<<"$COMMENTS_JSON"
-#   bash auto-release-e2e-clarify-decision.sh satisfied "$ISSUE_AUTHOR_ID" <<<"$COMMENTS_JSON"
+#   bash auto-release-e2e-clarify-decision.sh decide "$ROUNDS_ANSWERED" <<<"$COMMENTS_JSON"
+#   bash auto-release-e2e-clarify-decision.sh satisfied <<<"$COMMENTS_JSON"
 #   bash auto-release-e2e-clarify-decision.sh markers <<<"$COMMENTS_JSON"
 #
 # COMMENTS_JSON arrives on stdin, not argv -- a long-running issue's full
@@ -20,8 +20,9 @@
 # created_at}. This is the same shape intake.yml's own comment-trust-gate
 # (intake.yml:524) reads, on purpose -- see "qualifies" below.
 #
-# ISSUE_AUTHOR_ID is the issue author's numeric user id (`.user.id` from
-# `gh api repos/<owner>/<repo>/issues/<n>`).
+# A qualifying reply is a non-bot OWNER/MEMBER/COLLABORATOR comment, the
+# same rule the clarify stage applies (constitution 3.0.0, Principle V;
+# specs/129-maintainer-only-comments). No user id is consulted.
 #
 # `markers` is the single home for the "[!IMPORTANT] + one of the two
 # clarification-callout phrases" predicate (maintainer feedback: this used
@@ -48,8 +49,8 @@
 # "a human answers first" Edge Case).
 #
 # A comment QUALIFIES as an answer exactly when it would pass intake.yml's
-# own comment-trust-gate (intake.yml:524): not a Bot account, and either
-# an OWNER/MEMBER/COLLABORATOR association or the issue's own author.
+# own comment-trust-gate: not a Bot account, and an OWNER/MEMBER/
+# COLLABORATOR association.
 # MAX_CLARIFICATION_ROUNDS, if set in the environment (auto-release.yml's
 # `poll` step env), overrides the default of 3 -- this is the one place
 # that number is read, so the workflow's own `MAX_CLARIFICATION_ROUNDS`
@@ -73,14 +74,13 @@ markers_json() {
 
 qualifying_reply_after() {
   # $1: the ISO timestamp a qualifying reply must postdate.
-  local after="$1" author_id="$2"
-  printf '%s' "$comments_json" | jq -r --arg after "$after" --arg author_id "$author_id" '
+  local after="$1"
+  printf '%s' "$comments_json" | jq -r --arg after "$after" '
     any(.[]; (.created_at // "") > $after
       and ((.user.type // "") != "Bot")
       and ( ((.author_association // "") == "OWNER")
             or ((.author_association // "") == "MEMBER")
-            or ((.author_association // "") == "COLLABORATOR")
-            or (((.user.id // -1) | tostring) == $author_id) ))
+            or ((.author_association // "") == "COLLABORATOR") ))
   '
 }
 
@@ -89,14 +89,13 @@ case "$mode" in
     markers_json
     ;;
   decide)
-    author_id="${1:?issue author id required}"
-    rounds_answered="${2:?rounds answered required}"
+    rounds_answered="${1:?rounds answered required}"
     marker_created_at="$(markers_json | jq -r 'if length == 0 then "" else (last.created_at // "") end')"
     if [ -z "$marker_created_at" ]; then
       echo "none"
       exit 0
     fi
-    reply_exists="$(qualifying_reply_after "$marker_created_at" "$author_id")"
+    reply_exists="$(qualifying_reply_after "$marker_created_at")"
     if [ "$reply_exists" = "true" ]; then
       echo "wait"
       exit 0
@@ -109,12 +108,11 @@ case "$mode" in
     fi
     ;;
   satisfied)
-    author_id="${1:?issue author id required}"
     markers="$(markers_json)"
     result="ok"
     while IFS= read -r marker_created_at; do
       [ -n "$marker_created_at" ] || continue
-      if [ "$(qualifying_reply_after "$marker_created_at" "$author_id")" != "true" ]; then
+      if [ "$(qualifying_reply_after "$marker_created_at")" != "true" ]; then
         result="unsatisfied"
         break
       fi

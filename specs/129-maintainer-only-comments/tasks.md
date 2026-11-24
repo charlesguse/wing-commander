@@ -45,28 +45,28 @@ description: "Task list for spec 129: comment-triggered stages act only on maint
 
 **Independent Test**: quickstart §2 (clarify check step, relay composite) and §3 steps 2–3.
 
-- [ ] T004 [US1] In `.github/workflows/wing-commander-2-clarify.yml`:
+- [X] T004 [US1] In `.github/workflows/wing-commander-2-clarify.yml`:
   - remove the issue-author clause from the job `if:`;
   - rewrite the header and gate comments to state maintainers-only.
 
   Fails without it: gate check (a) and its mutant.
-- [ ] T005 [US1] In `.github/workflows/clarify.yml`, add the comment-author check step (research D1) right after "Checkout pipeline repository (shared composite actions)".
+- [X] T005 [US1] In `.github/workflows/clarify.yml`, add the comment-author check step (research D1) right after "Checkout pipeline repository (shared composite actions)".
   - It reads data-model.md Comment.user.type and Comment.author_association by the `comment-id` input.
   - Add its `maintainer == 'true'` condition to "Check lifecycle issue state" and to "Note closed lifecycle and stop".
   - Fails without it:
     - gate check (b) and its mutant;
     - a harness case in the gate's self-test that runs the step against a fake `gh`. `OWNER` and `COLLABORATOR` must give `true`; `NONE`, `CONTRIBUTOR` and a `Bot` user must give `false`; a failed read must fail the step.
-- [ ] T006 [US1] In `.github/workflows/clarify.yml`, remove `Bash(gh issue view:*)` from "Compose tool args (clarify)" `default-allowed-tools` (research D6). Fails without it: gate check (f) and its mutant.
-- [ ] T007 [P] [US1] Create `.github/actions/wing-commander-requester-relay-note/action.yml` (research D3).
+- [X] T006 [US1] In `.github/workflows/clarify.yml`, remove `Bash(gh issue view:*)` from "Compose tool args (clarify)" `default-allowed-tools` (research D6). Fails without it: gate check (f) and its mutant.
+- [X] T007 [P] [US1] Create `.github/actions/wing-commander-requester-relay-note/action.yml` (research D3).
   - Inputs: `issue-number`, `token`, `body-file`.
   - It reads data-model.md Issue.author_association and appends the one relay paragraph when the author is outside the maintainer set, or when the read fails.
   - Fails without it: harness cases in the gate's self-test (`NONE` appends exactly once; `OWNER` leaves the file byte-identical; a failed read appends), and the single-home check.
-- [ ] T008 [US1] Call the T007 composite on the body file before posting, in two places:
+- [X] T008 [US1] Call the T007 composite on the body file before posting, in two places:
   - `.github/workflows/intake.yml`, "Announce clarification needed" (`intake-clarification.md`);
   - `.github/workflows/clarify.yml`, "Announce remaining clarification questions" (`clarify-followup.md`).
 
   Fails without it: a gate check that both callout steps are preceded by the composite on the same body file, with a mutant that drops one.
-- [ ] T009 [P] [US1] Remove the author clause and its author-id parameter from `.github/actions/_shared/auto-release-e2e-clarify-decision.sh`.
+- [X] T009 [P] [US1] Remove the author clause and its author-id parameter from `.github/actions/_shared/auto-release-e2e-clarify-decision.sh`.
   - Remove `.github/workflows/auto-release.yml`'s two issue-author-id reads and their `fail_infra_on_read` path (research D5).
   - Update `specs/055-unattended-e2e-gates/contracts/gate-decision-scripts.md` and the e2e decision gates found in T001.
   - Fails without it: gate check (e) and its mutant, and the e2e decision gates' fixtures. A maintainer-answered fixture stays satisfied; a non-maintainer-author fixture becomes unsatisfied.

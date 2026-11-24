@@ -16,8 +16,8 @@ the findings below.
 
 **Invocation**:
 ```
-bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh decide "$ISSUE_AUTHOR_ID" "$ROUNDS_ANSWERED" <<<"$COMMENTS_JSON"
-bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh satisfied "$ISSUE_AUTHOR_ID" <<<"$COMMENTS_JSON"
+bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh decide "$ROUNDS_ANSWERED" <<<"$COMMENTS_JSON"
+bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh satisfied <<<"$COMMENTS_JSON"
 bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh markers <<<"$COMMENTS_JSON"
 ```
 
@@ -26,15 +26,13 @@ bash .github/actions/_shared/auto-release-e2e-clarify-decision.sh markers <<<"$C
   shape, the same shape intake.yml's own comment-trust-gate reads):
   entries of `{id, user:{login,id,type}, author_association, body,
   created_at}`.
-- `ISSUE_AUTHOR_ID`: the issue author's numeric id (`.user.id` from `gh
-  api repos/<owner>/<repo>/issues/<n>`).
 - `ROUNDS_ANSWERED` (`decide` only): integer, how many times this attempt
   has already posted the Prepared answer.
 
 A comment QUALIFIES as an answer exactly when it would pass intake.yml's
-own comment-trust-gate (`intake.yml:524`): `user.type != "Bot"`, and
-either `author_association` is `OWNER`/`MEMBER`/`COLLABORATOR` or
-`user.id` is the issue author's. A comment that does not qualify — a bot
+own comment-trust-gate: `user.type != "Bot"`, and `author_association`
+is `OWNER`/`MEMBER`/`COLLABORATOR` (constitution 3.0.0, Principle V;
+specs/129-maintainer-only-comments). No user id is consulted. A comment that does not qualify — a bot
 notice (metrics rollup, watchdog), or a human with no standing to answer
 — is never read as a reply. This closes the deadlock the original "any
 later comment" rule allowed.
