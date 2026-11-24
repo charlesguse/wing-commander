@@ -310,6 +310,22 @@ class CodeRun(unittest.TestCase):
             self.assertTrue(box.closed)
         self.assertNotEqual(sr.SANDBOX_USER, "runner")
 
+    def test_kill_and_listing_match_effective_and_real_uid(self):
+        # A sandbox process inside a setuid program keeps its real uid only.
+        calls = []
+
+        class Box(sr.UidSandbox):
+            def _sudo(self, *argv, **kw):
+                import subprocess
+                calls.append(argv)
+                return subprocess.CompletedProcess(argv, 1 if argv[0] == "ps" else 0, b"", b"")
+        Box()._kill_all()
+        self.assertIn(("pkill", "-KILL", "-u", sr.SANDBOX_USER), calls)
+        self.assertIn(("pkill", "-KILL", "-U", sr.SANDBOX_USER), calls)
+        ps = next(c for c in calls if c[0] == "ps")
+        self.assertIn("-U", ps)
+        self.assertIn("-u", ps)
+
     def test_kill_check_ignores_zombies_but_not_live_processes(self):
         # A killed process whose new parent never reaps it (a container's
         # bare PID 1) stays listed as a zombie; it runs no code.

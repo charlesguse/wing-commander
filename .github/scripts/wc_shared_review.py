@@ -677,8 +677,10 @@ class UidSandbox:
     def live_pids(self):
         """Processes of the sandbox user that can still run code. A zombie
         (state Z) is dead and only waits to be reaped by its new parent,
-        which a container's bare PID 1 may never do, so it does not count."""
-        listed = self._sudo("ps", "-o", "pid=,stat=", "-u", self.user)
+        which a container's bare PID 1 may never do, so it does not count.
+        Matched by effective OR real uid (-u, -U), so a sandbox process
+        running a setuid program is still listed."""
+        listed = self._sudo("ps", "-o", "pid=,stat=", "-u", self.user, "-U", self.user)
         if listed.returncode not in (0, 1):
             raise SandboxUnavailable("cannot list the processes of " + self.user)
         live = []
@@ -691,7 +693,9 @@ class UidSandbox:
     def _kill_all(self):
         import time
         for _ in range(KILL_ATTEMPTS):
+            # -u matches the effective uid only, -U the real uid only.
             self._sudo("pkill", "-KILL", "-u", self.user)
+            self._sudo("pkill", "-KILL", "-U", self.user)
             if not self.live_pids():
                 return
             time.sleep(0.1)
