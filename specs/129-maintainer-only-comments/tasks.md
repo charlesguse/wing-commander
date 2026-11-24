@@ -119,7 +119,7 @@ description: "Task list for spec 129: comment-triggered stages act only on maint
   - Explain why adopters should not add `gh issue view` back through `extra-allowed-tools` (research D6).
 - [X] T015 [P] Update the remaining live contracts to the rule (FR-009): `specs/010-reusable-pipeline/contracts/stage-interfaces.md`, `specs/033-pr-conversation-commands/contracts/wrapper-gate.md` (its "unlike clarify" contrast) and `specs/057-autonomous-board-loop/contracts/triage.md`.
 - [X] T016 [P] Rewrite the workflow comments that contrast pr-conversation with clarify and intake in `.github/workflows/pr-conversation.yml` (near 730) and `.github/workflows/wing-commander-9-pr-conversation.yml` (near 12). Re-run Gate 47 (`verify-comment-canonical-pointers.py`).
-- [ ] T017 Run quickstart §1, the new gate and every gate T001 listed, then `run-local-gates.py` filtered as usual. Compare each failure with an `origin/main` worktree, and record the results in `specs/129-maintainer-only-comments/tasks.md` "Notes". Confirm FR-011 from the diff: no edit to intake's `spec-request` entry, to pr-conversation's actor gate, or to Principle X's board-loop entry.
+- [X] T017 Run quickstart §1, the new gate and every gate T001 listed, then `run-local-gates.py` filtered as usual. Compare each failure with an `origin/main` worktree, and record the results in `specs/129-maintainer-only-comments/tasks.md` "Notes". Confirm FR-011 from the diff: no edit to intake's `spec-request` entry, to pr-conversation's actor gate, or to Principle X's board-loop entry.
 - [X] T018 Run the `review-step-gating` skill on the `if:` changes in `.github/workflows/clarify.yml`, `.github/workflows/auto-update-spec-kit.yml` and `.github/workflows/wing-commander-2-clarify.yml`. Run the `container-shell-safety` skill on the new `run:` step in clarify's container job.
 - [ ] T019 Review the local branch with separate local sessions until a pass comes back clean (the review-until-clean procedure, without a PR). Fix each real finding with a test that fails without it.
 - [ ] T020 Run the scratch-repository proof (quickstart §3) in `charlesguse/wing-commander-auto-release-scratch`, outside auto-release's 09:09 UTC run, and restore the wrapper pins afterwards. Record the evidence in `specs/129-maintainer-only-comments/tasks.md` "Notes".
@@ -213,4 +213,14 @@ description: "Task list for spec 129: comment-triggered stages act only on maint
 | Gate 113 / 141 / 116 | pass (constitution PR) |
 
 Same failures as origin/main (Windows-only): Gate 96 (3 file-staging cases under `/tmp`), Gate 93 self-test (1), `verify-auto-release-gate-waits-for-stage.py` (5), `verify-clarification-gating.py` (symlink privilege). On this tree, Gate 96's count assertions pass and its re-added author-clause mutation is caught.
+
+### T017 gate comparison (2026-11-24)
+
+- **What ran:** 150 gate scripts (210 gate labels) that read a changed file, run with `run-local-gates.py --jobs 3` on this branch and on origin/main (ec1fd4ac) in parallel.
+- **Main:** 32 failures, all from this Windows machine.
+- **Branch, first run:** the same 32 plus 5 of its own:
+  - Gate 27 (`verify-stage-tool-lists.py` and its self-test): the specs/010 contract still listed clarify's `Bash(gh issue view:*)`. Fixed in the contract.
+  - Gate 126 (`verify-gh-api-error-capture.py`): the new check step's `gh api` capture needed an explicit failure path. Fixed with `if ! info=...; then ... exit 1; fi`.
+  - Gate 106 (`verify-gate-106.py` and its self-test): its preamble marker was the removed `author_id=""` line. It now names the next line, so the extracted preamble is unchanged except for the removed block.
+- **After the fixes:** all five pass, and Gate 172 passes with every mutant caught. No other gate fails only on this branch.
 

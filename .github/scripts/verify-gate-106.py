@@ -69,7 +69,9 @@ CHECKS_SCRIPT_REL = os.path.join(
 # rather than silently drifting.
 FRAGMENT_START_MARKER = 'execution_pass_observed=""'
 FRAGMENT_END_MARKER = 'write_verdict "pass"'
-PREAMBLE_END_MARKER = 'author_id=""'
+# The first line after the preamble. It was `author_id=""` until
+# specs/129-maintainer-only-comments removed the issue-author read.
+PREAMBLE_END_MARKER = '# The three PR-merge gates share one shape (research.md D6/D9);'
 
 HEAD = "0123456789abcdef0123456789abcdef01234567"
 

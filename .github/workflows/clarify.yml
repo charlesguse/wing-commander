@@ -419,7 +419,10 @@ jobs:
           COMMENT_ID: ${{ inputs.comment-id }}
         run: |
           set -euo pipefail
-          info="$(gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" --jq '[(.user.type // ""), (.author_association // "")] | @tsv')"
+          if ! info="$(gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" --jq '[(.user.type // ""), (.author_association // "")] | @tsv')"; then
+            echo "::error::wing-commander clarify: could not read comment ${COMMENT_ID} to check its author; a failed read is never treated as a maintainer."
+            exit 1
+          fi
           user_type="${info%%$'\t'*}"
           association="${info#*$'\t'}"
           maintainer=false
