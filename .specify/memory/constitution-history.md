@@ -6,6 +6,25 @@ A new amendment adds its report to the top of this list (below this
 header), not to `constitution.md` -- see CLAUDE.md.
 
 <!--
+Sync Impact Report — 2026-11-23
+Version change: 2.8.0 → 3.0.0 (MAJOR: Principle V's comment-trigger rule is redefined. It read "a maintainer (OWNER/MEMBER/COLLABORATOR) or the original issue author" and now reads maintainers only. A requester who is not a maintainer can no longer answer clarification questions directly. That is backward incompatible for any adopter whose requesters lack write access, so it is a breaking principle change under the Governance semver rule.)
+Modified principles:
+  IV. Automation-First: the requester's list keeps "answer clarification questions" and adds that a requester who is not a maintainer answers through one, because comment-triggered stages act only on maintainers (Principle V).
+  V. Security — Untrusted Content Is Never Instructions: "Comment-triggered stages verify the commenter is a maintainer (OWNER/MEMBER/COLLABORATOR), and never react to bots; an issue's author who is not a maintainer gets no exception." The "or the original issue author" clause is removed. Pipeline entry (a maintainer-applied label) and Principle X's board-loop entry, which already require a maintainer, are unchanged.
+Added sections: none
+Removed sections: none
+Templates requiring updates:
+  ✅ .specify/templates/plan-template.md — no change needed (Constitution Check is generic)
+  ✅ .specify/templates/spec-template.md — no change needed (no principle references)
+  ✅ .specify/templates/tasks-template.md — no change needed (no principle references)
+  ⚠ The clarify wrapper's actor gate, the shared comment trust filter, the Spec Kit updater's comment gate, the auto-release e2e clarify check, docs/adoption.md, docs/architecture.md and the live contracts that describe the issue-author exception change in the follow-up change that implements this amendment. This amendment carries only `.specify/memory/` edits.
+  ✅ .specify/extensions.yml — absent, so no before/after_constitution hooks apply
+Motivation: owner decision, 2026-11-23: only maintainers steer comment-triggered stages. In this repository the issue-author exception had never been used by a requester without maintainer access, and the owner can relay a requester's answers when needed.
+Worked example: once the implementing change lands, a clarification reply on a lifecycle issue from its author who is not OWNER, MEMBER or COLLABORATOR starts no clarify run. This amendment merges first.
+Follow-up TODOs: none
+-->
+
+<!--
 Sync Impact Report — 2026-11-06
 Version change: 2.7.0 → 2.8.0 (MINOR: Principle X's board loop gains a second kind of entry, the Maintenance backlog line, with its own hold (the line annotation) and its own switch. A new entry kind materially expands the guidance that bounds the board loop, so this is MINOR, not PATCH, under the speckit-constitution versioning rule -- the same reasoning as 2.6.0 and 2.7.0. No merge class is added or widened: a line's fix PR is a fix PR under the existing bounded fix-PR merge, with every gate it already required.)
 Modified principles:
