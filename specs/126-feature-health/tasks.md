@@ -247,3 +247,9 @@ MVP = Phases 1-3 (registry, drift gate, classifier, renderer, fixtures): the ver
 - [X] FH-FB-C (nit C): In `wc_board_status.py` (~:348), when not even the too-large notice fits, log the drop or leave a marker instead of dropping the feature-health section silently. Add a test.
 - [X] FH-FB-D (nit D): In `verify-feature-health.py` (~:497), make `check_switch_source` flag only a truthy-string comparison used as the switch parse, not any `"1"` constant. It should also catch a module-level helper called from `collect`. Add positive and negative cases.
 - [X] FH-FB-E (nit E): Make the triage-close read tolerate a search-API 403/429 and its separate quota. Either check the `search` rate-limit bucket in `check_rate_limit` or report a distinct degraded state, not 'unreadable' while core calls are plentiful. Add a test.
+
+## Maintainer Feedback
+
+- [ ] T-MF1 Amend specs/126-feature-health/spec.md US3 acceptance 2 to say a failed output-signal query makes the feature unreadable only when no stronger state (paused, not configured, failing, not running) applies; otherwise the failure is recorded in the row's reason (review of c6a748d, finding 1).
+- [ ] T-MF2 Amend spec.md FR-004 (precedence) and FR-010 (signal failure handling) to match the same rule, and state what the header unreadable count covers.
+- [ ] T-MF3 Amend specs/126-feature-health/data-model.md rule 1 and the Report rows `reason` field (no longer 'unreadable only') to match wc_feature_health.py classify_feature.
