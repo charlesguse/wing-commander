@@ -69,12 +69,12 @@ on:
         required: false
         default: ""
       commenter-id:
-        description: "The commenter's numeric GitHub user id. Only meaningful when trigger == comment-reply."
+        description: "Accepted and ignored since specs/129-maintainer-only-comments: comment-reply admits a commenter by association only. Kept so existing callers do not fail."
         type: string
         required: false
         default: ""
       issue-author-id:
-        description: "The commented-on issue's author numeric GitHub user id. Only meaningful when trigger == comment-reply."
+        description: "Accepted and ignored since specs/129-maintainer-only-comments: comment-reply admits a commenter by association only. Kept so existing callers do not fail."
         type: string
         required: false
         default: ""
@@ -3465,7 +3465,8 @@ jobs:
   # question from a verified maintainer's reply.
   # T024 (US4, constitution V): commenter verification is the same
   # trigger-side actor gate wing-commander-2-clarify.yml uses — a maintainer
-  # (OWNER/MEMBER/COLLABORATOR) or the lifecycle issue's own author. Any
+  # (OWNER/MEMBER/COLLABORATOR); since specs/129-maintainer-only-comments
+  # the issue's own author gets no exception. Any
   # other commenter fails this job-level `if:`, so the job is skipped
   # entirely: no comment, no error surfaced, silently ignored (never react
   # to an untrusted commenter). evaluate-path's `needs.comment-reply` gate
@@ -3478,7 +3479,7 @@ jobs:
       !cancelled() &&
       needs.verify-image-prerequisites.result != 'failure' &&
       inputs.trigger == 'comment-reply' &&
-      (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), inputs.commenter-association) || inputs.commenter-id == inputs.issue-author-id)
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), inputs.commenter-association)
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}

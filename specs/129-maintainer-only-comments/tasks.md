@@ -100,13 +100,13 @@ description: "Task list for spec 129: comment-triggered stages act only on maint
 
 **Independent Test**: spec.md US3 acceptance scenarios, run through the gate's harness on the `comment-reply` job's `if:`.
 
-- [ ] T012 [P] [US3] In `.github/workflows/auto-update-spec-kit.yml`:
+- [X] T012 [P] [US3] In `.github/workflows/auto-update-spec-kit.yml`:
   - remove the `issue-author-id` comparison from the `comment-reply` job `if:`;
   - describe the `issue-author-id` input as accepted and ignored (research D2);
   - update the comment above the job.
 
   Fails without it: gate check (d) and its mutant.
-- [ ] T013 [US3] Stop passing `issue-author-id` from `.github/workflows/wing-commander-auto-update-spec-kit.yml`, and update `specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md`. Fails without it: the gate's wrapper scan, check (a).
+- [X] T013 [US3] Stop passing `issue-author-id` from `.github/workflows/wing-commander-auto-update-spec-kit.yml`, and update `specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md`. Fails without it: the gate's wrapper scan, check (a).
 
 **Checkpoint**: the new gate passes on the whole tree, and `--self-test` catches every mutant.
 

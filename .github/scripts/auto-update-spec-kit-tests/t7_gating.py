@@ -344,7 +344,7 @@ def main():
         ("OWNER", "1", "1", True, "OWNER"),
         ("MEMBER", "9", "1", True, "MEMBER"),
         ("COLLABORATOR", "9", "1", True, "COLLABORATOR"),
-        ("NONE", "7", "7", True, "non-maintainer but IS the issue author"),
+        ("NONE", "7", "7", False, "non-maintainer who IS the issue author (refused since spec 129)"),
         ("NONE", "9", "1", False, "drive-by NONE"),
         ("CONTRIBUTOR", "9", "1", False, "CONTRIBUTOR"),
         ("FIRST_TIME_CONTRIBUTOR", "9", "1", False, "FIRST_TIME_CONTRIBUTOR"),

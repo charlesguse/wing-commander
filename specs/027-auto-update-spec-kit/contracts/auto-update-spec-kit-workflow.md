@@ -38,8 +38,6 @@ jobs:
       issue-number: ${{ github.event.issue.number || '' }}
       comment-id: ${{ github.event.comment.id || '' }}
       commenter-association: ${{ github.event.comment.author_association || '' }}
-      commenter-id: ${{ github.event.comment.user.id || '' }}
-      issue-author-id: ${{ github.event.issue.user.id || '' }}
       stabilization-checks: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_STABILIZATION_CHECKS || '1' }}
       model: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_MODEL || 'claude-sonnet-5' }}
     secrets:
@@ -173,9 +171,10 @@ this job — nothing to record.
 
 1. Verify the commenter:
    `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
-   inputs.commenter-association) || inputs.commenter-id ==
-   inputs.issue-author-id` (the exact condition
-   `wing-commander-2-clarify.yml` already uses). Fails → no-op, no
+   inputs.commenter-association)` (the exact condition
+   `wing-commander-2-clarify.yml` already uses; since
+   specs/129-maintainer-only-comments no user id is compared, and the
+   `commenter-id` and `issue-author-id` inputs are accepted and ignored). Fails → no-op, no
    comment, no error surfaced (never react to an untrusted commenter,
    constitution V).
 2. The issue must carry an `outcome: ambiguous-options` question
