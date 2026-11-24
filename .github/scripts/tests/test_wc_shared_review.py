@@ -459,6 +459,24 @@ class ReviewRound3Fixes(unittest.TestCase):
         covered = dict(good_check, checks=good_check["checks"] + [{"id": "F1-1", "outcome": "confirmed"}])
         self.assertEqual(sr.validate_output(covered, "check", prior), [])
 
+    def test_check_agent_schema_matches_the_validator(self):
+        # The check agent's --json-schema must ask for exactly what
+        # validate_output requires, or a well-meant answer reads incomplete.
+        import json
+        import re
+        import yaml
+        wf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "workflows",
+                               "shared-pr-reviewer.yml")
+        wf = yaml.safe_load(open(wf_path, encoding="utf-8"))
+        agent = next(s for s in wf["jobs"]["check"]["steps"] if s.get("id") == "agent")
+        schema = json.loads(re.search(r"--json-schema '([^']*)'", agent["with"]["claude_args"]).group(1))
+        answers = schema["properties"]["answers"]
+        self.assertEqual(sorted(answers.get("required") or []), sorted(sr.ANSWER_KEYS))
+        for key in sr.ANSWER_KEYS:
+            self.assertEqual(sorted(answers["properties"][key]["enum"]), sorted(sr.ANSWER_VALUES))
+        outcome = schema["properties"]["checks"]["items"]["properties"]["outcome"]["enum"]
+        self.assertEqual(sorted(outcome), sorted(sr.CHECK_OUTCOMES))
+
     def test_validate_output_cli_refuses_an_empty_object(self):
         import json
         import tempfile
