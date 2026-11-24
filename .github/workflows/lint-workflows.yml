@@ -57,6 +57,9 @@ on:
       # covered by any glob above -- an edit here is the one change most
       # likely to make the built image disagree with required-tools.txt.
       - ".github/docker/e2e-reference-image/**"
+      # verify-shared-review-wiring.py's subject: the shared reviewer's
+      # agent prompts, which must name the PR tree outside the workspace.
+      - ".github/prompts/**"
       # verify-metrics-record-schema.py's subject: an edit to the documented
       # schema-version-1 shape alone (no code change) must still trigger the
       # gate that checks fixtures against it (FR-040).
