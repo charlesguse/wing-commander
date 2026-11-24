@@ -104,6 +104,28 @@ def _true(value):
     return value is True or str(value).lower() == "true"
 
 
+TOLERATED_JOBS = ("code-run", "find", "check")
+
+
+def tolerated_job_problems(wf):
+    """A5/P2: a failure no step handles in code-run, find or check (a
+    checkout or download, a timeout, PR code crashing the job) must leave a
+    successful run, so record's incomplete round is confirmed. And since a
+    tolerated job's result reads `success` whatever failed, no condition
+    may read those jobs' results; their outputs carry the signal."""
+    problems = []
+    jobs = wf.get("jobs") or {}
+    for name in TOLERATED_JOBS:
+        if not _true((jobs.get(name) or {}).get("continue-on-error")):
+            problems.append("{0} can fail the run (no job-level continue-on-error)".format(name))
+    text = yaml.safe_dump(jobs)
+    for name in TOLERATED_JOBS:
+        if re.search(r"needs\.{0}\.result".format(re.escape(name)), text):
+            problems.append("a condition reads needs.{0}.result, which a tolerated job always "
+                            "reports as success".format(name))
+    return problems
+
+
 def failure_path_problems(wf):
     """R3-F1, R3-F3 and the round-2 lines: an agent job's failure degrades
     to a missing output and never fails the job, nothing an unhealthy agent
@@ -259,7 +281,7 @@ def main():
     cal = yaml.safe_load(open(CALLABLE, encoding="utf-8")) or {}
     wrap = yaml.safe_load(open(WRAPPER, encoding="utf-8")) or {}
     problems = (callable_problems(cal) + diff_read_problems(cal) + failure_path_problems(cal)
-                + head_fetch_problems(cal) + retention_problems(cal)
+                + head_fetch_problems(cal) + retention_problems(cal) + tolerated_job_problems(cal)
                 + queued_dispatch_note_problems(open(WRAPPER, encoding="utf-8").read())
                 + wrapper_problems(wrap) + readers_problems())
     if "--self-test" in sys.argv:
@@ -283,6 +305,12 @@ def main():
                 ("check uploads an unstaged output", _upload_unstaged_check, failure_path_problems),
                 ("the find agent has no step timeout", _agent_without_step_timeout, failure_path_problems),
                 ("the check verdict step can fail the job", _verdict_can_fail, failure_path_problems),
+                ("code-run can fail the run", lambda w: w["jobs"]["code-run"].pop("continue-on-error"),
+                 tolerated_job_problems),
+                ("find can fail the run", lambda w: w["jobs"]["find"].pop("continue-on-error"),
+                 tolerated_job_problems),
+                ("record reads a tolerated job's result", lambda w: w["jobs"]["record"].update(
+                    {"if": "!cancelled() && needs.check.result == 'success'"}), tolerated_job_problems),
                 ("the PR-head fetch loses its token", _unauthenticated_fetch, head_fetch_problems),
                 ("the PR-head fetch persists its token", _persisted_fetch_token, head_fetch_problems)):
             clone = copy.deepcopy(cal)

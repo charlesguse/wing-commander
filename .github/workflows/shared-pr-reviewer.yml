@@ -262,11 +262,19 @@ jobs:
           retention-days: 7
 
   # Runs PR code. permissions: {}, no secret and no `secrets` reference (SC-008).
+  # continue-on-error on code-run, find and check: a failure no step
+  # handles (a checkout or artifact download, a timeout, PR code that
+  # crashes the job) must still leave a run that succeeds, so record's
+  # `incomplete` round is confirmed (confirm_record needs a successful run).
+  # A tolerated job's result reads `success` whatever failed in it, so
+  # downstream jobs read its outputs, never its result (as metrics-persist's
+  # tolerate-failure does, spec 120).
   code-run:
     needs: prepare
     if: needs.prepare.outputs.proceed == 'true' && needs.prepare.outputs.spent != 'true'
     runs-on: ${{ inputs.runner }}
     permissions: {}
+    continue-on-error: true
     timeout-minutes: 25
     steps:
       - name: Download the trees
@@ -311,6 +319,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
+    continue-on-error: true
     timeout-minutes: 30
     outputs:
       ok: ${{ steps.upload.outcome == 'success' }}
@@ -432,6 +441,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
+    continue-on-error: true
     timeout-minutes: 30
     steps:
       - name: Checkout the default branch (prompts and composites)

@@ -299,6 +299,65 @@ class CodeRun(unittest.TestCase):
         self.assertEqual(out["gate_suite"]["exit"], 0)
         self.assertEqual(len(box.ran), 1)
 
+    def test_any_exception_is_missing_and_still_closes(self):
+        # P2: an OSError from a failed fork, or anything else, is `missing`
+        # with the sandbox closed, never a crash of the code-run step.
+        for exc in (OSError(11, "Resource temporarily unavailable"), ValueError("odd"), KeyError("x")):
+            box = FakeSandbox({})
+
+            def boom(*a, exc=exc):
+                raise exc
+            box.run = boom
+            out = sr.stage_code_run("tree", "rev", ["x/verify-a.py"], timeout=30, sandbox=box)
+            self.assertEqual(out["status"], "missing", exc)
+            self.assertTrue(box.closed)
+
+    def test_close_kills_and_cleans_up_whatever_was_raised(self):
+        calls = []
+
+        class Box(sr.UidSandbox):
+            def _kill_all(self):
+                calls.append("kill")
+                raise OSError(11, "fork failed")
+
+            def _sudo(self, *argv, **kw):
+                calls.append(argv[0])
+                raise OSError(11, "fork failed")
+        box = Box()
+        box.work, box.private = "/nonexistent/work", None
+        box.close()
+        self.assertEqual(calls, ["kill", "rm"])
+
+    def test_commands_run_under_a_process_cap(self):
+        import subprocess
+        from unittest import mock
+        seen = {}
+
+        class Box(sr.UidSandbox):
+            def _fresh_tree(self, n):
+                return "/t", "/h"
+
+            def _kill_all(self):
+                pass
+        box = Box()
+        box.private = __import__("tempfile").mkdtemp()
+
+        class P:
+            pid = 1
+
+            def wait(self, timeout=None):
+                return 0
+
+        def fake_popen(argv, **kw):
+            seen["argv"] = argv
+            return P()
+        with mock.patch.object(subprocess, "Popen", fake_popen), \
+                mock.patch.object(Box, "_sudo", lambda self, *a, **k: subprocess.CompletedProcess(a, 0, b"", b"")):
+            box.run(["true"], 5, 1)
+        argv = seen["argv"]
+        self.assertEqual(argv[argv.index("prlimit") + 1], "--nproc={0}:{0}".format(sr.SANDBOX_NPROC))
+        self.assertLess(argv.index("prlimit"), argv.index("env"))
+
     def test_no_sandbox_runs_nothing_and_is_missing(self):
         # R3-F6: where the sandbox cannot be set up, or a process survives
         # its kill, nothing is staged and nothing of the PR runs unisolated.

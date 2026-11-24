@@ -616,6 +616,9 @@ def discover_named_check(added_files):
 SANDBOX_USER = "wc-code-run"
 SANDBOX_ENV_PATH = "/usr/local/bin:/usr/bin:/bin"
 KILL_ATTEMPTS = 50
+# Processes the sandbox user may have at once (RLIMIT_NPROC counts by real
+# uid), so a fork bomb cannot exhaust the runner's pids (P2).
+SANDBOX_NPROC = 4096
 
 
 class SandboxUnavailable(RuntimeError):
@@ -648,7 +651,7 @@ class UidSandbox:
         import shutil
         if os.name != "posix" or not hasattr(os, "geteuid") or os.geteuid() == 0:
             raise SandboxUnavailable("needs a non-root POSIX runner user")
-        for tool in ("sudo", "tar", "env", "pkill", "ps", "install"):
+        for tool in ("sudo", "tar", "env", "pkill", "ps", "install", "prlimit", "git"):
             if not shutil.which(tool):
                 raise SandboxUnavailable("{0} is not installed".format(tool))
         if self._sudo("true").returncode != 0:
@@ -741,7 +744,9 @@ class UidSandbox:
         env = ["PATH=" + SANDBOX_ENV_PATH, "HOME=" + home, "TMPDIR=" + home,
                "LANG=C.UTF-8", "PYTHONDONTWRITEBYTECODE=1"]
         with open(log, "wb") as fh:
-            proc = subprocess.Popen(["sudo", "-n", "-u", self.user, "--", "env", "-i", "-C", tree]
+            proc = subprocess.Popen(["sudo", "-n", "-u", self.user, "--", "prlimit",
+                                     "--nproc={0}:{0}".format(SANDBOX_NPROC), "--",
+                                     "env", "-i", "-C", tree]
                                     + env + list(argv),
                                     stdin=subprocess.DEVNULL, stdout=fh, stderr=subprocess.STDOUT)
             timed_out = False
@@ -767,13 +772,19 @@ class UidSandbox:
         return {"exit": code, "output_tail": out[-TAIL_CHARS:]}
 
     def close(self):
+        """Kill and clean up whatever went wrong before (P2): an OSError
+        from a fork that failed, or any other exception, still gets the
+        kill attempted and the copies removed, and close never raises."""
         import shutil
         if self.work:
             try:
                 self._kill_all()
-            except SandboxUnavailable:
+            except Exception:  # noqa: BLE001 -- close must not raise
                 pass
-            self._sudo("rm", "-rf", "--one-file-system", self.work)
+            try:
+                self._sudo("rm", "-rf", "--one-file-system", self.work)
+            except Exception:  # noqa: BLE001
+                pass
         if self.private:
             shutil.rmtree(self.private, ignore_errors=True)
 
@@ -791,8 +802,9 @@ def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT
         box.open(pr_tree, reviewer_tree)
         named = box.run(argv, timeout, 1) if argv else None
         gates = box.run(["python3", "-I", box.gate_runner()], timeout, 2)
-    except (SandboxUnavailable, OSError) as exc:
-        return {"status": "missing", "reason": "code-run sandbox: {0}".format(exc)[:500]}
+    except Exception as exc:  # noqa: BLE001 -- any failure is `missing`, never a crash (P2)
+        return {"status": "missing", "reason": "code-run sandbox: {0}: {1}".format(
+            type(exc).__name__, exc)[:500]}
     finally:
         box.close()
     return {"status": "staged", "named_check": named, "gate_suite": gates}
