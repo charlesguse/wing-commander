@@ -4827,6 +4827,16 @@ jobs:
       - name: Gate 172 self-test — no block, the bare string form, no cancel, a per-sha, per-run, run-number, head-branch, constant, per-ref or unprefixed group, and an unmodelled context each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lint-supersedes-pr-runs.py --self-test
+      # Gate 173 — the skill scripts under .claude/skills/*/scripts import
+      # helpers from .github/scripts; a rename there broke them with every
+      # other gate green. The gate imports each script and runs
+      # thrash_signals.py --self-test.
+      - name: Gate 173 — every skill script still imports and thrash_signals.py's self-test passes
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-skill-scripts-import.py
+      - name: Gate 173 self-test — a broken import and an empty tree each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-skill-scripts-import.py --self-test
       # Gate 165 — specs/116-review-convergence-analyze. It keeps the review
       # loops' convergence arithmetic and thresholds in wc_convergence.py
       # alone (FR-010, FR-018, FR-019); its fixtures run the rules, the
