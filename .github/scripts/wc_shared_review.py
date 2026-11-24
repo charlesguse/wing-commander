@@ -798,6 +798,46 @@ def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT
     return {"status": "staged", "named_check": named, "gate_suite": gates}
 
 
+LINK_NOTE = "symlink to: {0}\n"
+
+
+def neutralise_links(root):
+    """Replace every symbolic link under `root` with a plain file naming its
+    target, and return how many were replaced (A1).
+
+    `git archive | tar -x` writes a PR's symlinks out as symlinks, and
+    actions/upload-artifact resolves a symlink to its target's content. A
+    link to /proc/self/environ would upload the uploading step's runtime
+    token; a link into the runner's _temp would upload that directory. So
+    no tree leaves prepare with a link in it: a directory link is
+    unlinked, never descended. The target is kept as data, so a reviewer
+    still sees what the PR committed."""
+    replaced = 0
+    for top, dirs, files in os.walk(root, topdown=True, followlinks=False):
+        for name in list(dirs) + list(files):
+            path = os.path.join(top, name)
+            if not os.path.islink(path):
+                continue
+            target = os.readlink(path)
+            os.unlink(path)
+            with open(path, "w", encoding="utf-8", errors="replace") as fh:
+                fh.write(LINK_NOTE.format(target))
+            replaced += 1
+            if name in dirs:
+                dirs.remove(name)
+    return replaced
+
+
+def links_under(root):
+    """Every symbolic link left under `root` (lstat, never followed)."""
+    found = []
+    for top, dirs, files in os.walk(root, topdown=True, followlinks=False):
+        for name in dirs + files:
+            if os.path.islink(os.path.join(top, name)):
+                found.append(os.path.join(top, name))
+    return found
+
+
 def write_private(path, text):
     """The staged result, written by the runner once the sandbox user has
     no process left, mode 0600."""
@@ -889,6 +929,8 @@ def main(argv=None):
     f.add_argument("--head-sha", required=True); f.add_argument("--run-id", required=True)
     f.add_argument("--reviewer-commit", required=True); f.add_argument("--pr-state", default="open")
     f.add_argument("--pr-kind", default="fix")
+    nl = sub.add_parser("neutralise-links")
+    nl.add_argument("--root", required=True)
     v = sub.add_parser("validate-output")
     v.add_argument("--input", required=True)
     v.add_argument("--role", required=True, choices=("find", "check"))
@@ -932,6 +974,11 @@ def main(argv=None):
             added = [line.strip() for line in fh if line.strip()]
         write_private(args.out, json.dumps(stage_code_run(args.pr_tree, args.reviewer_tree, added)))
         return 0
+    if args.cmd == "neutralise-links":
+        replaced = neutralise_links(args.root)
+        left = links_under(args.root)
+        print(json.dumps({"replaced": replaced, "left": len(left)}))
+        return 1 if left else 0
     if args.cmd == "validate-output":
         try:
             data = _load(args.input)

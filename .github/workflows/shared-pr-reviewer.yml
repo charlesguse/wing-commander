@@ -188,10 +188,13 @@ jobs:
           git diff --name-only --diff-filter=A "origin/${DEFAULT_BRANCH}...FETCH_HEAD" > ../input/added-files.txt
           git log --format='%H %s' "origin/${DEFAULT_BRANCH}..FETCH_HEAD" > ../input/commits.txt
           [ -s ../input/pr.diff ] || { echo "::error::the PR's diff against ${DEFAULT_BRANCH} is empty"; exit 1; }
-          mkdir -p ../pr-tree
-          git archive FETCH_HEAD | tar -x -C ../pr-tree
-          mkdir -p ../reviewer-tree
-          git archive HEAD | tar -x -C ../reviewer-tree
+          mkdir -p ../review-trees/pr-tree ../review-trees/reviewer-tree
+          git archive FETCH_HEAD | tar -x -C ../review-trees/pr-tree
+          git archive HEAD | tar -x -C ../review-trees/reviewer-tree
+          # No symlink leaves this job: the upload would store its target's
+          # content (a link to /proc/self/environ is this job's runtime
+          # token). Each becomes a file naming its target; any left fails.
+          python3 -I .github/scripts/wc_shared_review.py neutralise-links --root ../review-trees
 
       - name: Resolve the purpose source and read earlier confirmed rounds
         id: state
@@ -255,9 +258,7 @@ jobs:
         with:
           name: shared-review-trees
           include-hidden-files: true
-          path: |
-            pr-tree/
-            reviewer-tree/
+          path: review-trees/
           retention-days: 7
 
   # Runs PR code. permissions: {}, no secret and no `secrets` reference (SC-008).
