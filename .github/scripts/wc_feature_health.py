@@ -360,6 +360,7 @@ def fetch_runs(gh, repo, filename, start, end, events=None):
             continue
         out.append({"id": r["id"], "event": r.get("event"),
                     "started_at": r.get("run_started_at") or r["created_at"],
+                    "updated_at": r.get("updated_at"),
                     "conclusion": r.get("conclusion") or "other"})
     return out
 
@@ -393,11 +394,13 @@ def _triage_close_times(gh, repo, base, since, until=None):
     search still unresolved after SEARCH_PAGES pages raises (FR-010/011).
     `until` (the capture only) drops a close after it before the stop rule
     sees it, so a later close cannot end the read early and hide one in the
-    window."""
+    window. `is:closed` is today's state, so under `until` the search drops
+    it, and an issue open today with a close in the window raises: whether
+    it was still closed at `until` cannot be read back."""
     s = fmt_time(since)
     u = fmt_time(until) if until else None
-    q = 'repo:{0} is:issue is:closed updated:>={1} "{2}"'.format(
-        repo, s[:10], TRIAGE_CLOSE_COMMENT_PREFIX.strip())
+    q = 'repo:{0} is:issue {1}updated:>={2} "{3}"'.format(
+        repo, "" if u else "is:closed ", s[:10], TRIAGE_CLOSE_COMMENT_PREFIX.strip())
     path = "search/issues?q={0}&sort=updated&order=desc&per_page=100".format(urllib.parse.quote(q))
     times = []
     for page in range(1, SEARCH_PAGES + 1):
@@ -418,6 +421,9 @@ def _triage_close_times(gh, repo, base, since, until=None):
                 return times
             for c in _pages(gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s), 1):
                 if TRIAGE_CLOSE_RE.search(c.get("body") or "") and (u is None or c["created_at"] <= u):
+                    if u and i.get("state") == "open":
+                        raise RuntimeError("issue {0} was triage closed at {1} and is open now; its state "
+                                           "at {2} cannot be read".format(i["number"], c["created_at"], u))
                     times.append(c["created_at"])
         if len(items) < 100:
             return times
@@ -595,7 +601,9 @@ def _runs_as_of(readings, now):
     """Keep only what classify_workflow reads of each run, in place. A run
     created before `now` but re-run after it reports its later attempt's
     start and conclusion, and what it showed at `now` cannot be read back, so
-    the capture refuses rather than record a later result as the window's."""
+    the capture refuses rather than record a later result as the window's.
+    A run still in progress at `now` (finished after it) is dropped: a build
+    at `now` reads only completed runs, so it could not have seen it."""
     for name, reading in readings.items():
         late = [r["started_at"] for r in reading.get("runs") or [] if parse_time(r["started_at"]) > now]
         if late:
@@ -603,7 +611,9 @@ def _runs_as_of(readings, now):
                              "its state then cannot be read".format(name, max(late), fmt_time(now)))
         if "runs" in reading:
             reading["runs"] = sorted(({"started_at": r["started_at"], "conclusion": r["conclusion"]}
-                                      for r in reading["runs"]), key=lambda r: r["started_at"])
+                                      for r in reading["runs"]
+                                      if not (r.get("updated_at") and parse_time(r["updated_at"]) > now)),
+                                     key=lambda r: r["started_at"])
 
 
 def capture_corpus(repo, now, start, ref="origin/main", gh=gh_json, registry=None):

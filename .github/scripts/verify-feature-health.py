@@ -24,6 +24,7 @@ import re
 import stat
 import sys
 import tempfile
+import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
@@ -558,6 +559,36 @@ def check_capture_bounds():
         problems.append("capture bound: a run attempt started after now was recorded")
     except SystemExit:
         pass
+    # A run started before `now` but finished after it was not completed at
+    # `now`, so a build then could not have seen it; the capture drops it.
+    inflight = {"a.yml": {"runs": [{"id": 1, "event": "push", "started_at": "2026-11-12T23:50:00Z",
+                                    "updated_at": "2026-11-13T00:10:00Z", "conclusion": "failure"}],
+                          "interval_hours": 24}}
+    fh._runs_as_of(inflight, now)
+    if inflight["a.yml"]["runs"]:
+        problems.append("capture bound: a run still in progress at now was recorded as {0}".format(
+            inflight["a.yml"]["runs"]))
+    # `is:closed` is today's state: under `until` the search must not ask for
+    # it, and an issue open today with a close in the window must raise.
+    queries = []
+
+    def reopened(path):
+        if path.startswith("search/issues?"):
+            queries.append(urllib.parse.unquote(path))
+            return {"incomplete_results": False,
+                    "items": [{"number": 3, "state": "open", "updated_at": "2026-11-21T00:00:00Z"}]}
+        return [{"created_at": "2026-11-01T00:00:00Z", "body": close}]
+    try:
+        got = fh.read_signal({"kind": "triage_close"}, "own/repo", since, reopened, {}, until=until)
+        problems.append("capture bound: a triage close on an issue reopened since gave {0}".format(got))
+    except RuntimeError:
+        pass
+    if any("is:closed" in q for q in queries):
+        problems.append("capture bound: the triage close search asked for today's is:closed under until")
+    queries.clear()
+    if fh.read_signal({"kind": "triage_close"}, "own/repo", since, reopened, {}) != "2026-11-01T00:00:00Z" \
+            or not all("is:closed" in q for q in queries):
+        problems.append("capture bound: the build's triage close search lost is:closed")
     return problems
 
 
