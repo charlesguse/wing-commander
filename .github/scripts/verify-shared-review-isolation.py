@@ -288,31 +288,25 @@ def _tools(value):
 
 
 def agent_read_problems(wf):
-    """C2: neither agent can Read outside the workspace and the trees.
-    Checked with Claude Code 2.1.319 headless: a bare Read allow rule lets
-    a Read and a Grep reach any path; with these scoped rules, the deny
-    rules and blockReadsOutsideWorkingDirectories, the tree file is read
-    and a file elsewhere or under a denied path is refused."""
-    import json
+    """C2: neither agent can Read, Grep or Glob outside the workspace and
+    the trees. Checked with Claude Code 2.1.319 headless: a bare Read, Grep
+    or Glob allow rule pre-approves any path; with only these scoped Read
+    rules and the denies, the tree is read, grepped and globbed, and a file
+    elsewhere or under a denied path is refused by all three. No settings
+    input: Gate 93 refuses one carrying permissions on a read-only agent."""
     problems = []
     for name in ("find", "check"):
         steps = [x or {} for x in ((wf.get("jobs") or {}).get(name) or {}).get("steps") or []]
         args = next((x.get("with") for x in steps if "default-allowed-tools" in (x.get("with") or {})), {})
         allowed, denied = _tools(args.get("default-allowed-tools")), _tools(args.get("default-disallowed-tools"))
-        reads = [t for t in allowed if t == "Read" or t.startswith("Read(")]
-        if "Read" in reads or sorted(reads) != sorted(AGENT_READ_SCOPES):
-            problems.append("{0}'s Read is not scoped to the workspace and the trees: {1}".format(name, reads))
+        bare = [t for t in allowed if t.split("(", 1)[0] in ("Read", "Grep", "Glob") and "(" not in t]
+        reads = [t for t in allowed if t.startswith("Read(")]
+        if bare or sorted(reads) != sorted(AGENT_READ_SCOPES):
+            problems.append("{0}'s file tools are not scoped to the workspace and the trees: {1}".format(
+                name, bare + reads))
         missing = [d for d in AGENT_READ_DENIES if d not in denied]
         if missing:
             problems.append("{0} does not deny {1}".format(name, ", ".join(missing)))
-        agent = next((x for x in steps if x.get("id") == "agent"), {})
-        try:
-            block = json.loads((agent.get("with") or {}).get("settings") or "{}")
-            block = (block.get("permissions") or {}).get("blockReadsOutsideWorkingDirectories")
-        except (ValueError, AttributeError):
-            block = None
-        if block is not True:
-            problems.append("{0}'s agent does not set blockReadsOutsideWorkingDirectories".format(name))
     return problems
 
 
@@ -509,14 +503,15 @@ def main():
                 for st in w["jobs"]["prepare"]["steps"]
                 if (st.get("with") or {}).get("name") == "shared-review-trees"],
             "find's Read is bare again": lambda w: [
-                x["with"].update({"default-allowed-tools": "Read,Grep,Glob"})
+                x["with"].update({"default-allowed-tools": "Read"})
                 for x in w["jobs"]["find"]["steps"] if "default-allowed-tools" in (x.get("with") or {})],
             "check no longer denies /proc": lambda w: [
                 x["with"].update({"default-disallowed-tools": x["with"]["default-disallowed-tools"].replace(
                     ",Read(//proc/**)", "")})
                 for x in w["jobs"]["check"]["steps"] if "default-disallowed-tools" in (x.get("with") or {})],
-            "check's agent drops blockReadsOutsideWorkingDirectories": lambda w: [
-                x["with"].pop("settings") for x in w["jobs"]["check"]["steps"] if x.get("id") == "agent"],
+            "check gets a bare Grep again": lambda w: [
+                x["with"].update({"default-allowed-tools": x["with"]["default-allowed-tools"] + ",Grep,Glob"})
+                for x in w["jobs"]["check"]["steps"] if "default-allowed-tools" in (x.get("with") or {})],
             "code-run ignores modified checks": lambda w: code_run_step(w).update(
                 {"run": code_run_step(w)["run"].replace(" --modified-files input/modified-files.txt", "")}),
             "code-run stops running the named check without the fix": lambda w: code_run_step(w).update(

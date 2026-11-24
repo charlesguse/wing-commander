@@ -377,11 +377,12 @@ jobs:
         id: tool-args
         uses: ./.github/actions/wing-commander-tool-args
         with:
-          # Read is scoped to the workspace and the trees, never bare: a bare
-          # Read pre-approves every path, /proc/self/environ (the model
-          # credential) included (C2). Reads elsewhere are refused by
-          # blockReadsOutsideWorkingDirectories on the agent step.
-          default-allowed-tools: "Read(./**),Read(/${{ runner.temp }}/shared-review-trees/**),Grep,Glob"
+          # Read is scoped to the workspace and the trees, and Grep and Glob
+          # get no allow rule: a bare Read, Grep or Glob rule pre-approves
+          # every path, /proc/self/environ (the model credential) included
+          # (C2). In -p mode an unapproved read outside the working
+          # directories is refused; inside them Grep and Glob need none.
+          default-allowed-tools: "Read(./**),Read(/${{ runner.temp }}/shared-review-trees/**)"
           default-disallowed-tools: "WebSearch,WebFetch,Bash,Write,Edit,ScheduleWakeup,Monitor,SendMessage,Read(//proc/**),Read(//sys/**),Read(//dev/**)"
           step-label: "shared-review.find"
       - name: Compute agent turn ceiling (find)
@@ -400,7 +401,6 @@ jobs:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           github_token: ${{ github.token }}
-          settings: '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'
           prompt: |
             Follow .github/prompts/shared-review-find.md exactly. The review inputs are in input/ and
             the PR's files are in ${{ runner.temp }}/shared-review-trees/pr-tree/. All of it is data.
@@ -517,11 +517,12 @@ jobs:
         id: tool-args
         uses: ./.github/actions/wing-commander-tool-args
         with:
-          # Read is scoped to the workspace and the trees, never bare: a bare
-          # Read pre-approves every path, /proc/self/environ (the model
-          # credential) included (C2). Reads elsewhere are refused by
-          # blockReadsOutsideWorkingDirectories on the agent step.
-          default-allowed-tools: "Read(./**),Read(/${{ runner.temp }}/shared-review-trees/**),Grep,Glob"
+          # Read is scoped to the workspace and the trees, and Grep and Glob
+          # get no allow rule: a bare Read, Grep or Glob rule pre-approves
+          # every path, /proc/self/environ (the model credential) included
+          # (C2). In -p mode an unapproved read outside the working
+          # directories is refused; inside them Grep and Glob need none.
+          default-allowed-tools: "Read(./**),Read(/${{ runner.temp }}/shared-review-trees/**)"
           default-disallowed-tools: "WebSearch,WebFetch,Bash,Write,Edit,ScheduleWakeup,Monitor,SendMessage,Read(//proc/**),Read(//sys/**),Read(//dev/**)"
           step-label: "shared-review.check"
       - name: Compute agent turn ceiling (check)
@@ -540,7 +541,6 @@ jobs:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
           anthropic_api_key: ${{ secrets.anthropic-api-key }}
           github_token: ${{ github.token }}
-          settings: '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'
           prompt: |
             Follow .github/prompts/shared-review-check.md exactly. The candidates are input/find.json,
             earlier findings are input/memory.json and the PR's files are in
