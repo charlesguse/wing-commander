@@ -606,6 +606,35 @@ class ReviewRound3Fixes(unittest.TestCase):
                                 "b" * 40, "open")
         self.assertEqual(out["verdict"], "incomplete")
 
+    def test_defuse_renames_everything_an_agent_could_load(self):
+        # P1: at every depth, whatever the case, and without clobbering a
+        # .as-data name the PR already ships.
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            def put(rel, text="x"):
+                path = os.path.join(root, *rel.split("/"))
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+            put("pr-tree/CLAUDE.md", "orders")
+            put("pr-tree/CLAUDE.md.as-data", "shipped by the PR")
+            put("pr-tree/.claude/settings.json", "{}")
+            put("pr-tree/.claude/skills/x/SKILL.md")
+            put("pr-tree/a/b/claude.md")
+            put("pr-tree/a/CLAUDE.local.md")
+            put("pr-tree/.mcp.json", "{}")
+            put("pr-tree/keep/README.md", "kept")
+            renamed = sr.defuse_agent_config(root)
+            self.assertEqual(sr.agent_config_left(root), [])
+            self.assertEqual(len(renamed), 5)
+            with open(os.path.join(root, "pr-tree", "CLAUDE.md.as-data"), encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), "shipped by the PR")
+            with open(os.path.join(root, "pr-tree", "CLAUDE.md.as-data-2"), encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), "orders")
+            self.assertTrue(os.path.isfile(os.path.join(root, "pr-tree", ".claude.as-data", "settings.json")))
+            self.assertTrue(os.path.isfile(os.path.join(root, "pr-tree", "keep", "README.md")))
+            self.assertEqual(sr.main(["defuse-agent-config", "--root", root]), 0)
+
     def test_named_check_skips_fixtures_specs_and_dash_paths(self):
         # R3-F9: a fixture or a spec file sorted first is not the change's
         # own check, and no path component may read as an option.

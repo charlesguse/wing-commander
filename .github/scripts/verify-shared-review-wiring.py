@@ -126,6 +126,51 @@ def tolerated_job_problems(wf):
     return problems
 
 
+AGENT_TREES = "${{ runner.temp }}/shared-review-trees"
+PROMPTS = (os.path.join(ROOT, ".github", "prompts", "shared-review-find.md"),
+           os.path.join(ROOT, ".github", "prompts", "shared-review-check.md"))
+
+
+def agent_tree_problems(wf, prompt_texts=None):
+    """P1 (FR-027): the PR tree can supply neither agent's instructions or
+    settings. Each agent job downloads the trees outside its working
+    directory, renames everything loadable before any agent setup, and
+    reaches them only through --add-dir; nothing opts --add-dir into
+    loading CLAUDE.md; the prompt files name no tree inside the workspace."""
+    problems = []
+    jobs = wf.get("jobs") or {}
+    if "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD" in yaml.safe_dump(wf):
+        problems.append("the callable opts --add-dir into loading CLAUDE.md")
+    for role in ("find", "check"):
+        steps = [x or {} for x in (jobs.get(role) or {}).get("steps") or []]
+        names = [x.get("name") or "" for x in steps]
+        dl = next((i for i, x in enumerate(steps)
+                   if (x.get("with") or {}).get("name") == "shared-review-trees"), None)
+        if dl is None or str(steps[dl]["with"].get("path")) != AGENT_TREES:
+            problems.append("{0} does not download the trees to {1}".format(role, AGENT_TREES))
+            continue
+        defuse = next((i for i, x in enumerate(steps) if "defuse-agent-config" in str(x.get("run") or "")), None)
+        agent = next((i for i, x in enumerate(steps) if x.get("id") == "agent"), None)
+        setup = next((i for i, n in enumerate(names) if n.startswith("Compose tool args")), agent)
+        if defuse is None or not dl < defuse < (setup if setup is not None else 10 ** 6):
+            problems.append("{0} does not defuse the trees after downloading them and before the "
+                            "agent's setup".format(role))
+        elif _true(steps[defuse].get("continue-on-error")) or str((steps[defuse].get("env") or {})
+                                                                    .get("TREES")) != AGENT_TREES:
+            problems.append("{0}'s defuse step does not fail closed on {1}".format(role, AGENT_TREES))
+        args = str(((steps[agent] if agent is not None else {}).get("with") or {}).get("claude_args", ""))
+        if "--add-dir " + AGENT_TREES not in args:
+            problems.append("{0}'s agent does not reach the trees through --add-dir".format(role))
+        prompt = str(((steps[agent] if agent is not None else {}).get("with") or {}).get("prompt", ""))
+        if AGENT_TREES + "/pr-tree/" not in " ".join(prompt.split()):
+            problems.append("{0}'s task prompt does not name the PR tree at {1}".format(role, AGENT_TREES))
+    texts = prompt_texts if prompt_texts is not None else [open(x, encoding="utf-8").read() for x in PROMPTS]
+    for text in texts:
+        if "trees/pr-tree/" in text:
+            problems.append("a prompt file names the PR tree inside the working directory")
+    return problems
+
+
 def failure_path_problems(wf):
     """R3-F1, R3-F3 and the round-2 lines: an agent job's failure degrades
     to a missing output and never fails the job, nothing an unhealthy agent
@@ -282,6 +327,7 @@ def main():
     wrap = yaml.safe_load(open(WRAPPER, encoding="utf-8")) or {}
     problems = (callable_problems(cal) + diff_read_problems(cal) + failure_path_problems(cal)
                 + head_fetch_problems(cal) + retention_problems(cal) + tolerated_job_problems(cal)
+                + agent_tree_problems(cal)
                 + queued_dispatch_note_problems(open(WRAPPER, encoding="utf-8").read())
                 + wrapper_problems(wrap) + readers_problems())
     if "--self-test" in sys.argv:
@@ -309,6 +355,16 @@ def main():
                  tolerated_job_problems),
                 ("find can fail the run", lambda w: w["jobs"]["find"].pop("continue-on-error"),
                  tolerated_job_problems),
+                ("find unpacks the trees in its working directory", lambda w: _step(
+                    w, "find", lambda x: (x.get("with") or {}).get("name") == "shared-review-trees")
+                    ["with"].update({"path": "trees"}), agent_tree_problems),
+                ("check stops defusing the trees", lambda w: w["jobs"]["check"]["steps"].remove(
+                    _step(w, "check", lambda x: "defuse-agent-config" in str(x.get("run") or ""))),
+                 agent_tree_problems),
+                ("find's agent loses --add-dir", lambda w: _step(w, "find", lambda x: x.get("id") == "agent")
+                    ["with"].update({"claude_args": "--model x"}), agent_tree_problems),
+                ("--add-dir opted into CLAUDE.md", lambda w: w.update(
+                    {"env": {"CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD": "1"}}), agent_tree_problems),
                 ("record reads a tolerated job's result", lambda w: w["jobs"]["record"].update(
                     {"if": "!cancelled() && needs.check.result == 'success'"}), tolerated_job_problems),
                 ("the PR-head fetch loses its token", _unauthenticated_fetch, head_fetch_problems),

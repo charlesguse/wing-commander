@@ -850,6 +850,48 @@ def links_under(root):
     return found
 
 
+# Names Claude Code would load from a tree as instructions or settings
+# (memory files, the .claude/ directory with its settings, rules, skills,
+# agents and commands, and project MCP servers). Compared case-insensitively.
+AGENT_CONFIG_NAMES = ("claude.md", "claude.local.md", ".claude", ".mcp.json")
+AS_DATA = ".as-data"
+
+
+def _agent_loadable(name):
+    return name.lower() in AGENT_CONFIG_NAMES
+
+
+def defuse_agent_config(root):
+    """Rename, at every depth under `root`, everything an agent could load
+    as its own configuration, so the PR's files reach the find and check
+    agents only as data (P1, FR-027). The content stays readable under a
+    `.as-data` name; a name already taken (a PR may ship one) gets a
+    numbered suffix. Returns the renamed paths, relative to `root`."""
+    renamed = []
+    for top, dirs, files in os.walk(root, topdown=True, followlinks=False):
+        for name in list(dirs) + list(files):
+            if not _agent_loadable(name):
+                continue
+            src = os.path.join(top, name)
+            dst, n = src + AS_DATA, 1
+            while os.path.lexists(dst):
+                n += 1
+                dst = "{0}{1}-{2}".format(src, AS_DATA, n)
+            os.rename(src, dst)
+            renamed.append(os.path.relpath(src, root))
+            if name in dirs:
+                dirs.remove(name)
+    return renamed
+
+
+def agent_config_left(root):
+    """Everything under `root` an agent could still load (never followed)."""
+    found = []
+    for top, dirs, files in os.walk(root, topdown=True, followlinks=False):
+        found += [os.path.join(top, name) for name in dirs + files if _agent_loadable(name)]
+    return found
+
+
 def write_private(path, text):
     """The staged result, written by the runner once the sandbox user has
     no process left, mode 0600."""
@@ -941,6 +983,8 @@ def main(argv=None):
     f.add_argument("--head-sha", required=True); f.add_argument("--run-id", required=True)
     f.add_argument("--reviewer-commit", required=True); f.add_argument("--pr-state", default="open")
     f.add_argument("--pr-kind", default="fix")
+    da = sub.add_parser("defuse-agent-config")
+    da.add_argument("--root", required=True)
     nl = sub.add_parser("neutralise-links")
     nl.add_argument("--root", required=True)
     v = sub.add_parser("validate-output")
@@ -986,6 +1030,11 @@ def main(argv=None):
             added = [line.strip() for line in fh if line.strip()]
         write_private(args.out, json.dumps(stage_code_run(args.pr_tree, args.reviewer_tree, added)))
         return 0
+    if args.cmd == "defuse-agent-config":
+        renamed = defuse_agent_config(args.root)
+        left = agent_config_left(args.root)
+        print(json.dumps({"renamed": len(renamed), "left": [os.path.relpath(x, args.root) for x in left]}))
+        return 1 if left else 0
     if args.cmd == "neutralise-links":
         replaced = neutralise_links(args.root)
         left = links_under(args.root)
