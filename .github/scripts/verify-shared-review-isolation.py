@@ -108,13 +108,13 @@ def link_proof_problems():
     uploads the targets' content before neutralise-links runs, and nothing
     of them after."""
     problems = []
-    secret = "wc-a1-" + uuid.uuid4().hex
+    canary = "wc-a1-canary-" + uuid.uuid4().hex
     work = tempfile.mkdtemp(prefix="wc-a1-")
     try:
         temp = os.path.join(work, "_temp")
         os.makedirs(temp)
         with open(os.path.join(temp, "runner-file"), "w", encoding="utf-8") as fh:
-            fh.write(secret)
+            fh.write(canary)
         tree = os.path.join(work, TREES_ROOT, "pr-tree")
         os.makedirs(os.path.join(tree, "nested"))
         with open(os.path.join(tree, "README"), "w", encoding="utf-8") as fh:
@@ -123,10 +123,10 @@ def link_proof_problems():
         os.symlink(temp, os.path.join(tree, "tempdir"))
         os.symlink(os.path.join(temp, "runner-file"), os.path.join(tree, "nested", "deep"))
         root = os.path.join(work, TREES_ROOT)
-        env = dict(os.environ, WC_A1_SECRET=secret)
+        env = dict(os.environ, WC_A1_CANARY=canary)
 
         def uploaded():
-            out = subprocess.run([sys.executable, "-I", "-c", _UPLOADER, root, secret], env=env,
+            out = subprocess.run([sys.executable, "-I", "-c", _UPLOADER, root, canary], env=env,
                                  capture_output=True, text=True, timeout=60)
             return sorted(x for x in out.stdout.splitlines() if x)
         before = uploaded()
