@@ -264,3 +264,8 @@ MVP = Phases 1-3 (registry, drift gate, classifier, renderer, fixtures): the ver
 
 - [ ] T-MF7 In wc_feature_health.py `classify_workflow`, move the 'no cron found' unreadable check up beside the switch/var unreadable read so it ranks the same as a cron that raises ValueError (review of c6a748d, finding 3).
 - [ ] T-MF8 Add a state case that fails without T-MF7: a paused workflow with a cadence schedule ref and no parsable cron is unreadable. Then update precedence notes in spec/data-model if they list the order.
+
+## Maintainer Feedback
+
+- [ ] T-MF9 Add `"expect_reason": "signal:"` to the `unreadable: signal` state case (healthy runs) in the feature-health fixtures (review of c6a748d, finding 4).
+- [ ] T-MF10 Add an e2e scenario in fixtures/feature-health/unreadable/scenarios.json where /releases fails for a feature with fresh successful runs, asserting state unreadable and the 'signal:' reason.
