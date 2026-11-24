@@ -284,8 +284,13 @@ def process_round(prior, candidates, checks, round_no, code_run_status):
     notes, serial = [], 0
 
     def settle(f, c):
-        f["in_scope"] = c.get("in_scope") is True
-        f["reachable"] = c.get("reachable") is True
+        # An omitted flag keeps the previous value (never silently clears a
+        # blocking finding); validate_output requires both on upheld/confirmed.
+        for k in ("in_scope", "reachable"):
+            if isinstance(c.get(k), bool):
+                f[k] = c[k]
+            else:
+                f[k] = f.get(k) is True
 
     for cand in candidates or []:
         c = check_for_key.get(cand.get("key")) or {}
@@ -475,6 +480,7 @@ def validate_output(data, role, prior=None):
         items = data.get("candidates")
         if not isinstance(items, list):
             return problems + ["candidates is not a list"]
+        seen_keys = set()
         for n, c in enumerate(items):
             if not isinstance(c, dict):
                 problems.append("candidate {0} is not an object".format(n))
@@ -482,6 +488,10 @@ def validate_output(data, role, prior=None):
             for k in ("key", "title", "file"):
                 if not _nonempty_str(c.get(k)):
                     problems.append("candidate {0} has no {1}".format(n, k))
+            if _nonempty_str(c.get("key")):
+                if c["key"] in seen_keys:
+                    problems.append("candidate {0} repeats key {1!r}".format(n, c["key"]))
+                seen_keys.add(c["key"])
             for k in ("line", "line_end"):
                 if not _opt(c.get(k), int):
                     problems.append("candidate {0} {1} is not an integer".format(n, k))
@@ -512,6 +522,11 @@ def validate_output(data, role, prior=None):
         for k in ("in_scope", "reachable", "cites_only_spec_docs", "needs_code_run"):
             if c.get(k) is not None and not isinstance(c.get(k), bool):
                 problems.append("check {0} {1} is not a boolean".format(n, k))
+        if c.get("outcome") in ("upheld", "confirmed"):
+            for k in ("in_scope", "reachable"):
+                if not isinstance(c.get(k), bool):
+                    problems.append("check {0} {1} is required (boolean) when outcome is {2}".format(
+                        n, k, c.get("outcome")))
         files = c.get("files")
         if files is not None and not (isinstance(files, list) and all(isinstance(x, str) for x in files)):
             problems.append("check {0} files is not a list of strings".format(n))
@@ -524,7 +539,7 @@ def validate_output(data, role, prior=None):
 
 
 def finalize_round(state, find_out, check_out, code_run, purpose, head_sha, dismissals,
-                   run_id, reviewer_commit, pr_state, agent_ok=True):
+                   run_id, reviewer_commit, pr_state, agent_ok=True, pr_kind="fix"):
     """One round's whole record, from staged data only. Agent output is
     read as data; every status, blocking flag and the verdict is code's."""
     round_no = int(state.get("round") or 1)
@@ -545,7 +560,7 @@ def finalize_round(state, find_out, check_out, code_run, purpose, head_sha, dism
         f["blocking"] = is_blocking(f)
         f["non_blocking_rule"] = non_blocking_rule(f)
     verdict = compute_verdict(agent_ok, opened, answers, code_status, has_purpose=bool(purpose))
-    return {"schema": SCHEMA, "reviewer": REVIEWER, "pr_kind": "fix", "round": round_no,
+    return {"schema": SCHEMA, "reviewer": REVIEWER, "pr_kind": pr_kind or "fix", "round": round_no,
             "head_sha": head_sha, "verdict": verdict, "pr_state": pr_state,
             "purpose": {"source": purpose, "version_used": (purpose or {}).get("version_used", "current"),
                         "answers": answers},
@@ -828,7 +843,7 @@ def _gh_api(args):
     import subprocess
     proc = subprocess.run(["gh", "api"] + args, capture_output=True, text=True)
     if proc.returncode != 0:
-        if "404" in (proc.stderr or "") or "Not Found" in (proc.stderr or ""):
+        if re.search(r"\(HTTP 404\)|^gh: Not Found", proc.stderr or "", re.M):
             raise GhNotFound(args[0])
         return None
     try:
@@ -869,6 +884,7 @@ def main(argv=None):
         f.add_argument("--" + name, default=None)
     f.add_argument("--head-sha", required=True); f.add_argument("--run-id", required=True)
     f.add_argument("--reviewer-commit", required=True); f.add_argument("--pr-state", default="open")
+    f.add_argument("--pr-kind", default="fix")
     v = sub.add_parser("validate-output")
     v.add_argument("--input", required=True)
     v.add_argument("--role", required=True, choices=("find", "check"))
@@ -895,7 +911,8 @@ def main(argv=None):
         record = finalize_round(opt(args.state) or {}, opt(args.find), opt(args.check), opt(args.code_run),
                                 opt(args.purpose), args.head_sha,
                                 (lambda d: d if isinstance(d, list) else [])(opt(args.dismissals)),
-                                args.run_id, args.reviewer_commit, args.pr_state)
+                                args.run_id, args.reviewer_commit, args.pr_state,
+                                pr_kind=args.pr_kind)
         print(build_record(record))
         return 0
     if args.cmd == "state":

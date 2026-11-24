@@ -61,6 +61,9 @@ def main(argv=None):
         comments = json.load(fh)
     with open(argv[1], encoding="utf-8") as fh:
         confirmed = json.load(fh)
+    if isinstance(confirmed, dict):  # the whole `state` object: take .confirmed
+        confirmed = confirmed.get("confirmed") or []
+    confirmed = [r for r in confirmed if isinstance(r, dict)]
     for row in compare(comments, confirmed):
         print("{0}\tshared: {1}\thand: {2}".format(
             str(row["head"])[:7], row["shared"] or "-", row["hand"] or "-"))

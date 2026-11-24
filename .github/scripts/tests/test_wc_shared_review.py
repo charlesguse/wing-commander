@@ -460,7 +460,8 @@ class ReviewRound3Fixes(unittest.TestCase):
         # or an unevaluated open finding is malformed.
         answers = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
         good_find = {"answers": {}, "candidates": [{"key": "k", "title": "t", "file": "a.py", "line": 3}]}
-        good_check = {"answers": answers, "checks": [{"key": "k", "outcome": "upheld", "in_scope": True}]}
+        good_check = {"answers": answers, "checks": [{"key": "k", "outcome": "upheld", "in_scope": True,
+                                                         "reachable": True}]}
         self.assertEqual(sr.validate_output(good_find, "find"), [])
         self.assertEqual(sr.validate_output(good_check, "check"), [])
         for bad, role in (({}, "find"), ({}, "check"), (good_check, "find"), (good_find, "check"),
@@ -474,6 +475,25 @@ class ReviewRound3Fixes(unittest.TestCase):
         self.assertNotEqual(sr.validate_output(good_check, "check", prior), [])
         covered = dict(good_check, checks=good_check["checks"] + [{"id": "F1-1", "outcome": "confirmed"}])
         self.assertEqual(sr.validate_output(covered, "check", prior), [])
+
+    def test_round4_validator_and_settle_hardening(self):
+        answers = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
+        # upheld/confirmed without in_scope/reachable is malformed
+        for outcome in ("upheld", "confirmed"):
+            bad = {"answers": answers, "checks": [{"key": "k", "outcome": outcome}]}
+            self.assertNotEqual(sr.validate_output(bad, "check"), [])
+        # duplicate candidate keys are refused
+        cand = {"key": "k", "title": "t", "file": "a.py"}
+        self.assertNotEqual(sr.validate_output({"answers": {}, "candidates": [cand, dict(cand)]}, "find"), [])
+        # an omitted flag keeps the previous value on a recheck
+        prior = [dict(finding("F1-1"), in_scope=True, reachable=True)]
+        found, _ = sr.process_round(prior, [], [{"id": "F1-1", "outcome": "confirmed"}], 2, "staged")
+        self.assertTrue(found[0]["in_scope"] and found[0]["reachable"])
+
+    def test_finalize_records_the_derived_pr_kind(self):
+        rec_ = sr.finalize_round({"round": 1, "prior": []}, None, None, None, None, "a" * 40, [], 5,
+                                 "b" * 40, "open", pr_kind="board-fix")
+        self.assertEqual(rec_["pr_kind"], "board-fix")
 
     def test_check_agent_schema_matches_the_validator(self):
         # The check agent's --json-schema must ask for exactly what

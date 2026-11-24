@@ -22,7 +22,10 @@ on:
 permissions: {}
 
 # One round at a time per pull request; the second dispatch sees the
-# first's record as an earlier round (FR-026).
+# first's record as an earlier round (FR-026). GitHub keeps only one pending
+# run per group, so a third dispatch cancels a queued second one and its
+# dismissals are never applied: dispatch the next round only after the
+# running one has finished.
 concurrency:
   group: shared-pr-reviewer-${{ inputs.pr }}
   cancel-in-progress: false

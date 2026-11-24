@@ -606,7 +606,7 @@ jobs:
             $py finalize --state input/state.json --find input/find.json --check input/check.json \
               --code-run input/code-run.json --purpose input/purpose.json --dismissals input/dismissals.json \
               --head-sha "$HEAD_SHA" --run-id "$RUN_ID" --reviewer-commit "$REVIEWER_COMMIT" \
-              --pr-state "$PR_STATE" > record.md
+              --pr-state "$PR_STATE" --pr-kind "$(jq -r '.kind // "fix"' input/prepared.json)" > record.md
           fi
           mkdir -p artifact
           cp record.md "artifact/record-${HEAD_SHA}.md"
@@ -615,7 +615,7 @@ jobs:
         with:
           name: shared-review-${{ needs.prepare.outputs.head-sha }}
           path: artifact/
-          retention-days: 30
+          retention-days: 90
       - name: Post the record comment
         shell: bash
         env:
