@@ -12,6 +12,7 @@ missing module or name fails at import.
     verify-skill-scripts-import.py             check the real tree
     verify-skill-scripts-import.py --self-test a broken import fails
 """
+import ast
 import glob
 import importlib.util
 import os
@@ -29,6 +30,20 @@ def load(path):
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
+    return mod
+
+
+def missing_attrs(mod, path):
+    """`module.name` uses that importing alone never resolves (call-time access)."""
+    with open(path, encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    missing = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                and isinstance(getattr(mod, node.value.id, None), type(sys))
+                and not hasattr(getattr(mod, node.value.id), node.attr)):
+            missing.add(node.value.id + "." + node.attr)
+    return sorted(missing)
 
 
 def check(root):
@@ -39,7 +54,10 @@ def check(root):
     for path in paths:
         rel = os.path.relpath(path, root)
         try:
-            load(path)
+            gone = missing_attrs(load(path), path)
+            if gone:
+                problems.append(f"{rel}: names missing from imported modules: {', '.join(gone)}")
+                continue
         except BaseException as exc:  # SystemExit from a bad import too
             problems.append(f"{rel}: import failed: {type(exc).__name__}: {exc}")
             continue
@@ -66,6 +84,11 @@ def self_test():
             f.write("from board_prove import renamed_away\n")
         if not any("bad.py" in p for p in check(d)):
             print("FAIL: a broken import passed")
+            return 1
+        with open(os.path.join(sdir, "bad.py"), "w") as f:
+            f.write("import os\n\ndef f():\n    return os.renamed_away\n")
+        if not any("os.renamed_away" in p for p in check(d)):
+            print("FAIL: a call-time attribute rename passed")
             return 1
     with tempfile.TemporaryDirectory() as empty:
         if not check(empty):
