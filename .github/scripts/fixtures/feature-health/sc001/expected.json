@@ -1,0 +1,29 @@
+{
+ "source": "specs/126-feature-health/spec.md SC-001, written by hand on 2026-11-23 from its wording and the registry's names; never from the classifier",
+ "rows": [
+  {
+   "feature": "private-image dogfood",
+   "state": "failing"
+  },
+  {
+   "feature": "spec PR review",
+   "state": "paused"
+  },
+  {
+   "feature": "board loop",
+   "state": "quiet"
+  },
+  {
+   "feature": "Spec Kit updater",
+   "state": "healthy"
+  },
+  {
+   "feature": "auto-release",
+   "state": "healthy"
+  },
+  {
+   "feature": "watchdog",
+   "state": "healthy"
+  }
+ ]
+}

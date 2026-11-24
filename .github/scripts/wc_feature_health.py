@@ -5,6 +5,8 @@ decided by code from run history, kill switches and output signals.
 Usage:
   wc_feature_health.py build --out feature-health-section.md
   wc_feature_health.py render READINGS.json     (pure: readings in, Markdown out)
+  wc_feature_health.py capture --start T --now T --out corpus.json
+                                                (maintainer only: the SC-001 corpus)
 
 The pure half (classify_workflow, classify_feature, render_section) takes
 already-read data and an injected `now` and does no I/O, so
@@ -441,13 +443,19 @@ def section_built(body, marker):
             or "**Feature health** — built" in block)
 
 
-def read_signal(signal, repo, since, gh, environ):
+def read_signal(signal, repo, since, gh, environ, until=None):
     """The newest occurrence time (ISO) of a declared signal in the window, or
     None (FR-003). Marker and selector strings live in the registry or in the
-    script that owns them; nothing is inferred from green runs."""
+    script that owns them; nothing is inferred from green runs. `until` caps
+    the window for a past `now` (the SC-001 capture only; the build leaves it
+    None): an occurrence after it is dropped, and a kind that can only read
+    today's state raises rather than answer for a past day."""
     kind = signal["kind"]
     base = "repos/{0}".format(repo)
     s = fmt_time(since)
+    u = fmt_time(until) if until else None
+    if u and kind in ("issue_updated", "issue_section"):
+        raise RuntimeError("{0} reads only the issue's current state; no read as of {1}".format(kind, u))
     times = []
     if kind == "merged_pr":
         for page in (1, 2, 3):
@@ -481,7 +489,11 @@ def read_signal(signal, repo, since, gh, environ):
         times = _triage_close_times(gh, repo, base, since)
     elif kind == "branch_commit":
         branch = environ.get("METRICS_BRANCH") or signal["branch"]
-        times = [gh("{0}/commits/{1}".format(base, branch))["commit"]["committer"]["date"]]
+        if u:
+            got = gh("{0}/commits?sha={1}&until={2}&per_page=1".format(base, branch, u))
+            times = [got[0]["commit"]["committer"]["date"]] if got else []
+        else:
+            times = [gh("{0}/commits/{1}".format(base, branch))["commit"]["committer"]["date"]]
     elif kind in ("issue_updated", "issue_section"):
         for i in gh("{0}/issues?state=open&labels=disposition:tracking&per_page=100".format(base)):
             if not i["title"].startswith(signal["title"]):
@@ -491,17 +503,18 @@ def read_signal(signal, repo, since, gh, environ):
             times.append(i["updated_at"])
     else:
         raise RuntimeError("unknown signal kind {0}".format(kind))
-    times = [t for t in times if t >= s]
+    times = [t for t in times if t >= s and (u is None or t <= u)]
     return max(times) if times else None
 
 
-def collect(registry, repo, now, gh=gh_json, environ=None, read_text=None):
+def collect(registry, repo, now, gh=gh_json, environ=None, read_text=None, start=None, until=None):
     """The readings, signals and ctx classify_all takes. A failed read makes
-    only the thing it belongs to unreadable (FR-010)."""
+    only the thing it belongs to unreadable (FR-010). `start` and `until` pin
+    a past window (capture_corpus only); the build passes neither."""
     environ = os.environ if environ is None else environ
     read_text = read_text or (lambda name: open(os.path.join(REPO_ROOT, ".github", "workflows", name),
                                                  encoding="utf-8").read())
-    start = now - datetime.timedelta(days=window_days(registry))
+    start = start or now - datetime.timedelta(days=window_days(registry))
     readings, signals = {}, {}
     ctx = {"switches": {}, "vars_set": {}}
     for entry in registry:
@@ -526,13 +539,78 @@ def collect(registry, repo, now, gh=gh_json, environ=None, read_text=None):
         if entry.get("signal"):
             try:
                 # A signal may list `also` readers; the newest occurrence of any counts.
-                found = [read_signal(s, repo, start, gh, environ)
+                found = [read_signal(s, repo, start, gh, environ, until=until)
                          for s in [entry["signal"]] + list(entry["signal"].get("also") or [])]
                 found = [t for t in found if t]
                 signals[entry["name"]] = {"signal_at": max(found) if found else None}
             except (RuntimeError, OSError, ValueError, KeyError, TypeError) as exc:
                 signals[entry["name"]] = {"unreadable": str(exc) or "read failed"}
     return readings, signals, ctx
+
+
+def _environ_as_of(registry, repo, now, gh):
+    """The environ the workflow would have had at `now`: every registry switch
+    and variable (and the metrics branch), from the repository variable, or ""
+    when it is unset, as `${{ vars.X }}` gives. A variable changed after `now`
+    has no readable past value, so the capture refuses rather than guess; one
+    deleted since `now` leaves no trace and reads as unset."""
+    names = {n for e in registry for n in (e.get("kill_switch"), e.get("requires_var")) if n}
+    names.add(SWITCH_PREFIX + "METRICS_BRANCH")
+    have = {}
+    for page in range(1, 11):
+        got = gh("repos/{0}/actions/variables?per_page=30&page={1}".format(repo, page))
+        have.update({v["name"]: v for v in got.get("variables") or []})
+        if len(got.get("variables") or []) < 30:
+            break
+    else:
+        raise SystemExit("feature-health capture: more than 300 repository variables; read truncated")
+    environ = {}
+    for name in sorted(names):
+        var = have.get(name)
+        if var and parse_time(var["updated_at"]) > now:
+            raise SystemExit("feature-health capture: {0} changed at {1}, after {2}; its value then "
+                             "cannot be read".format(name, var["updated_at"], fmt_time(now)))
+        environ[name[len(SWITCH_PREFIX):]] = var["value"] if var else ""
+    return environ
+
+
+def _workflow_text_at(commit):
+    """read_text for a past `now`: the workflow file as committed at `commit`.
+    A file that did not exist then raises OSError, which collect records as
+    that workflow's unreadable reading."""
+    def read(name):
+        r = subprocess.run(["git", "show", "{0}:.github/workflows/{1}".format(commit, name)],
+                           capture_output=True, cwd=REPO_ROOT)
+        if r.returncode != 0:
+            raise OSError("{0} does not exist at {1}".format(name, commit[:12]))
+        return r.stdout.decode("utf-8")
+    return read
+
+
+def capture_corpus(repo, now, start, ref="origin/main", gh=gh_json, registry=None):
+    """The SC-001 replay corpus (maintainer only, specs/126 tasks.md T030):
+    collect() over [start, now] with `now` pinned in the past, the registry
+    as merged, workflow files (for cron intervals) as committed on `ref`'s
+    first-parent line at `now`, and switches as the repository variables held
+    them then. Runs keep only what classify_workflow reads. Never run by the
+    workflow (FR-013 still holds: it only reads)."""
+    registry = registry or load_registry()
+    check_rate_limit(gh)
+    commit = subprocess.run(["git", "rev-list", "-1", "--first-parent", "--before=" + fmt_time(now), ref],
+                            capture_output=True, text=True, cwd=REPO_ROOT, check=True).stdout.strip()
+    if not commit:
+        raise SystemExit("feature-health capture: no commit on {0} before {1}".format(ref, fmt_time(now)))
+    environ = _environ_as_of(registry, repo, now, gh)
+    readings, signals, ctx = collect(registry, repo, now, gh, environ, _workflow_text_at(commit),
+                                     start=start, until=now)
+    for reading in readings.values():
+        if "runs" in reading:
+            reading["runs"] = sorted(({"started_at": r["started_at"], "conclusion": r["conclusion"]}
+                                      for r in reading["runs"]), key=lambda r: r["started_at"])
+    return {"schema": 1, "repository": repo, "window": {"start": fmt_time(start), "now": fmt_time(now)},
+            "now": fmt_time(now), "workflow_commit": commit,
+            "captured_at": fmt_time(datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)),
+            "registry": registry, "readings": readings, "signals": signals, "ctx": ctx}
 
 
 def build(repo, now=None, gh=gh_json, environ=None, read_text=None, registry=None):
@@ -555,6 +633,13 @@ def main(argv):
         now = parse_time(data["now"])
         rows = classify_all(data["registry"], data["readings"], data.get("signals", {}), data["ctx"], now)
         sys.stdout.write(render_section(rows, now, len(data["registry"])))
+        return 0
+    if len(argv) == 8 and argv[1] == "capture" and argv[2::2] == ["--start", "--now", "--out"]:
+        corpus = capture_corpus(os.environ["GITHUB_REPOSITORY"], parse_time(argv[5]), parse_time(argv[3]))
+        with open(argv[7], "w", encoding="utf-8", newline="\n") as fh:
+            json.dump(corpus, fh, indent=1, sort_keys=True)
+            fh.write("\n")
+        print("feature-health: wrote {0}".format(argv[7]))
         return 0
     if len(argv) == 4 and argv[1] == "build" and argv[2] == "--out":
         text = build(os.environ["GITHUB_REPOSITORY"])

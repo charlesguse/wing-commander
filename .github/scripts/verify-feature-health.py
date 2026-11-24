@@ -13,7 +13,7 @@ Checks:
              against a `gh` stub on PATH built with wc_shell_harness
   workflow   wing-commander-feature-health.yml is read-only, agent-free and
              hands its artifact to wc_board_status.py
-  sc001      the replay corpus, or the pending exemption
+  sc001      the captured 2026-10-14..2026-11-12 corpus against its hand-written key
 A self-check changes the code's input and confirms the fixtures notice.
 """
 import copy
@@ -41,10 +41,11 @@ CADENCES = ("schedule", "event")  # data-model.md "Workflow ref"
 EXEMPT_UNREGISTERED = {
     "housekeeping": Exemption(reason="a group row; its members are registered one by one", issue=(889,)),
 }
-EXEMPT_SC001_PENDING = {
-    "sc001": Exemption(reason="the corpus capture needs full history and an authenticated gh (T030)",
-                       issue=(889,)),
-}
+# Emptied by T030: the corpus and its key are captured (fixtures/feature-health/sc001).
+EXEMPT_SC001_PENDING = {}
+# SC-001's window, "2026-10-14 to 2026-11-12", with `now` on the last day.
+SC001_START = "2026-10-14T00:00:00Z"
+SC001_NOW_DAY = "2026-11-12"
 
 
 def load(*parts):
@@ -422,12 +423,114 @@ def check_sc001(directory, exempt):
         corpus = json.load(fp)
     with open(paths[1], encoding="utf-8") as fp:
         expected = json.load(fp)
+    return sc001_replay(corpus, expected), None
+
+
+def sc001_replay(corpus, expected, registry=None):
+    """Classify the corpus's readings, signals and switches at its own `now`
+    (no gh, no clock) with the registry as it is now, not the copy the corpus
+    recorded at capture, so a registry change that breaks SC-001 (a board
+    loop threshold of 27 days or more) fails here; compare each expected row.
+    A corpus outside SC-001's window, or a key with no rows, is itself a
+    problem."""
+    registry = fh.load_registry() if registry is None else registry
+    problems = []
+    window = corpus.get("window") or {}
+    if window.get("start") != SC001_START or not (corpus.get("now") or "").startswith(SC001_NOW_DAY)             or window.get("now") != corpus.get("now"):
+        problems.append("SC-001: the corpus window is {0}, not {1} to {2}".format(
+            window, SC001_START, SC001_NOW_DAY))
+    if not expected.get("rows"):
+        problems.append("SC-001: expected.json has no rows")
     now = fh.parse_time(corpus["now"])
-    rows = fh.classify_all(corpus["registry"], corpus["readings"], corpus.get("signals", {}), corpus["ctx"], now)
+    rows = fh.classify_all(registry, corpus["readings"], corpus.get("signals", {}), corpus["ctx"], now)
     got = {(r["feature"], r["stage"] or ""): r["state"] for r in rows}
-    want = {(e["feature"], e.get("stage") or ""): e["state"] for e in expected["rows"]}
-    return ["SC-001: {0} is {1}, expected {2}".format(k, got.get(k), v) for k, v in sorted(want.items())
-            if got.get(k) != v], None
+    want = {(e["feature"], e.get("stage") or ""): e["state"] for e in expected.get("rows") or []}
+    problems += ["SC-001: {0} is {1}, expected {2}".format(k, got.get(k), v) for k, v in sorted(want.items())
+                 if got.get(k) != v]
+    return problems
+
+
+def self_check_sc001(directory):
+    """The replay must fail its subject: an always-healthy classifier, a
+    flipped key row and a corpus from another window are each noticed."""
+    paths = [os.path.join(directory, n) for n in ("corpus.json", "expected.json")]
+    if not all(os.path.exists(p) for p in paths):
+        return []
+    with open(paths[0], encoding="utf-8") as fp:
+        corpus = json.load(fp)
+    with open(paths[1], encoding="utf-8") as fp:
+        expected = json.load(fp)
+    problems = []
+    saved = fh.classify_all
+    fh.classify_all = lambda registry, *_a: [{"feature": e["name"], "stage": None, "state": "healthy"}
+                                             for e in registry]
+    try:
+        if not sc001_replay(corpus, expected):
+            problems.append("self-check: the SC-001 replay did not notice an always-healthy classifier")
+    finally:
+        fh.classify_all = saved
+    for i, row in enumerate(expected["rows"]):
+        flipped = copy.deepcopy(expected)
+        flipped["rows"][i]["state"] = "unreadable" if row["state"] != "unreadable" else "healthy"
+        if not sc001_replay(corpus, flipped):
+            problems.append("self-check: the SC-001 replay did not notice {0} flipped to {1}".format(
+                row["feature"], flipped["rows"][i]["state"]))
+    moved = copy.deepcopy(corpus)
+    moved["window"]["start"] = "2026-10-12T00:00:00Z"
+    if not sc001_replay(moved, expected):
+        problems.append("self-check: the SC-001 replay did not notice a corpus from another window")
+    if not sc001_replay(corpus, {"rows": []}):
+        problems.append("self-check: the SC-001 replay did not notice an empty key")
+    # The registry once declared a 30-day board loop threshold, which SC-001's
+    # "shorter than 27 days" rules out; the replay must catch it coming back.
+    thirty = copy.deepcopy(fh.load_registry())
+    for e in thirty:
+        if e["name"] == "board loop":
+            e["quiet_days"] = 30
+    if not any("board loop" in p for p in sc001_replay(corpus, expected, thirty)):
+        problems.append("self-check: the SC-001 replay did not notice a 30-day board loop quiet threshold")
+    return problems
+
+
+def check_capture_bounds():
+    """T030: `until` caps every signal read for a past `now`, a current-state
+    kind refuses to answer for a past day, and the build path (until=None)
+    still keeps an occurrence after that day."""
+    problems = []
+    since, until = fh.parse_time("2026-10-14T00:00:00Z"), fh.parse_time("2026-11-12T23:59:59Z")
+    pulls = [{"merged_at": "2026-11-20T00:00:00Z", "updated_at": "2026-11-20T00:00:00Z", "head": {"ref": "fix/a"}},
+             {"merged_at": "2026-10-16T14:00:25Z", "updated_at": "2026-10-16T14:00:25Z", "head": {"ref": "fix/b"}}]
+    releases = [{"published_at": "2026-11-15T00:00:00Z"}, {"published_at": "2026-11-11T00:00:00Z"}]
+    calls = []
+
+    def gh(path):
+        calls.append(path)
+        if "/pulls?" in path:
+            return pulls if "page=1" in path else []
+        if "/releases" in path:
+            return releases
+        if "/commits?sha=metrics&until=2026-11-12T23:59:59Z" in path:
+            return [{"commit": {"committer": {"date": "2026-11-12T06:00:00Z"}}}]
+        if "/commits/" in path:
+            return {"commit": {"committer": {"date": "2026-11-23T06:00:00Z"}}}
+        return []
+    for signal, capped, live in (
+            ({"kind": "merged_pr", "head_prefixes": ["fix/"]}, "2026-10-16T14:00:25Z", "2026-11-20T00:00:00Z"),
+            ({"kind": "release"}, "2026-11-11T00:00:00Z", "2026-11-15T00:00:00Z"),
+            ({"kind": "branch_commit", "branch": "metrics"}, "2026-11-12T06:00:00Z", "2026-11-23T06:00:00Z")):
+        for bound, want in ((until, capped), (None, live)):
+            got = fh.read_signal(signal, "own/repo", since, gh, {}, until=bound)
+            if got != want:
+                problems.append("capture bound: {0} with until={1} gave {2}, expected {3}".format(
+                    signal["kind"], bound, got, want))
+    for kind in ("issue_updated", "issue_section"):
+        try:
+            fh.read_signal({"kind": kind, "title": "Board status", "marker": "x"}, "own/repo", since, gh, {},
+                           until=until)
+            problems.append("capture bound: {0} answered for a past day".format(kind))
+        except RuntimeError:
+            pass
+    return problems
 
 
 def self_check(fx):
@@ -710,8 +813,9 @@ def main():
     problems += check_review_round_two()
     problems += check_review_round_three()
     problems += check_review_round_five(registry)
+    problems += check_capture_bounds()
     real, note = check_sc001(os.path.join(FIXTURES, "sc001"), EXEMPT_SC001_PENDING)
-    problems += real + self_check(fx)
+    problems += real + self_check(fx) + self_check_sc001(os.path.join(FIXTURES, "sc001"))
     if note:
         print("[ok] verify-feature-health: {0}".format(note))
     if problems:
