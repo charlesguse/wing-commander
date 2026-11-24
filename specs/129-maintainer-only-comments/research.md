@@ -85,7 +85,7 @@ Every decision below was settled from this repository's precedent or from the ow
 - (e) the e2e decision script has no author clause;
 - (f) clarify's allowed tools contain no `gh issue view`.
 
-It also enforces single home: the relay paragraph's literal appears only in the new composite.
+It also checks (g): both clarification-question callouts are preceded by the relay composite on the same body file. And it enforces single home: the relay paragraph's literal appears only in the new composite.
 
 Each check has a mutant that reintroduces the exception and must fail. docs/reference.md gains the gate's row.
 

@@ -113,6 +113,7 @@ A reply on the Spec Kit updater's tracking issue drives its comment-reply path o
 - **FR-008**: A reply from a non-maintainer is not answered: no notice is posted for it, the same as today. Instead the rule is stated up front.
   - When the lifecycle issue's author is not `OWNER`, `MEMBER` or `COLLABORATOR`, every comment that asks for clarification answers MUST say so, whichever stage posts it (intake's first questions, clarify's follow-ups). It MUST say that only a maintainer's reply is folded into the spec, and that the requester can ask a maintainer to relay their answers.
   - When the issue's author is a maintainer, those comments MUST NOT carry that text.
+  - One exception: when the author's association cannot be read, the text is included, because it is harmless to a maintainer and needed by a requester (research D3).
 - **FR-009**: docs/adoption.md, docs/architecture.md and the live contracts MUST describe the maintainers-only rule. No live text may describe the issue-author exception as current behaviour. The live contracts are:
   - `specs/010-reusable-pipeline/contracts/stage-interfaces.md`;
   - `specs/029-intake-issue-comments/contracts/comment-trust-gate.md`;

@@ -1,0 +1,155 @@
+---
+
+description: "Task list for spec 129: comment-triggered stages act only on maintainers"
+---
+
+# Tasks: Comment-Triggered Stages Act Only on Maintainers
+
+**Input**: Design documents from `/specs/129-maintainer-only-comments/`
+
+**Prerequisites**: plan.md, spec.md, research.md (D1–D7), data-model.md, contracts/comment-author-rule.md, quickstart.md
+
+**Tests**: Required by this repository's review rule. Every change task names the gate check, mutant or harness case that fails without it. The new gate (T003) is written first and fails on today's tree.
+
+**Organization**: Tasks are grouped by user story, so each story can be built and tested on its own.
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: can run in parallel (different files, no dependency on an incomplete task)
+- **[Story]**: US1, US2 or US3 from spec.md
+
+---
+
+## Phase 1: Setup
+
+- [ ] T001 Build the inventory and record it under "Notes" in `specs/129-maintainer-only-comments/tasks.md`. It covers every live site that admits a comment by identity or describes the issue-author exception, across `.github/workflows/`, `.github/actions/` (including `_shared/`), `.github/scripts/`, `docs/` and `specs/*/contracts/`. Expected sites are plan.md's Source Code list plus `verify-clarification-gating.py`, `verify-issue-context-single-home.py`, `verify-diagnose-shadow-acts-on-nothing.py`, the four auto-release e2e decision gates, and the specs/029 `notice-callout.md`, specs/055 and specs/057 contracts. Also record the next free gate number from `.github/workflows/lint-workflows.yml`.
+
+---
+
+## Phase 2: Foundational (blocks every story)
+
+- [ ] T002 Write the gate `.github/scripts/verify-maintainer-only-comments.py` (research D7, contract `contracts/comment-author-rule.md`).
+  - Checks (a)–(f), plus the single-home check for the relay paragraph's literal.
+  - `--self-test` gets one mutant per check. Each mutant reintroduces the exception, or moves the literal into a second file, and must be caught.
+  - The maintainer set is read from data-model.md "Maintainer set". Do not restate it.
+  - Run the gate on today's tree. It MUST fail on (a), (c), (d), (e) and (f), and on (b)'s missing step. That proves the gate sees today's behaviour.
+- [ ] T003 Register the gate in `.github/workflows/lint-workflows.yml` under the number recorded in T001, and add its row to `docs/reference.md`. Fails without it: `run-local-gates.py` does not list the gate.
+
+**Checkpoint**: the new gate exists and is red. Story work turns it green.
+
+---
+
+## Phase 3: User Story 1 — A non-maintainer's reply does not steer clarify (P1) 🎯 MVP
+
+**Goal**: only a maintainer's comment starts or feeds a clarify run (FR-001, FR-005, FR-006, FR-007, FR-008).
+
+**Independent Test**: quickstart §2 (clarify check step, relay composite) and §3 steps 2–3.
+
+- [ ] T004 [US1] In `.github/workflows/wing-commander-2-clarify.yml`:
+  - remove the issue-author clause from the job `if:`;
+  - rewrite the header and gate comments to state maintainers-only.
+
+  Fails without it: gate check (a) and its mutant.
+- [ ] T005 [US1] In `.github/workflows/clarify.yml`, add the comment-author check step (research D1) right after "Checkout pipeline repository (shared composite actions)".
+  - It reads data-model.md Comment.user.type and Comment.author_association by the `comment-id` input.
+  - Add its `maintainer == 'true'` condition to "Check lifecycle issue state" and to "Note closed lifecycle and stop".
+  - Fails without it:
+    - gate check (b) and its mutant;
+    - a harness case in the gate's self-test that runs the step against a fake `gh`. `OWNER` and `COLLABORATOR` must give `true`; `NONE`, `CONTRIBUTOR` and a `Bot` user must give `false`; a failed read must fail the step.
+- [ ] T006 [US1] In `.github/workflows/clarify.yml`, remove `Bash(gh issue view:*)` from "Compose tool args (clarify)" `default-allowed-tools` (research D6). Fails without it: gate check (f) and its mutant.
+- [ ] T007 [P] [US1] Create `.github/actions/wing-commander-requester-relay-note/action.yml` (research D3).
+  - Inputs: `issue-number`, `token`, `body-file`.
+  - It reads data-model.md Issue.author_association and appends the one relay paragraph when the author is outside the maintainer set, or when the read fails.
+  - Fails without it: harness cases in the gate's self-test (`NONE` appends exactly once; `OWNER` leaves the file byte-identical; a failed read appends), and the single-home check.
+- [ ] T008 [US1] Call the T007 composite on the body file before posting, in two places:
+  - `.github/workflows/intake.yml`, "Announce clarification needed" (`intake-clarification.md`);
+  - `.github/workflows/clarify.yml`, "Announce remaining clarification questions" (`clarify-followup.md`).
+
+  Fails without it: a gate check that both callout steps are preceded by the composite on the same body file, with a mutant that drops one.
+- [ ] T009 [P] [US1] Remove the author clause and its author-id parameter from `.github/actions/_shared/auto-release-e2e-clarify-decision.sh`.
+  - Remove `.github/workflows/auto-release.yml`'s two issue-author-id reads and their `fail_infra_on_read` path (research D5).
+  - Update `specs/055-unattended-e2e-gates/contracts/gate-decision-scripts.md` and the e2e decision gates found in T001.
+  - Fails without it: gate check (e) and its mutant, and the e2e decision gates' fixtures. A maintainer-answered fixture stays satisfied; a non-maintainer-author fixture becomes unsatisfied.
+
+**Checkpoint**: gate checks (a), (b), (e) and (f) are green, and the relay harness passes.
+
+---
+
+## Phase 4: User Story 2 — Agents read only maintainers' comments (P2)
+
+**Goal**: the shared comment trust filter and intake's callout follow the rule (FR-003, FR-004).
+
+**Independent Test**: quickstart §2, comment filter.
+
+- [ ] T010 [P] [US2] In `.github/actions/wing-commander-issue-context/action.yml`:
+  - remove the identity clause from the qualifying, excluded and staging filters;
+  - drop the unused `AUTHOR_ID` read;
+  - keep the data-model.md Outputs (`qualifying-count`, `excluded-human-count`, `comments-file`) and their formats unchanged;
+  - update the header comment.
+
+  Fails without it: gate check (c) and its mutant, and a harness case with comments from a maintainer, a non-maintainer author and a bot. Only the maintainer's comment is staged, and `excluded-human-count=1`. Update `verify-issue-context-single-home.py`'s fixtures to match.
+- [ ] T011 [US2] In `.github/workflows/intake.yml`, change the "did not qualify" callout to "not from a maintainer" (FR-004). Update `specs/029-intake-issue-comments/contracts/notice-callout.md` and `contracts/comment-trust-gate.md`. Fails without it: the callout-text assertion in `verify-clarification-gating.py`, or the gate T001 finds pinning that text, updated to the new wording.
+
+**Checkpoint**: gate check (c) is green, and SC-003 holds (maintainer-only fixtures are byte-identical).
+
+---
+
+## Phase 5: User Story 3 — The Spec Kit updater follows the rule (P3)
+
+**Goal**: FR-002.
+
+**Independent Test**: spec.md US3 acceptance scenarios, run through the gate's harness on the `comment-reply` job's `if:`.
+
+- [ ] T012 [P] [US3] In `.github/workflows/auto-update-spec-kit.yml`:
+  - remove the `issue-author-id` comparison from the `comment-reply` job `if:`;
+  - describe the `issue-author-id` input as accepted and ignored (research D2);
+  - update the comment above the job.
+
+  Fails without it: gate check (d) and its mutant.
+- [ ] T013 [US3] Stop passing `issue-author-id` from `.github/workflows/wing-commander-auto-update-spec-kit.yml`, and update `specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md`. Fails without it: the gate's wrapper scan, check (a).
+
+**Checkpoint**: the new gate passes on the whole tree, and `--self-test` catches every mutant.
+
+---
+
+## Phase 6: Polish and cross-cutting
+
+- [ ] T014 [P] Update `docs/adoption.md` (lines near 166, 238–244, 1535 and 1560) and `docs/architecture.md` (near 392, 455 and 1326) to the maintainers-only rule (FR-009).
+  - Include the published behaviour change: clarify now checks the comment itself (FR-006).
+  - Explain why adopters should not add `gh issue view` back through `extra-allowed-tools` (research D6).
+- [ ] T015 [P] Update the remaining live contracts to the rule (FR-009): `specs/010-reusable-pipeline/contracts/stage-interfaces.md`, `specs/033-pr-conversation-commands/contracts/wrapper-gate.md` (its "unlike clarify" contrast) and `specs/057-autonomous-board-loop/contracts/triage.md`.
+- [ ] T016 [P] Rewrite the workflow comments that contrast pr-conversation with clarify and intake in `.github/workflows/pr-conversation.yml` (near 730) and `.github/workflows/wing-commander-9-pr-conversation.yml` (near 12). Re-run Gate 47 (`verify-comment-canonical-pointers.py`).
+- [ ] T017 Run quickstart §1, the new gate and every gate T001 listed, then `run-local-gates.py` filtered as usual. Compare each failure with an `origin/main` worktree, and record the results in `specs/129-maintainer-only-comments/tasks.md` "Notes".
+- [ ] T018 Run the `review-step-gating` skill on the `if:` changes in `.github/workflows/clarify.yml`, `.github/workflows/auto-update-spec-kit.yml` and `.github/workflows/wing-commander-2-clarify.yml`. Run the `container-shell-safety` skill on the new `run:` step in clarify's container job.
+- [ ] T019 Review the local branch with separate local sessions until a pass comes back clean (the review-until-clean procedure, without a PR). Fix each real finding with a test that fails without it.
+- [ ] T020 Run the scratch-repository proof (quickstart §3) in `charlesguse/wing-commander-auto-release-scratch`, outside auto-release's 09:09 UTC run, and restore the wrapper pins afterwards. Record the evidence in `specs/129-maintainer-only-comments/tasks.md` "Notes".
+- [ ] T021 Prepare the publish:
+  - Re-check the number 129 against open pipeline branches, and rename the directory and branch if it is taken.
+  - Add `specs/129-maintainer-only-comments/spec-meta.json`, pointing at a neutrally titled tracking issue opened at publish time (precedent: spec 037 and #216).
+  - Push one PR whose title names the behaviour change (research D2). The owner merges it, after PR #1194.
+- [ ] T022 After merge (prove-after-merge, quickstart §4): show the next auto-release e2e passing its clarification step (SC-004), and one real clarify run with `maintainer=true`. Record both on the PR.
+
+---
+
+## Dependencies and execution order
+
+- T001 → T002 → T003. Then US1, US2 and US3 can run in any order.
+- Within US1, T005 → T006 → T008, because they share `clarify.yml`. T007 must precede T008. T004 and T009 are independent.
+- US2: T010 and T011 are independent.
+- US3: T012 → T013.
+- Polish: T014–T016 in parallel once the stories land. Then T017 → T018 → T019 → T020 → T021 → T022.
+
+## Parallel examples
+
+- After T003: T004, T007, T009, T010 and T012 touch different files.
+- In polish: T014, T015 and T016.
+
+## Implementation strategy
+
+- MVP is US1: the clarify path, including the stage-side check and the relay text.
+- US2 and US3 follow in the same local branch.
+- Nothing is pushed until T021. One PR carries spec plus code.
+
+## Notes
+
+(T001 inventory, T017 gate results and T020 scratch evidence are recorded here.)
