@@ -27,6 +27,7 @@ the proof is required under Actions.
 import copy
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -318,6 +319,14 @@ def agent_read_problems(wf):
         missing = [d for d in AGENT_READ_DENIES if d not in denied]
         if missing:
             problems.append("{0} does not deny {1}".format(name, ", ".join(missing)))
+        # N2: claude-code-action requests --permission-mode auto, where reads
+        # outside the working directories run and only the denies hold. The
+        # scoped rules confine only in the default mode, which the agent's own
+        # claude_args (passed last) must pin, and nothing else may set.
+        agent = next((x for x in steps if x.get("id") == "agent"), {})
+        modes = re.findall(r"--permission-mode[ =]+(\S+)", str((agent.get("with") or {}).get("claude_args", "")))
+        if [m.strip("\"'") for m in modes] != ["default"]:
+            problems.append("{0}'s agent does not pin --permission-mode default (found {1})".format(name, modes))
     return problems
 
 
@@ -520,6 +529,14 @@ def main():
                 x["with"].update({"default-disallowed-tools": x["with"]["default-disallowed-tools"].replace(
                     ",Read(//proc/**)", "")})
                 for x in w["jobs"]["check"]["steps"] if "default-disallowed-tools" in (x.get("with") or {})],
+            "find's agent loses --permission-mode default": lambda w: [
+                x["with"].update({"claude_args": x["with"]["claude_args"].replace(
+                    "--permission-mode default\n", "")})
+                for x in w["jobs"]["find"]["steps"] if x.get("id") == "agent"],
+            "check's agent runs in auto mode": lambda w: [
+                x["with"].update({"claude_args": x["with"]["claude_args"].replace(
+                    "--permission-mode default", "--permission-mode auto")})
+                for x in w["jobs"]["check"]["steps"] if x.get("id") == "agent"],
             "check gets a bare Grep again": lambda w: [
                 x["with"].update({"default-allowed-tools": x["with"]["default-allowed-tools"] + ",Grep,Glob"})
                 for x in w["jobs"]["check"]["steps"] if "default-allowed-tools" in (x.get("with") or {})],
