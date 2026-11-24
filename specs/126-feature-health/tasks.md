@@ -259,3 +259,8 @@ MVP = Phases 1-3 (registry, drift gate, classifier, renderer, fixtures): the ver
 - [ ] T-MF4 In wc_feature_health.py `_callout`, append ` (signal unreadable: ...)` to the call-out when the row carries a signal reason, including a not-configured feature (review of c6a748d, finding 2).
 - [ ] T-MF5 Add a verify-feature-health.py / fixture case that fails without T-MF4: /releases returns 502 while the feature is not running, and the report shows the signal failure.
 - [ ] T-MF6 Make the amended FR-010 say what the header unreadable count covers (see T-MF2).
+
+## Maintainer Feedback
+
+- [ ] T-MF7 In wc_feature_health.py `classify_workflow`, move the 'no cron found' unreadable check up beside the switch/var unreadable read so it ranks the same as a cron that raises ValueError (review of c6a748d, finding 3).
+- [ ] T-MF8 Add a state case that fails without T-MF7: a paused workflow with a cadence schedule ref and no parsable cron is unreadable. Then update precedence notes in spec/data-model if they list the order.
