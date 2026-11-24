@@ -32,7 +32,8 @@ GitHub would, and fails when:
     runs are what prove main is green;
   * a group does not start with `lint-workflows-`, or another workflow's
     group does. Concurrency groups are shared by every workflow in the
-    repository, so the prefix is what keeps lint's groups its own;
+    repository, so the prefix is what keeps lint's groups its own.
+    GitHub compares group names ignoring case, and so does this gate;
   * a job carries its own concurrency: block, which this gate does not
     model;
   * the expression uses a context or function the shared evaluator
@@ -148,13 +149,18 @@ NON_PR = [("push to main", other_run("push", 45300000011, 5, "e1")),
           ("dispatch", other_run("workflow_dispatch", 45300000015, 9, "e2"))]
 
 
+def group_key(group):
+    """A rendered group as GitHub compares it: ignoring case."""
+    return to_str(group).lower()
+
+
 def check(doc, other_groups=()):
     """Failures (a list of strings) for a parsed lint-workflows.yml.
     other_groups is (file, group text) for every other workflow's
     concurrency group, workflow- or job-level."""
     failures = []
     for path, group in other_groups:
-        if str(group).startswith(GROUP_PREFIX.rstrip("-")):
+        if str(group).lower().startswith(GROUP_PREFIX.rstrip("-")):
             failures.append(
                 "{0} has concurrency group {1!r}; the {2!r} prefix is "
                 "lint-workflows.yml's own, so that workflow could cancel or "
@@ -194,7 +200,7 @@ def check(doc, other_groups=()):
     for label, run in PR_SAME + [PR_OTHER]:
         group = ev(label, run, "group")
         cancel = ev(label, run, "cancel-in-progress")
-        pr_groups.append((label, to_str(group)))
+        pr_groups.append((label, group_key(group)))
         if cancel is not unreadable and cancel is not True:
             bad_cancel.append((label, cancel))
     if bad_cancel:
@@ -223,7 +229,7 @@ def check(doc, other_groups=()):
         group = ev(label, run, "group")
         if group is unreadable:
             continue
-        group = to_str(group)
+        group = group_key(group)
         if group in seen:
             failures.append(
                 "the {0} run shares group {1!r} with the {2} run, so one of "
@@ -417,6 +423,21 @@ def self_test():
          {"group": "${{ github.event.pull_request.number || "
                    "github.run_id }}", "cancel-in-progress": True},
          "does not start with 'lint-workflows-'")
+    case("a non-PR group that matches a PR's only ignoring case fails: "
+         "GitHub compares group names ignoring case",
+         {"group": "lint-workflows-${{ github.event_name == 'pull_request' "
+                   "&& format('pr-{0}', github.event.pull_request.number) "
+                   "|| format('PR-{0}', github.run_number) }}",
+          "cancel-in-progress": True},
+         "push to main run shares group 'lint-workflows-pr-5'")
+    case("another workflow using the prefix in another case fails",
+         {"group": event_form, "cancel-in-progress": True},
+         "other.yml has concurrency group 'Lint-Workflows-x'",
+         other_groups=[(".github/workflows/other.yml", "Lint-Workflows-x")])
+    case("a quoted, padded expression fails: on GitHub it renders to the "
+         "string ' true', not the boolean",
+         {"group": event_form, "cancel-in-progress": " ${{ true }}"},
+         "PR #5 opened (' true')")
     case("another workflow using the lint-workflows prefix fails",
          {"group": event_form, "cancel-in-progress": True},
          "other.yml has concurrency group 'lint-workflows-x'",

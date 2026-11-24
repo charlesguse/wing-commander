@@ -335,14 +335,14 @@ def interpolate(template, ctx, known=None):
 def evaluate_value(value, ctx, known=None):
     """A YAML value as GitHub reads it (a concurrency group, a
     cancel-in-progress): a non-string as itself, a string that is exactly
-    one ${{ }} as that expression's typed value, any other string as
-    interpolate renders it."""
+    one ${{ }}, with not even whitespace around it, as that expression's
+    typed value, any other string as interpolate renders it."""
     if not isinstance(value, str):
         return value
     pieces = segments(value)
     exprs = [s for kind, s in pieces if kind == "expr"]
-    if len(exprs) == 1 and "".join(s for kind, s in pieces
-                                   if kind == "text").strip() == "":
+    if len(exprs) == 1 and all(s == "" for kind, s in pieces
+                               if kind == "text"):
         return Parser(exprs[0], ctx, known).parse()
     return interpolate(value, ctx, known)
 
