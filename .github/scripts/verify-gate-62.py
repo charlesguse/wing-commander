@@ -113,7 +113,18 @@ def read_required_tools(root="."):
 
 
 def docker_available():
-    return shutil.which("docker") is not None
+    """True only when a docker binary is on PATH AND a daemon answers.
+
+    A Claude Code cloud session has the client but no daemon, so a PATH check
+    alone let the gate fail inside `docker build` and report a known miss as
+    a real failure."""
+    if shutil.which("docker") is None:
+        return False
+    try:
+        return subprocess.run(["docker", "info"], capture_output=True,
+                              timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def docker_missing_result(env):
@@ -147,7 +158,8 @@ def docker_missing_result(env):
                    "and inspected. The runner image is expected to carry "
                    "Docker; a missing binary must fail this gate rather than "
                    "let it pass over nothing.")
-    return 0, ("Gate 62: skipped -- docker is not installed or not on PATH. "
+    return 0, ("Gate 62: skipped -- needs Docker, and none is usable here "
+               "(no binary on PATH, or no daemon answering `docker info`). "
                "This check builds and inspects the reference image, so it "
                "cannot run without Docker; CI always has it. Install Docker "
                "to exercise this gate locally.")
