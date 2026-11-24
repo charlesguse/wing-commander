@@ -8,6 +8,17 @@
 
 **Input**: User description: "Comment-triggered stages act only on maintainers. Implements constitution 3.0.0 (PR #1194): a comment-triggered stage acts on a comment only when its author is a maintainer (OWNER, MEMBER or COLLABORATOR) and never a bot; an issue's own author who is not a maintainer gets no exception."
 
+## Clarifications
+
+### Session 2026-11-23
+
+- Q: Must the clarify agent be unable to read other comments on the issue? → A: Yes; only the staged triggering comment reaches it (FR-007). This is settled by precedent and recorded by a local session; the owner was not asked.
+  - Spec 051's live contract (`specs/051-read-only-inspection-policy/contracts/inspection-policy.md`, row 8; final PR #349 merged by the owner) routed clarify away from thread reads: "clarify's prompt points at the already-staged answer file instead".
+  - The shared comment trust filter (`.github/actions/wing-commander-issue-context/action.yml`, header; #499) exists because `gh issue view` "can't be scoped narrower than the whole `gh issue view` prefix".
+  - Clarify's prompt uses no `gh issue view` step.
+- Q: Does the published clarify stage itself verify the triggering comment's association, so consumers' existing wrappers obey the rule? → A: Yes, the stage checks too (FR-006). Owner's answer in chat. The precedents conflicted: spec 010 D2 says the wrapper owns gate conditions, while the Spec Kit updater and pr-conversation gate inside the stage.
+- Q: What happens when a non-maintainer replies on a lifecycle issue in clarify? → A: The owner's words: "Say it up front but only if the requester is a non-maintainer as that is the only situation where it should matter" (FR-008). The reply itself gets no notice. Owner's answer in chat. The precedents conflicted: pr-conversation posts a notice (spec 033), and the Spec Kit updater stays silent.
+
 ## Context
 
 Owner decision (2026-11-23): only maintainers steer comment-triggered stages. "Authorized" means `OWNER`, `MEMBER` or `COLLABORATOR`. A requester who is not a maintainer answers through one, and the owner relays their words when needed. Constitution 3.0.0 (PR #1194) states the rule in Principles IV and V, and this feature makes every surface match it.
@@ -35,6 +46,8 @@ A lifecycle issue in `stage:spec` or `stage:clarify` was opened by someone who i
 1. **Given** a lifecycle issue whose author has association `NONE` or `CONTRIBUTOR`, **When** that author comments, **Then** no clarify agent step runs and the draft spec is unchanged.
 2. **Given** the same issue, **When** an `OWNER`, `MEMBER` or `COLLABORATOR` comments, **Then** clarify runs as it does today.
 3. **Given** an issue opened by a maintainer, **When** that maintainer comments, **Then** clarify runs. Their association qualifies them, not their authorship.
+4. **Given** a lifecycle issue whose author is not a maintainer, **When** intake or clarify posts clarification questions, **Then** the comment says only a maintainer's reply is folded in, and that the requester can ask a maintainer to relay their answers. **Given** an issue opened by a maintainer, **Then** the comment does not carry that text.
+5. **Given** a consumer wrapper that still admits the issue's author, **When** that non-maintainer author comments, **Then** the clarify stage stops before its agent step and changes nothing.
 
 ---
 
@@ -74,7 +87,7 @@ A reply on the Spec Kit updater's tracking issue drives its comment-reply path o
 - **A bot comment** never qualifies, whoever the bot is, as today.
 - **A requester whose association changes** (for example, they are added as a collaborator) qualifies from then on. Each comment is judged by its own association when the stage reads it.
 - **An org member whose membership is private** may be reported with an association other than `MEMBER`. That member is treated as a non-maintainer. Making the membership public, or adding them as a collaborator, makes them qualify.
-- **An adopter's existing wrapper that still carries the exception.** See FR-006.
+- **An adopter's existing wrapper that still carries the exception.** The stage's own check refuses the comment (FR-006).
 - **The auto-release end-to-end test** posts its clarification answers with the maintainer token, so its verdict does not change.
 
 ## Requirements *(mandatory)*
@@ -90,9 +103,16 @@ A reply on the Spec Kit updater's tracking issue drives its comment-reply path o
   - Its outputs and file formats are otherwise unchanged.
 - **FR-004**: Intake's "did not qualify" callout MUST describe qualifying comments as "from a maintainer", with no mention of the original reporter.
 - **FR-005**: The auto-release end-to-end clarify decision MUST apply the same rule as FR-001, so it asserts the shipped behaviour.
-- **FR-006**: [NEEDS CLARIFICATION: Does the clarify stage itself (the published reusable workflow) also verify the triggering comment's association and stop when it is not a maintainer? That would make every adopter's copied wrapper, including one that still has the exception, obey the rule from the next release: a published behaviour change. Or is the wrapper the only gate, as today?]
-- **FR-007**: [NEEDS CLARIFICATION: Must the clarify agent be unable to read other comments on the issue? Today its grant includes `gh issue view`, although its prompt says thread reads are not granted. The alternative is that only the triggering comment, already staged by the stage, reaches it.]
-- **FR-008**: [NEEDS CLARIFICATION: When a non-maintainer comments on a lifecycle issue in `stage:spec` or `stage:clarify`, is the comment ignored silently, as the clarify wrapper and the Spec Kit updater do today? Or does the stage post a notice that only maintainers can direct it, as pr-conversation does (FR-019 of spec 033)?]
+- **FR-006**: The clarify stage (the published reusable workflow) MUST itself verify the triggering comment's `author_association`.
+  - It reads the association when it fetches the comment it already reads by id, so the stage needs no new input and still reads no `github.event`.
+  - When the commenter is not `OWNER`, `MEMBER` or `COLLABORATOR`, it MUST stop before any agent step and make no change to the draft spec.
+  - So a consumer's wrapper that still carries the issue-author exception obeys the rule from the release that ships this feature. That is a published behaviour change, and it MUST be named in the release notes and in docs/adoption.md.
+- **FR-007**: The clarify agent MUST NOT be granted a command that reads the issue's comment thread (`gh issue view` in any form).
+  - The triggering comment, staged by the stage before the agent runs, MUST be the only comment text that reaches it.
+  - Any issue context it needs MUST come from the shared comment trust filter (FR-003).
+- **FR-008**: A reply from a non-maintainer is not answered: no notice is posted for it, the same as today. Instead the rule is stated up front.
+  - When the lifecycle issue's author is not `OWNER`, `MEMBER` or `COLLABORATOR`, every comment that asks for clarification answers MUST say so, whichever stage posts it (intake's first questions, clarify's follow-ups). It MUST say that only a maintainer's reply is folded into the spec, and that the requester can ask a maintainer to relay their answers.
+  - When the issue's author is a maintainer, those comments MUST NOT carry that text.
 - **FR-009**: docs/adoption.md, docs/architecture.md and the live contracts MUST describe the maintainers-only rule. No live text may describe the issue-author exception as current behaviour. The live contracts are:
   - `specs/010-reusable-pipeline/contracts/stage-interfaces.md`;
   - `specs/029-intake-issue-comments/contracts/comment-trust-gate.md`;
@@ -117,6 +137,8 @@ A reply on the Spec Kit updater's tracking issue drives its comment-reply path o
 - **SC-003**: On an issue where only maintainers commented, intake and the board loop pass the agent exactly the comments they passed before this change.
 - **SC-004**: The auto-release end-to-end verification still passes its clarification step on its next scheduled run after merge.
 - **SC-005**: Zero live docs or contracts describe the issue-author exception as current behaviour.
+- **SC-006**: With a wrapper that still admits the issue's author, a non-maintainer author's comment produces zero agent steps and zero changes to the draft spec.
+- **SC-007**: On issues opened by non-maintainers, 100% of clarification-question comments carry the relay text. On issues opened by maintainers, none do.
 
 ## Assumptions
 

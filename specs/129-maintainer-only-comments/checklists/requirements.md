@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain. FR-006, FR-007 and FR-008 are open; answer-from-precedent runs first.
+- [x] No [NEEDS CLARIFICATION] markers remain. FR-007 is settled by precedent; FR-006 and FR-008 are the owner's answers in chat on 2026-11-23 (see Clarifications).
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
