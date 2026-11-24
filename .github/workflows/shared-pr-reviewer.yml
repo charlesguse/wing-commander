@@ -116,7 +116,7 @@ jobs:
       contents: read
       actions: read
     outputs:
-      proceed: ${{ steps.state.outputs.proceed }}
+      proceed: ${{ steps.release.outputs.proceed }}
       spent: ${{ steps.state.outputs.spent }}
       head-sha: ${{ steps.pr.outputs.head-sha }}
       pr-state: ${{ steps.pr.outputs.pr-state }}
@@ -221,7 +221,7 @@ jobs:
           kind="$(jq -r .kind input/prepared.json)"
           decision="$($py guard --ref "$REF" --default-branch "$DEFAULT_BRANCH" --kind "$kind" --paused "$PAUSED")"
           if [ "$(jq -r .proceed <<<"$decision")" != "true" ]; then
-            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
             echo "spent=false" >> "$GITHUB_OUTPUT"
             jq -r .reason <<<"$decision" >> "$GITHUB_STEP_SUMMARY"
             exit 0
@@ -246,7 +246,7 @@ jobs:
             printf 'no source of purpose\n' > input/purpose.md
             echo null > input/purpose.json
           fi
-          echo "proceed=true" >> "$GITHUB_OUTPUT"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
           echo "spent=$(jq -r .spent input/state.json)" >> "$GITHUB_OUTPUT"
           jq '{prior: .prior}' input/state.json > input/memory.json
 
@@ -264,6 +264,15 @@ jobs:
           include-hidden-files: true
           path: review-trees/
           retention-days: 7
+
+      # Last, success() only: the round is released once every upload above
+      # has landed. A failed upload leaves `proceed` unset, so no later job
+      # runs and no record is posted that a failed run could never confirm
+      # (R2).
+      - name: Release the round
+        id: release
+        if: steps.state.outputs.ready == 'true'
+        run: echo "proceed=true" >> "$GITHUB_OUTPUT"
 
   # Runs PR code. permissions: {}, no secret and no `secrets` reference (SC-008).
   # continue-on-error on code-run, find and check: a failure no step

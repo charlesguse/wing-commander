@@ -183,6 +183,23 @@ def agent_tree_problems(wf, prompt_texts=None):
     return problems
 
 
+def release_problems(wf):
+    """R2: prepare's `proceed` is set by its last step, after every upload,
+    gated on success only, so a failed upload releases no round (a record
+    posted from a failed run is never confirmed)."""
+    job = (wf.get("jobs") or {}).get("prepare") or {}
+    steps = [x or {} for x in job.get("steps") or []]
+    m = re.search(r"steps\.([A-Za-z0-9_-]+)\.outputs\.proceed", str((job.get("outputs") or {}).get("proceed", "")))
+    idx = next((i for i, x in enumerate(steps) if m and x.get("id") == m.group(1)), None)
+    uploads = [i for i, x in enumerate(steps) if "upload-artifact" in str(x.get("uses") or "")]
+    if idx is None or not uploads or idx < max(uploads):
+        return ["prepare releases the round (proceed) before its uploads have landed"]
+    cond = str(steps[idx].get("if") or "")
+    if re.search(r"always\(\)|!cancelled\(\)|failure\(\)", cond) or _true(steps[idx].get("continue-on-error")):
+        return ["prepare's release step runs even when an upload failed"]
+    return []
+
+
 def failure_path_problems(wf):
     """R3-F1, R3-F3 and the round-2 lines: an agent job's failure degrades
     to a missing output and never fails the job, nothing an unhealthy agent
@@ -340,6 +357,7 @@ def main():
     problems = (callable_problems(cal) + diff_read_problems(cal) + failure_path_problems(cal)
                 + head_fetch_problems(cal) + retention_problems(cal) + tolerated_job_problems(cal)
                 + agent_tree_problems(cal)
+                + release_problems(cal)
                 + queued_dispatch_note_problems(open(WRAPPER, encoding="utf-8").read())
                 + wrapper_problems(wrap) + readers_problems())
     if "--self-test" in sys.argv:
@@ -363,6 +381,11 @@ def main():
                 ("check uploads an unstaged output", _upload_unstaged_check, failure_path_problems),
                 ("the find agent has no step timeout", _agent_without_step_timeout, failure_path_problems),
                 ("the check verdict step can fail the job", _verdict_can_fail, failure_path_problems),
+                ("prepare releases the round before its uploads", lambda w: w["jobs"]["prepare"]["outputs"]
+                    .update({"proceed": "${{ steps.state.outputs.ready }}"}), release_problems),
+                ("the release step runs after a failed upload", lambda w: _step(
+                    w, "prepare", lambda x: x.get("id") == "release").update(
+                    {"if": "!cancelled() && steps.state.outputs.ready == 'true'"}), release_problems),
                 ("code-run can fail the run", lambda w: w["jobs"]["code-run"].pop("continue-on-error"),
                  tolerated_job_problems),
                 ("find can fail the run", lambda w: w["jobs"]["find"].pop("continue-on-error"),
