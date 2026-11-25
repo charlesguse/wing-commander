@@ -136,6 +136,20 @@ UNUSED_COMPOSITE = {
 }
 BIG_HEREDOC = ["cat <<'EOF'"] + ["a b c"] * 60000 + ["EOF", "gh issue view 5"]
 
+def mint_case(perm_lines):
+    """A workflow whose one step mints an App token asking for `perm_lines`."""
+    body = "".join(f"          {l}\n" for l in perm_lines)
+    return {
+        ".github/workflows/w.yml":
+            "name: w\non:\n  workflow_dispatch: {}\njobs:\n  work:\n"
+            "    runs-on: ubuntu-latest\n    steps:\n"
+            "      - name: mint\n        id: app\n"
+            "        uses: actions/create-github-app-token@v3\n        with:\n"
+            "          client-id: x\n          private-key: y\n" + body,
+        "docs/setup.md": DOCS_OK,
+    }
+
+
 # name, files, expect_fail, must_mention
 FIXTURES = [
     # --- US1: allowed forms are checked ---------------------------------
@@ -354,6 +368,26 @@ FIXTURES = [
      mkcase(ISSUES_READ, "", [DEFAULT_ENV],
             ['x=`gh api "repos/$REPO/issues/1/comments" -f body=\\`a;b\\` -X POST`']),
      True, (DISALLOWED, "(backtick)")),
+
+    # --- category E: scopes asked of the App at mint time (run 45614694181)
+    ("a mint asking the App for a scope docs/setup.md does not grant fails, "
+     "naming the scope",
+     mint_case(["permission-actions: read", "permission-contents: read"]),
+     True, ("permission-actions: read", "422", "w.yml :: work / mint")),
+
+    ("a mint asking for write where docs/setup.md grants only read fails",
+     {**mint_case(["permission-issues: write"]),
+      "docs/setup.md": DOCS_OK.replace("Issues: **Read and write**", "Issues: **Read-only**")},
+     True, ("permission-issues: write",)),
+
+    ("a mint whose level is an expression cannot be checked and fails",
+     mint_case(["permission-issues: ${{ inputs.level }}"]),
+     True, ("cannot check",)),
+
+    ("a mint asking only for granted scopes passes",
+     mint_case(["permission-contents: read", "permission-issues: write",
+                "permission-pull-requests: read"]),
+     False, ()),
 ]
 
 # ----------------------------------------------------------- locator cases

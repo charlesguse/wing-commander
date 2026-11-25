@@ -984,6 +984,14 @@ jobs:
       # checked at all. A composite that makes gh calls but is used by no
       # workflow here fails loudly: no call site means no token to check.
       #
+      # (g) checks every `permission-<name>: <level>` an
+      # actions/create-github-app-token step asks of the App, in a workflow
+      # or a composite, against the same docs/setup.md grant. GitHub refuses
+      # the whole mint with HTTP 422 when one scope is not granted, before
+      # any `gh` call runs, so (d) never sees it: the shared reviewer's
+      # `permission-actions: read` stopped run 45614694181 that way. A
+      # level that is not a literal read or write fails as unverifiable.
+      #
       # Cross-repository `gh api repos/OWNER/REPO/...` calls (a literal,
       # different owner/repo — e.g. auto-update-spec-kit.yml's read of
       # `github/spec-kit`'s public releases) are out of scope: the App's
