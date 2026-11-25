@@ -293,7 +293,7 @@ def _case_r1_line_lands_under_proposed():
     return outcome == "applied" and gh.body == _fixture("roadmap-body-expected.md") and len(gh.writes) == 1
 
 
-_case("R1: a line-routed proposal is appended to the Roadmap's Proposed list, nothing else changes",
+_case("R1: a line-routed proposal goes under the Proposed header's 'Not yet ordered' label, nothing else changes",
       _case_r1_line_lands_under_proposed)
 
 
@@ -654,12 +654,12 @@ def _case_r16_review_pass_4_shapes():
         "### Proposed\n" + brm.UNORDERED_LABEL + "\n" + X_LINE + "\n\n1. #1: owner\n"
 
 
-_case("R16: title escaping, two Proposed headings, an owner's list under the label",
-      _case_r16_review_pass_4_shapes)
-
-
 _case("R15: the line goes directly under the label, the label directly under the header, "
       "and no owner line moves", _case_r15_fixed_anchor)
+
+
+_case("R16: title escaping, two Proposed headings, an owner's list under the label",
+      _case_r16_review_pass_4_shapes)
 
 
 def run(verbose=True):
