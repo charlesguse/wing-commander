@@ -148,7 +148,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 |---|---|---|
 | select | picks an in-flight item first, else the oldest eligible open issue | one item per run |
 | triage | checks the issue against current `main`; closes it only on evidence the code read itself (a failed cited run that ended on a rate-limit rejection or an API 429, in one turn at zero cost; or an upstream action bump) | turn budget 15 |
-| route | decides fix-shaped or spec-shaped. Spec-shaped work is filed as a `spec-proposal` and never fixed | turn budget 25 |
+| route | decides fix-shaped or spec-shaped. Spec-shaped work is filed as a `spec-proposal` and never fixed; every `spec-proposal` the loop files (here or on a fix or readiness size breach) also gets a line under the Roadmap issue's "Proposed" header, best effort | turn budget 25 |
 | fix | writes the fix on `fix/<issue>-<slug>` and opens a PR labelled `board:owned` | turn budget 60; 6 files and 120 changed lines |
 | review | a second agent with no shared context reviews; in-scope findings are fixed in the same PR | 5 rounds; the same `not-converging` rule as the review gate |
 | merge | squash-merges at the exact reviewed head | only when the merge switch is on |

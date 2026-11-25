@@ -277,6 +277,18 @@ def main():
         sys.exit(1)
 
     line_id = current_line_id()
+    # #1209: list the proposal on the Roadmap first, so a disposition that
+    # fails below still leaves it listed. Best effort: record_proposal()
+    # never raises and its outcome never changes this script's exit status.
+    try:
+        import board_roadmap
+        board_roadmap.record_proposal(args.spec_request_issue, line_id=line_id,
+                                      originating=None if line_id else args.originating,
+                                      repository=repository, bot_login=bot_login)
+    except Exception as exc:  # noqa: BLE001 -- the routing never fails on the Roadmap
+        print("::warning::board_duplicate_disposition: the Roadmap was not updated for #{0}: "
+              "{1}".format(args.spec_request_issue, exc), file=sys.stderr)
+
     if line_id:
         # -- see board_item_marker.current_line_id(): never the issue path's
         # close/label of the originating issue for a line (FR-013, FR-017).

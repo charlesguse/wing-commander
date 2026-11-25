@@ -14,6 +14,13 @@ failure-semantics table against a stubbed `gh` (the same `run=` injection
 seam `board_item_marker.add_stalled_label(issue_number, label, run=None)`
 already demonstrates), never a real repository.
 
+Cases R1-R10 (#1209) pin the Roadmap half of the same entry point: every
+spec-proposal the loop files is listed under the Roadmap issue's
+"### Proposed" header (board_roadmap.py), once, through
+board_backlog_edit.edit(), and a Roadmap that cannot be found, has no
+header or cannot be written never fails or undoes the routing. Fixtures:
+.github/scripts/tests/board-roadmap/.
+
     python3 .github/scripts/verify-board-duplicate-disposition.py
     python3 .github/scripts/verify-board-duplicate-disposition.py --self-test
 """
@@ -187,6 +194,259 @@ def _case_7_reroute_new_spec_request_posts_new_comment():
 
 _case("7: re-route to a new spec-request posts its own comment, not treated as already-disposed",
       _case_7_reroute_new_spec_request_posts_new_comment)
+
+
+# ---------------------------------------------------------------------------
+# #1209: every spec-proposal the loop files is listed under the Roadmap
+# issue's "### Proposed" header, through board_backlog_edit.edit(), by
+# board_roadmap.record_proposal() -- called from this script's main(),
+# which all three spec-proposal sites run. Fixtures:
+# .github/scripts/tests/board-roadmap/.
+# ---------------------------------------------------------------------------
+import board_roadmap as brm  # noqa: E402
+
+ROADMAP_FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tests", "board-roadmap")
+ROADMAP = 890
+PROPOSAL = 4242
+PROPOSAL_TITLE = "Roadmap Proposed lines for loop-filed proposals"
+LINE_ID = "bl-0123abcd"
+TODAY = "2026-11-25"
+
+
+def _fixture(name):
+    path = os.path.join(ROADMAP_FIXTURES, name)
+    if not os.path.isfile(path):
+        raise AssertionError("missing fixture {0}".format(path))
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
+def _tracking(roadmap=True, extra=()):
+    issues = [{"number": 889, "title": "Maintenance backlog", "state": "OPEN",
+               "labels": [{"name": "disposition:tracking"}], "author": {"login": "owner"},
+               "authorAssociation": "OWNER"}]
+    if roadmap:
+        issues.append({"number": ROADMAP, "title": "Roadmap: owner specs, in-flight lifecycles, and parked specs",
+                       "state": "OPEN", "labels": [{"name": "disposition:tracking"}],
+                       "author": {"login": "owner"}, "authorAssociation": "OWNER"})
+    return issues + list(extra)
+
+
+class _RoadmapGh:
+    """A fake GitHub for record_proposal(): `run` answers the tracking-issue
+    list and the title read; fetch/write hold the Roadmap body.
+    `drop_writes` writes that a concurrent editor overwrites."""
+
+    def __init__(self, body, tracking=None, drop_writes=0, list_fails=False, title=PROPOSAL_TITLE):
+        self.body = body
+        self.tracking = _tracking() if tracking is None else tracking
+        self.drop_writes = drop_writes
+        self.list_fails = list_fails
+        self.title = title
+        self.writes = []
+        self.fetches = 0
+        self.calls = []
+
+    def run(self, args, **kwargs):
+        self.calls.append(list(args))
+        if args[:2] == ["gh", "api"] and "labels=disposition:tracking" in args:
+            if self.list_fails:
+                return FakeProc(returncode=1, stderr="HTTP 502")
+            return FakeProc(stdout="".join(json.dumps(i) + "\n" for i in self.tracking))
+        if args[:3] == ["gh", "issue", "view"] and "title" in args:
+            return FakeProc(stdout=self.title + "\n")
+        raise AssertionError("unexpected gh call: {0!r}".format(args))
+
+    def fetch(self, issue):
+        assert issue == ROADMAP, "fetched #{0}, not the Roadmap".format(issue)
+        self.fetches += 1
+        return self.body
+
+    def write(self, issue, body):
+        assert issue == ROADMAP, "wrote #{0}, not the Roadmap".format(issue)
+        self.writes.append(body)
+        if self.drop_writes:
+            self.drop_writes -= 1  # a concurrent writer's whole-body write wins
+            return
+        self.body = body
+
+    def record(self, **kwargs):
+        kwargs.setdefault("line_id", LINE_ID)
+        return brm.record_proposal(PROPOSAL, repository="example/example", bot_login=BOT_LOGIN,
+                                   run=self.run, fetch=self.fetch, write=self.write, today=TODAY,
+                                   **kwargs)
+
+
+def _case_r1_line_lands_under_proposed():
+    gh = _RoadmapGh(_fixture("roadmap-body.md"))
+    outcome, _msg = gh.record()
+    return outcome == "applied" and gh.body == _fixture("roadmap-body-expected.md") and len(gh.writes) == 1
+
+
+_case("R1: a line-routed proposal is appended to the Roadmap's Proposed list, nothing else changes",
+      _case_r1_line_lands_under_proposed)
+
+
+def _case_r2_idempotent():
+    gh = _RoadmapGh(_fixture("roadmap-body-expected.md"))
+    outcome, _msg = gh.record()
+    return outcome == "applied" and gh.writes == [] and gh.body == _fixture("roadmap-body-expected.md")
+
+
+_case("R2: a proposal already listed is not added twice (no write)", _case_r2_idempotent)
+
+
+def _case_r3_issue_source():
+    gh = _RoadmapGh(_fixture("roadmap-body.md"))
+    outcome, _msg = gh.record(line_id=None, originating=1201)
+    want = "- #4242: {0}. Filed by the board loop {1} from issue #1201.\n".format(PROPOSAL_TITLE, TODAY)
+    return outcome == "applied" and want in gh.body and "bl-0123abcd" not in gh.body
+
+
+_case("R3: an issue-routed proposal names its originating issue", _case_r3_issue_source)
+
+
+def _case_r4_no_header():
+    body = _fixture("roadmap-body.md").replace("### Proposed (waiting on the owner's `spec-request`)",
+                                               "### Ideas")
+    gh = _RoadmapGh(body)
+    outcome, _msg = gh.record()
+    return outcome == brm.NO_HEADER and gh.writes == []
+
+
+_case("R4: no Proposed header -> reported, nothing written", _case_r4_no_header)
+
+
+def _case_r5_no_roadmap():
+    for tracking in (_tracking(roadmap=False),
+                     _tracking(extra=[dict(_tracking()[1], number=891)])):
+        gh = _RoadmapGh(_fixture("roadmap-body.md"), tracking=tracking)
+        outcome, _msg = gh.record()
+        if outcome != brm.NOT_FOUND or gh.fetches or gh.writes:
+            return False
+    return True
+
+
+_case("R5: no Roadmap, or two of them -> reported, no fetch or write by number",
+      _case_r5_no_roadmap)
+
+
+def _case_r6_concurrent_write_retried():
+    gh = _RoadmapGh(_fixture("roadmap-body.md"), drop_writes=1)
+    outcome, _msg = gh.record()
+    return (outcome == "applied" and len(gh.writes) == 2
+            and gh.body == _fixture("roadmap-body-expected.md"))
+
+
+_case("R6: a write a concurrent editor dropped is re-applied through edit()'s read-back loop",
+      _case_r6_concurrent_write_retried)
+
+
+def _case_r7_never_raises():
+    gh = _RoadmapGh(_fixture("roadmap-body.md"), list_fails=True)
+    outcome, _msg = gh.record()
+    return outcome == "failed" and gh.writes == []
+
+
+_case("R7: a gh failure is an outcome, never an exception", _case_r7_never_raises)
+
+
+def _case_r8_shapes():
+    """CRLF bodies keep CRLF; an empty section gets the line under its
+    header; #42421 is not #4242; #4242 under another heading is not
+    listed; the title is one line with no doubled period."""
+    crlf = _fixture("roadmap-body.md").replace("\n", "\r\n")
+    out = brm.add_line(crlf, PROPOSAL, "- #4242: x.")
+    if "- #4242: x.\r\n" not in out or "\n" in out.replace("\r\n", ""):
+        return False
+    empty = "### Proposed (waiting)\n\n### Parked\n- #4242: parked.\n"
+    if brm.add_line(empty, PROPOSAL, "- #4242: x.") != "### Proposed (waiting)\n- #4242: x.\n\n### Parked\n- #4242: parked.\n":
+        return False
+    lookalike = "### Proposed\n- #42421: other.\n"
+    if brm.is_listed(lookalike, PROPOSAL) or not brm.is_listed(lookalike, 42421):
+        return False
+    line = brm.proposed_line(PROPOSAL, "Two\nlines <!-- x --> end.", TODAY, line_id="not-an-id", originating=7)
+    return line == "- #4242: Two lines x end. Filed by the board loop 2026-11-25 from issue #7."
+
+
+_case("R8: CRLF, empty section, number boundary, section scope and title cleaning",
+      _case_r8_shapes)
+
+
+def _run_main(env, roadmap_gh, disposition_fails=False):
+    """Runs board_duplicate_disposition.main() on the issue path with every
+    gh call stubbed, the Roadmap included. Returns (exit_code, outputs)."""
+    import subprocess
+    import tempfile
+    repository = "example/example"
+
+    def run_stub(args, **kwargs):
+        if args[:2] == ["gh", "api"] and "labels=disposition:tracking" in args \
+                or args[:3] == ["gh", "issue", "view"] and "title" in args:
+            return roadmap_gh.run(args)
+        kind = _run_stub_call_kind(args, repository)
+        if kind == "view {0}".format(ORIGINATING):
+            return FakeProc(stdout='{"state": "OPEN", "labels": []}')
+        if kind is not None:
+            return FakeProc(stdout="")
+        if disposition_fails and args[1:3] == ["issue", "edit"]:
+            return FakeProc(returncode=1, stderr="stub failure at label")
+        return FakeProc()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out_path = os.path.join(tmp, "out")
+        summary_path = os.path.join(tmp, "summary")
+        saved_env = dict(os.environ)
+        saved = (subprocess.run, bdd.subprocess.run, brm.bbe.gh_fetch, brm.bbe.gh_write, sys.argv)
+        os.environ.update({"GITHUB_REPOSITORY": repository, "BOT_LOGIN": BOT_LOGIN,
+                           "GITHUB_OUTPUT": out_path, "GITHUB_STEP_SUMMARY": summary_path})
+        os.environ.pop("BOARD_LINE_ID", None)
+        os.environ.update(env)
+        subprocess.run = run_stub
+        brm.bbe.gh_fetch, brm.bbe.gh_write = roadmap_gh.fetch, roadmap_gh.write
+        sys.argv = ["board_duplicate_disposition.py", "--originating", str(ORIGINATING),
+                    "--spec-request-issue", str(PROPOSAL), "--spec-request-url",
+                    "https://github.com/example/example/issues/{0}".format(PROPOSAL), "--reason", REASON]
+        code = 0
+        try:
+            bdd.main()
+        except SystemExit as exc:
+            code = exc.code or 0
+        finally:
+            subprocess.run, bdd.subprocess.run, brm.bbe.gh_fetch, brm.bbe.gh_write, sys.argv = saved
+            os.environ.clear()
+            os.environ.update(saved_env)
+        outputs = open(out_path, encoding="utf-8").read() if os.path.exists(out_path) else ""
+        summary = open(summary_path, encoding="utf-8").read() if os.path.exists(summary_path) else ""
+    return code, outputs, summary
+
+
+def _case_r9_main_lists_the_proposal():
+    gh = _RoadmapGh(_fixture("roadmap-body.md"))
+    code, outputs, summary = _run_main({}, gh)
+    return (code == 0 and "disposed=true" in outputs and "from issue #{0}.".format(ORIGINATING) in gh.body
+            and "#4242" in summary)
+
+
+_case("R9: the disposition entry point every spec-proposal site runs lists the proposal",
+      _case_r9_main_lists_the_proposal)
+
+
+def _case_r10_roadmap_failure_never_fails_routing():
+    gh = _RoadmapGh(_fixture("roadmap-body.md"), list_fails=True)
+    code, outputs, summary = _run_main({}, gh)
+    no_header = _RoadmapGh(_fixture("roadmap-body.md").replace("### Proposed", "### Ideas"))
+    code2, outputs2, summary2 = _run_main({}, no_header)
+    # ...and a failed disposition is still listed (the Roadmap goes first).
+    listed = _RoadmapGh(_fixture("roadmap-body.md"))
+    code3, _o, _s = _run_main({}, listed, disposition_fails=True)
+    return (code == 0 and "disposed=true" in outputs and gh.writes == [] and "by hand" in summary
+            and code2 == 0 and "disposed=true" in outputs2 and "Proposed" in summary2
+            and code3 == 1 and "#4242:" in listed.body)
+
+
+_case("R10: a Roadmap failure or missing header never fails or undoes the routing",
+      _case_r10_roadmap_failure_never_fails_routing)
 
 
 def run(verbose=True):
