@@ -42,7 +42,7 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 - [X] T010 [US1] Add the aggregate job `lint` (`name: lint`, `needs:` all eight shards and `harness-tests`, `if: always() && github.event_name == 'pull_request'`) whose single step fails unless every `needs.<job>.result` is exactly `success` and prints each non-success job by name (FR-003, FR-004, FR-004a, R2). Keep the workflow `name: lint · workflows`.
 - [X] T011 [US1] Re-balance if local per-shard sums from T003 exceed ~300 s for any shard (move whole gate+self-test pairs only); confirm the floor shard (Gate 97 self-test, 156 s) fits.
 - [X] T012 [P] [US1] Adapt `.github/scripts/verify-lint-supersedes-pr-runs.py` and every other gate that read the single `lint` job's `if`, `steps` or concurrency (list from T001) so each finds its subject across the shard jobs and cannot pass vacuously (FR-008); extend each one's self-test with a fixture for the sharded layout.
-- [ ] T013 [US1] Run `python .github/scripts/run-local-gates.py` and compare the executed gate set with T002 (SC-002: none dropped, none duplicated).
+- [X] T013 [US1] Run `python .github/scripts/run-local-gates.py` and compare the executed gate set with T002 (SC-002: none dropped, none duplicated).
 
 **Checkpoint**: MVP — sharded suite, aggregate in place.
 
@@ -89,7 +89,7 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 
 - [X] T024 [P] Update `docs/reference.md` where it describes the lint job, its check names and limits: shard jobs, aggregate `lint`, `harness tests` as a unit, the new gates, the 10-minute target (FR-011); follow `docs/reference.md`'s own rule for which changes must update it.
 - [X] T025 [P] Add a "single home" check if any shared logic was consolidated (T005) to the nearest existing gate (CLAUDE.md "Shared logic has exactly one home").
-- [ ] T026 Run `python .github/scripts/run-local-gates.py` to green on the final tree, then validate against `specs/129-parallel-pr-lint/quickstart.md`.
+- [X] T026 Run `python .github/scripts/run-local-gates.py` to green on the final tree, then validate against `specs/129-parallel-pr-lint/quickstart.md`.
 
 ---
 
