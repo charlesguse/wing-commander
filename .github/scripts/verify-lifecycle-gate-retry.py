@@ -546,7 +546,7 @@ def check_single_home(repo_root="."):
     """#1210's checks, in this gate because the read is this gate's subject.
 
     1. Each SCRIPT_CALLERS step runs SCRIPT_INVOCATION and nothing else, as
-       a `shell: bash` run: step (not a `uses:`).
+       a `shell: bash` run: step (not a `uses:`), with GH_REPO set (#889).
     2. No composite under .github/actions/ (at any depth, action.yml or
        action.yaml) has a `uses: ./.github/...`
        step: inside a composite that path resolves against the CALLER's
@@ -579,6 +579,11 @@ def check_single_home(repo_root="."):
                             f"{(step.get('run') or '').strip()!r}).")
         if step.get("shell") != "bash":
             failures.append(f"{path}: step {name!r} must declare shell: bash.")
+        # #889: `gh issue view` must not depend on the caller's workspace
+        # being a checkout of the repository to know which one to read.
+        if (step.get("env") or {}).get("GH_REPO") != "${{ github.repository }}":
+            failures.append(f"{path}: step {name!r} must set "
+                            f"GH_REPO: ${{{{ github.repository }}}}.")
 
     actions_dir = os.path.join(repo_root, ".github", "actions")
     actions = sorted(
@@ -629,6 +634,7 @@ def _single_home_fixture(root, name, mutate):
     tree = os.path.join(root, "single-home-" + name)
     caller_steps = {
         path: [{"name": step_name, "shell": "bash",
+                "env": {"GH_REPO": "${{ github.repository }}"},
                 "run": SCRIPT_INVOCATION + "\n"}]
         for path, step_name in SCRIPT_CALLERS}
     mutate(tree, caller_steps)
@@ -674,6 +680,11 @@ def _fixture_caller_uses(tree, caller_steps):
                            "uses": "./.github/actions/wing-commander-lifecycle-gate"}]
 
 
+def _fixture_caller_no_gh_repo(tree, caller_steps):
+    for steps in caller_steps.values():
+        steps[0].pop("env", None)
+
+
 def _fixture_script_lost_body(tree, caller_steps):
     _write(tree, SCRIPT, "#!/usr/bin/env bash\n")
 
@@ -687,6 +698,8 @@ SINGLE_HOME_FIXTURES = [
      "carries a copy of the lifecycle read"),
     ("a SCRIPT_CALLERS step that `uses:` the lifecycle gate",
      _fixture_caller_uses, "must run"),
+    ("a SCRIPT_CALLERS step with no GH_REPO",
+     _fixture_caller_no_gh_repo, "must set GH_REPO"),
     ("the shared script no longer carries BODY_SIGNATURE",
      _fixture_script_lost_body, "missing"),
 ]
