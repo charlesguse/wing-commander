@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "zizmor accepted-findings register",
   "type": "object",
-  "required": ["entries"],
+  "required": ["waivers"],
   "properties": {
-    "entries": {
+    "waivers": {
       "type": "array",
       "items": {
         "type": "object",

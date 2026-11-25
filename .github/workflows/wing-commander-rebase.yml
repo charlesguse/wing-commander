@@ -32,11 +32,12 @@ jobs:
       - name: Redispatch via workflow_dispatch (a supported event for the conflict-resolution agent)
         env:
           GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           gh workflow run wing-commander-rebase.yml \
             --repo "$GITHUB_REPOSITORY" \
-            --ref "${{ github.ref_name }}"
+            --ref "$REF_NAME"
 
   # schedule and workflow_dispatch (including this file's own redispatch,
   # above) are both proven to reach claude-code-action successfully

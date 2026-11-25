@@ -1,0 +1,17 @@
+# zizmor configuration -- the one home of the trusted-publisher list.
+# Read by .github/scripts/verify-zizmor.py (specs/132-workflow-trigger-security).
+rules:
+  self-repository:
+    # Not an audit finding class this repository can act on: the self-hosted
+    # `uses: ./` references are governed by verify-untrusted-checkout-local-uses.py.
+    disable: true
+    reason: "this repository's own `./` references are judged per calling job by verify-untrusted-checkout-local-uses.py, which knows which checkout a path resolves into; zizmor's self-repository audit cannot"
+  unpinned-uses:
+    config:
+      policies:
+        # Trusted publishers: a ref (tag or branch) pin is accepted.
+        "actions/*": ref-pin
+        "github/*": ref-pin
+        "anthropics/*": ref-pin
+        # Everything else must be pinned to a full commit SHA.
+        "*": hash-pin

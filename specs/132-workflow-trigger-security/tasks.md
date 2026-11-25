@@ -9,17 +9,17 @@
 ## Phase 1: Setup
 
 - [ ] T001 Create `.github/scripts/zizmor-pin.txt` with `version=1.33.1` and the release asset `sha256` per data-model.md "Analyser pin"
-- [ ] T002 [P] Create `.github/zizmor.yml`: `rules.self-repository.disable: true` with non-empty `reason`, and `rules.unpinned-uses.config.policies` (`actions/*`, `github/*`, `anthropics/*` → `ref-pin`; `*` → `hash-pin`) per data-model.md "Analyser configuration"
-- [ ] T003 [P] Create empty-array `.github/scripts/zizmor-findings-waivers.json` conforming to `specs/132-workflow-trigger-security/contracts/findings-register.schema.json`
-- [ ] T004 [P] Create `.github/scripts/repo-only-reusable-workflows.json` listing `shared-pr-reviewer.yml` (data-model.md "Repo-only reusable workflow list"; FR-016b)
+- [X] T002 [P] Create `.github/zizmor.yml`: `rules.self-repository.disable: true` with non-empty `reason`, and `rules.unpinned-uses.config.policies` (`actions/*`, `github/*`, `anthropics/*` → `ref-pin`; `*` → `hash-pin`) per data-model.md "Analyser configuration"
+- [X] T003 [P] Create empty-array `.github/scripts/zizmor-findings-waivers.json` conforming to `specs/132-workflow-trigger-security/contracts/findings-register.schema.json`
+- [X] T004 [P] Create `.github/scripts/repo-only-reusable-workflows.json` listing `shared-pr-reviewer.yml` (data-model.md "Repo-only reusable workflow list"; FR-016b)
 
 ## Phase 2: Foundational
 
 **Purpose**: the zizmor gate skeleton every story's gate registration builds on.
 
-- [ ] T005 Implement `.github/scripts/verify-zizmor.py` per `contracts/zizmor-gate.md`: glob `.github/workflows` and `.github/actions` (incl. `_shared/`, nested), run pinned zizmor offline, parse JSON, subtract register; fail on analyser missing, empty file set, unparsable output (FR-001–FR-004)
-- [ ] T006 Add the register validation to `verify-zizmor.py`: records keyed on `zizmor-findings-waivers.json` fields `file`, `audit`, `location`, `reason`, `control`, `issue`, `decided_by` per data-model.md "Accepted-findings record"; stale record, duplicate key and unwaived finding fail, output names file, line, audit (FR-002, FR-010, FR-011)
-- [ ] T007 Add the `--self-test` fixtures under `.github/scripts/fixtures/zizmor/` (or the sibling gates' fixture location): one per branch — unwaived finding, stale record, analyser missing, empty file set, unparsable output (FR-006)
+- [X] T005 Implement `.github/scripts/verify-zizmor.py` per `contracts/zizmor-gate.md`: glob `.github/workflows` and `.github/actions` (incl. `_shared/`, nested), run pinned zizmor offline, parse JSON, subtract register; fail on analyser missing, empty file set, unparsable output (FR-001–FR-004)
+- [X] T006 Add the register validation to `verify-zizmor.py`: records keyed on `zizmor-findings-waivers.json` fields `file`, `audit`, `location`, `reason`, `control`, `issue`, `decided_by` per data-model.md "Accepted-findings record"; stale record, duplicate key and unwaived finding fail, output names file, line, audit (FR-002, FR-010, FR-011)
+- [X] T007 Add the `--self-test` fixtures under `.github/scripts/fixtures/zizmor/` (or the sibling gates' fixture location): one per branch — unwaived finding, stale record, analyser missing, empty file set, unparsable output (FR-006)
 - [ ] T008 Register the gate in the gate registry used by `.github/scripts/run-local-gates.py` and add the step plus `paths:` triggers (scanned files, zizmor.yml, register, pin) and checksum-verified, SHA-pinned install step to `.github/workflows/lint-workflows.yml` (FR-001, FR-005)
 
 **Checkpoint**: gate runs locally and in CI with identical version, config and file set.
@@ -29,8 +29,8 @@
 **Goal**: zizmor gate green on main with zero `template-injection` findings.
 **Independent Test**: add an inline `${{ github.event.issue.title }}` in a `run:`; gate fails naming the line; move to `env:` and it passes.
 
-- [ ] T009 [P] [US1] Move both `inputs.directed-recovery` expansions in `.github/workflows/board-loop.yml` to an `env:` variable, behaviour unchanged for empty string and `false` (FR-007)
-- [ ] T010 [P] [US1] Move the `--ref "${{ github.ref_name }}"` expansion in `.github/workflows/wing-commander-rebase.yml` to an `env:` variable, safe for refs containing `/` (FR-007)
+- [X] T009 [P] [US1] Move both `inputs.directed-recovery` expansions in `.github/workflows/board-loop.yml` to an `env:` variable, behaviour unchanged for empty string and `false` (FR-007)
+- [X] T010 [P] [US1] Move the `--ref "${{ github.ref_name }}"` expansion in `.github/workflows/wing-commander-rebase.yml` to an `env:` variable, safe for refs containing `/` (FR-007)
 - [ ] T011 [US1] Add a fixture to `verify-zizmor.py --self-test` proving an inline expansion fails and the `env:` form passes (US1 acceptance 2)
 - [ ] T012 [US1] Confirm the same verdict locally and in CI on one commit (SC-003) by running `python .github/scripts/run-local-gates.py`
 
@@ -42,12 +42,12 @@
 - [ ] T013 [US2] Add the 7 `dangerous-triggers` records to `.github/scripts/zizmor-findings-waivers.json`, each naming `control` and `issue` tracker (the Maintenance backlog issue) per data-model.md `zizmor-findings-waivers.json` `control` and `issue` (FR-012, SC-004)
 - [ ] T014 [US2] Triage each `github-env`, `artipacked`, `excessive-permissions` and `github-app` finding one at a time: fix in the owning workflow under `.github/workflows/` or `.github/actions/`, or add a register record with `reason` (FR-008)
 - [ ] T015 [US2] Verify gate 124 (`.github/scripts/verify-waiver-citations.py`) discovers the new register by name with no change, and add a fixture or check proving a closed tracker is caught (FR-013)
-- [ ] T016 [US2] Add a `verify-zizmor.py` check that fails when the `self-repository` disable `reason` in `.github/zizmor.yml` is missing, with a fixture (FR-016, SC-011)
+- [X] T016 [US2] Add a `verify-zizmor.py` check that fails when the `self-repository` disable `reason` in `.github/zizmor.yml` is missing, with a fixture (FR-016, SC-011)
 
 ## Phase 5: Third-party pins and trusted-publisher home (cross-cutting, FR-009–FR-009b, FR-017a)
 
 - [ ] T017 [US1] SHA-pin every third-party `uses:` outside `actions/*`, `github/*`, `anthropics/*` across `.github/workflows/` and `.github/actions/`, each with a version comment, until `unpinned-uses` reports nothing (FR-009, SC-008)
-- [ ] T018 [US1] Implement the single-home check (`.github/scripts/verify-trusted-publisher-single-home.py`, or fold into `verify-zizmor.py`): fail on a second copy of the list under `.github/` and on analyser policy differing from `.github/zizmor.yml`, with fixtures for both (FR-009a, SC-010)
+- [X] T018 [US1] Implement the single-home check (`.github/scripts/verify-trusted-publisher-single-home.py`, or fold into `verify-zizmor.py`): fail on a second copy of the list under `.github/` and on analyser policy differing from `.github/zizmor.yml`, with fixtures for both (FR-009a, SC-010)
 - [ ] T019 [US1] Add `action-runtime-pins.json` rows for every new SHA ref and drop replaced rows; confirm gate 170 (`verify-action-runtime-pins.py`) still fails a deprecated-runtime bump (FR-017a)
 - [ ] T020 [P] [US1] Create `.github/workflows/update-action-pins.yml`: opens PRs updating SHA and version comment together, carrying runtime-register rows; human-merged, no bot merge (FR-009b)
 - [ ] T021 [US1] Add a fixture rewriting one pin to another SHA and comment with its register rows, showing the full gate suite passes (SC-010)

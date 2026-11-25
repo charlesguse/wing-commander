@@ -7334,6 +7334,7 @@ jobs:
           CONCLUSION: ${{ steps.redrive.outputs.conclusion }}
           DISAMBIGUATED_REASON: ${{ steps.disambiguate.outputs.reason }}
           STOP_CAUSE_RUN_LABEL: ${{ steps.killswitch-recheck.outputs.stop-cause-run-label }}
+          RECOVERY: ${{ inputs.directed-recovery }}
         run: |
           set -uo pipefail
           # specs/097-recorded-stop-point FR-014/FR-015: name the cause
@@ -7345,7 +7346,7 @@ jobs:
           if [ "${{ steps.killswitch-recheck.outputs.paused }}" = "true" ]; then
             label="prove: $STOP_CAUSE_RUN_LABEL"
           elif [ "${{ steps.decide.outputs.actions-only }}" != "true" ]; then
-            if [ "${{ inputs.directed-recovery }}" = "true" ]; then
+            if [ "$RECOVERY" = "true" ]; then
               label="closed on merge evidence alone (recovered)"
             else
               label="closed on merge evidence alone"
@@ -7362,7 +7363,7 @@ jobs:
               os.environ.get('CONCLUSION') or None,
               os.environ.get('DISAMBIGUATED_REASON') or None))
           ")"
-            if [ "${{ inputs.directed-recovery }}" = "true" ]; then
+            if [ "$RECOVERY" = "true" ]; then
               label="proof (recovered): $reason"
             else
               label="proof: $reason"
