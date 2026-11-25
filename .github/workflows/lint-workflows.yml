@@ -4086,10 +4086,17 @@ jobs:
       # default branch before this branch's rebase landed) nor the 100 this
       # gate held next (main's own Gate 100, spec 079, claimed 100 first on
       # the default branch before this branch's second rebase landed).
-      - name: "Gate 104 — every uses: ./.github/actions/ reference in board-loop.yml resolves from the trusted copy, never the workspace"
+      # Rule (g) carries the uses:-block half to every other workflow: one
+      # that runs in a consumer's workspace (a `pipeline-repo` input) holds
+      # no raw `uses: ./.github/actions/`, and elsewhere no raw reference
+      # follows a workspace-root checkout of anything but the run's own
+      # commit. pr-conversation.yml's act job once resolved its
+      # outstanding-task-item composite from the PR branch it had just
+      # checked out at the root.
+      - name: "Gate 104 — every uses: ./.github/actions/ reference in board-loop.yml resolves from the trusted copy, never the workspace; no other workflow resolves one from an untrusted root"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-composite-provenance.py
-      - name: "Gate 104 self-test — a raw workspace uses:, a moved, dropped, mis-pinned, or continue-on-error checkout, a missing .gitignore entry, a widened ban, or a dropped write-protect step each fail"
+      - name: "Gate 104 self-test — a raw workspace uses:, a moved, dropped, mis-pinned, or continue-on-error checkout, a missing .gitignore entry, a widened ban, a dropped write-protect step, or a raw uses: after an untrusted root checkout in another workflow each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-composite-provenance.py --self-test
 
