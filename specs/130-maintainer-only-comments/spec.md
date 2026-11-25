@@ -19,6 +19,10 @@
 - Q: Does the published clarify stage itself verify the triggering comment's association, so consumers' existing wrappers obey the rule? → A: Yes, the stage checks too (FR-006). Owner's answer in chat. The precedents conflicted: spec 010 D2 says the wrapper owns gate conditions, while the Spec Kit updater and pr-conversation gate inside the stage.
 - Q: What happens when a non-maintainer replies on a lifecycle issue in clarify? → A: The owner's words: "Say it up front but only if the requester is a non-maintainer as that is the only situation where it should matter" (FR-008). The reply itself gets no notice. Owner's answer in chat. The precedents conflicted: pr-conversation posts a notice (spec 033), and the Spec Kit updater stays silent.
 
+### Session 2026-11-25
+
+- Q: The Spec Kit updater's comment-reply agent reads the tracking issue's comments as context. Does the rule cover that context, or only who can start the run? → A: It covers the context: the stage is fixed to match the rule (FR-002, its last two bullets). Owner's answer in chat, chosen over narrowing the contract to admission alone.
+
 ## Context
 
 Owner decision (2026-11-23): only maintainers steer comment-triggered stages. "Authorized" means `OWNER`, `MEMBER` or `COLLABORATOR`. A requester who is not a maintainer answers through one, and the owner relays their words when needed. Constitution 3.0.0 (PR #1194) states the rule in Principles IV and V, and this feature makes every surface match it.
@@ -78,6 +82,7 @@ A reply on the Spec Kit updater's tracking issue drives its comment-reply path o
 
 1. **Given** a non-maintainer commenter whose id equals the issue author's id, **When** they reply, **Then** the comment-reply job does not run.
 2. **Given** a caller that still passes `issue-author-id`, **When** the workflow is called, **Then** the call is accepted and the input has no effect.
+3. **Given** a maintainer's reply on a tracking issue that also carries comments from non-maintainers and from other bots, **When** the comment-reply agent interprets the reply, **Then** its context holds only the issue body, the pipeline's own comments and maintainers' comments, and a choice counts only when it is one of the option labels the pipeline posted.
 
 ---
 
@@ -98,6 +103,8 @@ A reply on the Spec Kit updater's tracking issue drives its comment-reply path o
 - **FR-002**: The Spec Kit updater's comment-reply gate MUST admit a commenter only when their association is `OWNER`, `MEMBER` or `COLLABORATOR`.
   - The `issue-author-id` input MUST stay declared, so existing callers do not fail.
   - The input MUST be documented as ignored.
+  - The comment-reply agent's context MUST hold only the issue body, the pipeline's own comments (its App's `<slug>[bot]` login) and comments whose association is `OWNER`, `MEMBER` or `COLLABORATOR` and whose author is not a bot.
+  - The read-back MUST accept a chosen option only when it is one of the option labels the pipeline posted; any other answer is unrecognized and asks for a clearer reply.
 - **FR-003**: The shared comment trust filter MUST qualify a comment only when its author is not a bot and its association is `OWNER`, `MEMBER` or `COLLABORATOR`.
   - Every comment it does not qualify MUST be counted as excluded.
   - Its outputs and file formats are otherwise unchanged.

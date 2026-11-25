@@ -185,7 +185,10 @@ this job — nothing to record.
    (`--allowedTools "Read"`), structured output mapping the comment body
    onto one of the previously posted options (or "unrecognized," in
    which case the workflow comments asking for a clearer reply and takes
-   no further action).
+   no further action). Since specs/130-maintainer-only-comments the
+   agent's context holds only the issue body, the pipeline's own comments
+   and maintainers' comments, and a chosen option counts only when it is
+   one of the labels the pipeline posted.
 4. Recognized choice → comment the human's decision on the issue
    (FR-013's "the decision made" now includes whose call it was), then
    re-enter at `prepare` with that chosen path.

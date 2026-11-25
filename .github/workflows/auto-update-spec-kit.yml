@@ -3594,6 +3594,10 @@ jobs:
       # + comments, which include the option labels) are UNTRUSTED — fetched
       # from the API straight to files, never shell-interpolated into the
       # prompt, matching wing-commander-2-clarify.yml's convention.
+      # Spec 130: the context holds the issue body, this pipeline's own
+      # comments (BOT_LOGIN: the posted question and its option labels) and
+      # maintainers' comments only; posted-options.txt lists the labels this
+      # pipeline posted, and "Read back interpretation" accepts no other.
       - name: Stage the reply and question context as data files
         id: stage
         shell: bash
@@ -3602,12 +3606,25 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           COMMENT_ID: ${{ inputs.comment-id }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
           gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" --jq .body \
             > "$RUNNER_TEMP/reply-comment.md" 2>/dev/null || printf '' > "$RUNNER_TEMP/reply-comment.md"
-          gh issue view "$ISSUE_NUMBER" --json body,comments --jq '.body, (.comments[].body)' \
-            > "$RUNNER_TEMP/question-context.md" 2>/dev/null || printf '' > "$RUNNER_TEMP/question-context.md"
+          # A failed read stages nothing, so the reply reads as unrecognized.
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" --paginate \
+            --jq '.[] | select(.user.login == env.BOT_LOGIN or (.user.type != "Bot" and (.author_association | IN("OWNER", "MEMBER", "COLLABORATOR"))))' \
+            > "$RUNNER_TEMP/context-comments.json" 2>/dev/null || printf '' > "$RUNNER_TEMP/context-comments.json"
+          {
+            gh issue view "$ISSUE_NUMBER" --json body --jq .body
+            jq -r '.body' "$RUNNER_TEMP/context-comments.json"
+          } > "$RUNNER_TEMP/question-context.md" 2>/dev/null || printf '' > "$RUNNER_TEMP/question-context.md"
+          # The labels of the options this pipeline posted ("- **<label>**: ...",
+          # quoted by the action callout), one per line.
+          jq -r 'select(.user.login == env.BOT_LOGIN) | .body | split("\n")[]
+            | capture("^(> )?- \\*\\*(?<label>.+?)\\*\\*: ") | .label' \
+            "$RUNNER_TEMP/context-comments.json" > "$RUNNER_TEMP/posted-options.txt" 2>/dev/null \
+            || printf '' > "$RUNNER_TEMP/posted-options.txt"
 
       # T026: claude-haiku-5-5, bounded, read-only — map the reply onto one
       # of the previously posted options, or "unrecognized". The comment body
@@ -3721,6 +3738,11 @@ jobs:
                 [ -n "$chosen" ] && recognized=true
               fi
             fi
+          fi
+          # Spec 130: only a label this pipeline posted counts as a choice.
+          if [ "$recognized" = "true" ] && ! grep -qxF -- "$chosen" "$RUNNER_TEMP/posted-options.txt" 2>/dev/null; then
+            recognized=false
+            chosen=""
           fi
           echo "recognized=$recognized" >> "$GITHUB_OUTPUT"
           {

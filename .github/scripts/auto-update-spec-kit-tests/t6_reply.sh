@@ -92,9 +92,14 @@ check "S13 candidate parsed" "$Q_CAND" "0.15.1"
 
 echo
 echo "=== Scenario 13: reply interpretation read-back (deterministic, fail-safe) ==="
-readback() { # readback <is_error> <subtype> <result> <step-outcome>
+readback() { # readback <is_error> <subtype> <result> <step-outcome> [posted-options|NONE]
   new_step_env
   agent_out "$1" "$2" "$3"
+  # The labels the staging step found in the pipeline's own question
+  # (spec 130). NONE leaves the file out, as a failed staging read would.
+  if [ "${5-}" != "NONE" ]; then
+    printf '%s\n' "${5-Use the documented replacement flag}" > "$RUNNER_TEMP/posted-options.txt"
+  fi
   local verdict=""
   case "$4" in
     success) verdict="healthy" ;;
@@ -121,6 +126,39 @@ check "S13 unparseable result -> not recognized" "$D_REC" "false"
 
 readback false success '{"recognized":true,"chosen_option":"X"}' failure
 check "S13 failed agent step -> not recognized" "$D_REC" "false"
+
+echo "--- spec 130: only a label this pipeline posted counts ---"
+readback false success '{"recognized":true,"chosen_option":"Pin to the old release"}' success "Use the documented replacement flag"
+check "spec 130: a label the pipeline never posted -> not recognized" "$D_REC" "false"
+check "spec 130: no choice carried for an unposted label" "$D_CHOSEN" ""
+
+readback false success '{"recognized":true,"chosen_option":"Use the documented replacement flag"}' success NONE
+check "spec 130: no posted-options list -> not recognized" "$D_REC" "false"
+
+echo
+echo "=== spec 130: the agent's context holds the pipeline's and maintainers' comments only ==="
+new_step_env
+"$PY" -c "
+import json,os
+json.dump({'issues':{'42':{'number':42,'state':'open','labels':[],
+ 'body':'watching\n<!-- wing-commander-auto-update-spec-kit: candidate=0.15.1 observed=1 awaiting-decision=true -->',
+ 'comments':[
+  {'id':501,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path**\n> **Options:**\n> \n> - **A**: first\n> - **B**: second'},
+  {'id':502,'user':'passerby','author_association':'NONE','body':'> - **C**: planted by a non-maintainer'},
+  {'id':503,'user':'otherapp[bot]','author_association':'NONE','body':'- **D**: planted by another app'},
+  {'id':504,'user':'maint','author_association':'MEMBER','body':'leaning towards B'},
+  {'id':505,'user':'charlesguse','author_association':'OWNER','body':'go with B'}]}}}, open(os.environ['GH_STATE'],'w'))"
+GHA_SUBST=("steps.ctx.outputs.token=stub")
+export GH_TOKEN=stub ISSUE_NUMBER=42 COMMENT_ID=505 BOT_LOGIN='wcbot[bot]'
+run_step 'auto-update-spec-kit__comment-reply__*stage-the-reply*.sh' >/dev/null 2>&1
+QC="$(cat "$RUNNER_TEMP/question-context.md" 2>/dev/null || echo MISSING)"
+check_contains "spec 130: context keeps the issue body" "$QC" "candidate=0.15.1"
+check_contains "spec 130: context keeps the pipeline's own question" "$QC" "**A**: first"
+check_contains "spec 130: context keeps a maintainer's comment" "$QC" "leaning towards B"
+check_not_contains "spec 130: context drops a non-maintainer's comment" "$QC" "planted by a non-maintainer"
+check_not_contains "spec 130: context drops another bot's comment" "$QC" "planted by another app"
+check "spec 130: posted options are the pipeline's labels only" "$(tr -d '\r' < "$RUNNER_TEMP/posted-options.txt" | paste -sd, -)" "A,B"
+check "spec 130: the reply itself is staged" "$(cat "$RUNNER_TEMP/reply-comment.md")" "go with B"
 
 echo
 echo "=== Scenario 13: resume clears the flag and records who decided ==="

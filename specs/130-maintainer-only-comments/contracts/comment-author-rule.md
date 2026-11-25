@@ -10,6 +10,8 @@ A comment admits a stage run, or reaches an agent as context, only when both hol
 
 Nothing about authorship, issue ownership or user id is consulted.
 
+A stage's agent may also read the pipeline's own comments (its App's `<slug>[bot]` login): they are the pipeline's output, such as the question a reply answers, not a comment that steers it.
+
 ## Where it is enforced
 
 | Surface | Kind | Enforcement |
@@ -17,6 +19,7 @@ Nothing about authorship, issue ownership or user id is consulted.
 | `wing-commander-2-clarify.yml` | wrapper `if:` | association only |
 | `clarify.yml` | published stage | the check step before `lifecycle-gate`. A refused comment ends the job successfully, with no reaction, no notice and no draft change |
 | `auto-update-spec-kit.yml` | published stage, `comment-reply` job `if:` | association only. `issue-author-id` is accepted and ignored |
+| `auto-update-spec-kit.yml` | published stage, `comment-reply` agent context and read-back | the context holds the issue body, the pipeline's own comments and maintainers' comments; a choice counts only when it is a label the pipeline posted |
 | `wing-commander-9-pr-conversation.yml` / `pr-conversation.yml` | wrapper + stage | unchanged (spec 033 FR-019) |
 | `wing-commander-issue-context` | shared comment filter (intake, board loop) | association only. Excluded comments are counted |
 | `_shared/auto-release-e2e-clarify-decision.sh` | e2e assertion | association only, matching the stage |
