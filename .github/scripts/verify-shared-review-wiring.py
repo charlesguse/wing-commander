@@ -52,11 +52,13 @@ def callable_problems(wf):
     # That scope can also approve, request changes, retitle or close the PR
     # (FR-023 forbids each), so the token is held to issues and pull
     # requests (no contents: no merge, no push), to this repository (no
-    # owner or repositories input) and to the one comment call.
+    # owner or repositories input) and to the one comment call. Only those
+    # inputs are checked: the action's other inputs may change with its
+    # versions.
     for s in mints:
         extra = sorted(k for k in (s.get("with") or {})
-                       if k not in ("client-id", "private-key",
-                                    "permission-issues", "permission-pull-requests"))
+                       if k in ("owner", "repositories") or (k.startswith("permission-") and k not in (
+                           "permission-issues", "permission-pull-requests")))
         if extra:
             problems.append("record's App token asks for more than issues and pull requests "
                             "on this repository: " + ", ".join(extra))
@@ -68,21 +70,24 @@ def callable_problems(wf):
     if record_text.count(token) != 1 or len(users) != 1:
         problems.append("record's write token reaches more than the one comment step")
     else:
-        lines = [ln.strip() for ln in str(users[0].get("run") or "").splitlines()
-                 if ln.strip() and ln.strip() != "set -euo pipefail"]
-        if len(lines) != 1 or not re.fullmatch(
-                r'gh api -X POST "repos/\$\{REPO\}/issues/\$\{PR\}/comments" -F body=@record\.md'
-                r'( > /dev/null)?', lines[0]):
+        # Every gh call in the step is the one comment call; flags, a retry
+        # loop and other shell lines around it are free.
+        gh = [ln.strip() for ln in str(users[0].get("run") or "").splitlines()
+              if re.search(r"\bgh\b", ln) and not ln.strip().startswith("#")]
+        comment = r'\bgh api\b.*"repos/\$\{?REPO\}?/issues/\$\{?PR\}?/comments"'
+        if not all(re.search(comment, ln) for ln in gh):
             problems.append("record's write token does more than post the one PR comment: "
-                            + " | ".join(lines))
-        # The command's path and host come from its env and shell, so those
-        # are pinned too: the PR and repository the round was asked about.
+                            + " | ".join(gh))
+        # The command's path comes from its env and its program from the
+        # shell, so those are pinned too: the PR and repository the round was
+        # asked about. Other env entries are free.
         env = {k: str(v).replace(" ", "") for k, v in (users[0].get("env") or {}).items()}
         want = {"GH_TOKEN": "${{" + token + "}}", "PR": "${{inputs.pr}}",
                 "REPO": "${{github.repository}}"}
-        if env != want or users[0].get("shell") != "bash":
-            problems.append("record's comment step takes its target or shell from somewhere else: "
-                            + "env {0}, shell {1}".format(sorted(env), users[0].get("shell")))
+        if any(env.get(k) != v for k, v in want.items()) or users[0].get("shell") != "bash":
+            problems.append("record's comment step takes its token, target or shell from somewhere "
+                            "else: env {0}, shell {1}".format(
+                                {k: env.get(k) for k in want}, users[0].get("shell")))
     for name in ("find", "check", "code-run", "record"):
         needs = jobs[name].get("needs") or []
         needs = [needs] if isinstance(needs, str) else needs
@@ -375,6 +380,10 @@ def _verdict_can_fail(wf):
     _step(wf, "check", lambda s: s.get("id") == "check-verdict").pop("continue-on-error", None)
 
 
+def _record_mint(wf):
+    return _step(wf, "record", lambda s: "create-github-app-token" in str(s.get("uses", "")))
+
+
 def _record_post_step(wf):
     return _step(wf, "record", lambda s: "steps.app.outputs.token" in yaml.safe_dump(s))
 
@@ -448,6 +457,29 @@ def main():
             mutate(clone)
             if not callable_problems(clone):
                 print("::error::self-test: mutation not caught: " + label)
+                bad += 1
+        # Ordinary edits to record's mint and post that must stay legal.
+        legal = {
+            "the post logs the comment URL with --jq": lambda c: _record_post_step(c).update(
+                {"run": 'set -euo pipefail\n'
+                        'gh api -X POST "repos/${REPO}/issues/${PR}/comments" -F body=@record.md --jq .html_url\n'}),
+            "the post retries": lambda c: _record_post_step(c).update(
+                {"run": 'set -euo pipefail\n# Retry a transient 5xx from gh.\nfor i in 1 2 3; do\n'
+                        '  gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@record.md > /dev/null 2>&1 && break\n'
+                        '  sleep 10\ndone\n'}),
+            "the post step gets another env entry": lambda c: _record_post_step(c)["env"].update(
+                {"GH_PROMPT_DISABLED": "1"}),
+            "the post step is renamed": lambda c: _record_post_step(c).update({"name": "Post the round"}),
+            "the mint gets a new action input": lambda c: _record_mint(c)["with"].update(
+                {"skip-token-revoke": "false"}),
+            "the mint drops issues: write": lambda c: _record_mint(c)["with"].pop("permission-issues"),
+        }
+        for label, edit in legal.items():
+            clone = copy.deepcopy(cal)
+            edit(clone)
+            found = callable_problems(clone)
+            if found:
+                print("::error::self-test: legal edit refused: {0}: {1}".format(label, found))
                 bad += 1
         for label, mutate, check in (
                 ("a git read swallowed with || true", _swallow_diff, diff_read_problems),
