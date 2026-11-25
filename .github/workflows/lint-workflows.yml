@@ -118,8 +118,8 @@ on:
       # Gate 165 reads spec 059's convergence-signal contract for its
       # pointers at spec 117.
       - "specs/059-converged-means-tasks-done/contracts/convergence-signal.md"
-      # Gate 174 (i) reads these live contracts (and docs/**, above): none
-      # may describe a comment admitted by its author's identity.
+      # Gate 174 (i) and (l) read these live contracts (and docs/**, above):
+      # none may describe a comment admitted by its author's identity.
       - "specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md"
       - "specs/029-intake-issue-comments/contracts/comment-trust-gate.md"
       - "specs/029-intake-issue-comments/contracts/notice-callout.md"
@@ -3771,9 +3771,10 @@ jobs:
       # Gate 96 — #499 code review round 4: the trust-filter jq
       # wing-commander-issue-context ships had no behavioural coverage of
       # its own. Executes the real "Fetch issue and comments, apply the
-      # trust filter" step against a stubbed gh with Bot/NONE/author-by-id/
-      # MEMBER/OWNER/COLLABORATOR comments submitted out of order, and a
-      # mutation dropping the author-id clause.
+      # trust filter" step against a stubbed gh with Bot/NONE/MEMBER/OWNER/
+      # COLLABORATOR comments submitted out of order, among them the issue's
+      # own NONE-association author, who is excluded like any non-maintainer
+      # (spec 130), and a mutation that adds an identity clause back.
       - name: "Gate 96 — wing-commander-issue-context's trust-filter jq behaves correctly"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-issue-context-trust-filter.py
@@ -4843,17 +4844,19 @@ jobs:
       # Gate 174 — specs/130-maintainer-only-comments: comment-triggered
       # stages admit a comment only from a non-bot OWNER, MEMBER or
       # COLLABORATOR (constitution 3.0.0, Principle V). It checks every
-      # comment-triggered wrapper, clarify's own check and its grant, the
-      # shared comment filter, the Spec Kit updater's gate,
-      # pr-conversation's actor gate, the e2e clarify decision, the live
-      # docs and contracts, and the single homes of the relay paragraph
-      # and its step comment, and runs the shipped clarify check and relay
-      # composite against a stub gh.
+      # comment-triggered wrapper, clarify's own check, the gating of every
+      # step after it and its grant, the shared comment filter, the Spec
+      # Kit updater's gate, pr-conversation's actor gate, the e2e clarify
+      # decision, the live docs and contracts, prose in workflows,
+      # composites and live docs that names the issue's author as
+      # admitted, and the single homes of the relay paragraph and its step
+      # comment, and runs the shipped clarify check and relay composite
+      # against a stub gh.
       # Numbered 174 because PR #1184 claims 171 and PR #1205 claims 173.
       - name: Gate 174 — comment-triggered stages act only on maintainers
         if: "!cancelled()"
         run: python3 .github/scripts/verify-maintainer-only-comments.py
-      - name: Gate 174 self-test — each surface or live contract admitting the issue's author, a moved or unconditioned check, a widened grant and a copied relay paragraph or comment each fail
+      - name: Gate 174 self-test — each surface, live contract or prose admitting the issue's author, a moved or unconditioned check, an ungated clarify step, a widened grant and a copied relay paragraph or comment each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-maintainer-only-comments.py --self-test
       # Gate 165 — specs/116-review-convergence-analyze. It keeps the review

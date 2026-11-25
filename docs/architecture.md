@@ -1506,8 +1506,8 @@ scans every open PR's body for the version-bump marker (never the revert
 marker) to decide whether this candidate is already proposed, extracting
 which candidate a match proposes from its head branch name rather than its
 title or body text. `comment-reply` additionally gates the
-commenter (`OWNER`/`MEMBER`/`COLLABORATOR` or the issue author — the same
-actor gate `wing-commander-2-clarify.yml` uses) and interprets the reply with
+commenter (`OWNER`/`MEMBER`/`COLLABORATOR` only — the same association
+rule `wing-commander-2-clarify.yml` uses) and interprets the reply with
 a read-only `claude-haiku-5-5` step before re-entering `prepare` → `verify` →
 `act`.
 

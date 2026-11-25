@@ -19,7 +19,10 @@ WHAT IT CHECKS (default run, on the tree)
     `issue-author-id`, `commenter-id ==`, actor/author ids).
 (b) clarify.yml's `clarify` job: the `comment-author` step exists, comes
     before `lifecycle-gate`, and both `lifecycle-gate` and "Note closed
-    lifecycle and stop" carry its `maintainer == 'true'` condition.
+    lifecycle and stop" carry its `maintainer == 'true'` condition. Every
+    later step skips for a refused comment: its `if:` carries the is-open
+    condition, or a condition that is false when an already-gated step was
+    skipped; only the two argument-composing steps run ungated.
 (c) wing-commander-issue-context's trust filter compares no user id (Gate
     96 runs its behaviour).
 (d) auto-update-spec-kit.yml's `comment-reply` job `if:` compares no id.
@@ -32,9 +35,9 @@ WHAT IT CHECKS (default run, on the tree)
     the same body file.
 (h) Single home: the relay paragraph's text appears in no other file under
     .github/workflows, .github/actions or .github/scripts, nor in a live
-    doc or contract (the files (i) reads), compared with
-    whitespace collapsed and `#` comment markers removed, so a copy wrapped
-    at another width is still found.
+    doc or contract (the files (i) reads), compared on letters and digits
+    alone, so a copy wrapped at another width, in comment lines, quoted
+    string pieces or a blockquote is still found.
 (i) No live doc or contract in LIVE_DOCS writes an identity comparison (`actor.id ==`, `user.id ==`,
     `== ...author-id`, `commenter-id ==`): they describe the rule by
     association only (FR-009, SC-005).
@@ -44,6 +47,10 @@ WHAT IT CHECKS (default run, on the tree)
 (k) Single home of the relay step's comment: its key sentence appears only
     in clarify.yml, which carries Gate 47's `requester-relay-note`
     canonical marker; intake.yml points at it.
+(l) No workflow, composite (.yml or .sh under .github/actions) or live
+    doc or contract describes the issue's author in prose as admitted next
+    to the maintainer set ("... or the issue's own author", "the
+    association/author-id clause").
 Plus two harnesses that run the shipped shell against a stub `gh`:
 - the `comment-author` step: OWNER, MEMBER and COLLABORATOR give
   maintainer=true; NONE, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR and a Bot
@@ -192,6 +199,39 @@ def check_b(tree):
     for needle in ("author_association", "Bot"):
         if needle not in run:
             failures.append(f"(b) clarify.yml: the comment-author step does not read {needle!r}")
+    failures += _ungated_after_gate(steps, gi)
+    return failures
+
+
+# (b)'s second half: a refused comment leaves lifecycle-gate skipped, so its
+# is-open output is empty. Every later step in the clarify job must skip
+# then: its `if:` (an && chain, no ||) carries the is-open condition, or a
+# condition that is false when an already-gated step was skipped. Only the
+# two steps that compose arguments and write nothing may run ungated.
+IS_OPEN_COND = "steps.lifecycle-gate.outputs.is-open == 'true'"
+UNGATED_OK = {"commit-guidance-clarify", "tool-args-clarify"}
+SKIP_SAFE = re.compile(
+    r"steps\.([\w-]+)\.(?:outputs\.[\w-]+\s*==\s*'[^']+'|outputs\.[\w-]+\s*!=\s*''|"
+    r"outcome\s*!=\s*'skipped')")
+
+
+def _ungated_after_gate(steps, gi):
+    gated = {"lifecycle-gate"}
+    failures = []
+    for n, s in enumerate(steps[gi + 1:], gi + 1):
+        sid = s.get("id")
+        cond = str(s.get("if") or "").strip()
+        cond = re.sub(r"^\$\{\{\s*|\s*\}\}$", "", cond)
+        ok = False
+        if cond and "||" not in cond:
+            ok = IS_OPEN_COND in cond or MAINTAINER_COND in cond or any(
+                m.group(1) in gated for m in SKIP_SAFE.finditer(cond))
+        if ok:
+            if sid:
+                gated.add(sid)
+        elif sid not in UNGATED_OK:
+            failures.append(f"(b) clarify.yml: step {s.get('name') or sid or n!r} would run for a "
+                            f"refused comment; gate it on {IS_OPEN_COND!r}")
     return failures
 
 
@@ -270,9 +310,9 @@ def check_h(tree):
     para = relay_paragraph(tree)
     if not para:
         return ["(h) the relay composite has no RELAY_PARAGRAPH"]
-    probe = _flatten(para)[:60]
+    probe = _letters(para)[:60]
     others = [p for p, t in tree.items()
-              if p != RELAY and probe in _flatten(t)]
+              if p != RELAY and probe in _letters(t)]
     return [f"(h) the relay paragraph is copied into {p}" for p in others]
 
 
@@ -282,6 +322,13 @@ def _flatten(text):
     into `#` comment lines, compares equal to the folded paragraph."""
     lines = (re.sub(r"^\s*#+", " ", l) for l in text.splitlines())
     return re.sub(r"\s+", " ", " ".join(lines))
+
+
+def _letters(text):
+    """Only the text's letters and digits, lowercased: a copy wrapped at any
+    width, inside quotes, comment markers, blockquotes or string
+    continuations still compares equal to the paragraph."""
+    return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
 def check_i(tree):
@@ -315,6 +362,29 @@ def check_j(tree):
     return ["(j) pr-conversation.yml: no step with id 'actor-gate'"]
 
 
+# (l): prose that describes the issue's author as admitted next to the
+# maintainer set, as the removed text did ("OWNER/MEMBER/COLLABORATOR or the
+# issue's own author", "a maintainer or the issue author", "the
+# association/author-id clause"). Matched on text flattened by _flatten.
+PROSE_EXCEPTION = re.compile(
+    r"\bor (?:its author is )?(?:the|an) (?:lifecycle )?issue(?:['’]s)? (?:own )?author\b|"
+    r"association/author-id|author-by-id|dropping the author-id clause", re.I)
+
+
+def check_l(tree):
+    failures = []
+    roots = (os.path.normpath(WF) + os.sep, os.path.normpath(os.path.join(".github", "actions")) + os.sep)
+    live = {os.path.normpath(p) for p in LIVE_DOCS}
+    for path, text in sorted(tree.items()):
+        if not (path in live or (path.startswith(roots) and path.endswith((".yml", ".yaml", ".sh")))):
+            continue
+        m = PROSE_EXCEPTION.search(_flatten(text))
+        if m:
+            failures.append(f"(l) {path}: describes the issue's author as admitted ({m.group(0)!r}); "
+                            f"describe the rule by association only")
+    return failures
+
+
 RELAY_COMMENT_KEY = "the questions say up front that only a maintainer's reply is folded in"
 
 
@@ -329,7 +399,7 @@ def check_k(tree):
 
 
 STATIC_CHECKS = (check_a, check_b, check_c, check_d, check_e, check_f, check_g, check_h,
-                 check_i, check_j, check_k)
+                 check_i, check_j, check_k, check_l)
 
 
 # --------------------------------------------------------------------------
@@ -676,6 +746,27 @@ def _relay_never_mutant(tree):
     return _yaml_edit(tree, RELAY, edit)
 
 
+def _agent_ungated_mutant(tree):
+    cond = "steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-clarify.outputs.allowed-tools != ''"
+    return _sub(tree, CLARIFY, "id: agent\n        if: " + cond,
+                "id: agent\n        if: steps.tool-args-clarify.outputs.allowed-tools != ''")
+
+
+def _quoted_copy_mutant(tree):
+    import textwrap
+    para = relay_paragraph(tree)
+    p = os.path.join(".github", "scripts", "verify-issue-context-trust-filter.py")
+    t = dict(tree)
+    t[p] = (t[p] + "\nRELAY = (\n"
+            + "\n".join(f'    "{l} "' for l in textwrap.wrap(para, 40)) + "\n)\n")
+    return t
+
+
+def _prose_mutant(tree):
+    p = os.path.join(".github", "actions", "wing-commander-issue-context", "action.yml")
+    return _sub(tree, p, "never a bot", "or the issue's own author, never a bot")
+
+
 MUTANTS = (
     ("(a) the clarify wrapper admits the issue's author", _clarify_wrapper_mutant),
     ("(a) the Spec Kit wrapper passes issue-author-id", _updater_wrapper_mutant),
@@ -698,6 +789,10 @@ MUTANTS = (
     ("(j) pr-conversation's actor-gate step is gone", _actor_gate_gone_mutant),
     ("(j) pr-conversation's actor gate stops reading actor-association",
      _actor_gate_no_association_mutant),
+    ("(b) clarify's agent step loses the is-open condition", _agent_ungated_mutant),
+    ("(h) the relay paragraph is copied into a gate script as a wrapped Python string",
+     _quoted_copy_mutant),
+    ("(l) the issue-context composite says it admits the issue's own author", _prose_mutant),
     ("(relay-harness) the relay composite never appends", _relay_never_mutant),
 )
 

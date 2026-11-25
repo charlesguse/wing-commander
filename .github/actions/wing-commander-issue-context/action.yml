@@ -125,7 +125,7 @@ outputs:
     description: Comments that passed the trust filter. 0 reproduces title+body-only behavior.
     value: ${{ steps.line.outputs.qualifying-count || steps.fetch.outputs.qualifying-count }}
   excluded-human-count:
-    description: Non-bot comments where the trust filter's association/author-id clause failed.
+    description: Non-bot comments whose author_association is not OWNER, MEMBER or COLLABORATOR.
     value: ${{ steps.line.outputs.excluded-human-count || steps.fetch.outputs.excluded-human-count }}
   bot-occurrences-file:
     description: >
