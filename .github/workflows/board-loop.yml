@@ -5729,12 +5729,12 @@ jobs:
                   decision["head_sha"] if decision["head_sha"] and decision["head_sha"] == backstop_head else ""))
           PYEOF
 
-      # FR-066/FR-068: names head_sha and every condition's result; states
-      # a human merge is awaited; never merges, approves, or enables
-      # auto-merge anywhere in this job's own API calls. The marker it
-      # writes records step awaiting-merge, not readiness (#532): the
-      # handover releases the board, so select() moves on to other issues
-      # instead of re-running readiness on this PR every run.
+      # FR-066/FR-068: names head_sha and every condition's result; never
+      # merges, approves, or enables auto-merge anywhere in this job's own
+      # API calls. The marker it writes records step awaiting-merge, not
+      # readiness (#532): the handover releases the board, so select()
+      # moves on to other issues instead of re-running readiness on this
+      # PR every run.
       # FR-011, contracts/directed-proof-run.md "Attribution": one
       # canonical attribution string (CLAUDE.md single-home), gated on
       # inputs.directed-stage != '', prepended rather than a separately-
@@ -5753,7 +5753,7 @@ jobs:
         run: |
           set -uo pipefail
           decision="$(cat "$RUNNER_TEMP/board-readiness-decision.json")"
-          body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\ndecision: %s\n\nAwaiting a human merge -- this loop never merges, approves, or enables auto-merge.' \
+          body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\ndecision: %s' \
             "$(jq -r '.head_sha' "$RUNNER_TEMP/board-readiness-decision.json")" "$decision")"
           [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
           gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
@@ -6097,13 +6097,13 @@ jobs:
 
   # specs/115-board-loop-self-merge (contracts/board-merge.md): the one place
   # this loop merges, and only while `vars.WING_COMMANDER_BOARD_AUTO_MERGE` is
-  # 'true' (unset, the job never exists and readiness's "Awaiting a human
-  # merge" report stands as before). Two classes may merge, both decided by
-  # board_merge.py from a snapshot of the exact head SHA fetched fresh below,
-  # never by this shell: the fix PR readiness just reported ready, and a
-  # Spec Kit upgrade PR the auto-update stage opened and verified. A refusal
-  # from GitHub (the App has no Workflows permission, so a workflow-touching
-  # PR ends here) is handed to a maintainer and nothing else is tried.
+  # 'true' (unset, the job never exists and a human merges the PR readiness
+  # reported ready). Two classes may merge, both decided by board_merge.py
+  # from a snapshot of the exact head SHA fetched fresh below, never by this
+  # shell: the fix PR readiness just reported ready, and a Spec Kit upgrade
+  # PR the auto-update stage opened and verified. A refusal from GitHub (the
+  # App has no Workflows permission, so a workflow-touching PR ends here) is
+  # handed to a maintainer and nothing else is tried.
   # `github.event_name != 'pull_request'` keeps this off the closed-PR
   # trigger, and directed proof runs never merge.
   merge:

@@ -37,8 +37,11 @@ loop.
 ## On `ready: true`
 
 Post a readiness report on the PR naming `head_sha` and each condition's
-result; record the same on the issue; state that a human merge is awaited
-(FR-066, FR-068). Never merge, approve, or enable auto-merge (FR-068).
+result; record the same on the issue (FR-066). The readiness job itself
+never merges, approves, or enables auto-merge (FR-068); with
+`WING_COMMANDER_BOARD_AUTO_MERGE` on, `board-loop.yml`'s `merge` job may
+merge it next (specs/115-board-loop-self-merge), so the report makes no
+claim about who merges.
 
 The issue record carries a board item marker with step `awaiting-merge`
 (not `readiness`), keeping `pr` (#532). That step is the handover: the
