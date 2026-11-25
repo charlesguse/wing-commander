@@ -2,7 +2,7 @@
   "issue": 1198,
   "spec_dir": "specs/129-parallel-pr-lint",
   "feature_num": "129",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 9,
   "spec_branch": "spec/129-parallel-pr-lint",
   "truncated_count": 0,
