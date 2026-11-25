@@ -1294,6 +1294,7 @@ jobs:
             | join("\n")
           ' > "$RUNNER_TEMP/clarify-followup.md"
 
+      # (canonical copy: requester-relay-note; do not condense)
       # FR-008 (specs/130-maintainer-only-comments): when the issue's author
       # is not a maintainer, the questions say up front that only a
       # maintainer's reply is folded in. The paragraph's single home is the
