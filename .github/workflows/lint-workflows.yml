@@ -4866,7 +4866,7 @@ jobs:
       - name: Gate 174 — every dispatch input passed to a number or boolean reusable-workflow input goes through fromJSON
         if: "!cancelled()"
         run: python3 .github/scripts/verify-dispatch-input-types.py
-      - name: Gate 174 self-test — a bare inputs or github.event.inputs reference to a number or boolean input fails, fromJSON and string inputs pass
+      - name: Gate 174 self-test — a bare, fallback, format, index or other-case dispatch reference to a number or boolean input fails; fromJSON, string inputs and a boolean dispatch input via inputs pass
         if: "!cancelled()"
         run: python3 .github/scripts/verify-dispatch-input-types.py --self-test
       # Gate 165 — specs/116-review-convergence-analyze. It keeps the review
