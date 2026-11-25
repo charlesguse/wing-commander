@@ -1,0 +1,9 @@
+{
+  "mode": "summary",
+  "id": "bl-b9677278",
+  "expect": "refuse",
+  "input": {
+    "issue": "The review comment hides what was checked.",
+    "pr": "Fixes #1202 by rendering the review parts."
+  }
+}

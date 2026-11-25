@@ -1,0 +1,9 @@
+{
+  "mode": "render-review",
+  "id": "#1202",
+  "expect": "ok",
+  "input": {
+    "parts": {"asked": ["not", "a", "string"], "checked": null},
+    "findings": ["board-loop.yml:4593 still posts a bare line", {"file": "x.py", "line": 3}]
+  }
+}

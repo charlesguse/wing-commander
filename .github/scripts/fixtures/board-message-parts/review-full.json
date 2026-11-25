@@ -1,0 +1,15 @@
+{
+  "mode": "render-review",
+  "id": "bl-b9677278",
+  "expect": "ok",
+  "input": {
+    "parts": {
+      "asked": "Does the review comment name what it checked?",
+      "checked": "The renderer, its fixtures and the gate.",
+      "decided": "Every part is rendered, filled or as a gap.",
+      "not_decided": "Wording of the fixed messages.",
+      "open": "Nothing open."
+    },
+    "findings": []
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "mode": "render-explanation",
+  "id": "#1202",
+  "expect": "ok",
+  "input": {
+    "parts": {
+      "line": "```\n````\n</details><script>alert(1)</script>\n# heading",
+      "code": 42,
+      "issue": "",
+      "why_it_matters": "x"
+    }
+  }
+}
