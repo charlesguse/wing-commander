@@ -61,7 +61,7 @@ Limits and rules:
 | Plan review | `pr`: a plan PR waits for a human merge. `auto` commits the plan and goes on to tasks | `WING_COMMANDER_PLAN_REVIEW` |
 | Tasks review | `auto`: `tasks.md` is committed. `pr` opens a tasks PR | `WING_COMMANDER_TASKS_REVIEW` |
 | Implement cycles per lifecycle | 5, then a `stage:stalled` hand-off that names how to resume | `WING_COMMANDER_MAX_ITERATIONS` |
-| A failed implement pass | retried once, one tier up (`claude-opus-5-5`); a second failure stalls the lifecycle | `WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL` |
+| A failed implement pass | retried once, one tier up (`claude-opus-5-5`); a second failure stalls the lifecycle. A pass whose agent never started (the action failed in its own setup) is not retried and stalls at once | `WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL` |
 | Implement on Opus | off; the `model:opus` label on the lifecycle issue opts in | label, or `WING_COMMANDER_IMPLEMENT_MODEL` |
 | Implement on Haiku | off; the `model:haiku` label opts in (retry goes to Sonnet, `model:opus` wins) | label, `WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS` (180) |
 | Hard turn stop | every agent step's `--max-turns` is 2.5 × its turn budget, rounded up | fixed (`wing-commander-turn-ceiling`) |

@@ -33,7 +33,18 @@ Checks (on implement.yml's `implement` job):
             never started and runs when it started or never reported, with
             every other condition set so the retry is due.
   pointers  every `mirrors "<name>"` comment in every workflow names a
-            step `name:` in that same file.
+            step `name:` in that same file, including a name that wraps
+            onto the next comment line.
+  output    the job's `agent-started` output reads 'true' when either the
+            cycle or the retry agent started: the retry clears the cycle's
+            transcript, so a retry that fails in its own setup reports
+            'false' after a cycle agent that ran and pushed (code review
+            of #1239).
+  stall     the exhausted-retry notice ("Report stalled on lifecycle
+            issue"), fed agent-started='false', says the agent never
+            started instead of "no higher model tier remains", which the
+            skipped retry made false; any other value keeps the pinned
+            headline (code review of #1239).
 
 Usage: verify-implement-retry-leg-guards.py [--root DIR]
        verify-implement-retry-leg-guards.py --self-test
@@ -43,11 +54,13 @@ import itertools
 import os
 import re
 import sys
+import tempfile
 
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_gha_expr import evaluate_if  # noqa: E402
+from wc_gha_expr import evaluate_if, evaluate_value  # noqa: E402
+from wc_shell_harness import resolve_bash, run_step  # noqa: E402
 
 WORKFLOW = ".github/workflows/implement.yml"
 WORKFLOWS_DIR = ".github/workflows"
@@ -59,7 +72,12 @@ TRANSCRIPT = "$RUNNER_TEMP/claude-execution-output.json"
 STARTED = "steps.agent-ran-cycle.outputs.started"
 KNOWN = ("steps.", "inputs.")
 REF_RE = re.compile(r"\b((?:steps|inputs)\.[A-Za-z0-9_.\-]+)")
-MIRRORS_RE = re.compile(r'#.*?\bmirrors\s+"([^"]+)"', re.I)
+MIRRORS_RE = re.compile(r'\bmirrors\s+"([^"]+)"', re.I)
+COMMENT_RE = re.compile(r"^\s*#\s?(.*)$")
+STALL_STEP = "Report stalled on lifecycle issue"
+STALL_JOB = "stalled"
+PINNED_HEADLINE = "and no higher model tier remains to escalate to"
+NEVER_STARTED = "failed before its agent started"
 # The two model references a retry-leg guard compares with each other; each
 # is tried at both ids. Every other reference is tried at each string
 # literal the two guards hold, plus unset and one value neither names.
@@ -185,11 +203,98 @@ def check_pointers(files):
         if text not in _NAMES:
             _NAMES[text] = step_names(yaml.safe_load(text))
         names = _NAMES[text]
-        for n, line in enumerate(text.splitlines(), 1):
-            for target in MIRRORS_RE.findall(line):
+        for n, comment in comment_blocks(text):
+            for target in MIRRORS_RE.findall(comment):
                 if target not in names:
                     errs.append("pointers: {0}:{1} says it mirrors {2!r}, but no step "
                                 "in that file has that name".format(path, n, target))
+    return errs
+
+
+def comment_blocks(text):
+    """(first line number, text) per run of consecutive `#` lines, joined
+    with single spaces so a quoted step name that wraps reads whole."""
+    out, start, parts = [], None, []
+    for n, line in enumerate(text.splitlines() + [""], 1):
+        m = COMMENT_RE.match(line)
+        if m:
+            if start is None:
+                start = n
+            parts.append(m.group(1).strip())
+        elif start is not None:
+            out.append((start, " ".join(p for p in parts if p)))
+            start, parts = None, []
+    return out
+
+
+def check_output(doc):
+    """agent-started: any 'true' wins, else the value that was set."""
+    expr = (((doc.get("jobs") or {}).get(JOB) or {}).get("outputs") or {}).get("agent-started")
+    if expr is None:
+        return ["output: the {0!r} job has no agent-started output".format(JOB)]
+    errs = []
+    for retry, cycle in itertools.product(("true", "false", ""), repeat=2):
+        ctx = {"steps.agent-ran-retry.outputs.started": retry,
+               "steps.agent-ran-cycle.outputs.started": cycle}
+        want = "true" if "true" in (retry, cycle) else (retry or cycle)
+        try:
+            got = evaluate_value(expr, ctx, KNOWN)
+        except ValueError as exc:
+            return ["output: cannot evaluate agent-started: {0}".format(exc)]
+        got = "" if got is None else str(got).lower() if isinstance(got, bool) else str(got)
+        if got != want:
+            errs.append("output: agent-started is {0!r} for retry={1!r}, cycle={2!r}; "
+                        "want {3!r} (an agent that started anywhere in the job "
+                        "may have pushed commits)".format(got, retry, cycle, want))
+    return errs
+
+
+def render_stall(script, started):
+    bash = resolve_bash()
+    with tempfile.TemporaryDirectory() as workdir, \
+            tempfile.TemporaryDirectory() as runner_temp:
+        spec = os.path.join(workdir, "specs", "001-x")
+        os.makedirs(spec)
+        with open(os.path.join(spec, "spec-meta.json"), "w", encoding="utf-8") as fh:
+            fh.write('{"iteration": 2}')
+        bindir = os.path.join(workdir, "bin")
+        os.makedirs(bindir)
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("#!/bin/sh\nexit 0\n")
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        env = {"GH_TOKEN": "x", "ISSUE": "1", "ITERATION": "2", "TIER": "model-a",
+               "REASON": "r", "AGENT_MSG": "", "SELF_WORKFLOW": "w.yml",
+               "RUN_URL": "https://example.invalid/r", "PUBLISHED_LINE": "",
+               "GITHUB_REPOSITORY": "o/r", "SPEC_DIR": "specs/001-x",
+               "AGENT_STARTED": started,
+               "PATH": bindir + os.pathsep + os.environ["PATH"]}
+        run_step(bash, script, workdir, env, runner_temp, path_prepend=bindir)
+        try:
+            with open(os.path.join(runner_temp, "stall-comment.md"), encoding="utf-8") as fh:
+                return fh.read()
+        except OSError:
+            return ""
+
+
+def check_stall(doc):
+    steps = (((doc.get("jobs") or {}).get(STALL_JOB) or {}).get("steps")) or []
+    step = next((s for s in steps if s.get("name") == STALL_STEP), None)
+    if step is None or not step.get("run"):
+        return ["stall: the {0!r} job has no {1!r} run step".format(STALL_JOB, STALL_STEP)]
+    errs = []
+    if str((step.get("env") or {}).get("AGENT_STARTED", "")).replace(" ", "") != \
+            "${{needs.implement.outputs.agent-started}}":
+        errs.append("stall: {0!r} does not read needs.implement.outputs.agent-started "
+                    "as AGENT_STARTED".format(STALL_STEP))
+    for started, never in (("false", True), ("true", False), ("", False)):
+        body = render_stall(step["run"], started)
+        if never and (PINNED_HEADLINE in body or NEVER_STARTED not in body):
+            errs.append("stall: with agent-started='false' the notice must say the "
+                        "agent never started, not that no higher tier remains (the "
+                        "retry was skipped): {0!r}".format(body[:300]))
+        if not never and (PINNED_HEADLINE not in body or NEVER_STARTED in body):
+            errs.append("stall: with agent-started={0!r} the notice lost its pinned "
+                        "headline: {1!r}".format(started, body[:300]))
     return errs
 
 
@@ -198,7 +303,8 @@ def run_checks(stage_text, workflow_texts):
     steps = ((doc.get("jobs") or {}).get(JOB) or {}).get("steps") or []
     if not steps:
         return ["{0} has no {1!r} job steps".format(WORKFLOW, JOB)]
-    return check_clear(steps) + check_started(steps) + check_pointers(workflow_texts)
+    return (check_clear(steps) + check_started(steps) + check_pointers(workflow_texts)
+            + check_output(doc) + check_stall(doc))
 
 
 def load(root):
@@ -282,6 +388,44 @@ def self_test(root):
             print("self-test: mutation {0!r} passed (want a {1} failure): {2}".format(
                 name, prefix, errs), file=sys.stderr)
             bad += 1
+    def output_most_recent(doc):
+        doc["jobs"][JOB]["outputs"]["agent-started"] = (
+            "${{ steps.agent-ran-retry.outputs.started || "
+            "steps.agent-ran-cycle.outputs.started }}")
+
+    def stall_unbranched(doc):
+        s = next(x for x in doc["jobs"][STALL_JOB]["steps"] if x.get("name") == STALL_STEP)
+        s["run"] = re.sub(r'if \[ "\$AGENT_STARTED" = "false" \]; then\n.*?\n\s*else\n(.*?)\n\s*fi\n',
+                          lambda m: m.group(1) + "\n", s["run"], count=1, flags=re.S)
+
+    def stall_env_dropped(doc):
+        s = next(x for x in doc["jobs"][STALL_JOB]["steps"] if x.get("name") == STALL_STEP)
+        s["env"].pop("AGENT_STARTED")
+
+    doc_cases = [("agent-started most-recent-wins", output_most_recent, "output:"),
+                 ("stall notice ignores agent-started", stall_unbranched, "stall:"),
+                 ("stall step never reads agent-started", stall_env_dropped, "stall:")]
+    for name, fn, prefix in doc_cases:
+        doc = yaml.safe_load(stage)
+        fn(doc)
+        mutated = yaml.safe_dump(doc, sort_keys=False)
+        if mutated == yaml.safe_dump(yaml.safe_load(stage), sort_keys=False):
+            print("self-test: mutation {0!r} changed nothing".format(name), file=sys.stderr)
+            bad += 1
+            continue
+        errs = run_checks(mutated, dict(texts, **{WORKFLOW: mutated}))
+        if not any(e.startswith(prefix) for e in errs):
+            print("self-test: mutation {0!r} passed (want a {1} failure): {2}".format(
+                name, prefix, errs), file=sys.stderr)
+            bad += 1
+    wrapped = stage.replace('mirrors "Report\n', 'mirrors "Report the\n', 1)
+    if wrapped == stage:
+        print("self-test: the wrapped mirrors pointer is missing", file=sys.stderr)
+        bad += 1
+    elif not any(e.startswith("pointers:") for e in
+                 run_checks(wrapped, dict(texts, **{WORKFLOW: wrapped}))):
+        print("self-test: a stale pointer wrapped over two lines passed", file=sys.stderr)
+        bad += 1
     stale = stage.replace('mirrors "Run the cycle-start gate suite (credential-free)"',
                           'mirrors "Run local gate suite (cycle)"')
     if stale == stage:
@@ -293,7 +437,8 @@ def self_test(root):
         bad += 1
     if bad:
         return 1
-    print("self-test ok ({0} mutations and a stale pointer each fail)".format(len(cases)))
+    print("self-test ok ({0} mutations and two stale pointers each fail)".format(
+        len(cases) + len(doc_cases)))
     return 0
 
 

@@ -626,7 +626,9 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
    `wing-commander-spec-meta` composite, #340) auto-retries the
    same iteration once, one model tier up (`claude-sonnet-5-5` →
    `claude-opus-5-5`). A failed retry — or a failure already on the top
-   tier — marks the spec `stalled` (label, `spec-meta.json`, issue comment);
+   tier, or a pass whose agent never started (the action failed in its own
+   setup, so the retry would fail the same way) — marks the spec `stalled`
+   (label, `spec-meta.json`, issue comment);
    restart is manual: re-dispatch the workflow with the same iteration.
 
 ## Stage 5 — Finalize (`finalize.yml`, wrapper `wing-commander-6-finalize.yml` — see `specs/006-finalize-stage/`)

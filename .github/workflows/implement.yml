@@ -768,7 +768,11 @@ jobs:
       # only after a cycle or retry succeeded (final ok) and never pushes,
       # so its own setup failure must not tell the stall notice that no
       # agent work exists -- that cycle's commits are on the branch (FR-015).
-      agent-started: ${{ steps.agent-ran-retry.outputs.started || steps.agent-ran-cycle.outputs.started }}
+      # Any 'true' wins, not most-recent: the retry clears the cycle's
+      # transcript first, so a retry that fails in its own setup reports
+      # 'false' after a cycle agent that ran and pushed (code review of
+      # #1239).
+      agent-started: ${{ (steps.agent-ran-retry.outputs.started == 'true' || steps.agent-ran-cycle.outputs.started == 'true') && 'true' || steps.agent-ran-retry.outputs.started || steps.agent-ran-cycle.outputs.started }}
       credential-refresh-ok: ${{ steps.credential-status-progress.outputs.ok || steps.credential-status-retry.outputs.ok || steps.credential-status-cycle.outputs.ok }}
       # Most-recent-wins across retry/cycle only, same convention as above.
       commits-published: ${{ steps.publish-stranded-retry.outputs.commits-published || steps.publish-stranded-cycle.outputs.commits-published }}
@@ -4430,6 +4434,10 @@ jobs:
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           PUBLISHED_LINE: ${{ steps.published-line.outputs.line }}
+          # 'false' only when the cycle agent never started, which skips
+          # the escalation retry (see "Implement and converge (retry at
+          # escalation model)").
+          AGENT_STARTED: ${{ needs.implement.outputs.agent-started }}
         run: |
           gh label create "stage:stalled" --color E99695 --description "Stage did not complete; manual restart required" --force
           gh issue edit "$ISSUE" --add-label "stage:stalled"
@@ -4460,7 +4468,11 @@ jobs:
           # comment for why this step cannot resolve _shared/ itself.
           published_line="$PUBLISHED_LINE"
           {
-            echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed (last attempt on \`$TIER\`), and no higher model tier remains to escalate to, so this specification is now **stalled** (nothing restarts automatically)."
+            if [ "$AGENT_STARTED" = "false" ]; then
+              echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed before its agent started (on \`$TIER\`), so it was not retried on a higher model tier: the retry runs on the same runner image and would fail its setup the same way. This specification is now **stalled** (nothing restarts automatically); a missing image prerequisite needs fixing first, while a transient download or network error clears on a re-dispatch."
+            else
+              echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed (last attempt on \`$TIER\`), and no higher model tier remains to escalate to, so this specification is now **stalled** (nothing restarts automatically)."
+            fi
             echo ""
             echo "**Failing run**: $RUN_URL"
             echo "**Why the attempt was judged failed**: $reason_text"
