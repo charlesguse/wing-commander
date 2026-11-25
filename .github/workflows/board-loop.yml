@@ -1489,7 +1489,8 @@ jobs:
                   pr_number = ""
                   pr_state = ""
               if marker_pr_field:
-                  note = "recorded pr {0} is awaiting a human merge ({1}) -- nothing to do this run".format(
+                  note = ("recorded pr {0} is awaiting merge ({1}; by the merge job, or by a human with "
+                          "WING_COMMANDER_BOARD_AUTO_MERGE off) -- nothing to do this run").format(
                       marker_pr_field, pr_state or "state unresolved")
               else:
                   note = "awaiting-merge marker records no pr -- nothing to do this run"
@@ -1842,9 +1843,10 @@ jobs:
 # Closing-step pattern (T014, FR-044): every job below ends by posting its
 # outcome on the originating issue -- the triage verdict and its evidence,
 # the route and its reason, the PR, each review round's outcome, the
-# readiness report or the unmet condition, the human merge, and the proof
-# run, per whichever step that job represents -- with the human-legible
-# comment body ending in the board_item_marker.py write_marker() HTML
+# readiness report or the unmet condition, the merge (the `merge` job's
+# announcement, or a human merge), and the proof run, per whichever step
+# that job represents -- with the human-legible comment body ending in the
+# board_item_marker.py write_marker() HTML
 # comment (contracts/board-item-marker.md); the marker is never the comment's
 # only content. Every durable action (a close, a label, a push, a PR) is
 # preceded by a re-check through wing-commander-board-stop-check (research.md

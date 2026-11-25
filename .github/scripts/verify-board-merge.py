@@ -107,6 +107,24 @@ TRANSIENT_STDERRS = (
     # Pass 2 of review-until-clean on PR #1059: the API's own refusal while
     # mergeability is unknown (gh's pre-check saw no blocked state).
     "GraphQL: Pull Request is not mergeable (mergePullRequest)",
+    # #889 (found by the code review of #1059): a rate limit, a rejected
+    # token and a DNS or network failure are not GitHub refusing the PR,
+    # so none may write the permanent handed-over record.
+    "GraphQL: API rate limit exceeded for installation ID 12345. (mergePullRequest)",
+    "HTTP 403: You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+    "HTTP 429: Too Many Requests (https://api.github.com/graphql)",
+    "HTTP 401: Bad credentials (https://api.github.com/graphql)",
+    "error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com",
+    'Post "https://api.github.com/graphql": dial tcp: lookup api.github.com on 127.0.0.53:53: no such host',
+    'Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: connect: connection refused',
+    'Post "https://api.github.com/graphql": net/http: TLS handshake timeout',
+    'Post "https://api.github.com/graphql": unexpected EOF',
+)
+# A 403 that is no rate limit is a missing permission: GitHub refused this
+# token, and a retry with the same grant cannot clear it.
+NON_TRANSIENT_STDERRS = (
+    "GraphQL: Resource not accessible by integration (mergePullRequest)",
+    "HTTP 403: Resource not accessible by integration (https://api.github.com/graphql)",
 )
 
 
@@ -117,7 +135,14 @@ def check_transient_refusals():
     for err, got in bad:
         fail("transient stderr {0!r} classified as {1!r}, which is handed over".format(err, got))
     if not bad:
-        ok("head-moved, base-moved and 5xx merge failures are retried, not handed over")
+        ok("head-moved, base-moved, 5xx, rate-limit, auth and network merge failures are retried, "
+           "not handed over")
+    wrongly = [err for err in NON_TRANSIENT_STDERRS
+               if board_merge.classify_refusal(err) in getattr(board_merge, "RETRYABLE_REFUSAL_CLASSES", ())]
+    for err in wrongly:
+        fail("a missing permission {0!r} is classified retryable".format(err))
+    if not wrongly:
+        ok("a 403 that is no rate limit (missing permission) is not retried")
 
 
 # gh's own refusal before it calls the API (pkg/cmd/pr/merge blockedReason):
@@ -439,6 +464,11 @@ UNSCOPED_MERGE_CLAIMS = (
     "this loop never merges, approves, or enables auto-merge",
     "the loop may report a pr ready, but it may never merge",
     "the loop stops at ready to merge",
+    # select's resume note and the closing-step header comment (#889, found
+    # by the code review of #1237): with the switch on, the merge job may
+    # merge an awaiting-merge PR and posts its own announcement.
+    "is awaiting a human merge",
+    "the unmet condition, the human merge",
 )
 # Every board_*.py module (glob, so a new one is read without an edit here)
 # and board-loop.yml itself, besides the documents named below: a fixed list
@@ -478,7 +508,15 @@ def check_unscoped_merge_claims_self_test():
     docstring = "The loop may report a PR ready, but it may never merge, approve, or enable\n"
     scoped = ("The readiness job itself never merges, approves, or enables auto-merge;\n"
               "# no board-loop job but `merge` merges, approves, or enables auto-merge\n")
-    if unscoped_merge_claims(wrapped) != [UNSCOPED_MERGE_CLAIMS[0]]:
+    select_note = ('                  note = "recorded pr {0} is awaiting a human merge ({1}) -- nothing to do '
+                   'this run".format(\n')
+    closing = ("# readiness report or the unmet condition, the human merge, and the proof\n"
+               "# run, per whichever step that job represents\n")
+    if unscoped_merge_claims(select_note) != [UNSCOPED_MERGE_CLAIMS[3]]:
+        fail("self-test: select's old 'awaiting a human merge' resume note is not caught")
+    elif unscoped_merge_claims(closing) != [UNSCOPED_MERGE_CLAIMS[4]]:
+        fail("self-test: the old closing-step comment's 'the human merge' is not caught")
+    elif unscoped_merge_claims(wrapped) != [UNSCOPED_MERGE_CLAIMS[0]]:
         fail("self-test: a wrapped 'this loop never merges' comment is not caught")
     elif unscoped_merge_claims(docstring) != [UNSCOPED_MERGE_CLAIMS[1]]:
         fail("self-test: the old board_readiness docstring claim is not caught")
@@ -718,9 +756,18 @@ def check_pass2_findings():
     if merged_by_us is None:
         fail("board_merge.py has no merged_by_us(): who merged the PR is decided in workflow shell")
     else:
-        cases = (({"mergedBy": {"login": "app/wing-commander"}, "headRefOid": "aaa1"}, "aaa1", True),
-                 ({"mergedBy": {"login": "Wing-Commander[bot]"}, "headRefOid": "aaa1"}, "aaa1", True),
-                 ({"mergedBy": {"login": "app/wing-commander"}, "headRefOid": "bbb2"}, "aaa1", False),
+        # gh renders a bot merger as {"is_bot": true, "login": "app/<slug>"}
+        # (mergedBy{login,...on User{id,name}}, the same shape as author).
+        # A user whose login equals the App slug is not the App (#889,
+        # found by the code review of #1084).
+        cases = (({"mergedBy": {"login": "app/wing-commander", "is_bot": True}, "headRefOid": "aaa1"}, "aaa1", True),
+                 ({"mergedBy": {"login": "Wing-Commander[bot]", "is_bot": True}, "headRefOid": "aaa1"},
+                  "aaa1", True),
+                 ({"mergedBy": {"login": "wing-commander", "is_bot": False, "id": "U_1"}, "headRefOid": "aaa1"},
+                  "aaa1", False),
+                 ({"mergedBy": {"login": "wing-commander"}, "headRefOid": "aaa1"}, "aaa1", False),
+                 ({"mergedBy": {"login": "app/wing-commander", "is_bot": True}, "headRefOid": "bbb2"},
+                  "aaa1", False),
                  ({"mergedBy": {"login": "someone"}, "headRefOid": "aaa1"}, "aaa1", False),
                  ({"mergedBy": None, "headRefOid": "aaa1"}, "aaa1", False),
                  ({"mergedBy": {"login": "app/wing-commander"}, "headRefOid": ""}, "", False))
