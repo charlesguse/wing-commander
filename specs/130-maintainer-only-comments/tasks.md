@@ -129,7 +129,7 @@ description: "Task list for spec 130: comment-triggered stages act only on maint
 - [ ] T021 Prepare the publish:
   - Re-check the number 130 against open pipeline branches, and rename the directory and branch if it is taken.
   - Add `specs/130-maintainer-only-comments/spec-meta.json`, pointing at a neutrally titled tracking issue opened at publish time (precedent: spec 037 and #216).
-  - Push one PR whose title names the behaviour change (research D2). The owner merges it, after PR #1194.
+  - Push one PR whose title names the behaviour change (research D2): clarify's own check, and the Spec Kit updater's narrower reply context (FR-002). The owner merges it, after PR #1194.
 - [ ] T022 After merge (prove-after-merge, quickstart §4): show the next auto-release e2e passing its clarification step (SC-004), and one real clarify run with `maintainer=true`. Record both on the PR.
 
 ---

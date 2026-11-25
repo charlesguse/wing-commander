@@ -1,6 +1,6 @@
 # Contract: Comment Author Rule
 
-This contract is live. Gate `verify-maintainer-only-comments.py` (D7) enforces it.
+This contract is live. Gate `verify-maintainer-only-comments.py` (D7) enforces it; `auto-update-spec-kit-tests/t6_reply.sh` (run by lint-workflows.yml) covers the Spec Kit updater's reply context.
 
 ## Rule
 
@@ -19,7 +19,7 @@ A stage's agent may also read the pipeline's own comments (its App's `<slug>[bot
 | `wing-commander-2-clarify.yml` | wrapper `if:` | association only |
 | `clarify.yml` | published stage | the check step before `lifecycle-gate`. A refused comment ends the job successfully, with no reaction, no notice and no draft change |
 | `auto-update-spec-kit.yml` | published stage, `comment-reply` job `if:` | association only. `issue-author-id` is accepted and ignored |
-| `auto-update-spec-kit.yml` | published stage, `comment-reply` agent context and read-back | the context holds the issue body, the pipeline's own comments and maintainers' comments; a choice counts only when it is a label the pipeline posted |
+| `auto-update-spec-kit.yml` | published stage, `comment-reply` agent context and read-back | the context holds the issue body, the pipeline's own comments and maintainers' comments; a choice counts only when it is a label the pipeline posted (tested by `t6_reply.sh`, not by Gate 174) |
 | `wing-commander-9-pr-conversation.yml` / `pr-conversation.yml` | wrapper + stage | unchanged (spec 033 FR-019) |
 | `wing-commander-issue-context` | shared comment filter (intake, board loop) | association only. Excluded comments are counted |
 | `_shared/auto-release-e2e-clarify-decision.sh` | e2e assertion | association only, matching the stage |
