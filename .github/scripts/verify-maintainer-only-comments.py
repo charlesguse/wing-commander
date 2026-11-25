@@ -102,7 +102,8 @@ DOC_IDENTITY = re.compile(
     r"commenter-id\s*==")
 PR_CONVERSATION = os.path.join(WF, "pr-conversation.yml")
 # (i)'s subjects: the live docs and contracts that describe who a
-# comment-triggered stage admits (spec 130's T001 inventory). A literal list,
+# comment-triggered stage admits (spec 130's T001 inventory, plus the docs
+# and contracts its review passes found). A literal list,
 # not a directory walk, so verify-gate-wiring.py can see each subject and
 # hold lint-workflows.yml's pull_request paths: to it. A missing file fails
 # the gate loudly.

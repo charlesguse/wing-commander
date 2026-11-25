@@ -86,7 +86,7 @@ Every decision below was settled from this repository's precedent or from the ow
 - (f) clarify's allowed tools contain no `gh issue view`;
 - (g) both clarification-question callouts are preceded, in the same job and under the same `if:`, by the relay composite on the same body file;
 - (h) single home of the relay paragraph: its text appears only in the new composite, under `.github/` and in the live docs and contracts (i) reads, compared on letters and digits alone, so a re-wrapped or re-quoted copy is still found. Each sentence of 30 or more letters and digits is probed on its own (its first 60), so a copy of any one sentence is found too;
-- (i) no live doc or contract in the gate's list (spec 130's T001 inventory) writes an identity comparison (FR-009, SC-005);
+- (i) no live doc or contract in the gate's list (spec 130's T001 inventory, plus the docs and contracts its review passes found) writes an identity comparison (FR-009, SC-005);
 - (j) pr-conversation.yml's stage-side "Authorized-actor gate" step admits by `inputs.actor-association` alone, with no identity in its `if:`, `env:` or `run:` (FR-010 names stages too);
 - (k) single home of the relay step's comment: its key sentence appears only in clarify.yml, which carries Gate 47's `requester-relay-note` canonical marker, and intake.yml points at it;
 - (l) no workflow, composite or live doc or contract describes the issue's author in prose as admitted next to the maintainer set.
