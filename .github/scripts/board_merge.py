@@ -485,7 +485,10 @@ def prove_disposition(snapshot, klass=None):
         return ("no proof re-drive follows (bump class): prove-gate enters prove only for the board "
                 "loop's own fix PR, and the evidence on record for this head is its verification run "
                 "(verification_passed_at_head above)")
-    paths = [(f or {}).get("path") for f in snapshot.get("files") or [] if (f or {}).get("path")]
+    # #889: a rename away from a path changes that path too, so a file's
+    # `previousPath` counts like its path (as _touches_constitution() does).
+    paths = [p for f in snapshot.get("files") or []
+             for p in ((f or {}).get("path"), (f or {}).get("previousPath")) if p]
     only, reason = actions_only(paths)
     if only:
         return "a proof re-drive follows the merge ({0})".format(reason)

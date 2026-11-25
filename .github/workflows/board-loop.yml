@@ -6881,8 +6881,13 @@ jobs:
           # #889: REST pulls/N/files, never gh pr view's files field, which
           # carries no previous path -- a rename away from a path is a change
           # to it (board_prove.pull_changed_paths()). One object per line.
-          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
-            --jq '.[] | {filename, previous_filename}' > "$RUNNER_TEMP/board-prove-files.jsonl"
+          # A failed or partial read stops the step: an empty list would
+          # read as "no changed paths" and close on the merge evidence.
+          if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+              --jq '.[] | {filename, previous_filename}' > "$RUNNER_TEMP/board-prove-files.jsonl"; then
+            echo "::error::could not read PR #$PR_NUMBER's files over REST; not deciding from a partial list"
+            exit 1
+          fi
 
           python3 - <<'PYEOF'
           import json

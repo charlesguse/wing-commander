@@ -409,6 +409,12 @@ def decide_step_rename_problems(workflow_text):
     problems = []
     if not re.search(r"gh api --paginate \"repos/\$GITHUB_REPOSITORY/pulls/\$PR_NUMBER/files", run_text):
         problems.append("prove `decide` does not read REST pulls/$PR_NUMBER/files with --paginate")
+    # A failed read must stop the step, not leave an empty list that
+    # actions_only() reads as "no changed paths" (review of #1260).
+    guarded = re.search(r"if ! gh api --paginate \"repos/\$GITHUB_REPOSITORY/pulls/\$PR_NUMBER/files"
+                        r"[^\n]*\\\n[^\n]*; then\n\s*(?:echo [^\n]*\n\s*)?exit 1\n\s*fi\n", run_text)
+    if not guarded:
+        problems.append("prove `decide` does not stop the step when the pulls/$PR_NUMBER/files read fails")
     if "previous_filename" not in run_text or "pull_changed_paths(" not in run_text:
         problems.append("prove `decide` does not fold previous_filename in through pull_changed_paths()")
     if "--json files" in run_text:
@@ -427,9 +433,15 @@ def decide_step_fixture_cases():
         if st.get("id") == "decide":
             st["run"] = old_read + "\n" + st["run"].split("PYEOF", 1)[0].replace("pull_changed_paths(", "(")
     regressed = yaml.safe_dump(doc)
+    unguarded = yaml.safe_load(real)
+    for st in unguarded["jobs"]["prove"]["steps"]:
+        if st.get("id") == "decide":
+            st["run"] = st["run"].replace("if ! gh api", "gh api", 1)
+    unguarded = yaml.safe_dump(unguarded)
     problems = []
     for label, text, want in (("the real board-loop.yml", real, False),
-                              ("a decide step reading gh pr view --json files", regressed, True)):
+                              ("a decide step reading gh pr view --json files", regressed, True),
+                              ("a decide step whose failed files read goes on", unguarded, True)):
         got = bool(decide_step_rename_problems(text))
         if got != want:
             problems.append("decide-step fixture {0!r}: problems={1}, expected {2}".format(label, got, want))
