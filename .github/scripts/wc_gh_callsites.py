@@ -576,6 +576,12 @@ class _Scan:
         if not self.gh_valued:
             decl = k < len(words) and words[k].lit in DECLARE
             self.gh_valued = any(map(_gh_value, words[:k] + (words[k + 1:] if decl else [])))
+            # `printf -v CMD gh`, `for CMD in 'gh'`: the same value, set another way.
+            setter = k < len(words) and (words[k].lit in ("for", "select") or (
+                words[k].lit == "printf" and any((w.lit or "").startswith("-v")
+                                                 for w in words[k + 1:])))
+            self.gh_valued = self.gh_valued or setter and any(
+                GH_VALUE.match(w.lit if w.lit is not None else w.pre) for w in words[k + 2:])
         tokens = [w.raw[9:] for w in words[:k] if w.raw.startswith("GH_TOKEN=")]
         prefix = (tokens or [None])[-1]
         odd_prefix = len(tokens) < k or any("=(" in w.raw for w in words[:k])
