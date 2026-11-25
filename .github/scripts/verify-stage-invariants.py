@@ -94,7 +94,7 @@ import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_published_stages import published_stages, unpublished_callables  # noqa: E402
+from wc_published_stages import REGISTRY_PATH, published_stages, unpublished_callables  # noqa: E402
 
 WORKFLOWS_DIR = ".github/workflows"
 WAIVERS_PATH = ".github/scripts/stage-invariant-waivers.json"
@@ -834,8 +834,7 @@ FIXTURES = [
     # reader leaves out, and the two readers "disagree".
     ("an unpublished callable registered under the checked root is not a stage",
      {"clean.yml": CLEAN, "internal-callable.yml": CLEAN,
-      ".github/scripts/unpublished-callables.json":
-          '{"internal-callable.yml": "self-test fixture: an internal callable"}'},
+      REGISTRY_PATH: '{"internal-callable.yml": "self-test fixture: an internal callable"}'},
      None, None),
     # #245 blind spot 2: this fixture used to be GREEN - a stage gaining a
     # second trigger silently left the scan, vars.SOMETHING and all.
