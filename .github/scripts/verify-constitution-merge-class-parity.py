@@ -15,7 +15,8 @@ V, not an extension of X, and the document says so in those words.
 The direction of this check matters. It is **presence-implies-documented**,
 never absence-implies-forbidden — the exact inverse of
 verify-board-readiness.py's `check_no_merge_invariant`, which scans
-board-loop.yml for merge calls that must not exist. Here the merge call is
+board-loop.yml outside its `merge` job (spec 115) for merge calls that must
+not exist there. Here the merge call is
 allowed to exist; what is not allowed is for it to exist while Principles V
 and X still describe a two-class world. So: no merge capability in
 lifecycle-review-gate.yml → this gate passes vacuously, and a constitution

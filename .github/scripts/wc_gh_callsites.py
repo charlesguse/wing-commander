@@ -14,7 +14,8 @@ The rule is strict so that this reader can stay small (the owner's option
 or evaluator runs (`sh -c`, `eval`, `trap`, `ssh`, a backtick, a heredoc or
 pipe fed to a shell); every `gh` in one is a disallowed call. A command word
 that is a variable or expansion is a disallowed call wherever the script
-holds a `gh` that is neither a located call nor a provable mention. The
+holds a `gh` that is neither a located call nor a provable mention (a `gh`
+in a `${...}` value never is one). The
 scanner is one left-to-right pass with no re-slicing (linear in the script)
 and never raises; once it meets a construct it cannot track exactly, every
 `gh` after it is a disallowed call.
@@ -143,6 +144,10 @@ class _Scan:
         self.bare = []                        # offsets of what runs a variable (locate())
         self.shell_stdin = False              # the heredocs now pending feed a shell
         self.fed = 0                          # text before it is condemned already
+        # Offsets of each gh in a `${...}` value, quoted or not (`${X:-gh}`,
+        # `${X:+"gh"}`): data where it stands, so no token, but a variable
+        # may carry it to a lone `$CMD`, so no proof for one either.
+        self.loose = set()
 
     # ---------------------------------------------------------------- tokens
     def _note(self, off, kind, **kw):
@@ -175,8 +180,8 @@ class _Scan:
     def _note_word(self, w, why):
         """Word `w` may run gh: each gh in it is a disallowed call, or the
         word itself is when it spells none."""
-        hits = [self._flag(m.start(), why)
-                for m in GH.finditer(self.g, w.off, w.off + len(w.raw))]
+        hits = [self._flag(m.start(), why)        # `${X:-gh}` too
+                for m in GH_IN_EXPANSION.finditer(self.g, w.off, w.off + len(w.raw))]
         if not any(hits):
             self._flag(w.off, why)
 
@@ -184,6 +189,10 @@ class _Scan:
         """Text from `start` to the end of this command is a script a shell
         runs: every gh in it is a disallowed call, quoted or not."""
         self._mark(start, self.at, why, True, True)
+
+    def _loose(self, a, b):
+        """Each gh in t[a:b], `-gh` too, is one a variable may carry."""
+        self.loose.update(m.start() for m in GH_IN_EXPANSION.finditer(self.g, a, b))
 
     def _unsure(self, off, reason):
         """A construct this scanner cannot track exactly: nothing after it is
@@ -275,8 +284,9 @@ class _Scan:
         text with EXP in place of each expansion).
 
         A double-quoted span's text is a mention unless it holds a command
-        substitution. A `${...}` span's text is data and a substitution in it
-        a disallowed form (the authoring rule); a lone `'` there could be a
+        substitution. A `${...}` span's text is data a variable may carry
+        (self.loose) and a substitution in it a disallowed form (the
+        authoring rule); a lone `'` there could be a
         quote or text depending on the quoting around the expansion, so it
         makes everything after unprovable."""
         t, n, dq = self.t, self.n, close == '"'
@@ -312,15 +322,20 @@ class _Scan:
                 pat.append(c)
                 j += 1
         segs.append((start, min(j, n)))
-        bad = not dq or j >= n or sub
-        why = ("param-expansion" if not dq else "unterminated-quote" if j >= n
-               else "quoted-substitution" if sub else "quoted")
-        for a, b in segs:
-            self._mark(a, b, why, bad)
         if not dq:
+            # Its text runs only as a command word (judged by _may_be_gh) or
+            # through a variable (locate()); `:-gh` and `:+gh` alike. The
+            # outermost span covers the ones inside it: each read once.
+            if self.braces == 1:
+                self._loose(i, min(j + 1, n))
             if j >= n:
                 self._unsure(i, "unterminated-expansion")
             self.braces -= 1
+        else:
+            why = ("unterminated-quote" if j >= n
+                   else "quoted-substitution" if sub else "quoted")
+            for a, b in segs:
+                self._mark(a, b, why, j >= n or sub)
         return "".join(buf), first, min(j + 1, n), "".join(pat)
 
     # ---------------------------------------------------------------- words
@@ -643,7 +658,9 @@ def _reads_stdin(words):
         elif b in SHELLS and b != "su":
             rest = words[j + 1:]        # once: this returns
             fish = b == "fish"
-            ops = [r for k, r in enumerate(rest) if (r.lit is None or r.lit[:1] not in "-+")
+            # `""` is an operand (a script path), not an option.
+            ops = [r for k, r in enumerate(rest)
+                   if (r.lit is None or not r.lit.startswith(("-", "+")))
                    and (k == 0 or not _takes_value(rest[k - 1].lit, fish))]
             return not later[j + 1] and (not ops or _dev_file(ops[0]) or
                                          any(r.lit == "-s" for r in rest))
@@ -712,10 +729,18 @@ def locate(script):
     sc._cmds(0, _Ctx(0, 0))
     # What runs a variable (`$CMD`, `eval`, a backtick or unquoted heredoc
     # holding an expansion) may run a gh the script holds outside a located
-    # call or a provable mention (`GH=gh`, `set -- gh api x`): unprovable.
-    if any(m.start() not in sc.by_off for m in GH.finditer(sc.g)):
+    # call or a provable mention (`GH=gh`, `set -- gh api x`), or one in a
+    # `${...}` value, quoted or not (`GH=${X:-gh}`, `GH=${X:+"gh"}`): unprovable.
+    def stray(off):
+        tok = sc.by_off.get(off)
+        return tok is None or off in sc.loose and tok.kind == "mention"
+    if any(stray(m.start()) for m in GH.finditer(sc.g)) or any(map(stray, sc.loose)):
         for off in sc.bare:
             sc._flag(off, "dynamic-command")
+    if sc.broken is not None:               # a `${...}` gh past it may be outside it
+        for off in sc.loose:
+            if off >= sc.broken[0] and off not in sc.by_off:
+                sc._flag(off, sc.broken[1])
     toks = sorted(sc.by_off.values(), key=lambda x: x.offset)
     if sc.broken is not None:
         for tok in toks:
@@ -861,18 +886,39 @@ def _run(node):
 
 
 def _compose(path):
+    """The node tree of the YAML at `path`, with every merge key (`<<: *a`)
+    folded into the mapping holding it the way yaml.safe_load folds it, so
+    a step that inherits its `run:` is read like any other."""
     import yaml
     with open(path, encoding="utf-8") as fh:
-        return yaml.compose(fh)
+        root = yaml.compose(fh)
+    loader, seen, todo = yaml.SafeLoader(""), set(), [root]
+    try:
+        while todo:
+            node = todo.pop()
+            if node is None or id(node) in seen:
+                continue
+            seen.add(id(node))
+            if isinstance(node, yaml.MappingNode):
+                loader.flatten_mapping(node)
+                todo.extend(v for kv in node.value for v in kv)
+            elif isinstance(node, yaml.SequenceNode):
+                todo.extend(node.value)
+    finally:
+        loader.dispose()
+    return root
 
 
 def _map_get(node, key):
+    """The value node of `key` in mapping `node`: the last one, as a
+    loader keeps it (after _compose has folded merge keys in)."""
     import yaml
+    got = None
     if isinstance(node, yaml.MappingNode):
         for k, v in node.value:
             if getattr(k, "value", None) == key:
-                return v
-    return None
+                got = v
+    return got
 
 
 def run_blocks(path):

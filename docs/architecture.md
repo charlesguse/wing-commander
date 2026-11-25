@@ -626,7 +626,9 @@ vars.WING_COMMANDER_MAX_ITERATIONS`).
    `wing-commander-spec-meta` composite, #340) auto-retries the
    same iteration once, one model tier up (`claude-sonnet-5-5` →
    `claude-opus-5-5`). A failed retry — or a failure already on the top
-   tier — marks the spec `stalled` (label, `spec-meta.json`, issue comment);
+   tier, or a pass whose agent never started (the action failed in its own
+   setup, so the retry would fail the same way) — marks the spec `stalled`
+   (label, `spec-meta.json`, issue comment);
    restart is manual: re-dispatch the workflow with the same iteration.
 
 ## Stage 5 — Finalize (`finalize.yml`, wrapper `wing-commander-6-finalize.yml` — see `specs/006-finalize-stage/`)
@@ -1639,7 +1641,10 @@ than only ever exercised on a bare runner:
   This repository pins its own `WING_COMMANDER_CONTAINER_IMAGE` to the
   same image, so Gate 62 also runs implement.yml's gate-suite preflight
   steps inside it and checks the implement prompt's lint tools and suite
-  interpreter (#989): those extras are this repository's, not adopters'. See
+  interpreter (#989), and that the image's shellcheck is the release Gate
+  48 lints with: both read the one pin in
+  `.github/docker/e2e-reference-image/shellcheck.pin`, sha256-checked
+  (#1204). Those extras are this repository's, not adopters'. See
   [docs/adoption.md](adoption.md#runners-and-container-images) for why this
   image is not a supported image for adopters.
 - **Reporting**: both the verdict and `report`'s failure/success output

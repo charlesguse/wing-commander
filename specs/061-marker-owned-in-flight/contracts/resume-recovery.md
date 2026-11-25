@@ -89,8 +89,9 @@ Priority by strongest live signal (research.md D5) — each clause below
 fires only when the ones above it don't apply:
 
 ```text
-0. (#532) The marker's step is awaiting-merge (readiness reported the PR
-   ready and handed it to a human), and its pr either resolves OPEN or
+0. (#532) The marker's step is awaiting-merge (the readiness job stopped
+   at ready; the `merge` job, WING_COMMANDER_BOARD_AUTO_MERGE on, or a
+   human, switch off, takes the PR from there), and its pr either resolves OPEN or
    does not resolve at all
      -> step = "awaiting-merge", a step no job consumes: a no-op run.
    select() never picks such an item while its PR may be open, so this

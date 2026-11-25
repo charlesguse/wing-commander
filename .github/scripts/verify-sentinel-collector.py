@@ -496,10 +496,15 @@ def run_staging(stage_script, fetch_script, sc, tmproot):
     runner_temp = tempfile.mkdtemp(dir=tmproot)
     try:
         fetch_dir = os.path.join(runner_temp, "dj-fetch")
-        with open(os.path.join(runner_temp,
-                               "watchdog-untrusted-collectors.json"),
-                  "w", encoding="utf-8") as fh:
-            fh.write("[]")
+        untrusted_path = os.path.join(runner_temp,
+                                      "watchdog-untrusted-collectors.json")
+        seed = sc.get("untrusted_seed", "[]")
+        if seed is DIRECTORY:
+            # A target the step cannot replace: its write must fail it.
+            os.makedirs(untrusted_path)
+        else:
+            with open(untrusted_path, "w", encoding="utf-8") as fh:
+                fh.write(seed)
         if "gh_listing" in sc:
             f_rc, result, f_jobs, f_reason, f_logs = run_fetch(
                 fetch_script, sc["gh_listing"], fetch_dir, tmproot,
@@ -531,7 +536,37 @@ def run_staging(stage_script, fetch_script, sc, tmproot):
             shutil.rmtree(d, ignore_errors=True)
 
 
+# untrusted_seed value: the untrusted-collectors path is a directory.
+DIRECTORY = object()
+
 STAGING_SCENARIOS = [
+    dict(
+        # #889: a list jq cannot extend still ends with job-logs recorded.
+        name="an unreadable untrusted-collectors list still records job-logs",
+        jobs_json=None, fetch_result="", untrusted_seed="{not json",
+        expect_outcome="failed", expect_reason="jobs-list",
+        expect_files={}, expect_untrusted=["job-logs"],
+    ),
+    dict(
+        name="a non-array untrusted-collectors list still records job-logs",
+        jobs_json=None, fetch_result="", untrusted_seed='{"a": 1}',
+        expect_outcome="failed", expect_reason="jobs-list",
+        expect_files={}, expect_untrusted=["job-logs"],
+    ),
+    dict(
+        name="control: job-logs is appended to the collectors already listed",
+        jobs_json=None, fetch_result="",
+        untrusted_seed='["collect-annotations"]',
+        expect_outcome="failed", expect_reason="jobs-list",
+        expect_files={}, expect_untrusted=["collect-annotations", "job-logs"],
+    ),
+    dict(
+        # #889: the write itself failing must fail the step, not pass with
+        # job-logs unrecorded.
+        name="a failed untrusted-collectors write fails the step",
+        jobs_json=None, fetch_result="", untrusted_seed=DIRECTORY,
+        expect_rc_nonzero=True,
+    ),
     dict(
         name="a crashed helper leaves no jobs.json: a gather failure",
         # A helper that died mid-write: no `result` output, no reason.txt,
@@ -671,6 +706,11 @@ def staging_suite(stage_script, fetch_script, collector, tmproot):
                 failures.append(f"{tag} helper (rc, result, jobs.json, "
                                 f"reason.txt, logs) {helper!r} does not match "
                                 f"the expectation.")
+        if sc.get("expect_rc_nonzero"):
+            if rc == 0:
+                failures.append(f"{tag} the step exited 0, but it could not "
+                                f"record job-logs as untrusted.")
+            continue
         if rc != 0 or status is None or not isinstance(untrusted, list):
             failures.append(f"{tag} the step exited {rc} or left an "
                             f"unreadable status or untrusted-collectors "
@@ -683,6 +723,9 @@ def staging_suite(stage_script, fetch_script, collector, tmproot):
                 f"{tag} status outcome/reason {status.get('outcome')!r}/"
                 f"{status.get('reason')!r}, expected "
                 f"{sc['expect_outcome']!r}/{sc['expect_reason']!r} (FR-019).")
+        if "expect_untrusted" in sc and untrusted != sc["expect_untrusted"]:
+            failures.append(f"{tag} untrusted collectors {untrusted!r}, "
+                            f"expected {sc['expect_untrusted']!r}.")
         want_untrusted = sc["expect_outcome"] != "ok"
         if ("job-logs" in untrusted) != want_untrusted:
             failures.append(f"{tag} untrusted collectors {untrusted!r}; "
@@ -1032,6 +1075,62 @@ def run_staging_checks(tmproot):
     return failures
 
 
+def check_credential_free(step, workflow_text):
+    """#889: the collector reads only the files the fetch step wrote, so it
+    holds no token, and the FR-006 comment that describes it sits on it.
+
+    Returns failure strings. The step dict is the parsed step; the comment
+    check reads the raw workflow text, since YAML parsing drops comments.
+    """
+    failures = []
+    tokens = sorted(k for k in (step.get("env") or {}) if "TOKEN" in k.upper())
+    if tokens:
+        failures.append(f"{STEP!r} sets {', '.join(tokens)}, but it calls no "
+                        f"API (the fetch step does); drop the token")
+    if re.search(r"(^|[\s;|&(])gh\s", step.get("run") or "", re.M):
+        failures.append(f"{STEP!r} runs gh; the job-log read belongs in the "
+                        f"wing-commander-fetch-job-logs step above it")
+    lines = workflow_text.splitlines()
+    name_re = re.compile(r'^\s*- name: "?' + re.escape(STEP) + r'"?\s*$')
+    idx = next((i for i, l in enumerate(lines) if name_re.match(l)), None)
+    block = []
+    if idx is not None:
+        j = idx - 1
+        while j >= 0 and lines[j].strip().startswith("#"):
+            block.insert(0, lines[j].strip())
+            j -= 1
+    if not any(l.startswith("# FR-006: this pipeline's own known sentinel "
+                            "phrases") for l in block):
+        failures.append(f"the FR-006 sentinel-phrase comment is not on "
+                        f"{STEP!r}; it describes that step, not the fetch")
+    return failures
+
+
+def run_credential_free_checks():
+    with open(WATCHDOG, encoding="utf-8") as fh:
+        text = fh.read()
+    step = find_step(WATCHDOG, STEP)
+    failures = check_credential_free(step, text)
+    # Mutations: each check must be able to fail.
+    muts = [
+        ("token back on the step",
+         dict(step, env=dict(step.get("env") or {}, GH_TOKEN="x")), text),
+        ("gh call in the step",
+         dict(step, run=(step.get("run") or "") + "\ngh api x\n"), text),
+        ("FR-006 comment off the step",
+         step, re.sub(r'(\n(\s*)# FR-006: this pipeline\'s own known sentinel phrases[^\n]*(\n\s*#[^\n]*)*)(\n\s*- name: "Collect: step summaries")',
+                      r"\4", text)),
+    ]
+    for label, mstep, mtext in muts:
+        if mtext == text and mstep == step:
+            failures.append(f"credential-free mutation inapplicable: {label}")
+        elif not check_credential_free(mstep, mtext):
+            failures.append(f"credential-free mutation survived: {label}")
+    for f in failures:
+        print(f"::error file={WATCHDOG}::{f}")
+    return failures
+
+
 def main():
     global BASH
     use_utf8_stdout()
@@ -1069,6 +1168,7 @@ def main():
                       f"mutation.")
                 failures.append(f"mutation survived: {label}")
         failures += run_staging_checks(tmproot)
+        failures += run_credential_free_checks()
     finally:
         shutil.rmtree(tmproot, ignore_errors=True)
 

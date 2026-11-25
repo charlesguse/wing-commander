@@ -1102,10 +1102,13 @@ def write_private(path, text):
         fh.write(text)
 
 
-def confirmed_from_github(pr, bot_login, default_branch, repository, gh):
+def confirmed_from_github(pr, bot_login, default_branch, repository, gh, gh_runs=None):
     """Round records of `pr` that confirm_record() accepts, oldest first.
     `gh(args)` returns parsed JSON for a `gh api` path (None on failure,
-    which fails the record closed)."""
+    which fails the record closed). `gh_runs` reads the Actions run and
+    its artifacts: the job's own token, since the App is granted no
+    Actions permission (docs/setup.md); it defaults to `gh`."""
+    gh_runs = gh_runs or gh
     comments = gh(["repos/{0}/issues/{1}/comments".format(repository, pr), "--paginate", "--slurp"])
     if comments is None:
         raise GhReadError("comments read failed")
@@ -1116,10 +1119,10 @@ def confirmed_from_github(pr, bot_login, default_branch, repository, gh):
         if not run_id.isdigit():
             continue
         try:
-            run = gh(["repos/{0}/actions/runs/{1}".format(repository, run_id)])
+            run = gh_runs(["repos/{0}/actions/runs/{1}".format(repository, run_id)])
         except GhNotFound:
             continue  # a real 404: the run does not exist, so unconfirmed
-        arts = gh(["repos/{0}/actions/runs/{1}/artifacts".format(repository, run_id)])
+        arts = gh_runs(["repos/{0}/actions/runs/{1}/artifacts".format(repository, run_id)])
         if not isinstance(run, dict) or arts is None:
             raise GhReadError("run or artifacts read failed for run " + run_id)
         run = dict(run)
@@ -1139,9 +1142,11 @@ class GhNotFound(GhReadError):
     pass
 
 
-def _gh_api(args):
+def _gh_api(args, token=None):
+    """`token`, when given, replaces GH_TOKEN for this one call."""
     import subprocess
-    proc = subprocess.run(["gh", "api"] + args, capture_output=True, text=True)
+    env = dict(os.environ, GH_TOKEN=token) if token else None
+    proc = subprocess.run(["gh", "api"] + args, capture_output=True, text=True, env=env)
     if proc.returncode != 0:
         if re.search(r"\(HTTP 404\)|^gh: Not Found", proc.stderr or "", re.M):
             raise GhNotFound(args[0])
@@ -1231,8 +1236,17 @@ def main(argv=None):
         print(build_record(record))
         return 0
     if args.cmd == "state":
+        # Comments are read with GH_TOKEN (the read-only App token); runs and
+        # artifacts with RUN_TOKEN (the job's github.token, actions: read).
+        # A missing RUN_TOKEN fails the round closed rather than falling
+        # back to an App token that cannot read Actions.
+        run_token = os.environ.get("RUN_TOKEN") or ""
+        if not run_token:
+            print("state: RUN_TOKEN is not set; cannot read earlier rounds' runs", file=sys.stderr)
+            return 1
         confirmed = confirmed_from_github(args.pr, args.bot_login, args.default_branch,
-                                          args.repository, _gh_api)
+                                          args.repository, _gh_api,
+                                          lambda a: _gh_api(a, token=run_token))
         spent, budget = budget_spent(confirmed, args.budget)
         print(json.dumps({"rounds": len(confirmed), "round": next_round(confirmed), "budget": budget,
                           "spent": spent, "open_set": open_set(fold_open_set(confirmed)),

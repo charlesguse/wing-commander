@@ -27,6 +27,7 @@ Exit 0 when every case behaves; 1 otherwise.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -657,14 +658,28 @@ def _is_pipeline_recheckout(step):
             and str(w.get("ref", "")).strip() == "${{ steps.pipeline-ref.outputs.ref }}")
 
 
+def _runs_whenever_agent_ran(step, agent_id):
+    """True when the step's `if:` admits every run in which the agent step
+    ran: `always()`, optionally ANDed with the agent not having been
+    skipped, and no other clause."""
+    cond = str(step.get("if", "")).strip()
+    clauses = [c.strip() for c in cond.split("&&")] if cond else []
+    allowed = {"always()"} | ({f"steps.{agent_id}.outcome != 'skipped'"} if agent_id else set())
+    return "always()" in clauses and set(clauses) <= allowed
+
+
 def check_pipeline_recheckout(errors, wf_dir=None):
     """MF-46: the agent can write the pipeline checkout in the workspace
     (`git diff --output=<path>`), so in every subfolder-capable job (one
     with a containment check) each agent step is followed, before any step
     that runs code from that checkout, by `rm -rf -- .wing-commander-pipeline`
-    and then a re-checkout at the job's pinned ref, both gated on a
-    non-empty project. Subfolder-capable means the job uses
-    wing-commander-containment in any mode."""
+    and then a re-checkout at the job's pinned ref. Both run whenever the
+    agent step ran, for a root lifecycle as well as a subfolder one: each
+    `if:` is `always()`, optionally with `steps.<agent>.outcome != 'skipped'`,
+    and nothing else -- in particular no project guard, since a root
+    lifecycle runs the same composites, some holding WC_BOT_TOKEN or the
+    App key. Subfolder-capable means the job uses wing-commander-containment
+    in any mode."""
     wf_dir = wf_dir or os.path.join(ROOT, ".github", "workflows")
     covered = 0
     for fn in sorted(os.listdir(wf_dir)):
@@ -691,8 +706,13 @@ def check_pipeline_recheckout(errors, wf_dir=None):
                 if not any(t.get("id") == "pipeline-ref" for t in steps[:i]):
                     errors.append(f"{where}: the job has no pipeline-ref step before the agent to re-checkout at (MF-46)")
                     continue
-                if not all(PROJECT_GATE.search(str(after[j].get("if", ""))) for j in (rm, co)):
-                    errors.append(f"{where}: the pipeline re-checkout is not gated on a non-empty project (MF-46)")
+                if any(PROJECT_GATE.search(str(after[j].get("if", ""))) for j in (rm, co)):
+                    errors.append(f"{where}: the pipeline removal/re-checkout is gated on a non-empty project, "
+                                  f"so a root lifecycle runs pipeline code the agent could have written (MF-46)")
+                    continue
+                if not all(_runs_whenever_agent_ran(after[j], s.get("id")) for j in (rm, co)):
+                    errors.append(f"{where}: the pipeline removal/re-checkout `if:` is not `always()` plus at most "
+                                  f"`steps.{s.get('id')}.outcome != 'skipped'`, so it can skip after the agent ran (MF-46)")
                     continue
                 covered += 1
     return covered
@@ -763,18 +783,67 @@ jobs:
         id: agent
         uses: anthropics/claude-code-action@v1
       - name: Remove the pipeline checkout (post-agent)
-        if: always() && steps.project.outputs.project != ''
+        if: always() && steps.agent.outcome != 'skipped'
         run: rm -rf -- .wing-commander-pipeline
       - name: Check agent changes stay inside the project folder
         id: containment
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
       - name: Re-checkout pipeline repository (post-agent)
-        if: always() && steps.project.outputs.project != ''
+        if: always() && steps.agent.outcome != 'skipped'
         uses: actions/checkout@v5
         with:
           ref: ${{ steps.pipeline-ref.outputs.ref }}
           path: .wing-commander-pipeline
 """
+
+
+# The shape every subfolder-capable agent must have: `rm`, then a
+# re-checkout at the pinned ref, both run whenever the agent ran. The
+# mutations below are this text with one change each.
+RECHECKED = """\
+jobs:
+  stage:
+    steps:
+      - id: pipeline-ref
+        run: echo ref=x >> "$GITHUB_OUTPUT"
+      - id: project
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-project
+      - name: Agent
+        id: agent
+        uses: anthropics/claude-code-action@v1
+      - name: Remove the pipeline checkout (post-agent)
+        if: always() && steps.agent.outcome != 'skipped'
+        run: rm -rf -- .wing-commander-pipeline
+      - name: Re-checkout pipeline repository (post-agent)
+        if: always() && steps.agent.outcome != 'skipped'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.pipeline-ref.outputs.ref }}
+          path: .wing-commander-pipeline
+      - name: Check agent changes stay inside the project folder
+        id: containment
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
+"""
+RECHECKOUT_MUTATIONS = {
+    # A re-added project guard: a root lifecycle skips the pair.
+    "project-guarded": (
+        RECHECKED.replace("if: always() && steps.agent.outcome != 'skipped'\n        uses: actions/checkout",
+                          "if: always() && steps.agent.outcome != 'skipped' && steps.project.outputs.project != ''\n        uses: actions/checkout"),
+        "gated on a non-empty project"),
+    "matrix-guarded": (
+        RECHECKED.replace("if: always() && steps.agent.outcome != 'skipped'\n        run: rm",
+                          "if: always() && steps.agent.outcome != 'skipped' && matrix.project != ''\n        run: rm"),
+        "gated on a non-empty project"),
+    # No pair at all.
+    "pair-missing": (
+        re.sub(r"      - name: Remove the pipeline checkout.*?path: \.wing-commander-pipeline\n", "", RECHECKED, flags=re.S),
+        "is not followed by"),
+    # success()-gated: a failed agent step skips the pair.
+    "not-always": (
+        RECHECKED.replace("if: always() && steps.agent.outcome != 'skipped'\n        run: rm",
+                          "if: steps.agent.outcome != 'skipped'\n        run: rm"),
+        "can skip after the agent ran"),
+}
 
 
 def staged_clone(tmp, case):
@@ -1090,6 +1159,54 @@ def pre_push(case):
                               capture_output=True, text=True, cwd=work, check=False)
 
 
+def check_harden_scope(errors, data):
+    """#889: containment.sh hardens git only in the modes that run git
+    (trusted-base, pre-push), never in the text-only outside/inside modes,
+    and removes the GIT_CONFIG_GLOBAL temp file wc_harden_git_env mktemps.
+
+    A stub git-push-hardening.sh beside a copy of the script records each
+    wc_harden_git_env call; the real one runs pre-push in a fresh TMPDIR,
+    which must be empty again when the hook exits.
+    """
+    passing = [c for c in data.get("pre_push", {}).values() if c.get("expect") == "pass"]
+    if not passing:
+        errors.append("harden scope: no passing pre_push case to drive pre-push mode with")
+        return
+    case = passing[0]
+    with tempfile.TemporaryDirectory() as tmp:
+        stub_dir = os.path.join(tmp, "stub")
+        os.makedirs(stub_dir)
+        shutil.copy(PRE_PUSH, os.path.join(stub_dir, "containment.sh"))
+        log = os.path.join(tmp, "harden.log")
+        with open(os.path.join(stub_dir, "git-push-hardening.sh"), "w", encoding="utf-8") as fh:
+            fh.write('wc_harden_git_env() { echo called >> "$WC_HARDEN_LOG"; }\n')
+        env = dict(os.environ, WC_HARDEN_LOG=log)
+        for mode in ("outside", "inside"):
+            r = subprocess.run(["bash", os.path.join(stub_dir, "containment.sh"), mode, "P"],
+                               input="P/a\nb\n", capture_output=True, text=True, env=env, check=False)
+            if r.returncode != 0:
+                errors.append(f"harden scope: {mode} mode failed rc={r.returncode} {r.stderr!r}")
+            if os.path.exists(log):
+                errors.append(f"harden scope: the text-only {mode} mode called wc_harden_git_env")
+                os.remove(log)
+        work, _, _ = staged_clone(os.path.join(tmp, "clone"), case)
+        line = case.get("stdin", "refs/heads/x {sha} refs/heads/x " + "0" * 40).format(sha=rev(work, "HEAD")) + "\n"
+        subprocess.run(["bash", os.path.join(stub_dir, "containment.sh"), "pre-push", case["project"]],
+                       input=line, capture_output=True, text=True, cwd=work, env=env, check=False)
+        if not os.path.exists(log):
+            errors.append("harden scope: pre-push mode ran git without wc_harden_git_env")
+        tmpdir = os.path.join(tmp, "tmpdir")
+        os.makedirs(tmpdir)
+        r = subprocess.run(["bash", PRE_PUSH, "pre-push", case["project"]], input=line,
+                           capture_output=True, text=True, cwd=work,
+                           env=dict(os.environ, TMPDIR=tmpdir), check=False)
+        if r.returncode != 0:
+            errors.append(f"harden scope: pre-push pass case failed rc={r.returncode} {r.stderr!r}")
+        left = os.listdir(tmpdir)
+        if left:
+            errors.append(f"harden scope: pre-push left {left!r} in TMPDIR; remove the GIT_CONFIG_GLOBAL temp file")
+
+
 def publish_stranded(case, script):
     """Run wing-commander-publish-stranded-commits' real shell after the
     case's local commits. Returns (result, push-ok, whether origin moved to
@@ -1164,6 +1281,7 @@ def main():
                 if p not in r.stdout + r.stderr:
                     errors.append(f"publish_stranded {name}: refusal does not name {p!r}")
     check_trusted_checkout_excluded(errors)
+    check_harden_scope(errors, data)
     check_modes(errors)
     check_rebase_manifest_unquoted(errors)
     if check_stale_folder(errors) == 0:
@@ -1220,6 +1338,20 @@ def main():
         check_pipeline_recheckout(probe, tmp)
         if not any("MF-46" in p for p in probe):
             errors.append("pipeline re-checkout: a re-checkout after the first pipeline composite was not flagged")
+    with tempfile.TemporaryDirectory() as tmp:
+        with open(os.path.join(tmp, "rechecked.yml"), "w", encoding="utf-8") as fh:
+            fh.write(RECHECKED)
+        probe = []
+        if check_pipeline_recheckout(probe, tmp) != 1 or probe:
+            errors.append(f"pipeline re-checkout: the unguarded reference pair was not accepted: {probe}")
+    for name, (text, expect) in RECHECKOUT_MUTATIONS.items():
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, f"{name}.yml"), "w", encoding="utf-8") as fh:
+                fh.write(text)
+            probe = []
+            check_pipeline_recheckout(probe, tmp)
+            if not any("MF-46" in p and expect in p for p in probe):
+                errors.append(f"pipeline re-checkout: mutation {name!r} was not flagged ({expect!r})")
     if check_snapshot_freshness(errors) == 0:
         errors.append("snapshot freshness: no containment check reading helpers-dir was found -- the check has lost its subject")
     with tempfile.TemporaryDirectory() as tmp:

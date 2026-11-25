@@ -105,7 +105,7 @@ gate_suite_green_in_rollup = _readiness_gate_suite_green
 
 
 def evaluate_from_snapshot(snapshot, review_gate, kill_switch_paused,
-                           reviews, bot_login):
+                           reviews, bot_login, now=None):
     """snapshot: the `gh pr view --json
     headRefOid,statusCheckRollup,mergeable,mergeStateStatus` shape, fetched
     fresh by the caller. review_gate: the lifecycle issue's own marker
@@ -114,11 +114,15 @@ def evaluate_from_snapshot(snapshot, review_gate, kill_switch_paused,
     bot_login: this App's own bot identity login, whose reviews never
     block its own merge. Returns the MergePreconditions dict
     (data-model.md §5), eight conditions evaluated in order, unmet_reason
-    naming the first failing condition's own name."""
+    naming the first failing condition's own name. "pending" is true when
+    the only unmet condition is gate_suite_green and the lint aggregate
+    has not reported yet (lifecycle_readiness's gate_suite_pending): the
+    verdict clears on its own, so the caller reports it as pending, never
+    as a durable not-ready (code review of #1233)."""
     head_sha = snapshot.get("headRefOid")
     review_gate = review_gate or {}
 
-    readiness = _readiness(snapshot, review_gate, kill_switch_paused)
+    readiness = _readiness(snapshot, review_gate, kill_switch_paused, now)
 
     values = {
         "checks_green": readiness["checks_green"],
@@ -145,8 +149,13 @@ def evaluate_from_snapshot(snapshot, review_gate, kill_switch_paused,
             unmet_reason = name
             break
 
+    pending = (unmet_reason == "gate_suite_green"
+               and readiness["gate_suite_pending"]
+               and all(values[name] for name in CONDITIONS
+                       if name != "gate_suite_green"))
+
     decision = {"head_sha": head_sha, "may_merge": may_merge,
-                "unmet_reason": unmet_reason}
+                "unmet_reason": unmet_reason, "pending": pending}
     decision.update(values)
     return decision
 
@@ -180,7 +189,7 @@ def main():
     decision = evaluate_from_snapshot(
         payload["snapshot"], payload.get("review_gate"),
         payload["kill_switch_paused"], payload.get("reviews") or [],
-        payload.get("bot_login") or "")
+        payload.get("bot_login") or "", payload.get("now"))
     print(json.dumps(decision))
 
 

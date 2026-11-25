@@ -61,7 +61,7 @@ Limits and rules:
 | Plan review | `pr`: a plan PR waits for a human merge. `auto` commits the plan and goes on to tasks | `WING_COMMANDER_PLAN_REVIEW` |
 | Tasks review | `auto`: `tasks.md` is committed. `pr` opens a tasks PR | `WING_COMMANDER_TASKS_REVIEW` |
 | Implement cycles per lifecycle | 5, then a `stage:stalled` hand-off that names how to resume | `WING_COMMANDER_MAX_ITERATIONS` |
-| A failed implement pass | retried once, one tier up (`claude-opus-5-5`); a second failure stalls the lifecycle | `WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL` |
+| A failed implement pass | retried once, one tier up (`claude-opus-5-5`); a second failure stalls the lifecycle. A pass whose agent never started (the action failed in its own setup) is not retried and stalls at once | `WING_COMMANDER_IMPLEMENT_ESCALATION_MODEL` |
 | Implement on Opus | off; the `model:opus` label on the lifecycle issue opts in | label, or `WING_COMMANDER_IMPLEMENT_MODEL` |
 | Implement on Haiku | off; the `model:haiku` label opts in (retry goes to Sonnet, `model:opus` wins) | label, `WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS` (180) |
 | Hard turn stop | every agent step's `--max-turns` is 2.5 × its turn budget, rounded up | fixed (`wing-commander-turn-ceiling`) |
@@ -116,12 +116,12 @@ on one of its fix PRs; it posts one round record and writes nothing else.
 
 | Rule | Value |
 |---|---|
-| Reviews | one open final PR per run, the oldest that is ready: `spec/NNN-slug` → `main`, stage `review`, no buildable task left unchecked, head not yet reviewed, checks green and mergeable. An older PR that is not ready yet is skipped for that run, not waited on; when none is ready, the oldest is stood down with its unmet condition posted on its lifecycle issue |
+| Reviews | one open final PR per run, the oldest that is ready: `spec/NNN-slug` → `main`, stage `review`, no buildable task left unchecked, head not yet reviewed, checks green and mergeable. An older PR that is not ready yet is skipped for that run, not waited on; when none is ready, the oldest is stood down with its unmet condition posted on its lifecycle issue. A PR whose only unmet condition is that every lint unit is green but the `lint` aggregate has not reported yet (for up to 15 minutes after the last unit finished) is pending, not stood down: nothing is posted and a later run re-evaluates it |
 | Reviewer | `claude-sonnet-5-5`, turn budget 30 (`WING_COMMANDER_LIFECYCLE_REVIEW_GATE_MODEL`) |
 | Findings | in-scope findings are folded into `tasks.md` and built by one more implement cycle; the next round reviews the new head |
 | Rounds | 5. A round that fails to parse does not count |
 | Stops early | from round 3, as `not-converging`, when the count of findings is not falling, half or more are in code an earlier round wrote, a folded finding comes back, the diff churns two rounds running, or the diff grew by more than half. The PR is handed to a human |
-| Merges | only when `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is `true` (default off), and only when all eight conditions hold on the exact head: checks green, gate suite green, mergeable, reviewed at this head, kill switch clear, round clean, no open findings, no unresolved human changes-requested review |
+| Merges | only when `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is `true` (default off), and only when all eight conditions hold on the exact head: checks green (as defined under [Board loop](#board-loop)), gate suite green, mergeable, reviewed at this head, kill switch clear, round clean, no open findings, no unresolved human changes-requested review |
 | Kill switch | `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED` stops the review and the merge |
 
 The constitution names a ninth condition, no hold label on the lifecycle
@@ -148,11 +148,11 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 |---|---|---|
 | select | picks an in-flight item first, else the oldest eligible open issue | one item per run |
 | triage | checks the issue against current `main`; closes it only on evidence the code read itself (a failed cited run that ended on a rate-limit rejection or an API 429, in one turn at zero cost; or an upstream action bump) | turn budget 15 |
-| route | decides fix-shaped or spec-shaped. Spec-shaped work is filed as a `spec-proposal` and never fixed | turn budget 25 |
+| route | decides fix-shaped or spec-shaped. Spec-shaped work is filed as a `spec-proposal` and never fixed; every `spec-proposal` the loop files (here or on a fix or readiness size breach) also gets a line under the Roadmap issue's "Proposed" header, best effort | turn budget 25 |
 | fix | writes the fix on `fix/<issue>-<slug>` and opens a PR labelled `board:owned` | turn budget 60; 6 files and 120 changed lines |
 | review | a second agent with no shared context reviews; in-scope findings are fixed in the same PR | 5 rounds; the same `not-converging` rule as the review gate |
 | merge | squash-merges at the exact reviewed head | only when the merge switch is on |
-| prove | re-drives one run that reaches the change, records the evidence and closes the issue (the fix PR names its issue as `Board item: #N`, never with a closing keyword, so the merge leaves it open); a change to docs, specs or a gate script only closes on the merge evidence; never entered for a Spec Kit bump | one dispatch |
+| prove | re-drives one run that reaches the change, records the evidence and closes the issue (the fix PR names its issue as `Board item: #N`, never with a closing keyword, so the merge leaves it open); a change to docs, specs or a gate script only closes on the merge evidence (a renamed file counts its old path too); never entered for a Spec Kit bump | one dispatch |
 
 | Rule | Value |
 |---|---|
@@ -161,6 +161,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | Spec-shaped, whatever its size | a change to a published stage's inputs or a composite's inputs and outputs |
 | Workflow files | a fix that edits `.github/workflows/` is held under `board:stalled` unless `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` is `true` (default off), which also needs the App's Workflows permission |
 | Stalled | `board:stalled` after the round budget is spent, a review that stops converging, a backstop breach, a fix it cannot push, or three not-ready outcomes on one PR. Only a human removing the label re-admits the issue |
+| Checks green | every check's newest result on the PR's head is a success, neutral or skipped; an earlier attempt of the same workflow run (one that was re-run) does not count, but a separate run of the same workflow on that head (another event, a reopened PR) is its own check and must be green too, except that a cancelled job of the gate suite's workflow (lint-workflows) is decided by a later run of the same job that did not skip (a PR closed and reopened mid-run); another workflow's later run answers a different event, so it never sets a cancelled one aside. A cancelled check is not green, but it is not a failure either: the not-ready outcome clears when the check is re-run, instead of holding the item until a new commit. The lifecycle review gate and the merge audit use the same rule |
 | Model | `claude-sonnet-5-5` (`WING_COMMANDER_BOARD_LOOP_MODEL`); a `model:opus` label on the issue opts in to Opus |
 | Fix PR merge needs | switch on, kill switch clear, a complete snapshot of the head, an eligible fix PR (the App's own, `fix/<number>-…` → `main`, not touching the constitution), checks green, gate suite green, review converged, backstop holds |
 | Spec Kit bump merge needs | switch on, kill switch clear, a complete snapshot, the updater's own PR, checks green, gate suite green, verification passed at that head. No size limit |
@@ -208,7 +209,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | `wing-commander-merge-evidence.yml` | this repository | hourly at :07 (verdicts) and daily, 05:41 UTC (audit); dispatch from the default branch only | the merge evidence audit ([spec](../specs/125-merge-evidence-audit/spec.md)): an hourly verdict for every open pull request into `main`, kept in the `merge-evidence-ledger` artifact, and a daily audit of every merge of the last 30 days with the verdict as of the merge and every commit that reached `main` without a pull request, which `board-status.yml` shows as a collapsed section. It only watches: read-only permissions, no agent, no App token, no merge, label, comment, check or status, and no merge job reads it. A dispatch from another branch is refused. `WING_COMMANDER_MERGE_EVIDENCE_PAUSED` stops it; `WING_COMMANDER_BOT_LOGIN` names the pipeline App's login (`<slug>[bot]`) so its records can be told from a maintainer's; unset, it defaults to `wing-commander-bot[bot]`, and an empty login makes every verdict incomplete |
 | `wing-commander-feature-health.yml` | this repository | daily, 06:29 UTC; dispatch from the default branch only | gives each feature one health state (healthy, idle, quiet, not running, failing, paused, not configured or unreadable) from its run history, its kill switch and its own output signal, so a feature that runs green but produces nothing shows as quiet. Registry: `.github/scripts/feature-health-registry.json`, checked against this file by `verify-feature-health.py`. Read-only, no agent, no App token; it uploads one artifact that `board-status.yml` shows as a section of "Board status". It files nothing. A dispatch from another branch is refused. `WING_COMMANDER_FEATURE_HEALTH_PAUSED` stops it |
 | fold-cycle-guard | published stage, wrapper | after an implement run | re-dispatches, once, an implement run that was cancelled while still queued |
-| `lint-workflows.yml` | this repository | every pull request that touches workflows, actions, scripts, docs, a root Markdown file or another document a gate reads (its `pull_request: paths:` list names each one); pushes to `main` that touch workflows; daily | the gate suite. `python .github/scripts/run-local-gates.py` runs the same set locally. A newer push to a pull request cancels the run still going for its older head; push, schedule and dispatch runs are never cancelled |
+| `lint-workflows.yml` | this repository | every pull request that touches workflows, actions, scripts, docs, a root Markdown file or another document a gate reads (its `pull_request: paths:` list names each one); pushes to `main` that touch workflows; daily | the gate suite, split on pull requests into eight `lint-shard-N` jobs plus `harness-tests`, each gate its own step, and a `lint` aggregate job (the check name every verdict reader matches, in a workflow named exactly `lint · workflows`) that runs `always()`, times out after 5 minutes, and fails unless every unit is `success`; the target is a verdict within 10 minutes. On push, schedule and dispatch the units and aggregate are skipped. `verify-lint-aggregate.py` and `verify-lint-shard-layout.py` hold that layout. `python .github/scripts/run-local-gates.py` runs the same set locally. A newer push to a pull request cancels the run still going for its older head; push, schedule and dispatch runs are never cancelled |
 | agent-startup-check | published stage | called by the image workflows | checks that the agent action can start inside a container image |
 
 Dispatch-only helpers in this repository: `wing-commander-trial-summary.yml`
@@ -382,8 +383,7 @@ tables above. No kill switch is set except spec PR review's.
   the scan found no edge, not that nothing runs the change.
 - A session's proof posted on an issue shared by several merges counts for a
   merge only when it names that merge's PR; one that names none counts for
-  none. The board loop's prove step is checked against what the list shows,
-  and the list never says a change is proven or not.
+  none. The list never says a change is proven or not.
 - The proof list's "runs set apart" count is large: 197 in a dry run on real
   data, beside 41 entries. Most of it is `pull_request` runs on branches
   deleted after a squash-merge, whose head commits are not in the checkout.

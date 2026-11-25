@@ -1579,7 +1579,7 @@ exit 0
 def _lifecycle_announce_env(body_file, **overrides):
     env = {"ISSUE": LIFECYCLE_ISSUE, "PR_NUMBER": LIFECYCLE_PR, "ROUND": "3",
           "HEAD_SHA": LIFECYCLE_HEAD_SHA, "MAY_MERGE": "", "UNMET_REASON": "",
-          "MERGED": "", "FAILURE_KIND": "", "FAILURE_DETAIL": "",
+          "PENDING": "", "MERGED": "", "FAILURE_KIND": "", "FAILURE_DETAIL": "",
           "REVIEW_GATE_OUTCOME": "success",
           "GH_TOKEN": "x", "GITHUB_REPOSITORY": "example/example",
           "STUB_BODY_FILE": body_file}
@@ -1633,6 +1633,11 @@ LIFECYCLE_ANNOUNCE_SCENARIOS = [
     ("unmet condition",
      dict(MERGED="", MAY_MERGE="false", UNMET_REASON="checks_green"),
      ["checks_green", "does not hold"]),
+    # Code review of #1233: the lint aggregate not having reported yet is
+    # announced as pending, never as a precondition that does not hold.
+    ("lint aggregate pending",
+     dict(MERGED="", MAY_MERGE="false", UNMET_REASON="gate_suite_green", PENDING="true"),
+     ["has not reported yet", "clears on its own"]),
     ("preconditions never evaluated",
      dict(MERGED="", MAY_MERGE="", UNMET_REASON="", REVIEW_GATE_OUTCOME="skipped"),
      ["were never evaluated", "closed mid-round"]),
@@ -1810,15 +1815,21 @@ JSON
   exit 0
 fi
 # #889: select's per-candidate readiness snapshot. Every PR is green and
-# mergeable unless named in STUB_PENDING (its lint check still running) or
-# STUB_VIEW_FAIL (the read fails).
+# mergeable unless named in STUB_PENDING (its lint check still running),
+# STUB_AGG_PENDING (a unit finished just now and the `lint` aggregate has
+# not reported: code review of #1233) or STUB_VIEW_FAIL (the read fails).
 if [ "$1 $2" = "pr view" ]; then
   case " ${{STUB_VIEW_FAIL:-}} " in *" $3 "*) echo 'gh: Server Error (HTTP 502)' >&2; exit 1 ;; esac
+  case " ${{STUB_AGG_PENDING:-}} " in
+    *" $3 "*)
+      printf '{{"headRefOid": "valid%04d", "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "statusCheckRollup": [{{"name": "lint-shard-1", "workflowName": "lint · workflows", "status": "COMPLETED", "conclusion": "SUCCESS", "completedAt": "%s"}}]}}\n' "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      exit 0 ;;
+  esac
   case " ${{STUB_PENDING:-}} " in
     *" $3 "*) state='"status": "IN_PROGRESS", "conclusion": ""' ;;
     *) state='"status": "COMPLETED", "conclusion": "SUCCESS"' ;;
   esac
-  printf '{{"headRefOid": "valid%04d", "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "statusCheckRollup": [{{"name": "lint", "workflowName": "lint-workflows", %s}}]}}\n' "$3" "$state"
+  printf '{{"headRefOid": "valid%04d", "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN", "statusCheckRollup": [{{"name": "lint", "workflowName": "lint · workflows", %s}}]}}\n' "$3" "$state"
   exit 0
 fi
 # #826: the review_gate marker is read through REST. STUB_COMMENTS picks
@@ -1882,7 +1893,8 @@ def _sh_select(script, cwd):
 def _stage_select_trusted_copy(repo):
     """Copies the real _shared/read-spec-meta.sh (+ the project-name.sh
     parser it reads names with, spec 114, and the kv.sh helper it sources), wc_lifecycle_review_marker.py
-    (+ its board_item_marker.py dependency) and lifecycle_readiness.py (#889) into .wc-pristine-repo -- the
+    (+ its board_item_marker.py dependency) and lifecycle_readiness.py (#889, + the board_readiness.py it
+    calls for the checks rules) into .wc-pristine-repo -- the
     step under test resolves both from there, never the workspace root
     (T073)."""
     actions_dir = os.path.join(repo, ".wc-pristine-repo", ".github", "actions", "_shared")
@@ -1894,13 +1906,13 @@ def _stage_select_trusted_copy(repo):
             os.path.join(".github", "actions", "_shared", name),
             os.path.join(actions_dir, name))
     for name in ("wc_lifecycle_review_marker.py", "board_item_marker.py",
-                 "lifecycle_readiness.py"):
+                 "lifecycle_readiness.py", "board_readiness.py"):
         shutil.copyfile(os.path.join(".github", "scripts", name),
                         os.path.join(scripts_dir, name))
 
 
 def run_lifecycle_select(select_script, tmproot, comments="ok", issue=SELECT_ISSUE,
-                         pending="", view_fail="", summary=False):
+                         pending="", view_fail="", summary=False, agg_pending=""):
     repo = _make_select_repo(tmproot, issue=issue)
     _stage_select_trusted_copy(repo)
     bindir = os.path.join(tmproot, "select-bin")
@@ -1912,6 +1924,7 @@ def run_lifecycle_select(select_script, tmproot, comments="ok", issue=SELECT_ISS
     env = {"GH_TOKEN": "x", "BOT_LOGIN": "wing-commander-bot[bot]",
           "GITHUB_REPOSITORY": "example/example", "STUB_COMMENTS": comments,
           "STUB_PENDING": pending, "STUB_VIEW_FAIL": view_fail,
+          "STUB_AGG_PENDING": agg_pending,
           "PATH": bindir + os.pathsep + os.environ.get("PATH", "")}
     rc, out, outputs, step_summary = run_step(BASH, select_script, repo, env, runner_temp)
     if summary:
@@ -1997,18 +2010,27 @@ SELECT_READY_CASES = (
     # Spec 062 US1 scenario 4: with none ready, the oldest still goes to
     # readiness, which posts its unmet condition on the lifecycle issue.
     ("no ready candidate selects the oldest for readiness to report", "3 4", "", "3",
-     "PR #3, the oldest, goes to readiness to post its unmet condition"),
+     "PR #3, the oldest not pending, goes to readiness to post its unmet condition"),
     ("a failed snapshot read skips that candidate only", "", "3", "4",
      "PR #3 skipped -- its checks and mergeability could not be read"),
     ("the oldest ready candidate still wins", "", "", "3", "selected PR #3"),
+    # Code review of #1233: a candidate whose lint aggregate has not
+    # reported yet is pending -- skipped, never sent to readiness to be
+    # stood down -- so the oldest NOT pending is the fallback, and with
+    # every candidate pending nothing is selected.
+    ("a pending lint aggregate is never stood down", "", "", "",
+     "PR #3 skipped -- the lint aggregate has not reported yet", "3 4"),
+    ("an older pending candidate leaves the fallback to a younger unready one", "4", "", "4",
+     "PR #4, the oldest not pending, goes to readiness", "3"),
 )
 
 
 def select_ready_failures(select_script, tmproot, cases=SELECT_READY_CASES):
     failures = []
-    for title, pending, view_fail, want, text in cases:
+    for title, pending, view_fail, want, text, *agg in cases:
         rc, out, outputs, summary = run_lifecycle_select(
-            select_script, tmproot, pending=pending, view_fail=view_fail, summary=True)
+            select_script, tmproot, pending=pending, view_fail=view_fail, summary=True,
+            agg_pending=agg[0] if agg else "")
         if rc != 0 or outputs.get("pr-number") != want or text not in summary:
             failures.append("lifecycle select #889 `{0}`: rc={1} pr-number={2!r} "
                             "(want {3!r}); summary: {4}".format(
@@ -2033,8 +2055,10 @@ SELECT_READY_MUTATIONS = (
     ("readiness skip removed", "jq -r '.ready')\" != \"true\"",
      "jq -r '.ready')\" = \"never\"", SELECT_READY_CASES[0]),
     ("oldest-first order reversed", "| sort)", "| sort -r)", SELECT_READY_CASES[3]),
-    ("none-ready fallback removed", "if [ -z \"$best_number\" ] && [ -n \"${ordered[0]:-}\" ]; then",
+    ("none-ready fallback removed", "if [ -z \"$best_number\" ] && [ -n \"$fallback\" ]; then",
      "if false; then", SELECT_READY_CASES[1]),
+    ("pending skip removed", "jq -r '.pending')\" = \"true\"",
+     "jq -r '.pending')\" = \"never\"", SELECT_READY_CASES[4]),
 )
 
 

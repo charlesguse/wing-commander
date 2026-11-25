@@ -32,16 +32,17 @@ TWO THINGS LIVE HERE
    a lint gate has no business leaving a file in the tree it lints,
    and the version in the directory name makes a bump a fresh download
    rather than a stale hit. Every archive is sha256-checked against the
-   pin below BEFORE anything is extracted: a release asset that has
+   pin BEFORE anything is extracted: a release asset that has
    been replaced, or a download that was tampered with in flight, fails
    the gate rather than running on a maintainer's machine.
 
    Where the hashes came from. actionlint's are copied from the
-   publisher's actionlint_1.7.7_checksums.txt release asset. shellcheck
-   publishes no checksum file, so each 0.10.0 asset was downloaded once
-   from the release page on 2026-09-12 and hashed (sha256) here; a
-   mismatch on a future download therefore means the asset changed
-   after that date. A version bump replaces every entry.
+   publisher's actionlint_1.7.7_checksums.txt release asset; a version
+   bump replaces every entry. shellcheck's version and hashes are not
+   kept here: they live in SHELLCHECK_PIN_FILE, which the e2e reference
+   image's Dockerfile also reads, so the shellcheck this gate runs and
+   the one the implement agent runs inside that image cannot drift
+   (#1204). That file says where its hashes came from.
 """
 import hashlib
 import io
@@ -54,11 +55,9 @@ import urllib.request
 import zipfile
 
 ACTIONLINT_VERSION = "1.7.7"
-SHELLCHECK_VERSION = "0.10.0"
 
 # sha256 of each release archive, keyed by the (osname, arch) host() returns.
-# actionlint: actionlint_1.7.7_checksums.txt. shellcheck: hashed from the
-# assets, see the docstring.
+# actionlint: actionlint_1.7.7_checksums.txt.
 ACTIONLINT_SHA256 = {
     ("windows", "amd64"): "7f12f1801bca3d480d67aaf7774f4c2a6359a3ca8eebe382c95c10c9704aa731",
     ("windows", "arm64"): "76e9514cfac18e5677aa04f3a89873c981f16a2f2353bb97372a86cd09b1f5a8",
@@ -67,15 +66,57 @@ ACTIONLINT_SHA256 = {
     ("darwin", "amd64"): "28e5de5a05fc558474f638323d736d822fff183d2d492f0aecb2b73cc44584f5",
     ("darwin", "arm64"): "2693315b9093aeacb4ebd91a993fea54fc215057bf0da2659056b4bc033873db",
 }
-SHELLCHECK_SHA256 = {
-    # shellcheck ships one Windows archive (x86-64), used on arm64 too.
-    ("windows", "amd64"): "eb6cd53a54ea97a56540e9d296ce7e2fa68715aa507ff23574646c1e12b2e143",
-    ("windows", "arm64"): "eb6cd53a54ea97a56540e9d296ce7e2fa68715aa507ff23574646c1e12b2e143",
-    ("linux", "amd64"): "6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87",
-    ("linux", "arm64"): "324a7e89de8fa2aed0d0c28f3dab59cf84c6d74264022c00c22af665ed1a09bb",
-    ("darwin", "amd64"): "ef27684f23279d112d8ad84e0823642e43f838993bbb8c0963db9b58a90464c2",
-    ("darwin", "arm64"): "bbd2f14826328eee7679da7221f2bc3afb011f6a928b848c80c321f6046ddf81",
-}
+
+# The shellcheck pin's one home, in the reference image's build context
+# because docker build reads nothing outside it -- see the file's header.
+SHELLCHECK_PIN_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), os.pardir, "docker",
+    "e2e-reference-image", "shellcheck.pin")
+
+
+def read_shellcheck_pin(path=SHELLCHECK_PIN_FILE):
+    """-> (version, {(osname, arch): sha256}) from the pin file.
+
+    Lines are `version=X` and `sha256.<os>.<arch>=<hex>`; `#` lines and
+    blanks are skipped. Anything else, a repeated key, a key line with
+    whitespace around it, or a file with no version is a hard failure: a
+    pin that half-parses would download one version and hash-check
+    another. Whitespace fails rather than being stripped because the
+    Dockerfile's sed reads the same lines and would keep it (#1204); a CR
+    line ending is the one thing both readers drop. shellcheck ships one
+    Windows archive (x86-64), so a windows/amd64 hash also answers for
+    windows/arm64.
+    """
+    version, table = None, {}
+    with open(path, encoding="utf-8") as fh:
+        for n, raw in enumerate(fh, 1):
+            line = raw.rstrip("\r\n")
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            if line != line.strip():
+                sys.exit(f"{path}:{n}: whitespace around a pin line, which the "
+                         f"reference image's Dockerfile would read differently: "
+                         f"{line!r}")
+            key, sep, value = line.partition("=")
+            parts = key.split(".")
+            if sep and key == "version" and version is None and value:
+                version = value
+            elif (sep and len(parts) == 3 and parts[0] == "sha256"
+                  and (parts[1], parts[2]) not in table
+                  and len(value) == 64
+                  and all(c in "0123456789abcdef" for c in value)):
+                table[(parts[1], parts[2])] = value
+            else:
+                sys.exit(f"{path}:{n}: not a `version=` or `sha256.<os>.<arch>="
+                         f"<64 hex>` line, or a repeat of one: {line!r}")
+    if version is None:
+        sys.exit(f"{path}: no `version=` line")
+    if ("windows", "amd64") in table:
+        table.setdefault(("windows", "arm64"), table[("windows", "amd64")])
+    return version, table
+
+
+SHELLCHECK_VERSION, SHELLCHECK_SHA256 = read_shellcheck_pin()
 
 # Ignored outright by both passes: a documented context property 1.7.7
 # does not know (specs/031 research.md D3). The message names the
@@ -110,7 +151,7 @@ def host():
 
 
 def ensure_pinned_tool(cache_name, exe_name, url, member, sha256,
-                       cache_root=None):
+                       cache_root=None, home="wc_actionlint.py"):
     """Path to a pinned binary, downloading `url` into the temp cache once.
 
     `member` is the archive entry holding the binary; the archive kind
@@ -118,7 +159,8 @@ def ensure_pinned_tool(cache_name, exe_name, url, member, sha256,
     <cache>/<cache_name>/<exe_name>; the version belongs in cache_name.
     `sha256` is the archive's expected digest, checked before
     extraction; a mismatch is a hard failure, never a warning.
-    `cache_root` overrides the OS temp dir (self-tests only).
+    `cache_root` overrides the OS temp dir (self-tests only). `home` is
+    the file that holds the pin, named when the digest does not match.
 
     Extracted next to the target under a per-process name and renamed
     into place, so a second process racing this one sees either nothing
@@ -146,7 +188,7 @@ def ensure_pinned_tool(cache_name, exe_name, url, member, sha256,
                  f"{digest} ({len(payload)} bytes). The release asset is "
                  f"not the one this repository pinned; nothing was "
                  f"extracted. If the publisher re-cut the asset, update "
-                 f"the pin in wc_actionlint.py deliberately.")
+                 f"the pin in {home} deliberately.")
     part = f"{target}.{os.getpid()}.part"
     if url.endswith(".zip"):
         with zipfile.ZipFile(io.BytesIO(payload)) as z, \
@@ -177,13 +219,14 @@ def ensure_pinned_tool(cache_name, exe_name, url, member, sha256,
     return target
 
 
-def _pin(table, osname, arch):
+def _pin(table, osname, arch, home="wc_actionlint.py"):
+    """`home` is the file a maintainer adds the missing digest to:
+    shellcheck's live only in SHELLCHECK_PIN_FILE (#1204)."""
     try:
         return table[(osname, arch)]
     except KeyError:
         sys.exit(f"no pinned sha256 for {osname}/{arch}; add the archive's "
-                 f"digest to wc_actionlint.py before this host can run the "
-                 f"gate.")
+                 f"digest to {home} before this host can run the gate.")
 
 
 def ensure_actionlint():
@@ -216,4 +259,6 @@ def ensure_shellcheck():
         url = f"{base}.{osname}.{machine}.tar.xz"
         member = f"shellcheck-v{SHELLCHECK_VERSION}/shellcheck"
     return ensure_pinned_tool(f"wc-shellcheck-{SHELLCHECK_VERSION}", exe,
-                              url, member, _pin(SHELLCHECK_SHA256, osname, arch))
+                              url, member, _pin(SHELLCHECK_SHA256, osname, arch,
+                                                SHELLCHECK_PIN_FILE),
+                              home=SHELLCHECK_PIN_FILE)
