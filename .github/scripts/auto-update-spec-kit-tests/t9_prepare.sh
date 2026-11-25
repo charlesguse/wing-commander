@@ -87,6 +87,21 @@ if [ "${UVX_NOOP:-0}" != 0 ]; then
   exit 0
 fi
 printf '{\n  "version": "%s",\n  "installed_integrations": ["claude"]\n}\n' "$CANDIDATE" > .specify/integration.json
+if [ "${UVX_STAMPS_ONLY:-0}" != 0 ]; then
+  # A partial upgrade that restamps and stops (#983 review): integration.json
+  # and the manifest's `version`/`installed_at` move, nothing they record
+  # does. UVX_STAMPS_ONLY=files also moves the manifest's `files` map, which
+  # is what the post-condition reads a manifest by; =corrupt leaves the
+  # manifest unparseable.
+  if [ "$UVX_STAMPS_ONLY" = corrupt ]; then
+    printf '{"version": "%s", "files": {' "$CANDIDATE" > .specify/integrations/claude.manifest.json
+  elif [ "$UVX_STAMPS_ONLY" = files ]; then
+    printf '{"version": "%s", "installed_at": "2026-11-25T00:00:00+00:00", "files": {".specify/scripts/bash/common.sh": "0f0f"}}\n' "$CANDIDATE" > .specify/integrations/claude.manifest.json
+  else
+    printf '{"version": "%s", "installed_at": "2026-11-25T00:00:00+00:00", "files": {}}\n' "$CANDIDATE" > .specify/integrations/claude.manifest.json
+  fi
+  exit 0
+fi
 printf '{"version": "%s", "files": {}}\n' "$CANDIDATE" > .specify/integrations/claude.manifest.json
 echo "echo common at $CANDIDATE" > .specify/scripts/bash/common.sh
 echo "# plan skill at $CANDIDATE" > .claude/skills/speckit-plan/SKILL.md
@@ -275,6 +290,61 @@ check "S5d no bundle for verify/act to consume" "$([ -e "$RUNNER_TEMP/prepare.bu
 check "S5d the step reports through the job result, not a channel of its own" \
   "$(wc -l < "$GH_CALLS" | tr -d ' ')" "0"
 unset UVX_NOOP
+cd - >/dev/null
+
+echo
+echo "=== Scenario 5e: the CLI rewrites only its version stamps (#983 review) ==="
+# integration.json and the manifest's `version`/`installed_at` are rewritten
+# by every run of `integration upgrade`, so they cannot vouch for one. A run
+# that restamped and installed nothing must fail exactly as the no-op does.
+R6="$(build)"; new_step_env; cd "$R6"
+GHA_SUBST=("steps.ctx.outputs.bot-slug=wing-commander")
+BIN="$(mk_uvx)"; OLDPATH="$PATH"; PATH="$BIN:$PATH"
+export UVX_ARGV="$WORK/uvx-argv.log"; : > "$UVX_ARGV"
+export UVX_STAMPS_ONLY=1 DB=main CANDIDATE=0.16.4 BOT_SLUG=wing-commander
+run_step "$STEP" >"$WORK/prep6.log" 2>&1
+RC6=$?
+PATH="$OLDPATH"; unset UVX_STAMPS_ONLY
+sed 's/^/      /' "$WORK/prep6.log" | head -4
+check "S5e step fails rather than committing a stamps-only diff" "$RC6" "1"
+check_contains "S5e error says the upgrade changed no Spec Kit artifact" \
+  "$(cat "$WORK/prep6.log")" "changed no Spec Kit artifact"
+check_contains "S5e error names the stamps it does not count" \
+  "$(cat "$WORK/prep6.log")" ".specify/integration.json"
+check "S5e no commit was made" "$(git rev-list --count "refs/remotes/origin/main..auto-update-spec-kit/v0.16.4")" "0"
+check "S5e no bundle for verify/act to consume" "$([ -e "$RUNNER_TEMP/prepare.bundle" ] && echo yes || echo no)" "no"
+cd - >/dev/null
+
+echo
+echo "=== Scenario 5f: a manifest whose files map moved counts as the upgrade (#983 review) ==="
+# The other half of 5e: a manifest is not ignored wholesale, it is read by
+# its `files` map, so a run whose only evidence is that map still passes.
+R7="$(build)"; new_step_env; cd "$R7"
+GHA_SUBST=("steps.ctx.outputs.bot-slug=wing-commander")
+BIN="$(mk_uvx)"; OLDPATH="$PATH"; PATH="$BIN:$PATH"
+export UVX_ARGV="$WORK/uvx-argv.log"; : > "$UVX_ARGV"
+export UVX_STAMPS_ONLY=files DB=main CANDIDATE=0.16.4 BOT_SLUG=wing-commander
+run_step "$STEP" >"$WORK/prep7.log" 2>&1
+RC7=$?
+PATH="$OLDPATH"; unset UVX_STAMPS_ONLY
+sed 's/^/      /' "$WORK/prep7.log" | head -4
+check "S5f step passes on a changed files map" "$RC7" "0"
+check "S5f the upgrade is committed" \
+  "$(git rev-list --count "refs/remotes/origin/main..auto-update-spec-kit/v0.16.4")" "1"
+cd - >/dev/null
+
+echo
+echo "=== Scenario 5g: a manifest the CLI left unparseable is no evidence (#983 review) ==="
+R8="$(build)"; new_step_env; cd "$R8"
+GHA_SUBST=("steps.ctx.outputs.bot-slug=wing-commander")
+BIN="$(mk_uvx)"; OLDPATH="$PATH"; PATH="$BIN:$PATH"
+export UVX_ARGV="$WORK/uvx-argv.log"; : > "$UVX_ARGV"
+export UVX_STAMPS_ONLY=corrupt DB=main CANDIDATE=0.16.4 BOT_SLUG=wing-commander
+run_step "$STEP" >"$WORK/prep8.log" 2>&1
+RC8=$?
+PATH="$OLDPATH"; unset UVX_STAMPS_ONLY
+check "S5g step fails on an unparseable manifest and no other change" "$RC8" "1"
+check "S5g no commit was made" "$(git rev-list --count "refs/remotes/origin/main..auto-update-spec-kit/v0.16.4")" "0"
 cd - >/dev/null
 
 echo

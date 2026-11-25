@@ -78,7 +78,7 @@ Suites:
 | `t6_reply.sh` | Scenarios 9, 12, 13, 14, 15 — self-recognition, maintainer gate, fail-safe read-backs, prompt-injection safety, and the guard-skip branch that outranks both entry paths' decisions |
 | `t7_gating.py` | every scenario's job routing, plus the wrapper's pause kill-switch |
 | `t8_scaffold.sh` | e2e-stage's scaffold step run repeatedly against one scratch repository — the branch is reset to a single orphan commit each time, whatever the scratch repository's default branch happens to be; plus the agent stage's project-root resolution, run against the real pinned scripts in a nested consumer/scratch layout |
-| `t9_prepare.sh` | Scenario 5's other half — the version-bump commit itself: the regenerated pin in all three files that carry it, `-A` semantics across additions/deletions/files outside `.specify`, the pipeline checkout kept out of the commit, the bundle handed to verify/act round-tripping, the candidate's `uvx` CLI shape asserted verbatim, and both ways the regeneration can fail (`uvx` absent, upgrade-CLI moved) |
+| `t9_prepare.sh` | Scenario 5's other half — the version-bump commit itself: the regenerated pin in all three files that carry it, `-A` semantics across additions/deletions/files outside `.specify`, the pipeline checkout kept out of the commit, the bundle handed to verify/act round-tripping, the candidate's `uvx` CLI shape asserted verbatim, both ways the regeneration can fail (`uvx` absent, upgrade-CLI moved), and the #191 post-condition: a no-op or stamps-only upgrade (integration.json, a manifest's `version`/`installed_at`, an unparseable manifest) fails, a manifest whose `files` map moved counts |
 
 ## The failure-branch rule (#169)
 
