@@ -22,7 +22,7 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 
 **Purpose**: changes that must land before the job is split.
 
-- [ ] T004 Rename the second `Gate 23 self-test — the detector actually detects` step in `.github/workflows/lint-workflows.yml` so every PR-time step name is unique (R4, Key Entities); update every gate that reads that step name (found in T001, e.g. `.github/scripts/verify-gate-wiring.py`, `verify-gate-22*.py`, `verify-gate-23*.py`) and their fixtures.
+- [X] T004 Rename the second `Gate 23 self-test — the detector actually detects` step in `.github/workflows/lint-workflows.yml` so every PR-time step name is unique (R4, Key Entities); update every gate that reads that step name (found in T001, e.g. `.github/scripts/verify-gate-wiring.py`, `verify-gate-22*.py`, `verify-gate-23*.py`) and their fixtures.
 - [ ] T005 [P] If T001 found setup/fixture steps shared by several gates, move them into a composite action under `.github/actions/` and call it from the job (single-home rule, R5); otherwise record "none" in the PR description.
 - [ ] T006 [P] In `.github/scripts/wc_gate_registry.py`, make `pr_time_gates` exclude the aggregate job named `lint` by name (R6); update its self-test with a fixture where the aggregate job carries a `run:` step and is excluded.
 - [ ] T007 Add `if: ${{ !cancelled() }}` to every step lacking a survivable guard in `.github/workflows/lint-workflows.yml` except checkout, and guard each self-test step `!cancelled() && steps.<gate id>.outcome != 'failure'` with an `id:` on its paired gate step, paired by step name (FR-009, R3). Run the gate suite and fix any gate that byte-compares the changed text.
@@ -69,7 +69,7 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 **Independent Test**: adding a gate to any shard appears in the local list with no second edit.
 
 - [ ] T019 [US3] Create `.github/scripts/verify-lint-shard-layout.py` enforcing contract items 1–3, 6, 7 and 8: workflow name; exactly one job named `lint`; every PR-time job other than the aggregate is in the aggregate's `needs` and every `needs` entry exists; step names unique; no gate invocation (script + args) in two units; every non-checkout step has a survivable guard, self-tests paired by step name; `pr_time_gates` output equals the union of gate invocations across units, aggregate exempt by name (FR-005, FR-007, FR-009).
-- [ ] T020 [US3] Add `--self-test` to `.github/scripts/verify-lint-shard-layout.py` with a fixture per failure branch (unit not under aggregate, aggregate lists missing job, shard named `lint`, duplicate step name, gate in two units, unguarded step, self-test guard paired to the wrong gate, derived/union divergence).
+- [X] T020 [US3] Add `--self-test` to `.github/scripts/verify-lint-shard-layout.py` with a fixture per failure branch (unit not under aggregate, aggregate lists missing job, shard named `lint`, duplicate step name, gate in two units, unguarded step, self-test guard paired to the wrong gate, derived/union divergence).
 - [ ] T021 [US3] Register `verify-lint-shard-layout.py` and its self-test as steps in `.github/workflows/lint-workflows.yml` (guarded per T007) and confirm `.github/scripts/run-local-gates.py` derives both with no edit to its source beyond any exemption T006 requires (FR-005); if `run-local-gates.py` needs an aggregate exemption by name, add it there with a self-test case.
 - [ ] T022 [US3] Confirm US3 scenario 2: temporarily move one gate step between shards locally and check `python .github/scripts/run-local-gates.py` lists it unchanged and `verify-lint-shard-layout.py` stays green (not committed).
 
@@ -81,7 +81,7 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 
 **Independent Test**: simulated failure output lists the failed job id.
 
-- [ ] T023 [US4] In the aggregate step of `.github/workflows/lint-workflows.yml`, also write the non-success unit names and their results to `$GITHUB_STEP_SUMMARY` (Principle III), and extend the `verify-lint-aggregate.py` self-test to assert the failure message names each non-success unit (SC-005).
+- [X] T023 [US4] In the aggregate step of `.github/workflows/lint-workflows.yml`, also write the non-success unit names and their results to `$GITHUB_STEP_SUMMARY` (Principle III), and extend the `verify-lint-aggregate.py` self-test to assert the failure message names each non-success unit (SC-005).
 
 ---
 
