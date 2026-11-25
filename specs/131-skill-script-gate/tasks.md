@@ -97,3 +97,61 @@ T007 (import fixtures) and T011 (self-test fixtures) can be written in parallel 
 ## Implementation Strategy
 
 MVP = Phase 1–3 (import resolution catches renames, the defect itself). Ship as one PR with US2 and US3, since a half-gate on main is worse (research D6). Totals: 20 tasks — Setup 2, Foundational 2, US1 4, US2 3, US3 4, Polish 2, Maintainer 3.
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Local sys.path insert causes false missing-module
+
+  inserts_scripts_path returns True for any sys.path.insert/append, so a skill script importing a sibling helper from its own scripts dir gets a false missing-module finding and CI goes red.
+
+  - .github/scripts/verify-skill-scripts.py
+
+  Detail: Resolve the inserted path and only set scripts_on_path when it points at .github/scripts.
+
+- [ ] Review finding: Third-party allowlist built only from repo script imports
+
+  A skill script importing a legitimate third-party package that no .github/scripts file imports is reported as missing-module when it also inserts a path, contradicting the contract.
+
+  - .github/scripts/verify-skill-scripts.py
+
+  Detail: Also try importlib.util.find_spec, or only fail names that look repo-local.
+
+- [ ] Review finding: Attribute check is unscoped and checks dunder attributes
+
+  The alias map is file-global, so a parameter or local that shares an alias name, or a dunder access such as mod.__name__, produces false missing-name findings.
+
+  - .github/scripts/verify-skill-scripts.py
+
+  Detail: Skip dunder attributes and drop aliases that are rebound elsewhere in the file.
+
+- [ ] Review finding: module_names misses for/with/walrus/match/TryStar bindings
+
+  Names bound by for targets, with-as targets, walrus, match bodies or TryStar are not collected, so a valid from-import of them is reported as missing-name.
+
+  - .github/scripts/verify-skill-scripts.py
+
+  Detail: Add For.target and withitem.optional_vars, and recurse into match cases and TryStar.
+
+- [ ] Review finding: Self-test failure discards output
+
+  run_self_test_of drops stdout and stderr, so a timeout and a non-zero exit both give a bare self-test-failed with no diagnostics.
+
+  - .github/scripts/verify-skill-scripts.py
+
+  Detail: Print the tail of the captured output or a timeout message.
+
+- [ ] Review finding: Gate self-test lacks unrecognised-loader and SyntaxError cases
+
+  No seeded case covers unrecognised-loader, the timeout path or a SyntaxError script, and check crashes with a traceback on a syntax error instead of a structured finding.
+
+  - .github/scripts/verify-skill-scripts.py
+
+  Detail: Add the fixtures, and catch SyntaxError in check.
+
+- [ ] Review finding: Dynamic-loader module attributes are not checked
+
+  spec_from_file_location is counted only as a module reach and no alias is recorded for the loaded module, so a renamed attribute reached through a dynamic loader goes undetected.
+
+  - .github/scripts/verify-skill-scripts.py
+
+  Detail: Record the assignment target of module_from_spec as an alias, or fail with unrecognised-loader.
