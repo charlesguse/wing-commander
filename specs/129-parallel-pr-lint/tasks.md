@@ -162,3 +162,45 @@ MVP = Phases 1–3 plus T014–T016 from US2: a sharded suite whose aggregate ca
   - .github/scripts/verify-lint-shard-layout.py
 
   Detail: Have Gate 174 call registry._is_aggregate so there is one definition.
+
+## Review Gate Round 2 Findings
+
+- [ ] Review finding: Self-test steps lack the paired-gate outcome guard required by the layout contract
+
+  Every `Gate N self-test` step has only `if: !cancelled()` and no gate step carries an `id:`, so a failing gate also fails its self-test and one defect shows as two red steps, contrary to research R3, T007 and contract item 7.
+
+  - .github/workflows/lint-workflows.yml
+
+  Detail: Add `id:` to each paired gate step and `steps.<id>.outcome != 'failure'` to its self-test's `if:`.
+
+- [ ] Review finding: Gate 174 self-test pairing check passes vacuously when gate step has no id
+
+  The check only reports a missing guard when `want` (the paired gate step's id) exists (`if not got and want`), so with no ids in the workflow the rule is unenforced and Gate 174 stays green.
+
+  - .github/scripts/verify-lint-shard-layout.py
+
+  Detail: Fail any self-test step whose paired gate step exists but has no id or no outcome guard.
+
+- [ ] Review finding: Gates 173 and 174 define the aggregate job differently
+
+  Gate 173 excludes the job id `lint` unconditionally, while the registry and Gate 174 use `_is_aggregate`, which also requires a non-empty `needs`, so the two can disagree about which jobs are units.
+
+  - .github/scripts/verify-lint-aggregate.py
+
+  Detail: Use registry._is_aggregate here too.
+
+- [ ] Review finding: Shard comment claims steps are in order but gates were reordered across shards
+
+  The comment above lint-shard-1 says 'same steps, in order', but several gates (9, 22, 34, 60, 82, 95, 111, 112, 41 self-test) moved and the Gate 23 self-test was renamed; workflow comments are load-bearing.
+
+  - .github/workflows/lint-workflows.yml
+
+  Detail: Say gates were rebalanced across shards for timing and order is not preserved.
+
+- [ ] Review finding: Readers may record a durable not-ready verdict while the lint aggregate is not yet listed
+
+  board_readiness and lifecycle_readiness match only the `lint` check and treat its absence as durable not-ready, but `lint` now needs eight shards plus harness-tests and may be absent from the rollup briefly after all shards succeed.
+
+  - .github/scripts/board_readiness.py
+
+  Detail: Confirm GitHub lists the waiting job in the rollup, or add a pending-aggregate fixture expecting a non-durable verdict.
