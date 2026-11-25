@@ -220,13 +220,18 @@ jobs:
           BOT_LOGIN: ${{ steps.app.outputs.app-slug }}[bot]
           BUDGET: ${{ inputs.round-budget }}
           PAUSED: ${{ inputs.paused }}
+          DISMISSALS: ${{ inputs.dismissals }}
         run: |
           set -euo pipefail
           py="python3 -I reviewer/.github/scripts/wc_shared_review.py"
           $py prepare --pr "$PR" --body-file input/pr-body.md \
             --head-branch "$(cat input/head-branch.txt)" --labels "$(cat input/labels.txt)" > input/prepared.json
           kind="$(jq -r .kind input/prepared.json)"
-          decision="$($py guard --ref "$REF" --default-branch "$DEFAULT_BRANCH" --kind "$kind" --paused "$PAUSED")"
+          # The dismissals are read from the environment, never argv: as an
+          # argument, a value starting with "-" is parsed as an option, so a
+          # typo would fail this step instead of refusing the run here.
+          decision="$($py guard --ref "$REF" --default-branch "$DEFAULT_BRANCH" --kind "$kind" --paused "$PAUSED" \
+            --dismissals-env DISMISSALS)"
           if [ "$(jq -r .proceed <<<"$decision")" != "true" ]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
             echo "spent=false" >> "$GITHUB_OUTPUT"
@@ -295,8 +300,9 @@ jobs:
     runs-on: ${{ inputs.runner }}
     permissions: {}
     continue-on-error: true
-    # Three commands of at most 600 s each, plus the tree copies.
-    timeout-minutes: 40
+    # Two named-check runs of at most 600 s and the gate suite's 1200 s
+    # (wc_shared_review.GATE_SUITE_TIMEOUT), plus the tree copies.
+    timeout-minutes: 48
     steps:
       - name: Download the trees
         uses: actions/download-artifact@v7
@@ -317,7 +323,7 @@ jobs:
       - name: Run the named check and the gate suite as data
         # Under the job's limit: a step timeout is a step failure the
         # job-level continue-on-error tolerates; a job timeout cancels.
-        timeout-minutes: 36
+        timeout-minutes: 44
         shell: bash
         run: |
           set -uo pipefail
@@ -607,7 +613,7 @@ jobs:
           printf '%s' "$OUT" > out/check.json
           # Degrades to missing, as in find.
           if python3 -I .github/scripts/wc_shared_review.py validate-output --role check --memory input/memory.json \
-            --input out/check.json; then
+            --find input/find.json --input out/check.json; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
           else
             rm -f out/check.json
