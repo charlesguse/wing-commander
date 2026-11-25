@@ -41,6 +41,14 @@ a board-loop run of this repository is cancelled with the cancel-token; a
 different workflow's run, an unreadable run and a completed run are not,
 and none of them fails the step. A mutation that disables the workflow-
 path guard must be caught there too.
+
+Issue #1210: the `closed-check` step used to be a nested `uses: ./.github/
+actions/wing-commander-lifecycle-gate`, which resolves against the caller's
+$GITHUB_WORKSPACE -- so it only worked where the caller's workspace held a
+checkout. closed_check_shell_check() runs the shipped step's own `run:`
+from an EMPTY working directory, with GITHUB_ACTION_PATH at the real
+composite directory, against a stub `gh` answering CLOSED and then OPEN,
+and requires `is-open` to come back `false` and `true`.
 """
 import glob
 import json
@@ -453,6 +461,92 @@ def composite_shell_check():
     return failures
 
 
+CLOSED_CHECK_ID = "closed-check"
+
+
+def closed_check_shell_check():
+    """#1210: the closed-check step works from the composite's own
+    directory, whatever the caller's workspace holds."""
+    with open(COMPOSITE, encoding="utf-8") as fh:
+        action = yaml.safe_load(fh)
+    step = next((st for st in action["runs"]["steps"]
+                 if st.get("id") == CLOSED_CHECK_ID), None)
+    if step is None:
+        print("::error::verify-board-stop-check: no step `id: {0}` in "
+              "{1}.".format(CLOSED_CHECK_ID, COMPOSITE))
+        return 1
+    script = step.get("run")
+    if not script or "uses" in step:
+        print("::error::verify-board-stop-check: the {0} step must be a run: "
+              "step, not `uses: {1}` -- a composite's nested `uses: ./` "
+              "resolves against the caller's workspace, so the closed check "
+              "only works where that workspace holds a checkout "
+              "(#1210).".format(CLOSED_CHECK_ID, step.get("uses")))
+        return 1
+    if step.get("shell") != "bash":
+        print("::error::verify-board-stop-check: the {0} step must declare "
+              "shell: bash.".format(CLOSED_CHECK_ID))
+        return 1
+    action_path = os.path.dirname(COMPOSITE)
+    failures = 0
+    work = tempfile.mkdtemp()
+    try:
+        for state, expected in (("CLOSED", "false"), ("OPEN", "true")):
+            case_dir = tempfile.mkdtemp(dir=work)
+            empty_workspace = os.path.join(case_dir, "workspace")
+            bindir = os.path.join(case_dir, "bin")
+            os.makedirs(empty_workspace)
+            os.makedirs(bindir)
+            gh = os.path.join(bindir, "gh")
+            with open(gh, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write("#!/bin/sh\n"
+                         'printf "%s|%s\\n" "$GH_REPO" "$*" >> "$STUB_LOG"\n'
+                         "printf '%s' \"$STUB_STATE\"\n")
+            os.chmod(gh, os.stat(gh).st_mode | stat.S_IEXEC)
+            script_path = os.path.join(case_dir, "step.sh")
+            with open(script_path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(script)
+            out = os.path.join(case_dir, "output")
+            log = os.path.join(case_dir, "gh.log")
+            for path in (out, log):
+                open(path, "w", encoding="utf-8").close()
+            env = dict(os.environ)
+            env.update({
+                "PATH": bindir + os.pathsep + env.get("PATH", ""),
+                "GH_TOKEN": "app-token", "GH_REPO": REPO, "ISSUE_NUMBER": "1",
+                "GITHUB_ACTION_PATH": action_path, "GITHUB_OUTPUT": out,
+                "RUNNER_TEMP": case_dir, "STUB_STATE": state, "STUB_LOG": log,
+            })
+            proc = subprocess.run(
+                ["bash", "--noprofile", "--norc", "-eo", "pipefail", script_path],
+                cwd=empty_workspace, env=env, capture_output=True, text=True)
+            with open(out, encoding="utf-8") as fh:
+                outputs = dict(line.split("=", 1)
+                               for line in fh.read().splitlines() if "=" in line)
+            with open(log, encoding="utf-8") as fh:
+                calls = fh.read().splitlines()
+            label = "closed-check from an empty workspace, issue {0}".format(state)
+            problems = []
+            if proc.returncode != 0:
+                problems.append("exited {0}: {1}{2}".format(
+                    proc.returncode, proc.stdout.strip(), proc.stderr.strip()))
+            if outputs.get("is-open") != expected:
+                problems.append("is-open={0!r}, expected {1!r}".format(
+                    outputs.get("is-open"), expected))
+            if not calls or not calls[0].startswith(REPO + "|issue view 1 "):
+                problems.append("expected one `gh issue view 1` with GH_REPO={0}, "
+                                "got {1!r}".format(REPO, calls))
+            if problems:
+                failures += 1
+                print("::error::verify-board-stop-check: {0}: {1}".format(
+                    label, "; ".join(problems)))
+            else:
+                print("ok: {0} -> is-open={1}".format(label, expected))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return failures
+
+
 def run():
     failures = 0
 
@@ -472,6 +566,7 @@ def run():
     failures += run_command_cases()
     failures += mutation_check()
     failures += composite_shell_check()
+    failures += closed_check_shell_check()
 
     print("verify-board-stop-check: {0} failure(s).".format(failures))
     return 1 if failures else 0
