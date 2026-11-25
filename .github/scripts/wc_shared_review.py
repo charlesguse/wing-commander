@@ -390,7 +390,28 @@ def validate_request(pr, kind, dismissals):
         return False, "refused: pull request kind {0!r} is not a fix PR".format(kind)
     if dismissals is not None and not isinstance(dismissals, list):
         return False, "refused: dismissals is not a list"
+    for d in dismissals or []:
+        if not (isinstance(d, dict) and _nonempty_str(d.get("id")) and _nonempty_str(d.get("reason"))):
+            return False, "refused: each dismissal is an object with an id and a reason"
     return True, None
+
+
+def parse_dismissals(text):
+    """The dispatch's dismissals input as given: (list, None), or (None,
+    refusal) when it is not JSON. Empty means none. Read where the run is
+    guarded, so a typo refuses the run instead of silently dropping the
+    dismissal and leaving the finding open (round 6)."""
+    if text is None or not str(text).strip():
+        return [], None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None, "refused: dismissals is not valid JSON"
+    # JSON null is not a list either (round-record.md); validate_request's
+    # None means "not given", so it is refused here (pass 1 of #1219's review).
+    if parsed is None:
+        return None, "refused: dismissals is not a list"
+    return parsed, None
 
 
 _CLOSES_RE = re.compile(r"\b(?:closes|fixes|resolves|fix|close|resolve)[:\s]+#(\d+)", re.I)
@@ -430,6 +451,14 @@ def guard(ref, default_branch, kind, paused, dismissals=None):
 
 # --------------------------------------------------------------- budget ---
 
+def next_round(confirmed_rounds):
+    """The next round's number: one past the highest confirmed round, never
+    the count. A record whose run's artifact has expired stops confirming,
+    so the count can fall back onto a round number already used, and its
+    F{round}-{n} ids would then overwrite that round's findings (round 6)."""
+    return max([r["round"] for r in confirmed_rounds or []] or [0]) + 1
+
+
 def budget_spent(confirmed_rounds, budget=DEFAULT_BUDGET):
     try:
         budget = int(budget)
@@ -460,7 +489,7 @@ def _opt(value, kinds):
     return value is None or (isinstance(value, kinds) and not isinstance(value, bool))
 
 
-def validate_output(data, role, prior=None):
+def validate_output(data, role, prior=None, candidates=None):
     """Problems with one agent job's output, [] when it is well-formed.
 
     `role` is "find" or "check"; each has its own schema, the same one its
@@ -468,7 +497,9 @@ def validate_output(data, role, prior=None):
     that fails is malformed, so the round is `incomplete` (FR-014), never
     a quieter verdict from a half-read output. For `check`, `prior` is the
     round's memory: every finding open in it must be evaluated by id
-    (FR-010)."""
+    (FR-010); `candidates` is the find job's output, and every candidate
+    must be evaluated by key, or an unchecked one would be dismissed
+    silently (FR-010)."""
     if role not in ("find", "check"):
         return ["unknown role {0!r}".format(role)]
     if not isinstance(data, dict):
@@ -545,6 +576,25 @@ def validate_output(data, role, prior=None):
     for f in prior or []:
         if isinstance(f, dict) and f.get("status") in OPEN_STATUSES and f.get("id") not in evaluated:
             problems.append("open finding {0} was not evaluated (FR-010)".format(f.get("id")))
+    keys = {c.get("key") for c in items if isinstance(c, dict) and _nonempty_str(c.get("key"))}
+    # A candidate is new, so its check upholds or dismisses it (data-model
+    # transitions), once: a `confirmed` or `resolved` one, or a second
+    # entry for the same key, would leave it dismissed without a verdict
+    # on it (pass 1 of #1219's review).
+    cand_keys = {c["key"] for c in candidates or [] if isinstance(c, dict) and _nonempty_str(c.get("key"))}
+    seen = set()
+    for n, c in enumerate(items):
+        if not (isinstance(c, dict) and c.get("key") in cand_keys):
+            continue
+        if c.get("outcome") not in ("upheld", "dismissed"):
+            problems.append("check {0} gives candidate {1!r} outcome {2!r}: a candidate is upheld or "
+                            "dismissed (FR-010)".format(n, c["key"], c.get("outcome")))
+        if c["key"] in seen:
+            problems.append("check {0} repeats candidate {1!r} (FR-010)".format(n, c["key"]))
+        seen.add(c["key"])
+    for c in candidates or []:
+        if isinstance(c, dict) and _nonempty_str(c.get("key")) and c["key"] not in keys:
+            problems.append("candidate {0!r} was not evaluated (FR-010)".format(c["key"]))
     return problems
 
 
@@ -557,9 +607,18 @@ def finalize_round(state, find_out, check_out, code_run, purpose, head_sha, dism
     # a malformed output is read as missing, so the round is `incomplete`.
     if validate_output(find_out, "find"):
         find_out = None
-    if validate_output(check_out, "check", state.get("prior")):
+    if validate_output(check_out, "check", state.get("prior"), (find_out or {}).get("candidates")):
         check_out = None
     prior, applied, notes = apply_dismissals(state.get("prior") or [], dismissals)
+    # New ids are F{round}-{n}: a round whose number an earlier finding
+    # already carries would overwrite it, so the round is refused as
+    # incomplete and the earlier findings stand unchanged (round 6).
+    reused = sorted(str(f.get("id")) for f in prior
+                    if isinstance(f, dict) and str(f.get("id") or "").startswith("F{0}-".format(round_no)))
+    if reused:
+        notes.append("round {0} would reuse the ids of earlier findings ({1}); nothing from this "
+                     "round's agents was applied".format(round_no, ", ".join(reused)))
+        find_out = check_out = None
     code_status = (code_run or {}).get("status") if (code_run or {}).get("status") == "staged" else "missing"
     agent_ok = bool(agent_ok and isinstance(find_out, dict) and isinstance(check_out, dict))
     findings, more = process_round(prior, (find_out or {}).get("candidates") or [],
@@ -591,7 +650,12 @@ def finalize_round(state, find_out, check_out, code_run, purpose, head_sha, dism
 
 # ------------------------------------------------- code-run and GitHub ---
 
+# Each named-check run, and the gate suite, which has its own limit: the
+# suite took 361 s on a 4-CPU runner (round 2), too close to 600 s to share
+# it (round 6). The code-run step's timeout-minutes covers two named-check
+# runs plus the suite (verify-shared-review-wiring.py checks the sum).
 CODE_RUN_TIMEOUT = 600
+GATE_SUITE_TIMEOUT = 1200
 TAIL_CHARS = 4000
 
 
@@ -872,7 +936,7 @@ class UidSandbox:
 
 
 def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT, sandbox=None,
-                   base_tree=None, origin_url=None, modified_files=None):
+                   base_tree=None, origin_url=None, modified_files=None, gate_timeout=GATE_SUITE_TIMEOUT):
     """The two kinds of PR code the code-run job may run, nothing else, all
     inside `sandbox` (UidSandbox by default): the change's named check, on
     the PR tree and again without the fix (FR-008(c): on `base_tree`, the
@@ -892,7 +956,7 @@ def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT
         without = None
         if argv and base_tree and os.path.isdir(base_tree):
             without = box.run(argv, timeout, 3, src=os.path.abspath(base_tree), overlay=[path])
-        gates = box.run(["python3", "-I", box.gate_runner()], timeout, 2)
+        gates = box.run(["python3", "-I", box.gate_runner()], gate_timeout, 2)
     except Exception as exc:  # noqa: BLE001 -- any failure is `missing`, never a crash (P2)
         return {"status": "missing", "reason": "code-run sandbox: {0}: {1}".format(
             type(exc).__name__, exc)[:500]}
@@ -1106,6 +1170,10 @@ def main(argv=None):
     g = sub.add_parser("guard")
     g.add_argument("--ref"); g.add_argument("--default-branch"); g.add_argument("--kind")
     g.add_argument("--paused", default="")
+    g.add_argument("--dismissals", default=None)
+    # The workflow's form: the name of an environment variable holding the
+    # dismissals, so no value is ever parsed as an option (pass 2 of #1219).
+    g.add_argument("--dismissals-env", default=None, metavar="NAME")
     p = sub.add_parser("prepare")
     p.add_argument("--pr", required=True); p.add_argument("--body-file", required=True)
     p.add_argument("--head-branch", default=""); p.add_argument("--labels", default="")
@@ -1137,9 +1205,13 @@ def main(argv=None):
     v.add_argument("--input", required=True)
     v.add_argument("--role", required=True, choices=("find", "check"))
     v.add_argument("--memory", default=None)
+    v.add_argument("--find", default=None)
     args = parser.parse_args(argv)
     if args.cmd == "guard":
-        ok, reason = guard(args.ref, args.default_branch, args.kind, args.paused)
+        dismissals, refusal = parse_dismissals(
+            os.environ.get(args.dismissals_env) if args.dismissals_env else args.dismissals)
+        ok, reason = (False, refusal) if refusal else guard(args.ref, args.default_branch, args.kind,
+                                                            args.paused, dismissals)
         print(json.dumps({"proceed": ok, "reason": reason}))
         # A refusal is a decision, not a failure: the workflow reads `proceed`.
         return 0
@@ -1176,7 +1248,7 @@ def main(argv=None):
                                           args.repository, _gh_api,
                                           lambda a: _gh_api(a, token=run_token))
         spent, budget = budget_spent(confirmed, args.budget)
-        print(json.dumps({"rounds": len(confirmed), "round": len(confirmed) + 1, "budget": budget,
+        print(json.dumps({"rounds": len(confirmed), "round": next_round(confirmed), "budget": budget,
                           "spent": spent, "open_set": open_set(fold_open_set(confirmed)),
                           "prior": fold_open_set(confirmed), "confirmed": confirmed}))
         return 0
@@ -1209,7 +1281,13 @@ def main(argv=None):
                 prior = _load(args.memory).get("prior")
             except (OSError, ValueError, AttributeError):
                 problems.append("the round's memory could not be read")
-        problems += validate_output(data, args.role, prior)
+        candidates = None
+        if args.find:
+            try:
+                candidates = _load(args.find).get("candidates")
+            except (OSError, ValueError, AttributeError):
+                problems.append("the find output could not be read")
+        problems += validate_output(data, args.role, prior, candidates)
         print(json.dumps({"ok": not problems, "problems": problems}))
         return 1 if problems else 0
     print(build_record(_load(args.input), handoff=args.handoff))

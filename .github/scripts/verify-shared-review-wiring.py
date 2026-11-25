@@ -19,6 +19,13 @@ import sys
 
 import yaml
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import wc_shared_review  # noqa: E402
+
+# Round 6: the named check twice (with and without the fix) and the gate
+# suite, each at its own limit, must all fit in code-run's step timeout.
+CODE_RUN_BUDGET_SECONDS = 2 * wc_shared_review.CODE_RUN_TIMEOUT + wc_shared_review.GATE_SUITE_TIMEOUT
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 CALLABLE = os.path.join(ROOT, ".github", "workflows", "shared-pr-reviewer.yml")
@@ -182,6 +189,10 @@ def tolerated_job_problems(wf):
             ok = False
         if not ok:
             problems.append("{0}'s long step has no timeout under the job's".format(name))
+        elif name == "code-run" and int(step["timeout-minutes"]) * 60 < CODE_RUN_BUDGET_SECONDS:
+            problems.append("code-run's step timeout ({0} min) is under its commands' limits ({1} s), so "
+                            "a slow gate suite ends as missing".format(step["timeout-minutes"],
+                                                                         CODE_RUN_BUDGET_SECONDS))
     return problems
 
 
@@ -281,6 +292,10 @@ def failure_path_problems(wf):
                 problems.append("{0} stages output from an agent whose verdict is not healthy".format(role))
             if not _true(stage.get("continue-on-error")):
                 problems.append("{0}: the stage step can fail the job".format(role))
+            # Every candidate needs a check entry (FR-010), so check's
+            # validation reads the find output it was given.
+            if role == "check" and "--find input/find.json" not in str(stage.get("run") or ""):
+                problems.append("check validates its output without the find output's candidates")
         upload = next((s for s in steps if (s.get("with") or {}).get("name") == "shared-review-" + role), None)
         if upload is None or "steps.stage.outputs.ok == 'true'" not in str(upload.get("if", "")) \
                 or not _true(upload.get("continue-on-error")):
@@ -382,6 +397,23 @@ def _verdict_can_fail(wf):
     _step(wf, "check", lambda s: s.get("id") == "check-verdict").pop("continue-on-error", None)
 
 
+def dismissals_guard_problems(wf):
+    """Round 6: the dismissals input reaches the guard, which refuses one
+    that is not JSON or not a list of {id, reason}, before the round runs.
+    The guard reads the value from the environment (--dismissals-env
+    DISMISSALS), never argv: as an argument, a value starting with "-" (a
+    typo such as -x) is read by argparse as an option, so the step fails
+    instead of refusing in the summary (pass 2 of #1219's review)."""
+    step = next((s for s in ((wf.get("jobs") or {}).get("prepare") or {}).get("steps") or []
+                 if " guard " in str(s.get("run") or "")), {})
+    run = str(step.get("run") or "")
+    if (step.get("env") or {}).get("DISMISSALS") != "${{ inputs.dismissals }}" \
+            or "--dismissals-env DISMISSALS" not in run or "$DISMISSALS" in run:
+        return ["prepare's guard does not read the dismissals input from the environment "
+                "(--dismissals-env DISMISSALS)"]
+    return []
+
+
 def _record_mint(wf):
     return _step(wf, "record", lambda s: "create-github-app-token" in str(s.get("uses", "")))
 
@@ -411,7 +443,7 @@ def main():
     wrap = yaml.safe_load(open(WRAPPER, encoding="utf-8")) or {}
     problems = (callable_problems(cal) + diff_read_problems(cal) + failure_path_problems(cal)
                 + head_fetch_problems(cal) + retention_problems(cal) + tolerated_job_problems(cal)
-                + agent_tree_problems(cal)
+                + agent_tree_problems(cal) + dismissals_guard_problems(cal)
                 + release_problems(cal)
                 + queued_dispatch_note_problems(open(WRAPPER, encoding="utf-8").read())
                 + wrapper_problems(wrap) + readers_problems())
@@ -494,6 +526,10 @@ def main():
                 ("check uploads an unstaged output", _upload_unstaged_check, failure_path_problems),
                 ("the find agent has no step timeout", _agent_without_step_timeout, failure_path_problems),
                 ("the check verdict step can fail the job", _verdict_can_fail, failure_path_problems),
+                ("check validates without the find output", lambda w: _step(
+                    w, "check", lambda x: "validate-output" in str(x.get("run") or "")).update(
+                    {"run": _step(w, "check", lambda x: "validate-output" in str(x.get("run") or ""))["run"]
+                     .replace("--find input/find.json ", "")}), failure_path_problems),
                 ("prepare releases the round before its uploads", lambda w: w["jobs"]["prepare"]["outputs"]
                     .update({"proceed": "${{ steps.state.outputs.ready }}"}), release_problems),
                 ("the release step runs after a failed upload", lambda w: _step(
@@ -503,6 +539,9 @@ def main():
                  tolerated_job_problems),
                 ("find can fail the run", lambda w: w["jobs"]["find"].pop("continue-on-error"),
                  tolerated_job_problems),
+                ("code-run's step timeout is back to 36 minutes", lambda w: _step(
+                    w, "code-run", lambda x: "--out out/code-run.json" in str(x.get("run") or ""))
+                    .update({"timeout-minutes": 36}), tolerated_job_problems),
                 ("code-run's run step loses its timeout", lambda w: _step(
                     w, "code-run", lambda x: "--out out/code-run.json" in str(x.get("run") or ""))
                     .pop("timeout-minutes"), tolerated_job_problems),
@@ -519,6 +558,14 @@ def main():
                 ("record reads a tolerated job's result", lambda w: w["jobs"]["record"].update(
                     {"if": "!cancelled() && needs.check.result == 'success'"}), tolerated_job_problems),
                 ("the PR-head fetch loses its token", _unauthenticated_fetch, head_fetch_problems),
+                ("the guard stops reading the dismissals", lambda w: next(
+                    x for x in w["jobs"]["prepare"]["steps"] if " guard " in str(x.get("run") or ""))
+                    ["env"].pop("DISMISSALS"), dismissals_guard_problems),
+                ("the guard takes the dismissals as an argument", lambda w: next(
+                    x for x in w["jobs"]["prepare"]["steps"] if " guard " in str(x.get("run") or "")).update(
+                    {"run": next(x for x in w["jobs"]["prepare"]["steps"] if " guard " in str(x.get("run") or ""))
+                     ["run"].replace("--dismissals-env DISMISSALS", '--dismissals "$DISMISSALS"')}),
+                 dismissals_guard_problems),
                 ("the PR-head fetch persists its token", _persisted_fetch_token, head_fetch_problems)):
             clone = copy.deepcopy(cal)
             mutate(clone)
