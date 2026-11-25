@@ -1111,20 +1111,41 @@ LINE_MARKER_RE = re.compile(r"^[ \t]*(?:#+(?!\d)|//+|>+|\*+)?[ \t]*",
 _LIVE_FILES_CACHE = {}
 
 
+def _index_path(root):
+    """The index file git uses for the working tree at `root`, or None when
+    git cannot name one. Asked of git rather than built as `.git/index`:
+    in a linked worktree `.git` is a file pointing at
+    `<common>/worktrees/<name>/`, which holds that worktree's index (#889)."""
+    try:
+        proc = subprocess.run(["git", "-C", root, "rev-parse", "--git-path",
+                               "index"], env=git_env(),
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError:
+        return None
+    path = os.fsdecode(proc.stdout).strip()
+    if proc.returncode != 0 or not path:
+        return None
+    return os.path.join(root, path)
+
+
 def _live_text_files(root):
     """Repository-relative paths of the live text files under `root` that
     check 6 reads (see its docstring entry for what is not live). Listed
-    once per process for a root with its own `.git`, keyed by its index
-    mtime; a directory without one (a self-test fixture) is listed afresh."""
+    once per process for a root with its own `.git` (a directory, or the
+    file a linked worktree has), keyed by its index's mtime; a root whose
+    index git cannot name or stat, or one without `.git` (a self-test
+    fixture), is listed afresh every call rather than cached forever."""
     key = None
     if os.path.exists(os.path.join(root, ".git")):
+        index = _index_path(root)
         try:
-            stamp = os.stat(os.path.join(root, ".git", "index")).st_mtime_ns
+            stamp = os.stat(index).st_mtime_ns if index else None
         except OSError:
             stamp = None
-        key = (os.path.realpath(root), stamp)
-        if key in _LIVE_FILES_CACHE:
-            return _LIVE_FILES_CACHE[key]
+        if stamp is not None:
+            key = (os.path.realpath(root), stamp)
+            if key in _LIVE_FILES_CACHE:
+                return _LIVE_FILES_CACHE[key]
     files = sorted(rel for rel in set(repo_files(root))
                    if rel.endswith(RATIONALE_SCAN_EXTS)
                    and not SPEC_DIR_RE.match(rel)
@@ -3333,6 +3354,52 @@ def _self_test_gh_rationale_home(tmpdir):
     return failures
 
 
+def _self_test_worktree_listing(tmpdir):
+    """Fixture 0: _live_text_files() in a linked worktree sees a file
+    committed to the index after its first listing."""
+    def git(*args, cwd):
+        return subprocess.run(["git", "-c", "user.name=t", "-c",
+                               "user.email=t@t", *args], cwd=cwd,
+                              env=git_env(), stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE)
+    main_tree = os.path.join(tmpdir, "gate-93-wt-main")
+    linked = os.path.join(tmpdir, "gate-93-wt-linked")
+    os.makedirs(main_tree)
+    with open(os.path.join(main_tree, "a.md"), "w", encoding="utf-8") as fh:
+        fh.write("a\n")
+    for args, cwd in ((("init", "-q"), main_tree), (("add", "a.md"), main_tree),
+                      (("commit", "-qm", "a"), main_tree),
+                      (("worktree", "add", "-q", linked), main_tree)):
+        proc = git(*args, cwd=cwd)
+        if proc.returncode != 0:
+            return [f"fixture 0 setup: git {' '.join(args)} failed: "
+                    f"{os.fsdecode(proc.stderr).strip()}"]
+    if not os.path.isfile(os.path.join(linked, ".git")):
+        return ["fixture 0 setup: the linked worktree's .git is not a file"]
+    before = _live_text_files(linked)
+    with open(os.path.join(linked, "b.md"), "w", encoding="utf-8") as fh:
+        fh.write("b\n")
+    proc = git("add", "b.md", cwd=linked)
+    if proc.returncode != 0:
+        return ["fixture 0 setup: git add b.md failed"]
+    # A coarse filesystem clock can leave the rewritten index on the same
+    # mtime; move it on so only a cache that never looks at the index can
+    # still return the first listing.
+    index = _index_path(linked)
+    if index and os.path.exists(index):
+        st = os.stat(index)
+        os.utime(index, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+    after = _live_text_files(linked)
+    if before != ["a.md"] or after != ["a.md", "b.md"]:
+        return [f"fixture 0 (#889): check 6's listing in a linked worktree "
+                f"was {before!r} then {after!r} after `git add b.md`, not "
+                f"['a.md'] then ['a.md', 'b.md'] -- the cache is not keyed "
+                f"on that worktree's index"]
+    print("note: fixture 0 (a linked worktree's listing follows its index) "
+          "passed.")
+    return []
+
+
 def run_self_test():
     failures = []
 
@@ -3363,6 +3430,12 @@ def run_self_test():
                 f"fragment: {grant_problems!r}")
         else:
             print(f"note: fixture 1 (gh issue view grant) caught: {grant_problems}")
+
+        # Fixture 0 (#889): check 6's file listing in a linked worktree,
+        # whose `.git` is a file, is re-read once its index changes --
+        # keyed on a `.git/index` that does not exist there, it was cached
+        # for the process lifetime.
+        failures.extend(_self_test_worktree_listing(tmpdir))
 
         # Fixture 1b (#499 rounds 4-5): the exact bypasses the reviews
         # found -- a bare subcommand grant (Bash(gh issue:*)), a fully-
