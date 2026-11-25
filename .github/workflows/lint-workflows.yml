@@ -3638,9 +3638,10 @@ jobs:
 
       # Gate 86 — specs/057-autonomous-board-loop (FR-036/FR-037/FR-068,
       # FR-064 bullet 4): readiness is reported or refused solely on
-      # re-derived head-SHA evidence, and this loop never merges, approves,
-      # or enables auto-merge -- these six fixtures are what stands between
-      # "ready" and a maintainer merging stale evidence.
+      # re-derived head-SHA evidence, and no board-loop job but `merge`
+      # (spec 115, pinned by verify-board-merge.py) merges, approves, or
+      # enables auto-merge -- these fixtures are what stands between
+      # "ready" and a merge of stale evidence.
       - name: Gate 86 — board loop readiness resolves every FR-064 bullet-4 branch
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-readiness.py

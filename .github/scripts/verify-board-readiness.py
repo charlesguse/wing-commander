@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """Gate — board_readiness.py's evaluate_from_snapshot() resolves every
-FR-064 bullet-4 branch correctly, and board-loop.yml itself never calls a
-merge/approve API (specs/057-autonomous-board-loop,
-contracts/readiness-report.md).
+FR-064 bullet-4 branch correctly, and board-loop.yml never calls a
+merge/approve API outside its `merge` job (specs/057-autonomous-board-loop,
+contracts/readiness-report.md; specs/115-board-loop-self-merge).
 
 WHY THIS EXISTS
 ---------------
-FR-068 is a hard invariant: this loop never merges, approves, or enables
-auto-merge. The one thing standing between "ready" and a maintainer being
-told to merge stale evidence is this decision — a regression that reported
-ready against a check that ran on an earlier push, or against unresolved
-findings, would look identical to correct behavior on every fixture except
-the one it broke. This gate pins all six documented branches.
+FR-068 is a hard invariant for every board-loop job except `merge`: none
+of them merges, approves, or enables auto-merge. The `merge` job
+(specs/115-board-loop-self-merge) merges a fix-class PR when
+WING_COMMANDER_BOARD_AUTO_MERGE is on, and verify-board-merge.py pins its
+shape; even there approvals and auto-merge stay forbidden. The one thing
+standing between "ready" and a merge of stale evidence is this
+decision — a regression that reported ready against a check that ran on
+an earlier push, or against unresolved findings, would look identical to
+correct behavior on every fixture except the one it broke. This gate pins all six documented branches.
 
 `check_no_merge_invariant()` (T066, SC-004) is the second, structural half
 of that same invariant: the six snapshot fixtures below prove the decision
 logic never *reports* ready on stale/absent/failing evidence, but nothing
-before T066 read board-loop.yml's own text to prove the workflow never
+before T066 read board-loop.yml's own text to prove no job but `merge`
 *acts* on readiness with a merge, approval, or auto-merge call. Textual,
 line-based, in the shape verify-correlated-release-dispatch.py's Gate 59
 already uses for the same kind of raw-YAML invariant.
@@ -97,9 +100,9 @@ def check_no_merge_invariant(lines, path=BOARD_LOOP_FILE):
                 errors.append(
                     "{0}:{1}:{2}".format(path, i + 1, line))
                 errors.append(
-                    "::error::{0} contains {1} -- board-loop.yml must "
-                    "never merge, approve, or enable auto-merge on any PR "
-                    "(FR-068).".format(path, label))
+                    "::error::{0} contains {1} -- outside its `merge` "
+                    "job, board-loop.yml must never merge, approve, or "
+                    "enable auto-merge on any PR (FR-068).".format(path, label))
     return errors
 
 
@@ -233,6 +236,12 @@ def self_test():
     check("--auto stays forbidden inside the merge job",
           len(check_no_merge_invariant([MERGE_JOB_HEADER, "        run: gh pr merge --auto"],
                                        path="fixture.yml")) == 2)
+    # The `merge` job may merge (spec 115), so the error must not claim the
+    # whole workflow never merges (code review of #1227).
+    readiness_errors = check_no_merge_invariant(["  readiness:", in_job[1]], path="fixture.yml")
+    check("the error names the `merge` job carve-out",
+          all("outside its `merge` job" in e for e in readiness_errors if e.startswith("::error::")),
+          "got {0!r}".format(readiness_errors))
 
     print("{0} failure(s).".format(failures))
     return 1 if failures else 0

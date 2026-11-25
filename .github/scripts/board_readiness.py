@@ -4,8 +4,10 @@ contracts/readiness-report.md, data-model.md "Readiness Decision").
 
 WHY THIS EXISTS
 ---------------
-The loop may report a PR ready, but it may never merge, approve, or enable
-auto-merge (FR-068) -- readiness is a report, not an action. Every
+Readiness may report a PR ready, but the readiness job never merges,
+approves, or enables auto-merge (FR-068) -- readiness is a report, not an
+action; with WING_COMMANDER_BOARD_AUTO_MERGE on, board-loop.yml's separate
+`merge` job decides the merge (board_merge.py, spec 115). Every
 condition is re-derived against the PR's exact head SHA, fetched fresh at
 evaluation time (FR-036) -- never a value this run captured earlier, since
 a check that completed against an earlier push must never be read as

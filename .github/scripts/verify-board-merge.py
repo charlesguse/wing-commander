@@ -426,6 +426,72 @@ def check_readiness_stale_claims_self_test():
         ok("self-test: the old readiness sentence is caught, a comment is not")
 
 
+# The prose half of the same claim (#889, found by the code review of #1227):
+# with WING_COMMANDER_BOARD_AUTO_MERGE on, the `merge` job merges, so a
+# document describing the board loop may say the readiness job (or any job
+# but `merge`) never merges, never that the whole loop does, nor that
+# readiness always hands over to a human. Matched after comment markers,
+# quotes and line breaks are folded away, so a phrase wrapped across comment
+# or docstring lines is still found.
+UNSCOPED_MERGE_CLAIMS = (
+    "this loop never merges, approves, or enables auto-merge",
+    "the loop may report a pr ready, but it may never merge",
+    "the loop stops at ready to merge",
+)
+UNSCOPED_MERGE_CLAIM_DOCS = (
+    ".github/scripts/verify-board-readiness.py",
+    ".github/scripts/board_readiness.py",
+    ".github/workflows/lint-workflows.yml",
+    "specs/057-autonomous-board-loop/contracts/readiness-report.md",
+)
+
+
+def _fold_prose(text):
+    """Lowercased text with `#` comment markers, quote characters and every
+    run of whitespace folded to one space."""
+    text = re.sub(r"(?m)^\s*#+", " ", text.lower())
+    text = re.sub(r"[\"'`“”]", "", text)
+    return re.sub(r"\s+", " ", text)
+
+
+def unscoped_merge_claims(text):
+    folded = _fold_prose(text)
+    return [claim for claim in UNSCOPED_MERGE_CLAIMS if claim in folded]
+
+
+def check_unscoped_merge_claims_self_test():
+    wrapped = ("      # re-derived head-SHA evidence, and this loop never merges, approves,\n"
+               "      # or enables auto-merge -- these six fixtures\n")
+    contract = 'the\nloop stops at "ready to merge", so the item releases the board\n'
+    docstring = "The loop may report a PR ready, but it may never merge, approve, or enable\n"
+    scoped = ("The readiness job itself never merges, approves, or enables auto-merge;\n"
+              "# no board-loop job but `merge` merges, approves, or enables auto-merge\n")
+    if unscoped_merge_claims(wrapped) != [UNSCOPED_MERGE_CLAIMS[0]]:
+        fail("self-test: a wrapped 'this loop never merges' comment is not caught")
+    elif unscoped_merge_claims(docstring) != [UNSCOPED_MERGE_CLAIMS[1]]:
+        fail("self-test: the old board_readiness docstring claim is not caught")
+    elif unscoped_merge_claims(contract) != [UNSCOPED_MERGE_CLAIMS[2]]:
+        fail("self-test: the old contract's 'stops at \"ready to merge\"' is not caught")
+    elif unscoped_merge_claims(scoped):
+        fail("self-test: a claim scoped to the readiness job is flagged")
+    else:
+        ok("self-test: unscoped 'never merges' prose is caught, a scoped claim is not")
+
+
+def check_unscoped_merge_claims():
+    for path in UNSCOPED_MERGE_CLAIM_DOCS:
+        if not os.path.isfile(path):
+            fail("{0} does not exist; run from the repository root".format(path))
+            continue
+        with open(path, encoding="utf-8") as fh:
+            found = unscoped_merge_claims(fh.read())
+        if found:
+            fail("{0} says the whole board loop never merges, though its `merge` job does with "
+                 "WING_COMMANDER_BOARD_AUTO_MERGE on; scope it to the readiness job: {1}".format(path, found))
+        else:
+            ok("{0} makes no unscoped 'never merges' claim".format(path))
+
+
 def check_board_loop():
     if not os.path.isfile(BOARD_LOOP):
         fail("{0} does not exist; run from the repository root".format(BOARD_LOOP))
@@ -879,6 +945,8 @@ def main():
     check_structural_self_test()
     check_gh_blocked_reasons()
     check_readiness_stale_claims_self_test()
+    check_unscoped_merge_claims_self_test()
+    check_unscoped_merge_claims()
     check_board_loop()
     check_readiness_head_binding()
     check_review_head_binding()
