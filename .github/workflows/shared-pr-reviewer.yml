@@ -293,8 +293,9 @@ jobs:
     runs-on: ${{ inputs.runner }}
     permissions: {}
     continue-on-error: true
-    # Three commands of at most 600 s each, plus the tree copies.
-    timeout-minutes: 40
+    # Two named-check runs of at most 600 s and the gate suite's 1200 s
+    # (wc_shared_review.GATE_SUITE_TIMEOUT), plus the tree copies.
+    timeout-minutes: 48
     steps:
       - name: Download the trees
         uses: actions/download-artifact@v7
@@ -315,7 +316,7 @@ jobs:
       - name: Run the named check and the gate suite as data
         # Under the job's limit: a step timeout is a step failure the
         # job-level continue-on-error tolerates; a job timeout cancels.
-        timeout-minutes: 36
+        timeout-minutes: 44
         shell: bash
         run: |
           set -uo pipefail

@@ -289,7 +289,7 @@ class CodeRun(unittest.TestCase):
         self.assertEqual(out["gate_suite"]["exit"], 3)
         self.assertEqual(box.opened, (os.path.abspath("tree"), os.path.abspath("rev")))
         self.assertEqual(box.ran[0], (["python3", "-I", "verify-probe-check.py"], 60, 1))
-        self.assertEqual(box.ran[1], (["python3", "-I", "/box/run-local-gates.py"], 60, 2))
+        self.assertEqual(box.ran[1], (["python3", "-I", "/box/run-local-gates.py"], sr.GATE_SUITE_TIMEOUT, 2))
         self.assertTrue(box.closed)
 
     def test_no_named_check_is_none_not_failure(self):
@@ -913,6 +913,19 @@ class Round6Fixes(unittest.TestCase):
                             or out["reason"].startswith("refused: each dismissal"), out)
         for text in (None, "", "[]", '[{"id": "F1-1", "reason": "ok"}]'):
             self.assertEqual(decide(text), {"proceed": True, "reason": None}, text)
+
+
+    def test_the_gate_suite_has_its_own_limit(self):
+        # Round 6, finding 5: the suite took 361 s on 4 CPUs, so it no
+        # longer shares the named check's 600 s.
+        import tempfile
+        self.assertGreater(sr.GATE_SUITE_TIMEOUT, sr.CODE_RUN_TIMEOUT)
+        ok = {"exit": 0, "output_tail": ""}
+        with tempfile.TemporaryDirectory() as base:
+            box = FakeSandbox({1: ok, 3: ok, 2: ok})
+            sr.stage_code_run("tree", "rev", ["x/test_fix.py"], sandbox=box, base_tree=base)
+        self.assertEqual({n: t for _, t, n in box.ran},
+                         {1: sr.CODE_RUN_TIMEOUT, 3: sr.CODE_RUN_TIMEOUT, 2: sr.GATE_SUITE_TIMEOUT})
 
 
 if __name__ == "__main__":

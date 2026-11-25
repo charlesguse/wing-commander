@@ -630,7 +630,12 @@ def finalize_round(state, find_out, check_out, code_run, purpose, head_sha, dism
 
 # ------------------------------------------------- code-run and GitHub ---
 
+# Each named-check run, and the gate suite, which has its own limit: the
+# suite took 361 s on a 4-CPU runner (round 2), too close to 600 s to share
+# it (round 6). The code-run step's timeout-minutes covers two named-check
+# runs plus the suite (verify-shared-review-wiring.py checks the sum).
 CODE_RUN_TIMEOUT = 600
+GATE_SUITE_TIMEOUT = 1200
 TAIL_CHARS = 4000
 
 
@@ -911,7 +916,7 @@ class UidSandbox:
 
 
 def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT, sandbox=None,
-                   base_tree=None, origin_url=None, modified_files=None):
+                   base_tree=None, origin_url=None, modified_files=None, gate_timeout=GATE_SUITE_TIMEOUT):
     """The two kinds of PR code the code-run job may run, nothing else, all
     inside `sandbox` (UidSandbox by default): the change's named check, on
     the PR tree and again without the fix (FR-008(c): on `base_tree`, the
@@ -931,7 +936,7 @@ def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT
         without = None
         if argv and base_tree and os.path.isdir(base_tree):
             without = box.run(argv, timeout, 3, src=os.path.abspath(base_tree), overlay=[path])
-        gates = box.run(["python3", "-I", box.gate_runner()], timeout, 2)
+        gates = box.run(["python3", "-I", box.gate_runner()], gate_timeout, 2)
     except Exception as exc:  # noqa: BLE001 -- any failure is `missing`, never a crash (P2)
         return {"status": "missing", "reason": "code-run sandbox: {0}: {1}".format(
             type(exc).__name__, exc)[:500]}

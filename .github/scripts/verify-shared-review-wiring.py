@@ -19,6 +19,13 @@ import sys
 
 import yaml
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import wc_shared_review  # noqa: E402
+
+# Round 6: the named check twice (with and without the fix) and the gate
+# suite, each at its own limit, must all fit in code-run's step timeout.
+CODE_RUN_BUDGET_SECONDS = 2 * wc_shared_review.CODE_RUN_TIMEOUT + wc_shared_review.GATE_SUITE_TIMEOUT
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 CALLABLE = os.path.join(ROOT, ".github", "workflows", "shared-pr-reviewer.yml")
@@ -135,6 +142,10 @@ def tolerated_job_problems(wf):
             ok = False
         if not ok:
             problems.append("{0}'s long step has no timeout under the job's".format(name))
+        elif name == "code-run" and int(step["timeout-minutes"]) * 60 < CODE_RUN_BUDGET_SECONDS:
+            problems.append("code-run's step timeout ({0} min) is under its commands' limits ({1} s), so "
+                            "a slow gate suite ends as missing".format(step["timeout-minutes"],
+                                                                         CODE_RUN_BUDGET_SECONDS))
     return problems
 
 
@@ -409,6 +420,9 @@ def main():
                  tolerated_job_problems),
                 ("find can fail the run", lambda w: w["jobs"]["find"].pop("continue-on-error"),
                  tolerated_job_problems),
+                ("code-run's step timeout is back to 36 minutes", lambda w: _step(
+                    w, "code-run", lambda x: "--out out/code-run.json" in str(x.get("run") or ""))
+                    .update({"timeout-minutes": 36}), tolerated_job_problems),
                 ("code-run's run step loses its timeout", lambda w: _step(
                     w, "code-run", lambda x: "--out out/code-run.json" in str(x.get("run") or ""))
                     .pop("timeout-minutes"), tolerated_job_problems),
