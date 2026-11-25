@@ -49,6 +49,28 @@ def callable_problems(wf):
              if "create-github-app-token" in str(s.get("uses", ""))]
     if not any((s.get("with") or {}).get("permission-pull-requests") == "write" for s in mints):
         problems.append("record's App token lacks pull-requests: write, so its PR comment is refused")
+    # That scope can also approve, request changes, retitle or close the PR
+    # (FR-023 forbids each), so the token is held to issues and pull
+    # requests (no contents: no merge, no push) and to the one comment call.
+    for s in mints:
+        extra = sorted(k for k in (s.get("with") or {})
+                       if k.startswith("permission-")
+                       and k not in ("permission-issues", "permission-pull-requests"))
+        if extra:
+            problems.append("record's App token asks for more than issues and pull requests: "
+                            + ", ".join(extra))
+    users = [s for s in (jobs["record"].get("steps") or [])
+             if "steps.app.outputs.token" in yaml.safe_dump(s)]
+    if yaml.safe_dump(jobs["record"]).count("steps.app.outputs.token") != 1 or len(users) != 1:
+        problems.append("record's write token reaches more than the one comment step")
+    else:
+        lines = [ln.strip() for ln in str(users[0].get("run") or "").splitlines()
+                 if ln.strip() and ln.strip() != "set -euo pipefail"]
+        if len(lines) != 1 or not re.fullmatch(
+                r'gh api -X POST "repos/\$\{REPO\}/issues/\$\{PR\}/comments" -F body=@record\.md'
+                r'( > /dev/null)?', lines[0]):
+            problems.append("record's write token does more than post the one PR comment: "
+                            + " | ".join(lines))
     for name in ("find", "check", "code-run", "record"):
         needs = jobs[name].get("needs") or []
         needs = [needs] if isinstance(needs, str) else needs
@@ -341,6 +363,10 @@ def _verdict_can_fail(wf):
     _step(wf, "check", lambda s: s.get("id") == "check-verdict").pop("continue-on-error", None)
 
 
+def _record_post_step(wf):
+    return _step(wf, "record", lambda s: "steps.app.outputs.token" in yaml.safe_dump(s))
+
+
 def _head_fetch_step(wf):
     return _step(wf, "prepare", lambda s: "refs/pull/" in str(s.get("run") or ""))
 
@@ -378,6 +404,15 @@ def main():
                 {"permission-pull-requests": "read"}),
             "find gets pull-requests: write": lambda c: c["jobs"]["find"].update(
                 {"permissions": {"pull-requests": "write"}}),
+            "record's token asks for contents: write": lambda c: next(
+                s for s in c["jobs"]["record"]["steps"]
+                if "create-github-app-token" in str(s.get("uses", "")))["with"].update(
+                {"permission-contents": "write"}),
+            "record approves the pull request": lambda c: _record_post_step(c).update(
+                {"run": _record_post_step(c)["run"] + 'gh pr review "$PR" --approve\n'}),
+            "record's token reaches the build step": lambda c: next(
+                s for s in c["jobs"]["record"]["steps"] if s.get("id") == "build")["env"].update(
+                {"GH_TOKEN": "${{ steps.app.outputs.token }}"}),
         }
         for label, mutate in muts.items():
             clone = copy.deepcopy(cal)
