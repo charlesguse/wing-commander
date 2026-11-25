@@ -1065,12 +1065,12 @@ jobs:
       # any step runs pipeline code -- see clarify.yml.
       - name: Remove the agent-writable pipeline checkout (post-agent)
         id: pipeline-rm
-        if: always() && steps.agent.outcome != 'skipped' && steps.num.outputs.project != ''
+        if: always() && steps.agent.outcome != 'skipped'
         run: rm -rf -- .wing-commander-pipeline
 
       - name: Re-checkout pipeline repository (post-agent)
         id: pipeline-recheckout
-        if: always() && steps.agent.outcome != 'skipped' && steps.num.outputs.project != ''
+        if: always() && steps.agent.outcome != 'skipped'
         uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
