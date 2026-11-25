@@ -247,7 +247,7 @@ def check_behaviour(push_cmd):
         if os.path.exists(marker):
             errors.append("planted pre-push hook ran")
         landed = subprocess.run(["git", "rev-parse", "--verify", "refs/heads/main"],
-                                cwd=real, capture_output=True, text=True)
+                                cwd=real, env=git_env(), capture_output=True, text=True)
         if landed.returncode != 0 or landed.stdout.strip() != head:
             errors.append("push did not land on the real remote "
                           "(planted insteadOf redirected it)")
