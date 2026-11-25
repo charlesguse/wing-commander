@@ -117,6 +117,7 @@ EXPECTED_CASES = {
     # #889 (found by the code review of #1196): only each check's newest
     # result counts, for select_prefilter as for the full decision.
     "cancelled-superseded-ready", "cancelled-newest-not-ready",
+    "cancelled-by-reopened-run-ready",
 }
 
 

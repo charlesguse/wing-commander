@@ -88,8 +88,33 @@ def latest_per_check(rollup):
         if key is not None and started and started > newest.get(key, ""):
             newest[key] = started
     return [entry for entry in rollup
-            if _check_key(entry) is None or not _started(entry)
-            or _started(entry) >= newest[_check_key(entry)]]
+            if (_check_key(entry) is None or not _started(entry)
+                or _started(entry) >= newest[_check_key(entry)])
+            and not _cancelled_by_later_run(entry, rollup)]
+
+
+def _cancelled_by_later_run(entry, rollup):
+    """A cancelled check run whose job a later, separate run of the same
+    workflow ran again on the head (code review of #1226, pass 4): a PR
+    closed and reopened while lint-workflows runs has its in-flight run
+    cancelled by its cancel-in-progress group, and the reopened run on
+    the same head decides the check. Only a stopped entry is set aside
+    this way -- a failure still needs a later attempt of its own run
+    (_check_key) -- and never for a skipped run, which did not run the
+    job and so decides nothing."""
+    if _entry_state(entry) not in STOPPED_STATES or entry.get("context"):
+        return False
+    key, started = _check_key(entry), _started(entry)
+    if key is None or not started:
+        return False
+    for other in rollup:
+        other_key, other_started = _check_key(other), _started(other)
+        if (other_key is not None and other_key[1] == key[1]
+                and other_key[3] == key[3] and other_key[2] != key[2]
+                and other_started and other_started > started
+                and _entry_state(other) != "SKIPPED"):
+            return True
+    return False
 
 
 def _checks_green(rollup):

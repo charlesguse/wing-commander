@@ -68,6 +68,10 @@ EXPECTED_CASES = {
     # the head (a review and a review comment) never hides a failure, and
     # a job cancelled before it started is set aside by its re-run.
     "separate-runs-failure-durable", "cancelled-before-start-superseded-ready",
+    # Code review of #1226, pass 4: a run cancel-in-progress stopped on the
+    # head (a PR closed and reopened mid-run) is decided by the reopened
+    # run of the same job; a later skipped run decides nothing.
+    "cancelled-by-reopened-run-ready", "cancelled-then-skipped-run-self-clearing",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"

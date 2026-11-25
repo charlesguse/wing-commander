@@ -19,7 +19,9 @@ def evaluate(pr_number: int) -> ReadinessDecision:
    an earlier attempt of the same workflow run on the same head (one
    that was re-run) is set aside (`board_readiness.latest_per_check()`,
    #889); a separate run of the same workflow (another event, a reopened
-   PR) is its own check and never hides a failure.
+   PR) is its own check and never hides a failure. A cancelled job alone
+   is set aside by a later, non-skipped run of the same workflow job (a
+   PR closed and reopened mid-run).
 2. **Gate suite green on `head_sha`** (research.md D13): the
    `lint-workflows` entry within that same fresh rollup, not a second
    local re-run.
