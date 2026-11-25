@@ -390,7 +390,23 @@ def validate_request(pr, kind, dismissals):
         return False, "refused: pull request kind {0!r} is not a fix PR".format(kind)
     if dismissals is not None and not isinstance(dismissals, list):
         return False, "refused: dismissals is not a list"
+    for d in dismissals or []:
+        if not (isinstance(d, dict) and _nonempty_str(d.get("id")) and _nonempty_str(d.get("reason"))):
+            return False, "refused: each dismissal is an object with an id and a reason"
     return True, None
+
+
+def parse_dismissals(text):
+    """The dispatch's dismissals input as given: (list, None), or (None,
+    refusal) when it is not JSON. Empty means none. Read where the run is
+    guarded, so a typo refuses the run instead of silently dropping the
+    dismissal and leaving the finding open (round 6)."""
+    if text is None or not str(text).strip():
+        return [], None
+    try:
+        return json.loads(text), None
+    except ValueError:
+        return None, "refused: dismissals is not valid JSON"
 
 
 _CLOSES_RE = re.compile(r"\b(?:closes|fixes|resolves|fix|close|resolve)[:\s]+#(\d+)", re.I)
@@ -1124,6 +1140,7 @@ def main(argv=None):
     g = sub.add_parser("guard")
     g.add_argument("--ref"); g.add_argument("--default-branch"); g.add_argument("--kind")
     g.add_argument("--paused", default="")
+    g.add_argument("--dismissals", default=None)
     p = sub.add_parser("prepare")
     p.add_argument("--pr", required=True); p.add_argument("--body-file", required=True)
     p.add_argument("--head-branch", default=""); p.add_argument("--labels", default="")
@@ -1158,7 +1175,9 @@ def main(argv=None):
     v.add_argument("--find", default=None)
     args = parser.parse_args(argv)
     if args.cmd == "guard":
-        ok, reason = guard(args.ref, args.default_branch, args.kind, args.paused)
+        dismissals, refusal = parse_dismissals(args.dismissals)
+        ok, reason = (False, refusal) if refusal else guard(args.ref, args.default_branch, args.kind,
+                                                            args.paused, dismissals)
         print(json.dumps({"proceed": ok, "reason": reason}))
         # A refusal is a decision, not a failure: the workflow reads `proceed`.
         return 0

@@ -339,6 +339,17 @@ def _verdict_can_fail(wf):
     _step(wf, "check", lambda s: s.get("id") == "check-verdict").pop("continue-on-error", None)
 
 
+def dismissals_guard_problems(wf):
+    """Round 6: the dismissals input reaches the guard, which refuses one
+    that is not JSON or not a list of {id, reason}, before the round runs."""
+    step = next((s for s in ((wf.get("jobs") or {}).get("prepare") or {}).get("steps") or []
+                 if " guard " in str(s.get("run") or "")), {})
+    if (step.get("env") or {}).get("DISMISSALS") != "${{ inputs.dismissals }}" \
+            or '--dismissals "$DISMISSALS"' not in str(step.get("run") or ""):
+        return ["prepare's guard does not read the dismissals input"]
+    return []
+
+
 def _head_fetch_step(wf):
     return _step(wf, "prepare", lambda s: "refs/pull/" in str(s.get("run") or ""))
 
@@ -360,7 +371,7 @@ def main():
     wrap = yaml.safe_load(open(WRAPPER, encoding="utf-8")) or {}
     problems = (callable_problems(cal) + diff_read_problems(cal) + failure_path_problems(cal)
                 + head_fetch_problems(cal) + retention_problems(cal) + tolerated_job_problems(cal)
-                + agent_tree_problems(cal)
+                + agent_tree_problems(cal) + dismissals_guard_problems(cal)
                 + release_problems(cal)
                 + queued_dispatch_note_problems(open(WRAPPER, encoding="utf-8").read())
                 + wrapper_problems(wrap) + readers_problems())
@@ -414,6 +425,9 @@ def main():
                 ("record reads a tolerated job's result", lambda w: w["jobs"]["record"].update(
                     {"if": "!cancelled() && needs.check.result == 'success'"}), tolerated_job_problems),
                 ("the PR-head fetch loses its token", _unauthenticated_fetch, head_fetch_problems),
+                ("the guard stops reading the dismissals", lambda w: next(
+                    x for x in w["jobs"]["prepare"]["steps"] if " guard " in str(x.get("run") or ""))
+                    ["env"].pop("DISMISSALS"), dismissals_guard_problems),
                 ("the PR-head fetch persists its token", _persisted_fetch_token, head_fetch_problems)):
             clone = copy.deepcopy(cal)
             mutate(clone)

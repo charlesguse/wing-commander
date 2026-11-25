@@ -216,13 +216,15 @@ jobs:
           BOT_LOGIN: ${{ steps.app.outputs.app-slug }}[bot]
           BUDGET: ${{ inputs.round-budget }}
           PAUSED: ${{ inputs.paused }}
+          DISMISSALS: ${{ inputs.dismissals }}
         run: |
           set -euo pipefail
           py="python3 -I reviewer/.github/scripts/wc_shared_review.py"
           $py prepare --pr "$PR" --body-file input/pr-body.md \
             --head-branch "$(cat input/head-branch.txt)" --labels "$(cat input/labels.txt)" > input/prepared.json
           kind="$(jq -r .kind input/prepared.json)"
-          decision="$($py guard --ref "$REF" --default-branch "$DEFAULT_BRANCH" --kind "$kind" --paused "$PAUSED")"
+          decision="$($py guard --ref "$REF" --default-branch "$DEFAULT_BRANCH" --kind "$kind" --paused "$PAUSED" \
+            --dismissals "$DISMISSALS")"
           if [ "$(jq -r .proceed <<<"$decision")" != "true" ]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
             echo "spent=false" >> "$GITHUB_OUTPUT"

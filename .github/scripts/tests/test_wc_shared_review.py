@@ -893,5 +893,27 @@ class Round6Fixes(unittest.TestCase):
         self.assertEqual(sorted(f["id"] for f in out["open_set"]), ["F2-1", "F3-1"])
 
 
+    def test_dismissals_that_are_not_json_or_not_id_and_reason_refuse_the_run(self):
+        # Round 6, finding 4: they used to read as [] at finalize, so the
+        # requested dismissal was dropped and the finding stayed open.
+        import contextlib
+        import io
+        import json as _json
+
+        def decide(text):
+            buf = io.StringIO()
+            argv = ["guard", "--ref", "refs/heads/main", "--default-branch", "main", "--kind", "fix"]
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(sr.main(argv + ([] if text is None else ["--dismissals", text])), 0)
+            return _json.loads(buf.getvalue())
+        for text in ('[{"id": "F1-1", "reason": "ok"}', '{"id": "F1-1"}', '[{"id": "F1-1"}]', '["F1-1"]'):
+            out = decide(text)
+            self.assertFalse(out["proceed"], text)
+            self.assertTrue(out["reason"].startswith("refused: dismissals")
+                            or out["reason"].startswith("refused: each dismissal"), out)
+        for text in (None, "", "[]", '[{"id": "F1-1", "reason": "ok"}]'):
+            self.assertEqual(decide(text), {"proceed": True, "reason": None}, text)
+
+
 if __name__ == "__main__":
     unittest.main()
