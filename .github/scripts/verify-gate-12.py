@@ -465,8 +465,8 @@ LOCATOR_CASES = [
      [dis("dynamic-command")]),
     ("a quoted ${:-} default holding gh is no call", 'echo "${D:-gh gave nothing}"', []),
     ("gh as a ${:+} alternate, one token", "${X:+gh} api x", [dis("dynamic-command")]),
-    # #889 (found by the code review of #1004): `:+gh` and `:-gh` read alike,
-    # in a quoted argument (data: no token) and as a command word.
+    # #889 (found by the code review of #1004): `bash ""` names an empty
+    # script path (bash exits 127), so the quoted heredoc is no shell's stdin.
     ("an empty operand is a script path, so the shell reads no stdin",
      "bash \"\" <<'E'\ngh api x -X DELETE\nE", [men("quoted-heredoc")]),
     # #889 (found by the code review of #1004): `:+gh` and `:-gh` read alike,
