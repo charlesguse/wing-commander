@@ -59,6 +59,9 @@ EXPECTED_CASES = {
     "stale-check-summary", "no-checks", "not-mergeable",
     "already-reviewed-at-this-sha", "kill-switch-set", "all-clear",
     "own-status-error-ignored", "own-status-only",
+    # #889 (found by the code review of #1196): only each check's newest
+    # result counts, for select_prefilter as for the full decision.
+    "cancelled-superseded-ready", "cancelled-newest-not-ready",
 }
 
 

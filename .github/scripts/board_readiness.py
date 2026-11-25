@@ -25,10 +25,43 @@ CONDITIONS = ("checks_green", "gate_suite_green", "zero_open_findings",
 GREEN_STATES = ("SUCCESS", "NEUTRAL", "SKIPPED")
 
 
+def _check_key(entry):
+    """One check's identity within a rollup: a commit status by its
+    context, a check run by its workflow and job name. None for an entry
+    that names neither, which is never merged with another."""
+    if entry.get("context"):
+        return ("status", entry["context"])
+    if entry.get("name"):
+        return ("check", entry.get("workflowName") or "", entry["name"])
+    return None
+
+
+def latest_per_check(rollup):
+    """The rollup without each check's superseded results (#889, found by
+    the code review of #1196). One check can report more than once on the
+    same head: a re-run of an older head's run, a reopened PR, the same
+    commit pushed again. Only the newest result describes the head, as on
+    GitHub's own checks list, so an entry is dropped when another entry of
+    the same check started strictly later. An entry with no `startedAt` (a
+    run still queued) is never dropped and never drops another, so a
+    result is only ever set aside for one that provably came after it. The
+    order of what is kept is unchanged."""
+    rollup = list(rollup or [])
+    newest = {}
+    for entry in rollup:
+        key, started = _check_key(entry), entry.get("startedAt")
+        if key is not None and started and started > newest.get(key, ""):
+            newest[key] = started
+    return [entry for entry in rollup
+            if _check_key(entry) is None or not entry.get("startedAt")
+            or entry["startedAt"] >= newest[_check_key(entry)]]
+
+
 def _checks_green(rollup):
     """FR-036/FR-037: an empty rollup is not green (a docs-only PR with no
-    triggered checks is never reported ready), and every entry must have
-    reached a terminal, non-failing state. Freshness (FR-036) comes from
+    triggered checks is never reported ready), and every check's newest
+    result (latest_per_check) must have reached a terminal, non-failing
+    state. Freshness (FR-036) comes from
     the caller fetching `headRefOid` and `statusCheckRollup` together in
     one `gh pr view` call, never a value this run captured earlier --
     `gh` does not expose a per-entry commit SHA to re-check here
@@ -37,6 +70,7 @@ def _checks_green(rollup):
     itself to re-verify per entry; a caller that assembles a snapshot from
     more than one fetch breaks that guarantee with no code-level check to
     catch it."""
+    rollup = latest_per_check(rollup)
     if not rollup:
         return False
     return all(_entry_state(entry) in GREEN_STATES for entry in rollup)
@@ -49,8 +83,9 @@ def _gate_suite_green(rollup):
     display name ("lint · workflows") only ever shows up in
     `workflowName` -- so both are checked together to find the right job
     among any repository's same-named jobs, rather than a `name` guess
-    that never matches a real rollup entry."""
-    for entry in rollup:
+    that never matches a real rollup entry. Only the lint job's newest
+    result counts (latest_per_check)."""
+    for entry in latest_per_check(rollup):
         name = entry.get("name") or entry.get("context") or ""
         workflow_name = (entry.get("workflowName") or "").lower()
         if name == "lint" and "workflow" in workflow_name:
@@ -68,6 +103,14 @@ gate_suite_green = _gate_suite_green
 # WAITING/REQUESTED/PENDING) with an empty `conclusion` and no `state`.
 NOT_CONCLUDED_STATES = ("QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "PENDING", "EXPECTED")
 
+# A check whose run was stopped before it reached a result: a newer push
+# in a cancel-in-progress group (lint-workflows.yml's since #1196), a
+# re-run of an older head's run in that group, or a person. It is not
+# green, so nothing is ready or merges on it, but it is not a failure
+# either: a re-run, or the run a newer push starts, decides the check. So
+# it makes a not-ready record self-clearing, never durable (#889).
+STOPPED_STATES = ("CANCELLED",)
+
 
 def _entry_state(entry):
     """A rollup entry's state: a concluded CheckRun's `conclusion`, a
@@ -77,10 +120,11 @@ def _entry_state(entry):
 
 def _unmet_class(rollup, checks_green):
     """specs/093-not-ready-board-release contracts/not-ready-hold.md,
-    research.md D2: "self-clearing" when every rollup entry is either
-    green (SUCCESS/NEUTRAL/SKIPPED) or not yet concluded, and at least one
-    is not yet concluded (checks_green false because something has not
-    finished, not because anything failed) -- "durable"
+    research.md D2: "self-clearing" when every check's newest result
+    (latest_per_check) is either green (SUCCESS/NEUTRAL/SKIPPED), not yet
+    concluded, or stopped before it concluded (STOPPED_STATES: CANCELLED),
+    and at least one is not green (checks_green false because something has
+    not finished, not because anything failed) -- "durable"
     otherwise (a terminal failing check state, an empty rollup, or an
     unmet reason that is not about checks_green at all: gate_suite_green,
     zero_open_findings, backstop_holds, kill_switch_clear). FR-005: derived
@@ -92,11 +136,13 @@ def _unmet_class(rollup, checks_green):
     research.md D9.)"""
     if checks_green:
         return "durable"
+    rollup = latest_per_check(rollup)
     if not rollup:
         return "durable"
     for entry in rollup:
         state = _entry_state(entry)
-        if state not in GREEN_STATES and state not in NOT_CONCLUDED_STATES:
+        if (state not in GREEN_STATES and state not in NOT_CONCLUDED_STATES
+                and state not in STOPPED_STATES):
             return "durable"
     return "self-clearing"
 
@@ -134,6 +180,14 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
         if not checks_green:
             if not rollup:
                 unmet_reason = "no checks reported on head_sha {0}".format(head_sha)
+            elif checks_class == "self-clearing" and any(
+                    _entry_state(entry) in STOPPED_STATES
+                    for entry in latest_per_check(rollup)):
+                # A check's newest run was cancelled: nothing failed, but it
+                # will not finish on its own. Say so, so nr_reason tells it
+                # from a run still going (#889).
+                unmet_reason = ("a check was cancelled on head_sha {0} and has not been "
+                                "re-run".format(head_sha))
             elif checks_class == "self-clearing":
                 # Only running checks: say so, so FR-009's nr_reason tells a
                 # pending outcome from a failed one on the same head.

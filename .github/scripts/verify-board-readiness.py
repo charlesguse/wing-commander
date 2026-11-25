@@ -53,6 +53,12 @@ EXPECTED_CASES = {
     # Every check green but no lint-workflows entry: durable, since that
     # check may never run for a PR outside its paths (code review of #1010).
     "lint-missing-durable",
+    # #889 (found by the code review of #1196): only each check's newest
+    # result counts, and a cancelled one is "not ready yet" (self-clearing),
+    # never a failure -- but it never hides a real failure either.
+    "cancelled-superseded-ready", "cancelled-newest-self-clearing",
+    "cancelled-queued-rerun-self-clearing", "cancelled-beside-failure-durable",
+    "failure-newer-than-success-durable",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"

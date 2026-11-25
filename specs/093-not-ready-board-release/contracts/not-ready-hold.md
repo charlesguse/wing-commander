@@ -20,12 +20,18 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
     Adds "unmet_class" to the returned dict: "self-clearing" when every
     rollup entry blocking checks_green is in a not-yet-concluded state
     (QUEUED, IN_PROGRESS, WAITING, REQUESTED, PENDING, EXPECTED -- a
-    CheckRun's `status` when it has no `conclusion` yet); "durable" for
-    any other
+    CheckRun's `status` when it has no `conclusion` yet) or was stopped
+    before it concluded (CANCELLED: a re-run, or the run a newer push
+    starts, decides the check; #889, found by the code review of #1196);
+    "durable" for any other
     unmet reason (a terminal failing check state, an empty rollup, an
     open finding, a backstop breach, or the kill switch), and null when
-    ready. FR-005: derived only from the rollup's own per-entry states,
-    never from an agent's reading of them."""
+    ready. Only each check's newest result on the head counts
+    (latest_per_check(): a check run by its workflow and job name, a
+    commit status by its context; an entry is set aside only for one of
+    the same check that started strictly later). FR-005: derived only from
+    the rollup's own per-entry states, never from an agent's reading of
+    them."""
 ```
 
 ## `.github/scripts/board_eligibility.py` (additions)

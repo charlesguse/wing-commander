@@ -1,0 +1,43 @@
+{
+  "snapshot": {
+    "headRefOid": "aaaa111",
+    "mergeable": "MERGEABLE",
+    "statusCheckRollup": [
+      {
+        "name": "lint",
+        "workflowName": "lint · workflows",
+        "status": "COMPLETED",
+        "conclusion": "CANCELLED",
+        "startedAt": "2026-11-25T02:46:46Z"
+      },
+      {
+        "name": "lint",
+        "workflowName": "lint · workflows",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-25T02:52:57Z"
+      },
+      {
+        "name": "harness-tests",
+        "workflowName": "lint · workflows",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-25T02:52:57Z"
+      }
+    ]
+  },
+  "review_gate": {
+    "round": 1,
+    "head_sha": "bbbb222",
+    "outcome": "clean",
+    "findings_open": 0,
+    "folded_fingerprints": [],
+    "filed_fingerprints": [],
+    "updated_at": "2026-09-01T00:00:00Z"
+  },
+  "kill_switch_paused": false,
+  "expected": {
+    "ready": true,
+    "unmet_reason": null
+  }
+}
