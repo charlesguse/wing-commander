@@ -404,9 +404,14 @@ def parse_dismissals(text):
     if text is None or not str(text).strip():
         return [], None
     try:
-        return json.loads(text), None
+        parsed = json.loads(text)
     except ValueError:
         return None, "refused: dismissals is not valid JSON"
+    # JSON null is not a list either (round-record.md); validate_request's
+    # None means "not given", so it is refused here (pass 1 of #1219's review).
+    if parsed is None:
+        return None, "refused: dismissals is not a list"
+    return parsed, None
 
 
 _CLOSES_RE = re.compile(r"\b(?:closes|fixes|resolves|fix|close|resolve)[:\s]+#(\d+)", re.I)
@@ -572,6 +577,21 @@ def validate_output(data, role, prior=None, candidates=None):
         if isinstance(f, dict) and f.get("status") in OPEN_STATUSES and f.get("id") not in evaluated:
             problems.append("open finding {0} was not evaluated (FR-010)".format(f.get("id")))
     keys = {c.get("key") for c in items if isinstance(c, dict) and _nonempty_str(c.get("key"))}
+    # A candidate is new, so its check upholds or dismisses it (data-model
+    # transitions), once: a `confirmed` or `resolved` one, or a second
+    # entry for the same key, would leave it dismissed without a verdict
+    # on it (pass 1 of #1219's review).
+    cand_keys = {c["key"] for c in candidates or [] if isinstance(c, dict) and _nonempty_str(c.get("key"))}
+    seen = set()
+    for n, c in enumerate(items):
+        if not (isinstance(c, dict) and c.get("key") in cand_keys):
+            continue
+        if c.get("outcome") not in ("upheld", "dismissed"):
+            problems.append("check {0} gives candidate {1!r} outcome {2!r}: a candidate is upheld or "
+                            "dismissed (FR-010)".format(n, c["key"], c.get("outcome")))
+        if c["key"] in seen:
+            problems.append("check {0} repeats candidate {1!r} (FR-010)".format(n, c["key"]))
+        seen.add(c["key"])
     for c in candidates or []:
         if isinstance(c, dict) and _nonempty_str(c.get("key")) and c["key"] not in keys:
             problems.append("candidate {0!r} was not evaluated (FR-010)".format(c["key"]))

@@ -915,6 +915,46 @@ class Round6Fixes(unittest.TestCase):
             self.assertEqual(decide(text), {"proceed": True, "reason": None}, text)
 
 
+    def test_a_candidate_check_upholds_or_dismisses_it_once(self):
+        # Pass 1 of #1219's review: a check that "confirms" a new candidate
+        # (the word the prompt gives re-checks), or answers it twice, used
+        # to validate, and process_round dismissed it, so the round with a
+        # real defect ended clean.
+        cand = {"key": "k", "title": "t", "file": "a.py", "line": 1,
+                "failing_case": {"state": "s", "wrong_result": "w"}}
+        find_out = {"answers": {}, "candidates": [cand]}
+        upheld = {"key": "k", "outcome": "upheld", "in_scope": True, "reachable": True, "reason": "real"}
+        for checks in ([dict(upheld, outcome="confirmed")], [dict(upheld, outcome="resolved")],
+                       [upheld, {"key": "k", "outcome": "dismissed", "reason": "no"}]):
+            check = {"answers": self.ANSWERS, "checks": checks}
+            self.assertTrue(sr.validate_output(check, "check", [], [cand]), checks)
+            self.assertEqual(_round({"round": 1, "prior": []}, find_out, check)["verdict"], "incomplete", checks)
+        # A re-check of an earlier finding still confirms it by id.
+        prior = [finding("F1-1")]
+        check = {"answers": self.ANSWERS, "checks": [upheld, {"id": "F1-1", "outcome": "confirmed"}]}
+        self.assertEqual(sr.validate_output(check, "check", prior, [cand]), [])
+
+    def test_the_state_command_numbers_the_round_past_the_highest(self):
+        # Pass 1 of #1219's review: only next_round() itself was tested, so
+        # the state command could go back to len(confirmed) + 1 unnoticed.
+        import contextlib
+        import io
+        import json as _json
+        from unittest import mock
+        buf = io.StringIO()
+        with mock.patch.object(sr, "confirmed_from_github", return_value=[rec(2), rec(3)]), \
+                contextlib.redirect_stdout(buf):
+            self.assertEqual(sr.main(["state", "--pr", "7", "--bot-login", "b[bot]", "--default-branch", "main",
+                                      "--repository", "o/r"]), 0)
+        out = _json.loads(buf.getvalue())
+        self.assertEqual((out["rounds"], out["round"]), (2, 4))
+
+    def test_null_dismissals_refuse_the_run(self):
+        # Pass 1 of #1219's review: null is not a list (round-record.md),
+        # but parsed to None, which the guard reads as "not given".
+        self.assertEqual(sr.parse_dismissals("null"), (None, "refused: dismissals is not a list"))
+        self.assertEqual(sr.parse_dismissals("[]"), ([], None))
+
     def test_the_gate_suite_has_its_own_limit(self):
         # Round 6, finding 5: the suite took 361 s on 4 CPUs, so it no
         # longer shares the named check's 600 s.
