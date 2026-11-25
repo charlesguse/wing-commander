@@ -456,10 +456,12 @@ def check_board_loop():
     else:
         ok("merge job: pinned --squash merge, no --admin/--auto/approve, both switches in its `if:`")
 
-    if "Awaiting a human merge" not in text:
-        fail("the switch-off readiness text 'Awaiting a human merge' is gone (SC-006)")
+    off_text = board_merge.readiness_next_step(False, None, "wing-commander[bot]")
+    if not off_text.startswith(board_merge.HUMAN_MERGE_PHRASE):
+        fail("the switch-off readiness text no longer opens 'Awaiting a human merge' (SC-006): {0!r}".format(
+            off_text))
     else:
-        ok("switch-off readiness text unchanged")
+        ok("switch-off readiness text still awaits a human merge")
 
     issue_post = merge_code.find("gh issue comment \"$ISSUE_NUMBER\"")
     pr_post = merge_code.find("gh pr comment \"$PR_NUMBER\"")
@@ -529,6 +531,124 @@ def check_readiness_head_binding():
         fail("readiness head binding: {0}".format(problem))
     if not problems:
         ok("readiness's head-sha output is the head its backstop measured, or empty")
+
+
+def readiness_next_step_problems(next_step):
+    """next_step(merge_job_runs, snapshot) -> text. The readiness report
+    must never tell the owner the loop will not merge a PR its merge job is
+    about to merge, nor promise a merge the merge job will not attempt."""
+    problems = []
+    passing = _load(os.path.join(FIXTURES_DIR, "fix-pass.json"))["inputs"]
+    on_eligible = next_step(True, passing["snapshot"])
+    for claim in ("never merges", board_merge.HUMAN_MERGE_PHRASE, "will not merge"):
+        if claim in on_eligible:
+            problems.append("auto-merge on, fix-class PR: the report says {0!r}: {1!r}".format(claim, on_eligible))
+    if "merge job squash-merges it" not in on_eligible:
+        problems.append("auto-merge on, fix-class PR: the report does not say the merge job merges it: "
+                        "{0!r}".format(on_eligible))
+    ineligible = sorted(glob.glob(os.path.join(FIXTURES_DIR, "fix-eligible_class*.json")))
+    if not ineligible:
+        problems.append("no fix-eligible_class*.json fixture to check the ineligible wording against")
+    cases = [("auto-merge off", False, passing["snapshot"]), ("class unread", True, None)]
+    cases += [(os.path.basename(path), True, _load(path)["inputs"]["snapshot"]) for path in ineligible]
+    for label, runs, snap in cases:
+        got = next_step(runs, snap)
+        if "squash-merges it" in got or "never merges" in got:
+            problems.append("{0}: the report promises a merge or claims the loop never merges: {1!r}".format(
+                label, got))
+        if "a human merges" not in got and board_merge.HUMAN_MERGE_PHRASE not in got:
+            problems.append("{0}: the report does not say a human merges: {1!r}".format(label, got))
+    return problems
+
+
+def check_readiness_next_step():
+    """Owner, 2026-11-25: readiness said "this loop never merges" while the
+    merge job, switch on, merged fix-class PRs right after it."""
+    bot = "wing-commander[bot]"
+    problems = readiness_next_step_problems(lambda runs, snap: board_merge.readiness_next_step(runs, snap, bot))
+    for problem in problems:
+        fail("readiness next step: {0}".format(problem))
+    if not problems:
+        ok("readiness says the merge job merges a fix-class PR when auto-merge is on, else a human merges")
+    old = ("Awaiting a human merge -- this loop never merges, approves, or enables auto-merge.")
+    if not readiness_next_step_problems(lambda runs, snap: old):
+        fail("readiness next step self-test: the old fixed 'never merges' sentence is not caught")
+    else:
+        ok("readiness next step self-test: the old fixed 'never merges' sentence is caught")
+
+
+READY_REPORT_STEP = "Post the readiness report (ready)"
+
+
+def _if_clauses(expression):
+    """`a && b && c` -> [a, b, c], whitespace-normalised, ${{ }} stripped."""
+    expression = re.sub(r"^\$\{\{|\}\}$", "", " ".join(expression.split()).strip()).strip()
+    return [" ".join(c.split()) for c in expression.split("&&")]
+
+
+def _folded_value(block, key, indent):
+    """The value of `key: >-` (or inline) in `block` lines at `indent` spaces."""
+    out, inside = [], False
+    for line in block:
+        if re.match(r"^ {%d}%s:" % (indent, re.escape(key)), line):
+            inside = True
+            rest = line.split(":", 1)[1].strip()
+            if rest not in (">-", ">", "|"):
+                return rest
+            continue
+        if inside:
+            if line.strip() and (len(line) - len(line.lstrip())) <= indent:
+                break
+            out.append(line.strip())
+    return " ".join(out) if inside else None
+
+
+def readiness_next_step_workflow_problems(lines):
+    problems = []
+    merge_job = job_block(lines, "merge") or []
+    readiness = job_block(lines, "readiness") or []
+    step = step_block(readiness, READY_REPORT_STEP)
+    if not step:
+        return ["the readiness job has no '{0}' step".format(READY_REPORT_STEP)]
+    merge_if = _folded_value(merge_job, "if", 4)
+    runs = _folded_value(step, "MERGE_JOB_RUNS", 10)
+    if merge_if is None or runs is None:
+        problems.append("the merge job's `if:` or the ready report's MERGE_JOB_RUNS is missing")
+    else:
+        want = [c for c in _if_clauses(merge_if) if c != "!cancelled()"]
+        if _if_clauses(runs) != want:
+            problems.append("MERGE_JOB_RUNS {0} is not the merge job's `if:` clauses {1}".format(
+                _if_clauses(runs), want))
+    code = "\n".join(line for line in step if not line.lstrip().startswith("#"))
+    if 'board_merge.py" readiness-next' not in code:
+        problems.append("the ready report does not take its closing line from board_merge.py readiness-next")
+    if "never merges" in code:
+        problems.append("the ready report hardcodes a 'never merges' claim")
+    return problems
+
+
+def check_readiness_next_step_workflow():
+    with open(BOARD_LOOP, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    problems = readiness_next_step_workflow_problems(lines)
+    for problem in problems:
+        fail("readiness next step (workflow): {0}".format(problem))
+    if not problems:
+        ok("the ready report reads the merge job's own switch clauses and board_merge.py's class")
+    text = "\n".join(lines)
+    for label, mutated in (
+            ("a dropped switch clause", text.replace(
+                "            && vars.WING_COMMANDER_BOARD_AUTO_MERGE == 'true'\n            && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true' }}",
+                "            && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true' }}", 1)),
+            ("the old hardcoded sentence", text.replace(
+                '"$decision" "$next_step")"',
+                '"$decision" "Awaiting a human merge -- this loop never merges.")"', 1))):
+        if mutated == text:
+            fail("readiness next step (workflow) self-test: the {0} mutation no longer applies".format(label))
+        elif not readiness_next_step_workflow_problems(mutated.splitlines()):
+            fail("readiness next step (workflow) self-test: {0} is not caught".format(label))
+        else:
+            ok("readiness next step (workflow) self-test: {0} is caught".format(label))
 
 
 SNAPSHOT_STEP = "Fetch the PR snapshot at its current head"
@@ -852,6 +972,8 @@ def main():
     check_gh_blocked_reasons()
     check_board_loop()
     check_readiness_head_binding()
+    check_readiness_next_step()
+    check_readiness_next_step_workflow()
     check_review_head_binding()
     check_pass2_findings()
     check_stalled_tracking_issue()

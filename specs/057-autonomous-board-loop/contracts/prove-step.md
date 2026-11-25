@@ -47,7 +47,7 @@ verify the tag independently) is unchanged.
 
 `board_prove.py` decides `actions_only` from the merged PR's changed
 paths: `docs/**`/`specs/**`-only, or `.github/scripts/verify-*.py`-only
-(already proven by that PR's own required checks) → `actions_only: false`,
+(already proven by that PR's own CI checks) → `actions_only: false`,
 recorded with the reason, issue closes on the merge evidence alone
 (FR-041 scenario 4). Any other changed path → `actions_only: true`.
 

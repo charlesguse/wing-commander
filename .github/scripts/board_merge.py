@@ -196,6 +196,36 @@ def evaluate_fix(snapshot, review_converged, backstop_holds, paused, switch_on, 
     return _decision(snapshot, "fix", CONDITIONS_FIX, results)
 
 
+# The closing line of readiness's ready report: what happens to the PR next.
+# It names the merge job only when that job will run this time
+# (`merge_job_runs`: readiness passes the merge job's own `if:` clauses --
+# verify-board-merge.py keeps the two the same) and the PR is in the class
+# the merge job's decide() requires (eligible_fix_class()). Every other case
+# keeps the switch-off wording "Awaiting a human merge" (spec 115 SC-006).
+HUMAN_MERGE_PHRASE = "Awaiting a human merge"
+
+
+def readiness_next_step(merge_job_runs, snapshot, bot_login):
+    """The readiness report's last line. `snapshot` is fetch_snapshot()'s
+    read of the PR, or None when it could not be read."""
+    if not merge_job_runs:
+        return ("{0} -- the board loop's merge job does not run this time "
+                "(`WING_COMMANDER_BOARD_AUTO_MERGE` is not `true`, or this is a directed proof run), "
+                "so the loop will not merge this PR.".format(HUMAN_MERGE_PHRASE))
+    if snapshot is None:
+        return ("Next: auto-merge is on, but this PR's merge class could not be read here. This run's "
+                "merge job decides from its own fresh snapshot and announces the outcome on this PR; "
+                "if it does not merge it, a human merges.")
+    if not eligible_fix_class(snapshot, bot_login):
+        return ("{0} -- auto-merge is on, but this PR is not in the fix class the board loop merges "
+                "(a PR the loop's App opened on its own `fix/<issue>-<slug>` branch into main, not touching "
+                "the constitution), so the loop will not merge it.".format(HUMAN_MERGE_PHRASE))
+    return ("Next: auto-merge is on and this is a fix-class PR, so this run's merge job squash-merges it at "
+            "this head once every merge condition holds again on a fresh snapshot, and announces the "
+            "outcome on this PR. If a condition fails or GitHub refuses the merge, the announcement says "
+            "so and a human merges.")
+
+
 def _bot_commit(commit, bot_login):
     """#889: a commit is the App's only when GitHub resolved its author to the
     App's own account (REST `author`: type Bot, the App's login); one GitHub
@@ -670,6 +700,24 @@ def main():
             sys.exit(1)
         print(json.dumps(snap))
     snapshot_cmd.set_defaults(func=_snapshot)
+    next_cmd = sub.add_parser("readiness-next", help="the readiness report's closing line on stdout")
+    next_cmd.add_argument("--merge-job-runs", required=True, choices=("true", "false"))
+    next_cmd.add_argument("--bot-login", required=True)
+    next_cmd.add_argument("--snapshot", default=None,
+                          help="board_merge.py snapshot JSON file; absent, empty or unreadable = unknown class")
+
+    def _next(a):
+        snap = None
+        if a.snapshot:
+            try:
+                with open(a.snapshot, encoding="utf-8") as fh:
+                    snap = json.load(fh)
+            except (OSError, ValueError):
+                snap = None
+            if not isinstance(snap, dict):
+                snap = None
+        print(readiness_next_step(a.merge_job_runs == "true", snap, a.bot_login))
+    next_cmd.set_defaults(func=_next)
     refusal_cmd = sub.add_parser("classify-refusal", help="stderr on stdin -> refusal class")
     refusal_cmd.set_defaults(func=lambda _a: print(classify_refusal(sys.stdin.read())))
     retry_cmd = sub.add_parser("retryable", help="exit 0 when the refusal class is retried once")

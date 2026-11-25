@@ -7,7 +7,7 @@ WHY THIS EXISTS
 A merged fix that changed behaviour running only inside Actions must be
 re-driven and proven before its issue closes (FR-041); a merge that
 changed nothing but docs/specs, or only a gate script the merged PR's own
-required checks already re-executed, proves nothing a fresh dispatch would
+CI checks already re-executed, proves nothing a fresh dispatch would
 add. This is a deterministic, path-based rule (Principle IX) -- never an
 agent's guess.
 """
@@ -98,7 +98,7 @@ def actions_only(changed_paths):
         return False, "docs/**/specs/**-only change"
 
     if all(fnmatch.fnmatch(p, VERIFY_SCRIPT_GLOB) for p in changed_paths):
-        return False, "verify-*.py-only change, already proven by the merged PR's own required checks"
+        return False, "verify-*.py-only change, already proven by the merged PR's own CI checks"
 
     return True, "changed path(s) outside docs/**, specs/**, and .github/scripts/verify-*.py"
 

@@ -5729,9 +5729,13 @@ jobs:
                   decision["head_sha"] if decision["head_sha"] and decision["head_sha"] == backstop_head else ""))
           PYEOF
 
-      # FR-066/FR-068: names head_sha and every condition's result; states
-      # a human merge is awaited; never merges, approves, or enables
-      # auto-merge anywhere in this job's own API calls. The marker it
+      # FR-066/FR-068: names head_sha and every condition's result, and
+      # closes with what happens next (board_merge.py readiness-next): the
+      # merge job merges it when that job runs this time and the PR is in
+      # its fix class, else a human merge is awaited. This job itself never
+      # merges, approves, or enables auto-merge. MERGE_JOB_RUNS is the
+      # merge job's own `if:` without `!cancelled()`, clause for clause
+      # (verify-board-merge.py). The marker it
       # writes records step awaiting-merge, not readiness (#532): the
       # handover releases the board, so select() moves on to other issues
       # instead of re-running readiness on this PR every run.
@@ -5746,15 +5750,36 @@ jobs:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
+          MERGE_JOB_RUNS: >-
+            ${{ github.event_name != 'pull_request'
+            && inputs.directed-stage == ''
+            && vars.WING_COMMANDER_BOARD_AUTO_MERGE == 'true'
+            && vars.WING_COMMANDER_BOARD_LOOP_PAUSED != 'true' }}
           DIRECTED_ATTRIBUTION: >-
             ${{ inputs.directed-stage != '' && format('_Directed proof run
             (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
             item, opens no fix PR._', inputs.directed-stage, inputs.directed-pr) || '' }}
         run: |
           set -uo pipefail
+          scripts="$RUNNER_TEMP/wc-pristine/scripts"
           decision="$(cat "$RUNNER_TEMP/board-readiness-decision.json")"
-          body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\ndecision: %s\n\nAwaiting a human merge -- this loop never merges, approves, or enables auto-merge.' \
-            "$(jq -r '.head_sha' "$RUNNER_TEMP/board-readiness-decision.json")" "$decision")"
+          # The PR's merge class is read only when the merge job runs; an
+          # unreadable snapshot leaves the class unknown, never "fix".
+          snapshot_arg=()
+          if [ "$MERGE_JOB_RUNS" = "true" ]; then
+            if python3 -I "$scripts/board_merge.py" snapshot --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" \
+                 --bot-login "$BOT_LOGIN" > "$RUNNER_TEMP/board-readiness-merge-snapshot.json"; then
+              snapshot_arg=(--snapshot "$RUNNER_TEMP/board-readiness-merge-snapshot.json")
+            else
+              echo "::warning::board-loop readiness (ready report): could not snapshot PR #$PR_NUMBER -- the report says its merge class is unknown."
+            fi
+          fi
+          next_step="$(python3 -I "$scripts/board_merge.py" readiness-next --merge-job-runs "$MERGE_JOB_RUNS" \
+            --bot-login "$BOT_LOGIN" "${snapshot_arg[@]}")" \
+            || next_step="Next: a human merges this PR unless this run's merge job does (board_merge.py readiness-next failed)."
+          body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\ndecision: %s\n\n%s' \
+            "$(jq -r '.head_sha' "$RUNNER_TEMP/board-readiness-decision.json")" "$decision" "$next_step")"
           [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
           gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
           # An empty/failed marker here causes readiness to re-drive this
@@ -6962,7 +6987,7 @@ jobs:
           token: ${{ github.token }}
 
       # FR-041 scenario 4: nothing a fresh dispatch would prove that the
-      # merged PR's own required checks did not already prove -- the issue
+      # merged PR's own CI checks did not already prove -- the issue
       # closes on the merge evidence alone, with the reason recorded.
       - name: Close the issue on the merge evidence alone
         if: steps.decide.outputs.actions-only != 'true' && steps.killswitch-recheck.outputs.paused != 'true'
