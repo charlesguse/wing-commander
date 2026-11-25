@@ -119,3 +119,46 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 ## Implementation Strategy
 
 MVP = Phases 1–3 plus T014–T016 from US2: a sharded suite whose aggregate cannot go green by omission. Nothing should merge without US2's aggregate gate, since Principle VIII makes the aggregate the whole point of the split. Then US3's layout gate, US4's summary, docs, and the maintainer proof.
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Gate 173 does not check for jq before running the aggregate step
+
+  verify-lint-aggregate.py runs the real aggregate bash, which calls jq, and only checks that bash exists. On a host without jq every case fails with a message that blames the workflow step.
+
+  - .github/scripts/verify-lint-aggregate.py
+
+  Detail: Add a shutil.which('jq') check next to the bash check and report 'jq required' or skip with a notice.
+
+- [ ] Review finding: Gate 174 `_guarded` accepts any if: containing !cancelled() or always()
+
+  The check looks for a substring, so `failure() && !cancelled()` or `always() && false` passes FR-009. It also does not require self-test steps to carry the paired steps.<id>.outcome != 'failure' guard.
+
+  - .github/scripts/verify-lint-shard-layout.py
+
+  Detail: Evaluate the if: with wc_gha_expr under a prior-step-failed context, as Gate 173 does, or reject conditions that add other status functions.
+
+- [ ] Review finding: Gate 173 self-test hand-copies the aggregate step's run block
+
+  _base() embeds a literal copy of the jq filter, summary write and exit 1 from lint-workflows.yml. The mutation cases test that copy, so the self-test stays green if the shipped step drifts. This also breaks the 'one home' rule in CLAUDE.md.
+
+  - .github/scripts/verify-lint-aggregate.py
+
+  Detail: Build the lint job in _base() from the parsed lint-workflows.yml instead of a literal.
+
+- [ ] Review finding: New readiness fixtures use job id harness-tests as the check name
+
+  The real check-run name is `harness tests`, as in the merge-preconditions fixture. The board-readiness and lifecycle-readiness fixtures (cancelled-run, failed-unit-skipped-aggregate) use `harness-tests`, so the rollup shape is not what GitHub emits.
+
+  - .github/scripts/tests/board-readiness/cancelled-run/case.json
+
+  Detail: The readers only match on `lint` today, so the cases pass. A reader that matches units by name would be tested against a name that never occurs.
+
+- [ ] Review finding: Registry and Gate 174 define the aggregate job differently
+
+  wc_gate_registry._is_aggregate exempts `lint` only when it has a non-empty needs:. Gate 174 excludes the job id `lint` unconditionally. For a `lint` job with no needs they disagree, so Gate 174 emits one failure per gate instead of a single 'not sharded' diagnosis.
+
+  - .github/scripts/wc_gate_registry.py
+  - .github/scripts/verify-lint-shard-layout.py
+
+  Detail: Have Gate 174 call registry._is_aggregate so there is one definition.
