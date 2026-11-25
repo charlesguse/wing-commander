@@ -48,6 +48,20 @@ def callable_problems(wf):
             problems.append("{0} writes or posts; only record may".format(name))
         if name not in ("prepare", "record") and "create-github-app-token" in text:
             problems.append("{0} mints an App token".format(name))
+    # A mint with no permission-* input gets the installation's whole grant,
+    # and write-all (or a widened scope) on guard, prepare or record is the
+    # same hole; find, check and code-run are pinned by
+    # verify-shared-review-isolation.py.
+    for name, job in jobs.items():
+        for s in job.get("steps") or []:
+            if "create-github-app-token" in str(s.get("uses", "")) and not any(
+                    str(k).startswith("permission-") for k in (s.get("with") or {})):
+                problems.append("{0}'s App token mint has no permission-* input, so it gets the "
+                                "installation's whole grant".format(name))
+    for name, want in (("guard", {}), ("prepare", {"contents": "read", "actions": "read"}),
+                       ("record", {"contents": "read"})):
+        if jobs[name].get("permissions") != want:
+            problems.append("{0}'s job permissions are not pinned to {1}".format(name, want))
     if "record" not in jobs or "-X POST" not in yaml.safe_dump(jobs["record"]):
         problems.append("record no longer posts the comment")
     # The record is a comment on a pull request: GitHub refuses it from an
@@ -485,6 +499,16 @@ def main():
                 {"PR": "${{ needs.prepare.outputs.spent }}"}),
             "record's comment step runs another shell": lambda c: _record_post_step(c).update(
                 {"shell": "python {0}"}),
+            "prepare's mint drops all its permission inputs": lambda c: [
+                s["with"].pop(k) for s in c["jobs"]["prepare"]["steps"]
+                if "create-github-app-token" in str(s.get("uses", ""))
+                for k in [k for k in s["with"] if k.startswith("permission-")]],
+            "record's mint drops all its permission inputs": lambda c: [
+                _record_mint(c)["with"].pop(k) for k in list(_record_mint(c)["with"])
+                if k.startswith("permission-")],
+            "guard gets write-all": lambda c: c["jobs"]["guard"].update({"permissions": "write-all"}),
+            "prepare gets write-all": lambda c: c["jobs"]["prepare"].update({"permissions": "write-all"}),
+            "record gets write-all": lambda c: c["jobs"]["record"].update({"permissions": "write-all"}),
         }
         for label, mutate in muts.items():
             clone = copy.deepcopy(cal)
