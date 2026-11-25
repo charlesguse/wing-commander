@@ -58,6 +58,11 @@ def _ctx(event, results, run_cancelled, job_level):
     Job level: success()/failure() read the needed jobs' results. Step
     level (the aggregate's first and only step): nothing earlier in the
     job has failed, so success() is simply "the run was not cancelled".
+
+    Job-level success() is deliberately False when any needed job was
+    skipped: Actions skips a dependent of a skipped need under the
+    implicit success() (the reason `!failure()` is the idiom for going
+    on past a skip), so a skipped unit must not read as passing here.
     """
     vals = list(results.values())
     if job_level:

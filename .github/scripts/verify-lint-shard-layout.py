@@ -183,8 +183,14 @@ def check(doc, derived=None):
                              "guard".format(label, k))
             m = _PAIR.match(name or "")
             if m:
+                # Any separator pairs (em dash, colon, hyphen), so a renamed
+                # gate step cannot silently drop the guard checks below
+                # (code review of #1233). A self-test with no gate step in
+                # its unit at all (Gates 40, 41 are standalone) has no pair.
                 want = ids.get(
-                    next((n for n in ids if n and n.startswith(m.group(1) + " —")), None))
+                    next((n for n in ids if n and not _PAIR.match(n)
+                          and re.match(re.escape(m.group(1)) + r"(?!\w)", n)),
+                         None))
                 got = _OUTCOME.search(str(s.get("if") or ""))
                 if not got and want:
                     fails.append("self-test step {0!r} lacks the paired "
@@ -289,6 +295,21 @@ def self_test():
          lambda d: J(d, "lint").pop("needs"), "not in the aggregate's needs")
     case("a self-test guarded on another gate's id fails",
          lambda d: (J(d, "lint-shard-1")["steps"].append(
+             {"name": "Gate 9 — other", "id": "other",
+              "if": "${{ !cancelled() }}", "run": "true"}),
+             J(d, "lint-shard-1")["steps"][2].update(
+             {"if": "${{ !cancelled() && steps.other.outcome != 'failure' }}"})),
+         "not its pair")
+    case("a colon-named gate step still pairs, so a missing guard fails",
+         lambda d: (J(d, "lint-shard-1")["steps"][1].update(
+             {"name": "Gate 1: a"}),
+             J(d, "lint-shard-1")["steps"][2].update(
+             {"if": "${{ !cancelled() }}"})),
+         "lacks the paired")
+    case("a hyphen-named gate step still pairs, so a wrong guard fails",
+         lambda d: (J(d, "lint-shard-1")["steps"][1].update(
+             {"name": "Gate 1 - a"}),
+             J(d, "lint-shard-1")["steps"].append(
              {"name": "Gate 9 — other", "id": "other",
               "if": "${{ !cancelled() }}", "run": "true"}),
              J(d, "lint-shard-1")["steps"][2].update(

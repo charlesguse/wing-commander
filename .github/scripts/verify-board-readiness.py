@@ -92,6 +92,9 @@ EXPECTED_CASES = {
     # aggregate, which clears on its own (self-clearing) -- unless another
     # condition is unmet too (durable, and named). Code review of #1233.
     "aggregate-pending-self-clearing", "aggregate-pending-open-findings",
+    # The same shape, but the last unit concluded long before `now`: the
+    # hold is bounded, so the verdict is durable (code review of #1233).
+    "aggregate-pending-expired",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"
@@ -188,7 +191,8 @@ def run():
         spec = _load(case_path)
         got = evaluate_from_snapshot(
             spec["snapshot"], spec["open_in_scope_findings"],
-            spec["backstop_holds"], spec["kill_switch_paused"])
+            spec["backstop_holds"], spec["kill_switch_paused"],
+            now=spec.get("now"))
         expected = spec["expected"]
 
         ok = got["ready"] == expected["ready"]

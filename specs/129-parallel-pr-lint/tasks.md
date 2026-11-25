@@ -213,7 +213,7 @@ MVP = Phases 1–3 plus T014–T016 from US2: a sharded suite whose aggregate ca
 
 ## Review Gate Round 4 Findings
 
-- [ ] Review finding: Self-clearing hold for missing lint aggregate is unbounded
+- [x] Review finding: Self-clearing hold for missing lint aggregate is unbounded
 
   If lint-workflows ran, every unit is green and no `lint` aggregate check appears (for example the run was cancelled or the runner was lost), `_gate_suite_pending` stays True forever and the board treats the PR as still running instead of durably not-ready.
 
@@ -221,7 +221,7 @@ MVP = Phases 1–3 plus T014–T016 from US2: a sharded suite whose aggregate ca
 
   Detail: Bound the hold by head age or a retry count, then fall back to a durable not-ready.
 
-- [ ] Review finding: Pending and green matchers disagree on what counts as the lint workflow
+- [x] Review finding: Pending and green matchers disagree on what counts as the lint workflow
 
   `_gate_suite_pending` matches the workflow by exact equality with LINT_WORKFLOW_NAME, but `_gate_suite_green` uses a loose `workflowName.lower()` substring check, so a display-name change can make a pending window read as a durable failure.
 
@@ -229,7 +229,7 @@ MVP = Phases 1–3 plus T014–T016 from US2: a sharded suite whose aggregate ca
 
   Detail: Share one matcher between the two functions.
 
-- [ ] Review finding: Gate 174 self-test pairing silently skips non-em-dash step names
+- [x] Review finding: Gate 174 self-test pairing silently skips non-em-dash step names
 
   Gate 174 pairs a self-test with its gate only when the gate step name starts with `<Gate N> —` (em dash). A colon or ASCII hyphen name, or a self-test without a gate id, gives want=None and the missing-guard requirement is skipped.
 
@@ -237,7 +237,7 @@ MVP = Phases 1–3 plus T014–T016 from US2: a sharded suite whose aggregate ca
 
   Detail: Fail when a `Gate N self-test` step has no paired gate step or lacks the `outcome != 'failure'` guard.
 
-- [ ] Review finding: Comments that point 'above' may now cross shard boundaries
+- [x] Review finding: Comments that point 'above' may now cross shard boundaries
 
   Splitting the lint job into shards at gate boundaries can leave comments such as 'see Gate 107's comment above' pointing at content now in a different job.
 
@@ -245,7 +245,7 @@ MVP = Phases 1–3 plus T014–T016 from US2: a sharded suite whose aggregate ca
 
   Detail: Re-point each reference by gate number and workflow, or confirm the target is in the same shard. Workflow comments are byte-compared by gates (CLAUDE.md).
 
-- [ ] Review finding: Aggregate gate models job-level success() too strictly
+- [x] Review finding: Aggregate gate models job-level success() too strictly
 
   `_ctx` treats job-level success() as 'every needed job is success', but Actions also accepts skipped needs, so an `if:` like `!failure() && pull_request` is misjudged when a unit is skipped.
 

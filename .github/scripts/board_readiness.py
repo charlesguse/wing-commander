@@ -162,7 +162,7 @@ def _gate_suite_green(rollup):
     result counts (latest_per_check)."""
     for entry in latest_per_check(rollup):
         name = entry.get("name") or entry.get("context") or ""
-        if name == "lint" and _is_gate_suite_workflow(entry.get("workflowName")):
+        if name == "lint" and _is_lint_workflow_entry(entry):
             return _entry_state(entry) in GREEN_STATES
     return False
 
@@ -171,8 +171,45 @@ def _gate_suite_green(rollup):
 # the workflow's name, pinned there and by Gate 174.
 LINT_WORKFLOW_NAME = "lint · workflows"
 
+# How long after its last unit concluded a missing `lint` aggregate still
+# counts as GitHub being slow to queue it. Past this the run was cancelled
+# or lost, and the verdict is a durable not-ready (code review of #1233).
+AGGREGATE_PENDING_MAX_SECONDS = 15 * 60
 
-def _gate_suite_pending(rollup):
+
+def _is_lint_workflow_entry(entry):
+    """The one matcher for "this rollup entry belongs to lint-workflows",
+    shared by the green and pending readers so they cannot disagree."""
+    return (entry.get("workflowName") or "").strip().lower() == LINT_WORKFLOW_NAME.lower()
+
+
+def _parse_ts(value):
+    import datetime
+    try:
+        parsed = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed
+
+
+def _pending_expired(lint_entries, now):
+    """True when the newest `completedAt` among the lint entries is older
+    than AGGREGATE_PENDING_MAX_SECONDS. An entry with no usable timestamp
+    gives no evidence of age, so the hold stays (the pre-bound behaviour)."""
+    import datetime
+    stamps = [_parse_ts(e.get("completedAt")) for e in lint_entries]
+    stamps = [s for s in stamps if s is not None]
+    if not stamps:
+        return False
+    current = _parse_ts(now) if now else datetime.datetime.now(datetime.timezone.utc)
+    if current is None:
+        return False
+    return (current - max(stamps)).total_seconds() > AGGREGATE_PENDING_MAX_SECONDS
+
+
+def _gate_suite_pending(rollup, now=None):
     """specs/129-parallel-pr-lint: lint-workflows ran on this head (one of
     its units is in the rollup) but its `lint` aggregate has not reported.
     GitHub creates a job's check run only once every job it `needs` has
@@ -181,11 +218,11 @@ def _gate_suite_pending(rollup):
     on its own within seconds. A rollup with no lint-workflows entry at all
     is the workflow never running (a PR outside its paths: code review of
     #1010), which does not."""
-    lint_entries = [e for e in rollup
-                    if (e.get("workflowName") or "") == LINT_WORKFLOW_NAME]
-    return bool(lint_entries) and not any(
-        (e.get("name") or e.get("context") or "") == "lint"
-        for e in lint_entries)
+    lint_entries = [e for e in rollup if _is_lint_workflow_entry(e)]
+    return (bool(lint_entries)
+            and not any((e.get("name") or e.get("context") or "") == "lint"
+                        for e in lint_entries)
+            and not _pending_expired(lint_entries, now))
 
 
 # Public names for the merge-evidence audit (specs/125-merge-evidence-audit,
@@ -244,7 +281,7 @@ def _unmet_class(rollup, checks_green):
 
 
 def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
-                            kill_switch_paused):
+                            kill_switch_paused, now=None):
     """snapshot: {"headRefOid": str, "statusCheckRollup": [{"state"|
     "conclusion": str, "name"|"context": str, "workflowName": str}, ...]}
     -- the `gh pr view --json headRefOid,statusCheckRollup` shape, fetched
@@ -271,7 +308,7 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
         # The checks' own class, then the record's: the reason text below
         # reads the first, the record carries the second.
         checks_class = _unmet_class(rollup, checks_green)
-        aggregate_pending = checks_green and _gate_suite_pending(rollup)
+        aggregate_pending = checks_green and _gate_suite_pending(rollup, now)
         if aggregate_pending:
             checks_class = "self-clearing"
         other_unmet = not (zero_open_findings and backstop_holds and kill_switch_clear)

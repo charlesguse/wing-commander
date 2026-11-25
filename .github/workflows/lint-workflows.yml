@@ -1486,7 +1486,7 @@ jobs:
       # Auto-merge is the one thing this feature does that a human action
       # has to undo, so its decision is fixtured, not trusted. Numbered
       # 112, not the 104 tasks.md's T050 originally reserved — see Gate
-      # 107's comment above for the Maintainer Feedback renumbering.
+      # 107's comment (in lint-shard-5) for the Maintainer Feedback renumbering.
       # #826: it also pins how every review_gate marker reader gets its
       # comments — REST (`gh api .../issues/$N/comments --paginate`, pages
       # merged), never `gh issue|pr view --json comments`, whose
@@ -4787,7 +4787,7 @@ jobs:
       # specs/075 FR-014) and a target is configured, and still bumps the
       # reported iteration in standalone mode — proven against a real git
       # clone/remote, not a mock. Numbered 111, not the standalone slot tasks.md's T035 first
-      # drafted — see Gate 107's comment above for the Maintainer Feedback
+      # drafted — see Gate 107's comment (in lint-shard-5) for the Maintainer Feedback
       # renumbering.
       - name: "Gate 111 — wing-commander-fold-dispatch composite"
         if: "!cancelled()"
