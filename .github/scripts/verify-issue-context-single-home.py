@@ -3014,17 +3014,46 @@ def _mutation_check_read_only_git():
 _PUB_GRANT_LIT = PUBLISHED_GIT_READ_GRANT
 # Diagnose's tool-args line is told from the diagnose shadow's (whose
 # allowed list is the same) by the disallowed list that follows it: the
-# shadow's denies NotebookEdit right after Edit, diagnose's does not. The
-# pushd mutations match each list from its head through `Bash(pushd:*),`
-# and nothing after it, so a deny added after pushd (as spec 101's
-# Bash(gh:*) was) leaves them applying; a deny added before pushd in
-# either list means re-spelling that list's needle.
+# shadow's denies NotebookEdit, diagnose's does not.
 _DENY_HEAD = ('\n          default-disallowed-tools: '
               '"WebSearch,WebFetch,Write,Edit,')
 _DIAGNOSE_TAIL = _DENY_HEAD + 'Bash(git:*)'
-_PUSHD_SPAN = "Bash(git:*),Bash(cd:*),Bash(pushd:*),"
-_DIAGNOSE_PUSHD_DENY = _DENY_HEAD + _PUSHD_SPAN
-_SHADOW_PUSHD_DENY = _DENY_HEAD + "NotebookEdit," + _PUSHD_SPAN
+
+
+class DropDeny:
+    """A mutation that removes the element `token` from the one quoted,
+    comma-separated tool list in a workflow whose line holds every `must`
+    substring and no `must_not` one. It finds its target by membership,
+    not by the list's text, so reordering or extending a deny list (as
+    spec 101's Bash(gh:*) did, #991) leaves it applying (#889)."""
+
+    def __init__(self, token, must=(), must_not=()):
+        self.token, self.must, self.must_not = token, must, must_not
+
+    def resolve(self, text):
+        """-> (old, new) for str.replace, or None unless exactly one list
+        matches."""
+        hits = []
+        for line in text.splitlines(keepends=True):
+            if (any(m not in line for m in self.must)
+                    or any(m in line for m in self.must_not)):
+                continue
+            for quoted in re.findall(r'"([^"]*)"', line):
+                items = quoted.split(",")
+                if self.token in items:
+                    kept = ",".join(i for i in items if i != self.token)
+                    hits.append((line, line.replace(f'"{quoted}"',
+                                                    f'"{kept}"', 1)))
+        if len(hits) != 1 or text.count(hits[0][0]) != 1:
+            return None
+        return hits[0]
+
+    def __repr__(self):
+        return (f"DropDeny({self.token!r}, must={self.must!r}, "
+                f"must_not={self.must_not!r})")
+
+
+_SHADOW = ("default-disallowed-tools:", "NotebookEdit")
 
 # Each mutation rewrites a REAL workflow other than board-loop.yml in
 # memory the way a later edit could reopen #518; check 4b must catch
@@ -3041,26 +3070,24 @@ FLEET_READ_ONLY_GIT_MUTATIONS = (
      "              git log --oneline"),
     (".github/workflows/implement.yml",
      "progress composer stops denying Bash(git:*)",
-     '"WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage,Write,Edit,'
-     'Bash(git:*),Bash(cd:*)',
-     '"WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage,Write,Edit,'
-     'Bash(cd:*)'),
+     DropDeny("Bash(git:*)", must=("default-disallowed-tools:",)), None),
     (".github/workflows/implement.yml",
      "progress composer stops denying cd (the #518 review's cd escape)",
-     'Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*)"',
-     'Edit,Bash(git:*),Bash(pushd:*),Bash(popd:*)"'),
+     DropDeny("Bash(cd:*)", must=("default-disallowed-tools:",)), None),
+    (".github/workflows/implement.yml",
+     "progress composer stops denying pushd",
+     DropDeny("Bash(pushd:*)", must=("default-disallowed-tools:",)), None),
     (".github/workflows/implement.yml",
      "progress composer's grant drops -I",
      f'default-allowed-tools: "{_PUB_GRANT_LIT}"',
      f'default-allowed-tools: "{_PUB_GRANT_LIT.replace(" -I", "")}"'),
     (".github/workflows/watchdog.yml",
      "diagnose stops denying pushd",
-     _DIAGNOSE_PUSHD_DENY,
-     _DIAGNOSE_PUSHD_DENY.replace("Bash(pushd:*),", "", 1)),
+     DropDeny("Bash(pushd:*)", must=("default-disallowed-tools:",),
+              must_not=("NotebookEdit",)), None),
     (".github/workflows/watchdog.yml",
      "diagnose shadow stops denying pushd",
-     _SHADOW_PUSHD_DENY,
-     _SHADOW_PUSHD_DENY.replace("Bash(pushd:*),", "", 1)),
+     DropDeny("Bash(pushd:*)", must=_SHADOW), None),
     (".github/workflows/auto-update-spec-kit.yml",
      "evaluate-path's inline --allowedTools regains raw git diff (#518 review)",
      f'--allowedTools "Read,Grep,{_PUB_GRANT_LIT}"',
@@ -3071,15 +3098,13 @@ FLEET_READ_ONLY_GIT_MUTATIONS = (
      f'--allowedTools "Read,Grep,Bash(gh api:*),{_PUB_GRANT_LIT}"'),
     (".github/workflows/auto-update-spec-kit.yml",
      "evaluate-path's inline --disallowedTools stops denying Bash(git:*)",
-     '--disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git:*),'
-     'Bash(cd:*)',
-     '--disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(cd:*)'),
+     DropDeny("Bash(git:*)", must=("--disallowedTools",)), None),
     (".github/workflows/auto-update-spec-kit.yml",
      "evaluate-path's inline --disallowedTools stops denying cd",
-     'Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),'
-     'Bash(git commit:*),Bash(git push:*)"',
-     'Edit,Bash(git:*),Bash(pushd:*),Bash(popd:*),'
-     'Bash(git commit:*),Bash(git push:*)"'),
+     DropDeny("Bash(cd:*)", must=("--disallowedTools",)), None),
+    (".github/workflows/auto-update-spec-kit.yml",
+     "evaluate-path's inline --disallowedTools stops denying pushd",
+     DropDeny("Bash(pushd:*)", must=("--disallowedTools",)), None),
     (".github/workflows/auto-update-spec-kit.yml",
      "evaluate-path's prompt names the repo-local wrapper path",
      f"`python3 -I {PUBLISHED_GIT_READ_WRAPPER}`\n            with `log`",
@@ -3103,8 +3128,10 @@ FLEET_READ_ONLY_GIT_MUTATIONS = (
      'Bash(git show:*)"'),
     (".github/workflows/pr-conversation.yml",
      "classify stops denying Bash(git:*)",
-     '"Write,Edit,WebSearch,WebFetch,Bash(git:*),Bash(cd:*)',
-     '"Write,Edit,WebSearch,WebFetch,Bash(cd:*)'),
+     DropDeny("Bash(git:*)", must=("default-disallowed-tools:",)), None),
+    (".github/workflows/pr-conversation.yml",
+     "classify stops denying pushd",
+     DropDeny("Bash(pushd:*)", must=("default-disallowed-tools:",)), None),
     (".github/workflows/pr-conversation.yml",
      "classify's prompt names the repo-local wrapper path",
      f"through `python3 -I {PUBLISHED_GIT_READ_WRAPPER}`",
@@ -3134,6 +3161,16 @@ def _mutation_check_fleet_read_only_git():
                 failures.append(f"mutation {label!r}: could not read "
                                 f"{workflow}: {exc}")
                 continue
+            if isinstance(old, DropDeny):
+                pair = old.resolve(original)
+                if pair is None:
+                    failures.append(
+                        f"mutation {label!r} no longer applies ({old!r} "
+                        f"matches no single tool list in {workflow}) -- "
+                        f"update FLEET_READ_ONLY_GIT_MUTATIONS so this gate "
+                        f"stays proven.")
+                    continue
+                old, new = pair
             if original.count(old) != 1:
                 failures.append(
                     f"mutation {label!r} no longer applies ({old!r} is not "
@@ -3354,6 +3391,33 @@ def _self_test_gh_rationale_home(tmpdir):
     return failures
 
 
+def _self_test_drop_deny():
+    """Fixture 0b: DropDeny finds its list by membership, not by text."""
+    failures = []
+    text = ('      x: "Read"\n'
+            '      default-disallowed-tools: "Bash(gh:*),Edit,Bash(pushd:*),'
+            'Bash(git:*),Bash(cd:*),Bash(new:*)"\n'
+            '      default-disallowed-tools: "NotebookEdit,Bash(pushd:*)"\n')
+    got = DropDeny("Bash(pushd:*)", must=("default-disallowed-tools:",),
+                   must_not=("NotebookEdit",)).resolve(text)
+    want_new = ('      default-disallowed-tools: "Bash(gh:*),Edit,'
+                'Bash(git:*),Bash(cd:*),Bash(new:*)"\n')
+    if not got or got[1] != want_new:
+        failures.append(f"fixture 0b: DropDeny on a reordered, extended deny "
+                        f"list gave {got!r}, not a pair ending {want_new!r}")
+    if DropDeny("Bash(pushd:*)",
+                must=("default-disallowed-tools:",)).resolve(text) is not None:
+        failures.append("fixture 0b: DropDeny resolved a token two lists "
+                        "hold instead of refusing the ambiguous target")
+    if DropDeny("Bash(git",
+                must=("default-disallowed-tools:",)).resolve(text) is not None:
+        failures.append("fixture 0b: DropDeny matched a token prefix rather "
+                        "than a whole list element")
+    if not failures:
+        print("note: fixture 0b (DropDeny matches by membership) passed.")
+    return failures
+
+
 def _self_test_worktree_listing(tmpdir):
     """Fixture 0: _live_text_files() in a linked worktree sees a file
     committed to the index after its first listing."""
@@ -3436,6 +3500,10 @@ def run_self_test():
         # keyed on a `.git/index` that does not exist there, it was cached
         # for the process lifetime.
         failures.extend(_self_test_worktree_listing(tmpdir))
+
+        # Fixture 0b (#889): a deny-removal mutation still applies once its
+        # list is reordered or extended, and refuses an ambiguous target.
+        failures.extend(_self_test_drop_deny())
 
         # Fixture 1b (#499 rounds 4-5): the exact bypasses the reviews
         # found -- a bare subcommand grant (Bash(gh issue:*)), a fully-
