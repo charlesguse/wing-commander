@@ -57,11 +57,11 @@
 **Goal**: no `./` reference resolves inside an untrusted tree.
 **Independent Test**: exposed-job fixture fails; safe-job fixture passes; audit lists exposed jobs on main.
 
-- [ ] T022 [US3] Implement `.github/scripts/verify-untrusted-checkout-local-uses.py` per `contracts/untrusted-checkout-gate.md`: track checkout/artifact/extract/write placements, classify trusted vs untrusted by repository and ref, judge composites per calling job, read `repo-only-reusable-workflows.json` (FR-016a, FR-016b)
-- [ ] T023 [US3] Add `--self-test` fixtures: exposed job (PR-head checkout), artifact-extracted tree, passing safe job (sidecar and `.wc-pristine-repo`), and an unlisted `workflow_call` treated as repo-only (FR-006, US3 acceptance 4–5)
+- [X] T022 [US3] Implement `.github/scripts/verify-untrusted-checkout-local-uses.py` per `contracts/untrusted-checkout-gate.md`: track checkout/artifact/extract/write placements, classify trusted vs untrusted by repository and ref, judge composites per calling job, read `repo-only-reusable-workflows.json` (FR-016a, FR-016b)
+- [X] T023 [US3] Add `--self-test` fixtures: exposed job (PR-head checkout), artifact-extracted tree, passing safe job (sidecar and `.wc-pristine-repo`), and an unlisted `workflow_call` treated as repo-only (FR-006, US3 acceptance 4–5)
 - [ ] T024 [US3] Run the exposure audit over main and record the report in a comment on lifecycle issue #1188 (FR-014) — drafted as `specs/132-workflow-trigger-security/quickstart.md` evidence, posted by the maintainer in Phase 9
 - [ ] T025 [US3] Fold the checkout-before-`./` rule out of `.github/scripts/verify-board-loop-composite-provenance.py` and `.github/scripts/verify-lifecycle-review-gate-composite-provenance.py` into the new gate, or record why each keeps it, with no duplicated rule logic; update their self-tests (FR-016a one-home)
-- [ ] T026 [US3] Fix each exposed job the audit finds (including `pr-conversation.yml` `wing-commander-outstanding-task-item` step if still present) without adding an input, secret or output to a published stage (FR-015, SC-009)
+- [X] T026 [US3] Fix each exposed job the audit finds (including `pr-conversation.yml` `wing-commander-outstanding-task-item` step if still present) without adding an input, secret or output to a published stage (FR-015, SC-009)
 - [ ] T027 [US3] Register the gate in the gate registry and `.github/workflows/lint-workflows.yml` with `paths:` triggers; confirm gates parsing `uses: ./` still pass (FR-017)
 
 ## Phase 7: User Story 4 — adopter event policy docs (P2)
@@ -69,8 +69,8 @@
 **Goal**: one docs page lists every event, its gate and a sample policy; a check enforces coverage.
 **Independent Test**: every event under `on:` of `wing-commander-*.yml` appears in the sample policy.
 
-- [ ] T028 [US4] Update `docs/adoption.md`: events table (what each drives, how gated), `wc-event-policy` sample block, Evaluate-mode advice with the unresolved Enterprise question, fork-PR limit, permissions-vs-trigger explanation, SHA-pin freeze note (FR-018, FR-018a, FR-019, FR-021, FR-022)
-- [ ] T029 [US4] Implement `.github/scripts/verify-adopter-event-policy.py`: compare `on:` events of `wing-commander-*.yml` with the `wc-event-policy` block, with `--self-test` fixtures for a missing event (FR-020, SC-006)
+- [X] T028 [US4] Update `docs/adoption.md`: events table (what each drives, how gated), `wc-event-policy` sample block, Evaluate-mode advice with the unresolved Enterprise question, fork-PR limit, permissions-vs-trigger explanation, SHA-pin freeze note (FR-018, FR-018a, FR-019, FR-021, FR-022)
+- [X] T029 [US4] Implement `.github/scripts/verify-adopter-event-policy.py`: compare `on:` events of `wing-commander-*.yml` with the `wc-event-policy` block, with `--self-test` fixtures for a missing event (FR-020, SC-006)
 - [ ] T030 [US4] Register the gate in `.github/workflows/lint-workflows.yml` with `paths:` triggers for the wrappers and `docs/adoption.md`
 
 ## Phase 8: Polish
