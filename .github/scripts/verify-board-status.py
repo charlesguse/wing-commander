@@ -403,9 +403,9 @@ def proof_list_half():
             return {"workflow_runs": path_runs}
 
         def dl(repo, rid, tmp):
-            if download == "ok":
+            if download == "ok" or isinstance(download, dict):
                 with open(os.path.join(tmp, "proof-list-section.json"), "w", encoding="utf-8") as fh:
-                    json.dump(section, fh)
+                    json.dump(section if download == "ok" else download, fh)
             elif download == "bad":
                 with open(os.path.join(tmp, "proof-list-section.json"), "w", encoding="utf-8") as fh:
                     fh.write("{")
@@ -430,6 +430,12 @@ def proof_list_half():
           and run([dict(fresh, head_repository={"full_name": "x/y"})], {3: True})["status"] == "never")
     check("a missing artifact is unreadable", run([fresh], {3: True}, download="none")["status"] == "unreadable")
     check("a malformed artifact is unreadable", run([fresh], {3: True}, download="bad")["status"] == "unreadable")
+    # #889: a non-string form or build time would make render() raise and stop
+    # the whole Board status rewrite; the reader refuses it as unreadable.
+    for key, bad in (("full", 123), ("names_only", ["x"]), ("built_at", 5), ("built_at", None)):
+        typed = run([fresh], {3: True}, download=dict(section, **{key: bad}))
+        check("a section whose {0} is {1!r}, not a string, is unreadable".format(key, bad),
+              typed["status"] == "unreadable", typed)
     check("an unreadable history is unreadable with last good unknown",
           run([fresh], {3: True}, fail="workflows/") == {"status": "unreadable", "last_good_at": "unknown"})
 
@@ -685,6 +691,68 @@ def feature_health_half():
     check("render places the feature-health section after the board",
           bs.render(dict(SNAP, feature_health={"status": "never"})).startswith(bs.render(SNAP))
           and bs.FEATURE_HEALTH_MARKER not in bs.render(SNAP))
+    # #889: an unterminated <details> must not take the end marker with it.
+    open_table = (bs.FEATURE_HEALTH_MARKER + "\n**Feature health** — built x\n\n<details><summary>All</summary>\n"
+                  + "| row |\n" * 3 + bs.FEATURE_HEALTH_MARKER_END + "\n")
+    cut = bs.shorten_feature_health(open_table)
+    check("shortening a section whose <details> never closes keeps its end marker",
+          cut.endswith(bs.FEATURE_HEALTH_MARKER_END) and "| row |" not in cut and "Table shortened" in cut, cut)
+
+
+def fit_half():
+    """#889: every section render appends keeps the whole body within
+    MAX_BODY_UNITS, at and around the boundary, whatever the section's status.
+    The limit is lowered for the sweep so a small board sits right at it."""
+    import contextlib
+    import io
+    import board_spec_request_body as bsrb
+    base = bs.render(SNAP)
+    pl_section = {"schema": 1, "built_at": "2026-11-20T06:19:00Z", "full": "F" * 400 + "\n",
+                  "names_only": "N" * 200 + "\n"}
+    me_section = dict(pl_section, full="M" * 400 + "\n", names_only="m" * 200 + "\n")
+    fh_section = (bs.FEATURE_HEALTH_MARKER + "\n**Feature health** — built x\n" + "- `x` — failing\n" * 10
+                  + "\n<details><summary>All</summary>\n\n" + "| row |\n" * 40 + "</details>\n"
+                  + bs.FEATURE_HEALTH_MARKER_END + "\n")
+    cases = []
+    for status in ("paused", "failed", "never", "unreadable"):
+        cases.append(("proof list " + status, {"proof_list": {"status": status, "last_good_at": "2026-11-19"}}))
+        cases.append(("merge evidence " + status, {"merge_evidence": {"status": status, "last_good_at": "2026-11-19"}}))
+        cases.append(("feature health " + status, {"feature_health": {"status": status, "last_good_at": "2026-11-19"}}))
+    cases.append(("proof list built", {"proof_list": {"status": "built", "last_good_at": "x", "section": pl_section}}))
+    cases.append(("merge evidence built", {"merge_evidence": {"status": "built", "last_good_at": "x", "section": me_section}}))
+    cases.append(("feature health built", {"feature_health": {"status": "built", "section": fh_section}}))
+    cases.append(("feature health stale", {"feature_health": {"status": "stale", "section": fh_section,
+                                                              "built_at": "2026-11-17T06:29:00Z"}}))
+    cases.append(("all three built", {"proof_list": {"status": "built", "last_good_at": "x", "section": pl_section},
+                                      "merge_evidence": {"status": "built", "last_good_at": "x", "section": me_section},
+                                      "feature_health": {"status": "built", "section": fh_section}}))
+    saved = bsrb.MAX_BODY_UNITS
+    try:
+        for name, extra in cases:
+            snap = dict(SNAP, **extra)
+            bsrb.MAX_BODY_UNITS = 10 ** 9
+            top = bsrb.utf16_len(bs.render(snap))
+            over, left_out, raised = [], 0, None
+            for limit in range(bsrb.utf16_len(base), top + 2):
+                bsrb.MAX_BODY_UNITS = limit
+                err = io.StringIO()
+                try:
+                    with contextlib.redirect_stderr(err):
+                        got = bs.render(snap)
+                except Exception as exc:  # noqa: BLE001 -- any raise stops the rewrite
+                    raised = "{0} at {1}: {2!r}".format(name, limit, exc)
+                    break
+                if bsrb.utf16_len(got) > limit:
+                    over.append(limit)
+                if "left out" in err.getvalue():
+                    left_out += 1
+            check("{0}: render stays within the body limit at every limit from the bare board up".format(name),
+                  not over and not raised, raised or over[:5])
+            check("{0}: a section with no room at all is left out and logged".format(name), left_out > 0, left_out)
+    finally:
+        bsrb.MAX_BODY_UNITS = saved
+    check("append_section adds nothing for a section that was left out",
+          bs.append_section("body\n", "") == "body\n" and bs.append_section("body\n", "x\n") == "body\n\nx\n")
 
 
 def main():
@@ -694,6 +762,7 @@ def main():
     proof_list_half()
     merge_evidence_half()
     feature_health_half()
+    fit_half()
     print("verify-board-status: {0} failure(s).".format(len(failures)))
     return 1 if failures else 0
 
