@@ -58,6 +58,30 @@ EXPECTED_CASES = {
     # Every check green but no lint-workflows entry: durable, since that
     # check may never run for a PR outside its paths (code review of #1010).
     "lint-missing-durable",
+    # #889 (found by the code review of #1196): only each check's newest
+    # result counts, and a cancelled one is "not ready yet" (self-clearing),
+    # never a failure -- but it never hides a real failure either.
+    "cancelled-superseded-ready", "cancelled-newest-self-clearing",
+    "cancelled-queued-rerun-self-clearing", "cancelled-beside-failure-durable",
+    "failure-newer-than-success-durable",
+    # Code review of #1226, pass 1: gh writes a queued run's unset
+    # `startedAt` as Go's zero time, which must not read as the oldest
+    # result; and a check run with no workflow is never merged with
+    # another of the same name.
+    "queued-zero-time-rerun-self-clearing", "no-workflow-failure-durable",
+    # Code review of #1226, pass 3: a separate run of the same workflow on
+    # the head (a review and a review comment) never hides a failure, and
+    # a job cancelled before it started is set aside by its re-run.
+    "separate-runs-failure-durable", "cancelled-before-start-superseded-ready",
+    # Code review of #1226, pass 4: a run cancel-in-progress stopped on the
+    # head (a PR closed and reopened mid-run) is decided by the reopened
+    # run of the same job; a later skipped run decides nothing.
+    "cancelled-by-reopened-run-ready", "cancelled-then-skipped-run-self-clearing",
+    # Code review of #1226, pass 5: only the gate suite's workflow re-runs
+    # the same work in a later run; another workflow's later run (a third
+    # review after pr-conversation's group cancelled a pending one) never
+    # sets aside the cancelled run's dropped request.
+    "cancelled-pending-other-workflow-run-self-clearing",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"

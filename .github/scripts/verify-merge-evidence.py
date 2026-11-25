@@ -343,6 +343,31 @@ def check_review_round3_rollup():
     return problems
 
 
+def check_cancelled_superseded_reason():
+    """#889 (found by the code review of #1196): an unmet checks condition
+    names a check by its newest result. A lint run cancelled and then re-run
+    (the same workflow run, a later attempt) on the same head is not why
+    the merge was unmet when another check really failed."""
+    rollup = [
+        {"name": "lint", "workflowName": "lint · workflows", "status": "COMPLETED",
+         "detailsUrl": "https://github.com/o/r/actions/runs/100/job/1",
+         "conclusion": "CANCELLED", "startedAt": "2026-11-25T02:46:46Z"},
+        {"name": "lint", "workflowName": "lint · workflows", "status": "COMPLETED",
+         "detailsUrl": "https://github.com/o/r/actions/runs/100/job/2",
+         "conclusion": "SUCCESS", "startedAt": "2026-11-25T02:52:57Z"},
+        {"name": "harness tests", "workflowName": "lint · workflows", "status": "COMPLETED",
+         "detailsUrl": "https://github.com/o/r/actions/runs/100/job/3",
+         "conclusion": "FAILURE", "startedAt": "2026-11-25T02:52:57Z"},
+    ]
+    problems = []
+    for rule in (me.RULE_ALL, me.RULE_NO_GATE):
+        got = me._checks_condition(rollup, rule)
+        if got.get("result") != "unmet" or got.get("reason") != "harness tests is FAILURE":
+            problems.append("cancelled-superseded reason ({0}): expected the failing check, "
+                            "got {1!r}".format(rule, got))
+    return problems
+
+
 def check_review_round3_kind():
     """Finding 1 (round 3): the runtime half assigns each PR's kind once, with
     the run's prefixes and base branch, and evaluate() reuses it, so a
@@ -1179,6 +1204,7 @@ def main():
     problems = check_verdicts(base_doc) + check_audits(base_doc) + check_ledger() + check_download_errors() \
         + check_review_round1() + check_review_round2() + check_review_round3_rollup() \
         + check_review_round3_open() + check_review_round3_kind() + check_review_round3_linked_issue()
+    problems += check_cancelled_superseded_reason()
     problems += check_single_home(read(".github/scripts/wc_merge_evidence.py"))
     problems += check_review_round4() + check_pass_report_titles() + check_pass_report_titles_noticed() + check_sc003()
     problems += check_final_review_links()

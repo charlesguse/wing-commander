@@ -27,7 +27,7 @@ LIFECYCLE = os.path.join(ROOT, ".github", "workflows", "lifecycle-review-gate.ym
 BOARD = os.path.join(ROOT, ".github", "workflows", "board-loop.yml")
 HELPERS = ("wc_convergence.py", "wc_review_finding_fingerprint.py", "board_item_marker.py",
            "board_spec_request_body.py", "wc_lifecycle_review_marker.py",
-           "lifecycle_readiness.py")
+           "lifecycle_readiness.py", "board_readiness.py")
 BOT = "wing-commander-bot[bot]"
 ISSUE = "42"
 BASH = resolve_bash()
@@ -93,9 +93,10 @@ class LoopRepo(unittest.TestCase):
         return path
 
     def run_shipped(self, path, name, env, path_prepend=None):
-        rc, out, outputs, _ = run_step(BASH, find_step(path, name)["run"], self.repo, env,
-                                       self.runner_temp, path_prepend=path_prepend)
+        rc, out, outputs, summary = run_step(BASH, find_step(path, name)["run"], self.repo, env,
+                                             self.runner_temp, path_prepend=path_prepend)
         self.assertEqual(rc, 0, out)
+        self.summary = summary
         return outputs
 
 
@@ -405,9 +406,16 @@ class LifecycleSelect(LoopRepo):
                      "  *) exit 1 ;;\n"
                      "esac\n".format(issue=ISSUE, **data))
         os.chmod(stub, os.stat(stub).st_mode | stat.S_IEXEC)
-        return self.run_shipped(LIFECYCLE, self.STEP, {
+        selected = self.run_shipped(LIFECYCLE, self.STEP, {
             "GH_TOKEN": "x", "GITHUB_REPOSITORY": "o/r", "BOT_LOGIN": BOT,
             "PATH": bindir + os.pathsep + os.environ["PATH"]}, path_prepend=bindir)["pr-number"]
+        # The readiness prefilter really ran: a lifecycle_readiness.py that
+        # cannot load its imports lands in the "could not read" branch, and
+        # the oldest-candidate fallback would still select "7" (code review
+        # of #1226, pass 3).
+        self.assertNotIn("could not be read", self.summary or "")
+        self.assertNotIn("no candidate is ready", self.summary or "")
+        return selected
 
     def test_a_rebase_alone_does_not_re_arm_a_not_converging_stop(self):
         head = self.rebase_onto_new_main("pr1-fixed\nfix1\n")

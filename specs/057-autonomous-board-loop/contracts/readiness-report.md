@@ -15,7 +15,15 @@ def evaluate(pr_number: int) -> ReadinessDecision:
    fresh `statusCheckRollup` belongs to `head_sha`; an empty rollup is
    `checks_green: false` (a docs-only PR with no triggered checks is never
    reported ready — Principle VIII, the `lint-workflows.yml` path-filter
-   edge case named in the spec).
+   edge case named in the spec). Only each check's newest result counts:
+   an earlier attempt of the same workflow run on the same head (one
+   that was re-run) is set aside (`board_readiness.latest_per_check()`,
+   #889); a separate run of the same workflow (another event, a reopened
+   PR) is its own check and never hides a failure. A cancelled job of
+   the gate suite's workflow (`lint-workflows`) alone is set aside by a
+   later, non-skipped run of the same job (a PR closed and reopened
+   mid-run); another workflow's later run answers a different event and
+   never sets a cancelled one aside.
 2. **Gate suite green on `head_sha`** (research.md D13): the
    `lint-workflows` entry within that same fresh rollup, not a second
    local re-run.

@@ -15,8 +15,12 @@ freshness guarantee.
 `gh` call; `evaluate()` is the runtime wrapper that fetches the snapshot.
 """
 import json
+import os
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import board_readiness  # noqa: E402
 
 CONDITIONS = ("checks_green", "gate_suite_green", "mergeable",
               "not_yet_reviewed", "kill_switch_clear")
@@ -31,33 +35,22 @@ OWN_STATUS_CONTEXT = "lifecycle-review-gate"
 
 
 def _checks_green(rollup):
-    """Mirrors board_readiness.py's own _checks_green: an empty rollup is
-    not green, and every entry must have reached a terminal, non-failing
-    state. This gate's own status (OWN_STATUS_CONTEXT) is left out before
-    either test, so it can neither block a round nor stand in for a real
-    check on an otherwise empty rollup."""
-    rollup = [e for e in rollup if e.get("context") != OWN_STATUS_CONTEXT]
-    if not rollup:
-        return False
-    for entry in rollup:
-        state = (entry.get("state") or entry.get("conclusion") or "").upper()
-        if state not in ("SUCCESS", "NEUTRAL", "SKIPPED"):
-            return False
-    return True
+    """board_readiness.py's own _checks_green, called rather than copied
+    (#889): an empty rollup is not green, and every check's newest result
+    must have reached a terminal, non-failing state. This gate's own
+    status (OWN_STATUS_CONTEXT) is left out before either test, so it can
+    neither block a round nor stand in for a real check on an otherwise
+    empty rollup."""
+    return board_readiness.checks_green(
+        [e for e in rollup if e.get("context") != OWN_STATUS_CONTEXT])
 
 
 def _gate_suite_green(rollup):
-    """Reuses board_readiness.py::_gate_suite_green's exact matching logic
-    (T006) rather than re-deriving it: a CheckRun's own `name` is its job
-    id ("lint"), never the workflow's display name, which only ever shows
-    up in `workflowName`."""
-    for entry in rollup:
-        name = entry.get("name") or entry.get("context") or ""
-        workflow_name = (entry.get("workflowName") or "").lower()
-        if name == "lint" and "workflow" in workflow_name:
-            state = (entry.get("state") or entry.get("conclusion") or "").upper()
-            return state in ("SUCCESS", "NEUTRAL", "SKIPPED")
-    return False
+    """board_readiness.py's own _gate_suite_green, called rather than
+    copied (T006, #889): a CheckRun's own `name` is its job id ("lint"),
+    never the workflow's display name, which only ever shows up in
+    `workflowName`, and only the lint job's newest result counts."""
+    return board_readiness.gate_suite_green(rollup)
 
 
 def evaluate_from_snapshot(snapshot, review_gate, kill_switch_paused):

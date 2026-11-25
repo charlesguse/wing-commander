@@ -121,7 +121,7 @@ on one of its fix PRs; it posts one round record and writes nothing else.
 | Findings | in-scope findings are folded into `tasks.md` and built by one more implement cycle; the next round reviews the new head |
 | Rounds | 5. A round that fails to parse does not count |
 | Stops early | from round 3, as `not-converging`, when the count of findings is not falling, half or more are in code an earlier round wrote, a folded finding comes back, the diff churns two rounds running, or the diff grew by more than half. The PR is handed to a human |
-| Merges | only when `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is `true` (default off), and only when all eight conditions hold on the exact head: checks green, gate suite green, mergeable, reviewed at this head, kill switch clear, round clean, no open findings, no unresolved human changes-requested review |
+| Merges | only when `WING_COMMANDER_LIFECYCLE_AUTO_MERGE` is `true` (default off), and only when all eight conditions hold on the exact head: checks green (as defined under [Board loop](#board-loop)), gate suite green, mergeable, reviewed at this head, kill switch clear, round clean, no open findings, no unresolved human changes-requested review |
 | Kill switch | `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED` stops the review and the merge |
 
 The constitution names a ninth condition, no hold label on the lifecycle
@@ -161,6 +161,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | Spec-shaped, whatever its size | a change to a published stage's inputs or a composite's inputs and outputs |
 | Workflow files | a fix that edits `.github/workflows/` is held under `board:stalled` unless `WING_COMMANDER_BOARD_CAN_PUSH_WORKFLOWS` is `true` (default off), which also needs the App's Workflows permission |
 | Stalled | `board:stalled` after the round budget is spent, a review that stops converging, a backstop breach, a fix it cannot push, or three not-ready outcomes on one PR. Only a human removing the label re-admits the issue |
+| Checks green | every check's newest result on the PR's head is a success, neutral or skipped; an earlier attempt of the same workflow run (one that was re-run) does not count, but a separate run of the same workflow on that head (another event, a reopened PR) is its own check and must be green too, except that a cancelled job of the gate suite's workflow (lint-workflows) is decided by a later run of the same job that did not skip (a PR closed and reopened mid-run); another workflow's later run answers a different event, so it never sets a cancelled one aside. A cancelled check is not green, but it is not a failure either: the not-ready outcome clears when the check is re-run, instead of holding the item until a new commit. The lifecycle review gate and the merge audit use the same rule |
 | Model | `claude-sonnet-5-5` (`WING_COMMANDER_BOARD_LOOP_MODEL`); a `model:opus` label on the issue opts in to Opus |
 | Fix PR merge needs | switch on, kill switch clear, a complete snapshot of the head, an eligible fix PR (the App's own, `fix/<number>-…` → `main`, not touching the constitution), checks green, gate suite green, review converged, backstop holds |
 | Spec Kit bump merge needs | switch on, kill switch clear, a complete snapshot, the updater's own PR, checks green, gate suite green, verification passed at that head. No size limit |
