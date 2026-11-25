@@ -351,7 +351,9 @@ jobs:
       pr-number: ${{ steps.verify-pr.outputs.pr-number }}
       # internal job-to-job wiring only, never a workflow_call output (research.md D3) -- see
       # specs/041-implement-stall-notice/research.md D3.
-      refusal-reason: ${{ steps.preflight.outputs.reason || steps.spec.outputs.reason || steps.meta.outputs.reason || steps.buildable-wait.outputs.reason }}
+      # The buildable refusal counts only once its hand-off wrote: a failed
+      # hand-off posted nothing, so the stalled job must still report it.
+      refusal-reason: ${{ steps.preflight.outputs.reason || steps.spec.outputs.reason || steps.meta.outputs.reason || (steps.buildable-handoff.outcome == 'success' && steps.buildable-wait.outputs.reason) || '' }}
       agent-ran: ${{ steps.agent-ran.outputs.ran }}
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
       agent-started: ${{ steps.agent-ran.outputs.started }}
@@ -1509,7 +1511,7 @@ jobs:
       - name: Request re-review from the answered reviewer(s)
         id: re-review
         shell: bash
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.pr-state == 'open'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.pr-state == 'open' && env.WC_BUILDABLE_REFUSED != 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}

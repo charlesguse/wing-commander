@@ -200,6 +200,91 @@ def check_handoff_composite(failures, path=HANDOFF):
             failures.append(f"wing-commander-stalled-handoff missing {needle!r}")
 
 
+def check_refusal_paths(failures, fin_path=None):
+    """#889: the refusal's job output and the re-review guard, EVALUATED.
+
+    refusal-reason carries the buildable refusal only once its hand-off
+    succeeded: a failed hand-off posted nothing, so the survivor `stalled`
+    job (which runs only on an empty refusal-reason) must still report the
+    red run. The re-review request must not run on the refusal path."""
+    import yaml
+    from wc_gha_expr import interpolate, evaluate_if
+    fin_path = fin_path or os.path.join(ROOT, ".github", "workflows", "finalize.yml")
+    doc = yaml.safe_load(open(fin_path)) or {}
+    jobs = doc.get("jobs") or {}
+    expr = ((jobs.get("finalize") or {}).get("outputs") or {}).get("refusal-reason", "")
+    stalled_if = (jobs.get("stalled") or {}).get("if", "")
+    reason = "buildable tasks remain (2 unchecked)"
+    for outcome, want in (("success", reason), ("failure", ""), ("skipped", "")):
+        ctx = {"steps.buildable-wait.outputs.reason": reason,
+               "steps.buildable-handoff.outcome": outcome}
+        got = interpolate(expr, ctx)
+        if got != want:
+            failures.append(f"finalize.yml refusal-reason with the hand-off {outcome}: "
+                            f"expected {want!r}, got {got!r}")
+        if outcome == "failure":
+            sctx = {"needs.verify-image-prerequisites.result": "success", "cancelled()": False,
+                    "needs.finalize.result": "failure", "needs.finalize.outputs.refusal-reason": got}
+            if not evaluate_if(stalled_if, sctx):
+                failures.append("finalize.yml: a failed buildable hand-off must still reach the stalled job")
+    got = interpolate(expr, {"steps.preflight.outputs.reason": "no credential"})
+    if got != "no credential":
+        failures.append(f"finalize.yml refusal-reason lost the preflight reason (got {got!r})")
+    steps = (jobs.get("finalize") or {}).get("steps") or []
+    rr = next((st for st in steps if (st or {}).get("id") == "re-review"), None)
+    if rr is None:
+        failures.append("finalize.yml lost its re-review step")
+        return
+    base = {"steps.lifecycle-gate.outputs.is-open": "true", "steps.diff.outputs.pr-state": "open"}
+    if evaluate_if(rr.get("if", ""), dict(base, **{"env.WC_BUILDABLE_REFUSED": "true"})):
+        failures.append("finalize.yml re-review request must not run on the buildable-refusal path")
+    if not evaluate_if(rr.get("if", ""), dict(base, **{"env.WC_BUILDABLE_REFUSED": ""})):
+        failures.append("finalize.yml re-review request no longer runs on an open PR")
+
+
+def check_handoff_marker_long_history(failures, path=HANDOFF):
+    """#889: the marker test survives a comment history longer than a pipe
+    buffer. `printf | grep -qF` under pipefail reads the writer SIGPIPE'd by
+    grep's early exit as "no marker" and posts a duplicate comment."""
+    import yaml
+    from wc_shell_harness import step_shell
+    name = "Post the one hand-off comment"
+    act = yaml.safe_load(open(path)) or {}
+    st = next((s for s in (act.get("runs") or {}).get("steps") or [] if (s or {}).get("name") == name), None)
+    if st is None:
+        failures.append(f"wing-commander-stalled-handoff lost its {name!r} step")
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        stub = os.path.join(tmp, "bin")
+        os.makedirs(stub)
+        filler = os.path.join(tmp, "filler")
+        with open(filler, "w") as fh:
+            fh.write("<!-- wing-commander-finalize-buildable-refusal iteration=3 -->\n")
+            fh.write(("x" * 1023 + "\n") * 4096)
+        posted = os.path.join(tmp, "posted")
+        with open(os.path.join(stub, "gh"), "w") as fh:
+            fh.write('#!/bin/bash\ncase "$1 $2" in\n'
+                     f'  "issue view") cat "{filler}" ;;\n'
+                     f'  "issue comment") touch "{posted}" ;;\n'
+                     "esac\n")
+        os.chmod(os.path.join(stub, "gh"), 0o755)
+        script = os.path.join(tmp, "step.sh")
+        with open(script, "w") as fh:
+            fh.write(st["run"])
+        body = os.path.join(tmp, "body.md")
+        open(body, "w").write("prose\n")
+        env = dict(os.environ, PATH=stub + os.pathsep + os.environ.get("PATH", ""),
+                   GH_TOKEN="x", ISSUE="1", SPEC_DIR="specs/999-x", BODY_FILE=body,
+                   MARKER_KIND="finalize-buildable-refusal", NEXT_ITER="3",
+                   GITHUB_REPOSITORY="o/r", GITHUB_STEP_SUMMARY=os.devnull)
+        argv = [a.replace("{0}", script) for a in step_shell(path, name)]
+        proc = subprocess.run(argv, env=env, capture_output=True, text=True)
+        if proc.returncode != 0 or os.path.exists(posted):
+            failures.append("wing-commander-stalled-handoff re-posts its hand-off comment when the marker "
+                            f"sits in a long comment history (rc={proc.returncode}, "
+                            f"posted={os.path.exists(posted)})")
+
+
 def check_watchdog_handoff(failures):
     """FR-015 hand-off (stage stalled + stalled label) yields no stage-mismatch."""
     fx = os.path.join(vbc.FIXTURES, "watchdog-handoff", "stalled-handoff.expected")
@@ -222,6 +307,8 @@ def main():
     check_fixtures(failures)
     check_review_gate_skip(failures)
     check_wiring(failures)
+    check_refusal_paths(failures)
+    check_handoff_marker_long_history(failures)
     if failures:
         for f in failures:
             print(f"FAIL: {f}")
