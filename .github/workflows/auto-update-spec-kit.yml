@@ -1654,41 +1654,21 @@ jobs:
           # maintainer at this step's own `::error::` line, exactly as it does
           # for the two failures above.
           #
-          # The CLI's own version stamps cannot vouch for it either (found by
-          # the code review of #983). Every run of `integration upgrade`
-          # rewrites .specify/integration.json and each integration manifest's
-          # `version` and `installed_at`, so a partial upgrade that restamped
-          # and installed nothing would pass a bare "anything under .specify/
-          # changed" test. Both are left out of the path check below, and a
-          # manifest counts only when its `files` map (installed path to
-          # content hash, the record of what was actually installed) differs
-          # from the default branch's.
+          # The CLI's own version stamps (.specify/integration.json, each
+          # manifest's `version` and `installed_at`) DO count, deliberately.
+          # Upstream's `integration upgrade` writes them only after every
+          # file is installed (a failed install is journaled back and exits
+          # non-zero, failing the step above), so a diff of stamps alone with
+          # exit 0 means the candidate's artifacts are byte-identical to the
+          # pin's: a CLI-only release, which is a clean bump. v1.2.3 (#1089)
+          # and v1.3.2 (#1124) were both exactly that. Excluding the stamps
+          # (proposed by the code review of #983) refuses every such release,
+          # and the still-settled tracking issue re-runs and re-fails it daily.
           speckit_changed="$(git status --porcelain -- \
             '.specify' ':(glob).claude/skills/speckit-*/**' \
-            ':(exclude).specify/init-options.json' \
-            ':(exclude).specify/integration.json' \
-            ':(exclude,glob).specify/integrations/*.manifest.json')"
-          manifests=()
-          while IFS= read -r -d '' manifest; do
-            manifests+=("$manifest")
-          done < <(git ls-files -z --cached --others --exclude-standard -- ':(glob).specify/integrations/*.manifest.json')
-          for manifest in ${manifests[@]+"${manifests[@]}"}; do
-            [ -z "$speckit_changed" ] || break
-            files_before=absent
-            if git cat-file -e "HEAD:$manifest" 2>/dev/null; then
-              files_before="$(git show "HEAD:$manifest" | jq -cS '.files // null' 2>/dev/null)" || files_before=unreadable
-            fi
-            files_after=absent
-            if [ -f "$manifest" ]; then
-              files_after="$(jq -cS '.files // null' "$manifest" 2>/dev/null)" || files_after=unreadable
-            fi
-            # A manifest the CLI left unreadable is no evidence of anything.
-            if [ "$files_after" != unreadable ] && [ "$files_before" != "$files_after" ]; then
-              speckit_changed="$manifest (files map)"
-            fi
-          done
+            ':(exclude).specify/init-options.json')"
           if [ -z "$speckit_changed" ]; then
-            echo "::error::wing-commander auto-update-spec-kit prepare: 'specify integration upgrade claude --script sh --force' exited 0 for v${CANDIDATE} but changed no Spec Kit artifact. Expected at least one added, modified or deleted path under .specify/ (other than .specify/init-options.json and the CLI's own version stamps, .specify/integration.json and the integration manifests) or .claude/skills/speckit-*/, or a change to an integration manifest's files map; a manifest's version or installed_at alone does not count. This is Spec Kit's documented no-op path — most often a missing or renamed .specify/integrations/claude.manifest.json — and committing now would ship a version-string-only diff that verify passes, pinning this repository to a version whose artifacts it does not have (#191). The candidate CLI's own output follows."
+            echo "::error::wing-commander auto-update-spec-kit prepare: 'specify integration upgrade claude --script sh --force' exited 0 for v${CANDIDATE} but changed no Spec Kit artifact. Expected at least one added, modified or deleted path under .specify/ (other than .specify/init-options.json) or .claude/skills/speckit-*/. This is Spec Kit's documented no-op path — most often a missing or renamed .specify/integrations/claude.manifest.json — and committing now would ship a version-string-only diff that verify passes, pinning this repository to a version whose artifacts it does not have (#191). The candidate CLI's own output follows."
             tail -c 2000 "$RUNNER_TEMP/prepare-install.log"
             exit 1
           fi
