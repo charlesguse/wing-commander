@@ -755,6 +755,29 @@ LOCATOR_CASES = [
     ("pass 3: fish -C reads its heredoc after the string",
      "fish -C 'x' <<'E'\ngh api x -X DELETE\nE", [dis("unquoted-heredoc")]),
     ("pass 3: make -C is no fish -C", "make -C dir; echo 'gh x'", [men("quoted")]),
+    # A variable assigned a value that starts with gh, quoted or not, may run
+    # it as a command (owner decision on #890, 2026-11-25; left open by #1259).
+    ("gh-valued variable: a quoted gh run by a lone $CMD", "CMD='gh'; $CMD api x",
+     [men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: a bare gh run by ${CMD}", "CMD=gh; ${CMD} issue view 1",
+     [dis("dynamic-command")]),
+    ("gh-valued variable: a double-quoted gh run by ${CMD}",
+     'CMD="gh"; ${CMD} issue view 1', [men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: export, local and a value with arguments",
+     "export GH='gh'; $GH api x\nlocal C=\" gh api\" ; \"$C\" x; G=\"gh $R\"; $G",
+     [men("quoted"), dis("dynamic-command"), men("quoted"), dis("dynamic-command"),
+      men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: as a prefix to another command, run by \"$@\"",
+     "CMD='gh' make; \"$@\" api x", [men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: an array or a subscripted element",
+     "a=('gh' api x); \"${a[@]}\"\nb[$k]=\"gh\"; ${b[$k]} x",
+     [men("quoted"), dis("dynamic-command"), men("quoted"), dis("dynamic-command")]),
+    ("an array or element that mentions gh after its start is no gh-valued variable",
+     'a=("the gh call" x); b[$k]="x gh"; "$@" y', [men("quoted")] * 2),
+    ("a message that mentions gh after its start is no gh-valued variable",
+     'msg="the gh call failed"; "$@" x; $CMD y; source "$F"', [men("quoted")]),
+    ("an assignment-shaped argument or a gh-prefixed word is no gh-valued variable",
+     "echo CMD='gh'; X=ghost; Y=gh-x; $CMD y", [men("quoted")]),
 ]
 
 

@@ -1755,7 +1755,7 @@ jobs:
                   break 2
                 elif [ -z "$settle_read_ok" ]; then
                   settle_unread="$(tail -c 500 "$RUNNER_TEMP/auto-release-poll-err.txt")"
-                  [ -n "$settle_unread" ] || settle_unread="gh issue view returned no output"
+                  [ -n "$settle_unread" ] || settle_unread="the gh issue view call returned no output"
                 fi
               done
               [ -z "$settle_unread" ] || break

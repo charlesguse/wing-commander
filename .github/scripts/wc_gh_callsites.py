@@ -15,7 +15,8 @@ or evaluator runs (`sh -c`, `eval`, `trap`, `ssh`, a backtick, a heredoc or
 pipe fed to a shell); every `gh` in one is a disallowed call. A command word
 that is a variable or expansion is a disallowed call wherever the script
 holds a `gh` that is neither a located call nor a provable mention (a `gh`
-in a `${...}` value never is one). The
+in a `${...}` value never is one), or assigns a variable a value that starts
+with `gh`, quoted or not (`CMD='gh'`). The
 scanner is one left-to-right pass with no re-slicing (linear in the script)
 and never raises; once it meets a construct it cannot track exactly, every
 `gh` after it is a disallowed call.
@@ -67,6 +68,8 @@ HEREDOC = re.compile(r"<<(-?)[ \t]*((?:'[^']*'|\"[^\"]*\"|\\.|[^\s;&|<>()`'\"\\]
 DELIM_PIECE = re.compile(r"'([^']*)'|\"([^\"]*)\"|\\(.)")
 FUNCTION_NAME = re.compile(r"[ \t]+[^\s;&|()<>]")    # `function NAME`, not `function)`
 TIME_GAP = re.compile(r"(?:[ \t]|\\\n)*")
+GH_VALUE = re.compile(r"\s*gh(?![\w-])")         # a value whose first word is gh
+GH_VALUE_RAW = re.compile(r"[\s\"'(]*gh(?![\w-])")  # the same, in source (`=('gh'`)
 ASSIGN = re.compile(r"[A-Za-z_]\w*(?:\[[^\]\n]*\])?\+?=")    # `a=`, `a+=`, `a[$k]=`
 DECLARE = frozenset(("declare", "local", "typeset", "readonly", "export"))
 GLOB = re.compile(r"\[(?:\[:[a-z]+:\]|[^\[\]/])+\]|[*?]")
@@ -148,6 +151,9 @@ class _Scan:
         # `${X:+"gh"}`): data where it stands, so no token, but a variable
         # may carry it to a lone `$CMD`, so no proof for one either.
         self.loose = set()
+        # An assignment whose value starts with gh (`CMD=gh`, `CMD='gh'`,
+        # `export GH="gh api"`): a lone `$CMD` may run it (locate()).
+        self.gh_valued = False
 
     # ---------------------------------------------------------------- tokens
     def _note(self, off, kind, **kw):
@@ -567,6 +573,9 @@ class _Scan:
         k = 0
         while k < len(words) and ASSIGN.match(words[k].raw):
             k += 1
+        if not self.gh_valued:
+            decl = k < len(words) and words[k].lit in DECLARE
+            self.gh_valued = any(map(_gh_value, words[:k] + (words[k + 1:] if decl else [])))
         tokens = [w.raw[9:] for w in words[:k] if w.raw.startswith("GH_TOKEN=")]
         prefix = (tokens or [None])[-1]
         odd_prefix = len(tokens) < k or any("=(" in w.raw for w in words[:k])
@@ -624,6 +633,23 @@ class _Scan:
                 self._note_word(w, "dynamic-command" if dynamic else "unquoted-wrapper")
             elif w.lit is None:
                 self.bare.append(w.off)
+
+
+def _gh_value(w):
+    """Whether word `w` is an assignment whose value, quoted or not, starts
+    with the word gh (`CMD=gh`, `CMD='gh'`, `GH="gh api"`): a variable that
+    may later run as a command (`$CMD`, `${CMD}`, `"$@"`). A message that
+    only mentions gh later in its value (`msg="the gh call failed"`) is not
+    one."""
+    m = ASSIGN.match(w.raw)
+    if not m:
+        return False
+    text = w.lit if w.lit is not None else w.pre   # the literal text before any expansion
+    if text.startswith(m.group()):
+        return GH_VALUE.match(text, len(m.group())) is not None
+    # An array (`a=('gh' api x)`) or a subscript holding an expansion
+    # (`a[$k]=gh`): read the source after the `=`, past quotes and `(`.
+    return GH_VALUE_RAW.match(w.raw, len(m.group())) is not None
 
 
 def _reads_stdin(words):
@@ -734,7 +760,10 @@ def locate(script):
     def stray(off):
         tok = sc.by_off.get(off)
         return tok is None or off in sc.loose and tok.kind == "mention"
-    if any(stray(m.start()) for m in GH.finditer(sc.g)) or any(map(stray, sc.loose)):
+    # A variable assigned a value that starts with gh (`CMD='gh'`) is one too,
+    # though the quoted gh in it is a mention.
+    if (sc.gh_valued or any(stray(m.start()) for m in GH.finditer(sc.g))
+            or any(map(stray, sc.loose))):
         for off in sc.bare:
             sc._flag(off, "dynamic-command")
     if sc.broken is not None:               # a `${...}` gh past it may be outside it
