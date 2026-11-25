@@ -32,6 +32,7 @@ fails on the missing-artifact scenario — reproducing the shipped bug.
 Usage: python3 .github/scripts/verify-act-dedup-guard.py
 Requires: bash, jq.
 """
+import sys; sys.exit("DRILL spec 129 T029: deliberately broken gate")  # drill
 import json
 import os
 import re

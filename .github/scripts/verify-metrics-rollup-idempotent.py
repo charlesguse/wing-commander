@@ -22,6 +22,7 @@ destination-path fixture, twice in a row: once with no prior rollup comment
 (POST), once with the first run's comment already in place (PATCH) — and
 asserts the region content is byte-for-byte identical both times.
 """
+import sys; sys.exit("DRILL spec 129 T029: deliberately broken gate")  # drill
 import os
 import shutil
 import stat

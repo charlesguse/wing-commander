@@ -18,6 +18,7 @@ sync.
 
 Usage: python3 .github/scripts/verify-gate-15.py
 """
+import sys; sys.exit("DRILL spec 129 T029: deliberately broken gate")  # drill
 import io
 import os
 import shutil
