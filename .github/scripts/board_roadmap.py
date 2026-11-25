@@ -53,7 +53,6 @@ NOT_OPEN = "not_open"
 HAND_EDIT = " Check the Roadmap's Proposed list and add its line by hand if it is missing."
 
 
-LIST_ITEM_RE = re.compile(r"^(?:[-*]|\d+[.)])[ \t]")
 # The owner orders the Proposed list (numbered, 2026-11-25); the loop never
 # places an item in that order. Its lines go on this sub-list instead, at a
 # fixed anchor: the label sits directly under the Proposed header, and each
@@ -62,16 +61,20 @@ LIST_ITEM_RE = re.compile(r"^(?:[-*]|\d+[.)])[ \t]")
 # a line into it (code review of #1222, pass 4: passes 2 and 3 each found
 # a list shape the list-end parser misread).
 UNORDERED_RE = re.compile(r"^(?:\*\*)?Not yet ordered\b", re.IGNORECASE)
+LOOP_ITEM_RE = re.compile(r"^- #\d+: .* Filed by the board loop \d{4}-\d{2}-\d{2} from ")
 UNORDERED_LABEL = "Not yet ordered (filed by the board loop, newest first; the owner places each in the Proposed order):"
 
 
 def _section(lines):
     """(header_index, end_index) of the Proposed section in `lines`
-    (keepends), or None when no header matches. The section runs to the
-    next heading."""
-    header = next((i for i, line in enumerate(lines) if HEADER_RE.match(line)), None)
-    if header is None:
+    (keepends), or None unless exactly one header matches. The section
+    runs to the next heading."""
+    headers = [i for i, line in enumerate(lines) if HEADER_RE.match(line)]
+    # The header is the loop's anchor: with two candidates (a "Proposed
+    # changes" heading elsewhere) it stands down rather than guess.
+    if len(headers) != 1:
         return None
+    header = headers[0]
     end = next((j for j in range(header + 1, len(lines)) if HEADING_RE.match(lines[j])), len(lines))
     return header, end
 
@@ -88,22 +91,27 @@ def is_listed(body, number):
     return any(item.match(line) for line in (body or "").splitlines())
 
 
+# One rule for the title (code review of #1222, pass 4, after passes 1-3
+# each found another way a title could render as markup): every @name
+# becomes a code span, and every other character that can start Markdown
+# or HTML -- emphasis, code, links and images, raw HTML, entities, strike,
+# tables, math -- is backslash-escaped, so the rest of the title is plain
+# text. A bare @name in a body edit would notify that user or team, and
+# GitHub finds mentions in rendered text, so escaping alone would not stop
+# one; a code span does. Every @name is wrapped, whatever precedes it.
+MENTION_RE = re.compile(r"(@[\w-]+(?:/[\w.-]+)?)")
+ACTIVE_RE = re.compile(r"([\\`*_\[\]<>&!~|$])")
+
+
 def _clean_title(title):
     text = str(title or "").replace("<!--", " ").replace("-->", " ")
     text = re.sub(r"\s+", " ", text).strip().rstrip(" .")
-    # Truncate before the @-wrapping below, so a cut never reopens a mention.
+    # Truncate before escaping, so a cut never splits an escape or a span.
     if len(text) > TITLE_MAX:
         text = text[:TITLE_MAX - 3].rstrip() + "..."
-    # Raw HTML in a title (an unclosed <details>) would restyle the rest of
-    # the owner's Roadmap; show it as text.
-    text = text.replace("<", "&lt;").replace(">", "&gt;")
-    # A bare @name in a body edit would notify that user or team. Escape
-    # the title's own backslashes and backticks first, so the code spans
-    # wrapped round each @name below are the only live ones: an odd
-    # backtick in the title can then never pair with one of them and leave
-    # the name bare (code review of #1222, pass 3).
-    text = text.replace("\\", "\\\\").replace("`", "\\`")
-    text = re.sub(r"(?<!\w)@([\w-]+(?:/[\w.-]+)?)", r"`@\1`", text)
+    parts = MENTION_RE.split(text)
+    text = "".join("`{0}`".format(part) if i % 2 else ACTIVE_RE.sub(r"\\\1", part)
+                   for i, part in enumerate(parts))
     return text or "(untitled)"
 
 
@@ -125,7 +133,7 @@ def add_line(body, number, line):
     """`body` with `line` directly under the Proposed section's "Not yet
     ordered" label, the label first created directly under the header
     when missing; `body` unchanged when #number is already listed
-    anywhere on the Roadmap; None when there is no Proposed header
+    anywhere on the Roadmap; None unless there is one Proposed header
     (board_backlog_edit.edit() reads None as a stand-down)."""
     body = body or ""
     lines = body.splitlines(True)
@@ -139,9 +147,9 @@ def add_line(body, number, line):
     label = next((j for j in range(header + 1, end) if UNORDERED_RE.match(lines[j].strip())), None)
     if label is not None:
         insert, block = label + 1, [line + newline]
-        # The loop's older items continue the list; anything else is
-        # set apart by a blank line.
-        joins = lambda text: bool(LIST_ITEM_RE.match(text))  # noqa: E731
+        # Only the loop's own older items continue the list; anything
+        # else, an owner's list included, is set apart by a blank line.
+        joins = lambda text: bool(LOOP_ITEM_RE.match(text))  # noqa: E731
     else:
         insert, block = header + 1, [UNORDERED_LABEL + newline, line + newline]
         # Whatever was under the header (the owner's order, prose) starts
@@ -218,7 +226,7 @@ def record_proposal(spec_number, line_id=None, originating=None, repository=None
             if result == bbe.APPLIED:
                 outcome, message = bbe.APPLIED, "listed under Proposed on the Roadmap (#{0})".format(roadmap)
             elif result == bbe.STAND_DOWN:
-                outcome, message = NO_HEADER, ("the Roadmap (#{0}) has no \"### Proposed\" header, "
+                outcome, message = NO_HEADER, ("the Roadmap (#{0}) has no single \"### Proposed\" header, "
                                                "so nothing was added".format(roadmap))
             else:
                 outcome, message = bbe.FAILED, ("concurrent edits kept dropping the line on the "
