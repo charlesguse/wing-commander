@@ -77,6 +77,11 @@ EXPECTED_CASES = {
     # head (a PR closed and reopened mid-run) is decided by the reopened
     # run of the same job; a later skipped run decides nothing.
     "cancelled-by-reopened-run-ready", "cancelled-then-skipped-run-self-clearing",
+    # Code review of #1226, pass 5: only the gate suite's workflow re-runs
+    # the same work in a later run; another workflow's later run (a third
+    # review after pr-conversation's group cancelled a pending one) never
+    # sets aside the cancelled run's dropped request.
+    "cancelled-pending-other-workflow-run-self-clearing",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"

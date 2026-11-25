@@ -94,6 +94,12 @@ def latest_per_check(rollup):
             and not _cancelled_by_later_run(entry, rollup)]
 
 
+def _is_gate_suite_workflow(workflow_name):
+    """The gate suite's workflow (lint-workflows.yml, "lint · workflows"),
+    matched the way _gate_suite_green matches it."""
+    return "workflow" in (workflow_name or "").lower()
+
+
 def _cancelled_by_later_run(entry, rollup):
     """A cancelled check run whose job a later, separate run of the same
     workflow ran again on the head (code review of #1226, pass 4): a PR
@@ -102,8 +108,16 @@ def _cancelled_by_later_run(entry, rollup):
     the same head decides the check. Only a stopped entry is set aside
     this way -- a failure still needs a later attempt of its own run
     (_check_key) -- and never for a skipped run, which did not run the
-    job and so decides nothing."""
+    job and so decides nothing. Only the gate suite's workflow
+    (_is_gate_suite_workflow) qualifies (code review of #1226, pass 5):
+    its every run on a head checks that same head, so a later run redoes
+    the cancelled one's work. A run of another workflow carries its own
+    event -- wing-commander-9-pr-conversation.yml's per-PR group cancels a
+    pending run's classify-and-announce when a third review arrives, and
+    the later run answers a different request, never the dropped one."""
     if _entry_state(entry) not in STOPPED_STATES or entry.get("context"):
+        return False
+    if not _is_gate_suite_workflow(entry.get("workflowName")):
         return False
     key, started = _check_key(entry), _started(entry)
     if key is None or not started:
@@ -148,8 +162,7 @@ def _gate_suite_green(rollup):
     result counts (latest_per_check)."""
     for entry in latest_per_check(rollup):
         name = entry.get("name") or entry.get("context") or ""
-        workflow_name = (entry.get("workflowName") or "").lower()
-        if name == "lint" and "workflow" in workflow_name:
+        if name == "lint" and _is_gate_suite_workflow(entry.get("workflowName")):
             return _entry_state(entry) in GREEN_STATES
     return False
 
