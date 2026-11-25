@@ -9,11 +9,19 @@ One place to see which specs are real work, which are in flight, and which are p
   - [x] Spec-shaped work is filed as `spec-proposal`, not `spec-request` (#901).
 
 ### Proposed (waiting on the owner's `spec-request`)
-- Spec 123 lever (b), follow-up: low-progress handling. Deferred until lever (a)'s effect is measured; no issue yet.
-- #1110: the lifecycle review gate converges. Owner asked for it 2026-11-06.
-- #1174: `verify-hardened-push` fails in the implement sandbox with a linked-worktree push error. Filed by the board loop 2026-11-22.
-- #1215: board loop messages explain the line. Owner direction 2026-11-25.
+Order agreed by the owner on 2026-11-25. Promote the next one when the previous one is past clarify.
+1. #1188: workflow security after a post on dangerous Actions triggers. Owner direction 2026-11-23.
+2. #1206: no gate runs the `.claude/skills/*/scripts` self-tests. Filed by the board loop 2026-11-24.
+3. #1180: `run-local-gates.py` cannot complete within the 10-minute tool limit. Filed by the board loop 2026-11-22.
+
+Not yet ordered (filed by the board loop; the owner places each in the order above):
 - #4242: Roadmap Proposed lines for loop-filed proposals. Filed by the board loop 2026-11-25 from Maintenance backlog line `bl-0123abcd`.
+
+Not specs:
+- #1167 (`trusted-file-tampered`) is already settled by #1181.
+- Spec 123 lever (b), follow-up: low-progress handling. Deferred until lever (a)'s effect is measured; no issue yet.
+
+Handled as fix PRs instead (owner, 2026-11-25): #1174, #1185, #1204, #1209, #1210 and #1211.
 
 On 2026-10-16, 17 bot-filed proposals that were really small defects (#997–#1049) were folded into #889 or closed as already fixed, at the owner's direction.
 

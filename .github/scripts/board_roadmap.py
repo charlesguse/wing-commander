@@ -12,6 +12,9 @@ under the Roadmap issue's "### Proposed (waiting on the owner's
 already calls board_duplicate_disposition.py, which calls
 record_proposal() here, so there is one call site and no workflow step.
 
+The owner orders the Proposed list, so the line goes on a "Not yet
+ordered" sub-list after that order, never into it (UNORDERED_LABEL).
+
 The Roadmap is found the way the backlog is: the one open
 `disposition:tracking` issue whose title starts "Roadmap"
 (board_backlog_lines.resolve_tracking()), never a hard-coded number. The
@@ -47,31 +50,46 @@ NOT_FOUND = "no_roadmap"
 NO_HEADER = "no_header"
 
 
+LIST_ITEM_RE = re.compile(r"^(?:[-*]|\d+[.)])[ \t]")
+# The owner orders the Proposed list (numbered, 2026-11-25); the loop never
+# places an item in that order. It appends to this sub-list instead, which
+# it creates after the section's first list when it is not there yet.
+UNORDERED_RE = re.compile(r"^(?:\*\*)?Not yet ordered\b", re.IGNORECASE)
+UNORDERED_LABEL = "Not yet ordered (filed by the board loop; the owner places each in the order above):"
+
+
 def _section(lines):
-    """(header_index, insert_index, end_index) of the Proposed section in
-    `lines` (keepends), or None when no header matches. insert_index is
-    just past the last item of the section's first list (continuation
-    lines included), or just past the header when the list is empty."""
+    """(header_index, end_index) of the Proposed section in `lines`
+    (keepends), or None when no header matches. The section runs to the
+    next heading."""
     header = next((i for i, line in enumerate(lines) if HEADER_RE.match(line)), None)
     if header is None:
         return None
     end = next((j for j in range(header + 1, len(lines)) if HEADING_RE.match(lines[j])), len(lines))
-    insert, seen = header + 1, False
-    for j in range(header + 1, end):
+    return header, end
+
+
+def _list_end(lines, start, end, skip_prose=True):
+    """Index just past the first list (bulleted or numbered, continuation
+    lines included) at or after `start`, before `end`; None when there is
+    none. With skip_prose=False the list must start at `start`."""
+    past = None
+    for j in range(start, end):
         text = lines[j].rstrip("\r\n")
-        if re.match(r"^[-*][ \t]", text):
-            seen, insert = True, j + 1
-        elif not seen:
-            continue
+        if LIST_ITEM_RE.match(text):
+            past = j + 1
+        elif past is None:
+            if not skip_prose:
+                return None
         elif text[:1] in (" ", "\t") and text.strip():
-            insert = j + 1
+            past = j + 1
         else:
             break
-    return header, insert, end
+    return past
 
 
 def _item_re(number):
-    return re.compile(r"^[ \t]*[-*][ \t]+(?:\[[ xX]\][ \t]+)?#{0}(?!\d)".format(int(number)))
+    return re.compile(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?#{0}(?!\d)".format(int(number)))
 
 
 def is_listed(body, number):
@@ -80,7 +98,7 @@ def is_listed(body, number):
     section = _section(lines)
     if section is None:
         return False
-    header, _insert, end = section
+    header, end = section
     item = _item_re(number)
     return any(item.match(lines[j]) for j in range(header + 1, end))
 
@@ -106,9 +124,11 @@ def proposed_line(number, title, date, line_id=None, originating=None):
 
 
 def add_line(body, number, line):
-    """`body` with `line` appended to the Proposed list; `body` unchanged
-    when #number is already listed there; None when there is no Proposed
-    header (board_backlog_edit.edit() reads None as a stand-down)."""
+    """`body` with `line` appended to the Proposed section's "Not yet
+    ordered" sub-list, created after the section's first list (the
+    owner's ordered one) when missing; `body` unchanged when #number is
+    already listed in the section; None when there is no Proposed header
+    (board_backlog_edit.edit() reads None as a stand-down)."""
     body = body or ""
     lines = body.splitlines(True)
     section = _section(lines)
@@ -117,10 +137,21 @@ def add_line(body, number, line):
     if is_listed(body, number):
         return body
     newline = "\r\n" if "\r\n" in body else "\n"
-    _header, insert, _end = section
+    header, end = section
+    label = next((j for j in range(header + 1, end) if UNORDERED_RE.match(lines[j].strip())), None)
+    if label is not None:
+        insert = _list_end(lines, label + 1, end, skip_prose=False) or label + 1
+        block = [line + newline]
+    else:
+        insert = _list_end(lines, header + 1, end) or header + 1
+        block = [UNORDERED_LABEL + newline, line + newline]
+        if insert > header + 1:
+            block.insert(0, newline)  # a blank line ends the ordered list above
+        if insert < len(lines) and lines[insert].strip():
+            block.append(newline)
     if insert > 0 and not lines[insert - 1].endswith(("\n", "\r")):
         lines[insert - 1] += newline
-    lines.insert(insert, line + newline)
+    lines[insert:insert] = block
     return "".join(lines)
 
 

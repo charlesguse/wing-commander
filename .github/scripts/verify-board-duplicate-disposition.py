@@ -14,7 +14,7 @@ failure-semantics table against a stubbed `gh` (the same `run=` injection
 seam `board_item_marker.add_stalled_label(issue_number, label, run=None)`
 already demonstrates), never a real repository.
 
-Cases R1-R10 (#1209) pin the Roadmap half of the same entry point: every
+Cases R1-R11 (#1209) pin the Roadmap half of the same entry point: every
 spec-proposal the loop files is listed under the Roadmap issue's
 "### Proposed" header (board_roadmap.py), once, through
 board_backlog_edit.edit(), and a Roadmap that cannot be found, has no
@@ -360,7 +360,8 @@ def _case_r8_shapes():
     if "- #4242: x.\r\n" not in out or "\n" in out.replace("\r\n", ""):
         return False
     empty = "### Proposed (waiting)\n\n### Parked\n- #4242: parked.\n"
-    if brm.add_line(empty, PROPOSAL, "- #4242: x.") != "### Proposed (waiting)\n- #4242: x.\n\n### Parked\n- #4242: parked.\n":
+    if brm.add_line(empty, PROPOSAL, "- #4242: x.") != ("### Proposed (waiting)\n" + brm.UNORDERED_LABEL
+                                                       + "\n- #4242: x.\n\n### Parked\n- #4242: parked.\n"):
         return False
     lookalike = "### Proposed\n- #42421: other.\n"
     if brm.is_listed(lookalike, PROPOSAL) or not brm.is_listed(lookalike, 42421):
@@ -447,6 +448,23 @@ def _case_r10_roadmap_failure_never_fails_routing():
 
 _case("R10: a Roadmap failure or missing header never fails or undoes the routing",
       _case_r10_roadmap_failure_never_fails_routing)
+
+
+def _case_r11_owner_order_kept():
+    """The owner numbers the Proposed list (2026-11-25): a numbered #N is
+    already listed, a second proposal joins the existing "Not yet
+    ordered" sub-list, and neither the numbered order nor "Not specs:"
+    gains a line."""
+    expected = _fixture("roadmap-body-expected.md")
+    if not brm.is_listed(expected, 1188) or brm.add_line(expected, 1188, "- #1188: again.") != expected:
+        return False
+    out = brm.add_line(expected, 4343, "- #4343: next.")
+    want = expected.replace("`bl-0123abcd`.\n", "`bl-0123abcd`.\n- #4343: next.\n", 1)
+    return out == want and out.count(brm.UNORDERED_LABEL) == 1
+
+
+_case("R11: the owner's numbered order and 'Not specs:' are never written into; "
+      "later proposals join 'Not yet ordered'", _case_r11_owner_order_kept)
 
 
 def run(verbose=True):
