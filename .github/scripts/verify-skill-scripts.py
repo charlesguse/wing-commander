@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 173 -- the skill scripts under .claude/skills/*/scripts/ keep working.
+"""Gate 176 -- the skill scripts under .claude/skills/*/scripts/ keep working.
 
 specs/131-skill-script-gate. Those scripts reach into .github/scripts and no
 other gate noticed when a name they import was renamed (the diff_name_list

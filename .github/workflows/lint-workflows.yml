@@ -5037,13 +5037,13 @@ jobs:
         if: "!cancelled()"
         run: bash .github/scripts/wc_convergence_tests/run-tests.sh
 
-      # Gate 173 — specs/131-skill-script-gate. The scripts under
+      # Gate 176 — specs/131-skill-script-gate. The scripts under
       # .claude/skills/*/scripts/ import names from .github/scripts and one
       # declares --self-test; nothing else noticed a rename or ran it.
-      - name: Gate 173 — skill scripts' cross-tree names resolve and their self-tests pass
+      - name: Gate 176 — skill scripts' cross-tree names resolve and their self-tests pass
         if: "!cancelled()"
         run: python3 .github/scripts/verify-skill-scripts.py
-      - name: Gate 173 fixtures — verify-skill-scripts self-test
+      - name: Gate 176 fixtures — verify-skill-scripts self-test
         if: "!cancelled()"
         run: python3 .github/scripts/verify-skill-scripts.py --self-test
 
