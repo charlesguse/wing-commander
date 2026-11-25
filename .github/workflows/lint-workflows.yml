@@ -162,8 +162,11 @@ permissions:
 
 jobs:
   # Gates 2 and 3 are pure static analysis over the workflow set in the
-  # checkout, so they run on the PR that introduces the defect.
-  lint:
+  # checkout, so they run on the PR that introduces the defect. The suite is
+  # split across lint-shard-1 .. lint-shard-8 (same steps, in order, cut
+  # between a gate and the next gate's comment); the `lint` aggregate below
+  # is the single required check.
+  lint-shard-1:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -1453,6 +1456,14 @@ jobs:
       # current").
       - name: Gate 30 — a turn-exhausted cycle is classified truncated only with positive evidence, and carried forward without ever reporting converged
         run: python3 .github/scripts/verify-truncated-cycle-carry-forward.py
+
+  lint-shard-2:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       # Gate 22 — specs/038-runner-container-passthrough FR-007: an adopter
       # binds a whole stage's jobs to their own runner/container image with
@@ -2808,6 +2819,14 @@ jobs:
       - name: Gate 26 self-test — the versioning-refs check detects what it claims to
         run: python3 .github/scripts/verify-versioning-refs.py --self-test
 
+  lint-shard-3:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
       # specs/043-durable-metrics-record — eight new gates, numbered 38-45
       # (37 was already taken; per the maintainer review on PR #267, MF-F7).
       # Each carries `if: '!cancelled()'` (not bare `always()`, matching
@@ -3141,6 +3160,14 @@ jobs:
       - name: Gate 63 self-test — a dropped callout, gate or cost line each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-plan-tasks-cost-line.py --self-test
+
+  lint-shard-4:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       # Gate 64 — specs/054-e2e-container-coverage (SC-009): auto-release.yml's
       # mode step used to derive the container/default-runner alternation
@@ -3615,6 +3642,14 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-review-fixup-push.py
 
+  lint-shard-5:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
       # Gate 82 — specs/057-autonomous-board-loop (FR-012/FR-064 bullet 1):
       # triage may close an issue on exactly two code-derived grounds, and
       # an agent's "already fixed on main" proposal must NEVER be one of
@@ -4022,6 +4057,14 @@ jobs:
       - name: "Gate 113 self-test — merge code with a silent constitution fails, and the Sync Impact Report's own prose never satisfies the check"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-constitution-merge-class-parity.py --self-test
+
+  lint-shard-6:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       # Gate 105 — specs/063-stage-clarify-label: every `stage:*` label
       # docs/setup.md documents either has a real writer among the shipped
@@ -4441,6 +4484,14 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-prove-path-concurrency.py --self-test
 
+  lint-shard-7:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
       # Gate 138 — specs/099-name-free-stage-identity T032/T033 (FR-012):
       # no FR-002 site in watchdog.yml or wing-commander-inspected-run-
       # identity/action.yml gates behavior on a reference display-name
@@ -4764,6 +4815,14 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-poll-credential-failure.py
 
+  lint-shard-8:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
       # Gate 128 — specs/074-serialized-fold-dispatch (FR-021/FR-022): the
       # fold-queue admission wiring actually serializes every stage-9
       # concurrency contender through a ticket, and fold-cycle-guard.yml's
@@ -5024,6 +5083,17 @@ jobs:
       - name: E2E provisioning single-home gate self-test
         run: python3 .github/scripts/verify-e2e-provisioning-single-home.py --self-test
 
+      # specs/129-parallel-pr-lint (FR-003, FR-004, FR-004a): the `lint`
+      # aggregate is the one required check; it must run when a unit failed,
+      # was cancelled or was skipped, and must fail unless every unit
+      # succeeded, so the split cannot go green by omission.
+      - name: Gate 173 — the lint aggregate runs always() on pull requests and fails unless every unit succeeded
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lint-aggregate.py
+      - name: Gate 173 self-test — a missing always(), !cancelled(), a skip-tolerant result check, an omitted unit and an unnamed failure each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lint-aggregate.py --self-test
+
   # Gate 4 — behavioral tests for the auto-update-spec-kit stage pair. Gates
   # 1-3 are static: they prove a workflow parses, registers, and is permitted
   # to run. None of them can see that a step's shell logic is simply wrong.
@@ -5060,6 +5130,44 @@ jobs:
       # actually ships. See .github/scripts/e2e-provisioning-tests/.
       - name: E2E provisioning behavioral tests
         run: bash .github/scripts/e2e-provisioning-tests/run-tests.sh
+
+  # The one required PR check named `lint` (specs/129-parallel-pr-lint,
+  # contracts/lint-workflow-layout.md). The suite runs as eight shard jobs
+  # plus `harness tests`; this aggregate is what every verdict reader and
+  # branch protection keep matching by the name `lint`. `always()` so a
+  # failed, cancelled or skipped unit still runs it and turns it red: a
+  # skipped aggregate would read as green by omission. It passes only when
+  # every unit's result is exactly `success`, and names each one that is
+  # not. Gate: verify-lint-aggregate.py.
+  lint:
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs:
+      - lint-shard-1
+      - lint-shard-2
+      - lint-shard-3
+      - lint-shard-4
+      - lint-shard-5
+      - lint-shard-6
+      - lint-shard-7
+      - lint-shard-8
+      - harness-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every lint unit succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          bad="$(printf '%s' "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"')"
+          if [ -n "$bad" ]; then
+            echo "::error::lint units that did not succeed:"
+            printf '%s\n' "$bad"
+            {
+              echo "### lint units that did not succeed"
+              printf '%s\n' "$bad" | sed 's/^/- /'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "All lint units succeeded."
 
   # Gate 1 — the catch-all. When GitHub cannot parse a workflow file it
   # registers the workflow with its PATH as its name and creates a failed
