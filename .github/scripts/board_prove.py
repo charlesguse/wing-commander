@@ -503,7 +503,7 @@ def redrive_target(changed_paths, dispatchable, uses_graph):
             return (candidate.rsplit("/", 1)[-1],
                     "wrapper reaching the changed {0}".format(hit[0]))
 
-    return None, "no workflow_dispatch-capable workflow reaches the changed path(s)"
+    return None, "no correlatable workflow_dispatch wrapper reaches the changed path(s)"
 
 
 def directed_stage(changed_paths, job_uses_graph, aimable_jobs):
