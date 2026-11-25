@@ -41,13 +41,13 @@ import copy
 import os
 import shlex
 import shutil
-import subprocess
 import sys
 import tempfile
 
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_repo_files import repo_files  # noqa: E402
 from wc_shell_harness import (ensure_jq, resolve_bash, run_step,
                               step_shell, use_utf8_stdout)
 
@@ -536,24 +536,10 @@ def _composite_steps(path):
 
 def _github_files(repo_root):
     """The tracked files under repo_root/.github -- an untracked scratch copy
-    or editor backup is not a second home. Outside a git work tree (the
-    self-test's fixtures) every file on disk is."""
-    try:
-        proc = subprocess.run(
-            ["git", "-C", repo_root, "ls-files", "-z", "--", ".github"],
-            capture_output=True, text=True, check=True)
-        inside = subprocess.run(
-            ["git", "-C", repo_root, "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, check=True).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        inside = None
-    if inside and os.path.realpath(inside) == os.path.realpath(repo_root):
-        return [os.path.join(repo_root, rel)
-                for rel in proc.stdout.split("\0") if rel]
-    found = []
-    for dirpath, _dirs, files in os.walk(os.path.join(repo_root, ".github")):
-        found.extend(os.path.join(dirpath, f) for f in files)
-    return found
+    or editor backup is not a second home (wc_repo_files falls back to a
+    walk outside a git work tree, as for the self-test's fixtures)."""
+    return [os.path.join(repo_root, rel) for rel in repo_files(repo_root)
+            if rel.startswith(".github/")]
 
 
 def check_single_home(repo_root="."):

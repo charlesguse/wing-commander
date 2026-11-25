@@ -315,6 +315,16 @@ def composite_check_script():
     return None
 
 
+def composite_check_shell():
+    """production_shell() of the composite's `id: check` step, with the
+    bash that inherits this process's environment (resolve_bash())."""
+    with open(COMPOSITE, encoding="utf-8") as fh:
+        action = yaml.safe_load(fh)
+    step = next(st for st in action["runs"]["steps"] if st.get("id") == "check")
+    return [resolve_bash() if arg == "bash" else arg
+            for arg in production_shell(step)]
+
+
 def _run_shell_case(script_path, bindir, runs_dir, work, comments, repo_root=REPO_ROOT,
                      board_stop_check_source=None):
     case_dir = tempfile.mkdtemp(dir=work)
@@ -337,10 +347,11 @@ def _run_shell_case(script_path, bindir, runs_dir, work, comments, repo_root=REP
         "RUNNER_TEMP": case_dir, "GITHUB_ACTION_PATH": action_path, "GITHUB_OUTPUT": out,
         "STUB_LOG": log, "STUB_COMMENTS": comments_path, "STUB_RUNS_DIR": runs_dir,
     })
-    # Actions runs a `shell: bash` step as `bash --noprofile --norc -eo
-    # pipefail {0}`: errexit is on whatever the script's own `set` says.
+    # The check step's own production shell (`shell: bash` is `bash
+    # --noprofile --norc -eo pipefail {0}`): errexit is on whatever the
+    # script's own `set` says.
     proc = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", script_path],
+        [script_path if arg == "{0}" else arg for arg in composite_check_shell()],
         cwd=repo_root, env=env, capture_output=True, text=True)
     with open(out, encoding="utf-8") as fh:
         outputs = dict(line.split("=", 1) for line in fh.read().splitlines() if "=" in line)
