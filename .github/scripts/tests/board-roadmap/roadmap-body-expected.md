@@ -14,7 +14,7 @@ Order agreed by the owner on 2026-11-25. Promote the next one when the previous 
 2. #1206: no gate runs the `.claude/skills/*/scripts` self-tests. Filed by the board loop 2026-11-24.
 3. #1180: `run-local-gates.py` cannot complete within the 10-minute tool limit. Filed by the board loop 2026-11-22.
 
-Not yet ordered (filed by the board loop; the owner places each in the order above):
+Not yet ordered (filed by the board loop; the owner places each in the Proposed order):
 - #4242: Roadmap Proposed lines for loop-filed proposals. Filed by the board loop 2026-11-25 from Maintenance backlog line `bl-0123abcd`.
 
 Not specs:

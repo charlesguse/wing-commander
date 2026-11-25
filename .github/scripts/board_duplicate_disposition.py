@@ -21,6 +21,12 @@ whichever step was left undone and never re-posts a duplicate comment,
 but whether a later SCHEDULED run makes that call depends on the call
 site and on which step failed (contracts/duplicate-disposition.md,
 failure semantics; #888).
+
+main() also lists the spec-request on the Roadmap's Proposed list first
+(board_roadmap.record_proposal(), #1209): best effort, outside the
+pre-checks above, and on every call -- it reads the tracking issues, the
+spec-request and the Roadmap, and writes the Roadmap only when the line
+is missing.
 """
 import argparse
 import json

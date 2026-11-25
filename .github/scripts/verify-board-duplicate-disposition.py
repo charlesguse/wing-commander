@@ -232,13 +232,21 @@ def _tracking(roadmap=True, extra=()):
     return issues + list(extra)
 
 
+def _is_title_read(args):
+    return args[:3] == ["gh", "issue", "view"] and "--json" in args \
+        and "title" in args[args.index("--json") + 1].split(",")
+
+
 class _RoadmapGh:
     """A fake GitHub for record_proposal(): `run` answers the tracking-issue
     list and the title read; fetch/write hold the Roadmap body.
     `drop_writes` writes that a concurrent editor overwrites."""
 
-    def __init__(self, body, tracking=None, drop_writes=0, list_fails=False, title=PROPOSAL_TITLE):
+    def __init__(self, body, tracking=None, drop_writes=0, list_fails=False, title=PROPOSAL_TITLE,
+                 state="OPEN", verify_fails=False):
         self.body = body
+        self.state = state
+        self.verify_fails = verify_fails
         self.tracking = _tracking() if tracking is None else tracking
         self.drop_writes = drop_writes
         self.list_fails = list_fails
@@ -253,13 +261,15 @@ class _RoadmapGh:
             if self.list_fails:
                 return FakeProc(returncode=1, stderr="HTTP 502")
             return FakeProc(stdout="".join(json.dumps(i) + "\n" for i in self.tracking))
-        if args[:3] == ["gh", "issue", "view"] and "title" in args:
-            return FakeProc(stdout=self.title + "\n")
+        if _is_title_read(args):
+            return FakeProc(stdout="{0}\t{1}\n".format(self.state, self.title))
         raise AssertionError("unexpected gh call: {0!r}".format(args))
 
     def fetch(self, issue):
         assert issue == ROADMAP, "fetched #{0}, not the Roadmap".format(issue)
         self.fetches += 1
+        if self.verify_fails and self.writes:
+            raise RuntimeError("gh api failed: HTTP 502")  # the read-back after a landed write
         return self.body
 
     def write(self, issue, body):
@@ -383,7 +393,7 @@ def _run_main(env, roadmap_gh, disposition_fails=False):
 
     def run_stub(args, **kwargs):
         if args[:2] == ["gh", "api"] and "labels=disposition:tracking" in args \
-                or args[:3] == ["gh", "issue", "view"] and "title" in args:
+                or _is_title_read(args):
             return roadmap_gh.run(args)
         kind = _run_stub_call_kind(args, repository)
         if kind == "view {0}".format(ORIGINATING):
@@ -442,7 +452,8 @@ def _case_r10_roadmap_failure_never_fails_routing():
     listed = _RoadmapGh(_fixture("roadmap-body.md"))
     code3, _o, _s = _run_main({}, listed, disposition_fails=True)
     return (code == 0 and "disposed=true" in outputs and gh.writes == [] and "by hand" in summary
-            and code2 == 0 and "disposed=true" in outputs2 and "Proposed" in summary2
+            and code2 == 0 and "disposed=true" in outputs2 and no_header.writes == []
+            and 'has no "### Proposed" header' in summary2
             and code3 == 1 and "#4242:" in listed.body)
 
 
@@ -495,6 +506,47 @@ def _case_r12_review_pass_1_shapes():
 
 _case("R12: moved proposals, no numbered order, an empty label, marked items and @-mentions",
       _case_r12_review_pass_1_shapes)
+
+
+def _case_r13_review_pass_2_shapes():
+    """Code review of #1222, pass 2: a loose numbered order (blank lines
+    between items) is one list, so the sub-list follows all of it; an
+    existing label with a blank line before its items keeps filing order;
+    the label never points "above" when it sits under the header; raw
+    HTML in a title is shown as text; a title ending in ? or a truncation
+    gets no doubled stop; truncation never reopens an @-mention; a
+    proposal that is no longer open is not listed; a failure after a
+    landed write never says the line is absent."""
+    loose = "### Proposed\n1. #1: a\n\n2. #2: b\n   more\n\nNot specs:\n- #3\n"
+    want = ("### Proposed\n1. #1: a\n\n2. #2: b\n   more\n\n" + brm.UNORDERED_LABEL
+            + "\n- #4242: x.\n\nNot specs:\n- #3\n")
+    if brm.add_line(loose, PROPOSAL, "- #4242: x.") != want:
+        return False
+    spaced = "### Proposed\n" + brm.UNORDERED_LABEL + "\n\n- #5: y\n"
+    if brm.add_line(spaced, PROPOSAL, "- #4242: x.") != spaced + "- #4242: x.\n":
+        return False
+    if "above" in brm.UNORDERED_LABEL:
+        return False
+    if "<details>" in brm.proposed_line(PROPOSAL, "Render <details> sections", TODAY, originating=7):
+        return False
+    if "?. " in brm.proposed_line(PROPOSAL, "Why does X fail?", TODAY, originating=7):
+        return False
+    long_line = brm.proposed_line(PROPOSAL, "a" * 190 + " @octocat", TODAY, originating=7)
+    if "...." in long_line or "@octo" in long_line.replace("`@", ""):
+        return False
+    closed = _RoadmapGh(_fixture("roadmap-body.md"), state="CLOSED")
+    outcome, _msg = closed.record()
+    if outcome != brm.NOT_OPEN or closed.writes or closed.fetches:
+        return False
+    landed = _RoadmapGh(_fixture("roadmap-body.md"), verify_fails=True)
+    outcome, msg = landed.record()
+    return outcome == "failed" and len(landed.writes) == 1 and "could not be updated" not in msg \
+        and "if it is missing" in brm.HAND_EDIT
+
+
+_case("R13: loose order, spaced label, label wording, title HTML/stops/truncation, "
+      "closed proposals and a failure after a landed write",
+      _case_r13_review_pass_2_shapes)
 
 
 def run(verbose=True):
