@@ -77,16 +77,22 @@ Every decision below was settled from this repository's precedent or from the ow
 
 ## D7 — The regression gate (FR-010)
 
-**Decision**: Add a new gate, `verify-maintainer-only-comments.py`, registered in lint-workflows.yml with the next free gate number at build time. It checks six things:
-- (a) the `if:` of every wrapper triggered by `issue_comment`, `pull_request_review` or `pull_request_review_comment` admits only through `author_association`, with no identity comparison (`user.id ==`, `issue.user`);
-- (b) clarify.yml has the D1 check step before `lifecycle-gate`, and both D1-gated steps carry its condition;
+**Decision**: Add a new gate, `verify-maintainer-only-comments.py`, registered in lint-workflows.yml with the next free gate number at build time (Gate 174). Its checks:
+- (a) in every wrapper triggered by `issue_comment`, `pull_request_review` or `pull_request_review_comment`, no job `if:`, step `if:`, step `env:` value or `with:` value compares or passes an identity (`.user.id`, `issue-author-id`, `commenter-id ==`, actor or author ids);
+- (b) clarify.yml has the D1 check step before `lifecycle-gate`, both D1-gated steps carry its condition, and every later step skips for a refused comment (only the two argument-composing steps run ungated);
 - (c) the issue-context filters contain no identity clause;
-- (d) the Spec Kit updater's comment-reply `if:` does not read `issue-author-id`;
+- (d) the Spec Kit updater's comment-reply `if:` compares no id;
 - (e) the e2e decision script has no author clause;
-- (f) clarify's allowed tools contain no `gh issue view`.
+- (f) clarify's allowed tools contain no `gh issue view`;
+- (g) both clarification-question callouts are preceded, in the same job and under the same `if:`, by the relay composite on the same body file;
+- (h) single home of the relay paragraph: its text appears only in the new composite, under `.github/` and in the live docs and contracts (i) reads, compared on letters and digits alone, so a re-wrapped or re-quoted copy is still found;
+- (i) no live doc or contract in the gate's list (spec 130's T001 inventory) writes an identity comparison (FR-009, SC-005);
+- (j) pr-conversation.yml's stage-side "Authorized-actor gate" step admits by `inputs.actor-association` alone, with no identity in its `if:`, `env:` or `run:` (FR-010 names stages too);
+- (k) single home of the relay step's comment: its key sentence appears only in clarify.yml, which carries Gate 47's `requester-relay-note` canonical marker, and intake.yml points at it;
+- (l) no workflow, composite or live doc or contract describes the issue's author in prose as admitted next to the maintainer set.
 
-It also checks (g): both clarification-question callouts are preceded by the relay composite on the same body file. And it enforces single home: the relay paragraph's literal appears only in the new composite.
+Two harnesses also run the shipped shell against a stub `gh`: the D1 check step, and the relay composite.
 
-Each check has a mutant that reintroduces the exception and must fail. docs/reference.md gains the gate's row.
+Each check has a mutant that reintroduces what it forbids, and the self-test counts a mutant as caught only when its own check reports it. docs/reference.md lists loops, defaults and switches, not gates, so it gains no row (T003).
 
 **Rationale**: CLAUDE.md says to add the "single home" check to a gate, because a rule with no gate behind it lasts only until the next session.
