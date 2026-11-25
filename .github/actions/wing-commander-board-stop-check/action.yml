@@ -129,14 +129,25 @@ runs:
     # already treated a failed read as "not closed, keep going" rather
     # than failing the job; this keeps that same fallback while gaining
     # the retry/timeout hardening lifecycle-gate already has.
+    #
+    # Run as lifecycle-gate's own script, from THIS composite's
+    # $GITHUB_ACTION_PATH, never as a nested `uses: ./.github/actions/
+    # wing-commander-lifecycle-gate` step (#1210): a composite's `uses: ./`
+    # resolves against the caller's $GITHUB_WORKSPACE, so the read only
+    # existed where the caller's workspace happened to hold a checkout,
+    # and ran whatever copy that checkout carried -- the same trap as the
+    # board-labels call below (#488). GH_REPO: the workspace need not be a
+    # checkout for `gh issue view` to know the repository.
     - name: Check whether the issue is already closed
       id: closed-check
       if: inputs.check-issue-closed == 'true'
       continue-on-error: true
-      uses: ./.github/actions/wing-commander-lifecycle-gate
-      with:
-        issue-number: ${{ inputs.issue-number }}
-        token: ${{ inputs.token }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+      run: bash "$GITHUB_ACTION_PATH/../_shared/lifecycle-issue-state.sh" gh issue view "$ISSUE_NUMBER" --json state --jq .state
 
     - name: Re-check kill switch and stop requests before any durable action
       id: check

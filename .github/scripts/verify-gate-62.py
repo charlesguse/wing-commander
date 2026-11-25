@@ -41,19 +41,28 @@ either list of its own:
     includes them:" sentence and the interpreter its gate-suite paragraph
     runs the suite with (`python`), so the prompt never advertises a
     command the agent's container does not have.
+  * the image's shellcheck must report the version in
+    .github/docker/e2e-reference-image/shellcheck.pin, the pin Gate 48
+    lints with, or the agent and CI disagree on shellcheck findings
+    (#1204); and, with no build, that pin is written nowhere else under
+    .github/ (no literal-version asset name or download URL, no hash
+    copy) and the Dockerfile still COPYs it -- the pin's single-home check.
 
 Self-test (--self-test): (0) checks the Docker-missing decision, (s) runs
 static cases with no build -- each implement.yml drift the gate relies on,
-the stray opt-out scan, and the preflight verdict parser -- then copies the
+the stray opt-out scan, the preflight verdict parser, the shellcheck
+version parser and the pin's single-home scan -- then copies the
 Dockerfile, required-tools.txt and implement.yml into an isolated temp tree
 and (a) builds the real, unmodified set and expects a clean pass, and (b)
 builds ONE drifted copy of the Dockerfile that drops jq together with
-python3-yaml, python-is-python3, yamllint and shellcheck, and expects the
-required-tools failure to name jq (the gap Gate 23's textual-only check
-leaves open, proving this gate fails on its own subject, Constitution
-VIII), the preflight failure to name pyyaml, and the prompted-command
-failure to name python, yamllint and shellcheck. One build serves all
-three because each assertion names its own package.
+python3-yaml, python-is-python3 and yamllint, and installs apt's
+shellcheck in place of the pinned one (the image before #1204), and
+expects the required-tools failure to name jq (the gap Gate 23's
+textual-only check leaves open, proving this gate fails on its own
+subject, Constitution VIII), the preflight failure to name pyyaml, the
+prompted-command failure to name python and yamllint, and the shellcheck
+version failure to name apt's 0.9 and the pin. One build serves all four
+because each assertion names its own package.
 
 Usage: python3 .github/scripts/verify-gate-62.py [--self-test]
 """
@@ -65,6 +74,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_actionlint import read_shellcheck_pin  # noqa: E402
 
 DOCKERFILE_DIR = ".github/docker/e2e-reference-image"
 REQUIRED_TOOLS_FILE = ".github/scripts/required-tools.txt"
@@ -99,6 +111,18 @@ SUITE_COMMAND = re.compile(r"`([A-Za-z][A-Za-z0-9_.-]*) \.github/scripts/run-loc
 PREFLIGHT_SHELL = "bash -e {0}"
 # Set "true" in the implement job's container: env -- see docker_missing_result.
 DOCKERLESS_ENV = "WC_GATE_SUITE_DOCKERLESS"
+# The shellcheck pin's one home (#1204), read by Gate 48 (wc_actionlint.py)
+# and COPYed by the Dockerfile -- see the file's header. The image's
+# shellcheck must report this version, and no other file under these
+# directories may write the version into a download or repeat a hash.
+SHELLCHECK_PIN = os.path.join(DOCKERFILE_DIR, "shellcheck.pin")
+PIN_SCAN_DIRS = (".github/scripts", ".github/workflows", ".github/actions",
+                 ".github/docker")
+# A shellcheck release written out with its version, instead of reading the
+# pin: the asset name, or a version assigned to a SHELLCHECK_VERSION-like name.
+PASTED_SHELLCHECK = re.compile(
+    r"shellcheck-v[0-9]|koalaman/shellcheck/releases/download/v[0-9]"
+    r"|SHELLCHECK_VERSION\s*[:=]\s*[\"']?[0-9]")
 
 
 def read_required_tools(root="."):
@@ -458,12 +482,79 @@ def check_preflight(tag, name, script):
             f"{DOCKERFILE_DIR}/Dockerfile -- {(proc.stdout + proc.stderr)[-1500:]}")
 
 
+def shellcheck_version_problem(stdout, want):
+    """-> None when `shellcheck --version` output names version `want`,
+    else what it showed instead."""
+    got = [ln.split(":", 1)[1].strip() for ln in stdout.splitlines()
+           if ln.startswith("version:")]
+    if got == [want]:
+        return None
+    return (f"reports version {got[0]}" if len(got) == 1
+            else "printed no single `version:` line (is shellcheck on PATH?)")
+
+
+def check_shellcheck_version(root, tag):
+    """-> failure message or None: the image's own shellcheck must be the
+    release Gate 48 lints with, or the implement agent and CI disagree on
+    what shellcheck reports (#1204)."""
+    want, _ = read_shellcheck_pin(os.path.join(root, SHELLCHECK_PIN))
+    proc = subprocess.run(["docker", "run", "--rm", "--entrypoint", "sh", tag,
+                           "-c", "shellcheck --version"],
+                          capture_output=True, text=True)
+    problem = shellcheck_version_problem(proc.stdout, want)
+    if problem is None:
+        return None
+    return (f"the reference image's shellcheck {problem}, but Gate 48 lints "
+            f"with {want} ({SHELLCHECK_PIN}), so the implement agent and CI "
+            f"would disagree on shellcheck findings (#1204). Install it from "
+            f"the pin in {DOCKERFILE_DIR}/Dockerfile, not from apt -- "
+            f"{(proc.stdout + proc.stderr)[-500:]}")
+
+
+def pin_single_home(root="."):
+    """-> problems: the shellcheck pin written anywhere but its one home.
+
+    Flags a release asset or download URL with a literal version, a
+    version assigned to a SHELLCHECK_VERSION-like name, any hash from the
+    pin file, and a Dockerfile that stops reading the pin. Gate 48 and the
+    Dockerfile each interpolate the pin's version, so neither matches."""
+    problems = []
+    pin = os.path.join(root, SHELLCHECK_PIN)
+    _, table = read_shellcheck_pin(pin)
+    hashes = set(table.values())
+    for base in PIN_SCAN_DIRS:
+        for dirpath, _dirs, files in os.walk(os.path.join(root, base)):
+            for f in files:
+                path = os.path.join(dirpath, f)
+                if os.path.normpath(path) == os.path.normpath(pin):
+                    continue
+                try:
+                    with io.open(path, encoding="utf-8") as fh:
+                        text = fh.read()
+                except (UnicodeDecodeError, OSError):
+                    continue
+                rel = os.path.relpath(path, root)
+                for n, line in enumerate(text.splitlines(), 1):
+                    if PASTED_SHELLCHECK.search(line) or any(h in line for h in hashes):
+                        problems.append(
+                            f"{rel}:{n}: writes out a shellcheck version or hash; "
+                            f"{SHELLCHECK_PIN} is the pin's one home (#1204) -- "
+                            f"read it instead of pasting a copy: {line.strip()[:160]}")
+    with io.open(os.path.join(root, DOCKERFILE_DIR, "Dockerfile"), encoding="utf-8") as fh:
+        dockerfile = fh.read()
+    if not re.search(r"^COPY\s+shellcheck\.pin\s", dockerfile, re.M):
+        problems.append(f"{DOCKERFILE_DIR}/Dockerfile no longer COPYs shellcheck.pin, "
+                        f"so its shellcheck is not the one Gate 48 pins (#1204)")
+    return problems
+
+
 def scan(root=".", tag=IMAGE_TAG):
     failures = []
     tools = read_required_tools(root)
     preflights, commands, problems = read_implement_subject(root)
     failures.extend(problems)
     failures.extend(stray_optouts(root))
+    failures.extend(pin_single_home(root))
     wanted = [t for t in commands if t not in JOB_INSTALLED and t not in tools]
     ok, log = build_image(root, tag)
     if not ok:
@@ -499,6 +590,9 @@ def scan(root=".", tag=IMAGE_TAG):
         elif loader:
             failures.append(
                 f"could not run the glibc loader probe in the built image -- {loader[1]}")
+        version = check_shellcheck_version(root, tag) if shell_ran else None
+        if version:
+            failures.append(version)
         req_missing = [t for t in missing if t in tools]
         if req_missing:
             failures.append(
@@ -553,10 +647,226 @@ def _drop_installs(root, packages):
     return absent
 
 
+def _swap_to_apt_shellcheck(root):
+    """The pre-#1204 Dockerfile, rebuilt in the copy: drop the pinned
+    shellcheck install (COPY shellcheck.pin through the end of its RUN) and
+    install apt's shellcheck instead. -> False when the copy has no such
+    block or apt list to edit (fixture drift)."""
+    path = os.path.join(root, DOCKERFILE_DIR, "Dockerfile")
+    with io.open(path, encoding="utf-8") as fh:
+        lines = fh.readlines()
+    try:
+        start = next(i for i, ln in enumerate(lines) if ln.startswith("COPY shellcheck.pin"))
+        apt = next(i for i, ln in enumerate(lines) if ln.strip() == "yamllint \\")
+    except StopIteration:
+        return False
+    end = start + 1
+    while end < len(lines) and lines[end].rstrip("\n").endswith("\\"):
+        end += 1
+    del lines[start:end + 1]
+    lines.insert(apt, lines[apt].replace("yamllint", "shellcheck"))
+    with io.open(path, "w", encoding="utf-8") as fh:
+        fh.writelines(lines)
+    return True
+
+
+def _pin_static_self_test():
+    """-> problems: the shellcheck-version parser and the pin's single-home
+    scan, each on a case it must judge one way or the other."""
+    problems = []
+    want = read_shellcheck_pin(os.path.join(".", SHELLCHECK_PIN))[0]
+    for label, stdout, ok in (
+            ("the pinned version", f"ShellCheck\nversion: {want}\nlicense: GPL\n", True),
+            ("apt's 0.9.0", "ShellCheck\nversion: 0.9.0\n", False),
+            ("no shellcheck at all", "", False)):
+        if (shellcheck_version_problem(stdout, want) is None) != ok:
+            problems.append(f"shellcheck_version_problem misjudged {label}")
+    real = pin_single_home(".")
+    if real:
+        problems.append("the real tree already pastes the shellcheck pin: " + "; ".join(real))
+    _, table = read_shellcheck_pin(os.path.join(".", SHELLCHECK_PIN))
+    tmp = tempfile.mkdtemp(prefix="verify_gate_62_pin_")
+    try:
+        shutil.copytree(DOCKERFILE_DIR, os.path.join(tmp, DOCKERFILE_DIR))
+        scripts = os.path.join(tmp, ".github", "scripts")
+        os.makedirs(scripts)
+        pasted = {
+            "asset.py": f'URL = "shellcheck-v{want}.linux.x86_64.tar.xz"\n',
+            "url.sh": f"curl https://github.com/koalaman/shellcheck/releases/download/v{want}/x\n",
+            "var.py": f'SHELLCHECK_VERSION = "{want}"\n',
+            "hash.json": '{"h": "%s"}\n' % table[("linux", "amd64")],
+        }
+        for name, body in pasted.items():
+            with io.open(os.path.join(scripts, name), "w", encoding="utf-8") as fh:
+                fh.write(body)
+        with io.open(os.path.join(scripts, "reads.py"), "w", encoding="utf-8") as fh:
+            fh.write('url = f"shellcheck-v{SHELLCHECK_VERSION}"\n')
+        got = pin_single_home(tmp)
+        for name in pasted:
+            if not any(name in g for g in got):
+                problems.append(f"a pasted shellcheck pin in {name} was NOT reported; got: {got}")
+        if any("reads.py" in g for g in got):
+            problems.append(f"a file that interpolates the pin was reported; got: {got}")
+        df = os.path.join(tmp, DOCKERFILE_DIR, "Dockerfile")
+        with io.open(df, encoding="utf-8") as fh:
+            text = fh.read()
+        with io.open(df, "w", encoding="utf-8") as fh:
+            fh.write(text.replace("COPY shellcheck.pin", "# COPY shellcheck.pin"))
+        if not any("no longer COPYs" in g for g in pin_single_home(tmp)):
+            problems.append("a Dockerfile that stopped COPYing shellcheck.pin was NOT reported")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    problems.extend(_pin_whitespace_self_test())
+    problems.extend(_dockerfile_pin_read_self_test())
+    import wc_actionlint
+    real_host = wc_actionlint.host
+    wc_actionlint.host = lambda: ("linux", "riscv64")
+    try:
+        wc_actionlint.ensure_shellcheck()
+        problems.append("ensure_shellcheck found a digest for linux/riscv64")
+    except SystemExit as e:
+        if "shellcheck.pin" not in str(e):
+            problems.append(f"a host with no shellcheck hash is told to add it "
+                            f"somewhere other than shellcheck.pin, which the "
+                            f"single-home scan would then reject: {e}")
+    finally:
+        wc_actionlint.host = real_host
+    problems.extend(_pin_mismatch_message_self_test(wc_actionlint))
+    return problems
+
+
+def _pin_whitespace_self_test():
+    """-> problems: a pin line with whitespace around it must stop Gate 48's
+    reader. The Dockerfile's sed would keep a trailing space in the version
+    or hash, and miss an indented key, so a reader that stripped it would
+    pass Gate 48 and break the image build."""
+    with io.open(SHELLCHECK_PIN, encoding="utf-8") as fh:
+        text = fh.read()
+    problems = []
+    tmp = tempfile.mkdtemp(prefix="verify_gate_62_pinws_")
+    try:
+        for label, old, new in (
+                ("a trailing space after the version", "\nversion=", None),
+                ("an indented version line", "\nversion=", "\n  version="),
+                ("a trailing space after a hash", "\nsha256.linux.amd64=", None)):
+            if new is None:
+                i = text.index(old) + 1
+                eol = text.index("\n", i)
+                bad = text[:eol] + " " + text[eol:]
+            else:
+                bad = text.replace(old, new, 1)
+            pin = os.path.join(tmp, "shellcheck.pin")
+            with io.open(pin, "w", encoding="utf-8", newline="") as fh:
+                fh.write(bad)
+            try:
+                read_shellcheck_pin(pin)
+                problems.append(f"read_shellcheck_pin accepted {label}, which the "
+                                f"Dockerfile reads differently (#1204)")
+            except SystemExit:
+                pass
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return problems
+
+
+def _pin_mismatch_message_self_test(wc_actionlint):
+    """-> problems: a shellcheck download that fails its sha256 check must
+    send the maintainer to shellcheck.pin, the hashes' one home, not to
+    wc_actionlint.py, where the single-home scan would reject a new hash."""
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    real_open, real_root = wc_actionlint.urllib.request.urlopen, wc_actionlint._cache_root
+    tmp = tempfile.mkdtemp(prefix="verify_gate_62_pinsha_")
+    wc_actionlint.urllib.request.urlopen = lambda url, timeout=None: _Resp(b"not the asset")
+    wc_actionlint._cache_root = lambda: tmp
+    try:
+        wc_actionlint.ensure_shellcheck()
+        return ["ensure_shellcheck accepted an archive whose sha256 is not the pin's"]
+    except SystemExit as e:
+        if "shellcheck.pin" not in str(e):
+            return [f"a shellcheck sha256 mismatch tells the maintainer to update "
+                    f"the pin somewhere other than shellcheck.pin: {e}"]
+        return []
+    finally:
+        wc_actionlint.urllib.request.urlopen = real_open
+        wc_actionlint._cache_root = real_root
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _dockerfile_pin_read_self_test():
+    """-> problems: the Dockerfile's own pin-reading shell, run here with sh
+    on an LF and a CRLF copy of the pin (a Windows checkout with
+    core.autocrlf), must read the version and linux/amd64 hash Gate 48's
+    read_shellcheck_pin reads. Runs the RUN block from its `pin=` line up to
+    its `[ -n "$version" ]` check, with dpkg answering amd64 and a sed that
+    takes POSIX options only (a maintainer's macOS has BSD sed)."""
+    df = os.path.join(DOCKERFILE_DIR, "Dockerfile")
+    with io.open(df, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    try:
+        start = next(i for i, ln in enumerate(lines) if ln.strip().startswith("pin=/tmp/shellcheck.pin"))
+        end = next(i for i in range(start, len(lines)) if lines[i].strip().startswith('[ -n "$version" ]'))
+    except StopIteration:
+        return [f"fixture setup: {df} has no `pin=/tmp/shellcheck.pin` line followed by "
+                f"a `[ -n \"$version\" ]` check -- update _dockerfile_pin_read_self_test"]
+    body = "\n".join(re.sub(r"\s*\\$", "", ln) for ln in lines[start:end])
+    want = read_shellcheck_pin(SHELLCHECK_PIN)
+    want = (want[0], want[1][("linux", "amd64")])
+    with io.open(SHELLCHECK_PIN, encoding="utf-8") as fh:
+        text = fh.read()
+    problems = []
+    real_sed = shutil.which("sed")
+    if not shutil.which("sh") or not real_sed:
+        print("Gate 62: no sh or sed on PATH here, so the Dockerfile's pin-reading "
+              "lines were not run; CI runs them")
+        return problems
+    tmp = tempfile.mkdtemp(prefix="verify_gate_62_pinread_")
+    try:
+        # A sed with POSIX options only, ahead of the host's: the lines must
+        # also read the pin on macOS, whose BSD sed takes -i's argument as a
+        # backup suffix, so a GNU-only option there misreads the pin.
+        shim = os.path.join(tmp, "bin")
+        os.makedirs(shim)
+        with io.open(os.path.join(shim, "sed"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write('#!/bin/sh\nfor a in "$@"; do case "$a" in -i*|--*) '
+                     'echo "sed: $a is not a POSIX sed option" >&2; exit 2 ;; esac; done\n'
+                     f'exec "{real_sed}" "$@"\n')
+        os.chmod(os.path.join(shim, "sed"), 0o755)
+        for label, eol in (("LF", "\n"), ("CRLF", "\r\n")):
+            pin = os.path.join(tmp, "shellcheck.pin").replace(os.sep, "/")
+            with io.open(pin, "w", encoding="utf-8", newline="") as fh:
+                fh.write(text.replace("\n", eol))
+            script = (f'set -eu\nPATH="{shim}:$PATH"\ndpkg() {{ echo amd64; }}\n'
+                      + body.replace("/tmp/shellcheck.pin", pin)
+                      + '\nprintf "%s|%s" "$version" "$sha"\n')
+            proc = subprocess.run(["sh", "-c", script], capture_output=True)
+            got = tuple(proc.stdout.decode("utf-8", "replace").split("|", 1))
+            if proc.returncode != 0 or got != want:
+                problems.append(f"the Dockerfile reads a {label} shellcheck.pin as "
+                                f"{got!r} (exit {proc.returncode}), but Gate 48 reads "
+                                f"{want!r}: the pin's two readers disagree (#1204) -- "
+                                f"{proc.stderr.decode('utf-8', 'replace')[-300:]}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return problems
+
+
 def _static_self_test():
     """-> problems: each implement.yml drift read_implement_subject must report."""
     import yaml
-    problems = []
+    problems = _pin_static_self_test()
+    # The drifted build keeps a shellcheck (apt's), so it no longer shows the
+    # prompted-command check naming shellcheck; check here that the prompt
+    # still yields it, or the check could stop covering shellcheck unseen.
+    if "shellcheck" not in read_implement_subject(".")[1]:
+        problems.append(f"{IMPLEMENT_WORKFLOW}'s agent prompt no longer yields "
+                        f"`shellcheck` as a prompted lint tool, so Gate 62 no "
+                        f"longer checks the image has it")
     cases = []
 
     def drop_env(wf):
@@ -725,9 +1035,17 @@ def self_test():
         # together, or pyyaml would still arrive as a dependency.
         drifted = os.path.join(root, "drifted")
         _copy_subject(drifted)
-        dropped = ("jq", "python3-yaml", "python-is-python3", "yamllint", "shellcheck")
+        # shellcheck goes back to apt's (the pre-#1204 image) rather than
+        # away, so the same build proves the version check fails on it.
+        swapped = _swap_to_apt_shellcheck(drifted)
+        dropped = ("jq", "python3-yaml", "python-is-python3", "yamllint")
         absent = _drop_installs(drifted, dropped)
-        if absent:
+        if not swapped:
+            problems.append("fixture setup: expected the reference Dockerfile to "
+                             "install shellcheck from a `COPY shellcheck.pin` block "
+                             "and list yamllint on its own apt line -- update "
+                             "_swap_to_apt_shellcheck")
+        elif absent:
             problems.append("fixture setup: expected the reference Dockerfile to "
                              "install each of " + ", ".join(absent) + " on its "
                              "own continuation line -- self-test can no longer "
@@ -745,11 +1063,17 @@ def self_test():
                                  f"naming pyyaml; got: {got}")
             cmds = [g for g in got if "command(s) the implement" in g]
             named = set(cmds[0].split(": ", 1)[-1].split(" -- ")[0].split(", ")) if cmds else set()
-            if not {"yamllint", "shellcheck", "python"} <= named:
-                problems.append(f"a Dockerfile that stopped installing yamllint, "
-                                 f"shellcheck and python-is-python3 was NOT failed by "
-                                 f"the prompted-command check naming all three; "
-                                 f"got: {got}")
+            if not {"yamllint", "python"} <= named or "shellcheck" in named:
+                problems.append(f"a Dockerfile that stopped installing yamllint "
+                                 f"and python-is-python3 was NOT failed by the "
+                                 f"prompted-command check naming both (and not "
+                                 f"shellcheck, which it still installs); got: {got}")
+            want = read_shellcheck_pin(os.path.join(drifted, SHELLCHECK_PIN))[0]
+            ver = [g for g in got if "Gate 48 lints with" in g]
+            if not (ver and "reports version 0.9" in ver[0] and want in ver[0]):
+                problems.append(f"a Dockerfile that installs apt's shellcheck "
+                                 f"instead of the {want} pin was NOT failed by the "
+                                 f"version check naming both; got: {got}")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -759,8 +1083,9 @@ def self_test():
         return 1
     print("Gate 62 self-test: a clean build of the real image passes; a Dockerfile "
           "that silently stops installing a required tool, the gate suite's "
-          "pyyaml, or a prompted command fails, naming it; implement.yml drift "
-          "the gate depends on is reported.")
+          "pyyaml, or a prompted command, or installs a shellcheck other than "
+          "Gate 48's pin, fails, naming it; implement.yml drift the gate "
+          "depends on and a pasted shellcheck pin are reported.")
     return 0
 
 
@@ -778,7 +1103,8 @@ def main(argv):
             static = []  # nothing to parse with; the skip below still reports
         else:
             static = (_static_self_test() if "--self-test" in argv
-                      else read_implement_subject(".")[2] + stray_optouts("."))
+                      else read_implement_subject(".")[2] + stray_optouts(".")
+                      + pin_single_home("."))
         for p in static:
             print(f"::error::Gate 62: {p}")
         code, message = docker_missing_result(os.environ)
@@ -791,7 +1117,8 @@ def main(argv):
         print(f"::error::Gate 62: {f}")
     print(f"Gate 62: the e2e reference image's tool set agrees with "
           f"{REQUIRED_TOOLS_FILE} and passes {IMPLEMENT_WORKFLOW}'s gate-suite "
-          f"preflight and has every command its agent prompt names; {len(failures)} failure(s).")
+          f"preflight and has every command its agent prompt names and Gate 48's "
+          f"shellcheck; {len(failures)} failure(s).")
     return 1 if failures else 0
 
 

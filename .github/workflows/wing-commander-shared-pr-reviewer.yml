@@ -39,7 +39,7 @@ jobs:
       actions: read
     uses: ./.github/workflows/shared-pr-reviewer.yml
     with:
-      pr: ${{ inputs.pr }}
+      pr: ${{ fromJSON(inputs.pr) }}
       dismissals: ${{ inputs.dismissals }}
       default-branch: ${{ github.event.repository.default_branch }}
       find-model: ${{ vars.WING_COMMANDER_SHARED_REVIEW_FIND_MODEL || 'claude-sonnet-5-5' }}

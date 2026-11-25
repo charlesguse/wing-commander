@@ -1639,7 +1639,10 @@ than only ever exercised on a bare runner:
   This repository pins its own `WING_COMMANDER_CONTAINER_IMAGE` to the
   same image, so Gate 62 also runs implement.yml's gate-suite preflight
   steps inside it and checks the implement prompt's lint tools and suite
-  interpreter (#989): those extras are this repository's, not adopters'. See
+  interpreter (#989), and that the image's shellcheck is the release Gate
+  48 lints with: both read the one pin in
+  `.github/docker/e2e-reference-image/shellcheck.pin`, sha256-checked
+  (#1204). Those extras are this repository's, not adopters'. See
   [docs/adoption.md](adoption.md#runners-and-container-images) for why this
   image is not a supported image for adopters.
 - **Reporting**: both the verdict and `report`'s failure/success output
