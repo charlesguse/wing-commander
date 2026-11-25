@@ -508,10 +508,16 @@ def validate_output(data, role, prior=None):
     if not isinstance(items, list):
         return problems + ["checks is not a list"]
     evaluated = set()
+    open_ids = {f.get("id") for f in prior or [] if isinstance(f, dict) and f.get("status") in OPEN_STATUSES}
     for n, c in enumerate(items):
         if not isinstance(c, dict):
             problems.append("check {0} is not an object".format(n))
             continue
+        # A re-check confirms or resolves an open finding (FR-010); only the
+        # requester dismisses one (data-model.md transitions), round 5.
+        if c.get("outcome") == "dismissed" and c.get("id") in open_ids:
+            problems.append("check {0} dismisses open finding {1}: a re-check confirms or resolves "
+                            "it (FR-010)".format(n, c["id"]))
         if not (_nonempty_str(c.get("id")) or _nonempty_str(c.get("key"))):
             problems.append("check {0} names neither an id nor a key".format(n))
         for k in ("id", "key", "reason"):

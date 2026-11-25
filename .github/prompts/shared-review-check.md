@@ -15,7 +15,8 @@ null), `files` (every file the claim cites) and `cites_only_spec_docs`.
 
 Then re-check every finding in `input/memory.json` that is still open (by
 `id`): `outcome` is `resolved` when it no longer reproduces at this commit,
-or `confirmed` when it still does. Set `needs_code_run` true when only a
+or `confirmed` when it still does; never `dismissed`, which only the
+requester can do. Set `needs_code_run` true when only a
 code-run result could decide it; when the code-run results are missing, say so
 instead of resolving it.
 

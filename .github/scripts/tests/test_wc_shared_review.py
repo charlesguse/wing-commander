@@ -781,6 +781,25 @@ class ReviewRound5Fixes(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(top, ".claude.as-data", "settings.json")))
             self.assertEqual(sr.main(["defuse-agent-config", "--root", root]), 0)
 
+    def test_a_recheck_cannot_dismiss_an_open_finding(self):
+        # Round 5, finding 5: FR-010 lets a re-check confirm or resolve an
+        # open finding, never dismiss it, so that output is malformed and
+        # the round is incomplete rather than the answer silently ignored.
+        answers = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
+        prior = [finding("F1-1")]
+        bad = {"answers": answers, "checks": [{"id": "F1-1", "outcome": "dismissed", "reason": "r"}]}
+        self.assertTrue(any("dismisses open finding F1-1" in p for p in sr.validate_output(bad, "check", prior)))
+        ok = {"answers": answers, "checks": [{"id": "F1-1", "outcome": "confirmed"},
+                                             {"key": "k", "outcome": "dismissed", "reason": "r"}]}
+        self.assertEqual(sr.validate_output(ok, "check", prior), [])
+        self.assertEqual(sr.validate_output(
+            {"answers": answers, "checks": [{"id": "F1-1", "outcome": "dismissed", "reason": "r"}]},
+            "check", [finding("F1-1", "resolved", reason="x")]), [])
+        staged = {"status": "staged", "named_check": None}
+        out = sr.finalize_round({"round": 2, "prior": prior}, {"answers": {}, "candidates": []}, bad,
+                                staged, {"type": "issue", "ref": "7"}, "a" * 40, [], 5, "b" * 40, "open")
+        self.assertEqual(out["verdict"], "incomplete")
+
 
 if __name__ == "__main__":
     unittest.main()
