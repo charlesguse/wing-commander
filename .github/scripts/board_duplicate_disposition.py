@@ -36,6 +36,7 @@ import sys
 # directory is trusted (Gate 98), so adding it back is safe.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import board_roadmap  # noqa: E402  (#1209: the Roadmap's Proposed line)
 from board_eligibility import DISPOSITION_LABEL, DUPLICATE_STEP  # noqa: E402
 from board_item_marker import (  # noqa: E402
     current_line_id, is_loop_marker_author, last_marker_match, write_marker)
@@ -281,7 +282,6 @@ def main():
     # fails below still leaves it listed. Best effort: record_proposal()
     # never raises and its outcome never changes this script's exit status.
     try:
-        import board_roadmap
         board_roadmap.record_proposal(args.spec_request_issue, line_id=line_id,
                                       originating=None if line_id else args.originating,
                                       repository=repository, bot_login=bot_login)
