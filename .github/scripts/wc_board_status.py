@@ -410,7 +410,8 @@ def _pl_block(status, built, last_good, summary, content, tag="wc-proof-list"):
 def _section_block(pl, body, label, notices, tag):
     """The section for snapshot entry `pl`, placed after `body`: the full form
     if the whole body fits MAX_BODY_UNITS, else names-only, else the failed
-    notice. Entries are never dropped for size (FR-020). The one renderer of
+    notice, else nothing (logged; as feature_health_block). Entries are never
+    dropped for size (FR-020). The one renderer of
     every built-by-another-workflow section (proof list, merge evidence)."""
     status = pl.get("status", "unreadable")
     last_good = pl.get("last_good_at") or "never"
