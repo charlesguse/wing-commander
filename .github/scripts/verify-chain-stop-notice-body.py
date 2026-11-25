@@ -750,10 +750,12 @@ def scenario_transient_graphql(steps, root):
 
 
 def scenario_empty_spec_dir_stage_label(steps, root):
-    """#889 (code review of #1112): with no record to mark (spec-dir empty,
-    as clarify passes before its spec PR merges), a passed stage-label is
-    still removed, so a stalled clarify does not keep stage:clarify beside
-    stage:stalled."""
+    """Code review of #1266: with no record to mark (spec-dir empty, as
+    clarify passes before its spec PR merges), a passed stage-label stays.
+    stage:clarify is the only thing that lets the requester's next reply
+    re-run clarify (wing-commander-2-clarify.yml's `if:` needs stage:spec or
+    stage:clarify, and clarify has no workflow_dispatch), so removing it
+    leaves the stall with no restart path."""
     failures = []
     where = "scenario: spec-dir empty with a stage-label (clarify)"
     work, repo = make_workspace(root, reachable_remote=True)
@@ -766,8 +768,10 @@ def scenario_empty_spec_dir_stage_label(steps, root):
         failures.append(f"{where}: {LABELS_STEP!r} exited {rc}: {out.strip()}")
         return failures
     got = read_calls(calls)
-    if not [c for c in got if "--remove-label stage:clarify" in c]:
-        failures.append(f"{where}: stage:clarify was not removed: {got}")
+    if [c for c in got if "stage:clarify" in c or "stage%3Aclarify" in c]:
+        failures.append(f"{where}: stage:clarify was removed, so the "
+                        f"requester's next reply can no longer restart "
+                        f"clarify: {got}")
     if not [c for c in got if "--add-label stage:stalled" in c]:
         failures.append(f"{where}: stage:stalled was not added: {got}")
     return failures
@@ -805,15 +809,16 @@ def _mut_labels_removes_regardless_of_status(steps):
     """The stage-label is removed even when the mark never landed — implies
     a successful hand-off that never happened."""
     steps[LABELS_STEP] = steps[LABELS_STEP].replace(
-        '[ -n "$STAGE_LABEL" ] && { [ "$RECORD_STATUS" = "marked" ] || [ -z "$SPEC_DIR" ]; }',
+        '[ -n "$STAGE_LABEL" ] && [ "$RECORD_STATUS" = "marked" ]',
         '[ -n "$STAGE_LABEL" ]')
 
 
-def _mut_labels_keeps_stage_label_without_record(steps):
-    """#889 reverted: with spec-dir empty the stage-label is never removed."""
+def _mut_labels_drops_stage_label_without_record(steps):
+    """Code review of #1266: with spec-dir empty the stage-label is removed
+    too, which strands a stalled clarify with no restart path."""
     steps[LABELS_STEP] = steps[LABELS_STEP].replace(
-        '{ [ "$RECORD_STATUS" = "marked" ] || [ -z "$SPEC_DIR" ]; }',
-        '[ "$RECORD_STATUS" = "marked" ]')
+        '[ -n "$STAGE_LABEL" ] && [ "$RECORD_STATUS" = "marked" ]',
+        '[ -n "$STAGE_LABEL" ] && { [ "$RECORD_STATUS" = "marked" ] || [ -z "$SPEC_DIR" ]; }')
 
 
 def _cut_fallback(text, start_marker):
@@ -910,8 +915,8 @@ MUTATIONS = [
      _mut_notice_ignores_commits_published),
     ("labels step removes stage-label even when the mark never landed",
      _mut_labels_removes_regardless_of_status),
-    ("labels step keeps stage-label when there is no record to mark",
-     _mut_labels_keeps_stage_label_without_record),
+    ("labels step removes stage-label when there is no record to mark",
+     _mut_labels_drops_stage_label_without_record),
     ("stage:stalled add has no REST fallback",
      _mut_labels_no_rest_fallback),
     ("notice comment has no REST fallback",

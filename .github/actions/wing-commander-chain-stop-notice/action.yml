@@ -48,9 +48,8 @@ inputs:
     default: ""
   stage-label:
     description: >
-      stage:<name> label to remove when the mark succeeds, or, with
-      spec-dir empty (no record to mark), whenever mark-record is "true".
-      Empty is valid (nothing to remove, e.g. intake).
+      stage:<name> label to remove when the mark succeeds. Empty is valid
+      (nothing to remove, e.g. intake).
     required: false
     default: ""
   run-url:
@@ -204,7 +203,6 @@ runs:
         RECORD_STATUS: ${{ steps.mark.outputs.record-status }}
         MARK_RECORD: ${{ inputs.mark-record }}
         POST_NOTICE: ${{ inputs.post-notice }}
-        SPEC_DIR: ${{ inputs.spec-dir }}
       run: |
         set -uo pipefail
         # Each write tries gh's GraphQL path first and, on failure, the REST
@@ -221,11 +219,12 @@ runs:
               || echo "::warning::wing-commander-chain-stop-notice: could not add stage:stalled to #$ISSUE (GraphQL and REST both failed)."
           fi
         fi
-        # The stage label goes once the record is marked, or when there is
-        # no record to wait on (spec-dir empty: intake, and clarify before
-        # its spec PR merges), so a stalled clarify does not keep
-        # stage:clarify beside stage:stalled (#889, code review of #1112).
-        if [ "$MARK_RECORD" = "true" ] && [ -n "$STAGE_LABEL" ] && { [ "$RECORD_STATUS" = "marked" ] || [ -z "$SPEC_DIR" ]; }; then
+        # The stage label goes only once the record is marked. With no
+        # record (spec-dir empty: clarify before its spec PR merges) the
+        # label stays: stage:clarify is what lets the requester's next reply
+        # start clarify again (wing-commander-2-clarify.yml's `if:`), and
+        # clarify has no other restart path (code review of #1266).
+        if [ "$MARK_RECORD" = "true" ] && [ -n "$STAGE_LABEL" ] && [ "$RECORD_STATUS" = "marked" ]; then
           if ! gh issue edit "$ISSUE" --remove-label "$STAGE_LABEL"; then
             sleep 5
             gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$ISSUE/labels/$(printf '%s' "$STAGE_LABEL" | jq -sRr @uri)" >/dev/null \
