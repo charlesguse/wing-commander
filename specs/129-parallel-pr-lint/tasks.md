@@ -37,11 +37,11 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 
 **Independent Test**: on a PR touching a workflow, the set of step names across units equals the T002 baseline (plus no duplicates) and the aggregate completes ≤ 10 min.
 
-- [ ] T008 [US1] Compute the shard assignment: greedy-balance the gate steps (with each self-test kept adjacent to its gate, and fixture-sharing gates together) across 8 groups using the T003 durations; the result exists only as step placement (FR-007), so keep any scratch table out of the repo.
+- [X] T008 [US1] Compute the shard assignment: greedy-balance the gate steps (with each self-test kept adjacent to its gate, and fixture-sharing gates together) across 8 groups using the T003 durations; the result exists only as step placement (FR-007), so keep any scratch table out of the repo.
 - [X] T009 [US1] In `.github/workflows/lint-workflows.yml`, replace job `lint` with jobs `lint-shard-1` … `lint-shard-8`, each with `if: github.event_name == 'pull_request'`, `contents: read` permissions, the same runner and checkout/setup as today (or the T005 composite), and its assigned steps moved verbatim (FR-001, FR-006).
 - [X] T010 [US1] Add the aggregate job `lint` (`name: lint`, `needs:` all eight shards and `harness-tests`, `if: always() && github.event_name == 'pull_request'`) whose single step fails unless every `needs.<job>.result` is exactly `success` and prints each non-success job by name (FR-003, FR-004, FR-004a, R2). Keep the workflow `name: lint · workflows`.
 - [ ] T011 [US1] Re-balance if local per-shard sums from T003 exceed ~300 s for any shard (move whole gate+self-test pairs only); confirm the floor shard (Gate 97 self-test, 156 s) fits.
-- [ ] T012 [P] [US1] Adapt `.github/scripts/verify-lint-supersedes-pr-runs.py` and every other gate that read the single `lint` job's `if`, `steps` or concurrency (list from T001) so each finds its subject across the shard jobs and cannot pass vacuously (FR-008); extend each one's self-test with a fixture for the sharded layout.
+- [X] T012 [P] [US1] Adapt `.github/scripts/verify-lint-supersedes-pr-runs.py` and every other gate that read the single `lint` job's `if`, `steps` or concurrency (list from T001) so each finds its subject across the shard jobs and cannot pass vacuously (FR-008); extend each one's self-test with a fixture for the sharded layout.
 - [ ] T013 [US1] Run `python .github/scripts/run-local-gates.py` and compare the executed gate set with T002 (SC-002: none dropped, none duplicated).
 
 **Checkpoint**: MVP — sharded suite, aggregate in place.
