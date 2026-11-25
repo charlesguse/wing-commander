@@ -26,7 +26,12 @@ def run_case(case, max_attempts=5):
 
     stale = {"left": 1 if case.get("stale_read_after_write") else 0, "body": case["initial"]}
 
+    hand = {"body": case.get("hand_edit_after_first_fetch"), "fetches": 0}
+
     def fetch(_issue):
+        hand["fetches"] += 1
+        if hand["fetches"] == 2 and hand["body"] is not None:
+            store["body"] = hand["body"]  # saved between our fetch and our write
         if writes and stale["left"]:
             stale["left"] -= 1
             return stale["body"]

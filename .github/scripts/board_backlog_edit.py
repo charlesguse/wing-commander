@@ -2,8 +2,8 @@
 """The single home for editing the Maintenance backlog issue body
 (specs/121-board-backlog-line-items, contracts/backlog-lines.md, FR-024).
 
-edit() fetches the body, applies a pure function, writes it, then re-fetches
-and checks the change survived; a concurrent writer that dropped it makes the
+edit() fetches the body, applies a pure function, re-fetches just before the write
+(a changed body restarts the attempt), writes it, then re-fetches and checks the change survived; a concurrent writer that dropped it makes the
 loop re-apply against the fresh body. On exhaustion the body is left as last
 fetched -- never a forced write.
 
@@ -33,6 +33,8 @@ def edit(issue, apply_fn, verify_fn, *, fetch, write, max_attempts=5):
             return STAND_DOWN
         if new_body == body:
             return APPLIED
+        if fetch(issue) != body:
+            continue  # a hand edit landed since our fetch; re-apply to it, never overwrite
         write(issue, new_body)
         if verify_fn(fetch(issue)):
             return APPLIED
