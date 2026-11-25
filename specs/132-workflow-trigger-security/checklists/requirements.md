@@ -32,7 +32,9 @@
 ## Notes
 
 - Both [NEEDS CLARIFICATION] markers were resolved by the clarify stage from the answer on lifecycle issue #1188 (2026-11-25):
-  - FR-009 (Q1, option C): SHA-pin actions outside a trusted-publisher set; the trusted set keeps tags; one home for the list (FR-009a); update automation keeps pins current (FR-009b).
-  - FR-016 (Q2, option B): keep `./`, disable the `self-repository` audit with a recorded reason, and add the untrusted-checkout gate (FR-016a).
+  - FR-009 (Q1, option C): SHA-pin actions outside a trusted-publisher set; the trusted set keeps tags; one home for the list (FR-009a); new pin-update automation keeps pins current, its PRs human-merged (FR-009b).
+  - Trusted-publisher set fixed by owner decision (2026-11-25, Roadmap #890): exactly `actions/*`, `github/*`, `anthropics/*`; changes to it are owner decisions.
+  - FR-016 (Q2, option B): keep `./`, disable the `self-repository` audit with a recorded reason, and add the untrusted-checkout gate (FR-016a), defined by where a `./` reference resolves (trusted copy versus untrusted tree).
+- Spec review round 1 (PR #1221) fixes: FR-016a/FR-014 redefined by resolution target; one home with Gate 104 and the lifecycle-review-gate provenance gate, Gate 151 unchanged, agent-writable workspace out of scope; FR-009b states the automation is new and human-merged, FR-017a keeps Gates 170 and 92 green on SHA refs; FR-018a and the Layer section cover per-release freezing; FR-006 covers every new gate's failure branches; SC-005a split into SC-008/SC-009, with SC-010/SC-011 added.
 - On "no implementation details": the subject of this feature is workflow tooling, so the spec has to name workflow files, trigger events, the analyser (zizmor, in Assumptions) and the existing gates. These are the subject, not a choice of how to build it. The analyser's invocation, register format, record key and gate wiring are left to the plan.
 - The source issue says this design belongs to clarify and plan. The spec fixes scope and required outcomes, and leaves the build details (record key, configuration file, offline audit set) as plan-level choices.

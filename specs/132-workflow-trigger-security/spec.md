@@ -12,12 +12,13 @@
 
 ### Session 2026-11-25
 
-- Q1: Should third-party `uses:` references be pinned by full commit SHA or stay on tags? → A: Option C. Pin by SHA only actions outside a trusted-publisher set; the trusted set (such as `actions/*` and `github/*`) keeps version tags. The trusted-publisher list has one home that the gate reads, and the update automation keeps the SHA pins current (FR-009, FR-009a, FR-009b).
+- Q1: Should third-party `uses:` references be pinned by full commit SHA or stay on tags? → A: Option C. Pin by SHA only actions outside a trusted-publisher set; the trusted set keeps version tags. The trusted-publisher list has one home that the gate reads, and the update automation keeps the SHA pins current (FR-009, FR-009a, FR-009b).
+- Trusted-publisher set (owner decision, 2026-11-25, recorded on Roadmap #890): exactly `actions/*`, `github/*` and `anthropics/*`. Every other third-party action is pinned by full SHA. Adding a publisher to the set or removing one is an owner decision (FR-009).
 - Q2: Move local action references to `$/`, keep `./` with the audit disabled, or split by layer? → A: Option B. Keep `./`, disable the `self-repository` audit with a recorded reason, and add a gate that no job checks out untrusted code at the workspace root before a `./` step. No published-contract change; GHES stays supported. The FR-014 exposure audit and spec 086's trusted resolution stand alongside the new gate (FR-016, FR-016a, FR-017).
 
 ## Layer
 
-This spec covers both interfaces Principle VII names. The static-analysis gate and the template-injection fixes apply to the **published contract** (the stage workflows and `.github/actions/**`) and to the **consuming instrument** (the `wing-commander-*.yml` wrappers). The adopter documentation describes the published contract as an adopter sees it. The self-repository decision (User Story 3) keeps `./` references, so it does not change the published contract (clarify Q2, 2026-11-25).
+This spec covers both interfaces Principle VII names. The static-analysis gate and the template-injection fixes apply to the **published contract** (the stage workflows and `.github/actions/**`) and to the **consuming instrument** (the `wing-commander-*.yml` wrappers). The adopter documentation describes the published contract as an adopter sees it. The self-repository decision (User Story 3) keeps `./` references, so it does not change the published contract (clarify Q2, 2026-11-25). SHA-pinning (FR-009) changes what a published stage workflow resolves, not its interface: no input, secret or output name changes, but each Wing Commander release freezes the third-party actions outside the trusted set that adopters run, so adopters pick up upstream fixes to those actions only through a new release (FR-018a).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -57,18 +58,19 @@ The pipeline runs on `issue_comment` and `workflow_run` by design, and the analy
 
 ### User Story 3 - Composite actions resolve from trusted code only (Priority: P2)
 
-A job that checks out a pull request's code or a consumer's ref at the workspace root, and then runs a local `./.github/actions/...` step, runs whatever copy of that action the checked-out code carries, not the trusted copy. The analyser's `self-repository` audit flags all about 639 `./` references (193 findings) as candidates for GitHub's `uses: $/...` form. That form resolves to the workflow's own repository at the running commit. A maintainer wants to know whether any job is actually exposed. The owner decided (clarify Q2, 2026-11-25) that the repository keeps `./`, switches the audit off with the reason recorded, and adds a gate that fails when a job checks out untrusted code at the workspace root before a `./` step.
+A job that checks out a pull request's code or a consumer's ref at the workspace root, and then runs a local `./.github/actions/...` step, runs whatever copy of that action the checked-out code carries, not the trusted copy. The analyser's `self-repository` audit flags all about 639 `./` references (193 findings) as candidates for GitHub's `uses: $/...` form. That form resolves to the workflow's own repository at the running commit. A maintainer wants to know whether any job is actually exposed. The owner decided (clarify Q2, 2026-11-25) that the repository keeps `./`, switches the audit off with the reason recorded, and adds a gate that fails when a `./` reference resolves inside a tree supplied by an untrusted checkout rather than inside a trusted copy (FR-016a).
 
 **Why this priority**: Spec 086 (trusted composite resolution) already addressed part of this risk, so the exposure may be zero. The first deliverable is the audit of exposed jobs; the new gate keeps the answer true afterwards. Keeping `./` avoids a large migration and a published-contract change.
 
-**Independent Test**: Run the exposure audit over the workflows. It lists every job in which a step checks out a ref other than the trusted workflow commit at the workspace root and a later step uses a `./` action. The list is checked by hand against two known jobs: one exposed (a fixture), one not.
+**Independent Test**: Run the exposure audit over the workflows. It lists every job in which a `./` action reference resolves inside an untrusted tree rather than a trusted copy (FR-014). The list is checked by hand against two known jobs: one exposed (a fixture), one not.
 
 **Acceptance Scenarios**:
 
-1. **Given** the workflows on main, **When** the exposure audit runs, **Then** it reports every job where an untrusted or consumer checkout at the workspace root comes before a `./` action step. The report is recorded on the lifecycle issue.
+1. **Given** the workflows on main, **When** the exposure audit runs, **Then** it reports every job where a `./` action reference resolves inside an untrusted tree. The report is recorded on the lifecycle issue.
 2. **Given** an exposed job the audit found, **When** this feature merges, **Then** that job no longer runs a workspace copy of an action taken from untrusted code.
 3. **Given** the self-repository decision, **When** this feature merges, **Then** the `self-repository` audit is disabled in the analyser configuration with a recorded reason, and the gate fails if that reason is removed.
-4. **Given** a PR that adds a job which checks out a pull request's or consumer's ref at the workspace root and then runs a `./` action, **When** CI runs, **Then** the untrusted-checkout gate fails and names the job and the step.
+4. **Given** a PR that adds a job which checks out a pull request's or consumer's ref at the workspace root and then runs a `./` action whose path lies inside that checkout, **When** CI runs, **Then** the untrusted-checkout gate fails and names the job and the step.
+5. **Given** a stage workflow that checks out the consumer at the workspace root and runs `./.wing-commander-pipeline/.github/actions/...` from its sidecar at the pipeline ref, or `board-loop.yml` / `lifecycle-review-gate.yml` running `./.wc-pristine-repo/.github/actions/...`, **When** the gate runs, **Then** it passes, because each reference resolves inside a trusted copy.
 
 ---
 
@@ -99,8 +101,9 @@ An adopter's organization wants to apply an Actions event policy like the one th
 - Moving the three injection sites to `env:` must not change behaviour: `inputs.directed-recovery` may be the empty string or `false`, and `github.ref_name` may contain `/`.
 - GitHub Enterprise Server adopters cannot use `$/`, and runners older than 2.336.0 cannot resolve it. Because `./` is kept (FR-016), the published contract's documented minimums do not change.
 - Gates that parse `uses: ./` today (for example the trusted-composite and composite-discovery gates) must keep working unchanged.
-- An action from a trusted publisher moves out of the trusted set, or a new third-party action is added on a tag. The gate must fail until it is SHA-pinned.
-- A SHA pin's version comment drifts from the SHA after a manual edit. The update automation's next run must bring them back in line; the plan decides whether a gate also checks it.
+- A publisher is removed from the trusted set, or a new third-party action from outside the set is added on a tag. The gate must fail until it is SHA-pinned.
+- A bump PR changes a third-party action's SHA and its version comment. Gates that read third-party `uses:` refs (Gate 170, Gate 92) must pass on it without a hand edit beyond what the bump carries (FR-017a).
+- A SHA pin's version comment drifts from the SHA after a manual edit. The pin-update automation's next run must bring them back in line; the plan decides whether a gate also checks it.
 
 ## Requirements *(mandatory)*
 
@@ -113,15 +116,15 @@ An adopter's organization wants to apply an Actions event policy like the one th
 - **FR-003**: The gate MUST fail loudly when the analyser cannot run, when the scanned file set is empty, or when the analyser's output cannot be parsed. It MUST NOT report a pass it did not earn.
 - **FR-004**: The gate MUST run without network access or a GitHub token by default, so it behaves the same on a fork PR, locally and in CI. Audits that only work online are out of the default run (see Assumptions).
 - **FR-005**: The gate MUST be triggered by changes to any file it scans, to its own configuration, to the register, and to its pin.
-- **FR-006**: Every failure branch of the gate (unwaived finding, stale record, analyser missing, empty file set, unparsable output) MUST be exercised by a checked-in fixture.
+- **FR-006**: Every failure branch of every gate this feature adds MUST be exercised by a checked-in fixture. That includes at least: unwaived finding, stale record, analyser missing, empty file set, unparsable output, an action outside the trusted set on a tag or branch (FR-009), a second copy of the trusted-publisher list (FR-009a), the recorded reason for disabling `self-repository` removed (FR-016), and a `./` reference resolving inside an untrusted tree (FR-016a).
 
 **Fixes**
 
 - **FR-007**: The three `template-injection` sites (two in `board-loop.yml` expanding `inputs.directed-recovery` into `run:`, one in `wing-commander-rebase.yml` expanding `github.ref_name` into `run:`) MUST read their values through environment variables instead. Behaviour MUST be unchanged for every value they accepted before.
 - **FR-008**: Each `github-env`, `artipacked`, `excessive-permissions` and `github-app` finding MUST be either fixed or recorded in the register with a reason.
-- **FR-009**: Action references outside a trusted-publisher set MUST be pinned by full commit SHA, with a version comment. References to actions from the trusted-publisher set (for example `actions/*` and `github/*`) keep their version tags. The `unpinned-uses` findings MUST be fixed accordingly: no finding remains for an action outside the trusted set, and the analyser is configured to accept tags only for the trusted set. (Owner decision, clarify Q1 option C, 2026-11-25.)
+- **FR-009**: Action references outside a trusted-publisher set MUST be pinned by full commit SHA, with a version comment. References to actions from the trusted-publisher set keep their version tags. The set is exactly `actions/*`, `github/*` and `anthropics/*`; adding a publisher or removing one is an owner decision (owner decision, 2026-11-25). The `unpinned-uses` findings MUST be fixed accordingly: no finding remains for an action outside the trusted set, and the analyser is configured to accept tags only for the trusted set. (Owner decision, clarify Q1 option C, 2026-11-25.)
 - **FR-009a**: The trusted-publisher list MUST have exactly one home, and the gate MUST read it from there. No second copy of the list may exist in another gate, configuration or workflow.
-- **FR-009b**: The repository's dependency-update automation MUST keep the SHA pins current, updating the SHA and its version comment together.
+- **FR-009b**: The repository has no action-update automation today (no Dependabot or Renovate configuration; `auto-update-spec-kit.yml` updates Spec Kit only). This feature MUST add automation that opens PRs to keep the SHA pins current, each PR updating the SHA and its version comment together. Those bump PRs are merged by a human: they are not the dependency-bump merge class of constitution Principle X, which covers only Spec Kit upgrades, and this feature adds no bot merge class.
 
 **Accepted-findings register**
 
@@ -132,15 +135,21 @@ An adopter's organization wants to apply an Actions event policy like the one th
 
 **Self-repository references**
 
-- **FR-014**: The feature MUST deliver an exposure audit that lists every job in which a step checks out a ref other than the trusted workflow commit at the workspace root before a step that uses a `./` action. The result MUST be recorded on the lifecycle issue.
+- **FR-014**: The feature MUST deliver an exposure audit that lists every job in which a `./` action reference resolves inside an untrusted tree rather than inside a trusted copy (both as FR-016a defines them). The result MUST be recorded on the lifecycle issue.
 - **FR-015**: Every exposed job FR-014 finds MUST be fixed so it no longer runs a workspace copy of an action taken from untrusted or consumer code.
 - **FR-016**: Local action references MUST stay in the `./` form. The analyser's `self-repository` audit MUST be disabled in the analyser configuration with a recorded reason, and the gate MUST fail if that reason is missing. No reference moves to `$/`, so the published contract does not change and GitHub Enterprise Server stays supported. (Owner decision, clarify Q2 option B, 2026-11-25.)
-- **FR-016a**: A gate MUST fail when any job checks out untrusted or consumer code (any ref other than the trusted workflow commit) at the workspace root before a step that uses a `./` action. This gate is the standing enforcement of what the FR-014 exposure audit finds once; it stands alongside that audit and spec 086's trusted composite resolution, and replaces neither. Its failure branches MUST be exercised by checked-in fixtures (one exposed job, one safe job).
+- **FR-016a**: A gate MUST fail when a `./` action reference in a job resolves to a path inside a tree supplied by an untrusted checkout, and pass when it resolves inside a trusted copy. The rule is about where the reference resolves, not about the order of checkouts.
+  - A **trusted copy** is: for a wrapper or other top-level workflow, a checkout of the workflow's own commit; for a published stage workflow, the pipeline sidecar `.wing-commander-pipeline/` checked out at the stage's resolved pipeline ref; for `board-loop.yml` and `lifecycle-review-gate.yml`, the pristine copy `.wc-pristine-repo/`.
+  - An **untrusted tree** is any other checkout: a pull request's head or branch, an item branch, or a consumer's repository at any ref, its default branch included.
+  - Scope and one home: the gate covers checkouts in every workflow and composite action. An agent-writable workspace (spec 086's fix-job exposure and its write-protect rule) is out of scope and stays with spec 086's gates. The checkout-before-`./` rule that Gate 104 (`verify-board-loop-composite-provenance.py`) and `verify-lifecycle-review-gate-composite-provenance.py` encode for their two workflows MUST end up with one home: the plan either folds that rule into this gate, leaving each older gate only its workflow-specific rules, or records why each keeps its own rule, with no duplicated rule logic. Gate 151 (`verify-composite-run-provenance.py`) covers composite `run:` bodies, a different subject, and stands unchanged.
+  - Its failure branch MUST be exercised by a checked-in fixture (one exposed job), alongside a passing fixture (one safe job).
 - **FR-017**: Gates that parse `uses: ./` references today MUST continue to pass on main unchanged.
+- **FR-017a**: Gates that read third-party `uses:` refs (Gate 170, `verify-action-runtime-pins.py` with `action-runtime-pins.json`; Gate 92, the claude-code-action inputs gate) MUST accept full-SHA refs with a version comment, and a bump PR that changes only a SHA and its version comment MUST keep them green.
 
 **Adopter documentation**
 
 - **FR-018**: The adopter documentation MUST list every event the wrapper workflows trigger on, what each one drives, and how each is gated.
+- **FR-018a**: The adopter documentation MUST state that third-party actions outside the trusted-publisher set are pinned by SHA in the published stage workflows, so each Wing Commander release freezes them, and adopters get upstream fixes to them by moving to a new release.
 - **FR-019**: The adopter documentation MUST give a sample Actions event policy that includes every event the pipeline needs. It MUST recommend running a new policy in Evaluate mode first, and say that it is unresolved whether Evaluate mode needs Enterprise.
 - **FR-020**: A check MUST fail when a wrapper workflow declares a trigger event that the sample policy does not list.
 - **FR-021**: The adopter documentation MUST state the fork-PR limit (review and review-comment events from a fork get a read-only token and no secrets) and what that means for PR conversation.
@@ -156,8 +165,9 @@ An adopter's organization wants to apply an Actions event policy like the one th
 - **Analyser pin**: the exact analyser version the gate runs, kept in one place and read by both the local runner and CI.
 - **Analyser configuration**: which audits run, at what level, and which are disabled with a recorded reason.
 - **Accepted-findings register**: one record per accepted finding. Each record has a file, an audit, a stable location key, a reason, a gating control and a tracking issue.
-- **Trusted-publisher list**: the one list of action publishers whose references may stay on version tags; every other third-party reference is SHA-pinned.
-- **Exposure audit report**: the list of jobs where an untrusted or consumer checkout at the workspace root comes before a `./` action step.
+- **Trusted-publisher list**: the one list of action publishers whose references may stay on version tags (`actions`, `github`, `anthropics`); every other third-party reference is SHA-pinned. Changing it is an owner decision.
+- **Trusted copy**: a checkout a `./` reference may resolve into (FR-016a): the workflow's own commit, the stage sidecar `.wing-commander-pipeline/` at the pipeline ref, or `.wc-pristine-repo/`.
+- **Exposure audit report**: the list of jobs where a `./` action reference resolves inside an untrusted tree.
 - **Trigger inventory**: the set of events the wrapper workflows declare, matched against the sample event policy in the docs.
 
 ## Success Criteria *(mandatory)*
@@ -169,9 +179,12 @@ An adopter's organization wants to apply an Actions event policy like the one th
 - **SC-003**: The local gate runner and CI give the same verdict on the same commit for this gate in every fixture case.
 - **SC-004**: Every one of the 7 `dangerous-triggers` findings has a register record that names its gating control, and 0 register records are stale.
 - **SC-005**: The exposure audit's result is recorded, and 0 jobs remain in which untrusted or consumer code supplies a `./` action that then runs.
-- **SC-005a**: 0 third-party action references outside the trusted-publisher set remain on a tag or branch, and the untrusted-checkout gate fails its exposed-job fixture and passes on main.
 - **SC-006**: 100% of the events the wrapper workflows declare appear in the documented sample event policy, and a check enforces it.
 - **SC-007**: An adopter can find, in one documentation page, every event the pipeline needs and the gate on each, without reading a workflow file.
+- **SC-008**: 0 third-party action references outside the trusted-publisher set remain on a tag or branch.
+- **SC-009**: The untrusted-checkout gate fails its exposed-job fixture and passes on main, where every stage workflow, `board-loop.yml` and `lifecycle-review-gate.yml` resolve their `./` references inside a trusted copy.
+- **SC-010**: The trusted-publisher list has one home, and a check fails on a second copy. A bump PR that changes a SHA and its version comment together passes the full gate suite.
+- **SC-011**: Removing the recorded reason for disabling the `self-repository` audit makes the gate fail.
 
 ## Assumptions
 
