@@ -4,7 +4,8 @@
 WHY THIS EXISTS
 ---------------
 A `workflow_dispatch` input arrives at the reusable-workflow call as a
-string, whatever `type:` the dispatch declares. When the called workflow
+string, whatever `type:` the dispatch declares (one exception: the `inputs`
+context keeps a `type: boolean` input a boolean). When the called workflow
 declares that input `type: number` (or `boolean`), GitHub refuses the call
 while composing the run: the run fails at startup with no jobs, the UI says
 "This run likely failed because of a workflow file issue", and the only
@@ -23,33 +24,31 @@ declared, and leaves a value that is already one unchanged.
 THE RULE
 --------
 For every workflow with a `workflow_dispatch` trigger, every job that calls
-a local reusable workflow (`uses: ./.github/workflows/X.yml`) may not pass
-an expression that can evaluate to a dispatch input's string to a `number`
-or `boolean` input of X. An expression is checked once its fromJSON(...)
-calls are removed: if it still names a dispatch input (`inputs.NAME`,
-`inputs['NAME']`, the `github.event.inputs.` forms, any letter case), it
-fails, so a fallback such as `${{ inputs.NAME || 1 }}` or
-`format('{0}', inputs.NAME)` fails like the bare reference does. Quoted
-literals are blanked first, so a `<`, `!` or `inputs.` inside one counts
-for nothing. `&&` and `||` return one of their operands, so the expression
-is split on them (outside parentheses and quotes) and each operand is
-checked: an operand with a comparison, a negation or
-contains/startsWith/endsWith is already a boolean and is left alone, so
-`${{ inputs.NAME != '' && inputs.NAME || 1 }}` still fails on its middle
-operand.
+a local reusable workflow (`uses: ./.github/workflows/X.yml`) may pass a
+value that reads a dispatch input (`inputs.NAME`, `inputs['NAME']`, the
+`github.event.inputs.` forms, any letter case, anywhere in any `${{ }}` of
+the value) to a `number` or `boolean` input of X only in one of these
+forms, the whole value and nothing else:
 
-One exception: the `inputs` context keeps a dispatch input declared
-`type: boolean` a boolean (only `github.event.inputs` turns it into a
-string), so `inputs.FLAG` of a boolean dispatch input may reach a boolean
-callee input bare; the gate names only the other references.
+  ${{ fromJSON(inputs.NAME) }}               NAME required, has a default,
+                                             or is a boolean dispatch input
+  ${{ fromJSON(inputs.NAME || '<json>') }}   '<json>' parses as the callee's
+                                             type (fromJSON('') fails too)
+  ${{ inputs.NAME }}                         only a boolean dispatch input
+                                             into a boolean callee input: the
+                                             `inputs` context keeps it a
+                                             boolean
 
-The fix the gate names is `${{ fromJSON(inputs.NAME) }}`; for an optional
-dispatch input with no default it is `fromJSON(inputs.NAME || '<default>')`,
-because fromJSON('') fails at startup too.
+A boolean dispatch input never fills a number input. Anything else fails
+with a message naming the form to use. The rule is an allowlist on purpose:
+two review passes of an expression matcher (fallbacks, guards, format(),
+literals, comparisons) each found new shapes it misread, and every typed
+call in the fleet already uses the first form.
 
 Usage: python3 .github/scripts/verify-dispatch-input-types.py [--self-test]
 """
 import glob
+import json
 import os
 import re
 import shutil
@@ -58,105 +57,98 @@ import tempfile
 
 import yaml
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import wc_gha_expr  # noqa: E402  -- `${{ }}` splitting has one home
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 TYPED = ("number", "boolean")
-WHOLE = re.compile(r"^\$\{\{(.*)\}\}$", re.S)
 REF = re.compile(
-    r"(?<![A-Za-z0-9_.-])(github\.event\.)?inputs(?:\.([A-Za-z0-9_-]+)|\[\s*'([^']*)'\s*\])", re.I)
-BOOLEAN_EXPR = re.compile(r"==|!=|<|>|!|\b(?:contains|startswith|endswith)\s*\(", re.I)
-FROMJSON = re.compile(r"\bfromjson\s*\(", re.I)
-
-
-def _strip_fromjson(expr):
-    """Remove every fromJSON(...) call, balanced parentheses and quoted strings respected."""
-    out = []
-    i = 0
-    while True:
-        m = FROMJSON.search(expr, i)
-        if not m:
-            out.append(expr[i:])
-            return "".join(out)
-        out.append(expr[i:m.start()])
-        depth, j, quoted = 1, m.end(), False
-        while j < len(expr) and depth:
-            c = expr[j]
-            if quoted:
-                if c == "'":
-                    quoted = False
-            elif c == "'":
-                quoted = True
-            elif c == "(":
-                depth += 1
-            elif c == ")":
-                depth -= 1
-            j += 1
-        out.append(" 0 ")
-        i = j
-
-
+    r"(?<![A-Za-z0-9_.-])(?:github\.event\.)?inputs(?:\.([A-Za-z0-9_-]+)|\[\s*'([^']*)'\s*\])", re.I)
 LITERAL = re.compile(r"'(?:[^']|'')*'")
-INDEXED = re.compile(r"(?<![A-Za-z0-9_.-])((?:github\.event\.)?inputs)\[\s*'([^']*)'\s*\]", re.I)
+NAME = r"inputs\.([A-Za-z0-9_-]+)"
+FROMJSON_BARE = re.compile(r"\$\{\{\s*fromjson\(\s*" + NAME + r"\s*\)\s*\}\}", re.I)
+FROMJSON_FALLBACK = re.compile(
+    r"\$\{\{\s*fromjson\(\s*" + NAME + r"\s*\|\|\s*('(?:[^']|'')*')\s*\)\s*\}\}", re.I)
+BARE = re.compile(r"\$\{\{\s*" + NAME + r"\s*\}\}", re.I)
 
 
-def _operands(expr):
-    """The operands `expr` can return: split on top-level && and ||, parentheses unwrapped."""
-    expr = expr.strip()
-    parts, depth, start, i = [], 0, 0, 0
-    while i < len(expr):
-        c = expr[i]
-        if c == "(":
-            depth += 1
-        elif c == ")":
-            depth -= 1
-        elif depth == 0 and expr[i:i + 2] in ("&&", "||"):
-            parts.append(expr[start:i])
-            start = i = i + 2
-            continue
-        i += 1
-    parts.append(expr[start:])
-    if len(parts) > 1:
-        return [o for p in parts for o in _operands(p)]
-    whole = parts[0].strip()
-    if whole.startswith("(") and whole.endswith(")"):
-        inner = whole[1:-1]
-        depth = 0
-        for c in inner:
-            depth += {"(": 1, ")": -1}.get(c, 0)
-            if depth < 0:
-                break
-        else:
-            return _operands(inner)
-    return [whole]
-
-
-def _string_refs(value, kind, dispatch):
-    """The dispatch inputs `value` can hand a `kind` callee input as a string."""
-    m = WHOLE.match(value)
-    if not m:
-        return []
-    # inputs['NAME'] becomes inputs.NAME before the literals are blanked.
-    expr = INDEXED.sub(lambda r: r.group(1) + "." + r.group(2), _strip_fromjson(m.group(1)))
-    expr = LITERAL.sub("''", expr)
+def _dispatch_refs(value, dispatch):
+    """The dispatch inputs any expression in `value` reads, quoted literals ignored."""
     names = []
-    for operand in _operands(expr):
-        if BOOLEAN_EXPR.search(operand):
+    for kind, body in wc_gha_expr.segments(value):
+        if kind != "expr":
             continue
-        for event, dotted, indexed in REF.findall(operand):
-            name = (dotted or indexed).lower()
-            if name not in dispatch or name in names:
+        quoted = [m.span() for m in LITERAL.finditer(body)]
+        for ref in REF.finditer(body):
+            if any(start <= ref.start() < end for start, end in quoted):
                 continue
-            if kind == "boolean" and not event and str(dispatch[name].get("type")) == "boolean":
-                continue
-            names.append(name)
+            name = (ref.group(1) or ref.group(2)).lower()
+            if name in dispatch and name not in names:
+                names.append(name)
     return names
 
 
-def _suggest(name, spec):
-    if not spec.get("required") and spec.get("default") in (None, ""):
-        return ("${{{{ fromJSON(inputs.{0} || '<default>') }}}} (inputs.{0} is optional with no default, "
-                "and fromJSON('') fails at startup too)").format(name)
-    return "${{{{ fromJSON(inputs.{0}) }}}}".format(name)
+def _is_boolean(spec):
+    return str(spec.get("type")) == "boolean"
+
+
+def _may_be_empty(spec):
+    return not _is_boolean(spec) and not spec.get("required") and spec.get("default") in (None, "")
+
+
+def _forms(name, kind, spec):
+    if _may_be_empty(spec):
+        forms = ["${{{{ fromJSON(inputs.{0} || '<{1}>') }}}}".format(name, kind)]
+    else:
+        forms = ["${{{{ fromJSON(inputs.{0}) }}}}".format(name)]
+    if kind == "boolean" and _is_boolean(spec):
+        forms.append("${{{{ inputs.{0} }}}}".format(name))
+    return " or ".join("`{0}`".format(f) for f in forms)
+
+
+def _of_kind(literal, kind):
+    try:
+        parsed = json.loads(literal[1:-1].replace("''", "'"))
+    except ValueError:
+        return False
+    if kind == "boolean":
+        return isinstance(parsed, bool)
+    return isinstance(parsed, (int, float)) and not isinstance(parsed, bool)
+
+
+def _problem(value, kind, dispatch):
+    """(dispatch input, reason) when `value` breaks the rule for a `kind` callee input, else None."""
+    try:
+        names = _dispatch_refs(value, dispatch)
+    except ValueError as exc:
+        return "?", "{0} -- close the expression".format(exc)
+    if not names:
+        return None
+    m = FROMJSON_BARE.fullmatch(value) or FROMJSON_FALLBACK.fullmatch(value) or BARE.fullmatch(value)
+    if m:
+        name = m.group(1).lower()
+    else:
+        # Name the input the author must change, not a boolean one that would be fine on its own.
+        name = next((n for n in names if not (kind == "boolean" and _is_boolean(dispatch[n]))), names[0])
+    spec = dispatch[name]
+    if kind == "number" and _is_boolean(spec):
+        return name, ("a boolean dispatch input stays a boolean, and no form turns it into a number "
+                      "-- declare `{0}` type: number or string".format(name))
+    if m is None:
+        return name, ("a dispatch input reaches the call as a string, and only these forms are known to yield a "
+                      "{0}".format(kind))
+    if m.re is BARE:
+        if kind == "boolean" and _is_boolean(spec):
+            return None
+        return name, "a dispatch input reaches the call as a string"
+    if m.re is FROMJSON_FALLBACK:
+        if _of_kind(m.group(2), kind):
+            return None
+        return name, "the fallback {0} is not a JSON {1}, so fromJSON fails on it at startup".format(m.group(2), kind)
+    if _may_be_empty(spec):
+        return name, "inputs.{0} is optional with no default, and fromJSON('') fails at startup".format(name)
+    return None
 
 
 def _on(wf):
@@ -195,19 +187,22 @@ def problems(root):
             if not os.path.isfile(callee_path):
                 found.append("{0}: job {1} calls {2}, which does not exist".format(rel, job_name, uses))
                 continue
-            callee_inputs = ((_on(_load(callee_path)).get("workflow_call") or {}).get("inputs") or {})
+            # Input names match in any letter case, like the dispatch side.
+            callee_inputs = {str(k).lower(): (v or {}) for k, v in
+                             (((_on(_load(callee_path)).get("workflow_call") or {}).get("inputs") or {}).items())}
             for key, value in ((job.get("with") or {}).items()):
-                kind = str(((callee_inputs.get(key) or {}).get("type")) or "string")
+                kind = str(((callee_inputs.get(str(key).lower()) or {}).get("type")) or "string")
                 if kind not in TYPED:
                     continue
-                for name in _string_refs(str(value).strip(), kind, dispatch_inputs):
-                    found.append(
-                        "{0}: job {1} passes dispatch input `{2}` to {3}'s {4} input `{5}` as `{6}`; "
-                        "a dispatch input arrives as a string and the run fails at startup -- "
-                        "pass {7}".format(
-                            rel, job_name, name, os.path.basename(uses), kind, key, str(value).strip(),
-                            _suggest(name, dispatch_inputs[name])))
-                    break
+                value = str(value).strip()
+                bad = _problem(value, kind, dispatch_inputs)
+                if bad:
+                    name, reason = bad
+                    if "--" not in reason and name in dispatch_inputs:
+                        reason += " -- pass " + _forms(name, kind, dispatch_inputs[name])
+                    found.append("{0}: job {1} passes `{2}` to {3}'s {4} input `{5}`, reading dispatch input "
+                                 "`{6}`: {7}".format(rel, job_name, value, os.path.basename(uses), kind, key,
+                                                     name, reason))
     return found
 
 
@@ -244,8 +239,10 @@ CASES = [
     ("also triggered by workflow_call: the dispatch path still breaks",
      _wrapper("${{ inputs.pr }}", extra_on="  workflow_call: {}\n"), _called("number"), True),
     ("healthy: fromJSON(inputs.pr) to a number input", _wrapper("${{ fromJSON(inputs.pr) }}"), _called("number"), False),
+    ("healthy: fromJSON in another letter case", _wrapper("${{FromJson( INPUTS.PR )}}"), _called("number"), False),
     ("healthy: bare inputs.pr to a string input", _wrapper("${{ inputs.pr }}"), _called("string"), False),
-    ("healthy: a comparison is already typed", _wrapper("${{ inputs.pr == 'true' }}", "string"), _called("boolean"), False),
+    ("healthy: a value that reads no dispatch input", _wrapper("${{ fromJSON(vars.PR) || 1 }}"), _called("number"), False),
+    ("a comparison is not one of the allowed forms", _wrapper("${{ inputs.pr == 'true' }}", "string"), _called("boolean"), True),
     ("a comparison guard still returns the string operand",
      _wrapper("${{ inputs.pr != '' && inputs.pr || 1 }}"), _called("number"), True),
     ("a negation guard still returns the string operand",
@@ -254,8 +251,20 @@ CASES = [
      _wrapper("${{ inputs.pr || '<none>' }}"), _called("number"), True),
     ("a '!' inside a format() literal is not a negation",
      _wrapper("${{ format('{0}!', inputs.pr) }}"), _called("number"), True),
-    ("healthy: comparisons joined by || are a boolean",
-     _wrapper("${{ (inputs.pr == 'a') || (inputs.pr == 'b') }}", "string"), _called("boolean"), False),
+    ("a comparison among format() arguments does not make it a boolean",
+     _wrapper("${{ format('{0}{1}', inputs.pr, inputs.pr == 'y') }}"), _called("number"), True),
+    ("a 'fromJSON(' inside a literal does not hide the reference after it",
+     _wrapper("${{ format('fromJSON(', inputs.pr) }}"), _called("number"), True),
+    ("text outside the expression makes a string", _wrapper("x${{ inputs.pr }}"), _called("number"), True),
+    ("a with: key in another letter case still reaches the typed input",
+     _wrapper("${{ inputs.pr }}").replace("      pr: $", "      PR: $"), _called("number"), True),
+    ("a reference inside a quoted literal is text, not a read",
+     _wrapper("${{ fromJSON(vars.PR || 'inputs.pr') }}"), _called("number"), False),
+    ("an unterminated expression fails instead of crashing the gate",
+     _wrapper("'${{ fromJSON(inputs.pr)'"), _called("number"), True),
+    ("a fallback that is not a JSON number", _wrapper("${{ fromJSON(inputs.pr || '<default>') }}"), _called("number"), True),
+    ("a guarded fromJSON is not an allowed form",
+     _wrapper("${{ inputs.pr && fromJSON(inputs.pr) || 0 }}"), _called("number"), True),
 ]
 
 
@@ -275,44 +284,46 @@ def self_test():
             shutil.rmtree(tmp)
         if bool(got) != expect_fail:
             failures.append("{0}: expected {1}, got {2}".format(name, "a failure" if expect_fail else "a pass", got or "a pass"))
-        elif expect_fail and "fromJSON(inputs.pr)" not in got[0]:
+        elif expect_fail and "fromJSON(inputs.pr" not in got[0]:
             failures.append("{0}: the message does not name the fix: {1}".format(name, got[0]))
-    # An optional dispatch input with no default: fromJSON('') fails too, so the
-    # message names a fallback instead of the bare fromJSON().
-    tmp = tempfile.mkdtemp(prefix="gate174-")
-    try:
-        d = os.path.join(tmp, ".github", "workflows")
-        os.makedirs(d)
-        with open(os.path.join(d, "wrapper.yml"), "w", encoding="utf-8") as fh:
-            fh.write(_wrapper("${{ inputs.pr }}", required="false"))
-        with open(os.path.join(d, "called.yml"), "w", encoding="utf-8") as fh:
-            fh.write(_called("number"))
-        got = problems(tmp)
-    finally:
-        shutil.rmtree(tmp)
-    if len(got) != 1 or "fromJSON(inputs.pr || '<default>')" not in got[0]:
-        failures.append("an optional input with no default: the message does not name a fallback: {0}".format(got))
-    # A boolean dispatch input read through `inputs` is fine for a boolean
-    # callee input, so the message names the string input beside it, not it.
-    tmp = tempfile.mkdtemp(prefix="gate174-")
-    try:
-        d = os.path.join(tmp, ".github", "workflows")
-        os.makedirs(d)
-        with open(os.path.join(d, "wrapper.yml"), "w", encoding="utf-8") as fh:
-            fh.write(_wrapper("${{ inputs.flag && inputs.pr || false }}").replace(
-                "    inputs:\n", "    inputs:\n      flag:\n        type: boolean\n", 1))
-        with open(os.path.join(d, "called.yml"), "w", encoding="utf-8") as fh:
-            fh.write(_called("boolean"))
-        got = problems(tmp)
-    finally:
-        shutil.rmtree(tmp)
-    if len(got) != 1 or "dispatch input `pr`" not in got[0]:
-        failures.append("a boolean flag beside a string input: the message names the wrong input: {0}".format(got))
+    # Message checks: each names the input to change and the fix that applies to it.
+    flag = "    inputs:\n      flag:\n        type: boolean\n"
+    message_cases = [
+        # An optional dispatch input with no default: fromJSON('') fails too, so
+        # the bare fromJSON() fails and the message names a fallback instead.
+        ("an optional input with no default, bare", _wrapper("${{ inputs.pr }}", required="false"),
+         _called("number"), ["fromJSON(inputs.pr || '<number>')"]),
+        ("an optional input with no default, fromJSON", _wrapper("${{ fromJSON(inputs.pr) }}", required="false"),
+         _called("number"), ["fromJSON('') fails", "fromJSON(inputs.pr || '<number>')"]),
+        # A boolean dispatch input read through `inputs` is fine for a boolean
+        # callee input, so the message names the string input beside it.
+        ("a boolean flag beside a string input",
+         _wrapper("${{ inputs.flag && inputs.pr || false }}").replace("    inputs:\n", flag, 1),
+         _called("boolean"), ["dispatch input `pr`", "fromJSON(inputs.pr)"]),
+        # fromJSON of a boolean is a boolean, so it is not the fix for a number input.
+        ("a boolean dispatch input to a number input", _wrapper("${{ inputs.pr }}", "boolean"),
+         _called("number"), ["stays a boolean", "type: number or string"]),
+    ]
+    for name, wrapper, called, wanted in message_cases:
+        tmp = tempfile.mkdtemp(prefix="gate174-")
+        try:
+            d = os.path.join(tmp, ".github", "workflows")
+            os.makedirs(d)
+            with open(os.path.join(d, "wrapper.yml"), "w", encoding="utf-8") as fh:
+                fh.write(wrapper)
+            with open(os.path.join(d, "called.yml"), "w", encoding="utf-8") as fh:
+                fh.write(called)
+            got = problems(tmp)
+        finally:
+            shutil.rmtree(tmp)
+        if len(got) != 1 or any(w not in got[0] for w in wanted):
+            failures.append("{0}: expected one failure naming {1}, got {2}".format(name, wanted, got))
     for f in failures:
         print("SELF-TEST FAIL: " + f)
     if failures:
         return 1
-    print("Gate 174 self-test: {0} case(s) behave as stated.".format(len(CASES)))
+    print("Gate 174 self-test: {0} case(s) and {1} message check(s) behave as stated.".format(
+        len(CASES), len(message_cases)))
     return 0
 
 

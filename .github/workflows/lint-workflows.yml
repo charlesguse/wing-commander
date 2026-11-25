@@ -4857,16 +4857,17 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lint-supersedes-pr-runs.py --self-test
       # Gate 174 — a workflow_dispatch input reaches a typed reusable-workflow
-      # input only through fromJSON(). A dispatch input arrives at the call as
-      # a string; a callee that declares `type: number` or `boolean` refuses
-      # it while the run is composed, so the run fails at startup with no jobs
-      # and passes actionlint and GitHub's file validation alike. The shared
-      # reviewer's wrapper shipped `pr: ${{ inputs.pr }}` that way (run
-      # 45555932648). Numbered 174 because PR #1205 claims 173.
+      # input only in an allowlisted form: fromJSON(inputs.X), fromJSON over a
+      # JSON literal fallback, or a boolean dispatch input bare into a boolean
+      # input. A dispatch input arrives at the call as a string; a callee that
+      # declares `type: number` or `boolean` refuses it while the run is
+      # composed, so the run fails at startup with no jobs and passes
+      # actionlint and GitHub's file validation alike. The shared reviewer's
+      # wrapper shipped `pr: ${{ inputs.pr }}` that way (run 45555932648).
       - name: Gate 174 — every dispatch input passed to a number or boolean reusable-workflow input goes through fromJSON
         if: "!cancelled()"
         run: python3 .github/scripts/verify-dispatch-input-types.py
-      - name: Gate 174 self-test — a bare, fallback, format, index or other-case dispatch reference to a number or boolean input fails; fromJSON, string inputs and a boolean dispatch input via inputs pass
+      - name: Gate 174 self-test — any dispatch reference to a number or boolean input outside the fromJSON, JSON-fallback or boolean-bare forms fails, and each message names the form to use
         if: "!cancelled()"
         run: python3 .github/scripts/verify-dispatch-input-types.py --self-test
       # Gate 165 — specs/116-review-convergence-analyze. It keeps the review
