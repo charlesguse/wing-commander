@@ -53,7 +53,8 @@ WHAT IT CHECKS (default run, on the tree)
     doc or contract describes the issue's author in prose as admitted next
     to the maintainer set ("... or the issue's own author", "the
     association/author-id clause", "a maintainer or the original
-    reporter", "the original requester or trusted members"), contrasts
+    reporter", "the original requester or trusted members",
+    "maintainer-or-author", "the issue author or a maintainer"), contrasts
     pr-conversation with clarify or intake as if they had an exception
     ("unlike clarify/intake"), or writes an identity comparison
     (`actor.id ==`) in a comment.
@@ -108,8 +109,10 @@ PR_CONVERSATION = os.path.join(WF, "pr-conversation.yml")
 LIVE_DOCS = (
     "docs/adoption.md",
     "docs/architecture.md",
+    "docs/setup.md",
     "specs/010-reusable-pipeline/contracts/stage-interfaces.md",
     "specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md",
+    "specs/022-gate-closed-lifecycle/contracts/lifecycle-gate-points.md",
     "specs/029-intake-issue-comments/contracts/comment-trust-gate.md",
     "specs/029-intake-issue-comments/contracts/notice-callout.md",
     "specs/032-structured-clarification-gate/contracts/clarification-schema.md",
@@ -398,7 +401,8 @@ def check_j(tree):
 # issue's own author", "a maintainer or the issue author", "the
 # association/author-id clause", "a maintainer or the original reporter",
 # "the original requester or trusted members", "or `user.id` is the issue
-# author's", "or from this id"), contrasts pr-conversation with clarify or
+# author's", "or from this id", "maintainer-or-author", "as the issue author
+# or a maintainer"), contrasts pr-conversation with clarify or
 # intake as if they had an exception ("unlike clarify/intake"), or writes
 # an identity comparison in a comment (`actor.id ==`). Every such sentence
 # spec 130 deleted is caught. Matched on text flattened by _flatten.
@@ -408,6 +412,7 @@ PROSE_EXCEPTION = re.compile(
     r"\bunlike (?:the )?clarify(?:/| and | or )intake\b|\bgate admits (?:the|an) issue['’]s (?:own )?author\b|"
     r"\bor `?\.?user\.id`? is the issue(?:['’]s)? author|\bor from this id\b|"
     r"(?:user|actor|author)[._-]id\s*==|"
+    r"\bmaintainer-or-author\b|\bissue(?:['’]s)? (?:own )?author or (?:a )?maintainer\b|"
     r"association/author-id|author-by-id|dropping the author-id clause", re.I)
 
 
@@ -836,6 +841,23 @@ def _prose_mutant(tree):
     return _sub(tree, p, "never a bot", "or the issue's own author, never a bot")
 
 
+def _stage_header_mutant(tree):
+    return _sub(tree, CLARIFY, "security gates (commenter is a maintainer, OWNER/MEMBER/COLLABORATOR, and",
+                "security gates (commenter is maintainer-or-author and not a bot, and")
+
+
+def _setup_doc_mutant(tree):
+    p = os.path.normpath("docs/setup.md")
+    return _sub(tree, p, "reply to the comment as a\n   maintainer (`OWNER`, `MEMBER` or `COLLABORATOR`)",
+                "reply to the comment (as the issue\n   author or a maintainer)")
+
+
+def _lifecycle_contract_mutant(tree):
+    p = os.path.normpath("specs/022-gate-closed-lifecycle/contracts/lifecycle-gate-points.md")
+    return _sub(tree, p, "non-bot commenter is a maintainer (`OWNER`/`MEMBER`/`COLLABORATOR`)",
+                "non-bot commenter is maintainer-or-author")
+
+
 MUTANTS = (
     ("(a) the clarify wrapper admits the issue's author", _clarify_wrapper_mutant),
     ("(a) the Spec Kit wrapper passes issue-author-id", _updater_wrapper_mutant),
@@ -868,6 +890,10 @@ MUTANTS = (
     ("(h) the relay paragraph's last sentence alone is copied into intake.yml",
      _sentence_copy_mutant),
     ("(relay-harness) the relay composite never appends", _relay_never_mutant),
+    ("(l) clarify.yml's header says the wrapper admits maintainer-or-author", _stage_header_mutant),
+    ("(l) docs/setup.md tells the issue's author to reply", _setup_doc_mutant),
+    ("(l) the spec 022 contract says the wrapper admits maintainer-or-author",
+     _lifecycle_contract_mutant),
 )
 
 

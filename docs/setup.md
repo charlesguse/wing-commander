@@ -250,9 +250,10 @@ gh label create board:owned                 --color 0E8A16 --description "Board 
    - a PR titled `Spec: … (#N)` targeting `main`,
    - `spec:NNN-slug` + `stage:spec` labels on the issue,
    - either a PR link comment or a `## 🔍 Clarification needed` comment.
-4. If there were clarification questions, reply to the comment (as the issue
-   author or a maintainer) — *Wing Commander · 2 clarify* folds your answers into the
-   draft PR and confirms on the issue.
+4. If there were clarification questions, reply to the comment as a
+   maintainer (`OWNER`, `MEMBER` or `COLLABORATOR`) — *Wing Commander · 2 clarify*
+   folds your answers into the draft PR and confirms on the issue. A reply
+   from anyone else is not acted on.
 5. Review the spec PR; merge to accept (later stages take over from there) or
    close to reject.
 

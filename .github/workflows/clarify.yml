@@ -1,8 +1,10 @@
 # Published stage — clarify (contracts/stage-interfaces.md).
 # on: workflow_call only. The calling wrapper owns the comment trigger and its
-# security gates (commenter is maintainer-or-author and not a bot —
-# constitution V; see docs/adoption.md). This stage folds the answers from the
-# referenced comment into the open draft spec PR and confirms on the issue.
+# security gates (commenter is a maintainer, OWNER/MEMBER/COLLABORATOR, and
+# not a bot — constitution 3.0.0, Principle V; see docs/adoption.md), and this
+# stage checks the triggering comment again itself before acting on it. This
+# stage folds the answers from the referenced comment into the open draft spec
+# PR and confirms on the issue.
 # Consumers: uses: <owner>/wing-commander/.github/workflows/clarify.yml@<ref>
 name: "reusable · clarify"
 
