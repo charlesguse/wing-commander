@@ -45,11 +45,11 @@ claim about who merges.
 
 The issue record carries a board item marker with step `awaiting-merge`
 (not `readiness`), keeping `pr` (#532). That step is the handover: the
-readiness job stops at ready, and the `merge` job
-(`WING_COMMANDER_BOARD_AUTO_MERGE` on) or a human (switch off) takes it
-from there, so the item releases the board rather than holding it until
-the PR merges. `select` never treats an `awaiting-merge`
-item as in flight, and its oldest-first fallback passes the item over
+readiness job stops at ready. With `WING_COMMANDER_BOARD_AUTO_MERGE` on
+and the loop unpaused, the `merge` job may merge it; otherwise, or when
+that job or GitHub refuses, a human takes it from there. Either way the
+item releases the board rather than holding it until the PR merges.
+`select` never treats an `awaiting-merge` item as in flight, and its oldest-first fallback passes the item over
 until the PR is positively known to be CLOSED or MERGED
 (specs/061-marker-owned-in-flight/contracts/in-flight-detection.md). After
 that, resume sends the still-open issue to a fresh `triage`

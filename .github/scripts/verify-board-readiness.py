@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """Gate — board_readiness.py's evaluate_from_snapshot() resolves every
-FR-064 bullet-4 branch correctly, and board-loop.yml never calls a
-merge/approve API outside its `merge` job (specs/057-autonomous-board-loop,
-contracts/readiness-report.md; specs/115-board-loop-self-merge).
+FR-064 bullet-4 branch correctly, and board-loop.yml never calls a merge
+API outside its `merge` job, nor an approve or auto-merge API anywhere
+(specs/057-autonomous-board-loop, contracts/readiness-report.md;
+specs/115-board-loop-self-merge).
 
 WHY THIS EXISTS
 ---------------
 FR-068 is a hard invariant for every board-loop job except `merge`: none
 of them merges, approves, or enables auto-merge. The `merge` job
-(specs/115-board-loop-self-merge) merges a fix-class PR when
-WING_COMMANDER_BOARD_AUTO_MERGE is on, and verify-board-merge.py pins its
-shape; even there approvals and auto-merge stay forbidden. The one thing
+(specs/115-board-loop-self-merge) merges a fix PR or a verified Spec Kit
+upgrade PR when WING_COMMANDER_BOARD_AUTO_MERGE is on, and
+verify-board-merge.py pins its shape; even there approvals and auto-merge
+stay forbidden. The one thing
 standing between "ready" and a merge of stale evidence is this
 decision — a regression that reported ready against a check that ran on
 an earlier push, or against unresolved findings, would look identical to
@@ -62,8 +64,8 @@ EXPECTED_CASES = {
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"
 
-# FR-068: none of these API shapes may appear anywhere in board-loop.yml
-# outside its `merge` job (see MERGE_JOB_ALLOWED_LABELS below).
+# FR-068: none of these API shapes may appear anywhere in board-loop.yml,
+# except the two in MERGE_JOB_ALLOWED_LABELS below inside its `merge` job.
 # Matched as regexes against the raw line text so a merge call split across
 # `gh pr merge "$PR" \` / `  --squash` is still caught on whichever line
 # carries the flag.
@@ -86,6 +88,20 @@ MERGE_JOB_ALLOWED_LABELS = ("a `gh pr merge` call", "a merge-strategy flag")
 _JOB_HEADER_RE = re.compile(r"  [A-Za-z0-9_-]+:")
 
 
+def _invariant_error(path, label):
+    """The ::error line for one forbidden shape. Only a merge call and its
+    strategy flag have the `merge` job carve-out; --auto and approvals are
+    forbidden in every job, `merge` included, so their message must not
+    point at a job boundary (code review of #1237)."""
+    if label in MERGE_JOB_ALLOWED_LABELS:
+        return ("::error::{0} contains {1} -- outside its `merge` job, "
+                "board-loop.yml must never merge a PR (FR-068; spec "
+                "115).".format(path, label))
+    return ("::error::{0} contains {1} -- no board-loop.yml job, the "
+            "`merge` job included, may approve, request changes on, or "
+            "enable auto-merge on any PR (FR-068).".format(path, label))
+
+
 def check_no_merge_invariant(lines, path=BOARD_LOOP_FILE):
     """FR-068/SC-004 (T066): fails if any forbidden merge/approve shape
     appears anywhere in `lines`, except a merge call and its strategy flag
@@ -102,10 +118,7 @@ def check_no_merge_invariant(lines, path=BOARD_LOOP_FILE):
             if pattern.search(line):
                 errors.append(
                     "{0}:{1}:{2}".format(path, i + 1, line))
-                errors.append(
-                    "::error::{0} contains {1} -- outside its `merge` "
-                    "job, board-loop.yml must never merge, approve, or "
-                    "enable auto-merge on any PR (FR-068).".format(path, label))
+                errors.append(_invariant_error(path, label))
     return errors
 
 
@@ -247,6 +260,17 @@ def self_test():
           bool(readiness_annotations)
           and all("outside its `merge` job" in e for e in readiness_annotations),
           "got {0!r}".format(readiness_errors))
+    # --auto and approvals have no carve-out, so their error must not send
+    # the reader looking for a job boundary (code review of #1237).
+    for shape in ("gh pr merge --auto", "-f event=APPROVE"):
+        merge_job_errors = check_no_merge_invariant(
+            [MERGE_JOB_HEADER, "        run: " + shape], path="fixture.yml")
+        merge_job_annotations = [e for e in merge_job_errors if e.startswith("::error::")]
+        check("{0!r} inside the merge job is reported as forbidden in every job".format(shape),
+              bool(merge_job_annotations)
+              and all("outside its `merge` job" not in e
+                      and "the `merge` job included" in e for e in merge_job_annotations),
+              "got {0!r}".format(merge_job_errors))
 
     print("{0} failure(s).".format(failures))
     return 1 if failures else 0
