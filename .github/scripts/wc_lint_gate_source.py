@@ -17,6 +17,7 @@ Usage:
   extract_gate_step("Gate 15")
 """
 import io
+import os
 import re
 import sys
 
@@ -81,3 +82,16 @@ def extract_gate_step(step_prefix, path=LINT_WORKFLOW):
                  f"extractor cannot know which gate's source to self-test. "
                  f"Rename one step or teach the callers full step names.")
     return source
+
+
+def case_env():
+    """The environment to run an extracted gate in a temp case directory.
+
+    A gate may import a shared module from .github/scripts relative to its
+    working directory (Gates 7, 22 and 23 read the unpublished-callables
+    registry through wc_published_stages). A case directory has no
+    .github/scripts, so this puts the repository's own on PYTHONPATH; the
+    gate still reads the case directory's files."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    rest = os.environ.get("PYTHONPATH")
+    return dict(os.environ, PYTHONPATH=here + (os.pathsep + rest if rest else ""))

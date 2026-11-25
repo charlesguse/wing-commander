@@ -1,0 +1,605 @@
+#!/usr/bin/env python3
+"""Gate: the shared reviewer's trust boundaries hold (specs/127-shared-pr-reviewer,
+SC-008 (a)-(d), FR-012, FR-022, FR-027).
+
+  (a) the `code-run` job has `permissions: {}` and references no secret, and
+      a hostile PR check finds no token or Actions variable in its
+      environment;
+  (b) nothing the PR's code writes reaches the staged result except its
+      exit codes and output: the hostile check overwrites the result file
+      and appends to GITHUB_ENV, GITHUB_OUTPUT and GITHUB_STEP_SUMMARY at
+      once, and leaves a detached background writer that tries again after
+      the check exits. The shipped code-run step is run as written, under
+      bash, and none of it may have any effect, no process of the sandbox
+      user may survive, and the background writer must never wake;
+  (c) the only commands stage_code_run runs are the discovered named check
+      and the default branch's run-local-gates.py;
+  (d) neither agent job holds a write token, a web tool or a Bash tool.
+
+The dynamic proof of (a) and (b) needs a Linux runner with passwordless
+sudo (the code-run sandbox, wc_shared_review.UidSandbox). Under GitHub
+Actions it is required; elsewhere, where the sandbox cannot be set up, it
+is reported as not proven here and the static checks still run.
+
+`--self-test` proves the static checks fail on a mutated workflow and that
+the proof is required under Actions.
+"""
+import copy
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+
+import yaml
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import wc_shared_review  # noqa: E402
+
+WORKFLOW = os.path.join(HERE, "..", "workflows", "shared-pr-reviewer.yml")
+HOSTILE = os.path.join(HERE, "tests", "fixtures", "shared-review-hostile")
+PROBE = "verify-probe-check.py"
+WEB_TOOLS = ("WebSearch", "WebFetch")
+RUNNER_FILES = ("GITHUB_ENV", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY")
+BACKGROUND_DELAY = 3
+
+
+def _text(obj):
+    return yaml.safe_dump(obj)
+
+
+def code_run_step(wf):
+    for step in ((wf.get("jobs") or {}).get("code-run") or {}).get("steps") or []:
+        if " code-run " in " {0} ".format(str((step or {}).get("run") or "")).replace("\n", " "):
+            return step
+    return None
+
+
+TREES_ROOT = "review-trees"
+
+
+def tree_link_problems(wf):
+    """A1: prepare replaces every symlink in the one root it uploads, after
+    the last tree is unpacked and before the upload."""
+    steps = ((wf.get("jobs") or {}).get("prepare") or {}).get("steps") or []
+    builder = next((s for s in steps if "git archive" in str((s or {}).get("run") or "")), None)
+    if builder is None:
+        return ["prepare no longer builds the trees"]
+    run = str(builder.get("run"))
+    call = "neutralise-links --root ../{0}".format(TREES_ROOT)
+    problems = []
+    if call not in run:
+        problems.append("prepare does not neutralise the symlinks in ../{0}".format(TREES_ROOT))
+    elif run.rindex(call) < run.rindex("tar -x"):
+        problems.append("prepare unpacks a tree after neutralising the symlinks")
+    upload = next((s for s in steps if ((s or {}).get("with") or {}).get("name") == "shared-review-trees"), None)
+    if upload is None or str(upload["with"].get("path", "")).strip() != TREES_ROOT + "/":
+        problems.append("the tree artifact is not exactly the neutralised root {0}/".format(TREES_ROOT))
+    return problems
+
+
+# Reads every file under a root the way actions/upload-artifact does:
+# following links (glob followSymbolicLinks, then realpath before zipping).
+_UPLOADER = r"""
+import os, sys
+root, needle = sys.argv[1], sys.argv[2].encode()
+hit = []
+for top, dirs, files in os.walk(root, followlinks=True):
+    for name in files:
+        path = os.path.join(top, name)
+        try:
+            with open(os.path.realpath(path), "rb") as fh:
+                if needle in fh.read():
+                    hit.append(os.path.relpath(path, root))
+        except OSError:
+            pass
+print("\n".join(hit))
+"""
+
+
+def link_proof_problems():
+    """A1 dynamic: a PR tree holding a link to /proc/self/environ, a
+    directory link into a stand-in for the runner's _temp and a nested link
+    uploads the targets' content before neutralise-links runs, and nothing
+    of them after."""
+    problems = []
+    canary = "wc-a1-canary-" + uuid.uuid4().hex
+    work = tempfile.mkdtemp(prefix="wc-a1-")
+    try:
+        temp = os.path.join(work, "_temp")
+        os.makedirs(temp)
+        with open(os.path.join(temp, "runner-file"), "w", encoding="utf-8") as fh:
+            fh.write(canary)
+        tree = os.path.join(work, TREES_ROOT, "pr-tree")
+        os.makedirs(os.path.join(tree, "nested"))
+        with open(os.path.join(tree, "README"), "w", encoding="utf-8") as fh:
+            fh.write("plain\n")
+        os.symlink("/proc/self/environ", os.path.join(tree, "pwn"))
+        os.symlink(temp, os.path.join(tree, "tempdir"))
+        os.symlink(os.path.join(temp, "runner-file"), os.path.join(tree, "nested", "deep"))
+        root = os.path.join(work, TREES_ROOT)
+        env = dict(os.environ, WC_A1_CANARY=canary)
+
+        def uploaded():
+            out = subprocess.run([sys.executable, "-I", "-c", _UPLOADER, root, canary], env=env,
+                                 capture_output=True, text=True, timeout=60)
+            return sorted(x for x in out.stdout.splitlines() if x)
+        before = uploaded()
+        if sorted(before) != sorted([os.path.join("pr-tree", "pwn"),
+                                     os.path.join("pr-tree", "tempdir", "runner-file"),
+                                     os.path.join("pr-tree", "nested", "deep")]):
+            problems.append("the link proof's uploader did not read the targets before the fix "
+                            "({0}), so the proof proves nothing".format(before))
+        cli = subprocess.run([sys.executable, "-I", os.path.join(HERE, "wc_shared_review.py"),
+                              "neutralise-links", "--root", root], capture_output=True, text=True, timeout=60)
+        if cli.returncode != 0:
+            problems.append("neutralise-links failed: " + (cli.stdout + cli.stderr)[-300:])
+        after = uploaded()
+        if after:
+            problems.append("a symlink target's content still reaches the tree artifact: " + ", ".join(after))
+        left = wc_shared_review.links_under(root)
+        if left:
+            problems.append("symlinks are left in the tree: " + ", ".join(left))
+        try:
+            with open(os.path.join(tree, "pwn"), encoding="utf-8") as fh:
+                note = fh.read()
+        except OSError:
+            note = ""
+        if note != wc_shared_review.LINK_NOTE.format("/proc/self/environ"):
+            problems.append("the replaced link does not name its target as data: {0!r}".format(note))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return problems
+
+
+_FIX_TEST = """import os, sys, unittest
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import mod
+
+
+class T(unittest.TestCase):
+    def test(self):
+        self.assertEqual(mod.f(), 2)
+"""
+
+_OLD_TEST = """import os, sys, unittest
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import mod
+
+
+class T(unittest.TestCase):
+    def test_old(self):
+        self.assertIn(mod.f(), (1, 2))
+"""
+
+_EXTENDED_TEST = _OLD_TEST + """
+    def test_new_case(self):
+        self.assertEqual(mod.f(), 2)
+"""
+
+# N1: the check is itself the file the fix changes (a verify script whose
+# own bug is the fix), so on the overlay tree it is the fixed version.
+_SELF_FIXED_BASE = "import sys\nsys.exit(1)\n"
+_SELF_FIXED_PR = "import sys\nsys.exit(0)\n"
+
+_WEAK_TEST = """import unittest
+
+
+class T(unittest.TestCase):
+    def test(self):
+        self.assertTrue(True)
+"""
+
+
+def without_fix_proof_problems():
+    """A3 (FR-008(c)) through the real sandbox: the named check also runs
+    on the merge-base tree with only its own file from the PR. A check that
+    passes only with the fix fails there; one that passes on both trees is
+    staged as passing without the fix, which code records as negative."""
+    problems = []
+    work = tempfile.mkdtemp(prefix="wc-a3-")
+    try:
+        base, pr, rev = (os.path.join(work, x) for x in ("base", "pr", "rev"))
+        for root, value in ((base, 1), (pr, 2)):
+            os.makedirs(os.path.join(root, "tests"))
+            with open(os.path.join(root, "mod.py"), "w", encoding="utf-8") as fh:
+                fh.write("def f():\n    return {0}\n".format(value))
+        for name, body in (("test_fix.py", _FIX_TEST), ("test_weak.py", _WEAK_TEST),
+                           ("test_a_weak.py", _WEAK_TEST), ("test_existing.py", _EXTENDED_TEST)):
+            with open(os.path.join(pr, "tests", name), "w", encoding="utf-8") as fh:
+                fh.write(body)
+        with open(os.path.join(base, "tests", "test_existing.py"), "w", encoding="utf-8") as fh:
+            fh.write(_OLD_TEST)
+        for root, body in ((base, _SELF_FIXED_BASE), (pr, _SELF_FIXED_PR)):
+            with open(os.path.join(root, "tests", "verify-thing.py"), "w", encoding="utf-8") as fh:
+                fh.write(body)
+        _reviewer_tree(rev)
+        for added, modified, want_with, want_without, answer in (
+                (["tests/test_fix.py"], [], 0, "non-zero", None),
+                (["tests/test_weak.py"], [], 0, 0, wc_shared_review.NEGATIVE),
+                # R1: a fix that extends an existing test (no test added).
+                ([], ["tests/test_existing.py"], 0, "non-zero", None),
+                # N1: a modified check the fix itself changes passes on the
+                # overlay tree, and code must not call that negative.
+                ([], ["tests/verify-thing.py"], 0, 0, None),
+                # Round 5: with two candidates the one that runs is a guess
+                # (here a weak one sorted before the real check, then an
+                # added one beside the extended test), so its passing is
+                # not determinable, never negative.
+                (["tests/test_fix.py", "tests/test_a_weak.py"], [], 0, 0, wc_shared_review.UNDETERMINABLE),
+                (["tests/test_weak.py"], ["tests/test_existing.py"], 0, 0, wc_shared_review.UNDETERMINABLE)):
+            out = wc_shared_review.stage_code_run(pr, rev, added, timeout=120,
+                                                  base_tree=base, modified_files=modified)
+            added = ",".join(added + modified)
+            named = (out.get("named_check") or {}).get("exit")
+            without = (out.get("named_check_without_fix") or {}).get("exit")
+            if out.get("status") != "staged" or named != want_with:
+                problems.append("{0} with the fix: {1!r}".format(added, out)[:400])
+                continue
+            if (want_without == 0 and without != 0) or (want_without != 0 and without in (0, None)):
+                problems.append("{0} without the fix exited {1!r}, wanted {2}".format(added, without, want_without))
+            if wc_shared_review.check_fails_without_fix(out)[0] != answer:
+                problems.append("{0}: check_fails_without_fix by code is {1!r}, wanted {2!r}".format(
+                    added, wc_shared_review.check_fails_without_fix(out)[0], answer))
+    finally:
+        subprocess.run(["sudo", "-n", "rm", "-rf", "--one-file-system", work], capture_output=True)
+        shutil.rmtree(work, ignore_errors=True)
+    return problems
+
+
+def git_root_proof_problems():
+    """A4 through the real sandbox: a named check sees its tree as a git
+    repository whose root is the tree, with the repository's own origin,
+    so gates that resolve the root through git do not read `/`."""
+    work = tempfile.mkdtemp(prefix="wc-a4-")
+    url = "https://github.com/wc-fixture/repo.git"
+    try:
+        pr, rev = os.path.join(work, "pr"), os.path.join(work, "rev")
+        os.makedirs(pr)
+        with open(os.path.join(pr, "run-tests.sh"), "w", encoding="utf-8") as fh:
+            fh.write('set -e\n[ "$(git rev-parse --show-toplevel)" = "$(pwd)" ]\n'
+                     'echo "ORIGIN:$(git remote get-url origin)"\n')
+        _reviewer_tree(rev)
+        out = wc_shared_review.stage_code_run(pr, rev, ["run-tests.sh"], timeout=60, origin_url=url)
+        named = out.get("named_check") or {}
+        if named.get("exit") != 0 or "ORIGIN:" + url not in named.get("output_tail", ""):
+            return ["the sandbox tree is not a git repository rooted at itself with origin "
+                    "({0!r})".format(named)[:400]]
+        return []
+    finally:
+        subprocess.run(["sudo", "-n", "rm", "-rf", "--one-file-system", work], capture_output=True)
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def base_tree_problems(wf):
+    """A3 (FR-008(c)): prepare archives the merge-base tree into the
+    neutralised root, and code-run hands it to the named check's run
+    without the fix."""
+    problems = []
+    steps = ((wf.get("jobs") or {}).get("prepare") or {}).get("steps") or []
+    builder = str(next((x.get("run") for x in steps if "git archive" in str((x or {}).get("run") or "")), ""))
+    if not ("git merge-base" in builder and "tar -x -C ../{0}/base-tree".format(TREES_ROOT) in builder):
+        problems.append("prepare does not archive the merge-base tree into ../{0}/base-tree".format(TREES_ROOT))
+    if "--base-tree trees/base-tree" not in str((code_run_step(wf) or {}).get("run") or ""):
+        problems.append("code-run does not run the named check without the fix (--base-tree)")
+    # R1: a fix that extends an existing check names it through the
+    # modified-files list. Round 5: both lists are NUL-separated (no
+    # C-quoted path) and a renamed file is listed as modified.
+    lists = {name: line for line in builder.splitlines() for name in ("added-files.txt", "modified-files.txt")
+             if line.strip().startswith("git diff") and name in line}
+    if not re.search(r"\s--diff-filter=MR\s", lists.get("modified-files.txt", "")):
+        problems.append("prepare does not list the PR's modified and renamed files")
+    if not all(re.search(r"\s-z\s", lists.get(name, "")) for name in ("added-files.txt", "modified-files.txt")):
+        problems.append("prepare's file lists are not NUL-separated (git diff -z)")
+    if "--modified-files input/modified-files.txt" not in str((code_run_step(wf) or {}).get("run") or ""):
+        problems.append("code-run does not consider a modified check (--modified-files)")
+    return problems
+
+
+AGENT_READ_SCOPES = ("Read(./**)", "Read(/${{ runner.temp }}/shared-review-trees/**)")
+AGENT_READ_DENIES = ("Read(//proc/**)", "Read(//sys/**)", "Read(//dev/**)")
+
+
+def _tools(value):
+    return [t.strip() for t in str(value or "").split(",") if t.strip()]
+
+
+def agent_read_problems(wf):
+    """C2: neither agent can Read, Grep or Glob outside the workspace and
+    the trees. Checked with Claude Code 2.1.319 headless: a bare Read, Grep
+    or Glob allow rule pre-approves any path; with only these scoped Read
+    rules and the denies, the tree is read, grepped and globbed, and a file
+    elsewhere or under a denied path is refused by all three. No settings
+    input: Gate 93 refuses one carrying permissions on a read-only agent."""
+    problems = []
+    for name in ("find", "check"):
+        steps = [x or {} for x in ((wf.get("jobs") or {}).get(name) or {}).get("steps") or []]
+        args = next((x.get("with") for x in steps if "default-allowed-tools" in (x.get("with") or {})), {})
+        allowed, denied = _tools(args.get("default-allowed-tools")), _tools(args.get("default-disallowed-tools"))
+        bare = [t for t in allowed if t.split("(", 1)[0] in ("Read", "Grep", "Glob") and "(" not in t]
+        reads = [t for t in allowed if t.startswith("Read(")]
+        if bare or sorted(reads) != sorted(AGENT_READ_SCOPES):
+            problems.append("{0}'s file tools are not scoped to the workspace and the trees: {1}".format(
+                name, bare + reads))
+        missing = [d for d in AGENT_READ_DENIES if d not in denied]
+        if missing:
+            problems.append("{0} does not deny {1}".format(name, ", ".join(missing)))
+        # N2: claude-code-action requests --permission-mode auto, where reads
+        # outside the working directories run and only the denies hold. The
+        # scoped rules confine only in the default mode, which the agent's own
+        # claude_args (passed last) must pin, and nothing else may set.
+        agent = next((x for x in steps if x.get("id") == "agent"), {})
+        modes = re.findall(r"--permission-mode[ =]+(\S+)", str((agent.get("with") or {}).get("claude_args", "")))
+        if [m.strip("\"'") for m in modes] != ["default"]:
+            problems.append("{0}'s agent does not pin --permission-mode default (found {1})".format(name, modes))
+    return problems
+
+
+def static_problems(wf):
+    problems = []
+    jobs = wf.get("jobs") or {}
+    code = jobs.get("code-run")
+    if not isinstance(code, dict):
+        return ["the callable has no code-run job"]
+    if code.get("permissions") != {}:
+        problems.append("code-run must declare `permissions: {}`")
+    if "secrets" in _text(code) or "app-private-key" in _text(code):
+        problems.append("code-run references a secret")
+    step = code_run_step(wf)
+    run = str((step or {}).get("run") or "")
+    if step is None:
+        problems.append("code-run has no step running wc_shared_review.py code-run")
+    else:
+        if "--out out/code-run.json" not in run:
+            problems.append("code-run's result is not written by the runner side (--out)")
+        if "mkdir -m 700 out" not in run:
+            problems.append("code-run's result directory is not the runner's alone (mkdir -m 700 out)")
+        if "> out/code-run.json" in run.split("||")[0]:
+            problems.append("code-run's result is a shell redirect open while PR code runs")
+    problems += tree_link_problems(wf)
+    problems += base_tree_problems(wf)
+    problems += agent_read_problems(wf)
+    for name in ("find", "check"):
+        job = jobs.get(name)
+        if not isinstance(job, dict):
+            problems.append("the callable has no {0} job".format(name))
+            continue
+        if job.get("permissions") != {"contents": "read"}:
+            problems.append("{0} must hold only `contents: read`".format(name))
+        text = _text(job)
+        if "create-github-app-token" in text or "app-private-key" in text:
+            problems.append("{0} mints or reads an App credential".format(name))
+        for s in job.get("steps") or []:
+            w = (s or {}).get("with") or {}
+            if "default-allowed-tools" in w:
+                allowed = [t.strip() for t in str(w["default-allowed-tools"]).split(",")]
+                if any(t.startswith("Bash") or t in WEB_TOOLS or t in ("Write", "Edit") for t in allowed):
+                    problems.append("{0} allows a Bash, web or write tool".format(name))
+                disallowed = str(w.get("default-disallowed-tools", ""))
+                for tool in WEB_TOOLS:
+                    if tool not in disallowed:
+                        problems.append("{0} does not disallow {1}".format(name, tool))
+    return problems
+
+
+def proof_required(environ):
+    """The dynamic proof may be skipped only off Actions."""
+    return environ.get("GITHUB_ACTIONS") == "true"
+
+
+def sandbox_unavailable_reason():
+    if os.name != "posix" or not shutil.which("bash"):
+        return "not a POSIX host with bash"
+    try:
+        wc_shared_review.UidSandbox()._check_host()
+    except wc_shared_review.SandboxUnavailable as exc:
+        return str(exc)
+    return None
+
+
+def _reviewer_tree(dest):
+    """The default branch's scripts, with a stub gate runner, so the proof
+    does not run the whole gate suite against the hostile tree."""
+    scripts = os.path.join(dest, ".github", "scripts")
+    os.makedirs(scripts)
+    for name in os.listdir(HERE):
+        if name.endswith(".py"):
+            shutil.copy2(os.path.join(HERE, name), scripts)
+    with open(os.path.join(scripts, "run-local-gates.py"), "w", encoding="utf-8") as fh:
+        fh.write("import sys\nprint('stub gate suite')\nsys.exit(3)\n")
+
+
+def _read(path):
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def dynamic_problems(wf):
+    """Runs the shipped code-run step against the hostile tree (SC-008 (a), (b))."""
+    step = code_run_step(wf)
+    if step is None:
+        return ["no code-run step to run"]
+    problems = []
+    work = tempfile.mkdtemp(prefix="wc-isolation-")
+    alive = os.path.join(tempfile.gettempdir(), "wc-hostile-alive-" + uuid.uuid4().hex)
+    try:
+        os.chmod(work, 0o755)
+        trees = os.path.join(work, "trees")
+        shutil.copytree(HOSTILE, os.path.join(trees, "pr-tree"))
+        os.makedirs(os.path.join(trees, "base-tree"))
+        _reviewer_tree(os.path.join(trees, "reviewer-tree"))
+        os.makedirs(os.path.join(work, "input"))
+        with open(os.path.join(work, "input", "added-files.txt"), "w", encoding="utf-8") as fh:
+            fh.write(PROBE + "\0")
+        open(os.path.join(work, "input", "modified-files.txt"), "w").close()
+        env = dict(os.environ)
+        runner_files = {}
+        fake = os.path.join(work, "_runner_file_commands")
+        for var in RUNNER_FILES:
+            path = os.environ.get(var)
+            if not path:
+                os.makedirs(fake, exist_ok=True)
+                path = os.path.join(fake, var.lower())
+                open(path, "w").close()
+                os.chmod(path, 0o644)
+            env[var] = path
+            runner_files[var] = path
+        before = {var: _read(path) for var, path in runner_files.items()}
+        result = os.path.join(work, "out", "code-run.json")
+        targets = {"runner_files": list(runner_files.values()), "result": result,
+                   "alive_marker": alive, "delay": BACKGROUND_DELAY}
+        with open(os.path.join(trees, "pr-tree", "hostile-targets.json"), "w", encoding="utf-8") as fh:
+            json.dump(targets, fh)
+        # Secrets in the step's own environment must not reach the probe.
+        env.update({"GH_TOKEN": "x", "ACTIONS_RUNTIME_TOKEN": "x", "ANTHROPIC_API_KEY": "x"})
+        # Set on every Actions runner; the step reads them under set -u.
+        env.setdefault("GITHUB_SERVER_URL", "https://github.com")
+        env.setdefault("GITHUB_REPOSITORY", "wc-fixture/repo")
+        script = os.path.join(work, "step.sh")
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write(str(step.get("run")))
+        proc = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", script], cwd=work,
+                              env=env, capture_output=True, text=True, timeout=600)
+        if proc.returncode != 0:
+            problems.append("the code-run step failed ({0}): {1}".format(
+                proc.returncode, (proc.stdout + proc.stderr)[-800:]))
+        staged_at_end = _read(result)
+        # Outlast the background writer before judging anything.
+        time.sleep(BACKGROUND_DELAY + 3)
+        staged = _read(result)
+        if staged != staged_at_end:
+            problems.append("the staged result changed after the code-run step ended")
+        try:
+            data = json.loads((staged or b"").decode("utf-8"))
+        except ValueError:
+            data = {}
+        if data.get("status") != "staged":
+            problems.append("the staged result is not `staged`: {0!r}".format((staged or b"")[:300]))
+        named = data.get("named_check") or {}
+        tail = named.get("output_tail", "")
+        if "LEAKED:" not in tail:
+            problems.append("the hostile probe did not run, so isolation is unproven")
+        else:
+            leaked = tail.split("LEAKED:")[-1].split("\n")[0].strip()
+            if leaked:
+                problems.append("variables reached the PR's check: " + leaked)
+        if "BACKGROUND-STARTED" not in tail:
+            problems.append("the hostile probe's background writer never started, so (b) is unproven")
+        forged = tail.split("FORGED-AT-ONCE:")[-1].split("\n")[0].strip() if "FORGED-AT-ONCE:" in tail else ""
+        if forged:
+            problems.append("the PR's check wrote runner-side files: " + forged)
+        if named.get("exit") in (0, None):
+            problems.append("the failing hostile check was not staged as a non-zero exit")
+        if (data.get("gate_suite") or {}).get("exit") != 3:
+            problems.append("the gate suite's exit code was not staged as data")
+        for var, path in runner_files.items():
+            if _read(path) != before[var]:
+                problems.append("{0} was written by the PR's code".format(var))
+        if os.path.exists(alive):
+            problems.append("a background process of the PR's code outlived the run")
+        user = wc_shared_review.SANDBOX_USER
+        if wc_shared_review.UidSandbox().live_pids():
+            problems.append("a process of {0} is still running".format(user))
+    finally:
+        subprocess.run(["sudo", "-n", "rm", "-rf", "--one-file-system", work, alive], capture_output=True)
+        shutil.rmtree(work, ignore_errors=True)
+    return problems
+
+
+def main():
+    wf = yaml.safe_load(open(WORKFLOW, encoding="utf-8")) or {}
+    problems = static_problems(wf)
+    if "--self-test" in sys.argv:
+        bad = 0
+        mutations = {
+            "code-run gains a secret": lambda w: w["jobs"]["code-run"].update(
+                {"env": {"T": "${{ secrets.x }}"}}),
+            "code-run loses its empty permissions": lambda w: w["jobs"]["code-run"].pop("permissions"),
+            "find gains a write token": lambda w: w["jobs"]["find"].update(
+                {"permissions": {"contents": "write"}}),
+            "prepare stops neutralising the tree symlinks": lambda w: [
+                st.update({"run": st["run"].replace("neutralise-links", "true #")})
+                for st in w["jobs"]["prepare"]["steps"] if "git archive" in str(st.get("run"))],
+            "prepare's file lists are newline-separated again": lambda w: [
+                st.update({"run": st["run"].replace("git diff -z -M --name-only --diff-filter=A",
+                                                    "git diff -M --name-only --diff-filter=A")})
+                for st in w["jobs"]["prepare"]["steps"] if "git archive" in str(st.get("run"))],
+            "a renamed check drops out of the modified list": lambda w: [
+                st.update({"run": st["run"].replace("--diff-filter=MR", "--diff-filter=M")})
+                for st in w["jobs"]["prepare"]["steps"] if "git archive" in str(st.get("run"))],
+            "the tree artifact uploads more than the neutralised root": lambda w: [
+                st["with"].update({"path": "review-trees/\nreviewer/\n"})
+                for st in w["jobs"]["prepare"]["steps"]
+                if (st.get("with") or {}).get("name") == "shared-review-trees"],
+            "find's Read is bare again": lambda w: [
+                x["with"].update({"default-allowed-tools": "Read"})
+                for x in w["jobs"]["find"]["steps"] if "default-allowed-tools" in (x.get("with") or {})],
+            "check no longer denies /proc": lambda w: [
+                x["with"].update({"default-disallowed-tools": x["with"]["default-disallowed-tools"].replace(
+                    ",Read(//proc/**)", "")})
+                for x in w["jobs"]["check"]["steps"] if "default-disallowed-tools" in (x.get("with") or {})],
+            "find's agent loses --permission-mode default": lambda w: [
+                x["with"].update({"claude_args": x["with"]["claude_args"].replace(
+                    "--permission-mode default\n", "")})
+                for x in w["jobs"]["find"]["steps"] if x.get("id") == "agent"],
+            "check's agent runs in auto mode": lambda w: [
+                x["with"].update({"claude_args": x["with"]["claude_args"].replace(
+                    "--permission-mode default", "--permission-mode auto")})
+                for x in w["jobs"]["check"]["steps"] if x.get("id") == "agent"],
+            "check gets a bare Grep again": lambda w: [
+                x["with"].update({"default-allowed-tools": x["with"]["default-allowed-tools"] + ",Grep,Glob"})
+                for x in w["jobs"]["check"]["steps"] if "default-allowed-tools" in (x.get("with") or {})],
+            "code-run ignores modified checks": lambda w: code_run_step(w).update(
+                {"run": code_run_step(w)["run"].replace(" --modified-files input/modified-files.txt", "")}),
+            "code-run stops running the named check without the fix": lambda w: code_run_step(w).update(
+                {"run": code_run_step(w)["run"].replace(" --base-tree trees/base-tree", "")}),
+            "code-run's result goes back to a shell redirect": lambda w: code_run_step(w).update(
+                {"run": "mkdir -p out\npython3 -I x.py code-run --pr-tree a --reviewer-tree b "
+                        "--added-files c > out/code-run.json || true\n"}),
+        }
+        for label, mutate in mutations.items():
+            clone = copy.deepcopy(wf)
+            mutate(clone)
+            if not static_problems(clone):
+                print("::error::self-test: mutation not caught: " + label)
+                bad += 1
+        if not proof_required({"GITHUB_ACTIONS": "true"}) or proof_required({}):
+            print("::error::self-test: the isolation proof is not required exactly under Actions")
+            bad += 1
+        return 1 if bad else (1 if problems else 0)
+    if os.path.exists("/proc/self/environ") and hasattr(os, "symlink"):
+        problems += link_proof_problems()
+    elif proof_required(os.environ):
+        problems.append("the symlink proof (A1) needs Linux /proc, so it is unproven")
+    else:
+        print("note: the symlink proof (A1) needs Linux /proc; it is proven on the lint runner")
+    reason = sandbox_unavailable_reason()
+    if reason is None:
+        problems += dynamic_problems(wf)
+        problems += git_root_proof_problems()
+        problems += without_fix_proof_problems()
+    elif proof_required(os.environ):
+        problems.append("the code-run sandbox cannot be set up on this runner ({0}), "
+                        "so SC-008 (a)/(b) is unproven".format(reason))
+    else:
+        print("note: SC-008 (a)/(b) not proven here: {0}; it is proven on the lint "
+              "runner".format(reason))
+    for p in problems:
+        print("::error::verify-shared-review-isolation: " + p)
+    if not problems:
+        print("verify-shared-review-isolation: {0}".format(
+            "static checks and the hostile code-run proof hold" if reason is None
+            else "static checks hold"))
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

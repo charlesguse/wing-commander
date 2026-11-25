@@ -94,7 +94,7 @@ import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_published_stages import published_stages  # noqa: E402
+from wc_published_stages import published_stages, unpublished_callables  # noqa: E402
 
 WORKFLOWS_DIR = ".github/workflows"
 WAIVERS_PATH = ".github/scripts/stage-invariant-waivers.json"
@@ -354,8 +354,13 @@ def load_workflows(root="."):
 
 def stage_workflows(loaded):
     """Relative paths of every workflow whose only trigger is workflow_call."""
+    # Registered unpublished callables (spec 127, unpublished-callables.json)
+    # are internal, not stages: wc_published_stages.py leaves them out, so
+    # this reader must too or the two would "disagree" about them.
+    skip = unpublished_callables()
     return sorted(path for path, _, parsed in loaded
                   if parsed is not None
+                  and os.path.basename(path) not in skip
                   and set(trigger_names(parsed)) == {"workflow_call"})
 
 
