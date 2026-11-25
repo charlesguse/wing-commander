@@ -112,11 +112,18 @@ on:
       # so an edit to the document alone has to run the gate. Gate 84
       # reads labels-and-cross-links.md's board:stalled sources (#889).
       # verify-board-merge.py (the board self-merge Gate 165) reads
-      # readiness-report.md for unscoped "never merges" prose (#889).
+      # readiness-report.md for unscoped "never merges" prose (#889), and
+      # the spec 061/062 contracts below for "handed to a human" prose and
+      # board-loop-workflow.md's job list for the `merge` entry that points
+      # at spec 115's board-merge.md (#1256).
       - "docs/adoption.md"
       - "specs/057-autonomous-board-loop/contracts/board-loop-workflow.md"
       - "specs/057-autonomous-board-loop/contracts/labels-and-cross-links.md"
       - "specs/057-autonomous-board-loop/contracts/readiness-report.md"
+      - "specs/061-marker-owned-in-flight/contracts/in-flight-detection.md"
+      - "specs/061-marker-owned-in-flight/contracts/resume-recovery.md"
+      - "specs/062-lifecycle-review-gate/contracts/readiness-and-merge.md"
+      - "specs/115-board-loop-self-merge/contracts/board-merge.md"
       - "specs/060-self-redrive-concurrency/contracts/concurrency-groups.md"
       - "specs/055-unattended-e2e-gates/research.md"
       - "specs/055-unattended-e2e-gates/spec.md"
