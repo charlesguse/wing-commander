@@ -345,15 +345,18 @@ def check_review_round3_rollup():
 
 def check_cancelled_superseded_reason():
     """#889 (found by the code review of #1196): an unmet checks condition
-    names a check by its newest result. A lint run cancelled by a newer run
-    of the same check on the same head is not why the merge was unmet when
-    another check really failed."""
+    names a check by its newest result. A lint run cancelled and then re-run
+    (the same workflow run, a later attempt) on the same head is not why
+    the merge was unmet when another check really failed."""
     rollup = [
         {"name": "lint", "workflowName": "lint · workflows", "status": "COMPLETED",
+         "detailsUrl": "https://github.com/o/r/actions/runs/100/job/1",
          "conclusion": "CANCELLED", "startedAt": "2026-11-25T02:46:46Z"},
         {"name": "lint", "workflowName": "lint · workflows", "status": "COMPLETED",
+         "detailsUrl": "https://github.com/o/r/actions/runs/100/job/2",
          "conclusion": "SUCCESS", "startedAt": "2026-11-25T02:52:57Z"},
         {"name": "harness tests", "workflowName": "lint · workflows", "status": "COMPLETED",
+         "detailsUrl": "https://github.com/o/r/actions/runs/100/job/3",
          "conclusion": "FAILURE", "startedAt": "2026-11-25T02:52:57Z"},
     ]
     problems = []

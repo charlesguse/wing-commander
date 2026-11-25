@@ -27,8 +27,9 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
     unmet reason (a terminal failing check state, an empty rollup, an
     open finding, a backstop breach, or the kill switch), and null when
     ready. Only each check's newest result on the head counts
-    (latest_per_check(): a check run by its workflow and job name, a
-    commit status by its context; an entry is set aside only for one of
+    (latest_per_check(): a check run by its workflow run id and job
+    name, so only a re-run's later attempt supersedes it, a commit status
+    by its context; an entry is set aside only for one of
     the same check that started strictly later). FR-005: derived only from
     the rollup's own per-entry states, never from an agent's reading of
     them."""

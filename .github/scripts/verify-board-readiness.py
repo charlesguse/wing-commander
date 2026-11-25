@@ -64,6 +64,10 @@ EXPECTED_CASES = {
     # result; and a check run with no workflow is never merged with
     # another of the same name.
     "queued-zero-time-rerun-self-clearing", "no-workflow-failure-durable",
+    # Code review of #1226, pass 3: a separate run of the same workflow on
+    # the head (a review and a review comment) never hides a failure, and
+    # a job cancelled before it started is set aside by its re-run.
+    "separate-runs-failure-durable", "cancelled-before-start-superseded-ready",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"

@@ -15,6 +15,7 @@ covering a later one (FR-037).
 `gh` call; `evaluate()` is the runtime wrapper that fetches the snapshot.
 """
 import json
+import re
 import subprocess
 import sys
 
@@ -25,40 +26,61 @@ CONDITIONS = ("checks_green", "gate_suite_green", "zero_open_findings",
 GREEN_STATES = ("SUCCESS", "NEUTRAL", "SKIPPED")
 
 
+# A GitHub Actions check run's `detailsUrl`: .../actions/runs/<run id>/job/<job id>.
+_RUN_ID_RE = re.compile(r"/actions/runs/(\d+)(?:/|$)")
+
+
 def _check_key(entry):
     """One check's identity within a rollup: a commit status by its
-    context, a check run by its workflow and job name. None for an entry
-    that names neither, or a check run with no workflow (another app's
-    check, where a shared job name proves nothing): it is never merged
-    with another."""
+    context, a check run by its workflow run (the run id in its
+    `detailsUrl`) and job name. Every attempt of one workflow run shares
+    the run id, so a re-run supersedes the attempt it re-ran. A separate
+    run of the same workflow on the same head is a different check (code
+    review of #1226, pass 3): wing-commander-9-pr-conversation.yml runs
+    once per review and once per review comment on the PR's head, and a
+    bot review's skipped run must never hide a human review's failed one.
+    None for an entry that names neither, or a check run with no workflow
+    or no run id (another app's check, where a shared job name proves
+    nothing): it is never merged with another."""
     if entry.get("context"):
         return ("status", entry["context"])
-    if entry.get("name") and entry.get("workflowName"):
-        return ("check", entry["workflowName"], entry["name"])
+    run = _RUN_ID_RE.search(entry.get("detailsUrl") or "")
+    if entry.get("name") and entry.get("workflowName") and run:
+        return ("check", entry["workflowName"], run.group(1), entry["name"])
     return None
 
 
-def _started(entry):
-    """An entry's `startedAt`, or None while it has not started. `gh`
-    writes an unset time as Go's zero time ("0001-01-01T00:00:00Z") rather
-    than leaving the key out, so a queued run carries that value."""
-    started = entry.get("startedAt")
-    if not started or str(started).startswith("0001-"):
+def _real_time(value):
+    """A timestamp, or None for a missing one or gh's zero time
+    ("0001-01-01T00:00:00Z": gh writes an unset time as Go's zero value
+    rather than leaving the key out)."""
+    if not value or str(value).startswith("0001-"):
         return None
+    return value
+
+
+def _started(entry):
+    """When an entry's result began: its `startedAt`, or None while it has
+    not started (a run still queued). An entry that concluded without ever
+    starting -- a job cancelled while it was still queued -- takes its
+    `completedAt` instead, so a re-run that started after it can still set
+    it aside (code review of #1226, pass 3)."""
+    started = _real_time(entry.get("startedAt"))
+    if started is None and _entry_state(entry) not in NOT_CONCLUDED_STATES:
+        started = _real_time(entry.get("completedAt"))
     return started
 
 
 def latest_per_check(rollup):
     """The rollup without each check's superseded results (#889, found by
     the code review of #1196). One check can report more than once on the
-    same head: a re-run of an older head's run, a reopened PR, the same
-    commit pushed again. Only the newest result describes the head, as on
-    GitHub's own checks list, so an entry is dropped when another entry of
-    the same check started strictly later. An entry that has not started
-    (no `startedAt`, or gh's zero time: a run still queued) is never
-    dropped and never drops another, so a result is only ever set aside
-    for one that provably came after it. The order of what is kept is
-    unchanged."""
+    same head when a run is re-run: only the newest attempt describes the
+    head, so an entry is dropped when another entry of the same check
+    (_check_key: the same workflow run and job) started strictly later. An
+    entry that has not started (no `startedAt`, or gh's zero time: a run
+    still queued) is never dropped and never drops another, so a result is
+    only ever set aside for one that provably came after it. The order of
+    what is kept is unchanged."""
     rollup = list(rollup or [])
     newest = {}
     for entry in rollup:
@@ -116,12 +138,13 @@ gate_suite_green = _gate_suite_green
 # WAITING/REQUESTED/PENDING) with an empty `conclusion` and no `state`.
 NOT_CONCLUDED_STATES = ("QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED", "PENDING", "EXPECTED")
 
-# A check whose run was stopped before it reached a result: a newer push
-# in a cancel-in-progress group (lint-workflows.yml's since #1196), a
-# re-run of an older head's run in that group, or a person. It is not
-# green, so nothing is ready or merges on it, but it is not a failure
-# either: a re-run, or the run a newer push starts, decides the check. So
-# it makes a not-ready record self-clearing, never durable (#889).
+# A check whose run was stopped before it reached a result on the head
+# being judged: a re-run of an older head's run in a cancel-in-progress
+# group (lint-workflows.yml's since #1196), or a person. (A newer push
+# cancels the older head's run, which is never in the new head's rollup.)
+# It is not green, so nothing is ready or merges on it, but it is not a
+# failure either: a re-run, or the run a newer push starts, decides the
+# check. So it makes a not-ready record self-clearing, never durable (#889).
 STOPPED_STATES = ("CANCELLED",)
 
 

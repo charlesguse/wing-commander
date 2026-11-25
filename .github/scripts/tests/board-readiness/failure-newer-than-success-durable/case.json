@@ -5,6 +5,7 @@
       {
         "name": "lint",
         "workflowName": "lint · workflows",
+        "detailsUrl": "https://github.com/o/r/actions/runs/100/job/1",
         "status": "COMPLETED",
         "conclusion": "SUCCESS",
         "startedAt": "2026-11-25T02:00:00Z"
@@ -12,6 +13,7 @@
       {
         "name": "harness tests",
         "workflowName": "lint · workflows",
+        "detailsUrl": "https://github.com/o/r/actions/runs/100/job/2",
         "status": "COMPLETED",
         "conclusion": "SUCCESS",
         "startedAt": "2026-11-25T02:00:00Z"
@@ -19,6 +21,7 @@
       {
         "name": "lint",
         "workflowName": "lint · workflows",
+        "detailsUrl": "https://github.com/o/r/actions/runs/100/job/3",
         "status": "COMPLETED",
         "conclusion": "FAILURE",
         "startedAt": "2026-11-25T03:00:00Z"

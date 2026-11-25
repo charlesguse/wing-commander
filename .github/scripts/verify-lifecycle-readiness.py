@@ -22,6 +22,7 @@ not vacuously, if any fixture file is missing.
     python3 .github/scripts/verify-lifecycle-readiness.py
     python3 .github/scripts/verify-lifecycle-readiness.py --self-test
 """
+import ast
 import glob
 import json
 import os
@@ -59,17 +60,53 @@ LIFECYCLE_READINESS = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "lifecycle_readiness.py")
 # The checks rules have one home, board_readiness.py (#889); a pasted copy
 # brings these literals back (CLAUDE.md "Shared logic has exactly one home").
-COPIED_RULE_RE = re.compile(r'"(SUCCESS|NEUTRAL|SKIPPED)"|==\s*"lint"')
-REQUIRED_CALLS = ("board_readiness.checks_green(", "board_readiness.gate_suite_green(")
+# Read from the module's syntax tree, so quote style or an `in` instead of
+# `==` cannot hide one (code review of #1226, pass 3).
+COPIED_RULE_LITERALS = ("SUCCESS", "NEUTRAL", "SKIPPED", "lint")
+# Each wrapper's body is its docstring and one `return board_readiness.<fn>(...)`.
+DELEGATES = {"_checks_green": "checks_green", "_gate_suite_green": "gate_suite_green"}
+
+
+def _docstring_nodes(tree):
+    nodes = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and isinstance(
+                    getattr(body[0], "value", None), ast.Constant) and isinstance(
+                    body[0].value.value, str):
+                nodes.add(id(body[0].value))
+    return nodes
+
+
+def _delegates_only(func, target):
+    body = list(func.body)
+    if body and isinstance(body[0], ast.Expr) and isinstance(
+            getattr(body[0], "value", None), ast.Constant):
+        body = body[1:]
+    if len(body) != 1 or not isinstance(body[0], ast.Return):
+        return False
+    call = body[0].value
+    return (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+            and call.func.attr == target and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "board_readiness")
 
 
 def single_home_problems(source):
     """lifecycle_readiness.py calls board_readiness.py's checks rules
-    rather than re-typing them (code review of #1226, pass 1)."""
-    problems = ["lifecycle_readiness.py contains {0}, a copy of a board_readiness.py "
-                "checks rule".format(m.group(0)) for m in COPIED_RULE_RE.finditer(source)]
-    problems += ["lifecycle_readiness.py does not call {0}...)".format(call)
-                 for call in REQUIRED_CALLS if call not in source]
+    rather than re-typing them (code review of #1226, passes 1 and 3)."""
+    tree = ast.parse(source)
+    docstrings = _docstring_nodes(tree)
+    problems = ["lifecycle_readiness.py contains {0!r} (line {1}), a copy of a "
+                "board_readiness.py checks rule".format(node.value, node.lineno)
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                and id(node) not in docstrings and node.value in COPIED_RULE_LITERALS]
+    funcs = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    for name, target in sorted(DELEGATES.items()):
+        if name not in funcs or not _delegates_only(funcs[name], target):
+            problems.append("lifecycle_readiness.py's {0} is not just `return "
+                            "board_readiness.{1}(...)`".format(name, target))
     return problems
 
 
@@ -232,6 +269,15 @@ def self_test():
         'in ("SUCCESS", "NEUTRAL", "SKIPPED") for e in rollup)')
     check("single-home-copy-caught", len(single_home_problems(pasted)) >= 4,
           repr(single_home_problems(pasted)))
+    # A copy in single quotes, beside the delegating calls, is caught too.
+    beside = real.replace(
+        "    return board_readiness.gate_suite_green(rollup)",
+        "    for e in rollup:\n"
+        "        if e.get('name') in ('lint',) and e.get('conclusion') in ('SUCCESS',):\n"
+        "            return True\n"
+        "    return board_readiness.gate_suite_green(rollup)")
+    check("single-home-single-quoted-copy-caught", len(single_home_problems(beside)) >= 3,
+          repr(single_home_problems(beside)))
 
     print("{0} failure(s).".format(failures))
     return 1 if failures else 0
