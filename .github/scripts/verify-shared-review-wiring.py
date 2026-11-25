@@ -51,14 +51,15 @@ def callable_problems(wf):
         problems.append("record's App token lacks pull-requests: write, so its PR comment is refused")
     # That scope can also approve, request changes, retitle or close the PR
     # (FR-023 forbids each), so the token is held to issues and pull
-    # requests (no contents: no merge, no push) and to the one comment call.
+    # requests (no contents: no merge, no push), to this repository (no
+    # owner or repositories input) and to the one comment call.
     for s in mints:
         extra = sorted(k for k in (s.get("with") or {})
-                       if k.startswith("permission-")
-                       and k not in ("permission-issues", "permission-pull-requests"))
+                       if k not in ("client-id", "private-key",
+                                    "permission-issues", "permission-pull-requests"))
         if extra:
-            problems.append("record's App token asks for more than issues and pull requests: "
-                            + ", ".join(extra))
+            problems.append("record's App token asks for more than issues and pull requests "
+                            "on this repository: " + ", ".join(extra))
     record_text = yaml.safe_dump(jobs["record"])
     if len(mints) != 1 or record_text.count("secrets.app-private-key") != 1:
         problems.append("record mints its App token more than once")
@@ -74,6 +75,14 @@ def callable_problems(wf):
                 r'( > /dev/null)?', lines[0]):
             problems.append("record's write token does more than post the one PR comment: "
                             + " | ".join(lines))
+        # The command's path and host come from its env and shell, so those
+        # are pinned too: the PR and repository the round was asked about.
+        env = {k: str(v).replace(" ", "") for k, v in (users[0].get("env") or {}).items()}
+        want = {"GH_TOKEN": "${{" + token + "}}", "PR": "${{inputs.pr}}",
+                "REPO": "${{github.repository}}"}
+        if env != want or users[0].get("shell") != "bash":
+            problems.append("record's comment step takes its target or shell from somewhere else: "
+                            + "env {0}, shell {1}".format(sorted(env), users[0].get("shell")))
     for name in ("find", "check", "code-run", "record"):
         needs = jobs[name].get("needs") or []
         needs = [needs] if isinstance(needs, str) else needs
@@ -420,6 +429,19 @@ def main():
             "record's token reaches the build step": lambda c: next(
                 s for s in c["jobs"]["record"]["steps"] if s.get("id") == "build")["env"].update(
                 {"GH_TOKEN": "${{ steps.app.outputs.token }}"}),
+            "record's one command reviews the pull request": lambda c: _record_post_step(c).update(
+                {"run": 'set -euo pipefail\n'
+                        'gh api -X POST "repos/${REPO}/pulls/${PR}/reviews" -f event=APPROVE\n'}),
+            "a record step reads the App private key": lambda c: c["jobs"]["record"]["steps"].append(
+                {"name": "x", "env": {"KEY": "${{ secrets.app-private-key }}"}, "run": "true\n"}),
+            "record's token reaches another owner": lambda c: next(
+                s for s in c["jobs"]["record"]["steps"]
+                if "create-github-app-token" in str(s.get("uses", "")))["with"].update(
+                {"owner": "${{ github.repository_owner }}"}),
+            "record's comment goes to another pull request": lambda c: _record_post_step(c)["env"].update(
+                {"PR": "${{ needs.prepare.outputs.spent }}"}),
+            "record's comment step runs another shell": lambda c: _record_post_step(c).update(
+                {"shell": "python {0}"}),
         }
         for label, mutate in muts.items():
             clone = copy.deepcopy(cal)
