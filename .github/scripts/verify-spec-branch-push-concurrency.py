@@ -79,13 +79,17 @@ import tempfile
 
 import yaml
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# A grant of `Bash(git push:*)` is read by the one regex the push gates
+# share; Gate 121 fails on a copy of it under .github/scripts/.
+from wc_push_grant import PUSH_GRANT_RE  # noqa: E402
+
 WORKFLOW_DIR = ".github/workflows"
 ACTIONS_DIR = ".github/actions"
 WAIVERS_PATH = ".github/scripts/spec-branch-push-waivers.json"
 TOOL_ARGS_COMPOSITE = "wing-commander-tool-args"
 
 PUSH_RE = re.compile(r"(?<![\w-])git\s+push\b")
-PUSH_GRANT_RE = re.compile(r"(?:^|,)\s*Bash\(git push:\*\)\s*(?:,|$)")
 # The three spellings the shipped stages use (specs/013 contract). The
 # group must be EXACTLY one of these: a prefix match would admit
 # `wing-commander-${{ inputs.spec-dir }}-something`, a different group.

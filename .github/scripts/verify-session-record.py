@@ -53,15 +53,23 @@ def _names(problems):
     return sorted(problem.split(":", 1)[0] for problem in problems)
 
 
+# What a fixture says it expects. One with none of these would pass
+# whatever the script does with it.
+EXPECT_KEYS = ("expect_refused", "expect_body", "expect_none", "expect_record")
+
+
 def run_case(case):
     """None, or what is wrong with one fixture's outcome."""
+    if not any(key in case for key in EXPECT_KEYS):
+        return "states none of {0}, so it would pass whatever the script does".format(
+            ", ".join(EXPECT_KEYS))
     refused = case.get("expect_refused")
     try:
         if "build" in case:
-            body = wsr.build(case["build"], case["fields"])
-            again = wsr.read(body)
-            if again != wsr.record(case["build"], case["fields"]):
-                return "the built comment does not read back as the same record"
+            # The writer's own check first: a refusal raised by read() of a
+            # comment build() wrote is the reader's, and a fixture that
+            # expects a refusal must see the writer make it.
+            rec = wsr.record(case["build"], case["fields"])
         else:
             body = None
             again = wsr.read("\n".join(case["read"]))
@@ -73,6 +81,14 @@ def run_case(case):
         return None
     if refused is not None:
         return "accepted, but {0} should refuse it".format(sorted(refused))
+    if "build" in case:
+        body = wsr.build(case["build"], case["fields"])
+        try:
+            again = wsr.read(body)
+        except wsr.RecordError as error:
+            return "the built comment reads back refused: {0}".format(error)
+        if again != rec:
+            return "the built comment does not read back as the same record"
     if "expect_body" in case and body != "\n".join(case["expect_body"]):
         return "built {0!r}".format(body)
     if case.get("expect_none") and again is not None:
@@ -80,6 +96,40 @@ def run_case(case):
     if "expect_record" in case and again != case["expect_record"]:
         return "read as {0!r}".format(again)
     return None
+
+
+# One well-formed record of each kind OPENINGS names, and what its
+# placeholders (N, YYYY-MM-DD) stand for in it.
+_SHA = "0123456789abcdef0123456789abcdef01234567"
+SAMPLES = {
+    "review": ("review", {"pass": 3, "verdict": "clean", "started": _SHA,
+                          "pushed": "nothing", "prose": "p"}),
+    "proof": ("proof", {"outcome": "no-run", "date": "2026-11-14", "merge": _SHA, "why": "w"}),
+    "decision": ("decision", {"date": "2026-11-14", "chosen": "c", "options": "o",
+                              "evidence": "e", "undo": "u"}),
+    "owner-decision": ("decision", {"by": "owner", "date": "2026-11-14", "chosen": "c",
+                                    "question": "q"}),
+}
+
+
+def opening_problems():
+    """Each OPENINGS entry, with its placeholders filled in, is how render()
+    starts a record of that kind; a kind OPENINGS lacks or one it names
+    that no sample builds is reported too."""
+    problems = []
+    if sorted(SAMPLES) != sorted(wsr.OPENINGS):
+        problems.append("OPENINGS names {0}, and the gate builds {1}".format(
+            sorted(wsr.OPENINGS), sorted(SAMPLES)))
+    for name, (kind, fields) in sorted(SAMPLES.items()):
+        if name not in wsr.OPENINGS:
+            continue
+        expected = wsr.OPENINGS[name].replace("YYYY-MM-DD", fields.get("date", "")).replace(
+            " N ", " {0} ".format(fields.get("pass", "")))
+        first = wsr.build(kind, fields).split("\n", 1)[0]
+        if not (first == expected or first.startswith(expected + " ")):
+            problems.append("OPENINGS[{0!r}] is `{1}`, and render() opens a {0} record "
+                            "with `{2}`".format(name, wsr.OPENINGS[name], first))
+    return problems
 
 
 def quoted_openings(text):
@@ -149,7 +199,7 @@ def run(root=ROOT):
             print("::error::verify-session-record: {0}: {1}".format(os.path.basename(path), error))
         else:
             print("[ok] {0}".format(os.path.basename(path)))
-    for problem in pointer_problems(root) + out_problems():
+    for problem in pointer_problems(root) + opening_problems() + out_problems():
         failures += 1
         print("::error::verify-session-record: {0}".format(problem))
     return failures
@@ -179,7 +229,7 @@ def _tree(edit):
 def self_test():
     """Each mutation must make the gate fail; the shipped tree must not."""
     failures = []
-    if _fixture_failures() or pointer_problems(ROOT):
+    if _fixture_failures() or pointer_problems(ROOT) or opening_problems():
         failures.append("the shipped tree does not pass, so no mutation can be judged")
 
     render = wsr.render
@@ -198,6 +248,41 @@ def self_test():
             failures.append("a checker that takes any text for a commit SHA passed every fixture")
     finally:
         wsr._sha = sha
+
+    # A writer that leaves a decision's missing parts to the reader: its
+    # refusals then come only from read() of the comment it wrote.
+    strict_record, strict_read = wsr.record, wsr.read
+
+    def lax_record(kind, fields):
+        if kind != "decision":
+            return strict_record(kind, fields)
+        return wsr._decision(fields, [])
+
+    def reader(body):
+        wsr.record = strict_record
+        try:
+            return strict_read(body)
+        finally:
+            wsr.record = lax_record
+
+    wsr.record, wsr.read = lax_record, reader
+    try:
+        if not _fixture_failures():
+            failures.append("a writer whose refusals only its reader makes passed every fixture")
+    finally:
+        wsr.record, wsr.read = strict_record, strict_read
+
+    kind, fields = SAMPLES["decision"]
+    if run_case({"build": kind, "fields": fields}) is None:
+        failures.append("a fixture that states no expectation passed")
+
+    openings = wsr.OPENINGS
+    wsr.OPENINGS = dict(openings, proof=openings["proof"].replace("after", "of"))
+    try:
+        if not opening_problems():
+            failures.append("an OPENINGS entry render() does not write passed")
+    finally:
+        wsr.OPENINGS = openings
 
     drifted = wsr.OPENINGS["decision"].replace("(YYYY-MM-DD)", "of YYYY-MM-DD")
     mutations = (
