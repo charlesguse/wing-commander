@@ -464,12 +464,27 @@ LOCATOR_CASES = [
     ("gh as a ${} default in command position", "${X:-gh} api x -X DELETE",
      [dis("dynamic-command")]),
     ("a quoted ${:-} default holding gh is no call", 'echo "${D:-gh gave nothing}"', []),
-    ("gh as a ${:+} alternate, one token", "${X:+gh} api x", [dis("param-expansion")]),
+    ("gh as a ${:+} alternate, one token", "${X:+gh} api x", [dis("dynamic-command")]),
+    # #889 (found by the code review of #1004): `bash ""` names an empty
+    # script path (bash exits 127), so the quoted heredoc is no shell's stdin.
+    ("an empty operand is a script path, so the shell reads no stdin",
+     "bash \"\" <<'E'\ngh api x -X DELETE\nE", [men("quoted-heredoc")]),
+    # #889 (found by the code review of #1004): `:+gh` and `:-gh` read alike,
+    # in a quoted argument (data: no token) and as a command word.
+    ("a quoted ${:+} or ${:-} holding gh is data either way",
+     'echo "${D:+gh}" "${D:-gh}" ${D:+gh}; echo "${D:+gh gave nothing}"', []),
+    ("a ${:+} or ${:-} command word holding gh is a call either way",
+     '"${D:+gh}" api x; "${D:-gh}" api x', [dis("dynamic-command")] * 2),
+    ("a gh a ${} value carries into a variable is no proof for a lone $CMD",
+     'C=${X:-gh}; $C api x -X DELETE\nC=${X:+"gh"}; "$C" api x',
+     [dis("dynamic-command"), men("quoted"), dis("dynamic-command")]),
+    ("a ${} gh after a quote the scanner cannot place is unprovable",
+     "echo ${X:-'gh api x'}", [dis("unparsed-expansion")]),
     ("gh as a ${} default behind a wrapper", "sudo ${X:-gh} api x",
      [dis("unquoted-wrapper")]),
     ("a ${} word holding gh anywhere is unprovable",
      "${X:-gh}/x api; ${GH:-${HOME}/bin/gh} api; sudo ${G:-${D}/gh} a; ${X:-gh}${Y:-} a",
-     [dis("dynamic-command"), dis("param-expansion"), dis("param-expansion"),
+     [dis("dynamic-command"), dis("dynamic-command"), dis("unquoted-wrapper"),
       dis("dynamic-command")]),
     ("a quoted gh behind a wrapper is a call", 'sudo "gh" api x',
      [dis("unquoted-wrapper")]),
@@ -848,6 +863,34 @@ def run_locator_cases():
         path, methods = loc.api_parts(args)
         if (None if path is None else str(path), [str(m) for m in methods]) != want:
             bad.append((f"api_parts {args}", [f"got {(path, methods)}, want {want}"]))
+    bad += merge_key_problems()
+    return bad
+
+
+# A step that inherits its `run:` through a YAML merge key (#889, found by
+# the code review of #1004): yaml.safe_load folds it in, so the run: readers
+# must too, or Gate 28 never scans it and Gate 12 reports it at line 1.
+MERGE_KEY_WORKFLOW = _N.join((
+    "name: w", "on: workflow_dispatch", "x-steps:",
+    "  cancel: &cancel", "    name: cancel", "    run: gh run cancel 1",
+    "  both: &both", "    run: gh api -X DELETE x",
+    "jobs:", "  work:", "    runs-on: ubuntu-latest", "    steps:",
+    "      - <<: *cancel", "      - <<: [*both, *cancel]", ""))
+
+
+def merge_key_problems():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "w.yml")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(MERGE_KEY_WORKFLOW)
+        blocks = [str(b) for b in loc.run_blocks(path)]
+        steps = {k: (str(v), v.line(1)) for k, v in loc.step_runs(path, True).items()}
+    want = {("work", 0): ("gh run cancel 1", 6), ("work", 1): ("gh api -X DELETE x", 8)}
+    bad = []
+    if blocks.count("gh run cancel 1") < 2 or "gh api -X DELETE x" not in blocks:
+        bad.append(("run_blocks: a step's merged run:", [f"got {blocks}"]))
+    if steps != want:
+        bad.append(("step_runs: a step's merged run:", [f"got {steps}", f"want {want}"]))
     return bad
 
 
