@@ -30,10 +30,10 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
     (latest_per_check(): a check run by its workflow run id and job
     name, so only a re-run's later attempt supersedes it, a commit status
     by its context; an entry is set aside only for one of
-    the same check that started strictly later; a CANCELLED check run is
-    of the gate suite's workflow is also set aside by a later, non-skipped run of the same job). FR-005: derived only from
-    the rollup's own per-entry states, never from an agent's reading of
-    them."""
+    the same check that started strictly later; a CANCELLED check run of
+    the gate suite's workflow is also set aside by a later, non-skipped
+    run of the same job). FR-005: derived only from the rollup's own
+    per-entry states, never from an agent's reading of them."""
 ```
 
 ## `.github/scripts/board_eligibility.py` (additions)
