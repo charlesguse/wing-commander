@@ -71,20 +71,22 @@ def callable_problems(wf):
         problems.append("record's write token reaches more than the one comment step")
     else:
         # Every gh call in the step is the one comment call; flags, a retry
-        # loop and other shell lines around it are free.
-        gh = [ln.strip() for ln in str(users[0].get("run") or "").splitlines()
-              if re.search(r"\bgh\b", ln) and not ln.strip().startswith("#")]
-        comment = r'\bgh api\b.*"repos/\$\{?REPO\}?/issues/\$\{?PR\}?/comments"'
+        # loop, messages and other shell lines around it are free.
+        run = str(users[0].get("run") or "").replace("\\\n", " ")
+        gh = [ln.strip() for ln in run.splitlines() if re.search(r"\bgh\b", ln)
+              and not re.match(r"\s*(#|echo\b|printf\b)", ln)]
+        comment = r'\bgh api\b.*\brepos/\$\{?REPO\}?/issues/\$\{?PR\}?/comments(?!/)'
         if not all(re.search(comment, ln) for ln in gh):
             problems.append("record's write token does more than post the one PR comment: "
                             + " | ".join(gh))
         # The command's path comes from its env and its program from the
         # shell, so those are pinned too: the PR and repository the round was
-        # asked about. Other env entries are free.
+        # asked about. Other env entries are free, and no shell: is bash on
+        # record's runner.
         env = {k: str(v).replace(" ", "") for k, v in (users[0].get("env") or {}).items()}
         want = {"GH_TOKEN": "${{" + token + "}}", "PR": "${{inputs.pr}}",
                 "REPO": "${{github.repository}}"}
-        if any(env.get(k) != v for k, v in want.items()) or users[0].get("shell") != "bash":
+        if any(env.get(k) != v for k, v in want.items()) or users[0].get("shell", "bash") != "bash":
             problems.append("record's comment step takes its token, target or shell from somewhere "
                             "else: env {0}, shell {1}".format(
                                 {k: env.get(k) for k in want}, users[0].get("shell")))
@@ -466,7 +468,10 @@ def main():
             "the post retries": lambda c: _record_post_step(c).update(
                 {"run": 'set -euo pipefail\n# Retry a transient 5xx from gh.\nfor i in 1 2 3; do\n'
                         '  gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@record.md > /dev/null 2>&1 && break\n'
-                        '  sleep 10\ndone\n'}),
+                        '  echo "::warning::gh failed, retrying"\n  sleep 10\ndone\n'}),
+            "the post is split over lines": lambda c: _record_post_step(c).update(
+                {"run": 'gh api -X POST \\\n  repos/${REPO}/issues/${PR}/comments \\\n  -F body=@record.md\n'}),
+            "the post step drops shell: bash": lambda c: _record_post_step(c).pop("shell"),
             "the post step gets another env entry": lambda c: _record_post_step(c)["env"].update(
                 {"GH_PROMPT_DISABLED": "1"}),
             "the post step is renamed": lambda c: _record_post_step(c).update({"name": "Post the round"}),
