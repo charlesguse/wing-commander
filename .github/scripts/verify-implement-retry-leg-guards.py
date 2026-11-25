@@ -15,16 +15,16 @@ Three Maintenance backlog (#889) defects in the implement job's retry leg:
    retry now does the same, under exactly the retry step's own guard.
 2. The retry ran even when the cycle's agent never started
    (`steps.agent-ran-cycle.outputs.started == 'false'`, e.g. an image
-   missing unzip). It uses the same image, so it failed the same way on a
-   more expensive model (found by the code review of #978). Every
-   retry-due step now carries `started != 'false'`.
+   missing unzip). It uses the same image, so it failed its setup the same
+   way (found by the code review of #978). Every retry-due step now
+   carries `started != 'false'`.
 3. A `mirrors "<step>"` comment named a step since renamed (found by the
    code review of #1088). A pointer to a step that does not exist sends a
    maintainer looking for nothing.
 
 Checks (on implement.yml's `implement` job):
-  clear     a step running `rm -f "$RUNNER_TEMP/claude-execution-output.json"`
-            sits after the cycle agent and before the retry agent, with no
+  clear     a step that removes or moves aside
+            `$RUNNER_TEMP/claude-execution-output.json` sits after the cycle agent and before the retry agent, with no
             agent step between it and the retry, and its `if:` EVALUATES
             the same as the retry step's over every combination of the
             values the two guards read (wc_gha_expr; no text matching).
@@ -44,13 +44,21 @@ Checks (on implement.yml's `implement` job):
             issue"), fed agent-started='false', says the agent never
             started instead of "no higher model tier remains", which the
             skipped retry made false; any other value keeps the pinned
-            headline (code review of #1239).
+            headline (code review of #1239). The never-started headline
+            names no "higher model tier": a cycle already on the
+            escalation tier lands there too (code review of #1239).
+  message   run back to back in one runner temp dir, the clear step then
+            "Extract agent final message" still report the cycle agent's
+            final message when the retry wrote no transcript, and the
+            retry's when it did (code review of #1239: deleting the
+            cycle's transcript lost the stall notice's best diagnostic).
 
 Usage: verify-implement-retry-leg-guards.py [--root DIR]
        verify-implement-retry-leg-guards.py --self-test
 """
 import argparse
 import itertools
+import json
 import os
 import re
 import sys
@@ -60,7 +68,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_gha_expr import evaluate_if, evaluate_value  # noqa: E402
-from wc_shell_harness import resolve_bash, run_step  # noqa: E402
+from wc_shell_harness import production_shell, resolve_bash, run_step  # noqa: E402
 
 WORKFLOW = ".github/workflows/implement.yml"
 WORKFLOWS_DIR = ".github/workflows"
@@ -69,6 +77,7 @@ CYCLE_ID = "cycle"
 RETRY_ID = "retry"
 AGENT_USES = "anthropics/claude-code-action"
 TRANSCRIPT = "$RUNNER_TEMP/claude-execution-output.json"
+EXTRACT_STEP = "Extract agent final message"
 STARTED = "steps.agent-ran-cycle.outputs.started"
 KNOWN = ("steps.", "inputs.")
 REF_RE = re.compile(r"\b((?:steps|inputs)\.[A-Za-z0-9_.\-]+)")
@@ -78,6 +87,7 @@ STALL_STEP = "Report stalled on lifecycle issue"
 STALL_JOB = "stalled"
 PINNED_HEADLINE = "and no higher model tier remains to escalate to"
 NEVER_STARTED = "failed before its agent started"
+HIGHER_TIER = "higher model tier"
 # The two model references a retry-leg guard compares with each other; each
 # is tried at both ids. Every other reference is tried at each string
 # literal the two guards hold, plus unset and one value neither names.
@@ -106,7 +116,8 @@ def is_agent(step):
 
 def clears_transcript(step):
     run = str(step.get("run", "")).strip()
-    return run in ('rm -f "{0}"'.format(TRANSCRIPT), "rm -f {0}".format(TRANSCRIPT))
+    return (run in ('rm -f "{0}"'.format(TRANSCRIPT), "rm -f {0}".format(TRANSCRIPT))
+            or 'mv -f "{0}" '.format(TRANSCRIPT) in run)
 
 
 def refs(*exprs):
@@ -288,13 +299,73 @@ def check_stall(doc):
                     "as AGENT_STARTED".format(STALL_STEP))
     for started, never in (("false", True), ("true", False), ("", False)):
         body = render_stall(step["run"], started)
-        if never and (PINNED_HEADLINE in body or NEVER_STARTED not in body):
+        if never and (PINNED_HEADLINE in body or NEVER_STARTED not in body
+                      or HIGHER_TIER in body):
             errs.append("stall: with agent-started='false' the notice must say the "
-                        "agent never started, not that no higher tier remains (the "
-                        "retry was skipped): {0!r}".format(body[:300]))
+                        "agent never started, and name no higher model tier (the "
+                        "cycle may already be on the escalation tier): {0!r}".format(
+                            body[:300]))
         if not never and (PINNED_HEADLINE not in body or NEVER_STARTED in body):
             errs.append("stall: with agent-started={0!r} the notice lost its pinned "
                         "headline: {1!r}".format(started, body[:300]))
+    return errs
+
+
+def _result(text):
+    return '[{"type": "result", "result": "%s"}]' % text
+
+
+def check_message(doc):
+    job = (doc.get("jobs") or {}).get(JOB) or {}
+    steps = job.get("steps") or []
+    ids = [s.get("id") for s in steps]
+    if RETRY_ID not in ids or CYCLE_ID not in ids:
+        return []  # check_clear reports it
+    clears = [s for s in steps[ids.index(CYCLE_ID) + 1:ids.index(RETRY_ID)]
+              if clears_transcript(s)]
+    extract = next((s for s in steps if s.get("name") == EXTRACT_STEP), None)
+    if not clears:
+        return []  # check_clear reports it
+    if extract is None or not extract.get("run"):
+        return ["message: the {0!r} job has no {1!r} run step".format(JOB, EXTRACT_STEP)]
+    bash = resolve_bash()
+    errs = []
+    with tempfile.TemporaryDirectory() as workdir, \
+            tempfile.TemporaryDirectory() as runner_temp:
+        main = os.path.join(runner_temp, "claude-execution-output.json")
+        diag = os.path.join(runner_temp, "implement-stall-diagnostics.json")
+
+        def run(step, env=None):
+            return run_step(bash, step["run"], workdir, dict(env or {}), runner_temp,
+                            shell=production_shell(step, job, doc))
+
+        def message():
+            if os.path.exists(diag):
+                os.remove(diag)
+            run(extract, {"REASON": "r"})
+            try:
+                with open(diag, encoding="utf-8") as fh:
+                    return json.load(fh).get("agent-message")
+            except (OSError, ValueError):
+                return None
+
+        with open(main, "w", encoding="utf-8") as fh:
+            fh.write(_result("cycle-msg"))
+        rc, out, _, _ = run(clears[-1])
+        if rc != 0 or os.path.exists(main):
+            return ["message: {0!r} left the cycle's transcript in place (rc={1}): "
+                    "{2}".format(clears[-1].get("name"), rc, out[-300:])]
+        got = message()
+        if got != "cycle-msg":
+            errs.append("message: after {0!r}, a retry that wrote no transcript leaves "
+                        "{1!r} with agent-message {2!r}, want the cycle agent's "
+                        "'cycle-msg'".format(clears[-1].get("name"), EXTRACT_STEP, got))
+        with open(main, "w", encoding="utf-8") as fh:
+            fh.write(_result("retry-msg"))
+        got = message()
+        if got != "retry-msg":
+            errs.append("message: with the retry's own transcript, {0!r} reports "
+                        "{1!r}, want the retry agent's 'retry-msg'".format(EXTRACT_STEP, got))
     return errs
 
 
@@ -304,7 +375,7 @@ def run_checks(stage_text, workflow_texts):
     if not steps:
         return ["{0} has no {1!r} job steps".format(WORKFLOW, JOB)]
     return (check_clear(steps) + check_started(steps) + check_pointers(workflow_texts)
-            + check_output(doc) + check_stall(doc))
+            + check_output(doc) + check_stall(doc) + check_message(doc))
 
 
 def load(root):
@@ -402,7 +473,29 @@ def self_test(root):
         s = next(x for x in doc["jobs"][STALL_JOB]["steps"] if x.get("name") == STALL_STEP)
         s["env"].pop("AGENT_STARTED")
 
+    def stall_names_tier(doc):
+        s = next(x for x in doc["jobs"][STALL_JOB]["steps"] if x.get("name") == STALL_STEP)
+        s["run"] = s["run"].replace("so it was not retried:",
+                                    "so it was not retried on a higher model tier:", 1)
+
+    def clear_deletes(doc):
+        s = next(x for x in doc["jobs"][JOB]["steps"] if clears_transcript(x))
+        s["run"] = 'rm -f "{0}"'.format(TRANSCRIPT)
+
+    def extract_no_fallback(doc):
+        s = next(x for x in doc["jobs"][JOB]["steps"] if x.get("name") == EXTRACT_STEP)
+        s["run"] = re.sub(r'if \[ ! -f "\$file" \]; then\n.*?\n\s*fi\n', "", s["run"],
+                          count=1, flags=re.S)
+
+    def extract_prefers_cycle(doc):
+        s = next(x for x in doc["jobs"][JOB]["steps"] if x.get("name") == EXTRACT_STEP)
+        s["run"] = s["run"].replace('if [ ! -f "$file" ]; then', "if true; then", 1)
+
     doc_cases = [("agent-started most-recent-wins", output_most_recent, "output:"),
+                 ("never-started headline names a higher tier", stall_names_tier, "stall:"),
+                 ("clear deletes the cycle transcript", clear_deletes, "message:"),
+                 ("extract has no cycle fallback", extract_no_fallback, "message:"),
+                 ("extract always reads the cycle copy", extract_prefers_cycle, "message:"),
                  ("stall notice ignores agent-started", stall_unbranched, "stall:"),
                  ("stall step never reads agent-started", stall_env_dropped, "stall:")]
     for name, fn, prefix in doc_cases:

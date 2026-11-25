@@ -88,7 +88,8 @@ drop-detection.
    with the agent-started guard on the very restart-command arm that says
    "its pushed commits are on the branch", and implement's agent-started
    never read from its non-pushing progress composer
-   (AGENT_STARTED_EXCLUDED_SIGNALS). The agent-started wiring is also
+   (AGENT_STARTED_EXCLUDED_SIGNALS), and read any-true rather than
+   most-recent-wins (AGENT_STARTED_ANY_TRUE). The agent-started wiring is also
    checked on every other job in those files whose reason step calls the
    composite (pr-conversation's stalled-mark).
 7. Every agent step in a `full_subject` job has its own refresh/agent-ran/
@@ -1004,9 +1005,9 @@ def check_agent_started_wiring(path, job, wf, job_name="stalled"):
     # Pass-2 review of PR #978: a bare "outputs.started" substring let a
     # mistyped step id, an unrelated step, or a dropped `||` arm through.
     # agent-started must read exactly agent-ran's own signal steps, in the
-    # same most-recent-wins order, minus the excluded ones -- and each of
-    # those ids must be a wing-commander-agent-ran-signal step of the entry
-    # job.
+    # same most-recent-wins order (any-true first for AGENT_STARTED_ANY_TRUE),
+    # minus the excluded ones -- and each of those ids must be a
+    # wing-commander-agent-ran-signal step of the entry job.
     signal_ids = {str((s or {}).get("id", "")) for s in
                   entry_job.get("steps") or []
                   if "wing-commander-agent-ran-signal" in

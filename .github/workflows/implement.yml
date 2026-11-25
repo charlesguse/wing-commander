@@ -774,7 +774,8 @@ jobs:
       # #1239).
       agent-started: ${{ (steps.agent-ran-retry.outputs.started == 'true' || steps.agent-ran-cycle.outputs.started == 'true') && 'true' || steps.agent-ran-retry.outputs.started || steps.agent-ran-cycle.outputs.started }}
       credential-refresh-ok: ${{ steps.credential-status-progress.outputs.ok || steps.credential-status-retry.outputs.ok || steps.credential-status-cycle.outputs.ok }}
-      # Most-recent-wins across retry/cycle only, same convention as above.
+      # Most-recent-wins across retry/cycle only, same convention as
+      # agent-conclusion above.
       commits-published: ${{ steps.publish-stranded-retry.outputs.commits-published || steps.publish-stranded-cycle.outputs.commits-published }}
       push-ok: ${{ steps.publish-stranded-retry.outputs.push-ok || steps.publish-stranded-cycle.outputs.push-ok }}
       # Record-only (not read by the stall path): 'true' when ANY chain
@@ -2253,7 +2254,7 @@ jobs:
       # ran on the escalation tier — that goes straight to stalled — and when
       # the cycle's agent never started (agent-ran-cycle started=false, e.g.
       # an image missing unzip): the retry runs on the same image and would
-      # fail its setup the same way, on a more expensive model.
+      # fail its setup the same way.
       - name: Compose commit-message guidance (implement.retry)
         id: commit-guidance-retry
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
@@ -2338,9 +2339,10 @@ jobs:
       # agent step writes its own only once its agent starts. Without this,
       # a retry that fails in its own setup hands the retry's agent-ran
       # signal (started), verdict, metrics and refusal probe the cycle's
-      # transcript as if it were the retry's. Same guard as the retry step,
-      # for the reason "Clear previous attempt's transcript (progress)"
-      # gives.
+      # transcript as if it were the retry's. Moved aside rather than
+      # deleted: "Extract agent final message" falls back to it when the
+      # retry wrote none. Same guard as the retry step, for the reason
+      # "Clear previous attempt's transcript (progress)" gives.
       - name: Clear previous attempt's transcript (retry)
         if: >-
           steps.lifecycle-gate.outputs.is-open == 'true' &&
@@ -2349,7 +2351,10 @@ jobs:
           steps.effective-model.outputs.model != inputs.escalation-model &&
           steps.agent-ran-cycle.outputs.started != 'false' &&
           steps.tool-args-retry.outputs.allowed-tools != ''
-        run: rm -f "$RUNNER_TEMP/claude-execution-output.json"
+        run: |
+          if [ -f "$RUNNER_TEMP/claude-execution-output.json" ]; then
+            mv -f "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/claude-execution-output-cycle.json"
+          fi
 
       # This step's prompt carries the retry-bound paragraph for the
       # credential-expiry `git push` signature -- see clarify.yml.
@@ -3296,6 +3301,9 @@ jobs:
       # workflows permission"). The action leaves its transcript in the runner
       # temp dir; the file reflects the LAST attempt that ran (a retry
       # overwrites the primary's, which was already uploaded as an artifact).
+      # A retry that failed in its own setup wrote none, so the cycle's,
+      # moved aside by "Clear previous attempt's transcript (retry)", is
+      # read instead.
       # #309: written to a file for the artifact below, together with the
       # consolidated reason, rather than lifted as job outputs -- see the
       # outputs: block above in this file.
@@ -3307,6 +3315,9 @@ jobs:
           REASON: ${{ steps.final.outputs.reason }}
         run: |
           file="$RUNNER_TEMP/claude-execution-output.json"
+          if [ ! -f "$file" ]; then
+            file="$RUNNER_TEMP/claude-execution-output-cycle.json"
+          fi
           msg=""
           if [ -f "$file" ]; then
             msg=$(jq -r '[.[] | select(.type == "result")] | last | .result // empty' "$file" 2>/dev/null | head -c 1500 || true)
@@ -4469,7 +4480,7 @@ jobs:
           published_line="$PUBLISHED_LINE"
           {
             if [ "$AGENT_STARTED" = "false" ]; then
-              echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed before its agent started (on \`$TIER\`), so it was not retried on a higher model tier: the retry runs on the same runner image and would fail its setup the same way. This specification is now **stalled** (nothing restarts automatically); a missing image prerequisite needs fixing first, while a transient download or network error clears on a re-dispatch."
+              echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed before its agent started (on \`$TIER\`), so it was not retried: a retry runs on the same runner image and would fail its setup the same way. This specification is now **stalled** (nothing restarts automatically); a missing image prerequisite needs fixing first, while a transient download or network error clears on a re-dispatch."
             else
               echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed (last attempt on \`$TIER\`), and no higher model tier remains to escalate to, so this specification is now **stalled** (nothing restarts automatically)."
             fi
