@@ -4856,6 +4856,19 @@ jobs:
       - name: Gate 172 self-test — no block, the bare string form, no cancel, a per-sha, per-run, run-number, head-branch, constant, per-ref or unprefixed group, and an unmodelled context each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lint-supersedes-pr-runs.py --self-test
+      # Gate 174 — a workflow_dispatch input reaches a typed reusable-workflow
+      # input only through fromJSON(). A dispatch input arrives at the call as
+      # a string; a callee that declares `type: number` or `boolean` refuses
+      # it while the run is composed, so the run fails at startup with no jobs
+      # and passes actionlint and GitHub's file validation alike. The shared
+      # reviewer's wrapper shipped `pr: ${{ inputs.pr }}` that way (run
+      # 45555932648). Numbered 174 because PR #1205 claims 173.
+      - name: Gate 174 — every dispatch input passed to a number or boolean reusable-workflow input goes through fromJSON
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-dispatch-input-types.py
+      - name: Gate 174 self-test — a bare inputs or github.event.inputs reference to a number or boolean input fails, fromJSON and string inputs pass
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-dispatch-input-types.py --self-test
       # Gate 165 — specs/116-review-convergence-analyze. It keeps the review
       # loops' convergence arithmetic and thresholds in wc_convergence.py
       # alone (FR-010, FR-018, FR-019); its fixtures run the rules, the
