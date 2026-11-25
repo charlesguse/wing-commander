@@ -158,7 +158,7 @@ MVP = Phase 1–3 (import resolution catches renames, the defect itself). Ship a
 
 ## Review Gate Round 2 Findings
 
-- [ ] Review finding: Skill-local sys.path insert mistaken for .github/scripts
+- [X] Review finding: Skill-local sys.path insert mistaken for .github/scripts
 
   inserts_scripts_path accepts any literal "scripts" path part, so a skill-local scripts dir makes sibling helper imports report missing-module and fail the gate.
 
@@ -166,7 +166,7 @@ MVP = Phase 1–3 (import resolution catches renames, the defect itself). Ship a
 
   Detail: Require literal ".github" then "scripts", or resolve the path. Add an ok- fixture for a skill-local scripts dir.
 
-- [ ] Review finding: Third-party allowlist hides a deleted repo module
+- [X] Review finding: Third-party allowlist hides a deleted repo module
 
   third_party_names counts any non-stdlib import in any .github/scripts file as third-party, so a leftover try/except import of a deleted module makes the skill script's import pass.
 
@@ -174,7 +174,7 @@ MVP = Phase 1–3 (import resolution catches renames, the defect itself). Ship a
 
   Detail: Build the allowlist from names that are not importable and not repo-shaped, or rely on find_spec.
 
-- [ ] Review finding: SyntaxError in a target module crashes the gate
+- [X] Review finding: SyntaxError in a target module crashes the gate
 
   module_names(mpath) parses a target .github/scripts module with no handler, so a syntax error there produces a traceback instead of a structured finding.
 
@@ -182,7 +182,7 @@ MVP = Phase 1–3 (import resolution catches renames, the defect itself). Ship a
 
   Detail: Catch SyntaxError, ValueError and UnicodeDecodeError around module_names and around the skill-script parse.
 
-- [ ] Review finding: Alias rebinding disables attribute checks file-wide
+- [X] Review finding: Alias rebinding disables attribute checks file-wide
 
   The rebound set covers any arg, Name Store or loop variable file-wide, so one parameter named like an alias turns off attribute checking for every use of that alias.
 
@@ -190,7 +190,7 @@ MVP = Phase 1–3 (import resolution catches renames, the defect itself). Ship a
 
   Detail: Scope the rebinding check to the enclosing function, or fail loudly when an alias is dropped.
 
-- [ ] Review finding: Self-test uses subset matching and does not assert reach or self-test counts
+- [X] Review finding: Self-test uses subset matching and does not assert reach or self-test counts
 
   bad-* cases pass even with spurious findings, and ok-self-test and the ok- import cases pass even if has_self_test or collect_reaches finds nothing.
 
@@ -198,7 +198,7 @@ MVP = Phase 1–3 (import resolution catches renames, the defect itself). Ship a
 
   Detail: Assert exact reason sets for bad-* cases. Assert selftests == 1 for ok-self-test and reaches > 0 for the ok- import cases.
 
-- [ ] Review finding: module_names misses some module-level bindings
+- [X] Review finding: module_names misses some module-level bindings
 
   The walrus scan breaks at the first Lambda or def, and match capture patterns and global-assigned names are not collected, which gives false missing-name findings.
 
@@ -206,7 +206,7 @@ MVP = Phase 1–3 (import resolution catches renames, the defect itself). Ship a
 
   Detail: Use a visitor that skips nested scopes instead of break. Collect MatchAs and MatchStar names and Global assignments.
 
-- [ ] Review finding: Live contract lacks syntax-error and no-skill-scripts reasons
+- [X] Review finding: Live contract lacks syntax-error and no-skill-scripts reasons
 
   The contract lists four reasons while the code also emits syntax-error and no-skill-scripts, and prints '-.-' where the contract format is <module>.<name>. The data-model line also omits the colon.
 
@@ -214,7 +214,7 @@ MVP = Phase 1–3 (import resolution catches renames, the defect itself). Ship a
 
   Detail: Add the two reasons and the '-' placeholder to the contract and data-model.
 
-- [ ] Review finding: Self-test summary count is wrong and fixture output is noisy
+- [X] Review finding: Self-test summary count is wrong and fixture output is noisy
 
   It prints len(SEEDED)+1 cases but 15 checks run, and a failing seeded skill self-test prints to stdout during a passing run, so the log looks like failures.
 

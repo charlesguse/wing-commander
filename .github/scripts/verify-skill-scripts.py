@@ -43,6 +43,7 @@ REPO_ROOT = os.path.abspath(os.path.join(HERE, ".."))
 REPO_ROOT = os.path.dirname(REPO_ROOT)
 FIXTURES = os.path.join(HERE, "verify-skill-scripts-fixtures")
 TIMEOUT = 60
+QUIET = False  # --self-test runs seeded failing fixtures; keep their output out of the log
 
 # (skills glob, modules dir) relative to a root; fixtures use a flatter shape
 # so no fixture needs a `.claude/` directory of its own.
@@ -67,16 +68,27 @@ def module_names(path):
             for elt in node.elts:
                 targets(elt)
 
+    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+
+    def scan(node):
+        """Walrus and match-capture bindings at module level; nested scopes
+        are skipped, siblings after them are still visited."""
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, scopes):
+                continue
+            if isinstance(child, ast.NamedExpr):
+                targets(child.target)
+            elif isinstance(child, (ast.MatchAs, ast.MatchStar)) and child.name:
+                names.add(child.name)
+            elif isinstance(child, ast.MatchMapping) and child.rest:
+                names.add(child.rest)
+            scan(child)
+
     def walk(body):
         nonlocal star
         for node in body:
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                for sub in ast.walk(node):  # walrus bindings at module level
-                    if isinstance(sub, ast.NamedExpr):
-                        targets(sub.target)
-                    elif isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
-                                          ast.Lambda)):
-                        break
+                scan(node)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 names.add(node.name)
             elif isinstance(node, ast.Assign):
@@ -113,7 +125,11 @@ def module_names(path):
                 for case in getattr(node, "cases", []):
                     walk(case.body)
 
-    walk(parse(path).body)
+    tree = parse(path)
+    walk(tree.body)
+    for node in ast.walk(tree):  # `global x` in a function binds a module name
+        if isinstance(node, ast.Global):
+            names.update(node.names)
     return names, star
 
 
@@ -132,23 +148,26 @@ def has_self_test(tree):
 
 def inserts_scripts_path(tree):
     """True when the script puts the .github/scripts directory on sys.path.
-    An insertion of any other directory (a sibling helper) does not count: the
-    argument must carry a literal ".github" or "scripts" path part."""
+    An insertion of any other directory (a sibling helper, a skill-local
+    scripts dir) does not count: the argument must carry the literal path
+    parts ".github" then "scripts", in that order."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
                 and node.func.attr in ("insert", "append") \
                 and isinstance(node.func.value, ast.Attribute) \
                 and node.func.value.attr == "path":
             for a in node.args:
-                if any(isinstance(c, ast.Constant) and c.value in (".github", "scripts")
-                       for c in ast.walk(a)):
+                lits = sorted((c.lineno, c.col_offset, c.value) for c in ast.walk(a)
+                              if isinstance(c, ast.Constant) and isinstance(c.value, str))
+                vals = [v for _l, _c, v in lits]
+                if ".github" in vals and "scripts" in vals[vals.index(".github") + 1:]:
                     return True
     return False
 
 
-def is_external(top, third_party):
-    """stdlib, a third-party name the repo's scripts use, or an installed package."""
-    if top in sys.stdlib_module_names or top in third_party:
+def is_external(top):
+    """stdlib or an installed package. Repo modules are checked before this."""
+    if top in sys.stdlib_module_names:
         return True
     try:
         return importlib.util.find_spec(top) is not None
@@ -156,24 +175,7 @@ def is_external(top, third_party):
         return False
 
 
-def third_party_names(mod_dir, repo_mods):
-    """Top-level imports used by the repo's own scripts that are neither
-    stdlib nor repo modules: the third-party allowlist, read from the tree."""
-    found = set()
-    for path in glob.glob(os.path.join(mod_dir, "*.py")):
-        try:
-            tree = parse(path)
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                found.update(a.name.split(".")[0] for a in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-                found.add(node.module.split(".")[0])
-    return {n for n in found if n not in sys.stdlib_module_names and n not in repo_mods}
-
-
-def collect_reaches(tree, repo_mods, scripts_on_path, third_party):
+def collect_reaches(tree, repo_mods, scripts_on_path):
     """Yield (module, name|None, kind, line); `name` None for module reaches.
     A reason string instead of kind marks an unrecognised loader."""
     alias = {}  # local name -> module
@@ -185,7 +187,7 @@ def collect_reaches(tree, repo_mods, scripts_on_path, third_party):
             if top in repo_mods:
                 for a in node.names:
                     out.append((top, a.name, "from-import", node.lineno))
-            elif scripts_on_path and not is_external(top, third_party):
+            elif scripts_on_path and not is_external(top):
                 out.append((top, None, "module", node.lineno))
         elif isinstance(node, ast.Import):
             for a in node.names:
@@ -193,7 +195,7 @@ def collect_reaches(tree, repo_mods, scripts_on_path, third_party):
                 if top in repo_mods:
                     alias[a.asname or top] = top
                     out.append((top, None, "module", node.lineno))
-                elif scripts_on_path and not is_external(top, third_party):
+                elif scripts_on_path and not is_external(top):
                     out.append((top, None, "module", node.lineno))
         elif isinstance(node, ast.Call):
             fn = node.func
@@ -219,17 +221,38 @@ def collect_reaches(tree, repo_mods, scripts_on_path, third_party):
             alias[name] = loaded[0]
         else:
             out.append(("<loader>", None, "unrecognised-loader", line))
-    # Names rebound anywhere in the file (parameters, locals) are not aliases.
-    rebound = {n.id for n in ast.walk(tree)
-               if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del))}
-    rebound |= {n.arg for n in ast.walk(tree) if isinstance(n, ast.arg)}
-    rebound -= {name for name, _line in loader_targets}  # their one binding is the loader's
-    for node in ast.walk(tree):
+    # A name rebound (parameter, local) inside the function an attribute load
+    # sits in is not the alias there; the rebinding is scoped, not file-wide.
+    fn_types = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+    loader_names = {name for name, _line in loader_targets}  # their one binding is the loader's
+
+    def bound_in(scope):
+        got = set()
+        for n in ast.walk(scope):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+                got.add(n.id)
+            elif isinstance(n, ast.arg):
+                got.add(n.arg)
+        return got
+
+    fn_bound = {}
+
+    def visit(node, enclosing):
+        if isinstance(node, fn_types):
+            if node not in fn_bound:
+                fn_bound[node] = bound_in(node)
+            enclosing = enclosing + [node]
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) \
                 and isinstance(node.ctx, ast.Load) and node.value.id in alias \
-                and node.value.id not in rebound \
                 and not (node.attr.startswith("__") and node.attr.endswith("__")):
-            out.append((alias[node.value.id], node.attr, "attribute", node.lineno))
+            nm = node.value.id
+            shadowed = nm not in loader_names and any(nm in fn_bound[f] for f in enclosing)
+            if not shadowed:
+                out.append((alias[nm], node.attr, "attribute", node.lineno))
+        for child in ast.iter_child_nodes(node):
+            visit(child, enclosing)
+
+    visit(tree, [])
     return out
 
 
@@ -256,17 +279,16 @@ def check(root, layout):
     repo_mods = {os.path.basename(p)[:-3] for p in glob.glob(os.path.join(mod_dir, "*.py"))}
     repo_mods |= {os.path.basename(os.path.dirname(p))
                   for p in glob.glob(os.path.join(mod_dir, "*", "__init__.py"))}
-    third = third_party_names(mod_dir, repo_mods)
     cache = {}
     reach_count = selftests = 0
     for script in scripts:
         rel = os.path.relpath(script, root)
         try:
             tree = parse(script)
-        except SyntaxError:
+        except (SyntaxError, ValueError, UnicodeDecodeError):
             findings.append((rel, os.path.basename(script)[:-3], "-", "syntax-error"))
             continue
-        reaches = collect_reaches(tree, repo_mods, inserts_scripts_path(tree), third)
+        reaches = collect_reaches(tree, repo_mods, inserts_scripts_path(tree))
         for module, name, kind, _line in reaches:
             reach_count += 1
             if kind == "unrecognised-loader":
@@ -279,7 +301,14 @@ def check(root, layout):
             if name is None:
                 continue
             if module not in cache:
-                cache[module] = module_names(mpath) if os.path.exists(mpath) else (set(), True)
+                try:
+                    cache[module] = (module_names(mpath) if os.path.exists(mpath)
+                                     else (set(), True))
+                except (SyntaxError, ValueError, UnicodeDecodeError):
+                    cache[module] = None
+                    findings.append((os.path.relpath(mpath, root), module, "-", "syntax-error"))
+            if cache[module] is None:
+                continue
             names, star = cache[module]
             sub = os.path.join(mod_dir, module, name)
             if name in names or star or os.path.exists(sub + ".py") or os.path.isdir(sub):
@@ -289,7 +318,8 @@ def check(root, layout):
             selftests += 1
             ok, detail = run_self_test_of(script, root)
             if not ok:
-                print(f"  {rel} --self-test: " + detail.replace("\n", "\n    "))
+                if not QUIET:
+                    print(f"  {rel} --self-test: " + detail.replace("\n", "\n    "))
                 findings.append((rel, os.path.basename(script)[:-3], "--self-test",
                                  "self-test-failed"))
     return findings, len(scripts), reach_count, selftests
@@ -306,7 +336,8 @@ def report(findings, scripts, reaches, selftests):
     return 0
 
 
-# case directory -> reasons that must appear (empty set: must pass clean)
+# case directory -> the exact set of reasons it must produce (empty set: must
+# pass clean). Spurious extra findings fail the case.
 SEEDED = {
     "bad-missing-name": {"missing-name"},
     "bad-attribute": {"missing-name"},
@@ -325,21 +356,27 @@ SEEDED = {
 
 
 def self_test():
-    global TIMEOUT
+    global TIMEOUT, QUIET
     failures = []
+    QUIET = True
     for case, want in SEEDED.items():
         root = os.path.join(FIXTURES, case)
         if not os.path.isdir(root):
             failures.append(f"{case}: fixture directory missing")
             continue
         TIMEOUT = 2 if case == "bad-timeout" else 60
-        found, scripts, _r, _t = check(root, FIXTURE_LAYOUT)
+        found, scripts, reaches, selftests = check(root, FIXTURE_LAYOUT)
         TIMEOUT = 60
         reasons = {f[3] for f in found}
-        if want and not want <= reasons:
+        if reasons != want:
             failures.append(f"{case}: expected {sorted(want)}, got {sorted(reasons)}")
-        if not want and found:
-            failures.append(f"{case}: expected clean, got {found}")
+        if case == "ok-self-test" and selftests != 1:
+            failures.append(f"{case}: expected 1 self-test run, got {selftests}")
+        # ok-local-path's one import is a skill-local helper: zero reaches is its point.
+        if case.startswith("ok-") and case not in ("ok-self-test", "ok-local-path") \
+                and reaches < 1:
+            failures.append(f"{case}: no reaches were collected, the check is blind")
+    QUIET = False
     # bad-new-script: the finding names the second script, found with no list.
     found, _s, _r, _t = check(os.path.join(FIXTURES, "bad-new-script"), FIXTURE_LAYOUT)
     if not any("second.py" in f[0] for f in found):
@@ -352,7 +389,7 @@ def self_test():
         print(f"verify-skill-scripts --self-test: FAIL {line}")
     if failures:
         return 1
-    print(f"verify-skill-scripts --self-test: OK ({len(SEEDED) + 1} cases caught)")
+    print(f"verify-skill-scripts --self-test: OK ({len(SEEDED) + 2} cases caught)")
     return 0
 
 

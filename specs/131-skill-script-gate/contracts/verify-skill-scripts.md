@@ -20,7 +20,9 @@ One line per finding to stdout, then a summary line:
     verify-skill-scripts: N finding(s)
 
 `<reason>` is one of `missing-name`, `missing-module`, `self-test-failed`,
-`unrecognised-loader`. A clean run prints
+`unrecognised-loader`, `syntax-error` (a skill script or a target module does
+not parse) or `no-skill-scripts` (discovery found nothing). A finding with no
+module or name prints `-` in that position (`-.-`). A clean run prints
 `verify-skill-scripts: OK (<S> scripts, <R> reaches, <T> self-tests)`.
 
 ## Guarantees

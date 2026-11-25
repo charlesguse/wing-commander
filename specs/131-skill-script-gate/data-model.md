@@ -7,7 +7,7 @@ Plain in-memory records inside `verify-skill-scripts.py`; nothing persists.
 | SkillScript | `path`, `skill`, `tree` (AST), `has_self_test` | discovered by globbing `.claude/skills/*/scripts/*.py` |
 | Reach | `script`, `module`, `name` or `None`, `kind` (`from-import`, `attribute`, `module`), `line` | one per cross-tree name a script uses |
 | ModuleNames | `module`, `names` (frozenset of top-level names) | parsed from `.github/scripts/<module>.py` |
-| Finding | `script`, `module`, `name`, `reason` (`missing-name`, `missing-module`, `self-test-failed`, `unrecognised-loader`) | printed as `skill-script: <path>: <module>.<name> <reason>`; any finding exits 1 |
+| Finding | `script`, `module`, `name`, `reason` (`missing-name`, `missing-module`, `self-test-failed`, `unrecognised-loader`, `syntax-error`, `no-skill-scripts`) | printed as `skill-script: <path>: <module>.<name>: <reason>` (`-` for an absent part); any finding exits 1 |
 
 Validation rules:
 
