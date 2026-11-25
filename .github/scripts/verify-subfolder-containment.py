@@ -27,6 +27,7 @@ Exit 0 when every case behaves; 1 otherwise.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1158,6 +1159,54 @@ def pre_push(case):
                               capture_output=True, text=True, cwd=work, check=False)
 
 
+def check_harden_scope(errors, data):
+    """#889: containment.sh hardens git only in the modes that run git
+    (trusted-base, pre-push), never in the text-only outside/inside modes,
+    and removes the GIT_CONFIG_GLOBAL temp file wc_harden_git_env mktemps.
+
+    A stub git-push-hardening.sh beside a copy of the script records each
+    wc_harden_git_env call; the real one runs pre-push in a fresh TMPDIR,
+    which must be empty again when the hook exits.
+    """
+    passing = [c for c in data.get("pre_push", {}).values() if c.get("expect") == "pass"]
+    if not passing:
+        errors.append("harden scope: no passing pre_push case to drive pre-push mode with")
+        return
+    case = passing[0]
+    with tempfile.TemporaryDirectory() as tmp:
+        stub_dir = os.path.join(tmp, "stub")
+        os.makedirs(stub_dir)
+        shutil.copy(PRE_PUSH, os.path.join(stub_dir, "containment.sh"))
+        log = os.path.join(tmp, "harden.log")
+        with open(os.path.join(stub_dir, "git-push-hardening.sh"), "w", encoding="utf-8") as fh:
+            fh.write('wc_harden_git_env() { echo called >> "$WC_HARDEN_LOG"; }\n')
+        env = dict(os.environ, WC_HARDEN_LOG=log)
+        for mode in ("outside", "inside"):
+            r = subprocess.run(["bash", os.path.join(stub_dir, "containment.sh"), mode, "P"],
+                               input="P/a\nb\n", capture_output=True, text=True, env=env, check=False)
+            if r.returncode != 0:
+                errors.append(f"harden scope: {mode} mode failed rc={r.returncode} {r.stderr!r}")
+            if os.path.exists(log):
+                errors.append(f"harden scope: the text-only {mode} mode called wc_harden_git_env")
+                os.remove(log)
+        work, _, _ = staged_clone(os.path.join(tmp, "clone"), case)
+        line = case.get("stdin", "refs/heads/x {sha} refs/heads/x " + "0" * 40).format(sha=rev(work, "HEAD")) + "\n"
+        subprocess.run(["bash", os.path.join(stub_dir, "containment.sh"), "pre-push", case["project"]],
+                       input=line, capture_output=True, text=True, cwd=work, env=env, check=False)
+        if not os.path.exists(log):
+            errors.append("harden scope: pre-push mode ran git without wc_harden_git_env")
+        tmpdir = os.path.join(tmp, "tmpdir")
+        os.makedirs(tmpdir)
+        r = subprocess.run(["bash", PRE_PUSH, "pre-push", case["project"]], input=line,
+                           capture_output=True, text=True, cwd=work,
+                           env=dict(os.environ, TMPDIR=tmpdir), check=False)
+        if r.returncode != 0:
+            errors.append(f"harden scope: pre-push pass case failed rc={r.returncode} {r.stderr!r}")
+        left = os.listdir(tmpdir)
+        if left:
+            errors.append(f"harden scope: pre-push left {left!r} in TMPDIR; remove the GIT_CONFIG_GLOBAL temp file")
+
+
 def publish_stranded(case, script):
     """Run wing-commander-publish-stranded-commits' real shell after the
     case's local commits. Returns (result, push-ok, whether origin moved to
@@ -1232,6 +1281,7 @@ def main():
                 if p not in r.stdout + r.stderr:
                     errors.append(f"publish_stranded {name}: refusal does not name {p!r}")
     check_trusted_checkout_excluded(errors)
+    check_harden_scope(errors, data)
     check_modes(errors)
     check_rebase_manifest_unquoted(errors)
     if check_stale_folder(errors) == 0:
