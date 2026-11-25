@@ -152,7 +152,7 @@ A comment on a lifecycle *issue* is not handled here: it starts clarify.
 | fix | writes the fix on `fix/<issue>-<slug>` and opens a PR labelled `board:owned` | turn budget 60; 6 files and 120 changed lines |
 | review | a second agent with no shared context reviews; in-scope findings are fixed in the same PR | 5 rounds; the same `not-converging` rule as the review gate |
 | merge | squash-merges at the exact reviewed head | only when the merge switch is on |
-| prove | re-drives one run that reaches the change, records the evidence and closes the issue (the fix PR names its issue as `Board item: #N`, never with a closing keyword, so the merge leaves it open); a change to docs, specs or a gate script only closes on the merge evidence; never entered for a Spec Kit bump | one dispatch |
+| prove | re-drives one run that reaches the change, records the evidence and closes the issue (the fix PR names its issue as `Board item: #N`, never with a closing keyword, so the merge leaves it open); a change to docs, specs or a gate script only closes on the merge evidence (a renamed file counts its old path too); never entered for a Spec Kit bump | one dispatch |
 
 | Rule | Value |
 |---|---|
@@ -383,8 +383,7 @@ tables above. No kill switch is set except spec PR review's.
   the scan found no edge, not that nothing runs the change.
 - A session's proof posted on an issue shared by several merges counts for a
   merge only when it names that merge's PR; one that names none counts for
-  none. The board loop's prove step is checked against what the list shows,
-  and the list never says a change is proven or not.
+  none. The list never says a change is proven or not.
 - The proof list's "runs set apart" count is large: 197 in a dry run on real
   data, beside 41 entries. Most of it is `pull_request` runs on branches
   deleted after a squash-merge, whose head commits are not in the checkout.

@@ -9,6 +9,7 @@ documented branch correctly too (FR-020/FR-021).
 import glob
 import json
 import os
+import re
 import sys
 import tempfile
 
@@ -19,8 +20,8 @@ from board_prove import (  # noqa: E402
     SCRIPT_PATH_RE, WORKFLOW_REF_RE,
     _close_script_imports, _resolve_script_imports, actions_only,
     aimable_jobs, directed_proof_group_busy, directed_stage,
-    is_safe_redrive_target, joins_directed_group, outcome_reason,
-    read_job_concurrency_group, redrive_target,
+    is_safe_redrive_target, joins_directed_group, mention_edges, outcome_reason,
+    pull_changed_paths, read_job_concurrency_group, redrive_target,
     scan_dispatchable_and_uses_graph, scan_job_uses_graph,
 )
 
@@ -230,6 +231,7 @@ REACH_CONSUMERS = (
     ".github/scripts/wc_proof_list.py",
 )
 CONSUMER_IMPORTS = ("reaching_workflows", "actions_only")
+STAGE_PARSE_NAMES = ("STAGE_ARRAY_RE", "STAGE_MAP_RE")
 FILE_WALKERS = frozenset({"listdir", "walk", "scandir", "glob", "iglob", "rglob"})
 
 # A file here is excused from the single-home check until its maintainer
@@ -281,6 +283,9 @@ def _consumer_breaks(tree):
     out = ["does not import {0} from board_prove".format(n)
            for n in CONSUMER_IMPORTS if n not in imported]
     out += ["lists or walks files itself ({0}())".format(n) for n in sorted(set(walks))]
+    # #889: the stage array has one parse, nightly_e2e_edges(with_stages=True).
+    out += ["parses the stage array itself (imports {0})".format(n)
+            for n in STAGE_PARSE_NAMES if n in imported]
     return out
 
 
@@ -329,6 +334,8 @@ def single_home_fixture_cases():
                                            _COPY_REACH + _COPY_ACTIONS}, {}, False),
         ("a thinned consumer, no exemption", {SKILL: _THIN}, {}, False),
         ("an inline mention loop left in the consumer", {SKILL: _INLINE}, {}, True),
+        ("a consumer parsing the stage array itself", {SKILL: _THIN.replace(
+            "import actions_only,", "import STAGE_ARRAY_RE, actions_only,")}, {}, True),
         ("the unthinned consumer passes only with its entry", {SKILL: _COPY_REACH},
          own_entry, False),
         ("the unthinned consumer without its entry", {SKILL: _COPY_REACH}, {}, True),
@@ -386,6 +393,48 @@ def worktree_copy_fixture_cases():
             shutil.rmtree(root, ignore_errors=True)
         if bool(got) != want_fail:
             problems.append("worktree fixture {0!r}: {1}".format(label, got or "did not fail"))
+    return problems
+
+
+def decide_step_rename_problems(workflow_text):
+    """#889: board-loop.yml's prove `decide` step reads the merged PR's
+    files from REST pulls/N/files and folds each `previous_filename` in
+    through board_prove.pull_changed_paths(); `gh pr view --json files`
+    carries no previous path, so a rename away from a path was missed."""
+    doc = yaml.safe_load(workflow_text) or {}
+    steps = (((doc.get("jobs") or {}).get("prove") or {}).get("steps")) or []
+    run_text = next((st.get("run") or "" for st in steps if st.get("id") == "decide"), None)
+    if run_text is None:
+        return ["board-loop.yml's prove job has no `decide` step"]
+    problems = []
+    if not re.search(r"gh api --paginate \"repos/\$GITHUB_REPOSITORY/pulls/\$PR_NUMBER/files", run_text):
+        problems.append("prove `decide` does not read REST pulls/$PR_NUMBER/files with --paginate")
+    if "previous_filename" not in run_text or "pull_changed_paths(" not in run_text:
+        problems.append("prove `decide` does not fold previous_filename in through pull_changed_paths()")
+    if "--json files" in run_text:
+        problems.append("prove `decide` still reads `gh pr view --json files`, which has no previous path")
+    return problems
+
+
+def decide_step_fixture_cases():
+    """Each case fails without the check it tests."""
+    with open(REPO_BOARD_LOOP, encoding="utf-8") as fh:
+        real = fh.read()
+    old_read = ('gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json files '
+                "--jq '[.files[].path]' > \"$RUNNER_TEMP/board-prove-paths.json\"")
+    doc = yaml.safe_load(real)
+    for st in doc["jobs"]["prove"]["steps"]:
+        if st.get("id") == "decide":
+            st["run"] = old_read + "\n" + st["run"].split("PYEOF", 1)[0].replace("pull_changed_paths(", "(")
+    regressed = yaml.safe_dump(doc)
+    problems = []
+    for label, text, want in (("the real board-loop.yml", real, False),
+                              ("a decide step reading gh pr view --json files", regressed, True)):
+        got = bool(decide_step_rename_problems(text))
+        if got != want:
+            problems.append("decide-step fixture {0!r}: problems={1}, expected {2}".format(label, got, want))
+        else:
+            print("[ok] decide-step fixture: {0}".format(label))
     return problems
 
 
@@ -491,6 +540,50 @@ def run():
                   "{1}, got {2}.".format(text, expected, got))
         else:
             print("[ok] mention scan of {0!r} = {1}".format(text, got))
+
+    # #889: mention_edges() matches the whole changed path, never a prefix
+    # of a longer one; a sentence-ending `.` or a closing quote still counts.
+    edge_cases = [
+        ("run: bash .github/scripts/a.sh.bak\n", False),
+        ("run: bash .github/scripts/a.shx\n", False),
+        ("run: bash x.github/scripts/a.sh\n", False),
+        ("run: ls .github/scripts/a.sh/x\n", False),
+        ("run: bash .github/scripts/a.sh\n", True),
+        ("run: echo 'see ./.github/scripts/a.sh.'\n", True),
+        ("run: bash \".github/scripts/a.sh\"\n", True),
+    ]
+    previous_cwd = os.getcwd()
+    for text, expected in edge_cases:
+        root = tempfile.mkdtemp(prefix="verify_board_prove_mention_")
+        try:
+            os.makedirs(os.path.join(root, ".github", "workflows"))
+            with open(os.path.join(root, ".github", "workflows", "w.yml"), "w", encoding="utf-8") as fh:
+                fh.write(text)
+            os.chdir(root)
+            got = bool(mention_edges([".github/scripts/a.sh"])[".github/scripts/a.sh"])
+        finally:
+            os.chdir(previous_cwd)
+            shutil.rmtree(root, ignore_errors=True)
+        if got != expected:
+            failures += 1
+            print("::error::verify-board-prove: mention_edges over {0!r}: expected an edge={1}, "
+                  "got {2}.".format(text, expected, got))
+        else:
+            print("[ok] mention_edges over {0!r}: edge={1}".format(text, got))
+
+    # #889: a rename away from a path changes that path too. The prove
+    # decide step reads REST pulls/N/files, whose `previous_filename`
+    # `gh pr view --json files` does not carry.
+    renamed = [{"filename": "docs/x.yml", "previous_filename": ".github/workflows/x.yml"},
+               {"filename": "docs/y.md"}, {"filename": "docs/y.md"}]
+    got_paths = pull_changed_paths(renamed)
+    want_paths = ["docs/x.yml", ".github/workflows/x.yml", "docs/y.md"]
+    if got_paths != want_paths or actions_only(got_paths)[0] is not True:
+        failures += 1
+        print("::error::verify-board-prove: pull_changed_paths({0}) = {1}, expected {2} "
+              "(actions_only True).".format(renamed, got_paths, want_paths))
+    else:
+        print("[ok] pull_changed_paths: a rename away from a workflow is an Actions change")
 
     for changed_paths, expected in DIRECTED_STAGE_CASES:
         got = directed_stage(changed_paths, JOB_USES_GRAPH, aimable_jobs)
@@ -742,6 +835,14 @@ def run():
         failures += 1
         print("::error::verify-board-prove: {0}".format(problem))
     print("[ok] the reach computation has one home (board_prove.py)")
+
+    for problem in decide_step_fixture_cases():
+        failures += 1
+        print("::error::verify-board-prove: {0}".format(problem))
+    with open(REPO_BOARD_LOOP, encoding="utf-8") as fh:
+        for problem in decide_step_rename_problems(fh.read()):
+            failures += 1
+            print("::error::verify-board-prove: {0}".format(problem))
 
     import board_prove  # noqa: E402
     problems, wrappers = check_nightly_edges(REPO_ROOT)
