@@ -223,10 +223,11 @@ jobs:
           $py prepare --pr "$PR" --body-file input/pr-body.md \
             --head-branch "$(cat input/head-branch.txt)" --labels "$(cat input/labels.txt)" > input/prepared.json
           kind="$(jq -r .kind input/prepared.json)"
-          # --dismissals=VALUE, one word: a value starting with "-" is still
-          # the value, so a typo refuses the run here instead of failing it.
+          # The dismissals are read from the environment, never argv: as an
+          # argument, a value starting with "-" is parsed as an option, so a
+          # typo would fail this step instead of refusing the run here.
           decision="$($py guard --ref "$REF" --default-branch "$DEFAULT_BRANCH" --kind "$kind" --paused "$PAUSED" \
-            --dismissals="$DISMISSALS")"
+            --dismissals-env DISMISSALS)"
           if [ "$(jq -r .proceed <<<"$decision")" != "true" ]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
             echo "spent=false" >> "$GITHUB_OUTPUT"

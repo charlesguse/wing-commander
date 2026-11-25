@@ -955,22 +955,29 @@ class Round6Fixes(unittest.TestCase):
         self.assertEqual(sr.parse_dismissals("null"), (None, "refused: dismissals is not a list"))
         self.assertEqual(sr.parse_dismissals("[]"), ([], None))
 
-    def test_a_dismissals_value_starting_with_a_dash_refuses_as_one_word(self):
-        # Pass 2 of #1219's review: as two words, "-x" is read by argparse
+    def test_a_dismissals_value_starting_with_a_dash_refuses_from_the_environment(self):
+        # Pass 2 of #1219's review: as an argument, "-x" is read by argparse
         # as an option and the guard exits 2, failing prepare instead of
-        # refusing in the summary; the workflow passes --dismissals=VALUE
+        # refusing in the summary; the workflow passes --dismissals-env
         # (verify-shared-review-wiring.py checks that form).
         import contextlib
         import io
         import json as _json
+        from unittest import mock
         argv = ["guard", "--ref", "refs/heads/main", "--default-branch", "main", "--kind", "fix"]
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             sr.main(argv + ["--dismissals", "-x"])
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            self.assertEqual(sr.main(argv + ["--dismissals=-x"]), 0)
-        self.assertEqual(_json.loads(buf.getvalue()),
+
+        def decide(env):
+            buf = io.StringIO()
+            with mock.patch.dict(os.environ, env, clear=False), contextlib.redirect_stdout(buf):
+                self.assertEqual(sr.main(argv + ["--dismissals-env", "WC_TEST_DISMISSALS"]), 0)
+            return _json.loads(buf.getvalue())
+        self.assertEqual(decide({"WC_TEST_DISMISSALS": "-x"}),
                          {"proceed": False, "reason": "refused: dismissals is not valid JSON"})
+        self.assertEqual(decide({"WC_TEST_DISMISSALS": "[]"}), {"proceed": True, "reason": None})
+        self.assertEqual(decide({"WC_TEST_DISMISSALS": '[{"id": "F1-1", "reason": "ok"}]'}),
+                         {"proceed": True, "reason": None})
 
     def test_the_gate_suite_has_its_own_limit(self):
         # Round 6, finding 5: the suite took 361 s on 4 CPUs, so it no

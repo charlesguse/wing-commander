@@ -353,16 +353,17 @@ def _verdict_can_fail(wf):
 def dismissals_guard_problems(wf):
     """Round 6: the dismissals input reaches the guard, which refuses one
     that is not JSON or not a list of {id, reason}, before the round runs.
-    The value is passed as one word, --dismissals="$DISMISSALS": as two
-    words, a value starting with "-" (a typo such as -x) is read by argparse
-    as an option, so the step fails instead of refusing in the summary
-    (pass 2 of #1219's review)."""
+    The guard reads the value from the environment (--dismissals-env
+    DISMISSALS), never argv: as an argument, a value starting with "-" (a
+    typo such as -x) is read by argparse as an option, so the step fails
+    instead of refusing in the summary (pass 2 of #1219's review)."""
     step = next((s for s in ((wf.get("jobs") or {}).get("prepare") or {}).get("steps") or []
                  if " guard " in str(s.get("run") or "")), {})
     run = str(step.get("run") or "")
     if (step.get("env") or {}).get("DISMISSALS") != "${{ inputs.dismissals }}" \
-            or '--dismissals="$DISMISSALS"' not in run:
-        return ["prepare's guard does not read the dismissals input as one --dismissals=VALUE word"]
+            or "--dismissals-env DISMISSALS" not in run or "$DISMISSALS" in run:
+        return ["prepare's guard does not read the dismissals input from the environment "
+                "(--dismissals-env DISMISSALS)"]
     return []
 
 
@@ -447,10 +448,10 @@ def main():
                 ("the guard stops reading the dismissals", lambda w: next(
                     x for x in w["jobs"]["prepare"]["steps"] if " guard " in str(x.get("run") or ""))
                     ["env"].pop("DISMISSALS"), dismissals_guard_problems),
-                ("the guard takes the dismissals as a separate word", lambda w: next(
+                ("the guard takes the dismissals as an argument", lambda w: next(
                     x for x in w["jobs"]["prepare"]["steps"] if " guard " in str(x.get("run") or "")).update(
                     {"run": next(x for x in w["jobs"]["prepare"]["steps"] if " guard " in str(x.get("run") or ""))
-                     ["run"].replace('--dismissals="$DISMISSALS"', '--dismissals "$DISMISSALS"')}),
+                     ["run"].replace("--dismissals-env DISMISSALS", '--dismissals "$DISMISSALS"')}),
                  dismissals_guard_problems),
                 ("the PR-head fetch persists its token", _persisted_fetch_token, head_fetch_problems)):
             clone = copy.deepcopy(cal)

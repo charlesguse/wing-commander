@@ -1166,6 +1166,9 @@ def main(argv=None):
     g.add_argument("--ref"); g.add_argument("--default-branch"); g.add_argument("--kind")
     g.add_argument("--paused", default="")
     g.add_argument("--dismissals", default=None)
+    # The workflow's form: the name of an environment variable holding the
+    # dismissals, so no value is ever parsed as an option (pass 2 of #1219).
+    g.add_argument("--dismissals-env", default=None, metavar="NAME")
     p = sub.add_parser("prepare")
     p.add_argument("--pr", required=True); p.add_argument("--body-file", required=True)
     p.add_argument("--head-branch", default=""); p.add_argument("--labels", default="")
@@ -1200,7 +1203,8 @@ def main(argv=None):
     v.add_argument("--find", default=None)
     args = parser.parse_args(argv)
     if args.cmd == "guard":
-        dismissals, refusal = parse_dismissals(args.dismissals)
+        dismissals, refusal = parse_dismissals(
+            os.environ.get(args.dismissals_env) if args.dismissals_env else args.dismissals)
         ok, reason = (False, refusal) if refusal else guard(args.ref, args.default_branch, args.kind,
                                                             args.paused, dismissals)
         print(json.dumps({"proceed": ok, "reason": reason}))
