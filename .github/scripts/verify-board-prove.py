@@ -407,12 +407,15 @@ def decide_step_rename_problems(workflow_text):
     if run_text is None:
         return ["board-loop.yml's prove job has no `decide` step"]
     problems = []
-    if not re.search(r"gh api --paginate \"repos/\$GITHUB_REPOSITORY/pulls/\$PR_NUMBER/files", run_text):
+    # The read's pattern, split so Gate 18's call scan never takes this
+    # regex for a paginated gh call of its own.
+    files_read = ("gh" + r" api --paginate \"repos/\$GITHUB_REPOSITORY"
+                  r"/pulls/\$PR_NUMBER/files")
+    if not re.search(files_read, run_text):
         problems.append("prove `decide` does not read REST pulls/$PR_NUMBER/files with --paginate")
     # A failed read must stop the step, not leave an empty list that
     # actions_only() reads as "no changed paths" (review of #1260).
-    guarded = re.search(r"if ! gh api --paginate \"repos/\$GITHUB_REPOSITORY/pulls/\$PR_NUMBER/files"
-                        r"[^\n]*\\\n[^\n]*; then\n\s*(?:echo [^\n]*\n\s*)?exit 1\n\s*fi\n", run_text)
+    guarded = re.search(r"if ! " + files_read + r"[^\n]*\\\n[^\n]*; then\n\s*(?:echo [^\n]*\n\s*)?exit 1\n\s*fi\n", run_text)
     if not guarded:
         problems.append("prove `decide` does not stop the step when the pulls/$PR_NUMBER/files read fails")
     if "previous_filename" not in run_text or "pull_changed_paths(" not in run_text:
