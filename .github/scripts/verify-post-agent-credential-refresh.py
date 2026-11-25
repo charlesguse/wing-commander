@@ -963,6 +963,21 @@ AGENT_STARTED_EXCLUDED_SIGNALS = {
     ".github/workflows/implement.yml": {"agent-ran-progress"},
 }
 
+# Jobs whose agent-started reads 'true' when ANY of its signal steps says
+# 'true', rather than most-recent-wins: implement's retry clears the cycle's
+# transcript first, so a retry that fails in its own setup reports 'false'
+# after a cycle agent that ran and pushed (code review of #1239;
+# verify-implement-retry-leg-guards.py evaluates the expression).
+AGENT_STARTED_ANY_TRUE = {".github/workflows/implement.yml"}
+
+
+def agent_started_expr(path, ids):
+    chain = " || ".join("steps.%s.outputs.started" % i for i in ids)
+    if path in AGENT_STARTED_ANY_TRUE and len(ids) > 1:
+        anyt = " || ".join("steps.%s.outputs.started == 'true'" % i for i in ids)
+        return "${{ (%s) && 'true' || %s }}" % (anyt, chain)
+    return "${{ %s }}" % chain
+
 
 def check_agent_started_wiring(path, job, wf, job_name="stalled"):
     """-> list[str]. #889/#972: the agent-started signal reaches the stall
@@ -1002,8 +1017,9 @@ def check_agent_started_wiring(path, job, wf, job_name="stalled"):
     want_ids = [i for i in ran_ids if i not in excluded]
     got_ids = re.findall(r"steps\.([A-Za-z0-9_-]+)\.outputs\.started",
                          published)
-    want_expr = "${{ %s }}" % " || ".join(
-        "steps.%s.outputs.started" % i for i in want_ids)
+    want_expr = agent_started_expr(path, want_ids)
+    if path in AGENT_STARTED_ANY_TRUE and len(want_ids) > 1:
+        want_ids = want_ids * 2
     if (not want_ids or got_ids != want_ids
             or published.strip() != want_expr
             or any(i not in signal_ids for i in got_ids)):
