@@ -603,7 +603,7 @@ jobs:
           printf '%s' "$OUT" > out/check.json
           # Degrades to missing, as in find.
           if python3 -I .github/scripts/wc_shared_review.py validate-output --role check --memory input/memory.json \
-            --input out/check.json; then
+            --find input/find.json --input out/check.json; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
           else
             rm -f out/check.json

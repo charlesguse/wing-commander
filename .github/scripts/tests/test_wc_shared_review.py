@@ -846,5 +846,33 @@ class ReviewRound5Fixes(unittest.TestCase):
         self.assertEqual(sr.check_fails_without_fix(out)[0], sr.NEGATIVE)
 
 
+
+def _round(state, find_out, check_out, dismissals=()):
+    ok = {"exit": 0, "output_tail": ""}
+    code_run = {"status": "staged", "named_check": ok, "named_check_tier": "added",
+                "named_check_without_fix": {"exit": 1, "output_tail": "AssertionError"}, "gate_suite": ok}
+    return sr.finalize_round(state, find_out, check_out, code_run, {"type": "issue", "ref": "7"},
+                             "a" * 40, list(dismissals), 5, "b" * 40, "open")
+
+
+class Round6Fixes(unittest.TestCase):
+    ANSWERS = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
+
+    def test_a_candidate_with_no_check_makes_the_round_incomplete(self):
+        # Round 6, finding 1: FR-010 asks the checking job to evaluate every
+        # candidate; one it leaves out used to be dismissed as "checker did
+        # not uphold", so a real defect could end the round clean.
+        cand = {"key": "k", "title": "t", "file": "a.py", "line": 1,
+                "failing_case": {"state": "s", "wrong_result": "w"}}
+        find_out = {"answers": {}, "candidates": [cand]}
+        unchecked = {"answers": self.ANSWERS, "checks": []}
+        self.assertEqual(sr.validate_output(unchecked, "check", [], [cand]),
+                         ["candidate 'k' was not evaluated (FR-010)"])
+        self.assertEqual(_round({"round": 1, "prior": []}, find_out, unchecked)["verdict"], "incomplete")
+        checked = {"answers": self.ANSWERS, "checks": [{"key": "k", "outcome": "dismissed", "reason": "no"}]}
+        self.assertEqual(sr.validate_output(checked, "check", [], [cand]), [])
+        self.assertEqual(_round({"round": 1, "prior": []}, find_out, checked)["verdict"], "clean")
+
+
 if __name__ == "__main__":
     unittest.main()

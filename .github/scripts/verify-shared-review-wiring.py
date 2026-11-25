@@ -234,6 +234,10 @@ def failure_path_problems(wf):
                 problems.append("{0} stages output from an agent whose verdict is not healthy".format(role))
             if not _true(stage.get("continue-on-error")):
                 problems.append("{0}: the stage step can fail the job".format(role))
+            # Every candidate needs a check entry (FR-010), so check's
+            # validation reads the find output it was given.
+            if role == "check" and "--find input/find.json" not in str(stage.get("run") or ""):
+                problems.append("check validates its output without the find output's candidates")
         upload = next((s for s in steps if (s.get("with") or {}).get("name") == "shared-review-" + role), None)
         if upload is None or "steps.stage.outputs.ok == 'true'" not in str(upload.get("if", "")) \
                 or not _true(upload.get("continue-on-error")):
@@ -381,6 +385,10 @@ def main():
                 ("check uploads an unstaged output", _upload_unstaged_check, failure_path_problems),
                 ("the find agent has no step timeout", _agent_without_step_timeout, failure_path_problems),
                 ("the check verdict step can fail the job", _verdict_can_fail, failure_path_problems),
+                ("check validates without the find output", lambda w: _step(
+                    w, "check", lambda x: "validate-output" in str(x.get("run") or "")).update(
+                    {"run": _step(w, "check", lambda x: "validate-output" in str(x.get("run") or ""))["run"]
+                     .replace("--find input/find.json ", "")}), failure_path_problems),
                 ("prepare releases the round before its uploads", lambda w: w["jobs"]["prepare"]["outputs"]
                     .update({"proceed": "${{ steps.state.outputs.ready }}"}), release_problems),
                 ("the release step runs after a failed upload", lambda w: _step(

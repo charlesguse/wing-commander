@@ -460,7 +460,7 @@ def _opt(value, kinds):
     return value is None or (isinstance(value, kinds) and not isinstance(value, bool))
 
 
-def validate_output(data, role, prior=None):
+def validate_output(data, role, prior=None, candidates=None):
     """Problems with one agent job's output, [] when it is well-formed.
 
     `role` is "find" or "check"; each has its own schema, the same one its
@@ -468,7 +468,9 @@ def validate_output(data, role, prior=None):
     that fails is malformed, so the round is `incomplete` (FR-014), never
     a quieter verdict from a half-read output. For `check`, `prior` is the
     round's memory: every finding open in it must be evaluated by id
-    (FR-010)."""
+    (FR-010); `candidates` is the find job's output, and every candidate
+    must be evaluated by key, or an unchecked one would be dismissed
+    silently (FR-010)."""
     if role not in ("find", "check"):
         return ["unknown role {0!r}".format(role)]
     if not isinstance(data, dict):
@@ -545,6 +547,10 @@ def validate_output(data, role, prior=None):
     for f in prior or []:
         if isinstance(f, dict) and f.get("status") in OPEN_STATUSES and f.get("id") not in evaluated:
             problems.append("open finding {0} was not evaluated (FR-010)".format(f.get("id")))
+    keys = {c.get("key") for c in items if isinstance(c, dict) and _nonempty_str(c.get("key"))}
+    for c in candidates or []:
+        if isinstance(c, dict) and _nonempty_str(c.get("key")) and c["key"] not in keys:
+            problems.append("candidate {0!r} was not evaluated (FR-010)".format(c["key"]))
     return problems
 
 
@@ -557,7 +563,7 @@ def finalize_round(state, find_out, check_out, code_run, purpose, head_sha, dism
     # a malformed output is read as missing, so the round is `incomplete`.
     if validate_output(find_out, "find"):
         find_out = None
-    if validate_output(check_out, "check", state.get("prior")):
+    if validate_output(check_out, "check", state.get("prior"), (find_out or {}).get("candidates")):
         check_out = None
     prior, applied, notes = apply_dismissals(state.get("prior") or [], dismissals)
     code_status = (code_run or {}).get("status") if (code_run or {}).get("status") == "staged" else "missing"
@@ -1132,6 +1138,7 @@ def main(argv=None):
     v.add_argument("--input", required=True)
     v.add_argument("--role", required=True, choices=("find", "check"))
     v.add_argument("--memory", default=None)
+    v.add_argument("--find", default=None)
     args = parser.parse_args(argv)
     if args.cmd == "guard":
         ok, reason = guard(args.ref, args.default_branch, args.kind, args.paused)
@@ -1195,7 +1202,13 @@ def main(argv=None):
                 prior = _load(args.memory).get("prior")
             except (OSError, ValueError, AttributeError):
                 problems.append("the round's memory could not be read")
-        problems += validate_output(data, args.role, prior)
+        candidates = None
+        if args.find:
+            try:
+                candidates = _load(args.find).get("candidates")
+            except (OSError, ValueError, AttributeError):
+                problems.append("the find output could not be read")
+        problems += validate_output(data, args.role, prior, candidates)
         print(json.dumps({"ok": not problems, "problems": problems}))
         return 1 if problems else 0
     print(build_record(_load(args.input), handoff=args.handoff))
