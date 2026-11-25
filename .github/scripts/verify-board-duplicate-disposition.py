@@ -14,7 +14,7 @@ failure-semantics table against a stubbed `gh` (the same `run=` injection
 seam `board_item_marker.add_stalled_label(issue_number, label, run=None)`
 already demonstrates), never a real repository.
 
-Cases R1-R12 (#1209) pin the Roadmap half of the same entry point: every
+Cases R1-R14 (#1209) pin the Roadmap half of the same entry point: every
 spec-proposal the loop files is listed under the Roadmap issue's
 "### Proposed" header (board_roadmap.py), once, through
 board_backlog_edit.edit(), and a Roadmap that cannot be found, has no
@@ -540,13 +540,42 @@ def _case_r13_review_pass_2_shapes():
         return False
     landed = _RoadmapGh(_fixture("roadmap-body.md"), verify_fails=True)
     outcome, msg = landed.record()
-    return outcome == "failed" and len(landed.writes) == 1 and "could not be updated" not in msg \
+    return outcome == "failed" and len(landed.writes) == 1 and "did not finish" in msg \
         and "if it is missing" in brm.HAND_EDIT
 
 
 _case("R13: loose order, spaced label, label wording, title HTML/stops/truncation, "
       "closed proposals and a failure after a landed write",
       _case_r13_review_pass_2_shapes)
+
+
+def _case_r14_review_pass_3_shapes():
+    """Code review of #1222, pass 3: a list that follows the loop's
+    sub-list after a blank line is the owner's, so a second proposal is
+    never appended into it; a backtick in a title can never pair with
+    the code span round an @name and leave the name a live mention."""
+    bulleted = "### Proposed\n- #1188: owner a\n- #1206: owner b\n\n### Parked\n"
+    once = brm.add_line(bulleted, PROPOSAL, "- #4242: x.")
+    twice = brm.add_line(once, 4343, "- #4343: y.")
+    if twice != ("### Proposed\n" + brm.UNORDERED_LABEL + "\n- #4242: x.\n- #4343: y.\n\n"
+                 "- #1188: owner a\n- #1206: owner b\n\n### Parked\n"):
+        return False
+    # Each title's own backslashes and backticks are escaped, so the only
+    # live backticks are the pair round each @name.
+    want = {
+        "Fix `foo @bar baz": "Fix \\`foo `@bar` baz",
+        "`a`@team": "\\`a\\``@team`",
+        "a\\`@b": "a\\\\\\``@b`",
+    }
+    for title, cleaned in want.items():
+        if brm.proposed_line(PROPOSAL, title, TODAY, originating=7) != \
+                "- #4242: {0}. Filed by the board loop {1} from issue #7.".format(cleaned, TODAY):
+            return False
+    return True
+
+
+_case("R14: a list below the loop's sub-list, and backticks round an @-mention",
+      _case_r14_review_pass_3_shapes)
 
 
 def run(verbose=True):

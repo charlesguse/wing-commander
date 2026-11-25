@@ -76,13 +76,16 @@ def _numbered(text):
     return bool(NUMBERED_RE.match(text))
 
 
-def _list_end(lines, start, end, skip_prose=True):
+def _list_end(lines, start, end, skip_prose=True, loose=True):
     """Index just past the first list (bulleted or numbered, continuation
     lines included) at or after `start`, before `end`; None when there is
     none. With skip_prose=False only blank lines may come before the list.
     A loose list -- blank lines between its items -- is one list: a blank
     line ends it only when the next text is neither an item of the same
-    kind nor indented under one (code review of #1222, pass 2)."""
+    kind nor indented under one (code review of #1222, pass 2). With
+    loose=False any blank line after an item ends the list: the loop's
+    own sub-list is always tight, so a list after a blank line below it is
+    the owner's, never more of the loop's (pass 3)."""
     past = None
     numbered = None
     j = start
@@ -98,6 +101,8 @@ def _list_end(lines, start, end, skip_prose=True):
         elif text[:1] in (" ", "\t") and text.strip():
             past = j + 1
         elif not text.strip():
+            if not loose:
+                break
             nxt = next((m for m in range(j + 1, end) if lines[m].strip()), None)
             if nxt is None:
                 break
@@ -134,8 +139,13 @@ def _clean_title(title):
     # Raw HTML in a title (an unclosed <details>) would restyle the rest of
     # the owner's Roadmap; show it as text.
     text = text.replace("<", "&lt;").replace(">", "&gt;")
-    # A bare @name in a body edit would notify that user or team.
-    text = re.sub(r"(?<![`\w])@([\w-]+(?:/[\w.-]+)?)", r"`@\1`", text)
+    # A bare @name in a body edit would notify that user or team. Escape
+    # the title's own backslashes and backticks first, so the code spans
+    # wrapped round each @name below are the only live ones: an odd
+    # backtick in the title can then never pair with one of them and leave
+    # the name bare (code review of #1222, pass 3).
+    text = text.replace("\\", "\\\\").replace("`", "\\`")
+    text = re.sub(r"(?<!\w)@([\w-]+(?:/[\w.-]+)?)", r"`@\1`", text)
     return text or "(untitled)"
 
 
@@ -170,7 +180,7 @@ def add_line(body, number, line):
     header, end = section
     label = next((j for j in range(header + 1, end) if UNORDERED_RE.match(lines[j].strip())), None)
     if label is not None:
-        insert = _list_end(lines, label + 1, end, skip_prose=False) or label + 1
+        insert = _list_end(lines, label + 1, end, skip_prose=False, loose=False) or label + 1
         block = [line + newline]
     else:
         # After the owner's numbered order; with none, under the header.
