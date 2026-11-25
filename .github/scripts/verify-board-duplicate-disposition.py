@@ -14,7 +14,7 @@ failure-semantics table against a stubbed `gh` (the same `run=` injection
 seam `board_item_marker.add_stalled_label(issue_number, label, run=None)`
 already demonstrates), never a real repository.
 
-Cases R1-R14 (#1209) pin the Roadmap half of the same entry point: every
+Cases R1-R15 (#1209) pin the Roadmap half of the same entry point: every
 spec-proposal the loop files is listed under the Roadmap issue's
 "### Proposed" header (board_roadmap.py), once, through
 board_backlog_edit.edit(), and a Roadmap that cannot be found, has no
@@ -470,7 +470,7 @@ def _case_r11_owner_order_kept():
     if not brm.is_listed(expected, 1188) or brm.add_line(expected, 1188, "- #1188: again.") != expected:
         return False
     out = brm.add_line(expected, 4343, "- #4343: next.")
-    want = expected.replace("`bl-0123abcd`.\n", "`bl-0123abcd`.\n- #4343: next.\n", 1)
+    want = expected.replace(brm.UNORDERED_LABEL + "\n", brm.UNORDERED_LABEL + "\n- #4343: next.\n", 1)
     return out == want and out.count(brm.UNORDERED_LABEL) == 1
 
 
@@ -510,20 +510,22 @@ _case("R12: moved proposals, no numbered order, an empty label, marked items and
 
 def _case_r13_review_pass_2_shapes():
     """Code review of #1222, pass 2: a loose numbered order (blank lines
-    between items) is one list, so the sub-list follows all of it; an
-    existing label with a blank line before its items keeps filing order;
+    between items) is never split (since pass 4 the sub-list goes above
+    it); an existing label with a blank line before its items gets the
+    new line directly under it;
     the label never points "above" when it sits under the header; raw
     HTML in a title is shown as text; a title ending in ? or a truncation
     gets no doubled stop; truncation never reopens an @-mention; a
     proposal that is no longer open is not listed; a failure after a
     landed write never says the line is absent."""
     loose = "### Proposed\n1. #1: a\n\n2. #2: b\n   more\n\nNot specs:\n- #3\n"
-    want = ("### Proposed\n1. #1: a\n\n2. #2: b\n   more\n\n" + brm.UNORDERED_LABEL
-            + "\n- #4242: x.\n\nNot specs:\n- #3\n")
+    want = ("### Proposed\n" + brm.UNORDERED_LABEL + "\n- #4242: x.\n\n1. #1: a\n\n2. #2: b\n   more\n\n"
+            "Not specs:\n- #3\n")
     if brm.add_line(loose, PROPOSAL, "- #4242: x.") != want:
         return False
     spaced = "### Proposed\n" + brm.UNORDERED_LABEL + "\n\n- #5: y\n"
-    if brm.add_line(spaced, PROPOSAL, "- #4242: x.") != spaced + "- #4242: x.\n":
+    if brm.add_line(spaced, PROPOSAL, "- #4242: x.") != ("### Proposed\n" + brm.UNORDERED_LABEL
+                                                        + "\n- #4242: x.\n\n- #5: y\n"):
         return False
     if "above" in brm.UNORDERED_LABEL:
         return False
@@ -557,7 +559,7 @@ def _case_r14_review_pass_3_shapes():
     bulleted = "### Proposed\n- #1188: owner a\n- #1206: owner b\n\n### Parked\n"
     once = brm.add_line(bulleted, PROPOSAL, "- #4242: x.")
     twice = brm.add_line(once, 4343, "- #4343: y.")
-    if twice != ("### Proposed\n" + brm.UNORDERED_LABEL + "\n- #4242: x.\n- #4343: y.\n\n"
+    if twice != ("### Proposed\n" + brm.UNORDERED_LABEL + "\n- #4343: y.\n- #4242: x.\n\n"
                  "- #1188: owner a\n- #1206: owner b\n\n### Parked\n"):
         return False
     # Each title's own backslashes and backticks are escaped, so the only
@@ -576,6 +578,51 @@ def _case_r14_review_pass_3_shapes():
 
 _case("R14: a list below the loop's sub-list, and backticks round an @-mention",
       _case_r14_review_pass_3_shapes)
+
+
+def _owner_lines(text):
+    """The non-blank lines that are not the loop's: its label and its
+    #4242/#4343 items."""
+    return [line for line in text.splitlines()
+            if line.strip() and line != brm.UNORDERED_LABEL and not line.startswith(("- #4242:", "- #4343:"))]
+
+
+def _case_r15_fixed_anchor():
+    """Code review of #1222, pass 4: the line goes at a fixed anchor --
+    directly under the "Not yet ordered" label, which sits directly under
+    the header -- so the loop never works out where the owner's list
+    ends. For every shape of the owner's Proposed section (tight, loose,
+    bulleted, a lazy continuation, prose only, an existing label), two
+    filings leave every owner line in place and in order, put the newest
+    line directly under the label, and keep the label unique."""
+    shapes = [
+        "### Proposed\n1. #1: a\n2. #2: b\nNot specs:\n- #3\n\n### Parked\n",
+        "### Proposed\n1. #1: a\n\n2. #2: b\n\n- #3\n",
+        "### Proposed\n- #1: a\n- #2: b\n\n- #3: c\n",
+        "### Proposed\nOrder agreed.\n1. #1: a\n   more\n\nNot specs:\n* #3\n",
+        "### Proposed\n" + brm.UNORDERED_LABEL + "\n- #9: older.\n\n1. #1: a\n",
+        "### Proposed\n" + brm.UNORDERED_LABEL,
+        "### Proposed",
+        _fixture("roadmap-body.md"),
+    ]
+    for body in shapes:
+        out = brm.add_line(brm.add_line(body, PROPOSAL, "- #4242: x."), 4343, "- #4343: y.")
+        lines = out.splitlines()
+        label = lines.index(brm.UNORDERED_LABEL)
+        if _owner_lines(out) != _owner_lines(body) or out.count(brm.UNORDERED_LABEL) != 1 \
+                or lines[label + 1:label + 3] != ["- #4343: y.", "- #4242: x."] \
+                or not brm.HEADER_RE.match(lines[label - 1]):
+            return False
+        # The owner's first line under the header is set apart from the
+        # loop's list unless it is the loop's own older item.
+        after = lines[label + 3] if label + 3 < len(lines) else ""
+        if after and not after.startswith("- #9:") and after.strip():
+            return False
+    return True
+
+
+_case("R15: the line goes directly under the label, the label directly under the header, "
+      "and no owner line moves", _case_r15_fixed_anchor)
 
 
 def run(verbose=True):

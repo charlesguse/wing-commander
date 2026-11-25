@@ -13,7 +13,8 @@ already calls board_duplicate_disposition.py, which calls
 record_proposal() here, so there is one call site and no workflow step.
 
 The owner orders the Proposed list, so the line goes on a "Not yet
-ordered" sub-list after that order, never into it (UNORDERED_LABEL).
+ordered" sub-list directly under the header, never into that order
+(UNORDERED_LABEL).
 
 The Roadmap is found the way the backlog is: the one open
 `disposition:tracking` issue whose title starts "Roadmap"
@@ -54,11 +55,14 @@ HAND_EDIT = " Check the Roadmap's Proposed list and add its line by hand if it i
 
 LIST_ITEM_RE = re.compile(r"^(?:[-*]|\d+[.)])[ \t]")
 # The owner orders the Proposed list (numbered, 2026-11-25); the loop never
-# places an item in that order. It appends to this sub-list instead, which
-# it creates after the section's first list when it is not there yet.
+# places an item in that order. Its lines go on this sub-list instead, at a
+# fixed anchor: the label sits directly under the Proposed header, and each
+# new line goes directly under the label (newest first). The loop never
+# works out where any list ends, so no shape of the owner's list can pull
+# a line into it (code review of #1222, pass 4: passes 2 and 3 each found
+# a list shape the list-end parser misread).
 UNORDERED_RE = re.compile(r"^(?:\*\*)?Not yet ordered\b", re.IGNORECASE)
-UNORDERED_LABEL = "Not yet ordered (filed by the board loop; the owner places each in the Proposed order):"
-NUMBERED_RE = re.compile(r"^\d+[.)][ \t]")
+UNORDERED_LABEL = "Not yet ordered (filed by the board loop, newest first; the owner places each in the Proposed order):"
 
 
 def _section(lines):
@@ -70,52 +74,6 @@ def _section(lines):
         return None
     end = next((j for j in range(header + 1, len(lines)) if HEADING_RE.match(lines[j])), len(lines))
     return header, end
-
-
-def _numbered(text):
-    return bool(NUMBERED_RE.match(text))
-
-
-def _list_end(lines, start, end, skip_prose=True, loose=True):
-    """Index just past the first list (bulleted or numbered, continuation
-    lines included) at or after `start`, before `end`; None when there is
-    none. With skip_prose=False only blank lines may come before the list.
-    A loose list -- blank lines between its items -- is one list: a blank
-    line ends it only when the next text is neither an item of the same
-    kind nor indented under one (code review of #1222, pass 2). With
-    loose=False any blank line after an item ends the list: the loop's
-    own sub-list is always tight, so a list after a blank line below it is
-    the owner's, never more of the loop's (pass 3)."""
-    past = None
-    numbered = None
-    j = start
-    while j < end:
-        text = lines[j].rstrip("\r\n")
-        if LIST_ITEM_RE.match(text):
-            if past is None:
-                numbered = _numbered(text)
-            past = j + 1
-        elif past is None:
-            if not skip_prose and text.strip():
-                return None
-        elif text[:1] in (" ", "\t") and text.strip():
-            past = j + 1
-        elif not text.strip():
-            if not loose:
-                break
-            nxt = next((m for m in range(j + 1, end) if lines[m].strip()), None)
-            if nxt is None:
-                break
-            following = lines[nxt].rstrip("\r\n")
-            if (LIST_ITEM_RE.match(following) and _numbered(following) == numbered) \
-                    or following[:1] in (" ", "\t"):
-                j = nxt
-                continue
-            break
-        else:
-            break
-        j += 1
-    return past
 
 
 def _item_re(number):
@@ -164,10 +122,10 @@ def proposed_line(number, title, date, line_id=None, originating=None):
 
 
 def add_line(body, number, line):
-    """`body` with `line` appended to the Proposed section's "Not yet
-    ordered" sub-list, created after the section's first list (the
-    owner's ordered one) when missing; `body` unchanged when #number is
-    already listed in the section; None when there is no Proposed header
+    """`body` with `line` directly under the Proposed section's "Not yet
+    ordered" label, the label first created directly under the header
+    when missing; `body` unchanged when #number is already listed
+    anywhere on the Roadmap; None when there is no Proposed header
     (board_backlog_edit.edit() reads None as a stand-down)."""
     body = body or ""
     lines = body.splitlines(True)
@@ -180,18 +138,19 @@ def add_line(body, number, line):
     header, end = section
     label = next((j for j in range(header + 1, end) if UNORDERED_RE.match(lines[j].strip())), None)
     if label is not None:
-        insert = _list_end(lines, label + 1, end, skip_prose=False, loose=False) or label + 1
-        block = [line + newline]
+        insert, block = label + 1, [line + newline]
+        # The loop's older items continue the list; anything else is
+        # set apart by a blank line.
+        joins = lambda text: bool(LIST_ITEM_RE.match(text))  # noqa: E731
     else:
-        # After the owner's numbered order; with none, under the header.
-        first = next((j for j in range(header + 1, end) if _numbered(lines[j])), None)
-        insert = _list_end(lines, first, end) if first is not None else header + 1
-        block = [UNORDERED_LABEL + newline, line + newline]
-        if insert > header + 1:
-            block.insert(0, newline)  # a blank line ends the ordered list above
-    if insert < len(lines) and lines[insert].strip():
-        block.append(newline)  # never glue the text below onto the new item
-    if insert > 0 and not lines[insert - 1].endswith(("\n", "\r")):
+        insert, block = header + 1, [UNORDERED_LABEL + newline, line + newline]
+        # Whatever was under the header (the owner's order, prose) starts
+        # after a blank line, never as more of the loop's list.
+        joins = lambda text: False  # noqa: E731
+    following = lines[insert].rstrip("\r\n") if insert < len(lines) else ""
+    if following.strip() and not joins(following):
+        block.append(newline)
+    if not lines[insert - 1].endswith(("\n", "\r")):
         lines[insert - 1] += newline
     lines[insert:insert] = block
     return "".join(lines)

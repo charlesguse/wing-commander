@@ -9,13 +9,13 @@ One place to see which specs are real work, which are in flight, and which are p
   - [x] Spec-shaped work is filed as `spec-proposal`, not `spec-request` (#901).
 
 ### Proposed (waiting on the owner's `spec-request`)
+Not yet ordered (filed by the board loop, newest first; the owner places each in the Proposed order):
+- #4242: Roadmap Proposed lines for loop-filed proposals. Filed by the board loop 2026-11-25 from Maintenance backlog line `bl-0123abcd`.
+
 Order agreed by the owner on 2026-11-25. Promote the next one when the previous one is past clarify.
 1. #1188: workflow security after a post on dangerous Actions triggers. Owner direction 2026-11-23.
 2. #1206: no gate runs the `.claude/skills/*/scripts` self-tests. Filed by the board loop 2026-11-24.
 3. #1180: `run-local-gates.py` cannot complete within the 10-minute tool limit. Filed by the board loop 2026-11-22.
-
-Not yet ordered (filed by the board loop; the owner places each in the Proposed order):
-- #4242: Roadmap Proposed lines for loop-filed proposals. Filed by the board loop 2026-11-25 from Maintenance backlog line `bl-0123abcd`.
 
 Not specs:
 - #1167 (`trusted-file-tampered`) is already settled by #1181.
