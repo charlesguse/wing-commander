@@ -24,6 +24,16 @@ The owner approved this rule (quoted verbatim; it is the governing wording for t
 
 A separate fix PR applies this wording to CLAUDE.md and the `review-until-clean` skill for review sessions. **This spec covers the stage agents only**: the stage-findings filing path, the PR-conversation stage's routing of review findings (including the lifecycle-review-gate findings it folds), and the lifecycle review gate's in-scope / out-of-scope split.
 
+## Clarifications
+
+### Session 2026-11-25
+
+Owner answers on #1189, each agreeing with the recommendation:
+
+- Q1 (failure class): C — Each finding carries a structured failure class (silent | loud | none) that deterministic code routes on, plus a required one-line silent-failure description whenever the class is silent; code rejects a silent finding without one. → FR-009.
+- Q2 (important/security marking): A — A severity field in the code-review vocabulary (important | nit | pre_existing) and a separate security boolean; routing code enforces never-drop on either. → FR-010.
+- Q3 (existing backlog lines): B — One sweep of the open #889 lines by the silent/loud rule after this ships, naming each removed line with its reason; the stale/duplicate/real triage has already finished (33 lines ticked on 2026-11-24). → FR-012.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - The lifecycle review gate records only silent out-of-scope findings (Priority: P1)
@@ -79,10 +89,11 @@ Stage agents (intake through finalize) that notice a defect outside their own ta
 ### Edge Cases
 
 - A finding is both out of scope and marked security, and classified "no output change": it is recorded, never dropped (the important/security override wins).
-- A finding classified silent but with no description of how it fails silently: it is still recorded, and the missing description is visible in the entry rather than invented.
+- A finding classified silent but with no description of how it fails silently: the routing code rejects it (FR-009) and reports the rejection; it is neither recorded with an invented description nor silently discarded.
+- A finding with severity nit and the security flag set: it is never dropped (FR-010), and it stays distinguishable from a security finding of severity important.
 - A loud-only finding is dropped, then the loud failure actually happens in a later run: it is filed then from that run's evidence by the existing failure-reporting paths; nothing in this feature blocks that.
 - A later review pass rediscovers a finding an earlier round dropped: the earlier round's report names it, so the pass can recognise it as already dropped rather than new.
-- Existing open backlog lines that this rule would drop: see FR-012.
+- Existing open backlog lines that this rule would drop: removed by the one-time sweep in FR-012, each named with its reason.
 
 ## Requirements *(mandatory)*
 
@@ -96,16 +107,16 @@ Stage agents (intake through finalize) that notice a defect outside their own ta
 - **FR-006**: A dropped finding MUST be named in the routing stage's own report (the review round's report, or the stage run's summary) with its drop reason ("fails loudly" or "no output change"), so a later pass can recognise it.
 - **FR-007**: A finding marked important or security MUST never be dropped; it is fixed or recorded.
 - **FR-008**: The lifecycle review gate, the PR-conversation stage's review-finding routing, and the stage-findings filing path MUST apply the same rule and reach the same outcome for the same finding.
-- **FR-009**: The way a finding's failure class (silent / loud / none) is determined MUST be [NEEDS CLARIFICATION: Should each finding carry a structured field (e.g. failure: silent | loud | none) that deterministic code routes on, or is the record/drop call the reviewing agent's judgment expressed in prose?]. Whichever is chosen, a finding with no determinable class MUST be recorded rather than dropped (fail toward visibility).
-- **FR-010**: The way a finding is marked important or security MUST be [NEEDS CLARIFICATION: How are "important" and "security" marked so the never-drop override is reliable — a severity field on the finding, a category value, or a label applied when recorded?].
+- **FR-009**: Each finding MUST carry a structured failure-class field (silent | loud | none) that deterministic routing code reads to decide record or drop; the call is not left to prose. Whenever the class is silent, the finding MUST also carry a required one-line description of how it fails silently, and the routing code MUST reject a silent finding that has none (the rejection is reported, never a silent discard). A finding with no determinable class MUST be recorded rather than dropped (fail toward visibility).
+- **FR-010**: Each finding MUST carry a severity field in the code-review vocabulary (important | nit | pre_existing) and a separate security boolean. Routing code MUST enforce the never-drop override (FR-007) on either one: a finding whose severity is important, or whose security flag is true, is fixed or recorded, never dropped. Keeping the two separate means a security nit stays distinguishable from a security bug.
 - **FR-011**: A deterministic check MUST fail when a stage drops a finding without naming it and its reason in that stage's report. (Default chosen for open question 2: yes, gate it — the "rule with no gate behind it" principle in the project instructions.)
-- **FR-012**: Open Maintenance backlog lines that this rule would drop MUST be handled by [NEEDS CLARIFICATION: a one-time sweep that removes them (naming each removal and its reason), or left in place with the rule applying to new findings only? A separate stale/duplicate/real triage of #889 is already running.].
+- **FR-012**: After this feature ships, the open Maintenance backlog (#889) lines MUST be swept once by the silent/loud rule: each line the rule would drop is removed, and each removal is named with its reason ("fails loudly" or "no output change"). The sweep runs once and is not a standing job. (The separate stale/duplicate/real triage of #889 has already finished: 33 lines were ticked on 2026-11-24, so the sweep does not wait on it.)
 - **FR-013**: Dropping MUST NOT suppress any existing failure-reporting path (watchdog, durable-failure issues, red gates); a loud failure is filed when it happens.
 - **FR-014**: The published contracts for the affected filing and routing paths MUST be updated in the same change as their behaviour, and the reference document MUST be updated where it lists the affected defaults or switches.
 
 ### Key Entities
 
-- **Finding**: a review finding or stage-found defect proposal. Attributes relevant here: scope (in / out), failure class (silent / loud / none), important/security marking, silent-failure description, and its routing outcome.
+- **Finding**: a review finding or stage-found defect proposal. Attributes relevant here: scope (in / out), failure class (structured field: silent / loud / none), severity (important / nit / pre_existing), security (boolean), silent-failure description (one line, required when the class is silent), and its routing outcome.
 - **Routing outcome**: fix now, record, or drop; for drop, a reason.
 - **Review report / run summary**: the per-round or per-run record in which dropped findings are named with their reasons.
 - **Maintenance backlog entry**: a checklist line recording an out-of-scope silent finding, including how it fails silently.
