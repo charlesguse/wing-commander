@@ -132,7 +132,8 @@ def check(doc, bash=None):
             fails.append("the aggregate needs '{0}', which is not a "
                          "job".format(n))
     units = [k for k, j in jobs.items()
-             if k != AGGREGATE and registry._job_runs_on_pull_request(j)]
+             if registry._job_runs_on_pull_request(j)
+             and not registry._is_aggregate(k, j)]
     for k in units:
         if k not in needs:
             fails.append("PR-time job '{0}' is not in the aggregate's "

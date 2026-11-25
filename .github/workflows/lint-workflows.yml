@@ -163,7 +163,8 @@ permissions:
 jobs:
   # Gates 2 and 3 are pure static analysis over the workflow set in the
   # checkout, so they run on the PR that introduces the defect. The suite is
-  # split across lint-shard-1 .. lint-shard-8 (same steps, in order, cut
+  # split across lint-shard-1 .. lint-shard-8 (same steps, rebalanced
+  # across shards for timing, so original order is not preserved; cut
   # between a gate and the next gate's comment); the `lint` aggregate below
   # is the single required check.
   lint-shard-1:

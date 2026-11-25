@@ -181,7 +181,7 @@ MVP = Phases 1–3 plus T014–T016 from US2: a sharded suite whose aggregate ca
 
   Detail: Fail any self-test step whose paired gate step exists but has no id or no outcome guard.
 
-- [ ] Review finding: Gates 173 and 174 define the aggregate job differently
+- [x] Review finding: Gates 173 and 174 define the aggregate job differently
 
   Gate 173 excludes the job id `lint` unconditionally, while the registry and Gate 174 use `_is_aggregate`, which also requires a non-empty `needs`, so the two can disagree about which jobs are units.
 
@@ -189,7 +189,7 @@ MVP = Phases 1–3 plus T014–T016 from US2: a sharded suite whose aggregate ca
 
   Detail: Use registry._is_aggregate here too.
 
-- [ ] Review finding: Shard comment claims steps are in order but gates were reordered across shards
+- [x] Review finding: Shard comment claims steps are in order but gates were reordered across shards
 
   The comment above lint-shard-1 says 'same steps, in order', but several gates (9, 22, 34, 60, 82, 95, 111, 112, 41 self-test) moved and the Gate 23 self-test was renamed; workflow comments are load-bearing.
 
