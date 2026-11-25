@@ -94,10 +94,22 @@ def latest_per_check(rollup):
             and not _cancelled_by_later_run(entry, rollup)]
 
 
-def _is_gate_suite_workflow(workflow_name):
-    """The gate suite's workflow (lint-workflows.yml, "lint · workflows"),
-    matched the way _gate_suite_green matches it."""
-    return "workflow" in (workflow_name or "").lower()
+# contracts/lint-workflow-layout.md item 1 (specs/129-parallel-pr-lint):
+# the workflow's name, pinned there and by Gate 174.
+LINT_WORKFLOW_NAME = "lint · workflows"
+
+
+def is_gate_suite_workflow(workflow_name):
+    """The one matcher for "this is the gate suite's workflow"
+    (lint-workflows.yml, LINT_WORKFLOW_NAME), so no two readers can
+    disagree on a name variant (code review of #1233): a loose
+    substring match read `lint-workflows` as green where an exact one
+    read it as never-ran. Every reader of the gate suite in a rollup --
+    this module's green, pending and cancelled-run readers,
+    lifecycle_readiness, lifecycle_merge_preconditions, board_merge and
+    wc_merge_evidence -- reaches it through this function;
+    verify-board-readiness.py fails on a second matcher."""
+    return (workflow_name or "").strip().lower() == LINT_WORKFLOW_NAME.lower()
 
 
 def _cancelled_by_later_run(entry, rollup):
@@ -109,7 +121,7 @@ def _cancelled_by_later_run(entry, rollup):
     this way -- a failure still needs a later attempt of its own run
     (_check_key) -- and never for a skipped run, which did not run the
     job and so decides nothing. Only the gate suite's workflow
-    (_is_gate_suite_workflow) qualifies (code review of #1226, pass 5):
+    (is_gate_suite_workflow) qualifies (code review of #1226, pass 5):
     its every run on a head checks that same head, so a later run redoes
     the cancelled one's work. A run of another workflow carries its own
     event -- wing-commander-9-pr-conversation.yml's per-PR group cancels a
@@ -117,7 +129,7 @@ def _cancelled_by_later_run(entry, rollup):
     the later run answers a different request, never the dropped one."""
     if _entry_state(entry) not in STOPPED_STATES or entry.get("context"):
         return False
-    if not _is_gate_suite_workflow(entry.get("workflowName")):
+    if not is_gate_suite_workflow(entry.get("workflowName")):
         return False
     key, started = _check_key(entry), _started(entry)
     if key is None or not started:
@@ -162,25 +174,15 @@ def _gate_suite_green(rollup):
     result counts (latest_per_check)."""
     for entry in latest_per_check(rollup):
         name = entry.get("name") or entry.get("context") or ""
-        if name == "lint" and _is_lint_workflow_entry(entry):
+        if name == "lint" and is_gate_suite_workflow(entry.get("workflowName")):
             return _entry_state(entry) in GREEN_STATES
     return False
 
-
-# contracts/lint-workflow-layout.md item 1 (specs/129-parallel-pr-lint):
-# the workflow's name, pinned there and by Gate 174.
-LINT_WORKFLOW_NAME = "lint · workflows"
 
 # How long after its last unit concluded a missing `lint` aggregate still
 # counts as GitHub being slow to queue it. Past this the run was cancelled
 # or lost, and the verdict is a durable not-ready (code review of #1233).
 AGGREGATE_PENDING_MAX_SECONDS = 15 * 60
-
-
-def _is_lint_workflow_entry(entry):
-    """The one matcher for "this rollup entry belongs to lint-workflows",
-    shared by the green and pending readers so they cannot disagree."""
-    return (entry.get("workflowName") or "").strip().lower() == LINT_WORKFLOW_NAME.lower()
 
 
 def _parse_ts(value):
@@ -218,7 +220,7 @@ def _gate_suite_pending(rollup, now=None):
     on its own within seconds. A rollup with no lint-workflows entry at all
     is the workflow never running (a PR outside its paths: code review of
     #1010), which does not."""
-    lint_entries = [e for e in rollup if _is_lint_workflow_entry(e)]
+    lint_entries = [e for e in rollup if is_gate_suite_workflow(e.get("workflowName"))]
     return (bool(lint_entries)
             and not any((e.get("name") or e.get("context") or "") == "lint"
                         for e in lint_entries)
@@ -229,6 +231,8 @@ def _gate_suite_pending(rollup, now=None):
 # FR-008): it calls the "every status counts" rule, never copies it.
 checks_green = _checks_green
 gate_suite_green = _gate_suite_green
+# lifecycle_readiness.py's pending state calls this one (code review of #1233).
+gate_suite_pending = _gate_suite_pending
 
 # A legacy StatusContext carries `state` (PENDING/EXPECTED); an Actions
 # CheckRun that has not concluded carries `status` (QUEUED/IN_PROGRESS/

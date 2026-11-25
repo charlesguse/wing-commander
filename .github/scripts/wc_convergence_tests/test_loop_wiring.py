@@ -401,7 +401,7 @@ class LifecycleSelect(LoopRepo):
                      # #889: select's readiness snapshot -- green and mergeable,
                      # so these cases turn on the re-arm rule alone.
                      "  'pr view') echo '{{\"mergeable\": \"MERGEABLE\", \"statusCheckRollup\": "
-                     "[{{\"name\": \"lint\", \"workflowName\": \"lint-workflows\", "
+                     "[{{\"name\": \"lint\", \"workflowName\": \"lint · workflows\", "
                      "\"conclusion\": \"SUCCESS\"}}]}}' ;;\n"
                      "  *) exit 1 ;;\n"
                      "esac\n".format(issue=ISSUE, **data))

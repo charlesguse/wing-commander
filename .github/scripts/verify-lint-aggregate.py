@@ -19,7 +19,12 @@ reader matches. This gate holds the aggregate's behaviour (contract items 2,
   * its step, run for real under CI's `bash -e` with `NEEDS` set the way
     `toJSON(needs)` renders it, exits non-zero unless every result is
     exactly `success`, and names every non-success unit in its log and in
-    $GITHUB_STEP_SUMMARY (SC-005).
+    $GITHUB_STEP_SUMMARY (SC-005);
+  * it carries a `timeout-minutes` of at most AGGREGATE_TIMEOUT_MAX: its
+    one step reads `needs` with jq, so a stuck runner must not hold the
+    `lint` check open for GitHub's six-hour default (code review of #1233).
+    Its behaviour on a cancelled run is proven by the post-merge drill
+    (T029), not here.
 
 An in-progress unit needs no case: a job's `needs` hold it until every
 needed job has finished, so the aggregate cannot conclude while one runs.
@@ -136,6 +141,20 @@ def _run_step(step, results, bash):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# The aggregate's one step reads `needs` with jq and exits; minutes, not
+# hours, bound it (code review of #1233).
+AGGREGATE_TIMEOUT_MAX = 10
+
+
+def _timeout_problem(agg):
+    value = agg.get("timeout-minutes")
+    if isinstance(value, bool) or not isinstance(value, int) or not (
+            1 <= value <= AGGREGATE_TIMEOUT_MAX):
+        return ("the aggregate job needs a literal timeout-minutes between 1 "
+                "and {0}; it has {1!r}".format(AGGREGATE_TIMEOUT_MAX, value))
+    return None
+
+
 def check(doc, bash=None):
     """Failures (list of strings) for a parsed lint-workflows.yml."""
     bash = bash or shutil.which("bash")
@@ -147,6 +166,9 @@ def check(doc, bash=None):
                 "its id must be 'lint'; found {0}".format(named)]
     agg = jobs[AGGREGATE] or {}
     fails = []
+    timeout_problem = _timeout_problem(agg)
+    if timeout_problem:
+        fails.append(timeout_problem)
     needs = agg.get("needs") or []
     if isinstance(needs, str):
         needs = [needs]
@@ -355,6 +377,12 @@ def self_test():
     case("a unit that also runs on push fails",
          lambda d: d["jobs"]["lint-shard-2"].pop("if"),
          "unit 'lint-shard-2' runs on push")
+    case("an aggregate with no timeout-minutes fails",
+         lambda d: j(d).pop("timeout-minutes", None), "timeout-minutes")
+    case("an aggregate timeout past the bound fails",
+         lambda d: j(d).update({"timeout-minutes": 360}), "timeout-minutes")
+    case("an aggregate timeout from an expression fails",
+         lambda d: j(d).update({"timeout-minutes": "${{ vars.T }}"}), "timeout-minutes")
     case("a missing aggregate fails",
          lambda d: d["jobs"].pop("lint"), "exactly one job")
     bad = cases.count(False)

@@ -187,12 +187,32 @@ def check(doc, derived=None):
                 # gate step cannot silently drop the guard checks below
                 # (code review of #1233). A self-test with no gate step in
                 # its unit at all (Gates 40, 41 are standalone) has no pair.
-                want = ids.get(
-                    next((n for n in ids if n and not _PAIR.match(n)
-                          and re.match(re.escape(m.group(1)) + r"(?!\w)", n)),
-                         None))
+                # The pair is found among every named step, not only those
+                # with an `id:` (code review of #1233): a guarded self-test
+                # whose gate step lost its id, or has no gate step in the
+                # unit, read as having no pair, and the "names its own
+                # pair" check below was skipped. The guard itself stays
+                # optional (FR-009, contract item 7, R3).
+                pair = next((p for p in steps if p.get("name")
+                             and not _PAIR.match(p["name"])
+                             and re.match(re.escape(m.group(1)) + r"(?!\w)",
+                                          p["name"])), None)
+                want = (pair or {}).get("id")
                 got = _OUTCOME.search(str(s.get("if") or ""))
-                if not got and want:
+                if got and got.group(1) in ids.values() and pair is None:
+                    fails.append("self-test step {0!r} guards on step id "
+                                 "{1!r}, but '{2}' has no {3!r} gate step to "
+                                 "pair it with; guard on the paired gate "
+                                 "step's id or drop the guard".format(
+                                     name, got.group(1), k, m.group(1)))
+                elif got and pair is not None and not want:
+                    fails.append("self-test step {0!r} guards on step id "
+                                 "{1!r}, but its paired gate step {2!r} has "
+                                 "no `id:`, so the pair cannot be checked; "
+                                 "give the gate step that id or drop the "
+                                 "guard".format(name, got.group(1),
+                                                pair["name"]))
+                elif not got and want:
                     fails.append("self-test step {0!r} lacks the paired "
                                  "steps.{1}.outcome != 'failure' guard".format(
                                      name, want))
@@ -315,6 +335,27 @@ def self_test():
              J(d, "lint-shard-1")["steps"][2].update(
              {"if": "${{ !cancelled() && steps.other.outcome != 'failure' }}"})),
          "not its pair")
+    case("a guarded self-test whose gate step has no id fails",
+         lambda d: J(d, "lint-shard-1")["steps"][1].pop("id"),
+         "has no `id:`")
+    case("a guard on another gate's id beside an id-less pair fails",
+         lambda d: (J(d, "lint-shard-1")["steps"][1].pop("id"),
+                    J(d, "lint-shard-1")["steps"].append(
+                        {"name": "Gate 9 — other", "id": "other",
+                         "if": "${{ !cancelled() }}", "run": "true"}),
+                    J(d, "lint-shard-1")["steps"][2].update(
+                        {"if": "${{ !cancelled() && steps.other.outcome != 'failure' }}"})),
+         "has no `id:`")
+    case("a guarded self-test with no gate step in its unit fails",
+         lambda d: (J(d, "lint-shard-1")["steps"][1].update({"name": "Gate 7 — a"}),
+                    J(d, "lint-shard-1")["steps"][2].update(
+                        {"name": "Gate 8 self-test — a"})),
+         "gate step to pair it with")
+    case("an unguarded self-test whose gate step has no id passes (the guard is optional)",
+         lambda d: (J(d, "lint-shard-1")["steps"][1].pop("id"),
+                    J(d, "lint-shard-1")["steps"][2].update(
+                        {"if": "${{ !cancelled() }}"})),
+         None)
     case("a self-test split from its gate into another unit fails",
          lambda d: J(d, "lint-shard-2")["steps"].append(
              J(d, "lint-shard-1")["steps"].pop(2)),

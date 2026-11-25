@@ -427,6 +427,10 @@ EXPECTED_CASES = {
     # matching the check named `lint` sees the aggregate, never a shard
     # (see verify-board-readiness.py).
     "failed-unit-failed-aggregate",
+    # Code review of #1233: the lint aggregate not having reported yet is
+    # pending (self-clearing) when it is the only unmet precondition, and
+    # durable beside any other.
+    "aggregate-pending", "aggregate-pending-round-not-clean",
 }
 
 
@@ -465,11 +469,12 @@ def run():
         got = evaluate_from_snapshot(
             spec["snapshot"], spec.get("review_gate"),
             spec["kill_switch_paused"], spec.get("reviews") or [],
-            spec.get("bot_login") or "")
+            spec.get("bot_login") or "", spec.get("now"))
         expected = spec["expected"]
 
         ok = (got["may_merge"] == expected["may_merge"]
               and got.get("unmet_reason") == expected.get("unmet_reason")
+              and got.get("pending") == expected.get("pending", False)
               and ("gate_suite_green" not in expected
                    or got.get("gate_suite_green")
                    == expected["gate_suite_green"]))

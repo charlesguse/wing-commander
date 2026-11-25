@@ -33,6 +33,7 @@ vacuously, if any fixture file is missing.
     python3 .github/scripts/verify-board-readiness.py
     python3 .github/scripts/verify-board-readiness.py --self-test
 """
+import ast
 import glob
 import json
 import os
@@ -58,6 +59,22 @@ EXPECTED_CASES = {
     # Every check green but no lint-workflows entry: durable, since that
     # check may never run for a PR outside its paths (code review of #1010).
     "lint-missing-durable",
+    # specs/129-parallel-pr-lint: a run a newer push cancelled (units
+    # cancelled, the always() aggregate failed) is durable not-ready; and a
+    # failed shard under a skipped aggregate is not-ready too, through
+    # checks_green, even though gate_suite_green reads a SKIPPED `lint` as
+    # green.
+    "cancelled-run", "failed-unit-skipped-aggregate",
+    # Every unit green and no `lint` entry yet: GitHub has not queued the
+    # aggregate, which clears on its own (self-clearing) -- unless another
+    # condition is unmet too (durable, and named). Code review of #1233.
+    "aggregate-pending-self-clearing", "aggregate-pending-open-findings",
+    # The same shape, but the last unit concluded long before `now`: the
+    # hold is bounded, so the verdict is durable (code review of #1233).
+    "aggregate-pending-expired",
+    # Code review of #1233: a name variant (`lint-workflows`) is not the
+    # gate suite for any reader -- one matcher, is_gate_suite_workflow.
+    "lint-workflow-name-variant-durable",
     # #889 (found by the code review of #1196): only each check's newest
     # result counts, and a cancelled one is "not ready yet" (self-clearing),
     # never a failure -- but it never hides a real failure either.
@@ -82,19 +99,6 @@ EXPECTED_CASES = {
     # review after pr-conversation's group cancelled a pending one) never
     # sets aside the cancelled run's dropped request.
     "cancelled-pending-other-workflow-run-self-clearing",
-    # specs/129-parallel-pr-lint: a run a newer push cancelled (units
-    # cancelled, the always() aggregate failed) is durable not-ready; and a
-    # failed shard under a skipped aggregate is not-ready too, through
-    # checks_green, even though gate_suite_green reads a SKIPPED `lint` as
-    # green.
-    "cancelled-run", "failed-unit-skipped-aggregate",
-    # Every unit green and no `lint` entry yet: GitHub has not queued the
-    # aggregate, which clears on its own (self-clearing) -- unless another
-    # condition is unmet too (durable, and named). Code review of #1233.
-    "aggregate-pending-self-clearing", "aggregate-pending-open-findings",
-    # The same shape, but the last unit concluded long before `now`: the
-    # hold is bounded, so the verdict is durable (code review of #1233).
-    "aggregate-pending-expired",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"
@@ -155,6 +159,75 @@ def check_no_merge_invariant(lines, path=BOARD_LOOP_FILE):
                     "{0}:{1}:{2}".format(path, i + 1, line))
                 errors.append(_invariant_error(path, label))
     return errors
+
+
+# Code review of #1233: "is this rollup entry the gate suite
+# (lint-workflows)" has one home, board_readiness.is_gate_suite_workflow;
+# every reader of the gate suite in a rollup calls it (CLAUDE.md "Shared
+# logic has exactly one home"). A loose copy read `lint-workflows` as green
+# in one reader and never-ran in another.
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+MATCHER_HOME = "board_readiness.py"
+MATCHER_FUNC = "is_gate_suite_workflow"
+MATCHER_READERS = ("board_readiness.py", "lifecycle_readiness.py",
+                   "lifecycle_merge_preconditions.py", "board_merge.py",
+                   "board_prove.py", "wc_merge_evidence.py")
+# A literal a second matcher would need: the workflow's name, a variant of
+# it, or the bare substring the pre-#1233 loose matcher tested.
+_MATCHER_LITERALS = ("workflow", "workflows", "lint · workflows",
+                     "lint-workflows", "lint workflows", "lint-workflows.yml")
+
+
+def _docstring_ids(tree):
+    ids = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and isinstance(
+                    getattr(body[0], "value", None), ast.Constant):
+                ids.add(id(body[0].value))
+    return ids
+
+
+def matcher_single_home_problems(sources):
+    """sources: {reader file name: its text}. Outside MATCHER_HOME's one
+    LINT_WORKFLOW_NAME assignment, no reader holds a gate-suite name
+    literal, and inside MATCHER_HOME only MATCHER_FUNC reads
+    LINT_WORKFLOW_NAME."""
+    problems = []
+    for name in sorted(sources):
+        tree = ast.parse(sources[name])
+        docstrings = _docstring_ids(tree)
+        allowed = set()
+        if name == MATCHER_HOME:
+            for node in tree.body:
+                if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                        and isinstance(node.targets[0], ast.Name)
+                        and node.targets[0].id == "LINT_WORKFLOW_NAME"):
+                    allowed.add(id(node.value))
+            for func in ast.walk(tree):
+                if isinstance(func, ast.FunctionDef) and func.name != MATCHER_FUNC:
+                    for node in ast.walk(func):
+                        if isinstance(node, ast.Name) and node.id == "LINT_WORKFLOW_NAME":
+                            problems.append("{0}: {1} reads LINT_WORKFLOW_NAME (line {2}); "
+                                            "only {3} may".format(name, func.name,
+                                                                  node.lineno, MATCHER_FUNC))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                    and id(node) not in docstrings and id(node) not in allowed
+                    and node.value.strip().lower() in _MATCHER_LITERALS):
+                problems.append("{0}: {1!r} (line {2}) is a second gate-suite matcher; "
+                                "call board_readiness.{3}".format(
+                                    name, node.value, node.lineno, MATCHER_FUNC))
+    return problems
+
+
+def _reader_sources():
+    sources = {}
+    for name in MATCHER_READERS:
+        with open(os.path.join(SCRIPTS_DIR, name), encoding="utf-8") as fh:
+            sources[name] = fh.read()
+    return sources
 
 
 def _load(path):
@@ -223,6 +296,13 @@ def run():
         else:
             print("[ok] no-merge-invariant: {0} contains no merge/approve/"
                   "auto-merge call.".format(BOARD_LOOP_FILE))
+
+    matcher_problems = matcher_single_home_problems(_reader_sources())
+    for problem in matcher_problems:
+        failures += 1
+        print("::error::verify-board-readiness: {0}".format(problem))
+    if not matcher_problems:
+        print("[ok] every gate-suite reader calls board_readiness.{0}".format(MATCHER_FUNC))
 
     print("verify-board-readiness: {0} failure(s).".format(failures))
     return 1 if failures else 0
@@ -307,6 +387,31 @@ def self_test():
               and all("outside its `merge` job" not in e
                       and "the `merge` job included" in e for e in merge_job_annotations),
               "got {0!r}".format(merge_job_errors))
+
+    # The gate-suite matcher's single home (code review of #1233): the real
+    # readers are clean; the pre-#1233 loose matcher, a reader with its own
+    # exact match, and a second function reading LINT_WORKFLOW_NAME are each
+    # caught.
+    sources = _reader_sources()
+    check("matcher-single-home-clean", matcher_single_home_problems(sources) == [],
+          repr(matcher_single_home_problems(sources)))
+    loose = dict(sources)
+    loose["lifecycle_readiness.py"] += (
+        '\n\ndef _loose(e):\n    return "workflow" in (e.get("workflowName") or "").lower()\n')
+    check("matcher-loose-copy-caught", len(matcher_single_home_problems(loose)) == 1,
+          repr(matcher_single_home_problems(loose)))
+    exact = dict(sources)
+    exact["board_merge.py"] += (
+        '\n\ndef _exact(e):\n    return e.get("workflowName") == "lint · workflows"\n')
+    check("matcher-exact-copy-caught", len(matcher_single_home_problems(exact)) == 1,
+          repr(matcher_single_home_problems(exact)))
+    second = dict(sources)
+    second[MATCHER_HOME] += (
+        "\n\ndef _is_lint_workflow_entry(entry):\n"
+        "    return entry.get('workflowName') == LINT_WORKFLOW_NAME\n")
+    check("matcher-second-function-in-home-caught",
+          len(matcher_single_home_problems(second)) == 1,
+          repr(matcher_single_home_problems(second)))
 
     print("{0} failure(s).".format(failures))
     return 1 if failures else 0

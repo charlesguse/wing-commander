@@ -5240,6 +5240,10 @@ jobs:
       - lint-shard-8
       - harness-tests
     runs-on: ubuntu-latest
+    # One jq read of `needs`: minutes, not GitHub's six-hour default, so a
+    # stuck runner cannot hold the `lint` check open (Gate 173; code review
+    # of #1233). Its cancel behaviour is the post-merge drill's (T029).
+    timeout-minutes: 5
     steps:
       - name: Every lint unit succeeded
         # always(), not the implicit success(): on a cancelled run the
