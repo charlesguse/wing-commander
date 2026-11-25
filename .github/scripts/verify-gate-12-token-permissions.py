@@ -515,7 +515,12 @@ def check_gh_invocation(where, tok, assigns, tok_kind, tok_detail,
         level = None
         for scope, cat in cats:
             if scope != "SELF" or cat is None:
-                continue  # cross-repo / non-repos path: a different repo's permission model, out of scope
+                # cross-repo / non-repos path: a different repo's permission
+                # model, out of scope. Deliberate for every method, a write
+                # (`gh api -X POST repos/o/r/...`) included: this
+                # repository's token grants say nothing about another
+                # repository, so there is nothing here to check it against.
+                continue
             perm_cat = API_CATEGORY_PERM.get(cat)
             if perm_cat is None:
                 failures.append(

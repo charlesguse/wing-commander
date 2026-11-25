@@ -25,6 +25,14 @@
     "signal": null
   },
   {
+    "name": "shared PR reviewer",
+    "reference_names": [],
+    "workflows": [{"file": "wing-commander-shared-pr-reviewer.yml", "cadence": "event"}],
+    "kill_switch": "WING_COMMANDER_SHARED_REVIEWER_PAUSED",
+    "requires_var": null,
+    "signal": null
+  },
+  {
     "name": "lifecycle review gate",
     "reference_names": [],
     "workflows": [{"file": "lifecycle-review-gate.yml", "cadence": "schedule"}],
@@ -47,8 +55,7 @@
     "kill_switch": "WING_COMMANDER_BOARD_LOOP_PAUSED",
     "requires_var": null,
     "signal": {"kind": "merged_pr", "label": "merged fix PR", "head_prefixes": ["fix/"],
-               "also": [{"kind": "triage_close", "label": "triage close"}]},
-    "quiet_days": 30
+               "also": [{"kind": "triage_close", "label": "triage close"}]}
   },
   {
     "name": "watchdog",

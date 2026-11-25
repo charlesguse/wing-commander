@@ -27,7 +27,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_lint_gate_source import LINT_WORKFLOW, extract_gate_step  # noqa: E402
+from wc_lint_gate_source import LINT_WORKFLOW, case_env, extract_gate_step  # noqa: E402
 
 STEP_PREFIX = "Gate 22 — every job"
 
@@ -536,7 +536,7 @@ def main():
             for fname, body in files.items():
                 io.open(os.path.join(wf_dir, fname), "w", encoding="utf-8").write(body)
 
-            proc = subprocess.run([sys.executable, gate_path], cwd=case_dir,
+            proc = subprocess.run([sys.executable, gate_path], cwd=case_dir, env=case_env(),
                                   capture_output=True, text=True,
                                   encoding="utf-8", errors="replace")
             out = (proc.stdout or "") + (proc.stderr or "")

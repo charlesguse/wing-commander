@@ -329,6 +329,23 @@ def case_placeholder_inside_argument(bash):
                    f"(exit {rc}): {out.strip()[:300]}")
 
 
+def case_absolute_program_path(bash):
+    """A custom shell whose program is a path (`/usr/bin/bash -e {0}`) runs
+    the resolved bash, not the path as written. The path here does not exist,
+    so running it as written cannot pass."""
+    case = "absolute program path"
+    argv = harness.production_shell({"shell": "/nonexistent/dir/bash -e {0}"})
+    try:
+        rc, out, outputs = run_probe(bash, PROBE, shell=argv)
+    except (RuntimeError, OSError) as exc:
+        fail(case, f"{argv[0]} was run as written, not as the resolved "
+                   f"bash: {exc}")
+        return
+    if rc != 0 or outputs.get("probe") != "survived":
+        fail(case, f"`{' '.join(argv)}` did not run under the resolved bash "
+                   f"(exit {rc}): {out.strip()[:300]}")
+
+
 def case_every_composite_traced(steps):
     """Every composite `shell: bash` step, at any depth under
     .github/actions/ (the _shared/ ones included), must be traced by its
@@ -464,6 +481,7 @@ def main():
     case_divergent_near_copies()
     case_unrunnable_shells(bash)
     case_placeholder_inside_argument(bash)
+    case_absolute_program_path(bash)
     case_shipped_step(bash, steps, "composite-bash", must_survive=False)
     case_shipped_step(bash, steps, "workflow-bash-over-default",
                       must_survive=False)

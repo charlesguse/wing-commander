@@ -89,6 +89,19 @@ chmod +x "$STUBDIR/gh"
 
 SPEC_DIR="specs/074-serialized-fold-dispatch"
 
+# kill_tree PID: a backgrounded `( ... bash "$SCRIPT" ) &` is a subshell whose
+# child is the real waiter; killing only the subshell orphans the waiter, which
+# keeps polling (up to MAX_WAIT_MINUTES) and races later scenarios on the
+# shared ledger. Kill every descendant first, then the subshell itself.
+kill_tree() {
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    kill_tree "$child"
+  done
+  kill "$pid" 2>/dev/null
+  return 0
+}
+
 run_admit() {
   local run_id="$1" kind="$2" existing_token="$3" max_wait="$4" poll="$5" stale_after="$6"
   local out_file summary_file
@@ -233,7 +246,7 @@ summary_file4="$(mktemp)"
 waiter_pid=$!
 sleep 3
 if kill -0 "$waiter_pid" 2>/dev/null; then
-  kill "$waiter_pid" 2>/dev/null
+  kill_tree "$waiter_pid"
   wait "$waiter_pid" 2>/dev/null
   still_position="$(LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" PEEK_TOKEN="run-900-implement" bash "$LEDGER_SH" peek | grep '^position=' | cut -d= -f2-)"
   if [ "$still_position" = "0" ]; then
@@ -324,7 +337,7 @@ summary_file6="$(mktemp)"
 waiter_pid6=$!
 sleep 3
 if kill -0 "$waiter_pid6" 2>/dev/null; then
-  kill "$waiter_pid6" 2>/dev/null
+  kill_tree "$waiter_pid6"
   wait "$waiter_pid6" 2>/dev/null
   echo "[ok] admission deadline extends for an implement-kind head reporting 'waiting', not just in_progress/queued"
 else
@@ -367,7 +380,7 @@ summary_file7="$(mktemp)"
 waiter_pid7=$!
 sleep 3
 if kill -0 "$waiter_pid7" 2>/dev/null; then
-  kill "$waiter_pid7" 2>/dev/null
+  kill_tree "$waiter_pid7"
   wait "$waiter_pid7" 2>/dev/null
   echo "[ok] admission deadline extends for a long-held act-kind head whose own run is still in_progress"
 else
@@ -430,7 +443,7 @@ summary_file8="$(mktemp)"
 waiter_pid8=$!
 sleep 3
 if kill -0 "$waiter_pid8" 2>/dev/null; then
-  kill "$waiter_pid8" 2>/dev/null
+  kill_tree "$waiter_pid8"
   wait "$waiter_pid8" 2>/dev/null
   still_position8="$(LEDGER_REMOTE_URL="$REMOTE" GH_TOKEN=x GITHUB_REPOSITORY=x/x SPEC_DIR="$SPEC_DIR" PEEK_TOKEN="run-930-implement" bash "$LEDGER_SH" peek | grep '^position=' | cut -d= -f2-)"
   if [ "$still_position8" = "0" ]; then

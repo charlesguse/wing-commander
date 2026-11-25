@@ -1,0 +1,56 @@
+# Shared PR reviewer (specs/127-shared-pr-reviewer) -- thin wrapper.
+# Owns the manual trigger, the per-PR concurrency group and every `vars.*`
+# read; all logic lives in shared-pr-reviewer.yml and
+# .github/scripts/wc_shared_review.py. Dispatch it from the default branch
+# only: the callable's guard job refuses any other ref and writes no record
+# (FR-022). Report-only: it never pushes, labels, merges or approves.
+name: "Wing Commander · shared PR reviewer"
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number (a session fix PR)
+        required: true
+        type: number
+      dismissals:
+        description: 'Optional JSON list of {"id": "F1-1", "reason": "..."} requester dismissals'
+        required: false
+        type: string
+        default: "[]"
+
+permissions: {}
+
+# One round at a time per pull request; the second dispatch sees the
+# first's record as an earlier round (FR-026). GitHub keeps only one pending
+# run per group, so a third dispatch cancels a queued second one and its
+# dismissals are never applied: dispatch the next round only after the
+# running one has finished.
+concurrency:
+  group: shared-pr-reviewer-${{ inputs.pr }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      actions: read
+    uses: ./.github/workflows/shared-pr-reviewer.yml
+    with:
+      pr: ${{ inputs.pr }}
+      dismissals: ${{ inputs.dismissals }}
+      default-branch: ${{ github.event.repository.default_branch }}
+      find-model: ${{ vars.WING_COMMANDER_SHARED_REVIEW_FIND_MODEL || 'claude-sonnet-5-5' }}
+      check-model: ${{ vars.WING_COMMANDER_SHARED_REVIEW_CHECK_MODEL || 'claude-sonnet-5-5' }}
+      find-max-turns: ${{ fromJSON(vars.WING_COMMANDER_SHARED_REVIEW_FIND_MAX_TURNS || '40') }}
+      check-max-turns: ${{ fromJSON(vars.WING_COMMANDER_SHARED_REVIEW_CHECK_MAX_TURNS || '40') }}
+      round-budget: ${{ vars.WING_COMMANDER_SHARED_REVIEW_ROUND_BUDGET || '5' }}
+      paused: ${{ vars.WING_COMMANDER_SHARED_REVIEWER_PAUSED || '' }}
+      runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
+    secrets:
+      claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
+      app-private-key: ${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}

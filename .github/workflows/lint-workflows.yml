@@ -57,6 +57,9 @@ on:
       # covered by any glob above -- an edit here is the one change most
       # likely to make the built image disagree with required-tools.txt.
       - ".github/docker/e2e-reference-image/**"
+      # verify-shared-review-wiring.py's subject: the shared reviewer's
+      # agent prompts, which must name the PR tree outside the workspace.
+      - ".github/prompts/**"
       # verify-metrics-record-schema.py's subject: an edit to the documented
       # schema-version-1 shape alone (no code change) must still trigger the
       # gate that checks fixtures against it (FR-040).
@@ -622,6 +625,14 @@ jobs:
           python3 - <<'PYEOF'
           import glob, os, sys, yaml
 
+          # Callables registered in unpublished-callables.json (spec 127) are
+          # internal, not stages. The registry's one reader is
+          # wc_published_stages.unpublished_callables() (single home:
+          # verify-gate-7.py fails on a second loader in a workflow).
+          sys.path.insert(0, os.path.join(".github", "scripts"))
+          from wc_published_stages import unpublished_callables
+          UNPUBLISHED = unpublished_callables()
+
           # sub-key -> the workflow_call input it must forward.
           BINDINGS = {"name": "environment", "deployment": "environment-deployment"}
           # input -> (type, default). The defaults ARE the contract: an
@@ -681,6 +692,10 @@ jobs:
               # Membership, not truthiness: a bare `workflow_call:` parses to
               # None, and a stage with no inputs yet is still a stage — it
               # must fail this gate, not slip past it as "not a stage".
+              # A callable registered in unpublished-callables.json (spec
+              # 127) is internal, not a stage — see wc_published_stages.py.
+              if os.path.basename(f) in UNPUBLISHED:
+                  continue
               if isinstance(on, dict) and "workflow_call" in on:
                   call = on.get("workflow_call") or {}
               elif isinstance(on, list) and "workflow_call" in on:
@@ -1563,6 +1578,11 @@ jobs:
                   return DOLLAR_OPEN + " " + re.sub(r"\s+", " ", m.group(1).strip()) + " " + DOLLAR_CLOSE
               return GH_EXPR_RE.sub(repl, s.strip())
 
+          # Registered unpublished callables are skipped -- see Gate 7.
+          sys.path.insert(0, os.path.join(".github", "scripts"))
+          from wc_published_stages import unpublished_callables
+          UNPUBLISHED = unpublished_callables()
+
           failures = 0
           stages = bound = 0
           for f in sorted(glob.glob(".github/workflows/*.yml")
@@ -1571,6 +1591,8 @@ jobs:
               # PyYAML resolves the bare key `on` to the boolean True (YAML
               # 1.1); quoted "on" stays a string. Accept either.
               on = wf.get(True, wf.get("on"))
+              if os.path.basename(f) in UNPUBLISHED:
+                  continue
               if isinstance(on, dict) and "workflow_call" in on:
                   call = on.get("workflow_call") or {}
               elif isinstance(on, list) and "workflow_call" in on:
@@ -1881,6 +1903,11 @@ jobs:
               ("agent-startup-check.yml", "classify-startup"),
           }
 
+          # Registered unpublished callables are skipped -- see Gate 7.
+          sys.path.insert(0, os.path.join(".github", "scripts"))
+          from wc_published_stages import unpublished_callables
+          UNPUBLISHED = unpublished_callables()
+
           failures = 0
           stages = 0
           embedded = {}
@@ -1888,6 +1915,8 @@ jobs:
                           + glob.glob(".github/workflows/*.yaml")):
               wf = yaml.safe_load(open(f, encoding="utf-8")) or {}
               on = wf.get(True, wf.get("on"))
+              if os.path.basename(f) in UNPUBLISHED:
+                  continue
               if isinstance(on, dict) and "workflow_call" in on:
                   call = on.get("workflow_call") or {}
               elif isinstance(on, list) and "workflow_call" in on:
@@ -4838,6 +4867,29 @@ jobs:
       - name: Gate 165 fixtures — wc_convergence rules, replays, round records and skill parity
         if: "!cancelled()"
         run: bash .github/scripts/wc_convergence_tests/run-tests.sh
+
+      # Gate 171 — specs/127-shared-pr-reviewer. The shared reviewer's
+      # record marker is disjoint from spec 116's (FR-020), and its
+      # deterministic module (records, identity, blocking rule, verdict,
+      # run confirmation, budget) is exercised by checked-in fixtures.
+      - name: Gate 171 — the shared reviewer's marker is disjoint from the convergence round marker
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-shared-review-marker-disjoint.py --self-test
+      - name: Gate 171 fixtures — shared reviewer records, verdict, blocking rule, identity, confirmation and budget
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-shared-review-fixtures.py
+      - name: Gate 171 isolation — code-run holds no permission or secret, the agents hold no write token, web or Bash tool
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-shared-review-isolation.py
+      - name: Gate 171 isolation self-test — each mutation fails
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-shared-review-isolation.py --self-test
+      - name: Gate 171 wiring — record is the only poster, downstream jobs wait on the guard, models and turns are explicit, nothing else reads the verdict
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-shared-review-wiring.py
+      - name: Gate 171 wiring self-test — each mutation fails
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-shared-review-wiring.py --self-test
 
       # Gate 165 — specs/115-board-loop-self-merge (FR-013, FR-015): every
       # merge-blocking condition and every refusal branch of board_merge.py

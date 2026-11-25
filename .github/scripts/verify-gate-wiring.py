@@ -90,6 +90,9 @@ COMPOSITE_ACTIONS_GLOB = os.path.join(".github", "actions", "*", "action.yml")
 SUBJECT_PATH_RE = re.compile(
     r"^(?:specs/[^\s*?\[\]]+/contracts/[^\s*?\[\]]+"
     r"|docs/[^\s*?\[\]]+\.md"
+    # Agent prompts a gate reads (verify-shared-review-wiring.py checks the
+    # shared reviewer's find and check prompts name no in-workspace tree).
+    r"|\.github/prompts/[^\s*?\[\]]+\.md"
     r"|\.specify/memory/[^\s*?\[\]]+\.md)$")
 
 # Two more shapes a gate reads as its subject, which _folded_join first

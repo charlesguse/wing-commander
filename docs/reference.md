@@ -30,6 +30,7 @@ checks it against the workflows yet (see [Keeping this current](#keeping-this-cu
 |---|---|---|---|---|---|
 | [Feature lifecycle](#feature-lifecycle) | issue → spec → plan → tasks → implement → final PR → cleanup | published stages, this repository's wrappers | events and dispatches | yes | no |
 | [Spec PR review](#spec-pr-review) | reviews a settled draft spec PR, pushes small fixes, reports | this repository | hourly | yes | no |
+| [Shared PR reviewer](#shared-pr-reviewer) | reviews one session fix PR on request and posts a round record, report-only | this repository | dispatch | yes | no |
 | [Lifecycle review gate](#lifecycle-review-gate) | reviews a final PR, sends findings back for a fix cycle, may merge | this repository | hourly | yes | final PRs, behind a switch |
 | [PR conversation](#pr-conversation) | acts on a maintainer's comment or review on a final PR | published stage, this repository's wrapper | PR comments and reviews | yes | no |
 | [Board loop](#board-loop) | works one open issue: triage → route → fix → review → merge → prove | this repository | hourly | yes | its own fix PRs and verified Spec Kit bumps, behind a switch |
@@ -92,6 +93,22 @@ clarification questions, merge the spec PR, merge the plan PR when
 [CLAUDE.md](../CLAUDE.md) separately tells sessions to give a spec PR at most
 three review rounds before the owner decides. That is a rule for sessions; the
 5 above is this workflow's own budget.
+
+### Shared PR reviewer
+
+Report-only (spec 127). A session dispatches `wing-commander-shared-pr-reviewer.yml`
+on one of its fix PRs; it posts one round record and writes nothing else.
+
+| Rule | Value |
+|---|---|
+| Reviews | one fix PR per dispatch, from the default branch only; any other ref, a non-fix PR or the kill switch ends in a run-summary line and no record |
+| Jobs | `guard`, `prepare`, `code-run` (no secret, runs the change's named check and the gate suite as data), `find`, `check` (no shared context), `record` (the only poster) |
+| Code-run sandbox | the PR's code runs as the throwaway user `wc-code-run` (created through passwordless sudo, no sudo of its own), each command on a fresh copy of the PR tree (a git repository with the repository's URL as origin) with a 600 s limit, the named check (an added test file, else a modified one) also once on the merge-base tree with only its own file from the PR (`named_check_without_fix`), at most 4096 processes, a 36-minute step limit inside a 40-minute job limit, and every process of that user is killed before the runner writes the result; a runner without passwordless sudo runs nothing and stages the results as missing |
+| Agents | `claude-sonnet-5-5` for both, turn budget 40 each, no effort override, a 22-minute step limit inside a 30-minute job limit, read-only tools with Read confined to the workspace and the trees (`--permission-mode default` pinned), no web (`WING_COMMANDER_SHARED_REVIEW_FIND_MODEL`, `WING_COMMANDER_SHARED_REVIEW_CHECK_MODEL`, `WING_COMMANDER_SHARED_REVIEW_FIND_MAX_TURNS`, `WING_COMMANDER_SHARED_REVIEW_CHECK_MAX_TURNS`) |
+| Verdict | `clean`, `findings`, `undetermined` or `incomplete`, computed by code in that order of precedence |
+| Rounds | 5 confirmed rounds per PR (`WING_COMMANDER_SHARED_REVIEW_ROUND_BUDGET`), then a hand-off record listing the open findings and no verdict; a round counts only while its run keeps the `shared-review-<head>` artifact, which is kept 90 days (GitHub's maximum), so a PR open longer starts its rounds and memory again |
+| Never | pushes, labels, merges or approves; its verdict is read by no existing reviewer or skill |
+| Kill switch | `WING_COMMANDER_SHARED_REVIEWER_PAUSED` |
 
 ### Lifecycle review gate
 
@@ -248,6 +265,7 @@ means running. A pause takes effect no later than the next run.
 | `WING_COMMANDER_BOARD_LOOP_PAUSED` | the board loop, including its merges |
 | `WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED` | the lifecycle review gate's reviews and merges |
 | `WING_COMMANDER_SPEC_REVIEW_PAUSED` | spec PR review |
+| `WING_COMMANDER_SHARED_REVIEWER_PAUSED` | the shared PR reviewer's rounds; a stopped dispatch writes a run-summary line and no record |
 | `WING_COMMANDER_WATCHDOG_PAUSED` | the watchdog and its self-check |
 | `WING_COMMANDER_AUTO_RELEASE_PAUSED` | auto-release (set it by dispatching `auto-release-switch.yml`) |
 | `WING_COMMANDER_AUTO_RELEASE_E2E_CONTAINER_PAUSED` | only auto-release's container runs |
