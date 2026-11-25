@@ -41,6 +41,9 @@ WHAT IT CHECKS (default run, on the tree)
 (j) pr-conversation.yml's stage-side "Authorized-actor gate" (id
     actor-gate) admits by `inputs.actor-association` alone: its `if:`,
     `env:` and `run:` compare no identity (FR-010 names stages too).
+(k) Single home of the relay step's comment: its key sentence appears only
+    in clarify.yml, which carries Gate 47's `requester-relay-note`
+    canonical marker; intake.yml points at it.
 Plus two harnesses that run the shipped shell against a stub `gh`:
 - the `comment-author` step: OWNER, MEMBER and COLLABORATOR give
   maintainer=true; NONE, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR and a Bot
@@ -312,8 +315,21 @@ def check_j(tree):
     return ["(j) pr-conversation.yml: no step with id 'actor-gate'"]
 
 
+RELAY_COMMENT_KEY = "the questions say up front that only a maintainer's reply is folded in"
+
+
+def check_k(tree):
+    """The relay step's comment has one canonical copy, in clarify.yml
+    (Gate 47 marker requester-relay-note); intake.yml points at it."""
+    homes = [p for p, t in tree.items() if RELAY_COMMENT_KEY in _flatten(t)]
+    if homes != [CLARIFY]:
+        return [f"(k) the relay step's comment must live only in {CLARIFY} (other sites "
+                f"point at it with `-- see clarify.yml`); found in {sorted(homes)}"]
+    return []
+
+
 STATIC_CHECKS = (check_a, check_b, check_c, check_d, check_e, check_f, check_g, check_h,
-                 check_i, check_j)
+                 check_i, check_j, check_k)
 
 
 # --------------------------------------------------------------------------
@@ -645,6 +661,13 @@ def _actor_gate_no_association_mutant(tree):
     return _yaml_edit(tree, PR_CONVERSATION, edit)
 
 
+def _comment_copy_mutant(tree):
+    return _sub(tree, INTAKE, "      # The maintainer-relay note for a requester who is not a maintainer\n"
+                              "      # -- see clarify.yml.\n",
+                "      # FR-008: when the issue's author is not a maintainer, the questions\n"
+                "      # say up front that only a maintainer's reply is folded in.\n")
+
+
 def _relay_never_mutant(tree):
     def edit(doc):
         for s in doc["runs"]["steps"]:
@@ -671,6 +694,7 @@ MUTANTS = (
     ("(a) the Spec Kit wrapper passes the commenter's user id", _updater_step_mutant),
     ("(j) pr-conversation's actor gate admits the issue's author", _pr_conversation_mutant),
     ("(a) a clarify wrapper step admits the issue's author", _wrapper_step_mutant),
+    ("(k) intake.yml copies the relay step's comment", _comment_copy_mutant),
     ("(j) pr-conversation's actor-gate step is gone", _actor_gate_gone_mutant),
     ("(j) pr-conversation's actor gate stops reading actor-association",
      _actor_gate_no_association_mutant),
@@ -698,10 +722,16 @@ def main():
                     failures.append(f"mutant {label!r} could not be applied ({exc}); update the "
                                     f"mutant alongside the file")
                     continue
-                if caught:
-                    print(f"note: mutant caught -- {label}: {caught[0]}")
+                # Caught only by the check the label names: a YAML re-dump
+                # drops every comment, so an unrelated check (k) would
+                # otherwise "catch" each such mutant for the wrong reason.
+                tag = label.split(")", 1)[0] + ")"
+                own = [c for c in caught if c.startswith(tag)]
+                if own:
+                    print(f"note: mutant caught -- {label}: {own[0]}")
                 else:
-                    failures.append(f"mutant NOT caught -- {label}")
+                    failures.append(f"mutant NOT caught by its own check {tag} -- {label}"
+                                    + (f" (only by: {caught[0]})" if caught else ""))
     for f in failures:
         print(f"::error::{GATE}: {f}")
     if failures:
