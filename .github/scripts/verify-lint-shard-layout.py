@@ -13,7 +13,17 @@ specs/129-parallel-pr-lint/contracts/lint-workflow-layout.md, items 1, 2, 3,
   * every step except checkout carries an `if:` with `!cancelled()` (or
     `always()`); a self-test step may also require its paired gate step's
     outcome not `failure`, and must name the id of its OWN pair, found by
-    step name ("Gate N self-test" pairs with "Gate N").
+    step name ("Gate N self-test" pairs with "Gate N");
+  * item 8: the gate set wc_gate_registry derives for run-local-gates.py
+    (pr_time_invocations plus the runnable inline heredoc steps) equals the
+    union of the units' own gate calls. The aggregate is exempt by name
+    because it may carry no gate at all: a repository script or a python
+    heredoc in its steps fails here, so the registry needs no exemption
+    for it and a gate cannot hide in the one job that is not a unit.
+
+Which jobs are PR-time is the registry's own reading
+(wc_gate_registry._job_runs_on_pull_request), so this gate and the local
+runner cannot disagree about which jobs are units.
 
 Usage:
     python3 .github/scripts/verify-lint-shard-layout.py
@@ -23,8 +33,12 @@ import copy
 import os
 import re
 import sys
+import tempfile
 
 import yaml
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import wc_gate_registry as registry  # noqa: E402
 
 WORKFLOW = os.path.join(".github", "workflows", "lint-workflows.yml")
 AGGREGATE = "lint"
@@ -35,8 +49,7 @@ _OUTCOME = re.compile(r"steps\.([\w-]+)\.outcome\s*!=\s*'failure'")
 
 
 def _runs_on_pr(job):
-    cond = str((job or {}).get("if") or "").strip()
-    return not re.search(r"github\.event_name\s*!=\s*'pull_request'", cond)
+    return registry._job_runs_on_pull_request(job)
 
 
 def _is_checkout(step):
@@ -48,14 +61,41 @@ def _guarded(step):
     return "!cancelled()" in cond or "always()" in cond
 
 
-# Contract item 7 (every step guarded) is switched on by T007, which adds the
-# guards to ~80 steps; until it lands the real workflow would fail it.
-ENFORCE_GUARDS = False
+def _unit_gate_set(units):
+    """(script, args) calls and runnable heredoc step names, over the units.
+
+    Read per unit with the registry's own call reader, so a divergence
+    between this and the registry's derived set is a job the registry
+    reads differently, never a second grammar disagreeing with the first.
+    """
+    scripts = set(registry.gate_scripts())
+    calls, inline = set(), set()
+    for job in units.values():
+        for s in (job or {}).get("steps") or []:
+            run = str((s or {}).get("run") or "")
+            if not run:
+                continue
+            if registry.LOOSE_PY_HEREDOC_RE.search(run):
+                inline.add(str(s.get("name") or "(unnamed step)"))
+            text = "\n".join(l for l in run.splitlines()
+                             if not l.lstrip().startswith("#"))
+            for script in scripts:
+                for args in registry._invocations_in_run(text, script):
+                    calls.add((script, tuple(args)))
+    return calls, inline
 
 
-def check(doc, enforce_guards=None):
-    if enforce_guards is None:
-        enforce_guards = ENFORCE_GUARDS
+def derived_gate_set(path):
+    """What run-local-gates.py derives from the workflow at `path`."""
+    calls = {(s, tuple(a))
+             for s, a in registry.pr_time_invocations(workflow=path)}
+    runnable, unrunnable = registry.pr_time_inline_steps(workflow=path)
+    return calls, {n for n, _ in runnable} | {n for n, _ in unrunnable}
+
+
+def check(doc, derived=None):
+    """Contract failures for `doc`. `derived` is derived_gate_set() of the
+    same workflow; None skips item 8 (a caller with no file on disk)."""
     fails = []
     if doc.get("name") != NAME:
         fails.append("workflow name is {0!r}, not {1!r}".format(
@@ -78,6 +118,23 @@ def check(doc, enforce_guards=None):
         if k not in needs:
             fails.append("PR-time unit '{0}' is not in the aggregate's "
                          "needs".format(k))
+    for s in jobs[AGGREGATE].get("steps") or []:
+        run = str((s or {}).get("run") or "")
+        if (registry.REPO_SCRIPT_RE.search(run)
+                or registry.LOOSE_PY_HEREDOC_RE.search(run)):
+            fails.append("the aggregate step {0!r} runs a gate; the aggregate "
+                         "is not a unit and may carry none".format(
+                             s.get("name") or "?"))
+    if derived is not None:
+        mine = _unit_gate_set(units)
+        for what, a, b in (("gate call", mine[0], derived[0]),
+                           ("inline gate step", mine[1], derived[1])):
+            for x in sorted(b - a, key=str):
+                fails.append("run-local-gates.py derives {0} {1} that no unit "
+                             "runs".format(what, x))
+            for x in sorted(a - b, key=str):
+                fails.append("a unit runs {0} {1} that run-local-gates.py "
+                             "does not derive".format(what, x))
     names, calls = {}, {}
     for k, job in units.items():
         steps = job.get("steps") or []
@@ -95,7 +152,7 @@ def check(doc, enforce_guards=None):
             if _is_checkout(s):
                 continue
             label = name or s.get("uses") or "?"
-            if enforce_guards and not _guarded(s):
+            if not _guarded(s):
                 fails.append("step {0!r} in '{1}' has no !cancelled() "
                              "guard".format(label, k))
             m = _PAIR.match(name or "")
@@ -146,7 +203,7 @@ def self_test():
     def case(label, mutate, expect):
         doc = copy.deepcopy(_base())
         mutate(doc)
-        got = check(doc, enforce_guards=True)
+        got = check(doc)
         ok = (not got) if expect is None else any(expect in g for g in got)
         results.append(ok)
         print("{0} {1}".format("ok  " if ok else "FAIL", label))
@@ -182,10 +239,71 @@ def self_test():
          lambda d: J(d, "lint-shard-1")["steps"][2].update(
              {"if": "${{ !cancelled() && steps.other.outcome != 'failure' }}"}),
          "not its pair")
+    case("an aggregate that runs a gate script fails",
+         lambda d: J(d, "lint")["steps"].append(
+             {"name": "sneak", "run": "python3 .github/scripts/verify-c.py"}),
+         "may carry none")
+    case("an aggregate that runs a python heredoc fails",
+         lambda d: J(d, "lint")["steps"].append(
+             {"name": "sneak", "run": "python3 - <<'PY'\nprint(1)\nPY"}),
+         "may carry none")
+    results.extend(_derivation_cases())
     bad = results.count(False)
     print("verify-lint-shard-layout self-test: {0}/{1} passed".format(
         len(results) - bad, len(results)))
     return 1 if bad else 0
+
+
+def _derivation_cases():
+    """Item 8 against the real registry, over a throwaway workflow file.
+
+    The registry reads gate scripts from the working tree, so the fixture
+    invokes real gate scripts; only the job layout is synthetic.
+    """
+    out = []
+    real = ".github/scripts/verify-lint-aggregate.py"
+    other = ".github/scripts/verify-lint-shard-layout.py"
+
+    def case(label, doc, derived_override, expect):
+        fd, path = tempfile.mkstemp(suffix=".yml")
+        os.close(fd)
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                yaml.safe_dump(doc, fh, allow_unicode=True)
+            derived = derived_gate_set(path)
+            if derived_override:
+                derived = derived_override(derived)
+            got = check(doc, derived)
+        finally:
+            os.unlink(path)
+        ok = (not got) if expect is None else any(expect in g for g in got)
+        print("{0} {1}".format("ok  " if ok else "FAIL", label))
+        if not ok:
+            print("     expected {0!r}, got {1}".format(expect, got))
+        out.append(ok)
+
+    doc = _base()
+    doc["jobs"]["lint-shard-1"]["steps"][1]["run"] = "python3 " + real
+    doc["jobs"]["lint-shard-1"]["steps"][2]["run"] = (
+        "python3 " + real + " --self-test")
+    doc["jobs"]["lint-shard-2"]["steps"][0]["run"] = "python3 " + other
+    doc["jobs"]["harness-tests"]["steps"][0]["run"] = (
+        "python3 - <<'PY'\nprint(1)\nPY")
+    case("the derived set equals the union over units", doc, None, None)
+    case("a derived gate no unit runs fails", doc,
+         lambda d: (d[0] | {(".github/scripts/verify-x.py", ())}, d[1]),
+         "that no unit runs")
+    case("a unit gate the derivation misses fails", doc,
+         lambda d: (d[0] - {(other, ())}, d[1]),
+         "does not derive")
+    case("an inline step the derivation misses fails", doc,
+         lambda d: (d[0], set()), "inline gate step")
+    moved = copy.deepcopy(doc)
+    step = moved["jobs"]["lint-shard-2"]["steps"].pop(0)
+    moved["jobs"]["lint-shard-1"]["steps"].append(step)
+    case("a gate moved to another unit is still derived (US3 scenario 2)",
+         moved, None, None)
+    return out
 
 
 def main(argv):
@@ -193,7 +311,7 @@ def main(argv):
         return self_test()
     with open(WORKFLOW, encoding="utf-8") as fh:
         doc = yaml.safe_load(fh) or {}
-    fails = check(doc)
+    fails = check(doc, derived_gate_set(WORKFLOW))
     for f in fails:
         print("::error file={0}::Gate 174: {1}".format(WORKFLOW, f))
     if fails:

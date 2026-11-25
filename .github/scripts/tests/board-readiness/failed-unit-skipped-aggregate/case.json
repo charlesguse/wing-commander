@@ -1,0 +1,39 @@
+{
+  "snapshot": {
+    "headRefOid": "abab777",
+    "statusCheckRollup": [
+      {
+        "name": "lint-shard-1",
+        "workflowName": "lint · workflows",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS"
+      },
+      {
+        "name": "lint-shard-3",
+        "workflowName": "lint · workflows",
+        "status": "COMPLETED",
+        "conclusion": "FAILURE"
+      },
+      {
+        "name": "harness-tests",
+        "workflowName": "lint · workflows",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS"
+      },
+      {
+        "name": "lint",
+        "workflowName": "lint · workflows",
+        "status": "COMPLETED",
+        "conclusion": "SKIPPED"
+      }
+    ]
+  },
+  "open_in_scope_findings": 0,
+  "backstop_holds": true,
+  "kill_switch_paused": false,
+  "expected": {
+    "ready": false,
+    "reason_contains": "abab777",
+    "unmet_class": "durable"
+  }
+}

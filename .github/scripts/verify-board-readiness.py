@@ -82,6 +82,12 @@ EXPECTED_CASES = {
     # review after pr-conversation's group cancelled a pending one) never
     # sets aside the cancelled run's dropped request.
     "cancelled-pending-other-workflow-run-self-clearing",
+    # specs/129-parallel-pr-lint: a run a newer push cancelled (units
+    # cancelled, the always() aggregate failed) is durable not-ready; and a
+    # failed shard under a skipped aggregate is not-ready too, through
+    # checks_green, even though gate_suite_green reads a SKIPPED `lint` as
+    # green.
+    "cancelled-run", "failed-unit-skipped-aggregate",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"

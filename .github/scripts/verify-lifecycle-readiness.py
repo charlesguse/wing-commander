@@ -118,6 +118,9 @@ EXPECTED_CASES = {
     # result counts, for select_prefilter as for the full decision.
     "cancelled-superseded-ready", "cancelled-newest-not-ready",
     "cancelled-by-reopened-run-ready",
+    # specs/129-parallel-pr-lint: a cancelled run, and a failed shard under
+    # a skipped aggregate, are both not-ready (see verify-board-readiness.py).
+    "cancelled-run", "failed-unit-skipped-aggregate",
 }
 
 
