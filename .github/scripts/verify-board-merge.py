@@ -410,7 +410,7 @@ def readiness_stale_claims(text):
     """Each STALE_READINESS_CLAIMS phrase found in a non-comment line of the
     readiness job (case-insensitive)."""
     job = job_block(text.splitlines(), "readiness") or []
-    code = "\n".join(line for line in job if not line.lstrip().startswith("#")).lower()
+    code = _run_blocks_text(job).lower()
     return [claim for claim in STALE_READINESS_CLAIMS if claim.lower() in code]
 
 

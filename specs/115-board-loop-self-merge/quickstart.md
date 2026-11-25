@@ -16,7 +16,7 @@ Expected: every fixture's `may_merge` and `unmet_reason` match its recorded expe
 
 ## 2. Switch off is unchanged (SC-006)
 
-Leave `WING_COMMANDER_BOARD_AUTO_MERGE` unset and drive a fix item to readiness. Expect the "Awaiting a human merge" report and the `awaiting-merge` marker, with no `merge` job in the run.
+Leave `WING_COMMANDER_BOARD_AUTO_MERGE` unset and drive a fix item to readiness. Expect the readiness report (which, since the owner's 2026-11-25 direction on #1227, makes no claim about who merges) and the `awaiting-merge` marker, with no `merge` job in the run; a human merges.
 
 ## 3. Fix class, live (US1)
 
