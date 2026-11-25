@@ -354,6 +354,13 @@ def evaluate_bump(snapshot, records, bot_login, paused, switch_on):
 # reason. Protection is checked before conflict: gh's own pre-merge refusal
 # reads "is not mergeable: <reason>" for a policy block and an out-of-date
 # head too, so the reason, not the prefix, names the class.
+# A rate limit (primary or secondary, 403 or 429), a rejected or expired
+# token (401: the next run mints a fresh App token), and a DNS or network
+# failure before GitHub answered are all transient too: none is GitHub
+# refusing this PR, so none may write the permanent handed-over record
+# (#889, found by the code review of #1059). A 403 that is not a rate limit
+# ("Resource not accessible by integration") is a missing permission and
+# stays `other`.
 _REFUSAL_PATTERNS = (
     ("workflow-scope", re.compile(r"workflows?`?\s+(permission|scope)|without\s+`?workflows?`?|"
                                   r"workflow\s+scope", re.IGNORECASE)),
@@ -361,7 +368,12 @@ _REFUSAL_PATTERNS = (
                              r"HTTP 5\d\d|bad gateway|service unavailable|gateway time-?out|"
                              r"timed out|connection reset|mergeab\w+ (state )?(is )?(still )?"
                              r"(unknown|being computed)|pull request is not mergeable|"
-                             r"merge already in progress", re.IGNORECASE)),
+                             r"merge already in progress|"
+                             r"rate limit|HTTP 429|too many requests|abuse detection|"
+                             r"HTTP 401|bad credentials|requires authentication|"
+                             r"no such host|could not resolve host|name resolution|"
+                             r"connection refused|network is unreachable|i/o timeout|"
+                             r"TLS handshake timeout|unexpected EOF|error connecting to", re.IGNORECASE)),
     ("protection", re.compile(r"protected branch|required status|required review|review is required|"
                               r"approving review|branch protection|base branch policy|"
                               r"repository rule|not up to date with the base", re.IGNORECASE)),
@@ -403,10 +415,13 @@ def decide(payload):
 def merged_by_us(pr, bot_login, head_sha):
     """`pr` is `gh pr view --json mergedBy,headRefOid` of a MERGED PR: this
     App merged it, at `head_sha`. Anyone else's merge, or one at another
-    head, is not this run's merge to announce."""
+    head, is not this run's merge to announce. The merger must be a bot
+    account (gh's `is_bot`, as _bot_pr_author reads the PR author): a user
+    whose login equals the App slug is not the App."""
     pr = pr or {}
+    merged_by = pr.get("mergedBy") or {}
     return (bool(head_sha) and pr.get("headRefOid") == head_sha
-            and _is_bot((pr.get("mergedBy") or {}).get("login"), bot_login))
+            and merged_by.get("is_bot") is True and _is_bot(merged_by.get("login"), bot_login))
 
 
 def _not_merged_reason(decision):

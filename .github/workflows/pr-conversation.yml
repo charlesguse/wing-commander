@@ -2858,7 +2858,7 @@ jobs:
       # wing-commander-outstanding-task-item composite.
       - name: Post outstanding task item on the lifecycle issue
         if: steps.phrase.outputs.phrase != ''
-        uses: ./.github/actions/wing-commander-outstanding-task-item
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-outstanding-task-item
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.classify-and-announce.outputs.issue-number }}

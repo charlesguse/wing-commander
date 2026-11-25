@@ -40,7 +40,14 @@ fails when:
     test repository's commit, the pipeline repository can't fetch it, and
     every implement job failed its pipeline checkout with "not our ref";
   * a wrapper that passes a `pipeline-ref` comes out passing anything but
-    the pipeline commit it was pinned to.
+    the pipeline commit it was pinned to;
+  * any workflow or script outside it carries its own default-branch
+    rewrite (`s/== 'main'/...` or `s/branches: [main]/...`), or a pinned
+    wrapper still names `main` where the test repository's default branch
+    belongs (#889: both callers used to paste their own seds);
+  * provision-e2e-target.sh's `WRAPPER_STAGE_FILE` map differs from
+    auto-release.yml's scaffold map, which is the one this gate dry-runs
+    (#889: the two copies had nothing keeping them in sync).
 
 Self-test (--self-test): copies the real tree, then (a) passes it clean,
 (b) pastes a second copy of the element list into a workflow and expects a
@@ -59,7 +66,10 @@ pointer comment stays and expects a "does not call" failure, (j) renames
 auto-release.yml's stage map away and expects a failure, and (k) runs the
 pin script on a 2 MB file that still calls a stage by local path and
 expects the refusal (a `printf | grep -q` pipe under pipefail lost it to
-SIGPIPE).
+SIGPIPE), (l) changes one stage in provision-e2e-target.sh's map and
+expects a drift failure, (m) pastes auto-release.yml's old default-branch
+sed back and expects a failure naming it, and (n) drops the pin script's
+default-branch rewrite and expects the plan and rebase wrappers to fail.
 
 Usage: python3 .github/scripts/verify-e2e-provisioning-single-home.py [--self-test]
 """
@@ -92,6 +102,11 @@ AUTO_RELEASE = ".github/workflows/auto-release.yml"
 # punctuation that closes the pattern later on the line, so prose such as
 # "the wrapper's uses: ./.github/workflows/x.yml call" is not a sed.
 INLINE_PIN_RE = re.compile(r"(?<!\w)s([^\w\s])uses: \\?\./\\?\.github/workflows/[^\n]*?\1")
+# An inline copy of the default-branch rewrite (#889): a sed substitution
+# whose pattern is a wrapper's literal `main` gate or trigger filter.
+INLINE_BRANCH_RE = re.compile(r"(?<!\w)s([^\w\s])(?:== 'main'|branches: \\?\[main\\?\])[^\n]*?\1")
+PROVISION_PATH = ".github/scripts/" + PROVISION_SCRIPT
+FAKE_BRANCH = "e2e-default"
 # A real call of the pin script: `bash "<root>/.github/actions/_shared/
 # pin-e2e-wrapper.sh"` on a line that is not a comment -- the pointer
 # comment at each call site names the script too, and must not count.
@@ -213,19 +228,31 @@ def scan_wrapper_pin(root="."):
             line = text.count("\n", 0, m.start()) + 1
             failures.append(f"{rel}:{line}: an inline rewrite of a wrapper's local stage call -- "
                             f"the one home is {PIN_SCRIPT}, which also pins pipeline-ref.")
+        for m in INLINE_BRANCH_RE.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            failures.append(f"{rel}:{line}: an inline rewrite of a wrapper's literal `main` -- "
+                            f"the one home is {PIN_SCRIPT}, which takes DEFAULT_BRANCH.")
 
     ar = os.path.join(root, AUTO_RELEASE)
     pairs = STAGE_MAP_RE.findall(_read(ar)) if os.path.isfile(ar) else []
     if not pairs:
         failures.append(f"{AUTO_RELEASE}: could not find the scaffold step's wrapper -> stage map "
                         f"([wing-commander-N-x.yml]=x.yml); if it moved, move this gate with it.")
+    prov = os.path.join(root, PROVISION_PATH)
+    prov_pairs = STAGE_MAP_RE.findall(_read(prov)) if os.path.isfile(prov) else []
+    if pairs and sorted(prov_pairs) != sorted(pairs):
+        only_ar = sorted(set(pairs) - set(prov_pairs))
+        only_prov = sorted(set(prov_pairs) - set(pairs))
+        failures.append(f"{PROVISION_PATH}: WRAPPER_STAGE_FILE differs from {AUTO_RELEASE}'s "
+                        f"scaffold map, which is the one this gate dry-runs -- only in "
+                        f"{AUTO_RELEASE}: {only_ar}; only in {PROVISION_SCRIPT}: {only_prov}.")
     for wrapper, stage in pairs:
         src = os.path.join(root, ".github/workflows", wrapper)
         if not os.path.isfile(src):
             failures.append(f"{AUTO_RELEASE} copies {wrapper}, which does not exist.")
             continue
-        r = subprocess.run(["bash", pin, src, stage, "example/pipeline", "e2e-verify-tag", FAKE_COMMIT],
-                           capture_output=True, text=True)
+        r = subprocess.run(["bash", pin, src, stage, "example/pipeline", "e2e-verify-tag", FAKE_COMMIT,
+                            FAKE_BRANCH], capture_output=True, text=True)
         if r.returncode != 0:
             failures.append(f"{PIN_SCRIPT} refused {wrapper}: {r.stderr.strip()[:300]}")
             continue
@@ -234,6 +261,9 @@ def scan_wrapper_pin(root="."):
             failures.append(f"{wrapper}: still calls its stage by local path after pinning.")
         if f"uses: example/pipeline/.github/workflows/{stage}@e2e-verify-tag" not in out:
             failures.append(f"{wrapper}: pinning did not produce a call to {stage} at the pin tag.")
+        if re.search(r"== 'main'|branches: \[main\]", out):
+            failures.append(f"{wrapper}: pinned wrapper still names `main` where the test "
+                            f"repository's default branch ({FAKE_BRANCH}) belongs.")
         for ref in re.findall(r"^\s*pipeline-ref:\s*(.*?)\s*$", out, re.M):
             if ref != FAKE_COMMIT:
                 failures.append(f"{wrapper}: pinned wrapper passes pipeline-ref {ref!r}, not the "
@@ -365,11 +395,50 @@ def self_test():
             # The pin rewrites every local stage call, so the unpinnable line
             # is a pipeline-ref the rewrite's pattern doesn't match.
             fh.write("    pipeline-ref: ${{ format('{0}', github.sha) }}\n" + ("# pad " + "x" * 70 + "\n") * 30000)
-        r = subprocess.run(["bash", PIN_SCRIPT, big, "nomatch.yml", "o/r", "t", FAKE_COMMIT],
+        r = subprocess.run(["bash", PIN_SCRIPT, big, "nomatch.yml", "o/r", "t", FAKE_COMMIT, "main"],
                            capture_output=True, text=True)
         if r.returncode == 0:
             problems.append(f"{PIN_SCRIPT} printed a 2 MB wrapper that still calls a stage by local "
                             f"path instead of refusing it")
+
+        drift = os.path.join(root, "drift")
+        _copy_tree(drift)
+        prov = os.path.join(drift, PROVISION_PATH)
+        text = _read(prov)
+        old = "[wing-commander-4-tasks.yml]=tasks.yml"
+        if text.count(old) != 1:
+            problems.append(f"fixture: could not find {old} in {PROVISION_SCRIPT}")
+        with io.open(prov, "w", encoding="utf-8") as fh:
+            fh.write(text.replace(old, "[wing-commander-4-tasks.yml]=task.yml"))
+        got = scan(drift)
+        if not any(PROVISION_SCRIPT in g and "WRAPPER_STAGE_FILE differs" in g for g in got):
+            problems.append(f"{PROVISION_SCRIPT}'s stage map drifting from {AUTO_RELEASE}'s was NOT "
+                            f"detected; got: {got}")
+
+        branch_sed = os.path.join(root, "branch_sed")
+        _copy_tree(branch_sed)
+        with io.open(os.path.join(branch_sed, AUTO_RELEASE), "a", encoding="utf-8") as fh:
+            fh.write('\n# default-branch fixture\n'
+                     '# sed -i "s/branches: \\[main\\]/branches: [${DEFAULT_BRANCH}]/" f\n')
+        got = scan(branch_sed)
+        if not any(AUTO_RELEASE in g and "literal `main`" in g for g in got):
+            problems.append(f"an inline default-branch sed pasted back into {AUTO_RELEASE} was NOT "
+                            f"detected; got: {got}")
+
+        no_branch = os.path.join(root, "no_branch")
+        _copy_tree(no_branch)
+        pin = os.path.join(no_branch, PIN_SCRIPT)
+        text = _read(pin)
+        mutated = "".join(l for l in text.splitlines(True)
+                          if "== 'main'#" not in l and "branches: \\[main\\]#" not in l)
+        if mutated.count("\n") != text.count("\n") - 2:
+            problems.append(f"fixture: could not find the two default-branch rewrites in {PIN_SCRIPT}")
+        with io.open(pin, "w", encoding="utf-8") as fh:
+            fh.write(mutated)
+        got = scan(no_branch)
+        for w in ("wing-commander-3-plan.yml", "wing-commander-rebase.yml"):
+            if not any(g.startswith(w) and "still names `main`" in g for g in got):
+                problems.append(f"a pin that leaves {w} naming `main` was NOT detected; got: {got}")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -380,8 +449,9 @@ def self_test():
     print("verify-e2e-provisioning-single-home self-test: clean tree passes; a pasted copy of the "
           "element list, a dropped call to provision-e2e-target.sh, a pin that leaves pipeline-ref "
           "at github.sha, an inline sed pin (escaped or not, nested or not), a caller that drops its "
-          "pin-script call, a missing stage map and a large unpinnable wrapper each fail; prose naming "
-          "a local stage call passes.")
+          "pin-script call, a missing stage map, a large unpinnable wrapper, a drifted provision "
+          "stage map, an inline default-branch sed and a pin that keeps `main` each fail; prose "
+          "naming a local stage call passes.")
     return 0
 
 
