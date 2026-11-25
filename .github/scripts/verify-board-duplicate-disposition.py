@@ -14,7 +14,7 @@ failure-semantics table against a stubbed `gh` (the same `run=` injection
 seam `board_item_marker.add_stalled_label(issue_number, label, run=None)`
 already demonstrates), never a real repository.
 
-Cases R1-R11 (#1209) pin the Roadmap half of the same entry point: every
+Cases R1-R12 (#1209) pin the Roadmap half of the same entry point: every
 spec-proposal the loop files is listed under the Roadmap issue's
 "### Proposed" header (board_roadmap.py), once, through
 board_backlog_edit.edit(), and a Roadmap that cannot be found, has no
@@ -353,15 +353,15 @@ _case("R7: a gh failure is an outcome, never an exception", _case_r7_never_raise
 
 def _case_r8_shapes():
     """CRLF bodies keep CRLF; an empty section gets the line under its
-    header; #42421 is not #4242; #4242 under another heading is not
-    listed; the title is one line with no doubled period."""
+    header; #42421 is not #4242; the title is one line with no doubled
+    period."""
     crlf = _fixture("roadmap-body.md").replace("\n", "\r\n")
     out = brm.add_line(crlf, PROPOSAL, "- #4242: x.")
     if "- #4242: x.\r\n" not in out or "\n" in out.replace("\r\n", ""):
         return False
-    empty = "### Proposed (waiting)\n\n### Parked\n- #4242: parked.\n"
+    empty = "### Proposed (waiting)\n\n### Parked\n- #4141: parked.\n"
     if brm.add_line(empty, PROPOSAL, "- #4242: x.") != ("### Proposed (waiting)\n" + brm.UNORDERED_LABEL
-                                                       + "\n- #4242: x.\n\n### Parked\n- #4242: parked.\n"):
+                                                       + "\n- #4242: x.\n\n### Parked\n- #4141: parked.\n"):
         return False
     lookalike = "### Proposed\n- #42421: other.\n"
     if brm.is_listed(lookalike, PROPOSAL) or not brm.is_listed(lookalike, 42421):
@@ -370,7 +370,7 @@ def _case_r8_shapes():
     return line == "- #4242: Two lines x end. Filed by the board loop 2026-11-25 from issue #7."
 
 
-_case("R8: CRLF, empty section, number boundary, section scope and title cleaning",
+_case("R8: CRLF, empty section, number boundary and title cleaning",
       _case_r8_shapes)
 
 
@@ -465,6 +465,36 @@ def _case_r11_owner_order_kept():
 
 _case("R11: the owner's numbered order and 'Not specs:' are never written into; "
       "later proposals join 'Not yet ordered'", _case_r11_owner_order_kept)
+
+
+def _case_r12_review_pass_1_shapes():
+    """Code review of #1222, pass 1: a proposal the owner moved out of
+    Proposed (In flight, Parked) is not listed again; with no numbered
+    order the sub-list goes under the header, never after "Not specs:";
+    an empty label never glues the text below onto the item; `**#N**`
+    and `[#N](url)` items count as listed; an @name in a title is code,
+    not a mention."""
+    moved = "### Proposed\n1. #1.\n\n### In flight\n- #4242: promoted.\n"
+    if brm.add_line(moved, PROPOSAL, "- #4242: x.") != moved:
+        return False
+    no_order = "### Proposed\nNone ordered yet.\n\nNot specs:\n- #1167 x\n\n### Parked\n"
+    want = ("### Proposed\n" + brm.UNORDERED_LABEL + "\n- #4242: x.\n\nNone ordered yet.\n\n"
+            "Not specs:\n- #1167 x\n\n### Parked\n")
+    if brm.add_line(no_order, PROPOSAL, "- #4242: x.") != want:
+        return False
+    bare = "### Proposed\n" + brm.UNORDERED_LABEL + "\nNot specs:\n- #1167 x\n"
+    if brm.add_line(bare, PROPOSAL, "- #4242: x.") != ("### Proposed\n" + brm.UNORDERED_LABEL
+                                                       + "\n- #4242: x.\n\nNot specs:\n- #1167 x\n"):
+        return False
+    marked = "### Proposed\n1. **#77**: a\n2. [#78](https://example.invalid/78): b\n"
+    if not (brm.is_listed(marked, 77) and brm.is_listed(marked, 78)):
+        return False
+    line = brm.proposed_line(PROPOSAL, "Bump @types/node for @octo-team", TODAY, originating=7)
+    return line.startswith("- #4242: Bump `@types/node` for `@octo-team`. ")
+
+
+_case("R12: moved proposals, no numbered order, an empty label, marked items and @-mentions",
+      _case_r12_review_pass_1_shapes)
 
 
 def run(verbose=True):

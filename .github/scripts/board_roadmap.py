@@ -89,23 +89,22 @@ def _list_end(lines, start, end, skip_prose=True):
 
 
 def _item_re(number):
-    return re.compile(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?#{0}(?!\d)".format(int(number)))
+    return re.compile(r"^[ \t]*(?:[-*]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?[*_]{{0,2}}\[?#{0}(?!\d)".format(int(number)))
 
 
 def is_listed(body, number):
-    """True when the Proposed section already has a list line for #number."""
-    lines = (body or "").splitlines(True)
-    section = _section(lines)
-    if section is None:
-        return False
-    header, end = section
+    """True when any list line on the Roadmap already starts with #number:
+    Proposed, or a section the owner has since moved it to (In flight,
+    Queued, Parked), so a re-run never lists it again."""
     item = _item_re(number)
-    return any(item.match(lines[j]) for j in range(header + 1, end))
+    return any(item.match(line) for line in (body or "").splitlines())
 
 
 def _clean_title(title):
     text = str(title or "").replace("<!--", " ").replace("-->", " ")
     text = re.sub(r"\s+", " ", text).strip().rstrip(" .")
+    # A bare @name in a body edit would notify that user or team.
+    text = re.sub(r"(?<![`\w])@([\w-]+(?:/[\w.-]+)?)", r"`@\1`", text)
     if len(text) > TITLE_MAX:
         text = text[:TITLE_MAX - 3].rstrip() + "..."
     return text or "(untitled)"
@@ -143,12 +142,15 @@ def add_line(body, number, line):
         insert = _list_end(lines, label + 1, end, skip_prose=False) or label + 1
         block = [line + newline]
     else:
-        insert = _list_end(lines, header + 1, end) or header + 1
+        # After the owner's numbered order; with none, under the header.
+        first = next((j for j in range(header + 1, end)
+                      if re.match(r"^\d+[.)][ \t]", lines[j])), None)
+        insert = _list_end(lines, first, end) if first is not None else header + 1
         block = [UNORDERED_LABEL + newline, line + newline]
         if insert > header + 1:
             block.insert(0, newline)  # a blank line ends the ordered list above
-        if insert < len(lines) and lines[insert].strip():
-            block.append(newline)
+    if insert < len(lines) and lines[insert].strip():
+        block.append(newline)  # never glue the text below onto the new item
     if insert > 0 and not lines[insert - 1].endswith(("\n", "\r")):
         lines[insert - 1] += newline
     lines[insert:insert] = block
