@@ -22,8 +22,10 @@ def evaluate(pr_number: int) -> LifecycleReadinessDecision:
    `board_readiness.py`'s own precedent exactly).
 3. **Mergeable** (new relative to `board_readiness.py` — D5): GitHub's
    `mergeable` field is `MERGEABLE` (not `UNKNOWN`/`CONFLICTING`); the
-   board loop never checks this because it never merges, so no existing
-   code answers this question for a lifecycle PR yet.
+   board loop's readiness job never checks this because it never merges
+   (only board-loop.yml's `merge` job does, for fix and bump PRs, with
+   `WING_COMMANDER_BOARD_AUTO_MERGE` on -- spec 115), so no existing code
+   answers this question for a lifecycle PR yet.
 4. **Not yet reviewed at this head SHA** (new relative to
    `board_readiness.py` — D5): `review_gate.head_sha != head_sha`
    (FR-004/FR-005 — a pass never carries over to a head it was not derived

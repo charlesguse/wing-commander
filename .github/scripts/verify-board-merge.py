@@ -14,7 +14,9 @@ it evaluated, never with `--admin`, `--auto`, an approval, or a second merge
 method, only behind both switches, and without dispatching proof runs itself.
 Because that job merges, the documents unscoped_merge_claim_docs() lists may
 not bring back the retired whole-loop "never merges" sentences
-(UNSCOPED_MERGE_CLAIMS).
+(UNSCOPED_MERGE_CLAIMS), the live contracts HANDOVER_CLAIM_DOCS lists may not
+say readiness hands every ready PR to a human (HANDOVER_CLAIMS), and the
+board-loop workflow contract's job list names the `merge` job.
 
 Fixtures live in .github/scripts/fixtures/board-merge/, named
 `<class>-<condition>[-variant].json` (a case where that condition is the
@@ -509,6 +511,114 @@ def check_unscoped_merge_claims():
             ok("{0} makes no unscoped 'never merges' claim".format(path))
 
 
+# The live contracts' half of the same scoping (#889, found by the code review
+# of #1237): with WING_COMMANDER_BOARD_AUTO_MERGE on, the `merge` job may merge
+# what readiness reported ready, so no live contract may say readiness hands
+# every such PR to a human, that the whole board loop never merges, or that
+# the no-merge invariant forbids merge calls in all of board-loop.yml. Exact
+# retired sentences, folded as UNSCOPED_MERGE_CLAIMS are.
+HANDOVER_CLAIMS = (
+    "handed the pr to a human",
+    "handed it to a human",
+    "the board loop never checks this because it never merges",
+    "scans board-loop.yml for merge calls that must not exist",
+)
+HANDOVER_CLAIM_DOCS = (
+    ".github/scripts/verify-constitution-merge-class-parity.py",
+    "specs/057-autonomous-board-loop/contracts/readiness-report.md",
+    "specs/061-marker-owned-in-flight/contracts/in-flight-detection.md",
+    "specs/061-marker-owned-in-flight/contracts/resume-recovery.md",
+    "specs/062-lifecycle-review-gate/contracts/readiness-and-merge.md",
+)
+BOARD_LOOP_CONTRACT = "specs/057-autonomous-board-loop/contracts/board-loop-workflow.md"
+MERGE_CONTRACT = "specs/115-board-loop-self-merge/contracts/board-merge.md"
+
+
+def handover_claims(text):
+    folded = _fold_prose(text)
+    return [claim for claim in HANDOVER_CLAIMS if claim in folded]
+
+
+def _jobs_section(text):
+    """The board-loop workflow contract's "## Jobs ..." sections, joined."""
+    parts = re.split(r"(?m)^## ", text)
+    return "\n".join(part for part in parts if part.startswith("Job"))
+
+
+def lists_merge_job(contract_text):
+    """True when a numbered entry in the contract's job list names the
+    `merge` job and points at its own contract."""
+    return re.search(r"(?m)^\d+\. `merge` \S+ " + re.escape(MERGE_CONTRACT),
+                     _jobs_section(contract_text)) is not None
+
+
+def check_handover_claims_self_test():
+    in_flight = ("    `awaiting-merge` (#532) never qualifies either, whatever its PR's\n"
+                 "    state: readiness already handed the PR to a human, and no job\n")
+    resume = "   ready and handed it to a human), and its pr either resolves OPEN or\n"
+    mergeable = ("   `mergeable` field is `MERGEABLE` (not `UNKNOWN`/`CONFLICTING`); the\n"
+                 "   board loop never checks this because it never merges, so no existing\n")
+    docstring = ("verify-board-readiness.py's `check_no_merge_invariant`, which scans\n"
+                 "board-loop.yml for merge calls that must not exist. Here the merge call is\n")
+    scoped = ("    state: the readiness job stopped at ready, and the `merge` job\n"
+              "   board loop's readiness job never checks this because it never merges\n"
+              "board-loop.yml outside its `merge` job (spec 115) for merge calls that must\n")
+    stale_jobs = ("## Jobs (schedule/dispatch path)\n\n"
+                  "6. `readiness` — contracts/readiness-report.md. Never merges (FR-068).\n\n"
+                  "## Job (resume path)\n\n7. `prove` — contracts/prove-step.md\n")
+    listed_jobs = stale_jobs.replace(
+        "\n\n## Job (resume path)",
+        "\n7. `merge` — {0}.\n\n## Job (resume path)".format(MERGE_CONTRACT))
+    elsewhere = stale_jobs + "\n## Notes\n\n7. `merge` — {0}.\n".format(MERGE_CONTRACT)
+    if handover_claims(in_flight) != [HANDOVER_CLAIMS[0]]:
+        fail("self-test: in-flight-detection.md's 'handed the PR to a human' is not caught")
+    elif handover_claims(resume) != [HANDOVER_CLAIMS[1]]:
+        fail("self-test: resume-recovery.md's 'handed it to a human' is not caught")
+    elif handover_claims(mergeable) != [HANDOVER_CLAIMS[2]]:
+        fail("self-test: readiness-and-merge.md's 'board loop never checks this' is not caught")
+    elif handover_claims(docstring) != [HANDOVER_CLAIMS[3]]:
+        fail("self-test: the parity gate's whole-file no-merge description is not caught")
+    elif handover_claims(scoped):
+        fail("self-test: a claim scoped to the readiness job or outside `merge` is flagged")
+    elif lists_merge_job(stale_jobs):
+        fail("self-test: a job list with no `merge` entry passes")
+    elif not lists_merge_job(listed_jobs):
+        fail("self-test: a job list naming `merge` and its contract is not recognised")
+    elif lists_merge_job(elsewhere):
+        fail("self-test: a `merge` entry outside the Jobs sections passes")
+    else:
+        ok("self-test: 'handed to a human' contract prose is caught, and the job list must name `merge`")
+
+
+def check_handover_claims():
+    for path in HANDOVER_CLAIM_DOCS + tuple(unscoped_merge_claim_docs()):
+        if not os.path.isfile(path):
+            fail("{0} does not exist; run from the repository root".format(path))
+            continue
+        with open(path, encoding="utf-8") as fh:
+            found = handover_claims(fh.read())
+        if found:
+            fail("{0} says readiness hands the PR to a human or the board loop never merges, "
+                 "though the `merge` job may merge it with WING_COMMANDER_BOARD_AUTO_MERGE on; "
+                 "say the readiness job stops at ready and the `merge` job or a human takes it: "
+                 "{1}".format(path, found))
+        else:
+            ok("{0} makes no 'handed to a human' claim".format(path))
+    if not os.path.isfile(BOARD_LOOP) or not os.path.isfile(BOARD_LOOP_CONTRACT):
+        fail("{0} or {1} does not exist; run from the repository root".format(
+            BOARD_LOOP, BOARD_LOOP_CONTRACT))
+        return
+    with open(BOARD_LOOP, encoding="utf-8") as fh:
+        has_merge_job = re.search(r"(?m)^  merge:\s*$", fh.read()) is not None
+    with open(BOARD_LOOP_CONTRACT, encoding="utf-8") as fh:
+        listed = lists_merge_job(fh.read())
+    if has_merge_job and not listed:
+        fail("{0} has a `merge` job but {1}'s job list has no `merge` entry pointing at {2}".format(
+            BOARD_LOOP, BOARD_LOOP_CONTRACT, MERGE_CONTRACT))
+    else:
+        ok("{0}'s job list names the `merge` job".format(BOARD_LOOP_CONTRACT))
+
+
 def check_board_loop():
     if not os.path.isfile(BOARD_LOOP):
         fail("{0} does not exist; run from the repository root".format(BOARD_LOOP))
@@ -964,6 +1074,8 @@ def main():
     check_readiness_stale_claims_self_test()
     check_unscoped_merge_claims_self_test()
     check_unscoped_merge_claims()
+    check_handover_claims_self_test()
+    check_handover_claims()
     check_board_loop()
     check_readiness_head_binding()
     check_review_head_binding()
