@@ -403,6 +403,29 @@ def check_structural_self_test():
            "a gh | grep -q pipe and a missing retry")
 
 
+STALE_READINESS_CLAIMS = ("Awaiting a human merge", "this loop never merges, approves, or enables auto-merge")
+
+
+def readiness_stale_claims(text):
+    """Each STALE_READINESS_CLAIMS phrase found in a non-comment line of the
+    readiness job (case-insensitive)."""
+    job = job_block(text.splitlines(), "readiness") or []
+    code = "\n".join(line for line in job if not line.lstrip().startswith("#")).lower()
+    return [claim for claim in STALE_READINESS_CLAIMS if claim.lower() in code]
+
+
+def check_readiness_stale_claims_self_test():
+    old = ("  readiness:\n    steps:\n      - run: |\n          body=\"$(printf 'decision: %s\\n\\n"
+           "Awaiting a human merge -- this loop never merges, approves, or enables auto-merge.' x)\"\n"
+           "  merge:\n")
+    if readiness_stale_claims(old) != list(STALE_READINESS_CLAIMS):
+        fail("self-test: the old readiness sentence is not caught: {0}".format(readiness_stale_claims(old)))
+    elif readiness_stale_claims(old.replace("          body", "          # body")):
+        fail("self-test: a commented-out readiness line is flagged")
+    else:
+        ok("self-test: the old readiness sentence is caught, a comment is not")
+
+
 def check_board_loop():
     if not os.path.isfile(BOARD_LOOP):
         fail("{0} does not exist; run from the repository root".format(BOARD_LOOP))
@@ -456,10 +479,15 @@ def check_board_loop():
     else:
         ok("merge job: pinned --squash merge, no --admin/--auto/approve, both switches in its `if:`")
 
-    if "Awaiting a human merge" not in text:
-        fail("the switch-off readiness text 'Awaiting a human merge' is gone (SC-006)")
+    # Owner, 2026-11-25: the readiness report said "Awaiting a human merge --
+    # this loop never merges, approves, or enables auto-merge." while the
+    # merge job below merged fix-class PRs with the switch on. Neither half
+    # of that sentence may come back.
+    stale = readiness_stale_claims(text)
+    if stale:
+        fail("board-loop.yml's readiness report carries a stale merge claim again: {0}".format(stale))
     else:
-        ok("switch-off readiness text unchanged")
+        ok("readiness report makes no 'awaiting a human merge' / 'never merges' claim")
 
     issue_post = merge_code.find("gh issue comment \"$ISSUE_NUMBER\"")
     pr_post = merge_code.find("gh pr comment \"$PR_NUMBER\"")
@@ -850,6 +878,7 @@ def main():
     check_quoted_verification_record()
     check_structural_self_test()
     check_gh_blocked_reasons()
+    check_readiness_stale_claims_self_test()
     check_board_loop()
     check_readiness_head_binding()
     check_review_head_binding()
