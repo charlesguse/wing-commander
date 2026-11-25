@@ -43,8 +43,9 @@ RUN_CAP = 1000
 RATE_LIMIT_FLOOR = 300
 COMMENT_READ_CAP = 150
 SEARCH_PAGES = 3
-# Comment pages read per triage-close candidate: one closed issue with more
-# than a page of comments must not make the whole signal unreadable.
+# Comment pages read per issue by the triage_close and issue_or_comment
+# readers: one issue with more than a page of comments must not make the
+# whole signal unreadable.
 COMMENT_PAGES = 10
 # The not-running threshold never drops below this many hours, so an hourly
 # workflow is not called out for an ordinary GitHub schedule delay.
@@ -520,7 +521,7 @@ def read_signal(signal, repo, since, gh, environ, until=None):
             times.append(i["created_at"])
         for i in issues:
             times.extend(c["created_at"] for c in _pages(
-                gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s), 1))
+                gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s), COMMENT_PAGES))
     elif kind == "triage_close":
         times = _triage_close_times(gh, repo, base, since, until)
     elif kind == "branch_commit":

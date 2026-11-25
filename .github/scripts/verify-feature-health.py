@@ -869,6 +869,26 @@ def check_schedule_and_comment_reads():
     if got != "2026-11-18T00:00:00Z":
         problems.append("triage_close on a candidate with 100+ comments: got {0}, expected "
                         "2026-11-18T00:00:00Z".format(got))
+    # The same for issue_or_comment: a labeled issue with a full page of
+    # comments is paged, and the newest comment on its second page counts.
+
+    def long_labeled(path):
+        if "/issues?state=all" in path:
+            return [{"number": 8, "created_at": "2026-11-01T00:00:00Z"}]
+        if "/issues/8/comments" in path:
+            if path.endswith("&page=1"):
+                return [{"created_at": "2026-11-10T00:00:00Z"}] * 100
+            if path.endswith("&page=2"):
+                return [{"created_at": "2026-11-19T00:00:00Z"}]
+        return []
+    try:
+        got = fh.read_signal({"kind": "issue_or_comment", "label_name": "x"}, "own/repo",
+                             fh.parse_time("2026-10-20T00:00:00Z"), long_labeled, {})
+    except RuntimeError as exc:
+        got = "RuntimeError: {0}".format(exc)
+    if got != "2026-11-19T00:00:00Z":
+        problems.append("issue_or_comment on a labeled issue with 100+ comments: got {0}, expected "
+                        "2026-11-19T00:00:00Z".format(got))
     return problems
 
 
