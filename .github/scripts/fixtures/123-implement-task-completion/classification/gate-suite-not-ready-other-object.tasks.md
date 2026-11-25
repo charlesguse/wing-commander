@@ -2,3 +2,5 @@
 - [ ] T002 Execute the migration, then rerun run-local-gates parity checks in a test
 - [ ] T003 Run the full gate suite and fix failures
 - [ ] T004 Run `python3 .github/scripts/run-local-gates.py --jobs 4`
+- [ ] T005 Run the full suite `python .github/scripts/run-local-gates.py` and confirm green.
+- [ ] T006 Run the full suite, `python .github/scripts/run-local-gates.py`, and confirm every gate still passes

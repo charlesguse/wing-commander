@@ -194,7 +194,8 @@ counts="$(printf '%s\n' "$content" | WC_GATE_READY="$GATE_SUITE_READY" WC_OOB="$
     # "run `python .github/scripts/run-local-gates.py` ..."): a line that
     # only mentions it later ("Run codegen and update the gate suite
     # fixtures") is ordinary build work (FR-007, ambiguity stays buildable).
-    if (gate_ready == "false" && t ~ /^(run|execute) (the )?(full )?((local|pr-time) )?(gate suite|`?(python3? )?(\.\/)?(\.github\/scripts\/)?run-local-gates)/) return 1
+    # "Run the full suite, `python .../run-local-gates.py`" names it too.
+    if (gate_ready == "false" && t ~ /^(run|execute) (the )?(full )?((local|pr-time) )?(gate suite|(suite[ ,:]+)?`?(python3? )?(\.\/)?(\.github\/scripts\/)?run-local-gates)/) return 1
     return 0
   }
   BEGIN {
