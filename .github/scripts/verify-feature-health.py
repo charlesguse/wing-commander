@@ -316,7 +316,7 @@ def check_unreadable(ux):
                     environ.pop(drop, None)
                 try:
                     text = fh.build("own/repo", now=now, environ=environ, registry=registry,
-                                    read_text=lambda name: 'cron: "17 6 * * *"')
+                                    read_text=lambda name: on_schedule('"17 6 * * *"'))
                     outcome = "ok"
                 except SystemExit as exc:
                     text, outcome = str(exc), "exit"
@@ -704,24 +704,29 @@ def check_switch_source(src):
     return problems
 
 
+def on_schedule(*crons):
+    """A minimal workflow whose on.schedule lists `crons` (as written, quoted or not)."""
+    return "on:\n  schedule:\n" + "".join("    - cron: {0}\n".format(c) for c in crons)
+
+
 def check_review_round_three():
     """Unquoted and ranged cron, bounded triage and comment reads."""
     problems = []
-    for text, want in (("    - cron: 0 */4 * * *\n", 4),
-                       ("    - cron: 17 6 * * *   # daily\n", 24),
-                       ('    - cron: "0 9-17 * * *"\n', 16),
-                       ('    - cron: "0 0-23/6 * * *"\n', 6),
-                       ('    - cron: "0 1,9-11 * * *"\n', 14),
-                       ('    - cron: "0 5-5/2 * * *"\n', 24),
-                       ('    - cron: "0 5/6 * * *"\n', 6)):
+    for text, want in ((on_schedule("0 */4 * * *"), 4),
+                       (on_schedule("17 6 * * *   # daily"), 24),
+                       (on_schedule('"0 9-17 * * *"'), 16),
+                       (on_schedule('"0 0-23/6 * * *"'), 6),
+                       (on_schedule('"0 1,9-11 * * *"'), 14),
+                       (on_schedule('"0 5-5/2 * * *"'), 24),
+                       (on_schedule('"0 5/6 * * *"'), 6)):
         try:
             got = fh.schedule_interval_hours(text)
         except ValueError as exc:
             got = "ValueError: {0}".format(exc)
         if got != want:
             problems.append("cron parsing: {0!r} gave {1}, expected {2}".format(text.strip(), got, want))
-    for bad in ('    - cron: "0 25 * * *"\n', '    - cron: "0 5-2 * * *"\n', '    - cron: "0 */0 * * *"\n',
-                '    - cron: "0 5-2/2 * * *"\n'):
+    for bad in (on_schedule('"0 25 * * *"'), on_schedule('"0 5-2 * * *"'), on_schedule('"0 */0 * * *"'),
+                on_schedule('"0 5-2/2 * * *"')):
         try:
             fh.schedule_interval_hours(bad)
             problems.append("cron parsing: {0!r} did not raise".format(bad.strip()))
@@ -732,7 +737,7 @@ def check_review_round_three():
     state, _d = fh.classify_workflow(
         {"file": "x.yml", "cadence": "schedule"}, {"name": "f"},
         {"runs": [{"started_at": "2026-11-20T10:00:00Z", "conclusion": "success"}],
-         "interval_hours": fh.schedule_interval_hours('    - cron: "0 9-17 * * *"\n')},
+         "interval_hours": fh.schedule_interval_hours(on_schedule('"0 9-17 * * *"'))},
         {}, now)
     if state != "healthy":
         problems.append("a 9-17 daily cron with a run 13.5 h ago classed {0!r}, expected healthy".format(state))
@@ -802,6 +807,71 @@ def check_review_round_three():
     return problems
 
 
+def check_schedule_and_comment_reads():
+    """The schedule read takes only on.schedule, the not-running threshold has
+    a floor and is never longer than the run read, and a long comment thread
+    on one triage-close candidate is paged rather than raised on."""
+    problems = []
+    # A `cron:` line in a run: block or heredoc is not a schedule.
+    wf = (on_schedule('"29 6 * * *"') + "jobs:\n  a:\n    steps:\n      - run: |\n"
+          "          cat > w.yml <<'EOF'\n          - cron: \"0 * * * *\"\n          EOF\n")
+    if fh.schedule_interval_hours(wf) != 24:
+        problems.append("cron parsing: a cron line inside a run: block set the interval to {0}h".format(
+            fh.schedule_interval_hours(wf)))
+    if fh.schedule_interval_hours("on: push\njobs:\n  a:\n    steps:\n      - run: |\n"
+                                  "          - cron: \"0 * * * *\"\n") is not None:
+        problems.append("cron parsing: a workflow with no on.schedule read a cron from a run: step")
+    # An hourly workflow is not "not running" after an ordinary schedule delay.
+    now = fh.parse_time("2026-11-20T12:00:00Z")
+    for hours_ago, want in ((3, "healthy"), (7, "not running")):
+        state, _d = fh.classify_workflow(
+            {"file": "x.yml", "cadence": "schedule"}, {"name": "f"},
+            {"runs": [{"started_at": fh.fmt_time(now - datetime.timedelta(hours=hours_ago)),
+                       "conclusion": "success"}], "interval_hours": 1}, {}, now)
+        if state != want:
+            problems.append("an hourly cron with a run {0} h ago classed {1!r}, expected {2}".format(
+                hours_ago, state, want))
+    # A monthly cron whose last run is older than the 31-day window but inside
+    # twice its interval: the run read must reach back to the threshold.
+    last = fh.fmt_time(now - datetime.timedelta(days=45))
+
+    def monthly(path):
+        m = re.search(r"created=([0-9TZ:-]+)\.\.", path)
+        if m:
+            runs = ([{"id": 1, "event": "schedule", "conclusion": "success", "run_started_at": last,
+                      "created_at": last}] if m.group(1) <= last else [])
+            return {"total_count": len(runs), "workflow_runs": runs}
+        return []
+    entry = [{"name": "f", "workflows": [{"file": "m.yml", "cadence": "schedule"}]}]
+    readings, signals, ctx = fh.collect(entry, "own/repo", now, gh=monthly, environ={},
+                                        read_text=lambda _n: on_schedule('"0 6 1 * *"'))
+    rows = fh.classify_all(entry, readings, signals, ctx, now)
+    if rows[0]["state"] != "healthy":
+        problems.append("a monthly cron that ran 45 days ago classed {0!r}, expected healthy".format(rows[0]["state"]))
+    # One triage-close candidate with a full page of other comments: the close
+    # on its second page is found, not a truncation error.
+    close = fh.TRIAGE_CLOSE_COMMENT_PREFIX + fh.TRIAGE_CLOSE_GROUNDS[0] + ", see the run."
+
+    def long_thread(path):
+        if path.startswith("search/issues"):
+            return {"incomplete_results": False, "items": [{"number": 7, "updated_at": "2026-11-19T00:00:00Z"}]}
+        if "/issues/7/comments" in path:
+            if path.endswith("&page=1"):
+                return [{"body": "chatter", "created_at": "2026-11-10T00:00:00Z"}] * 100
+            if path.endswith("&page=2"):
+                return [{"body": close, "created_at": "2026-11-18T00:00:00Z"}]
+        return []
+    try:
+        got = fh.read_signal({"kind": "triage_close"}, "own/repo", fh.parse_time("2026-10-20T00:00:00Z"),
+                             long_thread, {})
+    except RuntimeError as exc:
+        got = "RuntimeError: {0}".format(exc)
+    if got != "2026-11-18T00:00:00Z":
+        problems.append("triage_close on a candidate with 100+ comments: got {0}, expected "
+                        "2026-11-18T00:00:00Z".format(got))
+    return problems
+
+
 def check_review_round_two():
     """Cron parsing, truncated reads, shortened-section detection."""
     problems = []
@@ -812,7 +882,7 @@ def check_review_round_two():
     if fh.schedule_interval_hours('on:\n  schedule:\n    - cron: "0 1 * * *"\n') != 24:
         problems.append("cron parsing: a daily cron is not 24 hours")
     try:
-        fh.schedule_interval_hours('    - cron: "bad"\n')
+        fh.schedule_interval_hours(on_schedule('"bad"'))
         problems.append("cron parsing: an unparseable cron did not raise")
     except ValueError:
         pass
@@ -872,6 +942,7 @@ def main():
     problems += check_review_round_two()
     problems += check_review_round_three()
     problems += check_review_round_five(registry)
+    problems += check_schedule_and_comment_reads()
     problems += check_capture_bounds()
     real, note = check_sc001(os.path.join(FIXTURES, "sc001"), EXEMPT_SC001_PENDING)
     problems += real + self_check(fx) + self_check_sc001(os.path.join(FIXTURES, "sc001"))
