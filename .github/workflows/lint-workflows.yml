@@ -162,8 +162,12 @@ permissions:
 
 jobs:
   # Gates 2 and 3 are pure static analysis over the workflow set in the
-  # checkout, so they run on the PR that introduces the defect.
-  lint:
+  # checkout, so they run on the PR that introduces the defect. The suite is
+  # split across lint-shard-1 .. lint-shard-8 (same steps, rebalanced
+  # across shards for timing, so original order is not preserved; cut
+  # between a gate and the next gate's comment); the `lint` aggregate below
+  # is the single required check.
+  lint-shard-1:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -172,6 +176,7 @@ jobs:
           persist-credentials: false
 
       - name: Parse YAML and bash -n every run block
+        if: "!cancelled()"
         run: |
           python3 - <<'PYEOF'
           import glob, subprocess, sys, re, yaml
@@ -243,6 +248,7 @@ jobs:
       # `reusable · *` names instead of their wrapper's `Wing Commander ·
       # N *` display name).
       - name: Gate 2 — workflow_run names resolve and are not self-references or workflow_call-only
+        if: "!cancelled()"
         run: |
           python3 - <<'PYEOF'
           import glob, sys, yaml
@@ -302,6 +308,7 @@ jobs:
       # default, which this check cannot resolve. Self-tested by
       # verify-gate-3.py.
       - name: Gate 3 — callers grant every permission their reusable workflow requests
+        if: "!cancelled()"
         run: |
           python3 - <<'PYEOF'
           import glob, os, sys, yaml
@@ -394,6 +401,7 @@ jobs:
       # synthetic caller/callee pairs, including a caller grant downgraded
       # from write to read and a called job asking for an ungranted key.
       - name: Gate 3 self-test — the detector actually detects
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-3.py
 
       # Gate 5 — the denied-tool collector is the one piece of watchdog
@@ -413,6 +421,7 @@ jobs:
       # the checkout the other static gates already have, and it is a
       # sub-second jq/python check rather than a behavioral suite.
       - name: Gate 5 — the denied-tool collector's fixture check, and its filter is in sync
+        if: "!cancelled()"
         run: |
           set -uo pipefail
           bash .github/scripts/verify-denied-tool-collector.sh || exit 1
@@ -473,6 +482,7 @@ jobs:
       # workflow a wrapper names directly — one intermediate hop would
       # otherwise hide the agent step from this gate completely.
       - name: Gate 6 — agent-bearing wrapper reaches its stage only under a supported event
+        if: "!cancelled()"
         run: |
           python3 - <<'PYEOF'
           import glob, os, sys, re, yaml
@@ -603,6 +613,7 @@ jobs:
       # (extracted from this file, not a copy) against synthetic trees with
       # known defects and asserts the verdict and the error text.
       - name: Gate 6 self-test — the detector actually detects
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-6.py
 
       # Gate 7 — an adopter binds a whole stage with one `environment` input,
@@ -624,6 +635,7 @@ jobs:
       # release (issue #149), and it would mean a new stage file is born
       # exempt from this gate.
       - name: Gate 7 — every job of every published stage carries the environment binding
+        if: "!cancelled()"
         run: |
           python3 - <<'PYEOF'
           import glob, os, sys, yaml
@@ -861,6 +873,7 @@ jobs:
       # against is (and should stay) uniform, so a green Gate 7 says nothing
       # about whether Gate 7 works.
       - name: Gate 7 self-test — the detector actually detects
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-7.py
 
       # Gate 8 — behavioral, not static. Gates 1-3 prove intake.yml and
@@ -882,29 +895,8 @@ jobs:
       # suite fails — the same discipline as gates 6 and 7's self-tests, and
       # the reason gate 5 exists at all.
       - name: Gate 8 — clarification callouts are reachable and honest
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-clarification-gating.py
-
-      # Gate 9 — the watchdog's own tripwire. "Collect: step summaries" is
-      # what turns a stage's emitted sentinel into a signal that diagnose can
-      # reason about; a sentinel it drops does not degrade the watchdog, it
-      # makes the watchdog blind to one class of problem while still
-      # reporting that inspection passed. That is the most expensive failure
-      # shape this repository has had (2026-07-24's false "passed inspection",
-      # and 2026-07-25's audit finding 10 of 19 "successful" runs not genuine).
-      #
-      # It was untested — pure shell inside a `gh api` loop, invisible to
-      # every static gate — and it had already grown a real conflict: the
-      # legacy bare-word pass (capped at one match per job) also matched the
-      # emitted-token lines that docs/agent-friendly-workflows.md tells stage
-      # authors to write, so one event produced two signals sharing an id and
-      # spent the cap that an unrelated genuine stall word needed.
-      #
-      # Same discipline as gates 4-8: the shipped step is extracted and
-      # executed against synthetic job logs with `gh` stubbed, so there is no
-      # copy to drift, and mutations reintroduce the conflict to prove the
-      # suite can fail.
-      - name: Gate 9 — the watchdog's sentinel collector sees what stages emit
-        run: python3 .github/scripts/verify-sentinel-collector.py
 
       # Gate 11 — the turn-budget numbers in every job summary mean what
       # they say. wing-commander-metrics-summary rendered `.num_turns`
@@ -919,6 +911,7 @@ jobs:
       # transcripts, and mutations reintroduce each counting defect to prove
       # the suite can go red.
       - name: Gate 11 — the metrics summary counts the turns the budget caps
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-metrics-turn-accounting.py
 
       # Gate 12 — every `gh`/API call runs under a token whose permissions
@@ -1001,6 +994,7 @@ jobs:
       # permission grant is this repository's installation, not a token
       # anyone can use to authorize a call against an unrelated repository.
       - name: Gate 12 — every gh/API call runs under a token permissioned for it
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-12-token-permissions.py
 
       # Same reasoning as gates 6/7's self-tests: Gate 12 passing against
@@ -1013,6 +1007,7 @@ jobs:
       # acceptance corpus, differential-checks the locator against real
       # bash, and proves a mutated classifier turns the corpus red.
       - name: Gate 12 self-test — the detector actually detects
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-12.py
 
       # Gate 13 — pr-conversation's relay-confirmation phrase. Three things
@@ -1025,6 +1020,7 @@ jobs:
       # CLASSIFY AGENT and re-acts on a stored classification instead of
       # answering what was actually just asked (T069).
       - name: Gate 13 — relay confirmation is opt-in on one agreed phrase
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-relay-confirmation-phrase.py
 
       # Gate 14 — implement.yml's stall report tells a maintainer how to
@@ -1038,6 +1034,7 @@ jobs:
       # 1-3 passed throughout; they prove shell parses, not that two steps
       # agree about a number.
       - name: Gate 14 — the stalled-restart runbook is a command the guard accepts
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-stall-restart-runbook.py
 
       # Gate 15 — a job with no status-check function is skipped whenever
@@ -1058,6 +1055,7 @@ jobs:
       # A needs-closure walk rather than a list of known-bad jobs, so the next
       # second entry-point arm is caught by the same rule.
       - name: Gate 15 — no job is silently suppressed by a skipped ancestor
+        if: "!cancelled()"
         run: |
           python3 - <<'PYEOF'
           import glob, re, sys, yaml
@@ -1176,6 +1174,7 @@ jobs:
       # and the fleet it runs against is (and should stay) clean, so a green
       # Gate 15 says nothing about whether Gate 15 works.
       - name: Gate 15 self-test — the detector actually detects
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-15.py
 
       # specs/041-implement-stall-notice — the chain-stop notice composite's
@@ -1185,6 +1184,7 @@ jobs:
       # actually depends on whether the mark landed, and that
       # restart-command is reproduced byte-for-byte rather than rebuilt.
       - name: The chain-stop-notice composite's shell body behaves as documented
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-chain-stop-notice-body.py
 
       # specs/041-implement-stall-notice, User Story 2 acceptance scenario 3 /
@@ -1192,11 +1192,13 @@ jobs:
       # this feature — this proves it stayed that way, not merely that it
       # was not meant to change.
       - name: implement.yml's exhausted-retry stall notice reads exactly as before
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-implement-stall-notice-unchanged.py
       # #410 item 3: the gate above had no self-test. The regressions it
       # reintroduces are listed once, in the script's own SELF-TEST
       # section -- see verify-implement-stall-notice-unchanged.py.
       - name: The exhausted-retry stall-notice gate detects a reworded, deleted or reshaped pinned step, a missing pin, and a dependency-reason script that drifts on either branch
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-implement-stall-notice-unchanged.py --self-test
 
       # Gate 16 — every agent step's execution log survives the agent's own
@@ -1223,6 +1225,7 @@ jobs:
       # other agent steps — which is how a second agent added to an
       # already-covered job goes uncaptured.
       - name: Gate 16 — every agent step's execution log survives its failure
+        if: "!cancelled()"
         run: |
           python3 - <<'PYEOF'
           import glob, re, sys, yaml
@@ -1308,6 +1311,7 @@ jobs:
       # (and should stay) clean, so a green Gate 16 says nothing about whether
       # Gate 16 works.
       - name: Gate 16 self-test — the detector actually detects
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-16.py
 
       # Gate 18 — every `gh api` call is checked for a pagination-safe
@@ -1329,12 +1333,14 @@ jobs:
       # is the only escape hatch, and a bare one with no reason does not
       # count.
       - name: Gate 18 — every paginated read is safe by construction
+        if: "!cancelled()"
         run: |
           python3 .github/scripts/verify-gate-18-scan.py
 
       # Gate 18 says nothing about whether Gate 18 works — same reasoning as
       # gates 15/16/17's self-tests.
       - name: Gate 18 self-test — the detector actually detects
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-18.py
 
       # Gate 19 — the watchdog's annotation collector ("Collect: annotations")
@@ -1351,6 +1357,7 @@ jobs:
       # mutation reintroduces the array-collecting shape to prove the suite
       # can fail.
       - name: Gate 19 — the watchdog's annotation collector sees every page
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-19.py
 
       # Gate 20 — wing-commander-tool-args's declared and emitted outputs
@@ -1360,6 +1367,7 @@ jobs:
       # check keeping it that way — this is the machine check
       # specs/037-rendered-tooling-list exists to add (research.md D9).
       - name: Gate 20 — every output the tool-args composite emits is declared, and every declared output is emitted
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-tool-args-contract.py
 
       # Gate 21 — the tooling statement wing-commander-tool-args hands a
@@ -1368,18 +1376,8 @@ jobs:
       # subtraction, no bare-Bash case, and no exact/prefix distinction, so
       # a denied command could still read as permitted (research.md D8).
       - name: Gate 21 — the tooling statement matches what the run actually permits
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-tooling-statement.py
-
-      # Gate 22 — wing-commander-agent-verdict (specs/037-agent-turn-budget-guard/)
-      # classifies a transcript correctly. Same discipline as Gate 11: the
-      # shipped run: block, extracted and executed against synthetic
-      # transcripts covering healthy-but-would-be-rejected, genuinely errored,
-      # exhausted, and unreadable, plus mutations reintroducing each defect
-      # class (reading is_error/subtype from the wrong record, collapsing
-      # unclassifiable/failed together, computing over-budget from the
-      # reported rather than counted total) to prove the suite can go red.
-      - name: Gate 22 — the agent verdict composite classifies transcripts correctly
-        run: python3 .github/scripts/verify-agent-verdict.py
 
       # Gate 23 — every agent call site carries the full ceiling/verdict/
       # fail-loud protection, dynamically enumerated (YAML-parsed, never
@@ -1391,6 +1389,7 @@ jobs:
       # ceiling has regressed back to a literal/raw `inputs.max-turns`
       # passthrough (User Story 3 Acceptance Scenario 3), fails by name.
       - name: Gate 23 — every agent call site carries the full turn-budget protection
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-23.py
 
       # Gate 23 says nothing about whether Gate 23 works — same reasoning as
@@ -1398,6 +1397,7 @@ jobs:
       # uniformly compliant, so a green Gate 23 could just as easily mean its
       # detection is broken.
       - name: Gate 23 self-test — the detector actually detects
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-23-selftest.py
 
       # Gate 24 — the placement half of Gate 23. Gate 23 asserts every agent
@@ -1413,6 +1413,7 @@ jobs:
       # step reads that same signal — because the fleet is full of hard exits
       # that strand later steps entirely correctly.
       - name: Gate 24 — a guard does not strand the degradation path it fires on
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-24.py
 
       # Same reasoning as Gate 23's self-test, and more load-bearing here:
@@ -1421,6 +1422,7 @@ jobs:
       # matching anything", which is indistinguishable from a compliant
       # fleet. One fixture per clause, in both directions.
       - name: Gate 24 self-test — the detector actually detects
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-24-selftest.py
 
       # specs/039-lifecycle-gate-retry: run 31597186484 died at
@@ -1436,6 +1438,7 @@ jobs:
       # self-test step — since this gate directly executes the shipped
       # step's own bash against stubs rather than detecting drift elsewhere.
       - name: Gate 25 — the lifecycle gate retries transient failures and fails fast on permanent ones
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-lifecycle-gate-retry.py
 
       # Gate 30 — specs/040-truncated-cycle-carry-forward: a cycle that runs
@@ -1452,7 +1455,58 @@ jobs:
       # (see "Gate 26 — every release tag is annotated and every vX is
       # current").
       - name: Gate 30 — a turn-exhausted cycle is classified truncated only with positive evidence, and carried forward without ever reporting converged
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-truncated-cycle-carry-forward.py
+
+      # Gate 93 — #499 code review round 3 (B1): board-loop.yml's agent
+      # steps must never be granted `gh issue view`/`gh api` (that read
+      # would bypass the code-level author-association trust filter
+      # wing-commander-issue-context/action.yml now provides, the way
+      # round 2's own fix briefly did before this round found it), and
+      # that filter itself must have exactly one home -- no workflow or
+      # action may re-implement it inline. Board-loop run 36044831201
+      # (spec-request #509, body "No drafted body."): every spec-request
+      # board-loop.yml files must also take its body from
+      # board_spec_request_body.py, whose fallback reads only that
+      # composite's context-file.
+      - name: "Gate 93 — board-loop reads the issue only through wing-commander-issue-context"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-issue-context-single-home.py
+
+      - name: "Gate 93 self-test — a board-loop gh issue view grant, an inline trust-filter reimplementation, and a spec-request body without the trust-filtered fallback each fail"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-issue-context-single-home.py --self-test
+
+      # Gate 112 — specs/062-lifecycle-review-gate T048/T050:
+      # lifecycle_merge_preconditions.py's eight-condition decision refuses
+      # a merge for its OWN stated reason on every documented branch — a
+      # round clean at a DIFFERENT head SHA, a round that came back with
+      # findings, and a maintainer's standing CHANGES_REQUESTED are three
+      # different refusals, and FR-027 requires the gate to say which.
+      # Auto-merge is the one thing this feature does that a human action
+      # has to undo, so its decision is fixtured, not trusted. Numbered
+      # 112, not the 104 tasks.md's T050 originally reserved — see Gate
+      # 107's comment (in lint-shard-5) for the Maintainer Feedback renumbering.
+      # #826: it also pins how every review_gate marker reader gets its
+      # comments — REST (`gh api .../issues/$N/comments --paginate`, pages
+      # merged), never `gh issue|pr view --json comments`, whose
+      # author{login} shape has no user.type for is_loop_marker_author() —
+      # and runs disposition's and merge's read steps against a stub gh.
+      - name: "Gate 112 — Lifecycle merge preconditions"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-merge-preconditions.py
+
+      - name: "Gate 112 self-test — the bot's own review never blocks its merge, a plain comment never clears a standing CHANGES_REQUESTED, unmet_reason names only the first failing condition, and a --json comments, first-page-only, unmerged or unguarded marker read is caught"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lifecycle-merge-preconditions.py --self-test
+
+  lint-shard-2:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       # Gate 22 — specs/038-runner-container-passthrough FR-007: an adopter
       # binds a whole stage's jobs to their own runner/container image with
@@ -1478,6 +1532,7 @@ jobs:
       # the same way container.image is already checked — see the
       # EXPECTED_CREDENTIALS comparison below.
       - name: Gate 22 — every job of every published stage carries the runner/container-image passthrough
+        if: "!cancelled()"
         run: |
           python3 - <<'PYEOF'
           import glob, os, re, sys, yaml
@@ -1805,6 +1860,7 @@ jobs:
       # against is (and should stay) uniform, so a green Gate 22 says
       # nothing about whether Gate 22 works.
       - name: Gate 22 self-test — the detector actually detects
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-22.py
 
       # Gate 23 — specs/038-runner-container-passthrough FR-010/FR-011: an
@@ -1820,6 +1876,7 @@ jobs:
       # against actual `run:` invocations, not just asserted once at plan
       # time. T018-T028 wired all three by hand across eleven files.
       - name: Gate 23 — every published stage checks adopter-chosen image prerequisites before any real job starts
+        if: "!cancelled()"
         run: |
           python3 - <<'PYEOF'
           import glob, os, re, sys, yaml
@@ -2622,7 +2679,8 @@ jobs:
       # filename when this feature's branch rebased onto that one. Both
       # halves now live in .github/scripts/verify-gate-23.py, dispatched by
       # argument — --selftest runs this one.
-      - name: Gate 23 self-test — the detector actually detects
+      - name: Gate 23 self-test (turn-budget collision half) — the detector actually detects
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-23.py --selftest
 
       # Gate 27 — the per-stage default tool-list table matches every
@@ -2637,9 +2695,11 @@ jobs:
       # script to exist: Spec Kit dropped update-agent-context.sh and both
       # plan sites kept granting it.
       - name: Gate 27 — the documented per-stage tool lists match the call sites
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-tool-lists.py
 
       - name: Gate 27 self-test — the tool-list check detects what it claims to
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-tool-lists.py --self-test
 
       # Gate 28 — every `gh api` call that carries a field says which method
@@ -2660,6 +2720,7 @@ jobs:
       # hatch is a same-line or immediately-preceding
       # `# wc-gh-method-exempt: <reason>` comment; a bare one does not count.
       - name: Gate 28 — every `gh api` call that passes a field states its method
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gh-api-explicit-method.py
 
       # Gate 28 says nothing about whether Gate 28 works — same reasoning as
@@ -2668,6 +2729,7 @@ jobs:
       # spelling, a `\`-continued call, and the pipe/quoting false-positive
       # cases) plus eight mutations, each of which must be caught by one.
       - name: Gate 28 self-test — the detector actually detects
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gh-api-explicit-method.py --self-test
 
       # Gate 29 — cleanup's lifecycle guard. Behavioral, like gates 8/9/14:
@@ -2686,6 +2748,7 @@ jobs:
       # labelled issue rather than pick the newest of several, and to treat a
       # failed lookup as its own outcome rather than as "found none" (#188).
       - name: Gate 29 — cleanup's lifecycle guard names the fault it hit and recovers a null issue
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-cleanup-lifecycle-guard.py
 
       # Gate 32 — watchdog.yml's act job never treats an unresolved triage
@@ -2698,6 +2761,7 @@ jobs:
       # before this gate — same "a verifier nothing runs is not a verifier"
       # gap Gates 5/9/19 exist to close for their own subjects.
       - name: Gate 32 — the act job's dedup guard stays report-only when the triage decision never arrived
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-act-dedup-guard.py
 
       # Gate 31 — constitution VII's stage-layer rule, at PR time and over
@@ -2720,6 +2784,7 @@ jobs:
       # release.yml's Gate 1b now calls this same script, so there is one
       # implementation and the release-time check cannot drift from this one.
       - name: Gate 31 — no published stage reads github.event, vars.*, or inherits secrets
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-invariants.py
 
       # Same reasoning as Gates 22–27's self-tests, and load-bearing here:
@@ -2729,6 +2794,7 @@ jobs:
       # works. The fixtures are throwaway repository roots on disk, so
       # discovery, comment stripping and waiver loading are all exercised.
       - name: Gate 31 self-test — the invariant scan detects what it claims to
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-stage-invariants.py --self-test
       # Gate 33 — a stage that dies at entry reaches the chain-stop notice,
       # and nothing else does (specs/041-implement-stall-notice). Neither
@@ -2743,20 +2809,8 @@ jobs:
       # gh-api-explicit-method check, 29-31 landed via #243/#235/#244, and
       # 32 via PR #240's act-dedup gate - so this is 33.
       - name: Gate 33 — a stage that dies at entry reaches the chain-stop notice, and nothing else does
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-chain-stop-notice.py
-
-      # Gate 34 — specs/042-post-review-fold-loop (research.md D1-D6): a
-      # review folds every leg exactly once before any implementation
-      # dispatch, dispatch itself happens exactly once per review (not per
-      # leg — the defect that cancelled leg 4 and iteration 3 against each
-      # other on PR #240), and a leg that dies without folding is reported
-      # by name, distinguishing "not folded" from "partly folded", derived
-      # only from signals a dead leg never had to publish itself. The leg's
-      # job is matched by its caller-prefixed API name ("pr-conversation /
-      # act (leg-0)"); the fixtures carry that shape, and a mutation that
-      # matches the bare name again must fail (#416).
-      - name: Gate 34 — a review folds every leg once and dispatches once, and a dead leg says so
-        run: python3 .github/scripts/verify-fold-dispatch-once.py
 
       # Gate 35 — specs/042-post-review-fold-loop (research.md D7-D10): a
       # finalize run against an existing OPEN final PR refreshes it instead
@@ -2766,6 +2820,7 @@ jobs:
       # (#662): every post-PR step that can fail finalize is a named
       # failed-step candidate, and the manual-work announcement retries.
       - name: Gate 35 — finalize refreshes an open final PR, and only an open one
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-finalize-refresh.py
 
       # Gate 36 — #169: the stage-8b watchdog verifier's own failure
@@ -2778,6 +2833,7 @@ jobs:
       # mutation per guard (listed at the harness's foot) proving each
       # load-bearing.
       - name: Gate 36 — the watchdog verifier's failure branches actually execute
+        if: "!cancelled()"
         run: bash .github/scripts/verify-watchdog-run-failure-paths.sh
 
       # Gate 37 — watchdog issue #261: a `${{ }}` inside an action
@@ -2787,6 +2843,7 @@ jobs:
       # actionlint covers workflows, not composite manifests, so this is
       # the only thing that says so before a run does.
       - name: Gate 37 — action-manifest descriptions carry no template expressions
+        if: "!cancelled()"
         run: |
           python3 .github/scripts/verify-action-manifest-descriptions.py --self-test
           python3 .github/scripts/verify-action-manifest-descriptions.py
@@ -2798,6 +2855,7 @@ jobs:
       # successful cycle, cancelled run) stay byte-for-byte quiet across
       # all seven survivor-job conditions.
       - name: A refusal excludes the chain-stop notice, and quiet paths stay quiet
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-chain-stop-refusal-exclusion.py
 
       # Gate 26 self-test — the refs check can tell its failures apart.
@@ -2806,7 +2864,39 @@ jobs:
       # a tag desync is never something the PR introduced. What a PR CAN
       # break is the checker, so that is what runs here.
       - name: Gate 26 self-test — the versioning-refs check detects what it claims to
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-versioning-refs.py --self-test
+
+      # Gate 9 — the watchdog's own tripwire. "Collect: step summaries" is
+      # what turns a stage's emitted sentinel into a signal that diagnose can
+      # reason about; a sentinel it drops does not degrade the watchdog, it
+      # makes the watchdog blind to one class of problem while still
+      # reporting that inspection passed. That is the most expensive failure
+      # shape this repository has had (2026-07-24's false "passed inspection",
+      # and 2026-07-25's audit finding 10 of 19 "successful" runs not genuine).
+      #
+      # It was untested — pure shell inside a `gh api` loop, invisible to
+      # every static gate — and it had already grown a real conflict: the
+      # legacy bare-word pass (capped at one match per job) also matched the
+      # emitted-token lines that docs/agent-friendly-workflows.md tells stage
+      # authors to write, so one event produced two signals sharing an id and
+      # spent the cap that an unrelated genuine stall word needed.
+      #
+      # Same discipline as gates 4-8: the shipped step is extracted and
+      # executed against synthetic job logs with `gh` stubbed, so there is no
+      # copy to drift, and mutations reintroduce the conflict to prove the
+      # suite can fail.
+      - name: Gate 9 — the watchdog's sentinel collector sees what stages emit
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-sentinel-collector.py
+
+  lint-shard-3:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       # specs/043-durable-metrics-record — eight new gates, numbered 38-45
       # (37 was already taken; per the maintainer review on PR #267, MF-F7).
@@ -2840,16 +2930,6 @@ jobs:
       - name: Gate 40 self-test — unknown metrics schema versions are retained and skipped
         if: "!cancelled()"
         run: python3 .github/scripts/verify-metrics-schema-version-tolerance.py --self-test
-
-      # Gate 41 — the metrics persistence append-with-retry algorithm
-      # survives a concurrent writer and fails loudly under sustained
-      # contention, run against the shipped "Append records with retry"
-      # `run:` block itself (MF-F1: previously a standalone
-      # reimplementation of the algorithm's shape, which is how MF-B3
-      # shipped past 16 green checks). No live subject in the repository.
-      - name: Gate 41 self-test — metrics persist append-with-retry survives contention
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-metrics-persist-retry.py --self-test
 
       # Gate 42 — every discovered transcript/metrics-record upload-artifact
       # site declares retention-days: 90 (FR-032/FR-033/SC-010); discovery-
@@ -3057,39 +3137,6 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-correlated-release-dispatch.py --self-test
 
-      # Gate 60 — specs/049-single-home-release-idioms: each of the three
-      # cross-workflow idioms auto-release.yml and auto-update-spec-kit.yml
-      # share (scoped App-token mint + reachability, orphan-branch
-      # force-reset, durable failure issue) and the fail-infra verdict
-      # shape now has exactly one home under .github/actions/_shared/, and
-      # a structural scan -- not merely an assertion that the two known
-      # consumers call the shared definitions -- fails on a third,
-      # unknown site pasting any of them anywhere under
-      # .github/workflows/ or .github/actions/, naming both the offending
-      # site and the shared home to call instead. A separate pass fails if
-      # a workflow_call-only stage or a published (non-underscore)
-      # composite action ever resolves an internal _shared/ path (FR-025).
-      # Also runs the byte-identity check (FR-009): the shipped
-      # auto-release-verdict.sh against every real verdict-construction
-      # site's captured pre-refactor inputs, diffed against their
-      # pre-refactor jq -n output.
-      #
-      # Numbered 60, not 52 as research.md/tasks.md call it: Gate 52 was
-      # free when this feature's plan was written and was taken by
-      # verify-auto-release-report.py (#325) before this feature's branch
-      # was rebased past it. The branch then registered this gate as 53,
-      # the next number free in its own tree -- but by the time of the
-      # maintainer's review of PR #347, spec 046's PR #341 had registered
-      # Gates 53-58 on main and spec 048's PR #342 had taken 59, so this
-      # gate moved again, to 60 -- see verify-single-home-idioms.py's own
-      # module docstring.
-      - name: Gate 60 — each of the three cross-workflow idioms and the fail-infra verdict shape has exactly one home, and no published surface resolves an internal helper
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-single-home-idioms.py
-      - name: Gate 60 self-test — the structural scan detects a third paste, a waiver suppresses only what it names, and promotion into a published surface fails
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-single-home-idioms.py --self-test
-
       # Gate 61 — a spec branch's spec-meta.json is read in one place (#340).
       # The fetch-then-`git show`-then-jq read was pasted into implement.yml
       # (both read-backs), plan.yml, tasks.yml and the watchdog's identity
@@ -3141,6 +3188,20 @@ jobs:
       - name: Gate 63 self-test — a dropped callout, gate or cost line each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-plan-tasks-cost-line.py --self-test
+
+      # rebase.yml's merge sync method (spec 118): the helper's decisions run
+      # against real git fixtures. Not numbered, for the same reason.
+      - name: Merge sync method decides, verifies and publishes on real git history
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-sync-from-main.py
+
+  lint-shard-4:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       # Gate 64 — specs/054-e2e-container-coverage (SC-009): auto-release.yml's
       # mode step used to derive the container/default-runner alternation
@@ -3595,12 +3656,6 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-rebase-discover-selection.py
 
-      # rebase.yml's merge sync method (spec 118): the helper's decisions run
-      # against real git fixtures. Not numbered, for the same reason.
-      - name: Merge sync method decides, verifies and publishes on real git history
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-sync-from-main.py
-
       # watchdog.yml's own failure accounting (#811, #889): a handled rate
       # limit is not an unhandled failure, and an unreadable self-dispatch
       # chain counts as capped. Not numbered, as for the board status step.
@@ -3615,18 +3670,13 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-review-fixup-push.py
 
-      # Gate 82 — specs/057-autonomous-board-loop (FR-012/FR-064 bullet 1):
-      # triage may close an issue on exactly two code-derived grounds, and
-      # an agent's "already fixed on main" proposal must NEVER be one of
-      # them -- the fixture this gate pins is the one case where "the agent
-      # says so" and "the gate says so" could be confused for the same
-      # thing. Numbered 82, not 81 (its original slot): landing after
-      # Gate 80 (#397/#438) shifts this whole block by one, and an earlier
-      # pass only shifted Gate 81 (eligibility) itself, leaving this gate's
-      # number colliding with it -- fixed as part of #451's own review.
-      - name: Gate 82 — board loop triage resolves every FR-064 bullet-1 branch
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-board-triage.py
+  lint-shard-5:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       # Gate 83 — specs/057-autonomous-board-loop T022: the shared
       # size-path-backstop composite's own file/line-count formula, run
@@ -3758,24 +3808,6 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-claude-code-action-inputs.py
 
-      # Gate 93 — #499 code review round 3 (B1): board-loop.yml's agent
-      # steps must never be granted `gh issue view`/`gh api` (that read
-      # would bypass the code-level author-association trust filter
-      # wing-commander-issue-context/action.yml now provides, the way
-      # round 2's own fix briefly did before this round found it), and
-      # that filter itself must have exactly one home -- no workflow or
-      # action may re-implement it inline. Board-loop run 36044831201
-      # (spec-request #509, body "No drafted body."): every spec-request
-      # board-loop.yml files must also take its body from
-      # board_spec_request_body.py, whose fallback reads only that
-      # composite's context-file.
-      - name: "Gate 93 — board-loop reads the issue only through wing-commander-issue-context"
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-issue-context-single-home.py
-      - name: "Gate 93 self-test — a board-loop gh issue view grant, an inline trust-filter reimplementation, and a spec-request body without the trust-filtered fallback each fail"
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-issue-context-single-home.py --self-test
-
       # Gate 94 — SF1 (#499 code review round 3): triage-propose and the
       # reviewer's own inline fenced-block extractors used the same
       # first-match regex route-propose's did before an earlier round of
@@ -3786,26 +3818,6 @@ jobs:
       - name: "Gate 94 — the shared fence extractor behaves correctly and all three board-loop extract steps consume it"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-fence-extract.py
-
-      # Gate 95 — #499 code review round 4 (BLOCKER): a reviewer step that
-      # never wrote claude-execution-output.json (crashed, was OOM-killed)
-      # left parse-failed false and in-scope-count 0, reading as
-      # "converged" -- a PR advanced to readiness having never been
-      # reviewed. Executes the real "Extract and validate the review
-      # findings", "Decide the round outcome" and "Compose the review
-      # body" steps end to end (read out of board-loop.yml at run time)
-      # against four scenarios, plus three mutations proving each fix
-      # would actually be caught if silently reverted. #583: an out-of-
-      # scope title split by a line break sets no other step output (the
-      # raw $GITHUB_OUTPUT is checked), a multi-line title is
-      # flattened to one line (not dropped), a dropped finding stops the
-      # round converging and is named in the review body, lone surrogates
-      # are removed or rejected, the filing steps read each body from a
-      # fixed path, and a quoted dedupe marker does not suppress another
-      # finding's filing; one mutation per fix.
-      - name: "Gate 95 — the reviewer's fail-closed wiring (extract, round outcome, review body) is real"
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-reviewer-fail-closed.py
 
       # Gate 96 — #499 code review round 4: the trust-filter jq
       # wing-commander-issue-context ships had no behavioural coverage of
@@ -3959,44 +3971,6 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-fold-commit-composite.py --self-test
 
-      # Gate 111 — specs/062-lifecycle-review-gate T034/T035:
-      # wing-commander-fold-dispatch's shipped step really re-reads the spec
-      # branch's tip, dispatches implement-workflow only when the caller's
-      # folded-json names this run's own folds (never on a tip-move alone —
-      # specs/075 FR-014) and a target is configured, and still bumps the
-      # reported iteration in standalone mode — proven against a real git
-      # clone/remote, not a mock. Numbered 111, not the standalone slot tasks.md's T035 first
-      # drafted — see Gate 107's comment above for the Maintainer Feedback
-      # renumbering.
-      - name: "Gate 111 — wing-commander-fold-dispatch composite"
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-fold-dispatch-composite.py
-      - name: "Gate 111 self-test — a dispatch on a tip-move alone and a standalone-mode dispatch are both caught"
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-fold-dispatch-composite.py --self-test
-
-      # Gate 112 — specs/062-lifecycle-review-gate T048/T050:
-      # lifecycle_merge_preconditions.py's eight-condition decision refuses
-      # a merge for its OWN stated reason on every documented branch — a
-      # round clean at a DIFFERENT head SHA, a round that came back with
-      # findings, and a maintainer's standing CHANGES_REQUESTED are three
-      # different refusals, and FR-027 requires the gate to say which.
-      # Auto-merge is the one thing this feature does that a human action
-      # has to undo, so its decision is fixtured, not trusted. Numbered
-      # 112, not the 104 tasks.md's T050 originally reserved — see Gate
-      # 107's comment above for the Maintainer Feedback renumbering.
-      # #826: it also pins how every review_gate marker reader gets its
-      # comments — REST (`gh api .../issues/$N/comments --paginate`, pages
-      # merged), never `gh issue|pr view --json comments`, whose
-      # author{login} shape has no user.type for is_loop_marker_author() —
-      # and runs disposition's and merge's read steps against a stub gh.
-      - name: "Gate 112 — Lifecycle merge preconditions"
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-lifecycle-merge-preconditions.py
-      - name: "Gate 112 self-test — the bot's own review never blocks its merge, a plain comment never clears a standing CHANGES_REQUESTED, unmet_reason names only the first failing condition, and a --json comments, first-page-only, unmerged or unguarded marker read is caught"
-        if: "!cancelled()"
-        run: python3 .github/scripts/verify-lifecycle-merge-preconditions.py --self-test
-
       # Gate 113 — specs/062-lifecycle-review-gate T055/T057 (FR-038):
       # the constitution names every class of merge the pipeline can
       # actually perform. Principle V says the only merges the bot may
@@ -4022,6 +3996,14 @@ jobs:
       - name: "Gate 113 self-test — merge code with a silent constitution fails, and the Sync Impact Report's own prose never satisfies the check"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-constitution-merge-class-parity.py --self-test
+
+  lint-shard-6:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       # Gate 105 — specs/063-stage-clarify-label: every `stage:*` label
       # docs/setup.md documents either has a real writer among the shipped
@@ -4086,10 +4068,17 @@ jobs:
       # default branch before this branch's rebase landed) nor the 100 this
       # gate held next (main's own Gate 100, spec 079, claimed 100 first on
       # the default branch before this branch's second rebase landed).
-      - name: "Gate 104 — every uses: ./.github/actions/ reference in board-loop.yml resolves from the trusted copy, never the workspace"
+      # Rule (g) carries the uses:-block half to every other workflow: one
+      # that runs in a consumer's workspace (a `pipeline-repo` input) holds
+      # no raw `uses: ./.github/actions/`, and elsewhere no raw reference
+      # follows a workspace-root checkout of anything but the run's own
+      # commit. pr-conversation.yml's act job once resolved its
+      # outstanding-task-item composite from the PR branch it had just
+      # checked out at the root.
+      - name: "Gate 104 — every uses: ./.github/actions/ reference in board-loop.yml resolves from the trusted copy, never the workspace; no other workflow resolves one from an untrusted root"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-composite-provenance.py
-      - name: "Gate 104 self-test — a raw workspace uses:, a moved, dropped, mis-pinned, or continue-on-error checkout, a missing .gitignore entry, a widened ban, or a dropped write-protect step each fail"
+      - name: "Gate 104 self-test — a raw workspace uses:, a moved, dropped, mis-pinned, or continue-on-error checkout, a missing .gitignore entry, a widened ban, a dropped write-protect step, or a raw uses: after an untrusted root checkout in another workflow each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-composite-provenance.py --self-test
 
@@ -4441,6 +4430,40 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-prove-path-concurrency.py --self-test
 
+      # Gate 22 — wing-commander-agent-verdict (specs/037-agent-turn-budget-guard/)
+      # classifies a transcript correctly. Same discipline as Gate 11: the
+      # shipped run: block, extracted and executed against synthetic
+      # transcripts covering healthy-but-would-be-rejected, genuinely errored,
+      # exhausted, and unreadable, plus mutations reintroducing each defect
+      # class (reading is_error/subtype from the wrong record, collapsing
+      # unclassifiable/failed together, computing over-budget from the
+      # reported rather than counted total) to prove the suite can go red.
+      - name: Gate 22 — the agent verdict composite classifies transcripts correctly
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-agent-verdict.py
+
+      # Gate 34 — specs/042-post-review-fold-loop (research.md D1-D6): a
+      # review folds every leg exactly once before any implementation
+      # dispatch, dispatch itself happens exactly once per review (not per
+      # leg — the defect that cancelled leg 4 and iteration 3 against each
+      # other on PR #240), and a leg that dies without folding is reported
+      # by name, distinguishing "not folded" from "partly folded", derived
+      # only from signals a dead leg never had to publish itself. The leg's
+      # job is matched by its caller-prefixed API name ("pr-conversation /
+      # act (leg-0)"); the fixtures carry that shape, and a mutation that
+      # matches the bare name again must fail (#416).
+      - name: Gate 34 — a review folds every leg once and dispatches once, and a dead leg says so
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-dispatch-once.py
+
+  lint-shard-7:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
       # Gate 138 — specs/099-name-free-stage-identity T032/T033 (FR-012):
       # no FR-002 site in watchdog.yml or wing-commander-inspected-run-
       # identity/action.yml gates behavior on a reference display-name
@@ -4764,6 +4787,98 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-auto-release-poll-credential-failure.py
 
+      # Gate 111 — specs/062-lifecycle-review-gate T034/T035:
+      # wing-commander-fold-dispatch's shipped step really re-reads the spec
+      # branch's tip, dispatches implement-workflow only when the caller's
+      # folded-json names this run's own folds (never on a tip-move alone —
+      # specs/075 FR-014) and a target is configured, and still bumps the
+      # reported iteration in standalone mode — proven against a real git
+      # clone/remote, not a mock. Numbered 111, not the standalone slot tasks.md's T035 first
+      # drafted — see Gate 107's comment (in lint-shard-5) for the Maintainer Feedback
+      # renumbering.
+      - name: "Gate 111 — wing-commander-fold-dispatch composite"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-dispatch-composite.py
+
+      - name: "Gate 111 self-test — a dispatch on a tip-move alone and a standalone-mode dispatch are both caught"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-fold-dispatch-composite.py --self-test
+
+      # Gate 60 — specs/049-single-home-release-idioms: each of the three
+      # cross-workflow idioms auto-release.yml and auto-update-spec-kit.yml
+      # share (scoped App-token mint + reachability, orphan-branch
+      # force-reset, durable failure issue) and the fail-infra verdict
+      # shape now has exactly one home under .github/actions/_shared/, and
+      # a structural scan -- not merely an assertion that the two known
+      # consumers call the shared definitions -- fails on a third,
+      # unknown site pasting any of them anywhere under
+      # .github/workflows/ or .github/actions/, naming both the offending
+      # site and the shared home to call instead. A separate pass fails if
+      # a workflow_call-only stage or a published (non-underscore)
+      # composite action ever resolves an internal _shared/ path (FR-025).
+      # Also runs the byte-identity check (FR-009): the shipped
+      # auto-release-verdict.sh against every real verdict-construction
+      # site's captured pre-refactor inputs, diffed against their
+      # pre-refactor jq -n output.
+      #
+      # Numbered 60, not 52 as research.md/tasks.md call it: Gate 52 was
+      # free when this feature's plan was written and was taken by
+      # verify-auto-release-report.py (#325) before this feature's branch
+      # was rebased past it. The branch then registered this gate as 53,
+      # the next number free in its own tree -- but by the time of the
+      # maintainer's review of PR #347, spec 046's PR #341 had registered
+      # Gates 53-58 on main and spec 048's PR #342 had taken 59, so this
+      # gate moved again, to 60 -- see verify-single-home-idioms.py's own
+      # module docstring.
+      - name: Gate 60 — each of the three cross-workflow idioms and the fail-infra verdict shape has exactly one home, and no published surface resolves an internal helper
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-single-home-idioms.py
+
+      - name: Gate 60 self-test — the structural scan detects a third paste, a waiver suppresses only what it names, and promotion into a published surface fails
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-single-home-idioms.py --self-test
+
+      # Gate 95 — #499 code review round 4 (BLOCKER): a reviewer step that
+      # never wrote claude-execution-output.json (crashed, was OOM-killed)
+      # left parse-failed false and in-scope-count 0, reading as
+      # "converged" -- a PR advanced to readiness having never been
+      # reviewed. Executes the real "Extract and validate the review
+      # findings", "Decide the round outcome" and "Compose the review
+      # body" steps end to end (read out of board-loop.yml at run time)
+      # against four scenarios, plus three mutations proving each fix
+      # would actually be caught if silently reverted. #583: an out-of-
+      # scope title split by a line break sets no other step output (the
+      # raw $GITHUB_OUTPUT is checked), a multi-line title is
+      # flattened to one line (not dropped), a dropped finding stops the
+      # round converging and is named in the review body, lone surrogates
+      # are removed or rejected, the filing steps read each body from a
+      # fixed path, and a quoted dedupe marker does not suppress another
+      # finding's filing; one mutation per fix.
+      - name: "Gate 95 — the reviewer's fail-closed wiring (extract, round outcome, review body) is real"
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-reviewer-fail-closed.py
+
+      # Gate 82 — specs/057-autonomous-board-loop (FR-012/FR-064 bullet 1):
+      # triage may close an issue on exactly two code-derived grounds, and
+      # an agent's "already fixed on main" proposal must NEVER be one of
+      # them -- the fixture this gate pins is the one case where "the agent
+      # says so" and "the gate says so" could be confused for the same
+      # thing. Numbered 82, not 81 (its original slot): landing after
+      # Gate 80 (#397/#438) shifts this whole block by one, and an earlier
+      # pass only shifted Gate 81 (eligibility) itself, leaving this gate's
+      # number colliding with it -- fixed as part of #451's own review.
+      - name: Gate 82 — board loop triage resolves every FR-064 bullet-1 branch
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-board-triage.py
+
+  lint-shard-8:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
       # Gate 128 — specs/074-serialized-fold-dispatch (FR-021/FR-022): the
       # fold-queue admission wiring actually serializes every stage-9
       # concurrency contender through a ticket, and fold-cycle-guard.yml's
@@ -4964,8 +5079,10 @@ jobs:
       # comment does not count as running it — that is how an orphan would
       # hide from this check.
       - name: Gate 10 — every check is wired to a workflow, and every wire lands
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-wiring.py
       - name: "Gate 10 self-test — collided harness identities, .github/actions/ placement vs. orphan-hood, and both directions of missing/duplicate .github/actions/ references each fail loudly"
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-gate-wiring.py --self-test
 
       # Gate 119 — gate_scripts() discovers .github/scripts/ only (FR-001), so
@@ -4977,8 +5094,10 @@ jobs:
       # verify-actions-no-gate-scripts.py's own docstring gives. The
       # .github/actions/_shared/ carve-out is structural, not a waiver.
       - name: "Gate 119 — no test harness or standalone gate script lives under .github/actions/"
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-actions-no-gate-scripts.py
       - name: "Gate 119 self-test — a harness or standalone verify-* script under .github/actions/ (outside _shared/), at any depth, is caught; a _shared/ helper is not"
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-actions-no-gate-scripts.py --self-test
 
       # spec 110, FR-006 — the Haiku tier names claude-haiku-5-5; the retired
@@ -4986,22 +5105,29 @@ jobs:
       # constitution or the docs. The constitution half covers Principle II
       # as amended to 2.4.0 by its own PR (#988, tasks T004/T011).
       - name: "Gate 141 — no pipeline-chosen 4.5 Haiku model ID remains"
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-haiku-tier-model-id.py
       - name: "Gate 141 self-test — a workflow, docs or constitution hit, and an empty scan root, each fail"
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-haiku-tier-model-id.py --self-test
 
       # spec 110, FR-008/FR-010 — the diagnose shadow's comparison and its
       # stop condition are deterministic; each outcome and each bound branch
       # has a checked-in fixture under .github/scripts/fixtures/.
       - name: "Gate 142 — compare-diagnose-shadow classifies every trial outcome"
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-compare-diagnose-shadow.py
       - name: "Gate 143 — trial-bound stops the diagnose shadow at 102 days or 300 compared runs"
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-trial-bound.py
       - name: "Gate 144 — trial-summary reports meets, misses or sample too small from records alone"
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-trial-summary.py
       - name: "Gate 145 — the model:haiku implement opt-in keeps the 180-turn default and stays in the implement wrapper"
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-implement-haiku-optin.py
       - name: "Gate 145 self-test — a drifted budget, a haiku-before-opus order, a stray reader and a wrong escalation each fail"
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-implement-haiku-optin.py --self-test
 
       # spec 110, FR-009/SC-003 and constitution II (2.4.0) — the watchdog's
@@ -5010,8 +5136,10 @@ jobs:
       # the job backstop, its prompt byte-equal to Diagnose's, and read by no
       # acting step or job output.
       - name: "Gate 146 — the diagnose shadow acts on nothing"
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-diagnose-shadow-acts-on-nothing.py
       - name: "Gate 146 self-test — an App token, a write tool, an always() gate, a reordered step, a drifted prompt and a wrapper hard-on each fail"
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-diagnose-shadow-acts-on-nothing.py --self-test
 
       # spec 053, SC-007 (Constitution VIII) — the E2E onboarding-element
@@ -5019,10 +5147,45 @@ jobs:
       # future change cannot paste a second, independently-drifting copy of
       # it into a workflow or another script.
       - name: E2E provisioning single-home gate
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-e2e-provisioning-single-home.py
 
       - name: E2E provisioning single-home gate self-test
+        if: "!cancelled()"
         run: python3 .github/scripts/verify-e2e-provisioning-single-home.py --self-test
+
+      # specs/129-parallel-pr-lint (FR-003, FR-004, FR-004a): the `lint`
+      # aggregate is the one verdict check; it must run when a unit failed,
+      # was cancelled or was skipped, and must fail unless every unit
+      # succeeded, so the split cannot go green by omission.
+      - name: Gate 173 — the lint aggregate runs always() on pull requests and fails unless every unit succeeded
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lint-aggregate.py
+      - name: Gate 173 self-test — a missing always(), !cancelled(), a skip-tolerant result check, an omitted unit and an unnamed failure each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lint-aggregate.py --self-test
+
+      # specs/129-parallel-pr-lint (FR-005, FR-007, FR-009): the sharded
+      # layout keeps one `lint` job, every unit under it, unique step names,
+      # each gate in exactly one unit, every step but checkout guarded with
+      # !cancelled(), and run-local-gates.py's derived set equal to the
+      # union over the units.
+      - name: Gate 174 — the sharded lint layout holds its contract
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lint-shard-layout.py
+      - name: Gate 174 self-test — a wrong name, an unlisted unit, a duplicate step or gate, an unguarded step, a mispaired self-test, a gate in the aggregate and a derived/union divergence each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-lint-shard-layout.py --self-test
+
+      # Gate 41 — the metrics persistence append-with-retry algorithm
+      # survives a concurrent writer and fails loudly under sustained
+      # contention, run against the shipped "Append records with retry"
+      # `run:` block itself (MF-F1: previously a standalone
+      # reimplementation of the algorithm's shape, which is how MF-B3
+      # shipped past 16 green checks). No live subject in the repository.
+      - name: Gate 41 self-test — metrics persist append-with-retry survives contention
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-metrics-persist-retry.py --self-test
 
   # Gate 4 — behavioral tests for the auto-update-spec-kit stage pair. Gates
   # 1-3 are static: they prove a workflow parses, registers, and is permitted
@@ -5051,6 +5214,7 @@ jobs:
           persist-credentials: false
 
       - name: Gate 4 — auto-update-spec-kit behavioral tests
+        if: "!cancelled()"
         run: bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh
 
       # spec 053 — behavioral tests for provision-e2e-target.sh and the
@@ -5059,7 +5223,54 @@ jobs:
       # directly against a stubbed `gh`, so the suite cannot drift from what
       # actually ships. See .github/scripts/e2e-provisioning-tests/.
       - name: E2E provisioning behavioral tests
+        if: "!cancelled()"
         run: bash .github/scripts/e2e-provisioning-tests/run-tests.sh
+
+  # The one PR check named `lint` (specs/129-parallel-pr-lint,
+  # contracts/lint-workflow-layout.md). The suite runs as eight shard jobs
+  # plus `harness tests`; this aggregate is what every verdict reader keeps
+  # matching by the name `lint`. `always()` so a
+  # failed, cancelled or skipped unit still runs it and turns it red: a
+  # skipped aggregate would read as green by omission. It passes only when
+  # every unit's result is exactly `success`, and names each one that is
+  # not. Gate: verify-lint-aggregate.py.
+  lint:
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs:
+      - lint-shard-1
+      - lint-shard-2
+      - lint-shard-3
+      - lint-shard-4
+      - lint-shard-5
+      - lint-shard-6
+      - lint-shard-7
+      - lint-shard-8
+      - harness-tests
+    runs-on: ubuntu-latest
+    # One jq read of `needs`: minutes, not GitHub's six-hour default, so a
+    # stuck runner cannot hold the `lint` check open (Gate 173; code review
+    # of #1233). Its cancel behaviour is the post-merge drill's (T029).
+    timeout-minutes: 5
+    steps:
+      - name: Every lint unit succeeded
+        # always(), not the implicit success(): on a cancelled run the
+        # implicit guard would skip this step and leave the check without a
+        # failure; always() runs it, and a cancelled unit then fails it.
+        if: ${{ always() }}
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          bad="$(printf '%s' "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"')"
+          if [ -n "$bad" ]; then
+            echo "::error::lint units that did not succeed:"
+            printf '%s\n' "$bad"
+            {
+              echo "### lint units that did not succeed"
+              printf '%s\n' "$bad" | sed 's/^/- /'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "All lint units succeeded."
 
   # Gate 1 — the catch-all. When GitHub cannot parse a workflow file it
   # registers the workflow with its PATH as its name and creates a failed

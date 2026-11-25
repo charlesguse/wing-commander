@@ -1,0 +1,47 @@
+{
+  "snapshot": {
+    "headRefOid": "abcd129",
+    "statusCheckRollup": [
+      {
+        "name": "lint-shard-1",
+        "workflowName": "lint · workflows",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "completedAt": "2026-11-25T12:00:00Z"
+      },
+      {
+        "name": "lint-shard-2",
+        "workflowName": "lint · workflows",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "completedAt": "2026-11-25T12:00:00Z"
+      },
+      {
+        "name": "harness tests",
+        "workflowName": "lint · workflows",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "completedAt": "2026-11-25T12:00:00Z"
+      }
+    ],
+    "mergeable": "MERGEABLE"
+  },
+  "review_gate": {
+    "round": 2,
+    "head_sha": "abcd129",
+    "outcome": "clean",
+    "findings_open": 0,
+    "folded_fingerprints": [],
+    "filed_fingerprints": [],
+    "updated_at": "2026-11-25T11:00:00Z"
+  },
+  "kill_switch_paused": false,
+  "reviews": [],
+  "bot_login": "wing-commander-bot",
+  "now": "2026-11-25T12:01:00Z",
+  "expected": {
+    "may_merge": false,
+    "unmet_reason": "gate_suite_green",
+    "pending": true
+  }
+}

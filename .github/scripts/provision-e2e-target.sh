@@ -183,23 +183,14 @@ act_wrapper_set() { # act_wrapper_set OWNER NAME
   [ -n "$default_branch" ] || default_branch="main"
   for f in "${WRAPPER_FILES[@]}"; do
     stage="${WRAPPER_STAGE_FILE[$f]}"
-    # Pins the stage call and the wrapper's pipeline-ref (#1083) -- see
-    # .github/actions/_shared/pin-e2e-wrapper.sh.
+    # Pins the stage call and the wrapper's pipeline-ref (#1083), and
+    # names the target's default branch where the wrapper names `main`
+    # (#889) -- see .github/actions/_shared/pin-e2e-wrapper.sh.
     content="$(bash "$REPO_ROOT/.github/actions/_shared/pin-e2e-wrapper.sh" \
-      "$REPO_ROOT/.github/workflows/$f" "$stage" "$this_repo" "$head_sha" "$head_sha")" || {
+      "$REPO_ROOT/.github/workflows/$f" "$stage" "$this_repo" "$head_sha" "$head_sha" "$default_branch")" || {
       echo "provision-e2e-target.sh: could not pin $f for $owner/$name -- refusing to install a wrapper that would check out the wrong pipeline commit (#1083)" >&2
       exit 1
     }
-    # docs/adoption.md's own instruction, applied the same way
-    # auto-release.yml's scaffold step applies it: replace the literal
-    # `main` in the two wrappers whose gate/trigger names it with the
-    # target's actual default branch.
-    if [ "$f" = "wing-commander-3-plan.yml" ]; then
-      content="$(printf '%s\n' "$content" | sed "s/== 'main'/== '${default_branch}'/")"
-    fi
-    if [ "$f" = "wing-commander-rebase.yml" ]; then
-      content="$(printf '%s\n' "$content" | sed "s/branches: \[main\]/branches: [${default_branch}]/")"
-    fi
     b64="$(printf '%s\n' "$content" | base64 | tr -d '\n')"
     sha="$(gh api "repos/$owner/$name/contents/.github/workflows/$f" -q .sha 2>/dev/null || true)"
     if [ -n "$sha" ]; then
