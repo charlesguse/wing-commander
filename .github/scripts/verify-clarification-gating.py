@@ -90,6 +90,9 @@ MARKER_COMPOSITE = ".github/actions/wing-commander-clarification-marker/action.y
 MARKER_COMPOSITE_STEP = "Scan spec.md for an open clarification marker"
 MARKER_STEP = "Scan spec.md for an open clarification marker"   # in each stage
 MARKER_PSEUDO = "<composite: wing-commander-clarification-marker>"
+# The permissions of the job that runs the stage's chain-stop notice ride
+# along as a pseudo step too, so a structural mutation can edit them.
+NOTICE_JOB_PSEUDO = "<job: runs wing-commander-chain-stop-notice>"
 MARKER_OUTPUT_REF = "${{ steps.marker-scan.outputs.open }}"
 FAILED_STEP = "Determine failed post-agent step"
 MARKER_CANDIDATE = ('{"name": "%s", "conclusion": '
@@ -196,11 +199,17 @@ def load_steps(stage):
     """Map step name -> step dict for the single job in the stage file."""
     wf = yaml.safe_load(open(stage.path, encoding="utf-8")) or {}
     steps = {}
-    for job in (wf.get("jobs") or {}).values():
+    notice_jobs = []
+    for job_id, job in (wf.get("jobs") or {}).items():
         for step in (job or {}).get("steps") or []:
             name = (step or {}).get("name")
             if name and name not in steps:
                 steps[name] = step
+            if "wing-commander-chain-stop-notice" in str((step or {}).get("uses") or ""):
+                notice_jobs.append(job_id)
+    steps[NOTICE_JOB_PSEUDO] = {
+        "jobs": {j: copy.deepcopy((wf["jobs"][j] or {}).get("permissions"))
+                 for j in notice_jobs}}
     wanted = ([stage.validate, stage.decide] + stage.callout_steps
               + stage.fail_steps)
     missing = [n for n in wanted if n not in steps]
@@ -1289,6 +1298,32 @@ def structural_checks(loaded):
                 "spec-branch: the spec/<slug> branch does not exist before the "
                 f"spec PR merges (#1103); offending step(s): {bad or 'none found'}")
 
+    # #889 (least privilege): before the spec PR merges neither stage has a
+    # record to mark, so the job that runs its chain-stop notice pushes
+    # nothing and its GITHUB_TOKEN reads only (the two checkouts).
+    for stage, steps, _ in loaded:
+        notice = [st for name, st in steps.items() if name != NOTICE_JOB_PSEUDO
+                  and "wing-commander-chain-stop-notice" in str((st or {}).get("uses") or "")]
+        jobs = (steps.get(NOTICE_JOB_PSEUDO) or {}).get("jobs") or {}
+        problems = []
+        if not jobs:
+            problems.append("no job runs wing-commander-chain-stop-notice")
+        if any(str((st.get("with") or {}).get("spec-dir", "<unset>")) != ""
+               for st in notice):
+            problems.append("a chain-stop-notice call passes a non-empty spec-dir")
+        for job_id, perms in jobs.items():
+            if not isinstance(perms, dict):
+                problems.append(f"job {job_id!r} sets no explicit permissions "
+                                f"map ({perms!r}), so it inherits the caller's")
+            elif perms.get("contents") != "read":
+                problems.append(f"job {job_id!r} grants contents: "
+                                f"{perms.get('contents')!r}, not read")
+        if problems:
+            failures.append(
+                f"{stage.name}'s stall-notice job must hold contents: read: it "
+                f"marks no record before the spec PR merges (#889); "
+                + "; ".join(problems))
+
     # 1. The two render blocks are one algorithm.
     renders = {}
     for stage, steps, _ in loaded:
@@ -1616,6 +1651,22 @@ def smut_clarify_marks_spec_branch(loaded):
                 st["with"]["spec-branch"] = "spec/${{ steps.identity.outputs.slug }}"
 
 
+def smut_stall_job_regains_contents_write(loaded):
+    """#889 reverted: intake's stall-notice job writes contents again."""
+    for stage, steps, _ in loaded:
+        if stage.name == "intake":
+            for perms in steps[NOTICE_JOB_PSEUDO]["jobs"].values():
+                perms["contents"] = "write"
+
+
+def smut_clarify_stall_job_drops_permissions(loaded):
+    """clarify's stall-notice job loses its permissions map (inherits)."""
+    for stage, steps, _ in loaded:
+        if stage.name == "clarify":
+            for job_id in steps[NOTICE_JOB_PSEUDO]["jobs"]:
+                steps[NOTICE_JOB_PSEUDO]["jobs"][job_id] = None
+
+
 # Mutations of what only structural_checks() can see.
 STRUCTURAL_MUTATIONS = [
     ("intake carrying its own copy of the marker scan", smut_intake_inlines_scan),
@@ -1627,6 +1678,10 @@ STRUCTURAL_MUTATIONS = [
      smut_scan_not_a_failed_step_candidate),
     ("clarify's stall notice marking a spec/<slug> branch that does not "
      "exist yet (#1103)", smut_clarify_marks_spec_branch),
+    ("intake's stall-notice job granted contents: write again (#889)",
+     smut_stall_job_regains_contents_write),
+    ("clarify's stall-notice job with no permissions map (#889)",
+     smut_clarify_stall_job_drops_permissions),
 ]
 
 
