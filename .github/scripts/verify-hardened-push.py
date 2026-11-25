@@ -300,17 +300,17 @@ def check_shim_guards(hardening=HARDENING):
 
         if push("HEAD", linked).returncode == 0 or subprocess.run(
                 ["git", "rev-parse", "--verify", "refs/heads/HEAD"], cwd=bare,
-                capture_output=True).returncode == 0:
+                env=git_env(), capture_output=True).returncode == 0:
             errors.append("wc_push_from_shim pushed a branch literally named HEAD")
         got = push("main", linked)
         landed = subprocess.run(["git", "rev-parse", "--verify", "refs/heads/main"], cwd=bare,
-                                capture_output=True, text=True).stdout.strip()
+                                env=git_env(), capture_output=True, text=True).stdout.strip()
         if got.returncode != 0 or landed != head:
             errors.append("wc_push_from_shim could not push from a linked worktree: "
                           + (got.stdout + got.stderr)[-300:])
         tracking = subprocess.run(["git", "rev-parse", "--verify", "-q",
                                    "refs/remotes/origin/main"], cwd=linked,
-                                  capture_output=True, text=True).stdout.strip()
+                                  env=git_env(), capture_output=True, text=True).stdout.strip()
         if tracking != head:
             errors.append("wc_push_from_shim left the checkout's refs/remotes/origin/<branch> "
                           "behind the push, as a plain `git push origin` would not")
