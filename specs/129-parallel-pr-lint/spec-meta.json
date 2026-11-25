@@ -1,3 +1,11 @@
-{"issue": 1198, "spec_dir": "specs/129-parallel-pr-lint",
- "feature_num": "129", "stage": "implement", "iteration": 1,
- "spec_branch": "spec/129-parallel-pr-lint"}
+{
+  "issue": 1198,
+  "spec_dir": "specs/129-parallel-pr-lint",
+  "feature_num": "129",
+  "stage": "implement",
+  "iteration": 1,
+  "spec_branch": "spec/129-parallel-pr-lint",
+  "truncated_count": 0,
+  "truncated_tier": null,
+  "gate_suite_ready": true
+}
