@@ -111,6 +111,8 @@ on:
       # code reviews of #940; each gate compares its document with code,
       # so an edit to the document alone has to run the gate. Gate 84
       # reads labels-and-cross-links.md's board:stalled sources (#889).
+      # Gate 165 reads readiness-report.md for unscoped "never merges"
+      # prose (#889).
       - "docs/adoption.md"
       - "specs/057-autonomous-board-loop/contracts/board-loop-workflow.md"
       - "specs/057-autonomous-board-loop/contracts/labels-and-cross-links.md"
@@ -4901,7 +4903,8 @@ jobs:
       # method, no --admin/--auto/approval, both switches in its `if:`, the
       # App token (so prove-gate sees the closed event), and no decision
       # logic of its own. The auto-update stage posts the verification record
-      # and never merges.
+      # and never merges, and no board-loop document claims the whole loop
+      # never merges.
       - name: Gate 165 — board loop self-merge decision, refusal classes and merge-job shape
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-merge.py

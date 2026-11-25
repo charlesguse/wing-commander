@@ -14,7 +14,8 @@ shape; even there approvals and auto-merge stay forbidden. The one thing
 standing between "ready" and a merge of stale evidence is this
 decision — a regression that reported ready against a check that ran on
 an earlier push, or against unresolved findings, would look identical to
-correct behavior on every fixture except the one it broke. This gate pins all six documented branches.
+correct behavior on every fixture except the one it broke. This gate pins
+every documented branch (EXPECTED_CASES).
 
 `check_no_merge_invariant()` (T066, SC-004) is the second, structural half
 of that same invariant: the six snapshot fixtures below prove the decision
@@ -60,7 +61,8 @@ EXPECTED_CASES = {
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"
 
-# FR-068: none of these API shapes may appear anywhere in board-loop.yml.
+# FR-068: none of these API shapes may appear anywhere in board-loop.yml
+# outside its `merge` job (see MERGE_JOB_ALLOWED_LABELS below).
 # Matched as regexes against the raw line text so a merge call split across
 # `gh pr merge "$PR" \` / `  --squash` is still caught on whichever line
 # carries the flag.
@@ -239,8 +241,10 @@ def self_test():
     # The `merge` job may merge (spec 115), so the error must not claim the
     # whole workflow never merges (code review of #1227).
     readiness_errors = check_no_merge_invariant(["  readiness:", in_job[1]], path="fixture.yml")
+    readiness_annotations = [e for e in readiness_errors if e.startswith("::error::")]
     check("the error names the `merge` job carve-out",
-          all("outside its `merge` job" in e for e in readiness_errors if e.startswith("::error::")),
+          bool(readiness_annotations)
+          and all("outside its `merge` job" in e for e in readiness_annotations),
           "got {0!r}".format(readiness_errors))
 
     print("{0} failure(s).".format(failures))

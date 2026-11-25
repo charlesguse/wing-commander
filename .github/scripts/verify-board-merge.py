@@ -12,6 +12,8 @@ evaluator cannot look identical to a working one. The workflow half is
 structural: the `merge` job may call `gh pr merge` only pinned to the head SHA
 it evaluated, never with `--admin`, `--auto`, an approval, or a second merge
 method, only behind both switches, and without dispatching proof runs itself.
+Because that job merges, no board-loop document may say the whole loop never
+merges (UNSCOPED_MERGE_CLAIMS).
 
 Fixtures live in .github/scripts/fixtures/board-merge/, named
 `<class>-<condition>[-variant].json` (a case where that condition is the
