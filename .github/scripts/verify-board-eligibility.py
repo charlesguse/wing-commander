@@ -67,7 +67,11 @@ own-marker-newer-forged-ignored keeps the loop's own marker authoritative
 when newer foreign ones follow it. unowned-open-pr: a marker whose PR the
 select lookup reported as UNOWNED_OPEN_PR_STATE (open, not the loop's own)
 is not in-flight, and the fallback passes its issue over, so the resume
-step's no-op hold for it is not re-selected every run. AUTHOR_MUTATIONS swap weaker
+step's no-op hold for it is not re-selected every run. unowned-merged-pr
+(#1211): an awaiting-merge marker whose PR the lookup reported as
+UNOWNED_MERGED_PR_STATE (merged, not the loop's own) is not held -- no
+displacement scan or prove ever reaches it -- so select() admits its
+issue, the oldest, for resume to send to a fresh triage. AUTHOR_MUTATIONS swap weaker
 predicates into board_item_marker and must each fail a case, and
 board_eligibility.py's main() must refuse a payload with no bot_login.
 
@@ -131,6 +135,7 @@ IN_FLIGHT_CASES = {
     "forged-marker-other-app",
     "own-marker-newer-forged-ignored",
     "unowned-open-pr",
+    "unowned-merged-pr",
     "forged-marker-in-own-comment",
     "forged-marker-unclosed-in-own-comment",
     "breach-pr-open",

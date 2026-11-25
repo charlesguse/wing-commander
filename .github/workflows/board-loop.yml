@@ -776,8 +776,14 @@ jobs:
               # board:owned removed) is recorded as
               # board_eligibility.UNOWNED_OPEN_PR_STATE: never in-flight,
               # and passed over by select()'s fallback until it closes.
-              if [ "$pr_state" = "OPEN" ] && [ "$(jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ" "$RUNNER_TEMP/board-lookup-pr.json")" != "true" ]; then
-                pr_state="OPEN_UNOWNED"
+              # Issue #1211: a MERGED one that is not this loop's own is
+              # board_eligibility.UNOWNED_MERGED_PR_STATE -- never held, since
+              # the displacement scan and prove-gate both pass it by.
+              if [ "$(jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ" "$RUNNER_TEMP/board-lookup-pr.json")" != "true" ]; then
+                case "$pr_state" in
+                  OPEN) pr_state="OPEN_UNOWNED" ;;
+                  MERGED) pr_state="MERGED_UNOWNED" ;;
+                esac
               fi
               jq --arg n "$pr_number" --arg s "$pr_state" '. + {($n): $s}' \
                 "$RUNNER_TEMP/board-pr-state-by-number.json" > "$RUNNER_TEMP/board-pr-state-by-number.tmp"

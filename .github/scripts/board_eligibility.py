@@ -131,6 +131,16 @@ TERMINAL_STEPS = frozenset({"closed", "stalled", "proven", DUPLICATE_STEP})
 # _merged_fix_holds() instead), so the resume step's no-op
 # hold for it is never re-selected every run.
 UNOWNED_OPEN_PR_STATE = "OPEN_UNOWNED"
+# Issue #1211: the same lookup records a MERGED PR that is not this loop's
+# own as this state instead of "MERGED". Nothing would ever release such a
+# hold: the displacement scan lists only board:owned merges and prove-gate
+# refuses a PR that fails BOARD_PR_OWNED_JQ, so no prove marker is ever
+# written for it. It is never held -- like a CLOSED PR, the item is
+# admitted and the resume step's foreign-PR clause sends it to a fresh
+# triage, which reads current main with the merge already on it.
+UNOWNED_MERGED_PR_STATE = "MERGED_UNOWNED"
+# States select's holds treat as "this PR can no longer move".
+_SETTLED_PR_STATES = ("CLOSED", "MERGED", UNOWNED_MERGED_PR_STATE)
 
 # specs/093-not-ready-board-release, contracts/not-ready-hold.md,
 # spec.md Assumptions -- "Threshold value: 3 not-ready outcomes per PR", a
@@ -499,7 +509,7 @@ def not_ready_hold_reason(marker, pr_state_by_number, pr_head_sha_by_number):
         pr = int(marker.get("pr"))
     except (TypeError, ValueError):
         pr = None
-    if pr is not None and (pr_state_by_number or {}).get(pr) in ("CLOSED", "MERGED"):
+    if pr is not None and (pr_state_by_number or {}).get(pr) in _SETTLED_PR_STATES:
         return None
     # select's lookup leaves no state only for a PR that 404s (any other
     # failure stops the run): a PR that no longer exists can never close
@@ -564,7 +574,7 @@ def _awaiting_merge_holds(marker, pr_state_by_number):
         pr = int(marker.get("pr"))
     except (TypeError, ValueError):
         return True
-    return pr_state_by_number.get(pr) not in ("CLOSED", "MERGED")
+    return pr_state_by_number.get(pr) not in _SETTLED_PR_STATES
 
 
 def _unowned_open_pr_holds(marker, pr_state_by_number):
@@ -594,7 +604,9 @@ def _merged_fix_holds(marker, pr_state_by_number):
     (research.md D8/FR-010b, `board_prove_displacement.find_undetected_merges()`),
     which already treats "no later prove/proven marker" as undetected
     regardless of select()'s own picks, and writes the `step=prove`
-    marker FR-011's recovery mechanism then acts on."""
+    marker FR-011's recovery mechanism then acts on. A merge that is not
+    the loop's own (UNOWNED_MERGED_PR_STATE) is never held: that scan
+    never sees it, so the hold would be forever (#1211)."""
     if (marker or {}).get("step") not in FIX_OR_LATER_STEPS:
         return False
     try:
