@@ -210,7 +210,7 @@ def without_fix_proof_problems():
             with open(os.path.join(root, "mod.py"), "w", encoding="utf-8") as fh:
                 fh.write("def f():\n    return {0}\n".format(value))
         for name, body in (("test_fix.py", _FIX_TEST), ("test_weak.py", _WEAK_TEST),
-                           ("test_existing.py", _EXTENDED_TEST)):
+                           ("test_a_weak.py", _WEAK_TEST), ("test_existing.py", _EXTENDED_TEST)):
             with open(os.path.join(pr, "tests", name), "w", encoding="utf-8") as fh:
                 fh.write(body)
         with open(os.path.join(base, "tests", "test_existing.py"), "w", encoding="utf-8") as fh:
@@ -220,16 +220,22 @@ def without_fix_proof_problems():
                 fh.write(body)
         _reviewer_tree(rev)
         for added, modified, want_with, want_without, answer in (
-                ("tests/test_fix.py", None, 0, "non-zero", None),
-                ("tests/test_weak.py", None, 0, 0, wc_shared_review.NEGATIVE),
+                (["tests/test_fix.py"], [], 0, "non-zero", None),
+                (["tests/test_weak.py"], [], 0, 0, wc_shared_review.NEGATIVE),
                 # R1: a fix that extends an existing test (no test added).
-                (None, "tests/test_existing.py", 0, "non-zero", None),
+                ([], ["tests/test_existing.py"], 0, "non-zero", None),
                 # N1: a modified check the fix itself changes passes on the
                 # overlay tree, and code must not call that negative.
-                (None, "tests/verify-thing.py", 0, 0, None)):
-            out = wc_shared_review.stage_code_run(pr, rev, [added] if added else [], timeout=120,
-                                                  base_tree=base, modified_files=[modified] if modified else [])
-            added = added or modified
+                ([], ["tests/verify-thing.py"], 0, 0, None),
+                # Round 5: with two candidates the one that runs is a guess
+                # (here a weak one sorted before the real check, then an
+                # added one beside the extended test), so its passing is
+                # not determinable, never negative.
+                (["tests/test_fix.py", "tests/test_a_weak.py"], [], 0, 0, wc_shared_review.UNDETERMINABLE),
+                (["tests/test_weak.py"], ["tests/test_existing.py"], 0, 0, wc_shared_review.UNDETERMINABLE)):
+            out = wc_shared_review.stage_code_run(pr, rev, added, timeout=120,
+                                                  base_tree=base, modified_files=modified)
+            added = ",".join(added + modified)
             named = (out.get("named_check") or {}).get("exit")
             without = (out.get("named_check_without_fix") or {}).get("exit")
             if out.get("status") != "staged" or named != want_with:

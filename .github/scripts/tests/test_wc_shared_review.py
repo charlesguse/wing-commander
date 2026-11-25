@@ -811,6 +811,40 @@ class ReviewRound5Fixes(unittest.TestCase):
             self.assertEqual(sr.read_path_list(path), ["tests/test_ü.py", "a b/README.md"])
             self.assertEqual(sr.named_check_file([], sr.read_path_list(path)), "tests/test_ü.py")
 
+    def test_with_more_than_one_candidate_a_passing_added_check_is_not_determinable(self):
+        # Round 5, finding 2: only the first candidate runs, so an added one
+        # passing without the fix says nothing about the others: not
+        # determinable, never negative, and never clean on the agent's say-so.
+        self.assertEqual(sr.named_check_candidates(["z/test_new.py", "a/test_x.py"], ["b/verify-y.py", "c.md"]),
+                         ["a/test_x.py", "z/test_new.py", "b/verify-y.py"])
+        import tempfile
+        ok = {"exit": 0, "output_tail": ""}
+        answers = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
+        for added, modified in ((["x/test_weak.py", "x/test_fix.py"], []), (["x/test_weak.py"], ["x/test_old.py"])):
+            with tempfile.TemporaryDirectory() as base:
+                box = FakeSandbox({1: ok, 3: ok, 2: ok})
+                out = sr.stage_code_run("tree", "rev", added, timeout=60, sandbox=box, base_tree=base,
+                                        modified_files=modified)
+            self.assertEqual(out["named_check_file"], sorted(added)[0])
+            self.assertEqual(out["named_check_tier"], "added")
+            answer, why = sr.check_fails_without_fix(out)
+            self.assertEqual(answer, sr.UNDETERMINABLE)
+            self.assertIn("2 files could be", why)
+            self.assertEqual(sr.check_fails_without_fix(dict(out, named_check_without_fix={"exit": 124}))[0],
+                             sr.UNDETERMINABLE)
+            self.assertEqual(sr.check_fails_without_fix(dict(out, named_check_without_fix={"exit": 1})),
+                             (None, None))
+            rec_ = sr.finalize_round({"round": 1, "prior": []}, {"answers": {}, "candidates": []},
+                                     {"checks": [], "answers": answers}, out, {"type": "issue", "ref": "7"},
+                                     "a" * 40, [], 5, "b" * 40, "open")
+            self.assertEqual(rec_["purpose"]["answers"]["check_fails_without_fix"], sr.UNDETERMINABLE)
+            self.assertEqual(rec_["verdict"], "undetermined")
+        # one candidate: an added check passing without the fix is still negative (SC-005)
+        with tempfile.TemporaryDirectory() as base:
+            out = sr.stage_code_run("tree", "rev", ["x/test_fix.py"], timeout=60,
+                                    sandbox=FakeSandbox({1: ok, 3: ok, 2: ok}), base_tree=base)
+        self.assertEqual(sr.check_fails_without_fix(out)[0], sr.NEGATIVE)
+
 
 if __name__ == "__main__":
     unittest.main()

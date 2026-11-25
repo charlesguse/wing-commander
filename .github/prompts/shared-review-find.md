@@ -30,6 +30,9 @@ Answer, in this order:
    `not_determinable` when it is missing, timed out or could not start. A
    modified check (`named_check_tier`) that passes there is for you to judge
    from the diff: the fix may change that file or a fixture it reads.
+   When `named_check_candidates` lists more than one file, only
+   `named_check_file` ran: an added one passing there is `not_determinable`
+   by code, and otherwise judge whether it is the check for the fix.
 4. What does the change break?
 
 Each answer is `positive`, `negative` or `not_determinable`, with a short

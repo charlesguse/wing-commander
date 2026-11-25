@@ -28,6 +28,9 @@ Code records `negative` when an added check passes there and `not_determinable`
 when the run is missing, timed out or could not start, whatever you answer. When
 `named_check_tier` is `modified` and it passes there, the answer is yours: the
 fix may change that check file, or a fixture it reads, so read the diff.
+When `named_check_candidates` lists more than one file, only
+`named_check_file` ran: an added one passing there is `not_determinable` by
+code, and otherwise judge from the diff whether it is the check for the fix.
 
 Finally restate the three purpose answers (`problem_real`, `change_fixes`,
 `check_fails_without_fix`) after your own check: `positive`, `negative` or

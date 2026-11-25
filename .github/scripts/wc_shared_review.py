@@ -624,18 +624,28 @@ def named_check_argv(path):
 
 
 def named_check_file(added_files, modified_files=None):
-    """The path of the change's named check, or None.
+    """The path of the change's named check, or None: the first of
+    named_check_candidates()."""
+    found = named_check_candidates(added_files, modified_files)
+    return found[0] if found else None
+
+
+def named_check_candidates(added_files, modified_files=None):
+    """Every file that could be the change's named check, in preference order.
 
     Preference order, deterministic: an ADDED file first, else a MODIFIED
     one (a fix usually extends an existing test or verify script, R1), each
-    tier in sorted order. Its run without the fix overlays the PR's version
-    of that one file on the merge-base tree, so a modified check runs its
-    new case against the unfixed code.
+    tier in sorted order. Only the first is run; with more than one, which
+    file exercises the fix is a guess, so code decides nothing from its
+    run (check_fails_without_fix, round 5). Its run without the fix
+    overlays the PR's version of that one file on the merge-base tree, so a
+    modified check runs its new case against the unfixed code.
 
     The change's own check is a test the change adds to exercise its fix,
     not a file it adds as test data: a path under a `fixtures` directory or
     a spec's directory is never chosen. A path component starting with `-`
     is refused, so no part of the path reads as an option to the runner."""
+    found = []
     for path in sorted(added_files or []) + sorted(modified_files or []):
         parts = path.split("/")
         if ".." in parts or path.startswith("/") or any(p.startswith("-") for p in parts):
@@ -644,8 +654,9 @@ def named_check_file(added_files, modified_files=None):
             continue
         base = path.rsplit("/", 1)[-1]
         if re.fullmatch(r"(verify-[\w.-]+|test_[\w.-]+)\.py", base) or base == "run-tests.sh":
-            return path
-    return None
+            if path not in found:
+                found.append(path)
+    return found
 
 
 # The PR's code runs as this throwaway system user, never as the runner's
@@ -872,7 +883,8 @@ def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT
     run (FR-012)."""
     pr_tree, reviewer_tree = os.path.abspath(pr_tree), os.path.abspath(reviewer_tree)
     box = sandbox if sandbox is not None else UidSandbox(origin_url=origin_url)
-    path = named_check_file(added_files, modified_files)
+    candidates = named_check_candidates(added_files, modified_files)
+    path = candidates[0] if candidates else None
     argv = named_check_argv(path) if path else None
     try:
         box.open(pr_tree, reviewer_tree)
@@ -888,6 +900,7 @@ def stage_code_run(pr_tree, reviewer_tree, added_files, timeout=CODE_RUN_TIMEOUT
         box.close()
     tier = None if not path else ("added" if path in (added_files or []) else "modified")
     return {"status": "staged", "named_check": named, "named_check_tier": tier,
+            "named_check_file": path, "named_check_candidates": candidates,
             "named_check_without_fix": without, "gate_suite": gates}
 
 
@@ -903,7 +916,10 @@ def check_fails_without_fix(code_run):
     other
     failure without the fix is for the agent to judge from the output: it
     is positive only if the check fails for the reason the fix addresses,
-    not because a helper the PR also adds is absent."""
+    not because a helper the PR also adds is absent. With more than one
+    candidate check, the added one that ran is a guess: its passing says
+    nothing about the others, which did not run, so that is not
+    determinable rather than negative (round 5)."""
     if (code_run or {}).get("status") != "staged":
         return UNDETERMINABLE, "code-run results missing"
     if not code_run.get("named_check"):
@@ -919,6 +935,11 @@ def check_fails_without_fix(code_run):
             return None, ("the modified named check passes on the merge-base tree with its own "
                           "file overlaid; the fix may change that file or a fixture it reads, so "
                           "the checking job's answer stands")
+        candidates = code_run.get("named_check_candidates") or []
+        if len(candidates) > 1:
+            return UNDETERMINABLE, ("the added named check passes without the fix, but {0} files could be "
+                                    "the change's named check and only the first in preference order "
+                                    "ran".format(len(candidates)))
         return NEGATIVE, "the named check passes without the fix"
     if without["exit"] in (124, 127):
         return UNDETERMINABLE, "the named check without the fix timed out or could not start"
