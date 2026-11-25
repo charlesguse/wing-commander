@@ -18,12 +18,13 @@ correct behavior on every fixture except the one it broke. This gate pins
 every documented branch (EXPECTED_CASES).
 
 `check_no_merge_invariant()` (T066, SC-004) is the second, structural half
-of that same invariant: the six snapshot fixtures below prove the decision
-logic never *reports* ready on stale/absent/failing evidence, but nothing
-before T066 read board-loop.yml's own text to prove no job but `merge`
-*acts* on readiness with a merge, approval, or auto-merge call. Textual,
-line-based, in the shape verify-correlated-release-dispatch.py's Gate 59
-already uses for the same kind of raw-YAML invariant.
+of that same invariant: the snapshot fixtures below (EXPECTED_CASES)
+prove the decision logic never *reports* ready on stale/absent/failing
+evidence, but nothing before T066 read board-loop.yml's own text to
+prove no job but `merge` *acts* on readiness with a merge, approval, or
+auto-merge call. Textual, line-based, in the shape
+verify-correlated-release-dispatch.py's Gate 59 already uses for the same
+kind of raw-YAML invariant.
 
 Fixtures (FR-064 bullet 4), each a checked-in `gh pr view` JSON snapshot
 under .github/scripts/tests/board-readiness/<case>/. Fails loudly, not

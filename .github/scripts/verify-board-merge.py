@@ -440,12 +440,22 @@ UNSCOPED_MERGE_CLAIMS = (
     "the loop may report a pr ready, but it may never merge",
     "the loop stops at ready to merge",
 )
+# Every board_*.py module (glob, so a new one is read without an edit here)
+# and board-loop.yml itself, besides the documents named below: a fixed list
+# of four missed board_eligibility.py's AWAITING_MERGE_STEP comment (found by
+# the code review of #1237).
 UNSCOPED_MERGE_CLAIM_DOCS = (
     ".github/scripts/verify-board-readiness.py",
-    ".github/scripts/board_readiness.py",
+    ".github/workflows/board-loop.yml",
     ".github/workflows/lint-workflows.yml",
     "specs/057-autonomous-board-loop/contracts/readiness-report.md",
 )
+UNSCOPED_MERGE_CLAIM_GLOB = ".github/scripts/board_*.py"
+
+
+def unscoped_merge_claim_docs():
+    modules = sorted(glob.glob(UNSCOPED_MERGE_CLAIM_GLOB))
+    return list(UNSCOPED_MERGE_CLAIM_DOCS) + modules
 
 
 def _fold_prose(text):
@@ -481,7 +491,12 @@ def check_unscoped_merge_claims_self_test():
 
 
 def check_unscoped_merge_claims():
-    for path in UNSCOPED_MERGE_CLAIM_DOCS:
+    docs = unscoped_merge_claim_docs()
+    for module in (".github/scripts/board_readiness.py", ".github/scripts/board_eligibility.py"):
+        if module not in docs:
+            fail("{0} matched no {1}; the unscoped-claim scan has lost its board modules".format(
+                module, UNSCOPED_MERGE_CLAIM_GLOB))
+    for path in docs:
         if not os.path.isfile(path):
             fail("{0} does not exist; run from the repository root".format(path))
             continue
