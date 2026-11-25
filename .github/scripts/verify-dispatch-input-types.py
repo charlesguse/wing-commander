@@ -39,6 +39,14 @@ forms, the whole value and nothing else:
                                              `inputs` context keeps it a
                                              boolean
 
+The value is matched as YAML hands it over: a `>` or `|` block scalar keeps
+a trailing newline, and text or whitespace around the `${{ }}` makes the
+value a string (wc_gha_expr.evaluate_value). When the workflow has any
+trigger besides workflow_dispatch and workflow_call (schedule, workflow_run,
+pull_request, ...), the `inputs` context is empty on those runs, so every
+dispatch input may be empty there and only the JSON-fallback form is
+accepted.
+
 A boolean dispatch input never fills a number input. Anything else fails
 with a message naming the form to use. The rule is an allowlist on purpose:
 two review passes of an expression matcher (fallbacks, guards, format(),
@@ -93,16 +101,21 @@ def _is_boolean(spec):
     return str(spec.get("type")) == "boolean"
 
 
-def _may_be_empty(spec):
+def _may_be_empty(spec, other):
+    """True when inputs.NAME can be '': an optional non-boolean input with no
+    default, or any input of a workflow with another trigger (`other`), whose
+    runs leave the `inputs` context empty."""
+    if other:
+        return True
     return not _is_boolean(spec) and not spec.get("required") and spec.get("default") in (None, "")
 
 
-def _forms(name, kind, spec):
-    if _may_be_empty(spec):
+def _forms(name, kind, spec, other=None):
+    if _may_be_empty(spec, other):
         forms = ["${{{{ fromJSON(inputs.{0} || '<{1}>') }}}}".format(name, kind)]
     else:
         forms = ["${{{{ fromJSON(inputs.{0}) }}}}".format(name)]
-    if kind == "boolean" and _is_boolean(spec):
+    if kind == "boolean" and _is_boolean(spec) and not other:
         forms.append("${{{{ inputs.{0} }}}}".format(name))
     return " or ".join("`{0}`".format(f) for f in forms)
 
@@ -117,8 +130,10 @@ def _of_kind(literal, kind):
     return isinstance(parsed, (int, float)) and not isinstance(parsed, bool)
 
 
-def _problem(value, kind, dispatch):
-    """(dispatch input, reason) when `value` breaks the rule for a `kind` callee input, else None."""
+def _problem(value, kind, dispatch, other=None):
+    """(dispatch input, reason) when `value` breaks the rule for a `kind` callee input, else None.
+
+    `other` names a trigger besides workflow_dispatch/workflow_call, if the workflow has one."""
     try:
         names = _dispatch_refs(value, dispatch)
     except ValueError as exc:
@@ -135,18 +150,27 @@ def _problem(value, kind, dispatch):
     if kind == "number" and _is_boolean(spec):
         return name, ("a boolean dispatch input stays a boolean, and no form turns it into a number "
                       "-- declare `{0}` type: number or string".format(name))
+    if m is None and value != value.strip() and (FROMJSON_BARE.fullmatch(value.strip())
+                                                 or FROMJSON_FALLBACK.fullmatch(value.strip())
+                                                 or BARE.fullmatch(value.strip())):
+        return name, ("whitespace around the expression (a `>` or `|` block scalar keeps a trailing newline) "
+                      "makes the value a string -- use `>-` or `|-`, or a plain scalar")
     if m is None:
         return name, ("a dispatch input reaches the call as a string, and only these forms are known to yield a "
                       "{0}".format(kind))
+    empty_run = ("a {0} run leaves the `inputs` context empty, and inputs.{1} is '' there".format(other, name)
+                 if other else None)
     if m.re is BARE:
-        if kind == "boolean" and _is_boolean(spec):
+        if kind == "boolean" and _is_boolean(spec) and not other:
             return None
-        return name, "a dispatch input reaches the call as a string"
+        return name, empty_run or "a dispatch input reaches the call as a string"
     if m.re is FROMJSON_FALLBACK:
         if _of_kind(m.group(2), kind):
             return None
         return name, "the fallback {0} is not a JSON {1}, so fromJSON fails on it at startup".format(m.group(2), kind)
-    if _may_be_empty(spec):
+    if other:
+        return name, empty_run + ", so fromJSON('') fails at startup"
+    if _may_be_empty(spec, other):
         return name, "inputs.{0} is optional with no default, and fromJSON('') fails at startup".format(name)
     return None
 
@@ -179,6 +203,8 @@ def problems(root):
         if not dispatch_inputs:
             continue
         rel = os.path.relpath(path, root)
+        # Runs of any other trigger leave the `inputs` context empty.
+        other = next((str(k) for k in on if k not in ("workflow_dispatch", "workflow_call")), None)
         for job_name, job in (wf.get("jobs") or {}).items():
             uses = str((job or {}).get("uses") or "")
             if not uses.startswith("./.github/workflows/"):
@@ -194,14 +220,15 @@ def problems(root):
                 kind = str(((callee_inputs.get(str(key).lower()) or {}).get("type")) or "string")
                 if kind not in TYPED:
                     continue
-                value = str(value).strip()
-                bad = _problem(value, kind, dispatch_inputs)
+                # Matched unstripped: whitespace around the expression makes a string.
+                value = str(value)
+                bad = _problem(value, kind, dispatch_inputs, other)
                 if bad:
                     name, reason = bad
                     if "--" not in reason and name in dispatch_inputs:
-                        reason += " -- pass " + _forms(name, kind, dispatch_inputs[name])
+                        reason += " -- pass " + _forms(name, kind, dispatch_inputs[name], other)
                     found.append("{0}: job {1} passes `{2}` to {3}'s {4} input `{5}`, reading dispatch input "
-                                 "`{6}`: {7}".format(rel, job_name, value, os.path.basename(uses), kind, key,
+                                 "`{6}`: {7}".format(rel, job_name, value.strip(), os.path.basename(uses), kind, key,
                                                      name, reason))
     return found
 
@@ -213,6 +240,9 @@ def _wrapper(value, dispatch_type="number", extra_on="", required="true"):
             "        required: {r}\n        type: {t}\npermissions: {{}}\njobs:\n  call:\n"
             "    uses: ./.github/workflows/called.yml\n    with:\n      pr: {v}\n"
             ).format(extra=extra_on, t=dispatch_type, v=value, r=required)
+
+
+SCHEDULE = "  schedule:\n    - cron: '0 0 * * *'\n"
 
 
 def _called(kind):
@@ -263,6 +293,18 @@ CASES = [
     ("an unterminated expression fails instead of crashing the gate",
      _wrapper("'${{ fromJSON(inputs.pr)'"), _called("number"), True),
     ("a fallback that is not a JSON number", _wrapper("${{ fromJSON(inputs.pr || '<default>') }}"), _called("number"), True),
+    ("a scheduled run leaves inputs empty, so fromJSON(inputs.pr) fails there",
+     _wrapper("${{ fromJSON(inputs.pr) }}", extra_on=SCHEDULE), _called("number"), True),
+    ("a scheduled run leaves a boolean dispatch input empty too",
+     _wrapper("${{ inputs.pr }}", "boolean", extra_on=SCHEDULE), _called("boolean"), True),
+    ("healthy: a JSON fallback covers the scheduled run",
+     _wrapper("${{ fromJSON(inputs.pr || '0') }}", extra_on=SCHEDULE), _called("number"), False),
+    ("healthy: workflow_call beside dispatch does not empty the inputs",
+     _wrapper("${{ fromJSON(inputs.pr) }}", extra_on="  workflow_call: {}\n"), _called("number"), False),
+    ("a `>` block scalar keeps a trailing newline, which makes a string",
+     _wrapper(">\n        ${{ fromJSON(inputs.pr) }}"), _called("number"), True),
+    ("healthy: a `>-` block scalar over several lines",
+     _wrapper(">-\n        ${{\n          fromJSON(inputs.pr)\n        }}"), _called("number"), False),
     ("a guarded fromJSON is not an allowed form",
      _wrapper("${{ inputs.pr && fromJSON(inputs.pr) || 0 }}"), _called("number"), True),
 ]
@@ -303,6 +345,13 @@ def self_test():
         # fromJSON of a boolean is a boolean, so it is not the fix for a number input.
         ("a boolean dispatch input to a number input", _wrapper("${{ inputs.pr }}", "boolean"),
          _called("number"), ["stays a boolean", "type: number or string"]),
+        # Another trigger empties the inputs context, so the message names the trigger and a fallback.
+        ("a scheduled run, fromJSON", _wrapper("${{ fromJSON(inputs.pr) }}", extra_on=SCHEDULE),
+         _called("number"), ["a schedule run leaves", "fromJSON(inputs.pr || '<number>')"]),
+        ("a scheduled run, boolean bare", _wrapper("${{ inputs.pr }}", "boolean", extra_on=SCHEDULE),
+         _called("boolean"), ["a schedule run leaves", "fromJSON(inputs.pr || '<boolean>')"]),
+        ("a block scalar's trailing newline", _wrapper(">\n        ${{ fromJSON(inputs.pr) }}"),
+         _called("number"), ["trailing newline", "`>-`"]),
     ]
     for name, wrapper, called, wanted in message_cases:
         tmp = tempfile.mkdtemp(prefix="gate174-")
