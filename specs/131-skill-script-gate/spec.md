@@ -22,8 +22,8 @@ importing the module and using its names as attributes:
 | `whats-on-me/scripts/board_now.py` | `wc_board_status`, used as `wc_board_status.snapshot`, `.render`, `.switches_from` |
 | `container-shell-safety/scripts/unpinned-container-steps.py` | `wc_gate_registry.workflow_files`, `wc_shell_pin` names |
 
-These scripts run only when a session invokes the skill. A rename or
-signature change in `.github/scripts/` therefore merges with every gate
+These scripts run only when a session invokes the skill. A rename in
+`.github/scripts/` therefore merges with every gate
 green, and the first sign of breakage is an owner's session failing mid-task.
 
 State on main at intake (2026-11-25), so the plan does not redo it:
@@ -146,6 +146,8 @@ fail; a list of three scripts goes stale the day a fourth appears.
   self-test run by the PR-time gate suite, found from the tree (FR-003),
   and a failing self-test MUST fail the suite. The skill self-tests MUST run
   as part of the gate set `run-local-gates.py` derives, not only in CI.
+  A skill self-test MUST run offline; one that needs the network or the
+  GitHub API fails the gate as a defect in that skill's self-test.
 - **FR-005**: The check MUST NOT execute a skill script's normal command
   path or reach the network or GitHub API.
 - **FR-006**: The new gate MUST carry a self-test that demonstrates it fails
@@ -159,9 +161,9 @@ fail; a list of three scripts goes stale the day a fourth appears.
   MUST remain enforced by exactly one gate:
   `verify-convergence-single-home.py`, which already fails when the entry
   stops covering the skill scripts. This feature adds no second copy.
-- **FR-009**: The open PR #1205 MUST be dispositioned: either its content
-  is reused in this feature's implementation or it is closed with a pointer
-  to this lifecycle, and Maintenance backlog line `bl-ddabf5f6` is closed
+- **FR-009**: The open PR #1205 MUST be closed with a pointer to this
+  lifecycle, whether or not its content is reused in this feature's
+  implementation, and Maintenance backlog line `bl-ddabf5f6` is closed
   when this feature merges.
 - **FR-010**: The plan sets how the work is split into PRs; this spec sets
   no size bound.
