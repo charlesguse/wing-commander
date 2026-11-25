@@ -6100,10 +6100,9 @@ jobs:
   # 'true' (unset, the job never exists and a human merges the PR readiness
   # reported ready). Two classes may merge, both decided by board_merge.py
   # from a snapshot of the exact head SHA fetched fresh below, never by this
-  # shell:
-  # the fix PR readiness just reported ready, and a Spec Kit upgrade PR the
-  # auto-update stage opened and verified. A refusal from GitHub (the App
-  # has no Workflows permission, so a workflow-touching PR ends here) is
+  # shell: the fix PR readiness just reported ready, and a Spec Kit upgrade
+  # PR the auto-update stage opened and verified. A refusal from GitHub (the
+  # App has no Workflows permission, so a workflow-touching PR ends here) is
   # handed to a maintainer and nothing else is tried.
   # `github.event_name != 'pull_request'` keeps this off the closed-PR
   # trigger, and directed proof runs never merge.

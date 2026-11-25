@@ -14,7 +14,7 @@ python .github/scripts/run-local-gates.py
 
 Expected: every fixture's `may_merge` and `unmet_reason` match its recorded expectation. That covers one case per name in `CONDITIONS_FIX`, `CONDITIONS_BUMP` and `REFUSAL_CLASSES`, plus the moved-head and no-checks cases. The full gate suite passes. Contract: [contracts/board-merge.md](contracts/board-merge.md).
 
-## 2. Switch off is unchanged (SC-006)
+## 2. Switch off: no merge job runs (SC-006)
 
 Leave `WING_COMMANDER_BOARD_AUTO_MERGE` unset and drive a fix item to readiness. Expect the readiness report (which, since the owner's 2026-11-25 direction on #1227, makes no claim about who merges) and the `awaiting-merge` marker, with no `merge` job in the run; a human merges.
 
