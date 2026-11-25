@@ -13,7 +13,8 @@
         "name": "lint",
         "workflowName": "lint · workflows",
         "status": "QUEUED",
-        "conclusion": ""
+        "conclusion": "",
+        "startedAt": "0001-01-01T00:00:00Z"
       },
       {
         "name": "harness tests",
@@ -29,6 +30,7 @@
   "kill_switch_paused": false,
   "expected": {
     "ready": false,
-    "unmet_class": "self-clearing"
+    "unmet_class": "self-clearing",
+    "reason_contains": "checks still running on head_sha abab777"
   }
 }

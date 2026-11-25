@@ -59,6 +59,11 @@ EXPECTED_CASES = {
     "cancelled-superseded-ready", "cancelled-newest-self-clearing",
     "cancelled-queued-rerun-self-clearing", "cancelled-beside-failure-durable",
     "failure-newer-than-success-durable",
+    # Code review of #1226, pass 1: gh writes a queued run's unset
+    # `startedAt` as Go's zero time, which must not read as the oldest
+    # result; and a check run with no workflow is never merged with
+    # another of the same name.
+    "queued-zero-time-rerun-self-clearing", "no-workflow-failure-durable",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"

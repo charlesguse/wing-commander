@@ -55,6 +55,24 @@ def context_pin_problems(workflow_text):
             for c in found if c != OWN_STATUS_CONTEXT]
 
 
+LIFECYCLE_READINESS = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "lifecycle_readiness.py")
+# The checks rules have one home, board_readiness.py (#889); a pasted copy
+# brings these literals back (CLAUDE.md "Shared logic has exactly one home").
+COPIED_RULE_RE = re.compile(r'"(SUCCESS|NEUTRAL|SKIPPED)"|==\s*"lint"')
+REQUIRED_CALLS = ("board_readiness.checks_green(", "board_readiness.gate_suite_green(")
+
+
+def single_home_problems(source):
+    """lifecycle_readiness.py calls board_readiness.py's checks rules
+    rather than re-typing them (code review of #1226, pass 1)."""
+    problems = ["lifecycle_readiness.py contains {0}, a copy of a board_readiness.py "
+                "checks rule".format(m.group(0)) for m in COPIED_RULE_RE.finditer(source)]
+    problems += ["lifecycle_readiness.py does not call {0}...)".format(call)
+                 for call in REQUIRED_CALLS if call not in source]
+    return problems
+
+
 EXPECTED_CASES = {
     "stale-check-summary", "no-checks", "not-mergeable",
     "already-reviewed-at-this-sha", "kill-switch-set", "all-clear",
@@ -137,6 +155,14 @@ def run():
         print("[ok] every status write uses context {0!r}".format(
             OWN_STATUS_CONTEXT))
 
+    with open(LIFECYCLE_READINESS, encoding="utf-8") as fh:
+        problems = single_home_problems(fh.read())
+    for problem in problems:
+        failures += 1
+        print("::error::verify-lifecycle-readiness: {0}".format(problem))
+    if not problems:
+        print("[ok] lifecycle_readiness.py calls board_readiness.py's checks rules")
+
     print("verify-lifecycle-readiness: {0} failure(s).".format(failures))
     return 1 if failures else 0
 
@@ -192,6 +218,20 @@ def self_test():
           len(context_pin_problems(good + good.replace(
               OWN_STATUS_CONTEXT, "lifecycle-review")))== 1)
     check("context-pin-no-write-caught", len(context_pin_problems("")) == 1)
+
+    # The single-home check: the real module is clean, and the copy this
+    # module carried before #889 is caught.
+    with open(LIFECYCLE_READINESS, encoding="utf-8") as fh:
+        real = fh.read()
+    check("single-home-clean", single_home_problems(real) == [],
+          repr(single_home_problems(real)))
+    pasted = real.replace(
+        "board_readiness.checks_green(", "_old_checks_green(").replace(
+        "return board_readiness.gate_suite_green(rollup)",
+        'return any(e.get("name") == "lint" and (e.get("conclusion") or "").upper() '
+        'in ("SUCCESS", "NEUTRAL", "SKIPPED") for e in rollup)')
+    check("single-home-copy-caught", len(single_home_problems(pasted)) >= 4,
+          repr(single_home_problems(pasted)))
 
     print("{0} failure(s).".format(failures))
     return 1 if failures else 0

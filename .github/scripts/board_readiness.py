@@ -28,12 +28,24 @@ GREEN_STATES = ("SUCCESS", "NEUTRAL", "SKIPPED")
 def _check_key(entry):
     """One check's identity within a rollup: a commit status by its
     context, a check run by its workflow and job name. None for an entry
-    that names neither, which is never merged with another."""
+    that names neither, or a check run with no workflow (another app's
+    check, where a shared job name proves nothing): it is never merged
+    with another."""
     if entry.get("context"):
         return ("status", entry["context"])
-    if entry.get("name"):
-        return ("check", entry.get("workflowName") or "", entry["name"])
+    if entry.get("name") and entry.get("workflowName"):
+        return ("check", entry["workflowName"], entry["name"])
     return None
+
+
+def _started(entry):
+    """An entry's `startedAt`, or None while it has not started. `gh`
+    writes an unset time as Go's zero time ("0001-01-01T00:00:00Z") rather
+    than leaving the key out, so a queued run carries that value."""
+    started = entry.get("startedAt")
+    if not started or str(started).startswith("0001-"):
+        return None
+    return started
 
 
 def latest_per_check(rollup):
@@ -42,19 +54,20 @@ def latest_per_check(rollup):
     same head: a re-run of an older head's run, a reopened PR, the same
     commit pushed again. Only the newest result describes the head, as on
     GitHub's own checks list, so an entry is dropped when another entry of
-    the same check started strictly later. An entry with no `startedAt` (a
-    run still queued) is never dropped and never drops another, so a
-    result is only ever set aside for one that provably came after it. The
-    order of what is kept is unchanged."""
+    the same check started strictly later. An entry that has not started
+    (no `startedAt`, or gh's zero time: a run still queued) is never
+    dropped and never drops another, so a result is only ever set aside
+    for one that provably came after it. The order of what is kept is
+    unchanged."""
     rollup = list(rollup or [])
     newest = {}
     for entry in rollup:
-        key, started = _check_key(entry), entry.get("startedAt")
+        key, started = _check_key(entry), _started(entry)
         if key is not None and started and started > newest.get(key, ""):
             newest[key] = started
     return [entry for entry in rollup
-            if _check_key(entry) is None or not entry.get("startedAt")
-            or entry["startedAt"] >= newest[_check_key(entry)]]
+            if _check_key(entry) is None or not _started(entry)
+            or _started(entry) >= newest[_check_key(entry)]]
 
 
 def _checks_green(rollup):
@@ -182,10 +195,13 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
                 unmet_reason = "no checks reported on head_sha {0}".format(head_sha)
             elif checks_class == "self-clearing" and any(
                     _entry_state(entry) in STOPPED_STATES
+                    for entry in latest_per_check(rollup)) and not any(
+                    _entry_state(entry) in NOT_CONCLUDED_STATES
                     for entry in latest_per_check(rollup)):
-                # A check's newest run was cancelled: nothing failed, but it
-                # will not finish on its own. Say so, so nr_reason tells it
-                # from a run still going (#889).
+                # A check's newest run was cancelled and nothing is still
+                # running: nothing failed, but it will not finish on its
+                # own. Say so, so nr_reason tells it from a run still going
+                # (#889). A queued or running re-run reads as running.
                 unmet_reason = ("a check was cancelled on head_sha {0} and has not been "
                                 "re-run".format(head_sha))
             elif checks_class == "self-clearing":
