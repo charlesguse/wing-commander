@@ -6879,8 +6879,16 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.directed-pr }}
         run: |
           set -uo pipefail
-          gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json files \
-            --jq '[.files[].path]' > "$RUNNER_TEMP/board-prove-paths.json"
+          # #889: REST pulls/N/files, never gh pr view's files field, which
+          # carries no previous path -- a rename away from a path is a change
+          # to it (board_prove.pull_changed_paths()). One object per line.
+          # A failed or partial read stops the step: an empty list would
+          # read as "no changed paths" and close on the merge evidence.
+          if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+              --jq '.[] | {filename, previous_filename}' > "$RUNNER_TEMP/board-prove-files.jsonl"; then
+            echo "::error::could not read PR #$PR_NUMBER's files over REST; not deciding from a partial list"
+            exit 1
+          fi
 
           python3 - <<'PYEOF'
           import json
@@ -6889,14 +6897,14 @@ jobs:
 
           sys.path.insert(0, ".github/scripts")
           from board_prove import (
-              actions_only, aimable_jobs, directed_stage, redrive_target,
+              actions_only, aimable_jobs, directed_stage, pull_changed_paths, redrive_target,
               scan_dispatchable_and_uses_graph, scan_job_uses_graph,
           )
           from wc_step_output import write_outputs
 
           runner_temp = os.environ["RUNNER_TEMP"]
-          with open(os.path.join(runner_temp, "board-prove-paths.json"), encoding="utf-8") as fh:
-              changed_paths = json.load(fh)
+          with open(os.path.join(runner_temp, "board-prove-files.jsonl"), encoding="utf-8") as fh:
+              changed_paths = pull_changed_paths(json.loads(line) for line in fh if line.strip())
 
           # board_prove.scan_dispatchable_and_uses_graph is the single home
           # for this scan (never offer a target the composite could

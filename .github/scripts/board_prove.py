@@ -83,6 +83,21 @@ ORDINARY_GROUP = "wing-commander-board-loop"
 aimable_jobs = frozenset({"triage", "review", "readiness", "prove"})
 
 
+def pull_changed_paths(pull_files):
+    """The changed paths of a pull request, from the REST `pulls/N/files`
+    items (#889): each file's `filename`, then its `previous_filename` when
+    the file was renamed, so a rename away from a path is a change to that
+    path too (`gh pr view --json files` carries no previous path). Order
+    kept, duplicates dropped."""
+    out = []
+    for item in pull_files or ():
+        for key in ("filename", "previous_filename"):
+            path = (item or {}).get(key)
+            if path and path not in out:
+                out.append(path)
+    return out
+
+
 def _matches_any(path, globs):
     return any(fnmatch.fnmatch(path, g) for g in globs)
 
@@ -400,9 +415,18 @@ def mention_edges(changed_paths):
                              if not line.lstrip().startswith("#"))
         for changed_path in changed_paths:
             if (changed_path.startswith(".github/") and changed_path != path
-                    and changed_path in text):
+                    and _mentions(text, changed_path)):
                 mentioned_by[changed_path].add(path)
     return mentioned_by
+
+
+def _mentions(text, changed_path):
+    """A literal mention is the whole path, never a prefix or suffix of a
+    longer one (#889, the same rule WORKFLOW_REF_RE keeps since #1161):
+    `foo.py` is not mentioned by `foo.py.bak`, `xfoo.py` or `foo.py/x`; a
+    sentence-ending `.` after it is still a mention."""
+    return re.search(r"(?<![\w-])" + re.escape(changed_path)
+                     + r"(?![\w-]|[./][\w-])", text) is not None
 
 
 def reaching_workflows(changed_paths, uses_graph):
@@ -442,22 +466,28 @@ def runs_of_its_own(path):
     return set(workflow_triggers(path)) != {"workflow_call"}
 
 
-def nightly_e2e_edges(root="."):
+def nightly_e2e_edges(root=".", with_stages=False):
     """FR-005 (research D12): {auto-release.yml: [wrapper files]} read from the
     `declare -A stage_file=(...)` array of `root`'s auto-release.yml. No file
     gives {}; a file whose array cannot be parsed raises ValueError. Only the
-    proof list merges these edges; reach() and the hand procedure never do."""
+    proof list merges these edges; reach() and the hand procedure never do.
+
+    with_stages=True returns (edges, [stage files]) from the same parse, so
+    the proof list never parses the array a second time (#889)."""
     path = os.path.join(root, AUTO_RELEASE)
     if not os.path.isfile(path):
-        return {}
+        return ({}, []) if with_stages else {}
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
     block = STAGE_ARRAY_RE.search(text)
     pairs = STAGE_MAP_RE.findall(block.group(1)) if block else []
     if not pairs:
         raise ValueError("{0}: cannot parse the stage_file array".format(AUTO_RELEASE))
-    return {AUTO_RELEASE: sorted("{0}/{1}".format(WORKFLOWS_DIR, wrapper)
-                                 for wrapper, _stage in pairs)}
+    edges = {AUTO_RELEASE: sorted("{0}/{1}".format(WORKFLOWS_DIR, wrapper)
+                                  for wrapper, _stage in pairs)}
+    if with_stages:
+        return edges, sorted({"{0}/{1}".format(WORKFLOWS_DIR, stage) for _wrapper, stage in pairs})
+    return edges
 
 
 def redrive_target(changed_paths, dispatchable, uses_graph):

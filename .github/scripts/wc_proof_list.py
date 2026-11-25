@@ -816,9 +816,10 @@ def tree_reaching(sha, changed_paths):
     import subprocess
     import tarfile
     import tempfile
-    from board_prove import (AUTO_RELEASE, STAGE_ARRAY_RE, STAGE_MAP_RE, WORKFLOWS_DIR, reach,
+    from board_prove import (AUTO_RELEASE, WORKFLOWS_DIR, reach,
                              reaching_workflows as _reaching, nightly_e2e_edges,
                              runs_of_its_own as _own, scan_dispatchable_and_uses_graph)
+    current = git("rev-parse", "HEAD").strip() == git("rev-parse", sha).strip()
     archive = subprocess.run(["git", "archive", sha, ".github"], capture_output=True)
     if archive.returncode != 0:
         raise ReadError("git archive {0} failed: {1}".format(sha[:10], archive.stderr.decode(errors="replace")))
@@ -830,12 +831,19 @@ def tree_reaching(sha, changed_paths):
         try:
             _disp, graph = scan_dispatchable_and_uses_graph(WORKFLOWS_DIR)
             base = _reaching(changed_paths, graph)
-            extra = nightly_e2e_edges(".")
+            # An unparseable stage array is fatal only on the current tree;
+            # a historical merge's tree carrying one gets no nightly edges,
+            # or that one tree would fail every daily build until it left
+            # the window (#889).
+            try:
+                extra, stages = nightly_e2e_edges(".", with_stages=True)
+            except ValueError:
+                if not current:
+                    extra, stages = {}, []
+                else:
+                    raise
             extended = {k: set(v) for k, v in graph.items()}
             if extra:
-                with open(AUTO_RELEASE, encoding="utf-8") as fh:
-                    block = STAGE_ARRAY_RE.search(fh.read()).group(1)
-                stages = {"{0}/{1}".format(WORKFLOWS_DIR, stage) for _w, stage in STAGE_MAP_RE.findall(block)}
                 extended.setdefault(AUTO_RELEASE, set()).update(extra[AUTO_RELEASE], stages)
                 for wrapper in extra[AUTO_RELEASE]:
                     extended.setdefault(wrapper, set(graph.get(wrapper, ())))

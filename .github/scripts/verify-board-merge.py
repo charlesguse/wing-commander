@@ -1096,14 +1096,17 @@ def check_merged_proof_disposition():
         ok("a merged bump's announcement says no proof re-drive follows")
     fix = dict(decision, **{"class": "fix"})
     for files, want in (([{"path": ".github/workflows/x.yml"}], "a proof re-drive follows the merge"),
-                        ([{"path": "docs/x.md"}], "no proof re-drive is needed")):
+                        ([{"path": "docs/x.md"}], "no proof re-drive is needed"),
+                        # #889: a rename away from a workflow is an Actions change.
+                        ([{"path": "docs/x.yml", "previousPath": ".github/workflows/x.yml"}],
+                         "a proof re-drive follows the merge")):
         line = next((l for l in board_merge.render_announcement(fix, "merged", dict(snap, files=files),
                                                                  merge_sha="mmm0").splitlines()
                      if l.startswith("Proof: ")), "")
         if want not in line:
-            fail("a merged fix PR touching {0} is announced {1!r}, want {2!r}".format(files[0]["path"], line, want))
+            fail("a merged fix PR touching {0} is announced {1!r}, want {2!r}".format(files[0], line, want))
         else:
-            ok("a merged fix PR touching {0} keeps the actions_only() disposition".format(files[0]["path"]))
+            ok("a merged fix PR touching {0} keeps the actions_only() disposition".format(files[0]))
 
 
 def main():
