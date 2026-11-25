@@ -48,7 +48,10 @@ $GITHUB_WORKSPACE -- so it only worked where the caller's workspace held a
 checkout. closed_check_shell_check() runs the shipped step's own `run:`
 from an EMPTY working directory, with GITHUB_ACTION_PATH at the real
 composite directory, against a stub `gh` answering CLOSED and then OPEN,
-and requires `is-open` to come back `false` and `true`.
+and requires `is-open` to come back `false` and `true`. The step's
+environment is its own `env:` mapping with each expression substituted
+(never one the harness supplies), so a mutation that drops GH_REPO from that
+mapping -- the read then has no repository outside a checkout -- must fail.
 """
 import glob
 import json
@@ -64,6 +67,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import board_stop_check  # noqa: E402
+from wc_shell_harness import production_shell, resolve_bash  # noqa: E402
 
 FIXTURES_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "tests", "board-stop-check")
@@ -462,13 +466,40 @@ def composite_shell_check():
 
 
 CLOSED_CHECK_ID = "closed-check"
+CLOSED_CHECK_EXPRESSIONS = {
+    "inputs.token": "app-token",
+    "github.repository": REPO,
+    "inputs.issue-number": "1",
+}
+EXPRESSION_RE = re.compile(r"\$\{\{\s*([^}]*?)\s*\}\}")
 
 
-def closed_check_shell_check():
+def closed_check_env(step):
+    """The step's own `env:` mapping with each expression substituted.
+
+    An expression with no entry in CLOSED_CHECK_EXPRESSIONS is returned in
+    the second slot, so the caller fails rather than guessing its value.
+    """
+    env, unknown = {}, []
+
+    def sub(match):
+        expr = match.group(1)
+        if expr not in CLOSED_CHECK_EXPRESSIONS:
+            unknown.append(expr)
+            return ""
+        return CLOSED_CHECK_EXPRESSIONS[expr]
+
+    for key, value in (step.get("env") or {}).items():
+        env[str(key)] = EXPRESSION_RE.sub(sub, str(value))
+    return env, unknown
+
+
+def closed_check_shell_check(action=None, verbose=True):
     """#1210: the closed-check step works from the composite's own
     directory, whatever the caller's workspace holds."""
-    with open(COMPOSITE, encoding="utf-8") as fh:
-        action = yaml.safe_load(fh)
+    if action is None:
+        with open(COMPOSITE, encoding="utf-8") as fh:
+            action = yaml.safe_load(fh)
     step = next((st for st in action["runs"]["steps"]
                  if st.get("id") == CLOSED_CHECK_ID), None)
     if step is None:
@@ -487,6 +518,14 @@ def closed_check_shell_check():
         print("::error::verify-board-stop-check: the {0} step must declare "
               "shell: bash.".format(CLOSED_CHECK_ID))
         return 1
+    step_env, unknown = closed_check_env(step)
+    if unknown:
+        print("::error::verify-board-stop-check: the {0} step's env: uses "
+              "{1}, which this harness has no value for -- add it to "
+              "CLOSED_CHECK_EXPRESSIONS.".format(CLOSED_CHECK_ID, unknown))
+        return 1
+    shell_argv = [resolve_bash() if arg == "bash" else arg
+                  for arg in production_shell(step)]
     action_path = os.path.dirname(COMPOSITE)
     failures = 0
     work = tempfile.mkdtemp()
@@ -510,15 +549,16 @@ def closed_check_shell_check():
             log = os.path.join(case_dir, "gh.log")
             for path in (out, log):
                 open(path, "w", encoding="utf-8").close()
-            env = dict(os.environ)
+            env = {k: v for k, v in os.environ.items()
+                   if k not in ("GH_REPO", "GH_TOKEN", "ISSUE_NUMBER")}
+            env.update(step_env)
             env.update({
                 "PATH": bindir + os.pathsep + env.get("PATH", ""),
-                "GH_TOKEN": "app-token", "GH_REPO": REPO, "ISSUE_NUMBER": "1",
                 "GITHUB_ACTION_PATH": action_path, "GITHUB_OUTPUT": out,
                 "RUNNER_TEMP": case_dir, "STUB_STATE": state, "STUB_LOG": log,
             })
             proc = subprocess.run(
-                ["bash", "--noprofile", "--norc", "-eo", "pipefail", script_path],
+                [script_path if arg == "{0}" else arg for arg in shell_argv],
                 cwd=empty_workspace, env=env, capture_output=True, text=True)
             with open(out, encoding="utf-8") as fh:
                 outputs = dict(line.split("=", 1)
@@ -538,13 +578,35 @@ def closed_check_shell_check():
                                 "got {1!r}".format(REPO, calls))
             if problems:
                 failures += 1
-                print("::error::verify-board-stop-check: {0}: {1}".format(
-                    label, "; ".join(problems)))
-            else:
+                if verbose:
+                    print("::error::verify-board-stop-check: {0}: {1}".format(
+                        label, "; ".join(problems)))
+            elif verbose:
                 print("ok: {0} -> is-open={1}".format(label, expected))
     finally:
         shutil.rmtree(work, ignore_errors=True)
     return failures
+
+
+def closed_check_gh_repo_mutation():
+    """Dropping GH_REPO from the closed-check step's own env: must fail the
+    harness above -- the harness must not supply it itself."""
+    with open(COMPOSITE, encoding="utf-8") as fh:
+        action = yaml.safe_load(fh)
+    step = next((st for st in action["runs"]["steps"]
+                 if st.get("id") == CLOSED_CHECK_ID), None)
+    if step is None or "GH_REPO" not in (step.get("env") or {}):
+        print("::error::verify-board-stop-check: the {0} step's env: has no "
+              "GH_REPO to mutate.".format(CLOSED_CHECK_ID))
+        return 1
+    del step["env"]["GH_REPO"]
+    if not closed_check_shell_check(action, verbose=False):
+        print("::error::verify-board-stop-check: mutation 'GH_REPO dropped "
+              "from the {0} step' was NOT caught.".format(CLOSED_CHECK_ID))
+        return 1
+    print("note: mutation caught (GH_REPO dropped from the {0} step)."
+          .format(CLOSED_CHECK_ID))
+    return 0
 
 
 def run():
@@ -567,6 +629,7 @@ def run():
     failures += mutation_check()
     failures += composite_shell_check()
     failures += closed_check_shell_check()
+    failures += closed_check_gh_repo_mutation()
 
     print("verify-board-stop-check: {0} failure(s).".format(failures))
     return 1 if failures else 0

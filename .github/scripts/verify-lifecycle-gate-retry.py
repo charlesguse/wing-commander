@@ -41,6 +41,7 @@ import copy
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -533,6 +534,28 @@ def _composite_steps(path):
     return [s or {} for s in ((doc.get("runs") or {}).get("steps") or [])]
 
 
+def _github_files(repo_root):
+    """The tracked files under repo_root/.github -- an untracked scratch copy
+    or editor backup is not a second home. Outside a git work tree (the
+    self-test's fixtures) every file on disk is."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", repo_root, "ls-files", "-z", "--", ".github"],
+            capture_output=True, text=True, check=True)
+        inside = subprocess.run(
+            ["git", "-C", repo_root, "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        inside = None
+    if inside and os.path.realpath(inside) == os.path.realpath(repo_root):
+        return [os.path.join(repo_root, rel)
+                for rel in proc.stdout.split("\0") if rel]
+    found = []
+    for dirpath, _dirs, files in os.walk(os.path.join(repo_root, ".github")):
+        found.extend(os.path.join(dirpath, f) for f in files)
+    return found
+
+
 def check_single_home(repo_root="."):
     """#1210's checks, in this gate because the read is this gate's subject.
 
@@ -586,31 +609,105 @@ def check_single_home(repo_root="."):
                     f"directory (#1210, #488): run the logic through a "
                     f"script under .github/actions/_shared/ instead.")
 
-    github_dir = os.path.join(repo_root, ".github")
     script_full = os.path.normpath(os.path.join(repo_root, SCRIPT))
     this_file = os.path.normpath(os.path.abspath(__file__))
     found_in_script = False
-    for dirpath, _dirs, files in os.walk(github_dir):
-        for fname in files:
-            full = os.path.normpath(os.path.join(dirpath, fname))
-            if os.path.abspath(full) == this_file:
-                continue
-            try:
-                text = open(full, encoding="utf-8").read()
-            except (UnicodeDecodeError, OSError):
-                continue
-            if BODY_SIGNATURE not in text:
-                continue
-            if full == script_full:
-                found_in_script = True
-            else:
-                failures.append(
-                    f"{os.path.relpath(full, repo_root)}: carries a copy of "
-                    f"the lifecycle read ({BODY_SIGNATURE!r}); its one home "
-                    f"is {SCRIPT} -- run that instead.")
+    for full in _github_files(repo_root):
+        full = os.path.normpath(full)
+        if os.path.abspath(full) == this_file:
+            continue
+        try:
+            text = open(full, encoding="utf-8").read()
+        except (UnicodeDecodeError, OSError):
+            continue
+        if BODY_SIGNATURE not in text:
+            continue
+        if full == script_full:
+            found_in_script = True
+        else:
+            failures.append(
+                f"{os.path.relpath(full, repo_root)}: carries a copy of "
+                f"the lifecycle read ({BODY_SIGNATURE!r}); its one home "
+                f"is {SCRIPT} -- run that instead.")
     if not found_in_script:
         failures.append(f"{SCRIPT}: missing {BODY_SIGNATURE!r} -- update "
                         f"BODY_SIGNATURE with the script.")
+    return failures
+
+
+def _single_home_fixture(root, name, mutate):
+    """A minimal tree check_single_home() passes on, then `mutate(tree)`."""
+    tree = os.path.join(root, "single-home-" + name)
+    caller_steps = {
+        path: [{"name": step_name, "shell": "bash",
+                "run": SCRIPT_INVOCATION + "\n"}]
+        for path, step_name in SCRIPT_CALLERS}
+    mutate(tree, caller_steps)
+    for path, steps in caller_steps.items():
+        full = os.path.join(tree, path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as fh:
+            yaml.safe_dump({"runs": {"using": "composite", "steps": steps}}, fh)
+    script = os.path.join(tree, SCRIPT)
+    os.makedirs(os.path.dirname(script), exist_ok=True)
+    if not os.path.exists(script):
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write(BODY_SIGNATURE + "\n")
+    return tree
+
+
+def _write(tree, rel, text):
+    full = os.path.join(tree, rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
+def _fixture_nested_uses(tree, caller_steps):
+    caller_steps[".github/actions/x/action.yml"] = [
+        {"name": "nested", "uses": "./.github/actions/wing-commander-lifecycle-gate"}]
+
+
+def _fixture_pasted_copy(tree, caller_steps):
+    _write(tree, ".github/actions/_shared/pasted.sh", BODY_SIGNATURE + "\n")
+
+
+def _fixture_caller_uses(tree, caller_steps):
+    path, name = SCRIPT_CALLERS[1]
+    caller_steps[path] = [{"name": name,
+                           "uses": "./.github/actions/wing-commander-lifecycle-gate"}]
+
+
+def _fixture_script_lost_body(tree, caller_steps):
+    _write(tree, SCRIPT, "#!/usr/bin/env bash\n")
+
+
+SINGLE_HOME_FIXTURES = [
+    ("a composite with a nested `uses: ./.github/actions/...` step",
+     _fixture_nested_uses, "resolves against the"),
+    ("a pasted copy of the read in another file", _fixture_pasted_copy,
+     "carries a copy of the lifecycle read"),
+    ("a SCRIPT_CALLERS step that `uses:` the lifecycle gate",
+     _fixture_caller_uses, "must run"),
+    ("the shared script no longer carries BODY_SIGNATURE",
+     _fixture_script_lost_body, "missing"),
+]
+
+
+def check_single_home_selftest(root):
+    """#169's lesson for check_single_home(): a clean fixture passes, and
+    each one-defect fixture fails with a message naming that defect."""
+    failures = []
+    clean = check_single_home(_single_home_fixture(root, "clean", lambda t, c: None))
+    if clean:
+        failures.append(f"single-home self-test: the clean fixture failed: {clean}")
+    for i, (label, mutate, needle) in enumerate(SINGLE_HOME_FIXTURES):
+        got = check_single_home(_single_home_fixture(root, str(i), mutate))
+        ok = any(needle in msg for msg in got)
+        print(f"[{'ok' if ok else 'FAIL'}] single-home self-test: {label} is caught")
+        if not ok:
+            failures.append(f"single-home self-test: {label} was not caught "
+                            f"(expected a failure naming {needle!r}, got {got!r})")
     return failures
 
 
@@ -688,6 +785,7 @@ def main():
               f"composites run {SCRIPT}, no composite has a nested `uses: ./.github/` "
               f"step, and no other file carries a copy of the read")
         failures.extend(single_home)
+        failures.extend(check_single_home_selftest(root))
         failures.extend(check_gate_wired())
     finally:
         shutil.rmtree(root, ignore_errors=True)
