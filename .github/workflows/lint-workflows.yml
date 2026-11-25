@@ -5037,6 +5037,16 @@ jobs:
         if: "!cancelled()"
         run: bash .github/scripts/wc_convergence_tests/run-tests.sh
 
+      # Gate 173 — specs/131-skill-script-gate. The scripts under
+      # .claude/skills/*/scripts/ import names from .github/scripts and one
+      # declares --self-test; nothing else noticed a rename or ran it.
+      - name: Gate 173 — skill scripts' cross-tree names resolve and their self-tests pass
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-skill-scripts.py
+      - name: Gate 173 fixtures — verify-skill-scripts self-test
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-skill-scripts.py --self-test
+
       # Gate 171 — specs/127-shared-pr-reviewer. The shared reviewer's
       # record marker is disjoint from spec 116's (FR-020), and its
       # deterministic module (records, identity, blocking rule, verdict,
