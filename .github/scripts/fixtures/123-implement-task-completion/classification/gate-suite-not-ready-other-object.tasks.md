@@ -1,0 +1,4 @@
+- [ ] T001 Run codegen and update the gate suite fixtures
+- [ ] T002 Execute the migration, then rerun run-local-gates parity checks in a test
+- [ ] T003 Run the full gate suite and fix failures
+- [ ] T004 Run `python3 .github/scripts/run-local-gates.py --jobs 4`

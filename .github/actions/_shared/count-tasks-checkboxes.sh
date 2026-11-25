@@ -190,7 +190,11 @@ counts="$(printf '%s\n' "$content" | WC_GATE_READY="$GATE_SUITE_READY" WC_OOB="$
     # else stays buildable (ambiguity stays buildable).
     if (t ~ /^(post-merge|after (the )?merge|drill)[ ,:-]+(the |a |one )?(prove|proof|verify|re-?drive|dispatch|confirm|record|check)([^a-z0-9-]|$)/) return 1
     if (index(oob, "\n" line "\n") > 0) return 1
-    if (gate_ready == "false" && t ~ /^(run|execute) .*(gate suite|run-local-gates)/) return 1
+    # The suite must be the verb'"'"'s own object ("run the gate suite ...",
+    # "run `python .github/scripts/run-local-gates.py` ..."): a line that
+    # only mentions it later ("Run codegen and update the gate suite
+    # fixtures") is ordinary build work (FR-007, ambiguity stays buildable).
+    if (gate_ready == "false" && t ~ /^(run|execute) (the )?(full )?((local|pr-time) )?(gate suite|`?(python3? )?(\.\/)?(\.github\/scripts\/)?run-local-gates)/) return 1
     return 0
   }
   BEGIN {

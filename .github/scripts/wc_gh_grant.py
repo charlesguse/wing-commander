@@ -19,12 +19,13 @@ LAUNCHER_WORDS = frozenset((
     "sh", "zsh", "dash", "eval", "script", "chroot", "unshare", "flock",
     "strace", "ltrace", "busybox", "parallel", "find", "su", "runuser",
     "nsenter", "systemd-run", "taskset", "numactl", "tmux", "ssh", "perl",
-))# Interpreters run whatever their code argument says: only a script path is
+))
+# Interpreters run whatever their code argument says: only a script path is
 # safe to grant, so a `-c`/`-e` flag or no script at all can reach `gh`.
 INTERPRETER_WORDS = frozenset((
     "bash", "sh", "zsh", "dash", "python", "python3", "perl", "ruby", "node",
 ))
-CODE_FLAGS = frozenset(("-c", "-e", "-E", "-m", "-p"))
+CODE_FLAGS = frozenset(("-c", "-e", "-E", "-m", "-p", "--eval", "-pe", "-ne"))
 SEGMENT_SPLIT_RE = re.compile(r"&&|\|\||[;&|\n`]|\$\(")
 ENV_ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 BASH_RE = re.compile(r"Bash\((.*)\)", re.S)
@@ -83,6 +84,8 @@ def _segment_grants_gh(segment, open_ended):
                 return True
             if open_ended and not [a for a in args if not a.startswith("-")]:
                 return True
-        elif open_ended and not args:
+        elif open_ended:
+            # `timeout 5:*`, `env FOO=1:*`: the grant's open end is where a
+            # launcher's command goes, whatever arguments come before it.
             return True
     return False

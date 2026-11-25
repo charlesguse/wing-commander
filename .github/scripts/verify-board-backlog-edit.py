@@ -102,8 +102,45 @@ def single_home_violations(root):
     return hits
 
 
+def rest_only_errors():
+    """gh_fetch/gh_write/gh_comment go through `gh api` REST: `gh issue
+    view/edit/comment` need GraphQL, which cloud sessions are refused (#889).
+    The body round-trips through the JSON each call sends and reads."""
+    calls, errors = [], []
+    saved = bbe._gh
+
+    def fake(args, stdin=None):
+        calls.append((list(args), stdin))
+        return "line one\nline two\n\n"
+
+    bbe._gh = fake
+    try:
+        got = bbe.gh_fetch(889)
+        bbe.gh_write(889, "new\nbody")
+        bbe.gh_comment(889, "a note")
+    finally:
+        bbe._gh = saved
+    for args, _stdin in calls:
+        if args[:1] != ["api"] or not any(a.endswith("/issues/889") or a.endswith("/issues/889/comments") for a in args):
+            errors.append("not a REST issue call: gh {0}".format(" ".join(args)))
+    if got != "line one\nline two\n":
+        errors.append("gh_fetch returned {0!r}".format(got))
+    sent = []
+    for _args, stdin in calls[1:]:
+        try:
+            sent.append(json.loads(stdin or ""))
+        except ValueError:
+            sent.append(stdin)
+    if sent != [{"body": "new\nbody"}, {"body": "a note"}]:
+        errors.append("write/comment sent {0!r}".format(sent))
+    return errors
+
+
 def run():
     failures = 0
+    for error in rest_only_errors():
+        failures += 1
+        print("::error::verify-board-backlog-edit: {0}".format(error))
     for path in sorted(glob.glob(FIXTURES)):
         with open(path, encoding="utf-8") as fh:
             error = run_case(json.load(fh))
