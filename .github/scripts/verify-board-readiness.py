@@ -88,6 +88,10 @@ EXPECTED_CASES = {
     # checks_green, even though gate_suite_green reads a SKIPPED `lint` as
     # green.
     "cancelled-run", "failed-unit-skipped-aggregate",
+    # Every unit green and no `lint` entry yet: GitHub has not queued the
+    # aggregate, which clears on its own (self-clearing) -- unless another
+    # condition is unmet too (durable, and named). Code review of #1233.
+    "aggregate-pending-self-clearing", "aggregate-pending-open-findings",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"

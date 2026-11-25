@@ -25,7 +25,7 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 - [X] T004 Rename the second `Gate 23 self-test — the detector actually detects` step in `.github/workflows/lint-workflows.yml` so every PR-time step name is unique (R4, Key Entities); update every gate that reads that step name (found in T001, e.g. `.github/scripts/verify-gate-wiring.py`, `verify-gate-22*.py`, `verify-gate-23*.py`) and their fixtures.
 - [X] T005 [P] If T001 found setup/fixture steps shared by several gates, move them into a composite action under `.github/actions/` and call it from the job (single-home rule, R5); otherwise record "none" in the PR description.
 - [X] T006 [P] In `.github/scripts/wc_gate_registry.py`, make `pr_time_gates` exclude the aggregate job named `lint` by name (R6); update its self-test with a fixture where the aggregate job carries a `run:` step and is excluded.
-- [X] T007 Add `if: ${{ !cancelled() }}` to every step lacking a survivable guard in `.github/workflows/lint-workflows.yml` except checkout, and guard each self-test step `!cancelled() && steps.<gate id>.outcome != 'failure'` with an `id:` on its paired gate step, paired by step name (FR-009, R3). Run the gate suite and fix any gate that byte-compares the changed text.
+- [X] T007 Add `if: ${{ !cancelled() }}` to every step lacking a survivable guard in `.github/workflows/lint-workflows.yml` except checkout; a self-test step MAY also carry `steps.<gate id>.outcome != 'failure'` with an `id:` on its paired gate step, paired by step name (FR-009, R3: optional, and not added). Run the gate suite and fix any gate that byte-compares the changed text.
 
 **Checkpoint**: single `lint` job still green locally, names unique, isolation in place.
 
@@ -165,7 +165,7 @@ MVP = Phases 1–3 plus T014–T016 from US2: a sharded suite whose aggregate ca
 
 ## Review Gate Round 2 Findings
 
-- [ ] Review finding: Self-test steps lack the paired-gate outcome guard required by the layout contract
+- [x] Review finding: Self-test steps lack the paired-gate outcome guard required by the layout contract
 
   Every `Gate N self-test` step has only `if: !cancelled()` and no gate step carries an `id:`, so a failing gate also fails its self-test and one defect shows as two red steps, contrary to research R3, T007 and contract item 7.
 
@@ -173,13 +173,17 @@ MVP = Phases 1–3 plus T014–T016 from US2: a sharded suite whose aggregate ca
 
   Detail: Add `id:` to each paired gate step and `steps.<id>.outcome != 'failure'` to its self-test's `if:`.
 
-- [ ] Review finding: Gate 174 self-test pairing check passes vacuously when gate step has no id
+  Disposition (hand-finish, 2026-11-25): not added. FR-009 and contract item 7 say a self-test MAY be skipped when its gate fails; R3 and T007 now say the same. A self-test runs fixtures, so it stays green when its gate finds a real defect.
+
+- [x] Review finding: Gate 174 self-test pairing check passes vacuously when gate step has no id
 
   The check only reports a missing guard when `want` (the paired gate step's id) exists (`if not got and want`), so with no ids in the workflow the rule is unenforced and Gate 174 stays green.
 
   - .github/scripts/verify-lint-shard-layout.py
 
   Detail: Fail any self-test step whose paired gate step exists but has no id or no outcome guard.
+
+  Disposition (hand-finish, 2026-11-25): not a defect. The pair guard is optional (FR-009, contract item 7), so Gate 174 checks a guard only where one is present, and that it names its own gate in the same unit.
 
 - [x] Review finding: Gates 173 and 174 define the aggregate job differently
 
@@ -197,10 +201,12 @@ MVP = Phases 1–3 plus T014–T016 from US2: a sharded suite whose aggregate ca
 
   Detail: Say gates were rebalanced across shards for timing and order is not preserved.
 
-- [ ] Review finding: Readers may record a durable not-ready verdict while the lint aggregate is not yet listed
+- [x] Review finding: Readers may record a durable not-ready verdict while the lint aggregate is not yet listed
 
   board_readiness and lifecycle_readiness match only the `lint` check and treat its absence as durable not-ready, but `lint` now needs eight shards plus harness-tests and may be absent from the rollup briefly after all shards succeed.
 
   - .github/scripts/board_readiness.py
 
   Detail: Confirm GitHub lists the waiting job in the rollup, or add a pending-aggregate fixture expecting a non-durable verdict.
+
+  Disposition (hand-finish, 2026-11-25): fixed in board_readiness.py (`_gate_suite_pending`), with fixtures aggregate-pending-self-clearing and aggregate-pending-open-findings.

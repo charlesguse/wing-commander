@@ -12,7 +12,7 @@
 - **Risk to prove**: when a newer push cancels a run (#1196), the `always()` aggregate must conclude cancelled or failure, never success/skipped. Covered by the aggregate gate's simulation and the post-merge `prove-after-merge` drill (SC-003). Pass through `review-step-gating` skill.
 
 ## R3 — FR-009 failure isolation
-- **Decision**: every step except checkout and the aggregate's own gets `if: ${{ !cancelled() }}` (or the existing guard); a self-test step is guarded `!cancelled() && steps.<gate id>.outcome != 'failure'`, paired by unique step name. Enforced by `verify-lint-shard-layout.py`.
+- **Decision**: every step except checkout and the aggregate's own gets `if: ${{ !cancelled() }}` (or the existing guard). A self-test step MAY additionally be guarded `steps.<gate id>.outcome != 'failure'`, paired by unique step name (FR-009 and contract item 7 make this optional). The shipped workflow adds no pair guards: a self-test runs fixtures, not the repository's state, so it still passes when its gate finds a real defect. Both steps go red only when the gate script itself is broken, and then both are accurate. `verify-lint-shard-layout.py` enforces the `!cancelled()` guard, and checks that any pair guard present names its own gate's id in the same unit.
 - **Rationale**: 70 steps today are skipped by an earlier failure; sharding does not fix that alone.
 
 ## R4 — Step-name uniqueness

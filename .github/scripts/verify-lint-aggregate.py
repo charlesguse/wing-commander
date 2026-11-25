@@ -32,6 +32,7 @@ import copy
 import itertools
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -48,6 +49,7 @@ AGGREGATE = "lint"
 EVENTS = ("pull_request", "push", "schedule", "workflow_dispatch")
 RESULTS = ("success", "failure", "cancelled", "skipped")
 NEEDS_ENV = "${{ toJSON(needs) }}"
+STATUS_FUNCS = ("success", "failure", "cancelled", "always")
 
 
 def _ctx(event, results, run_cancelled, job_level):
@@ -71,11 +73,27 @@ def _ctx(event, results, run_cancelled, job_level):
 def _runs(cond, ctx):
     """Whether a job/step with `if: cond` runs. An absent if: is success()."""
     expr = str(cond).strip() if cond not in (None, "") else "success()"
-    has_status = any(f in expr for f in ("success()", "failure()",
-                                         "cancelled()", "always()"))
-    if not has_status:
+    if not _has_status_call(expr):
         expr = "success() && (" + expr.replace("${{", "").replace("}}", "") + ")"
     return gha.evaluate_if(expr, ctx, known=("github.",))
+
+
+def _has_status_call(expr):
+    """Whether `expr` CALLS a status function, read from its tokens as
+    GitHub parses it: `'always()'` inside a string literal is not a call,
+    and GitHub still wraps such an if: in the implicit success() &&."""
+    m = re.fullmatch(r"\$\{\{(.*)\}\}", expr.strip(), re.S)
+    toks = gha.tokenize(m.group(1) if m else expr)
+    return any(kind == "name" and val.lower() in STATUS_FUNCS
+               and i + 1 < len(toks) and toks[i + 1] == ("op", "(")
+               for i, (kind, val) in enumerate(toks))
+
+
+def _names(text, unit):
+    """Whether `text` names `unit` as a whole token: lint-shard-1 is not
+    named by lint-shard-10, nor harness-tests by harness-tests-2."""
+    return re.search(r"(?<![\w-])" + re.escape(unit) + r"(?![\w-])",
+                     text) is not None
 
 
 def _combos(needs):
@@ -211,16 +229,26 @@ def check(doc, bash=None):
             fails.append("the aggregate step passes when {0}".format(
                 ", ".join("{0}={1}".format(k, results[k]) for k in bad)))
             break
-        unnamed = [k for k in bad if k not in log]
+        # SC-005 names the units that did not succeed, and only those: a
+        # step that prints every unit names the failed one by accident.
+        good = [k for k, v in results.items() if v == "success"]
+        unnamed = [k for k in bad if not _names(log, k)]
         if unnamed:
             fails.append("the aggregate step's log does not name the "
                          "non-success unit(s) {0}".format(unnamed))
             break
-        unsummed = [k for k in bad if k not in summary]
+        unsummed = [k for k in bad if not _names(summary, k)]
         if unsummed:
             fails.append("the aggregate step does not write the non-success "
                          "unit(s) {0} to $GITHUB_STEP_SUMMARY".format(unsummed))
             break
+        if bad:
+            blamed = [k for k in good
+                      if _names(log, k) or _names(summary, k)]
+            if blamed:
+                fails.append("the aggregate step names unit(s) {0} that "
+                             "succeeded as not succeeding".format(blamed))
+                break
     return fails
 
 
@@ -291,6 +319,19 @@ def self_test():
          lambda d: s(d).update({"run": s(d)["run"].replace(
              '>> "$GITHUB_STEP_SUMMARY"', ">/dev/null")}),
          "GITHUB_STEP_SUMMARY")
+    case("a step that prints every unit, not the failed ones, fails",
+         lambda d: s(d).update({"run": s(d)["run"].replace(
+             "printf '%s\\n' \"$bad\"\n",
+             "printf '%s' \"$NEEDS\" | jq -r 'keys[]'\n", 1)}),
+         "that succeeded as not succeeding")
+    case("a step naming a unit only as a prefix of another name fails",
+         lambda d: s(d).update({"run": s(d)["run"].replace(
+             '"\\(.key): ', '"\\(.key)0: ')}),
+         "does not name")
+    case("a string literal 'always()' is not a status call",
+         lambda d: j(d).update({"if": "${{ " + pr + " && github.head_ref "
+                                "!= 'always()' }}"}),
+         "it needs always()")
     case("a NEEDS env that is not toJSON(needs) fails",
          lambda d: s(d)["env"].update({"NEEDS": "${{ needs }}"}),
          "env NEEDS")

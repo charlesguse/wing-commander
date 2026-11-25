@@ -167,6 +167,27 @@ def _gate_suite_green(rollup):
     return False
 
 
+# contracts/lint-workflow-layout.md item 1 (specs/129-parallel-pr-lint):
+# the workflow's name, pinned there and by Gate 174.
+LINT_WORKFLOW_NAME = "lint · workflows"
+
+
+def _gate_suite_pending(rollup):
+    """specs/129-parallel-pr-lint: lint-workflows ran on this head (one of
+    its units is in the rollup) but its `lint` aggregate has not reported.
+    GitHub creates a job's check run only once every job it `needs` has
+    finished, so between the last unit concluding and the aggregate being
+    queued the rollup holds green units and no `lint` at all. That clears
+    on its own within seconds. A rollup with no lint-workflows entry at all
+    is the workflow never running (a PR outside its paths: code review of
+    #1010), which does not."""
+    lint_entries = [e for e in rollup
+                    if (e.get("workflowName") or "") == LINT_WORKFLOW_NAME]
+    return bool(lint_entries) and not any(
+        (e.get("name") or e.get("context") or "") == "lint"
+        for e in lint_entries)
+
+
 # Public names for the merge-evidence audit (specs/125-merge-evidence-audit,
 # FR-008): it calls the "every status counts" rule, never copies it.
 checks_green = _checks_green
@@ -250,10 +271,16 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
         # The checks' own class, then the record's: the reason text below
         # reads the first, the record carries the second.
         checks_class = _unmet_class(rollup, checks_green)
+        aggregate_pending = checks_green and _gate_suite_pending(rollup)
+        if aggregate_pending:
+            checks_class = "self-clearing"
         other_unmet = not (zero_open_findings and backstop_holds and kill_switch_clear)
         unmet_class = "durable" if other_unmet else checks_class
-        if not checks_green:
-            if not rollup:
+        if not checks_green or aggregate_pending:
+            if aggregate_pending:
+                unmet_reason = ("the lint-workflows units finished but the `lint` "
+                                "aggregate has not reported yet on head_sha {0}".format(head_sha))
+            elif not rollup:
                 unmet_reason = "no checks reported on head_sha {0}".format(head_sha)
             elif checks_class == "self-clearing" and any(
                     _entry_state(entry) in STOPPED_STATES
