@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: User description: "Board loop messages explain the line: the issue, why it matters, what the fix does and does not decide" (issue #1215, owner direction 2026-11-25, following a walk-through of the board loop's comments on #1202). The issue also put in scope a "fix, but needs one decision" route for a backlog line that needs one small decision; the owner split that route out on 2026-11-25 into the follow-up spec-proposal #NNN, which depends on this feature's explanation renderer.
+**Input**: User description: "Board loop messages explain the line: the issue, why it matters, what the fix does and does not decide" (issue #1215, owner direction 2026-11-25, following a walk-through of the board loop's comments on #1202). The issue also put in scope a "fix, but needs one decision" route for a backlog line that needs one small decision; the owner split that route out on 2026-11-25 into the follow-up spec-proposal #1249, which depends on this feature's explanation renderer.
 
 ## Background
 
@@ -26,7 +26,7 @@ The board loop works Maintenance backlog lines (#889) into fix PRs. Its comments
 ### Session 2026-11-25
 
 - Q1: Review agent output form? → A: structured named parts (asked / checked / decided / not decided / open) in the review agent's result schema, with a gate that fails a comment missing any part (answered from the `wc_session_record.py` precedent, recorded 2026-11-24). → FR-008, Story 2.
-- Q2: Where is a one-decision question posted and how is the answer picked up? → A: a comment on the Maintenance backlog issue (#889) against the line's `bl-` identifier; the owner answers by replying with that identifier and the chosen option. → FR-013, Story 4. *(Note: moved to the follow-up spec-proposal #NNN by the owner's 2026-11-25 split; FR-013 and Story 4 are no longer in this spec.)*
+- Q2: Where is a one-decision question posted and how is the answer picked up? → A: a comment on the Maintenance backlog issue (#889) against the line's `bl-` identifier; the owner answers by replying with that identifier and the chosen option. → FR-013, Story 4. *(Note: moved to the follow-up spec-proposal #1249 by the owner's 2026-11-25 split; FR-013 and Story 4 are no longer in this spec.)*
 - Q3: Which surfaces do the message rules cover? → A: board-loop fix PRs only, for now. Lifecycle-review-gate rounds, pr-conversation and the watchdog may be added by a later spec; the named-parts schema and gate stay general enough for that but those surfaces are not built now. → FR-016, FR-008.
 
 ## User Scenarios & Testing *(mandatory)*
@@ -118,7 +118,7 @@ Every fixed-text message the board loop posts (readiness, merge, proof, stand-do
 
 **Scope, length and backlog record**
 
-- **FR-016**: These message rules MUST apply to the board loop's own messages only: its fix PRs and its line records on the Maintenance backlog issue (FR-017). Lifecycle-review-gate rounds, pr-conversation replies and watchdog comments are out of scope for this feature and MUST NOT be changed by it; the owner may extend the rules to them in a later spec, which is why FR-008's schema and gate stay surface-independent. The one-decision question on #889 and its Board status entry belong to the follow-up spec-proposal #NNN, not to this feature. *(Clarified 2026-11-25, Q3 option A, owner's choice "for now"; narrowed by the owner's 2026-11-25 split.)*
+- **FR-016**: These message rules MUST apply to the board loop's own messages only: its fix PRs and its line records on the Maintenance backlog issue (FR-017). Lifecycle-review-gate rounds, pr-conversation replies and watchdog comments are out of scope for this feature and MUST NOT be changed by it; the owner may extend the rules to them in a later spec, which is why FR-008's schema and gate stay surface-independent. The one-decision question on #889 and its Board status entry belong to the follow-up spec-proposal #1249, not to this feature. *(Clarified 2026-11-25, Q3 option A, owner's choice "for now"; narrowed by the owner's 2026-11-25 split.)*
 - **FR-017**: When the loop ticks a backlog line as fixed, the ticked line MUST carry a one-line record of what was decided and a link to the explaining comment, so #889 keeps the "why". *(Default for the issue's open question 4.)*
 - **FR-018**: Each explaining or review comment MUST lead with its labelled parts (fenced as FR-003a requires) in a section that fits on one screen; supporting evidence beyond that (long quotes, file lists, logs) MUST go in a collapsed `<details>` section rather than be cut. *(Default for the issue's open question 5.)*
 
@@ -147,5 +147,5 @@ Every fixed-text message the board loop posts (readiness, merge, proof, stand-do
 - Main has no required checks, branch protection or rulesets (confirmed by the owner 2026-11-25); the truthfulness rule applies to that state and to any later one.
 - The board loop's existing switches (`WING_COMMANDER_BOARD_AUTO_MERGE`, the kill switch) and PR classes are unchanged by this feature; only the messages describing them change.
 - Scope is board-loop fix PRs only (FR-016); extending the rules to lifecycle-review-gate rounds, pr-conversation and the watchdog is a possible later spec, decided once the owner has seen this one in use.
-- The "fix, but needs one decision" route (formerly Story 4, FR-012–FR-015, FR-019–FR-022, SC-004) was split out by the owner on 2026-11-25 into the follow-up spec-proposal #NNN, which reuses this feature's explanation renderer for its question; FR numbers here are not renumbered, so the gaps are deliberate.
+- The "fix, but needs one decision" route (formerly Story 4, FR-012–FR-015, FR-019–FR-022, SC-004) was split out by the owner on 2026-11-25 into the follow-up spec-proposal #1249, which reuses this feature's explanation renderer for its question; FR numbers here are not renumbered, so the gaps are deliberate.
 - The owner-reviewed #1202 / bl-b9677278 draft in the issue is the reference shape for both the first comment and the review comment.
