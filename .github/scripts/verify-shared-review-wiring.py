@@ -37,12 +37,59 @@ def callable_problems(wf):
     for name, job in jobs.items():
         text = yaml.safe_dump(job)
         if name != "record" and ("issues: write" in text or "permission-issues: write" in text
-                                 or "-X POST" in text):
+                                 or "pull-requests: write" in text or "-X POST" in text):
             problems.append("{0} writes or posts; only record may".format(name))
         if name not in ("prepare", "record") and "create-github-app-token" in text:
             problems.append("{0} mints an App token".format(name))
     if "record" not in jobs or "-X POST" not in yaml.safe_dump(jobs["record"]):
         problems.append("record no longer posts the comment")
+    # The record is a comment on a pull request: GitHub refuses it from an
+    # App token without pull-requests: write (HTTP 403, T044 run 45628429265).
+    mints = [s for s in (jobs["record"].get("steps") or [])
+             if "create-github-app-token" in str(s.get("uses", ""))]
+    if not any((s.get("with") or {}).get("permission-pull-requests") == "write" for s in mints):
+        problems.append("record's App token lacks pull-requests: write, so its PR comment is refused")
+    # That scope can also approve, request changes, retitle or close the PR
+    # (FR-023 forbids each), so the token is held to issues and pull
+    # requests (no contents: no merge, no push), to this repository (no
+    # owner or repositories input) and to the one comment call. Only those
+    # inputs are checked: the action's other inputs may change with its
+    # versions.
+    for s in mints:
+        extra = sorted(k for k in (s.get("with") or {})
+                       if k in ("owner", "repositories") or (k.startswith("permission-") and k not in (
+                           "permission-issues", "permission-pull-requests")))
+        if extra:
+            problems.append("record's App token asks for more than issues and pull requests "
+                            "on this repository: " + ", ".join(extra))
+    record_text = yaml.safe_dump(jobs["record"])
+    if len(mints) != 1 or record_text.count("secrets.app-private-key") != 1:
+        problems.append("record mints its App token more than once")
+    token = "steps.{0}.outputs.token".format((mints[0].get("id") if mints else None) or "app")
+    users = [s for s in (jobs["record"].get("steps") or []) if token in yaml.safe_dump(s)]
+    if record_text.count(token) != 1 or len(users) != 1:
+        problems.append("record's write token reaches more than the one comment step")
+    else:
+        # Every gh call in the step is the one comment call; flags, a retry
+        # loop, messages and other shell lines around it are free.
+        run = str(users[0].get("run") or "").replace("\\\n", " ")
+        gh = [ln.strip() for ln in run.splitlines() if re.search(r"\bgh\b", ln)
+              and not re.match(r"\s*(#|echo\b|printf\b)", ln)]
+        comment = r'\bgh api\b.*\brepos/\$\{?REPO\}?/issues/\$\{?PR\}?/comments(?!/)'
+        if not all(re.search(comment, ln) for ln in gh):
+            problems.append("record's write token does more than post the one PR comment: "
+                            + " | ".join(gh))
+        # The command's path comes from its env and its program from the
+        # shell, so those are pinned too: the PR and repository the round was
+        # asked about. Other env entries are free, and no shell: is bash on
+        # record's runner.
+        env = {k: str(v).replace(" ", "") for k, v in (users[0].get("env") or {}).items()}
+        want = {"GH_TOKEN": "${{" + token + "}}", "PR": "${{inputs.pr}}",
+                "REPO": "${{github.repository}}"}
+        if any(env.get(k) != v for k, v in want.items()) or users[0].get("shell", "bash") != "bash":
+            problems.append("record's comment step takes its token, target or shell from somewhere "
+                            "else: env {0}, shell {1}".format(
+                                {k: env.get(k) for k in want}, users[0].get("shell")))
     for name in ("find", "check", "code-run", "record"):
         needs = jobs[name].get("needs") or []
         needs = [needs] if isinstance(needs, str) else needs
@@ -335,6 +382,14 @@ def _verdict_can_fail(wf):
     _step(wf, "check", lambda s: s.get("id") == "check-verdict").pop("continue-on-error", None)
 
 
+def _record_mint(wf):
+    return _step(wf, "record", lambda s: "create-github-app-token" in str(s.get("uses", "")))
+
+
+def _record_post_step(wf):
+    return _step(wf, "record", lambda s: "steps.app.outputs.token" in yaml.safe_dump(s))
+
+
 def _head_fetch_step(wf):
     return _step(wf, "prepare", lambda s: "refs/pull/" in str(s.get("run") or ""))
 
@@ -366,12 +421,70 @@ def main():
             "find posts": lambda c: c["jobs"]["find"].update({"permissions": {"issues": "write"}}),
             "check loses its model": lambda c: c["jobs"]["check"]["steps"].clear(),
             "prepare loses the guard": lambda c: c["jobs"]["prepare"].update({"needs": []}),
+            "record's token cannot comment on a pull request": lambda c: next(
+                s for s in c["jobs"]["record"]["steps"]
+                if "create-github-app-token" in str(s.get("uses", "")))["with"].update(
+                {"permission-pull-requests": "read"}),
+            "find gets pull-requests: write": lambda c: c["jobs"]["find"].update(
+                {"permissions": {"pull-requests": "write"}}),
+            "record's token asks for contents: write": lambda c: next(
+                s for s in c["jobs"]["record"]["steps"]
+                if "create-github-app-token" in str(s.get("uses", "")))["with"].update(
+                {"permission-contents": "write"}),
+            "record approves the pull request": lambda c: _record_post_step(c).update(
+                {"run": _record_post_step(c)["run"] + 'gh pr review "$PR" --approve\n'}),
+            "record mints a second write token": lambda c: c["jobs"]["record"]["steps"].insert(
+                -1, dict(copy.deepcopy(next(s for s in c["jobs"]["record"]["steps"]
+                                            if "create-github-app-token" in str(s.get("uses", "")))),
+                         id="app2")),
+            "record's token reaches the build step": lambda c: next(
+                s for s in c["jobs"]["record"]["steps"] if s.get("id") == "build")["env"].update(
+                {"GH_TOKEN": "${{ steps.app.outputs.token }}"}),
+            "record's one command reviews the pull request": lambda c: _record_post_step(c).update(
+                {"run": 'set -euo pipefail\n'
+                        'gh api -X POST "repos/${REPO}/pulls/${PR}/reviews" -f event=APPROVE\n'}),
+            "a record step reads the App private key": lambda c: c["jobs"]["record"]["steps"].append(
+                {"name": "x", "env": {"KEY": "${{ secrets.app-private-key }}"}, "run": "true\n"}),
+            "record's token reaches another owner": lambda c: next(
+                s for s in c["jobs"]["record"]["steps"]
+                if "create-github-app-token" in str(s.get("uses", "")))["with"].update(
+                {"owner": "${{ github.repository_owner }}"}),
+            "record's comment goes to another pull request": lambda c: _record_post_step(c)["env"].update(
+                {"PR": "${{ needs.prepare.outputs.spent }}"}),
+            "record's comment step runs another shell": lambda c: _record_post_step(c).update(
+                {"shell": "python {0}"}),
         }
         for label, mutate in muts.items():
             clone = copy.deepcopy(cal)
             mutate(clone)
             if not callable_problems(clone):
                 print("::error::self-test: mutation not caught: " + label)
+                bad += 1
+        # Ordinary edits to record's mint and post that must stay legal.
+        legal = {
+            "the post logs the comment URL with --jq": lambda c: _record_post_step(c).update(
+                {"run": 'set -euo pipefail\n'
+                        'gh api -X POST "repos/${REPO}/issues/${PR}/comments" -F body=@record.md --jq .html_url\n'}),
+            "the post retries": lambda c: _record_post_step(c).update(
+                {"run": 'set -euo pipefail\n# Retry a transient 5xx from gh.\nfor i in 1 2 3; do\n'
+                        '  gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@record.md > /dev/null 2>&1 && break\n'
+                        '  echo "::warning::gh failed, retrying"\n  sleep 10\ndone\n'}),
+            "the post is split over lines": lambda c: _record_post_step(c).update(
+                {"run": 'gh api -X POST \\\n  repos/${REPO}/issues/${PR}/comments \\\n  -F body=@record.md\n'}),
+            "the post step drops shell: bash": lambda c: _record_post_step(c).pop("shell"),
+            "the post step gets another env entry": lambda c: _record_post_step(c)["env"].update(
+                {"GH_PROMPT_DISABLED": "1"}),
+            "the post step is renamed": lambda c: _record_post_step(c).update({"name": "Post the round"}),
+            "the mint gets a new action input": lambda c: _record_mint(c)["with"].update(
+                {"skip-token-revoke": "false"}),
+            "the mint drops issues: write": lambda c: _record_mint(c)["with"].pop("permission-issues"),
+        }
+        for label, edit in legal.items():
+            clone = copy.deepcopy(cal)
+            edit(clone)
+            found = callable_problems(clone)
+            if found:
+                print("::error::self-test: legal edit refused: {0}: {1}".format(label, found))
                 bad += 1
         for label, mutate, check in (
                 ("a git read swallowed with || true", _swallow_diff, diff_read_problems),
