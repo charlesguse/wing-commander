@@ -768,9 +768,14 @@ jobs:
       # only after a cycle or retry succeeded (final ok) and never pushes,
       # so its own setup failure must not tell the stall notice that no
       # agent work exists -- that cycle's commits are on the branch (FR-015).
-      agent-started: ${{ steps.agent-ran-retry.outputs.started || steps.agent-ran-cycle.outputs.started }}
+      # Any 'true' wins, not most-recent: the retry clears the cycle's
+      # transcript first, so a retry that fails in its own setup reports
+      # 'false' after a cycle agent that ran and pushed (code review of
+      # #1239).
+      agent-started: ${{ (steps.agent-ran-retry.outputs.started == 'true' || steps.agent-ran-cycle.outputs.started == 'true') && 'true' || steps.agent-ran-retry.outputs.started || steps.agent-ran-cycle.outputs.started }}
       credential-refresh-ok: ${{ steps.credential-status-progress.outputs.ok || steps.credential-status-retry.outputs.ok || steps.credential-status-cycle.outputs.ok }}
-      # Most-recent-wins across retry/cycle only, same convention as above.
+      # Most-recent-wins across retry/cycle only, same convention as
+      # agent-conclusion above.
       commits-published: ${{ steps.publish-stranded-retry.outputs.commits-published || steps.publish-stranded-cycle.outputs.commits-published }}
       push-ok: ${{ steps.publish-stranded-retry.outputs.push-ok || steps.publish-stranded-cycle.outputs.push-ok }}
       # Record-only (not read by the stall path): 'true' when ANY chain
@@ -2149,13 +2154,14 @@ jobs:
             echo "⚠️ gate-suite preflight (retry): missing prerequisites —$missing; skipping the local gate suite for this retry." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # FR-009: mirrors "Run local gate suite (cycle)" above. Only when the
-      # retry agent is due (its own ok/escalation-model conditions): every
+      # FR-009: mirrors "Run the cycle-start gate suite (credential-free)"
+      # (in gate-suite-implement-cycle, spec 095). Only when the retry agent
+      # is due (its own ok/escalation-model/started conditions): every
       # reader of this step's outputs is retry-only, and on a converged cycle
       # the suite would only hold the job up to its step timeout.
       - name: Run local gate suite (retry)
         id: gate-suite-retry
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.gate-suite-preflight-retry.outputs.ready == 'true' && steps.outcome.outputs.ok == 'false' && steps.effective-model.outputs.model != inputs.escalation-model
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.gate-suite-preflight-retry.outputs.ready == 'true' && steps.outcome.outputs.ok == 'false' && steps.effective-model.outputs.model != inputs.escalation-model && steps.agent-ran-cycle.outputs.started != 'false'
         continue-on-error: true
         # The step timeout -- see "Run the cycle-start gate suite
         # (credential-free)" above in this file.
@@ -2245,7 +2251,10 @@ jobs:
 
       # One automatic retry of the SAME iteration, one tier up
       # (→ inputs.escalation-model). Skipped when the failing attempt already
-      # ran on the escalation tier — that goes straight to stalled.
+      # ran on the escalation tier — that goes straight to stalled — and when
+      # the cycle's agent never started (agent-ran-cycle started=false, e.g.
+      # an image missing unzip): the retry runs on the same image and would
+      # fail its setup the same way.
       - name: Compose commit-message guidance (implement.retry)
         id: commit-guidance-retry
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
@@ -2280,6 +2289,7 @@ jobs:
           steps.guard.outputs.skip != 'true' &&
           steps.outcome.outputs.ok == 'false' &&
           steps.effective-model.outputs.model != inputs.escalation-model &&
+          steps.agent-ran-cycle.outputs.started != 'false' &&
           steps.tool-args-retry.outputs.allowed-tools != ''
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
         with:
@@ -2297,6 +2307,7 @@ jobs:
           steps.guard.outputs.skip != 'true' &&
           steps.outcome.outputs.ok == 'false' &&
           steps.effective-model.outputs.model != inputs.escalation-model &&
+          steps.agent-ran-cycle.outputs.started != 'false' &&
           steps.tool-args-retry.outputs.allowed-tools != ''
         env:
           SLUG: ${{ steps.spec.outputs.slug }}
@@ -2316,12 +2327,34 @@ jobs:
           steps.guard.outputs.skip != 'true' &&
           steps.outcome.outputs.ok == 'false' &&
           steps.effective-model.outputs.model != inputs.escalation-model &&
+          steps.agent-ran-cycle.outputs.started != 'false' &&
           steps.tool-args-retry.outputs.allowed-tools != '' &&
           steps.project.outputs.project != ''
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
         with:
           mode: install-pre-push
           project: ${{ steps.project.outputs.project }}
+
+      # The cycle agent's transcript is still at this path, and the retry
+      # agent step writes its own only once its agent starts. Without this,
+      # a retry that fails in its own setup hands the retry's agent-ran
+      # signal (started), verdict, metrics and refusal probe the cycle's
+      # transcript as if it were the retry's. Moved aside rather than
+      # deleted: "Extract agent final message" falls back to it when the
+      # retry wrote none. Same guard as the retry step, for the reason
+      # "Clear previous attempt's transcript (progress)" gives.
+      - name: Clear previous attempt's transcript (retry)
+        if: >-
+          steps.lifecycle-gate.outputs.is-open == 'true' &&
+          steps.guard.outputs.skip != 'true' &&
+          steps.outcome.outputs.ok == 'false' &&
+          steps.effective-model.outputs.model != inputs.escalation-model &&
+          steps.agent-ran-cycle.outputs.started != 'false' &&
+          steps.tool-args-retry.outputs.allowed-tools != ''
+        run: |
+          if [ -f "$RUNNER_TEMP/claude-execution-output.json" ]; then
+            mv -f "$RUNNER_TEMP/claude-execution-output.json" "$RUNNER_TEMP/claude-execution-output-cycle.json"
+          fi
 
       # This step's prompt carries the retry-bound paragraph for the
       # credential-expiry `git push` signature -- see clarify.yml.
@@ -2332,6 +2365,7 @@ jobs:
           steps.guard.outputs.skip != 'true' &&
           steps.outcome.outputs.ok == 'false' &&
           steps.effective-model.outputs.model != inputs.escalation-model &&
+          steps.agent-ran-cycle.outputs.started != 'false' &&
           steps.tool-args-retry.outputs.allowed-tools != ''
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
@@ -3267,6 +3301,9 @@ jobs:
       # workflows permission"). The action leaves its transcript in the runner
       # temp dir; the file reflects the LAST attempt that ran (a retry
       # overwrites the primary's, which was already uploaded as an artifact).
+      # A retry that failed in its own setup wrote none, so the cycle's,
+      # moved aside by "Clear previous attempt's transcript (retry)", is
+      # read instead.
       # #309: written to a file for the artifact below, together with the
       # consolidated reason, rather than lifted as job outputs -- see the
       # outputs: block above in this file.
@@ -3278,6 +3315,9 @@ jobs:
           REASON: ${{ steps.final.outputs.reason }}
         run: |
           file="$RUNNER_TEMP/claude-execution-output.json"
+          if [ ! -f "$file" ]; then
+            file="$RUNNER_TEMP/claude-execution-output-cycle.json"
+          fi
           msg=""
           if [ -f "$file" ]; then
             msg=$(jq -r '[.[] | select(.type == "result")] | last | .result // empty' "$file" 2>/dev/null | head -c 1500 || true)
@@ -4405,6 +4445,10 @@ jobs:
           SELF_WORKFLOW: ${{ inputs.self-workflow }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           PUBLISHED_LINE: ${{ steps.published-line.outputs.line }}
+          # 'false' only when the cycle agent never started, which skips
+          # the escalation retry (see "Implement and converge (retry at
+          # escalation model)").
+          AGENT_STARTED: ${{ needs.implement.outputs.agent-started }}
         run: |
           gh label create "stage:stalled" --color E99695 --description "Stage did not complete; manual restart required" --force
           gh issue edit "$ISSUE" --add-label "stage:stalled"
@@ -4435,7 +4479,11 @@ jobs:
           # comment for why this step cannot resolve _shared/ itself.
           published_line="$PUBLISHED_LINE"
           {
-            echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed (last attempt on \`$TIER\`), and no higher model tier remains to escalate to, so this specification is now **stalled** (nothing restarts automatically)."
+            if [ "$AGENT_STARTED" = "false" ]; then
+              echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed before its agent started (on \`$TIER\`), so it was not retried: a retry runs on the same runner image and would fail its setup the same way. This specification is now **stalled** (nothing restarts automatically); a missing image prerequisite needs fixing first, while a transient download or network error clears on a re-dispatch."
+            else
+              echo "⏸️ **Implementation stalled** — iteration $ITERATION of the implement/converge loop failed (last attempt on \`$TIER\`), and no higher model tier remains to escalate to, so this specification is now **stalled** (nothing restarts automatically)."
+            fi
             echo ""
             echo "**Failing run**: $RUN_URL"
             echo "**Why the attempt was judged failed**: $reason_text"

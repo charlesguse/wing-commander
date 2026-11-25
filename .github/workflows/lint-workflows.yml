@@ -3577,6 +3577,17 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-implement-gate-suite-preflight.py
 
+      # implement.yml's escalation retry clears the cycle agent's transcript
+      # under its own guard, skips a cycle agent that never started, and
+      # every step a quoted "mirrors" pointer names exists (#889).
+      # Not numbered, as above.
+      - name: Implement retry starts clean and skips an agent that never started
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-implement-retry-leg-guards.py
+      - name: Implement retry guards self-test
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-implement-retry-leg-guards.py --self-test
+
       # rebase.yml's discover step (#916, #831) runs against a real local
       # origin and a gh stub that applies its own --jq programs. Not
       # numbered, for the same reason as the board status step above.
