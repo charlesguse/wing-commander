@@ -268,8 +268,24 @@ def queued_dispatch_note_problems(wrapper_text):
     return []
 
 
-def wrapper_problems(wf):
+def wrapper_problems(wf, cal=None):
     problems = []
+    # A workflow_dispatch value reaches the callable as a string, and a
+    # callable `type: number` input refuses a string at startup ("Unexpected
+    # value '1219'": the first live rounds of T044, runs 45555932648 and
+    # 45559003373, never started a job). Every number input the wrapper
+    # passes as an expression goes through fromJSON.
+    declared = (((cal or {}).get("on") or (cal or {}).get(True) or {}).get("workflow_call") or {}).get("inputs") or {}
+    for job in (wf.get("jobs") or {}).values():
+        if "shared-pr-reviewer.yml" not in str(job.get("uses", "")):
+            continue
+        for name, value in (job.get("with") or {}).items():
+            if (declared.get(name) or {}).get("type") != "number" or not isinstance(value, str):
+                continue
+            expr = value.strip()
+            if expr.startswith("${{") and not re.match(r"^\$\{\{\s*fromJSON\(", expr):
+                problems.append("the wrapper passes number input {0} without fromJSON, which fails at "
+                                "startup when dispatched".format(name))
     conc = wf.get("concurrency") or {}
     if "shared-pr-reviewer-" not in str(conc.get("group", "")) or conc.get("cancel-in-progress") is not False:
         problems.append("the wrapper lacks the per-PR concurrency group with cancel-in-progress: false")
@@ -359,7 +375,7 @@ def main():
                 + agent_tree_problems(cal)
                 + release_problems(cal)
                 + queued_dispatch_note_problems(open(WRAPPER, encoding="utf-8").read())
-                + wrapper_problems(wrap) + readers_problems())
+                + wrapper_problems(wrap, cal) + readers_problems())
     if "--self-test" in sys.argv:
         bad = 0
         muts = {
@@ -425,6 +441,11 @@ def main():
         wclone["concurrency"] = {}
         if not wrapper_problems(wclone):
             print("::error::self-test: dropped concurrency not caught")
+            bad += 1
+        wclone = copy.deepcopy(wrap)
+        wclone["jobs"]["review"]["with"]["pr"] = "${{ inputs.pr }}"
+        if not wrapper_problems(wclone, cal):
+            print("::error::self-test: mutation not caught: the dispatch PR number passed without fromJSON")
             bad += 1
         return 1 if bad or problems else 0
     for p in problems:
