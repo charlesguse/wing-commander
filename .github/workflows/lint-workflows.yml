@@ -4903,7 +4903,7 @@ jobs:
       # method, no --admin/--auto/approval, both switches in its `if:`, the
       # App token (so prove-gate sees the closed event), and no decision
       # logic of its own. The auto-update stage posts the verification record
-      # and never merges, and the documents it scans
+      # and never merges. The documents this gate scans
       # (unscoped_merge_claim_docs) don't bring back the retired whole-loop
       # "never merges" sentences.
       - name: Gate 165 — board loop self-merge decision, refusal classes and merge-job shape
