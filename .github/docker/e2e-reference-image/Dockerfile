@@ -66,9 +66,12 @@ RUN apt-get update \
 
 # shellcheck at Gate 48's pin (see the header). An architecture the pin has
 # no linux hash for fails the build rather than installing something else.
+# CRs are dropped first: a Windows checkout (core.autocrlf) hands the build
+# a CRLF pin, which Gate 48's reader accepts, so this one must read it alike.
 COPY shellcheck.pin /tmp/shellcheck.pin
 RUN set -eu; \
     pin=/tmp/shellcheck.pin; \
+    sed -i 's/\r$//' "$pin"; \
     version="$(sed -n 's/^version=//p' "$pin")"; \
     case "$(dpkg --print-architecture)" in \
         amd64) arch=amd64; machine=x86_64 ;; \

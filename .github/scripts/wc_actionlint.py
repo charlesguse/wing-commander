@@ -210,13 +210,14 @@ def ensure_pinned_tool(cache_name, exe_name, url, member, sha256,
     return target
 
 
-def _pin(table, osname, arch):
+def _pin(table, osname, arch, home="wc_actionlint.py"):
+    """`home` is the file a maintainer adds the missing digest to:
+    shellcheck's live only in SHELLCHECK_PIN_FILE (#1204)."""
     try:
         return table[(osname, arch)]
     except KeyError:
         sys.exit(f"no pinned sha256 for {osname}/{arch}; add the archive's "
-                 f"digest to wc_actionlint.py before this host can run the "
-                 f"gate.")
+                 f"digest to {home} before this host can run the gate.")
 
 
 def ensure_actionlint():
@@ -249,4 +250,5 @@ def ensure_shellcheck():
         url = f"{base}.{osname}.{machine}.tar.xz"
         member = f"shellcheck-v{SHELLCHECK_VERSION}/shellcheck"
     return ensure_pinned_tool(f"wc-shellcheck-{SHELLCHECK_VERSION}", exe,
-                              url, member, _pin(SHELLCHECK_SHA256, osname, arch))
+                              url, member, _pin(SHELLCHECK_SHA256, osname, arch,
+                                                SHELLCHECK_PIN_FILE))

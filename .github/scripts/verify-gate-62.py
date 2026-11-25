@@ -716,6 +716,59 @@ def _pin_static_self_test():
             problems.append("a Dockerfile that stopped COPYing shellcheck.pin was NOT reported")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    problems.extend(_dockerfile_pin_read_self_test())
+    import wc_actionlint
+    try:
+        wc_actionlint._pin(wc_actionlint.SHELLCHECK_SHA256, "linux", "riscv64",
+                           wc_actionlint.SHELLCHECK_PIN_FILE)
+        problems.append("wc_actionlint._pin returned a digest for linux/riscv64")
+    except SystemExit as e:
+        if "shellcheck.pin" not in str(e):
+            problems.append(f"a host with no shellcheck hash is told to add it "
+                            f"somewhere other than shellcheck.pin, which the "
+                            f"single-home scan would then reject: {e}")
+    return problems
+
+
+def _dockerfile_pin_read_self_test():
+    """-> problems: the Dockerfile's own pin-reading shell, run here with sh
+    on an LF and a CRLF copy of the pin (a Windows checkout with
+    core.autocrlf), must read the version and linux/amd64 hash Gate 48's
+    read_shellcheck_pin reads. Runs the RUN block from its `pin=` line up to
+    its `[ -n "$version" ]` check, with dpkg answering amd64."""
+    df = os.path.join(DOCKERFILE_DIR, "Dockerfile")
+    with io.open(df, encoding="utf-8") as fh:
+        lines = fh.read().splitlines()
+    try:
+        start = next(i for i, ln in enumerate(lines) if ln.strip().startswith("pin=/tmp/shellcheck.pin"))
+        end = next(i for i in range(start, len(lines)) if lines[i].strip().startswith('[ -n "$version" ]'))
+    except StopIteration:
+        return [f"fixture setup: {df} has no `pin=/tmp/shellcheck.pin` line followed by "
+                f"a `[ -n \"$version\" ]` check -- update _dockerfile_pin_read_self_test"]
+    body = "\n".join(re.sub(r"\s*\\$", "", ln) for ln in lines[start:end])
+    want = read_shellcheck_pin(SHELLCHECK_PIN)
+    want = (want[0], want[1][("linux", "amd64")])
+    with io.open(SHELLCHECK_PIN, encoding="utf-8") as fh:
+        text = fh.read()
+    problems = []
+    tmp = tempfile.mkdtemp(prefix="verify_gate_62_pinread_")
+    try:
+        for label, eol in (("LF", "\n"), ("CRLF", "\r\n")):
+            pin = os.path.join(tmp, "shellcheck.pin").replace(os.sep, "/")
+            with io.open(pin, "w", encoding="utf-8", newline="") as fh:
+                fh.write(text.replace("\n", eol))
+            script = ("set -eu\ndpkg() { echo amd64; }\n"
+                      + body.replace("/tmp/shellcheck.pin", pin)
+                      + '\nprintf "%s|%s" "$version" "$sha"\n')
+            proc = subprocess.run(["sh", "-c", script], capture_output=True)
+            got = tuple(proc.stdout.decode("utf-8", "replace").split("|", 1))
+            if proc.returncode != 0 or got != want:
+                problems.append(f"the Dockerfile reads a {label} shellcheck.pin as "
+                                f"{got!r} (exit {proc.returncode}), but Gate 48 reads "
+                                f"{want!r}: the pin's two readers disagree (#1204) -- "
+                                f"{proc.stderr.decode('utf-8', 'replace')[-300:]}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     return problems
 
 
