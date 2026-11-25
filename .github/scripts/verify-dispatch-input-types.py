@@ -29,14 +29,19 @@ or `boolean` input of X. An expression is checked once its fromJSON(...)
 calls are removed: if it still names a dispatch input (`inputs.NAME`,
 `inputs['NAME']`, the `github.event.inputs.` forms, any letter case), it
 fails, so a fallback such as `${{ inputs.NAME || 1 }}` or
-`format('{0}', inputs.NAME)` fails like the bare reference does. An
-expression with a comparison, a negation or contains/startsWith/endsWith
-is already a boolean and is left alone.
+`format('{0}', inputs.NAME)` fails like the bare reference does. Quoted
+literals are blanked first, so a `<`, `!` or `inputs.` inside one counts
+for nothing. `&&` and `||` return one of their operands, so the expression
+is split on them (outside parentheses and quotes) and each operand is
+checked: an operand with a comparison, a negation or
+contains/startsWith/endsWith is already a boolean and is left alone, so
+`${{ inputs.NAME != '' && inputs.NAME || 1 }}` still fails on its middle
+operand.
 
 One exception: the `inputs` context keeps a dispatch input declared
 `type: boolean` a boolean (only `github.event.inputs` turns it into a
 string), so `inputs.FLAG` of a boolean dispatch input may reach a boolean
-callee input bare.
+callee input bare; the gate names only the other references.
 
 The fix the gate names is `${{ fromJSON(inputs.NAME) }}`; for an optional
 dispatch input with no default it is `fromJSON(inputs.NAME || '<default>')`,
@@ -90,23 +95,61 @@ def _strip_fromjson(expr):
         i = j
 
 
+LITERAL = re.compile(r"'(?:[^']|'')*'")
+INDEXED = re.compile(r"(?<![A-Za-z0-9_.-])((?:github\.event\.)?inputs)\[\s*'([^']*)'\s*\]", re.I)
+
+
+def _operands(expr):
+    """The operands `expr` can return: split on top-level && and ||, parentheses unwrapped."""
+    expr = expr.strip()
+    parts, depth, start, i = [], 0, 0, 0
+    while i < len(expr):
+        c = expr[i]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif depth == 0 and expr[i:i + 2] in ("&&", "||"):
+            parts.append(expr[start:i])
+            start = i = i + 2
+            continue
+        i += 1
+    parts.append(expr[start:])
+    if len(parts) > 1:
+        return [o for p in parts for o in _operands(p)]
+    whole = parts[0].strip()
+    if whole.startswith("(") and whole.endswith(")"):
+        inner = whole[1:-1]
+        depth = 0
+        for c in inner:
+            depth += {"(": 1, ")": -1}.get(c, 0)
+            if depth < 0:
+                break
+        else:
+            return _operands(inner)
+    return [whole]
+
+
 def _string_refs(value, kind, dispatch):
     """The dispatch inputs `value` can hand a `kind` callee input as a string."""
     m = WHOLE.match(value)
     if not m:
         return []
-    expr = _strip_fromjson(m.group(1))
-    if BOOLEAN_EXPR.search(expr):
-        return []
-    refs = []
-    for event, dotted, indexed in REF.findall(expr):
-        name = (dotted or indexed).lower()
-        if name in dispatch:
-            refs.append((name, bool(event)))
-    if (kind == "boolean" and refs
-            and all(not event and str(dispatch[n].get("type")) == "boolean" for n, event in refs)):
-        return []
-    return [n for n, _ in refs]
+    # inputs['NAME'] becomes inputs.NAME before the literals are blanked.
+    expr = INDEXED.sub(lambda r: r.group(1) + "." + r.group(2), _strip_fromjson(m.group(1)))
+    expr = LITERAL.sub("''", expr)
+    names = []
+    for operand in _operands(expr):
+        if BOOLEAN_EXPR.search(operand):
+            continue
+        for event, dotted, indexed in REF.findall(operand):
+            name = (dotted or indexed).lower()
+            if name not in dispatch or name in names:
+                continue
+            if kind == "boolean" and not event and str(dispatch[name].get("type")) == "boolean":
+                continue
+            names.append(name)
+    return names
 
 
 def _suggest(name, spec):
@@ -203,6 +246,16 @@ CASES = [
     ("healthy: fromJSON(inputs.pr) to a number input", _wrapper("${{ fromJSON(inputs.pr) }}"), _called("number"), False),
     ("healthy: bare inputs.pr to a string input", _wrapper("${{ inputs.pr }}"), _called("string"), False),
     ("healthy: a comparison is already typed", _wrapper("${{ inputs.pr == 'true' }}", "string"), _called("boolean"), False),
+    ("a comparison guard still returns the string operand",
+     _wrapper("${{ inputs.pr != '' && inputs.pr || 1 }}"), _called("number"), True),
+    ("a negation guard still returns the string operand",
+     _wrapper("${{ !inputs.pr && 0 || inputs.pr }}"), _called("number"), True),
+    ("a '<' inside a quoted fallback is not a comparison",
+     _wrapper("${{ inputs.pr || '<none>' }}"), _called("number"), True),
+    ("a '!' inside a format() literal is not a negation",
+     _wrapper("${{ format('{0}!', inputs.pr) }}"), _called("number"), True),
+    ("healthy: comparisons joined by || are a boolean",
+     _wrapper("${{ (inputs.pr == 'a') || (inputs.pr == 'b') }}", "string"), _called("boolean"), False),
 ]
 
 
@@ -239,6 +292,22 @@ def self_test():
         shutil.rmtree(tmp)
     if len(got) != 1 or "fromJSON(inputs.pr || '<default>')" not in got[0]:
         failures.append("an optional input with no default: the message does not name a fallback: {0}".format(got))
+    # A boolean dispatch input read through `inputs` is fine for a boolean
+    # callee input, so the message names the string input beside it, not it.
+    tmp = tempfile.mkdtemp(prefix="gate174-")
+    try:
+        d = os.path.join(tmp, ".github", "workflows")
+        os.makedirs(d)
+        with open(os.path.join(d, "wrapper.yml"), "w", encoding="utf-8") as fh:
+            fh.write(_wrapper("${{ inputs.flag && inputs.pr || false }}").replace(
+                "    inputs:\n", "    inputs:\n      flag:\n        type: boolean\n", 1))
+        with open(os.path.join(d, "called.yml"), "w", encoding="utf-8") as fh:
+            fh.write(_called("boolean"))
+        got = problems(tmp)
+    finally:
+        shutil.rmtree(tmp)
+    if len(got) != 1 or "dispatch input `pr`" not in got[0]:
+        failures.append("a boolean flag beside a string input: the message names the wrong input: {0}".format(got))
     for f in failures:
         print("SELF-TEST FAIL: " + f)
     if failures:
