@@ -111,9 +111,12 @@ on:
       # code reviews of #940; each gate compares its document with code,
       # so an edit to the document alone has to run the gate. Gate 84
       # reads labels-and-cross-links.md's board:stalled sources (#889).
+      # verify-board-merge.py (the board self-merge Gate 165) reads
+      # readiness-report.md for unscoped "never merges" prose (#889).
       - "docs/adoption.md"
       - "specs/057-autonomous-board-loop/contracts/board-loop-workflow.md"
       - "specs/057-autonomous-board-loop/contracts/labels-and-cross-links.md"
+      - "specs/057-autonomous-board-loop/contracts/readiness-report.md"
       - "specs/060-self-redrive-concurrency/contracts/concurrency-groups.md"
       - "specs/055-unattended-e2e-gates/research.md"
       - "specs/055-unattended-e2e-gates/spec.md"
@@ -3646,9 +3649,10 @@ jobs:
 
       # Gate 86 — specs/057-autonomous-board-loop (FR-036/FR-037/FR-068,
       # FR-064 bullet 4): readiness is reported or refused solely on
-      # re-derived head-SHA evidence, and this loop never merges, approves,
-      # or enables auto-merge -- these six fixtures are what stands between
-      # "ready" and a maintainer merging stale evidence.
+      # re-derived head-SHA evidence, no board-loop job but `merge` (spec
+      # 115, pinned by verify-board-merge.py) merges, and no job, `merge`
+      # included, approves or enables auto-merge -- these fixtures are what
+      # stands between "ready" and a merge of stale evidence.
       - name: Gate 86 — board loop readiness resolves every FR-064 bullet-4 branch
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-readiness.py
@@ -4925,7 +4929,9 @@ jobs:
       # method, no --admin/--auto/approval, both switches in its `if:`, the
       # App token (so prove-gate sees the closed event), and no decision
       # logic of its own. The auto-update stage posts the verification record
-      # and never merges.
+      # and never merges. The documents this gate scans
+      # (unscoped_merge_claim_docs) don't bring back the retired whole-loop
+      # "never merges" sentences.
       - name: Gate 165 — board loop self-merge decision, refusal classes and merge-job shape
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-merge.py
