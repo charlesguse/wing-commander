@@ -37,3 +37,9 @@
 - No clarification markers: the remaining choices (static vs stubbed import,
   new gate vs extending an existing one, PR #1205 reuse) are reversible plan
   decisions with reasonable defaults recorded in Assumptions.
+- Round 1 review (2026-11-25): FR-001/FR-002 now cover attribute use of an
+  imported module; FR-004 defines the self-test marker (`--self-test`) and
+  puts skill self-tests in the derived local gate set; FR-007 and FR-008
+  were restated so each is testable and single-homed; FR-010 no longer sets
+  a size bound (the plan sets the split); FR-011 ties the new steps to
+  spec 129's PR-time layout; SC-004 bounds the new steps' own run time.

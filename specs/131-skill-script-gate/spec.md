@@ -12,13 +12,14 @@
 
 The owner's sessions run helper scripts that ship with the repository's
 skills (`.claude/skills/<skill>/scripts/*.py`). Several of them import
-functions by name from the shared `.github/scripts/` tree:
+functions from the shared `.github/scripts/` tree, either by name or by
+importing the module and using its names as attributes:
 
-| Skill script | Names it imports from `.github/scripts/` |
+| Skill script | Names it reaches in `.github/scripts/` |
 |---|---|
-| `review-until-clean/scripts/thrash_signals.py` | the `wc_convergence` module (and has its own `--self-test`) |
+| `review-until-clean/scripts/thrash_signals.py` | `wc_convergence` as `wc`, used as `wc.measure`, `wc.decide`, `wc.decide_history`, `wc.render_handoff` (and has its own `--self-test`) |
 | `prove-after-merge/scripts/redrive_candidates.py` | `board_prove` names, `board_route_backstop.diff_name_list` |
-| `whats-on-me/scripts/board_now.py` | `wc_board_status` (`snapshot`, `render`, `switches_from`) |
+| `whats-on-me/scripts/board_now.py` | `wc_board_status`, used as `wc_board_status.snapshot`, `.render`, `.switches_from` |
 | `container-shell-safety/scripts/unpinned-container-steps.py` | `wc_gate_registry.workflow_files`, `wc_shell_pin` names |
 
 These scripts run only when a session invokes the skill. A rename or
@@ -62,6 +63,10 @@ names `redrive_candidates.py` and `diff_name_list`. Revert; it passes.
    names the skill script, the module and the missing name.
 3. **Given** a change that removes a whole module a skill script imports,
    **When** the check runs, **Then** it fails the same way.
+4. **Given** a skill script that imports a whole module (for example
+   `import wc_convergence as wc`) and calls `wc.decide`, **When** a change
+   renames `decide` in that module, **Then** the check fails and names the
+   skill script, the module and `decide`.
 
 ---
 
@@ -83,9 +88,8 @@ copy and run the gate suite; it fails. Restore; it passes.
 1. **Given** a skill script that declares a self-test, **When** the gate
    suite runs, **Then** that self-test runs and its failure fails the suite.
 2. **Given** a new skill script that declares a self-test, **When** it is
-   added, **Then** the gate picks it up without a workflow edit, or fails
-   until it is registered (whichever the plan chooses), so it is never
-   silently skipped.
+   added, **Then** the gate runs it with no workflow edit and no entry in a
+   hand-kept list, so it is never silently skipped.
 
 ---
 
@@ -129,41 +133,53 @@ fail; a list of three scripts goes stale the day a fourth appears.
 ### Functional Requirements
 
 - **FR-001**: The PR-time gate suite MUST fail when any skill script under
-  `.claude/skills/*/scripts/` imports a module or name from
-  `.github/scripts/` that does not exist on the PR's head.
+  `.claude/skills/*/scripts/` reaches a module or name in `.github/scripts/`
+  that does not exist on the PR's head. This covers every name the script
+  reaches, whether imported directly (`from module import name`) or used as
+  an attribute of an imported module (`import module as m` … `m.name`).
 - **FR-002**: The failure message MUST name the skill script, the module
-  and the missing name.
+  and the missing name, for both kinds of use in FR-001.
 - **FR-003**: The set of skill scripts checked MUST be discovered from the
   tree, not from a hand-kept list.
-- **FR-004**: Every skill script that offers a self-test MUST have that
-  self-test run by the PR-time gate suite, and a failing self-test MUST
-  fail the suite.
+- **FR-004**: A skill script offers a self-test when it accepts a
+  `--self-test` command-line flag. Every such script MUST have that
+  self-test run by the PR-time gate suite, found from the tree (FR-003),
+  and a failing self-test MUST fail the suite. The skill self-tests MUST run
+  as part of the gate set `run-local-gates.py` derives, not only in CI.
 - **FR-005**: The check MUST NOT execute a skill script's normal command
   path or reach the network or GitHub API.
 - **FR-006**: The new gate MUST carry a self-test that demonstrates it fails
   on a removed name, a removed module and a failing skill self-test.
-- **FR-007**: The gate MUST be registered so that
-  `python .github/scripts/run-local-gates.py` runs it, and documented
-  wherever the repository requires a new gate to be listed
-  (docs/reference.md and the gate registry).
+- **FR-007**: The gate MUST be picked up by the derived gate list, so that
+  `python .github/scripts/run-local-gates.py` runs it, with no hand
+  registration. `docs/reference.md` is edited only if one of the
+  categories its "Keeping this current" section lists changes.
 - **FR-008**: lint-workflows' `pull_request: paths:` MUST continue to
-  include `.claude/skills/*/scripts/**` (already true on main); the gate
-  MUST fail if that entry is removed, or the plan MUST record which existing
-  gate already enforces it.
+  include `.claude/skills/*/scripts/**` (already true on main), and that
+  MUST remain enforced by exactly one gate:
+  `verify-convergence-single-home.py`, which already fails when the entry
+  stops covering the skill scripts. This feature adds no second copy.
 - **FR-009**: The open PR #1205 MUST be dispositioned: either its content
   is reused in this feature's implementation or it is closed with a pointer
   to this lifecycle, and Maintenance backlog line `bl-ddabf5f6` is closed
   when this feature merges.
-- **FR-010**: The work MUST fit the board's size backstop as a single PR,
-  or be split into PRs that each do, as the plan decides.
+- **FR-010**: The plan sets how the work is split into PRs; this spec sets
+  no size bound.
+- **FR-011**: The new gate step(s) and the self-test of the new gate MUST
+  follow whatever PR-time layout from spec 129 (`129-parallel-pr-lint`) is
+  on main when this is implemented, sharded or not: each sits in exactly
+  one unit, runs regardless of an unrelated step's failure, has a step name
+  unique across PR-time steps, and is picked up by the derived gate list
+  with no extra edit.
 
 ### Key Entities
 
 - **Skill script**: a Python file under `.claude/skills/<skill>/scripts/`
   that a session runs while following a skill.
-- **Cross-tree import**: a module or name a skill script imports from
-  `.github/scripts/`.
-- **Skill self-test**: a mode of a skill script (e.g. `--self-test`) that
+- **Cross-tree import**: a module or name a skill script reaches in
+  `.github/scripts/`, imported directly or used as an attribute of an
+  imported module.
+- **Skill self-test**: the `--self-test` mode of a skill script, which
   checks its own behaviour and exits non-zero on failure.
 
 ## Success Criteria *(mandatory)*
@@ -176,8 +192,8 @@ fail; a list of three scripts goes stale the day a fourth appears.
   triggers the gate suite, and breaking it turns the suite red.
 - **SC-003**: Adding a new skill script that imports from `.github/scripts/`
   requires zero edits to the gate for its imports to be checked.
-- **SC-004**: The new gate adds no more than one minute to the gate suite's
-  wall-clock time.
+- **SC-004**: The new gate steps, skill self-tests included, take no more
+  than one minute of their own run time in CI.
 - **SC-005**: On merge, no open PR or backlog line still tracks this defect.
 
 ## Assumptions
