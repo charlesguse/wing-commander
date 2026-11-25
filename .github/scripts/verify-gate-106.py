@@ -432,14 +432,17 @@ exit 1
 
 
 def runs_page(*runs):
-    """A REST `GET .../actions/runs` page for (id, path[, status]) tuples.
-    `status` defaults to "completed"; None leaves the key out entirely."""
+    """A REST `GET .../actions/runs` page for (id, path[, status[,
+    conclusion]]) tuples. `status` defaults to "completed"; None leaves the
+    key out entirely. `conclusion` is left out unless given."""
     page = []
     for r in runs:
         run = {"id": r[0], "path": r[1]}
         status = r[2] if len(r) > 2 else "completed"
         if status is not None:
             run["status"] = status
+        if len(r) > 3 and r[3] is not None:
+            run["conclusion"] = r[3]
         page.append(run)
     return json.dumps({"total_count": len(runs), "workflow_runs": page})
 
@@ -676,6 +679,24 @@ EXECUTION_SCENARIOS = [
         reached_pass=False,
         failing_check="container-mode evidence unreadable",
     ),
+    # #889 (code review of #960): a zero-jobs run is always `completed`, so
+    # the verdict must carry the run's conclusion, which says why.
+    dict(
+        name="#889 a startup_failure stage run with zero jobs: the verdict names its conclusion",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH, "completed", "startup_failure")),
+                 GH_STUB_JOBS_111=jobs_page()),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+        observed_contains="(status completed, conclusion startup_failure)",
+    ),
+    dict(
+        name="#889 a zero-jobs stage run with no status and a conclusion: neither shifts into the other",
+        env=dict(GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH, None, "action_required")),
+                 GH_STUB_JOBS_111=jobs_page()),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+        observed_contains="(status unknown, conclusion action_required)",
+    ),
     # #960 review: a wrapper run the stage:done label or the final merge
     # fired seconds before this read can still be queued with no job
     # scheduled yet -- it ran nothing anywhere, so it is skipped, not judged
@@ -770,6 +791,10 @@ def suite_execution(preamble, fragment, tmproot, source_root=REPO_ROOT):
             elif verdict.get("failing_check") != want_fc:
                 failures.append(f"{tag} expected failing_check={want_fc!r}, "
                                 f"got {verdict.get('failing_check')!r}")
+        want_obs = sc.get("observed_contains")
+        if want_obs is not None and want_obs not in str((verdict or {}).get("observed")):
+            failures.append(f"{tag} expected observed to contain {want_obs!r}, "
+                            f"got {(verdict or {}).get('observed')!r}")
     return failures
 
 
