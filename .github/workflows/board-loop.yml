@@ -4363,6 +4363,19 @@ jobs:
             at this PR's head, where the finding sits. Give it whenever the
             finding has one line; omit it for a whole-file concern rather
             than guess.
+
+            Then, after it, end with one more fenced block that reports
+            against the question this PR was asked to answer. Each key is
+            an optional string; omit a key you cannot fill rather than
+            invent text:
+
+            ```wing-commander-review-report
+            {"asked": "the question this change answers",
+             "checked": "what you checked",
+             "decided": "what the diff settles",
+             "not_decided": "what it leaves undecided",
+             "open": "what is still open"}
+            ```
           claude_args: |
             --model ${{ needs.resolve-model.outputs.model }}
             --max-turns ${{ steps.review-ceiling.outputs.ceiling }}
@@ -4459,6 +4472,7 @@ jobs:
 
           path = os.path.join(os.environ["RUNNER_TEMP"], "claude-execution-output.json")
           raw = []
+          report = {}
           # SF1/#499: unlike triage-propose/route-propose, a parse failure
           # here must NEVER read as "zero findings" -- that would silently
           # advance a possibly-unreviewed PR to readiness (see "Decide the
@@ -4508,6 +4522,12 @@ jobs:
                   else:
                       print("::warning::board-loop reviewer: parsed ```wing-commander-review-findings``` block was not a JSON array (got {0}) -- the round will be treated as not completed, not as zero findings".format(type(parsed).__name__))
                       parse_failed = True
+                  # specs/130 FR-005: the five-part report. A missing or
+                  # malformed block is not a parse failure -- the renderer
+                  # shows every part it lacks as a gap.
+                  rep, _rep_err = extract_fenced_json(text, "wing-commander-review-report")
+                  if isinstance(rep, dict):
+                      report = rep
               else:
                   print("::warning::board-loop reviewer: claude-execution-output.json has no terminal result record -- the round will be treated as not completed, not as zero findings")
                   parse_failed = True
@@ -4543,8 +4563,10 @@ jobs:
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "board-review-findings.json"), "w", encoding="utf-8") as fh:
               json.dump(kept, fh)
+          with open(os.path.join(runner_temp, "board-review-report.json"), "w", encoding="utf-8") as fh:
+              json.dump({"parts": report}, fh)
 
-          in_scope = [f for f in kept if f.get("in_scope") is True]
+          in_scope =[f for f in kept if f.get("in_scope") is True]
           out_of_scope = [f for f in kept if f.get("in_scope") is False]
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write("in-scope-count={0}\n".format(len(in_scope)))
@@ -4623,8 +4645,18 @@ jobs:
           # body too, the same fail-closed default used there.
           parse_failed = os.environ.get("PARSE_FAILED", "") != "false"
 
+          # specs/130 FR-005..FR-007: the five review parts come from
+          # wc_message_parts (the one home), never a bare "No findings.".
+          # A failed round posts "review did not complete".
+          from wc_message_parts import Refusal, render_incomplete_review, render_review
+          identifier = os.environ.get("BOARD_LINE_ID") or "#{0}".format(os.environ.get("ISSUE_NUMBER", ""))
           lines = ["Board loop review."]
+          lines.append("")
           if parse_failed:
+              try:
+                  lines.append(render_incomplete_review(identifier))
+              except Refusal:
+                  lines.append("Review did not complete.")
               lines.append("")
               lines.append(
                   "Inconclusive -- this round did not produce a "
@@ -4632,9 +4664,16 @@ jobs:
                   "reviewer result, or a non-healthy agent verdict). "
                   "Findings below, if any, are whatever could still be "
                   "salvaged; do not read this as a clean review.")
-          elif not findings:
-              lines.append("")
-              lines.append("No findings.")
+          else:
+              report_parts = {}
+              report_path = os.path.join(runner_temp, "board-review-report.json")
+              if os.path.isfile(report_path):
+                  with open(report_path, encoding="utf-8") as fh:
+                      report_parts = json.load(fh).get("parts", {})
+              try:
+                  lines.append(render_review(report_parts, identifier, []))
+              except Refusal:
+                  lines.append("Review report unavailable: no valid line or issue identifier.")
           # #583: dropped findings are named, never silently omitted -- see
           # "Decide the round outcome".
           dropped = os.environ.get("DROPPED_COUNT") or "0"

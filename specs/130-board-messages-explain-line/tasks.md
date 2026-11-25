@@ -39,7 +39,7 @@
 
 - [x] T011 [US2] Implement `render_review` in `.github/scripts/wc_message_parts.py`: five parts always present, identifier named, open findings listed under Open, never reduces to "No findings" (FR-006, FR-007).
 - [x] T012 [P] [US2] Add review fixtures under `.github/scripts/fixtures/board-message-parts/`: no findings, with findings, one per part missing, non-string part, review-did-not-complete.
-- [ ] T013 [US2] Add `report: {asked, checked, decided, not_decided, open}` (each optional string) to the review agent's result schema and prompt in `.github/workflows/board-loop.yml`, and replace the bare "No findings." body with the renderer output; a failed or timed-out review posts "review did not complete" (Edge Cases).
+- [x] T013 [US2] Add `report: {asked, checked, decided, not_decided, open}` (each optional string) to the review agent's result schema and prompt in `.github/workflows/board-loop.yml`, and replace the bare "No findings." body with the renderer output; a failed or timed-out review posts "review did not complete" (Edge Cases).
 - [x] T014 [US2] Create `.github/scripts/verify-board-message-parts.py` mode 1: render every fixture and fail when any rendered part is neither filled nor gap, or when output is a bare "No findings"; register it in the gate registry so `run-local-gates.py` runs it.
 
 ## Phase 5: User Story 3 - Fixed text tells the truth (P2)

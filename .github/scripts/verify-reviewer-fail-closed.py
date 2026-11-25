@@ -113,7 +113,7 @@ LIFECYCLE_PARTITION_STEP = "Partition, dedup, and render this round's findings"
 SHARED_SCRIPTS = ("wc_fence_extract.py", "verify-board-review-finding-schema.py",
                   "wc_schema_pattern.py", "board_spec_request_body.py",
                   "wc_convergence.py", "wc_review_finding_fingerprint.py",
-                  "wc_finding_triage.py")
+                  "wc_finding_triage.py", "wc_message_parts.py")
 SHARED_SCHEMAS = ("board-review-finding.schema.json",)
 PRISTINE_DIR = "wc-pristine"
 # board_eligibility.py: board_item_marker.py imports STALLED_LABEL from it
@@ -210,7 +210,8 @@ def run_pipeline(extract_script, round_script, compose_script, tmproot,
         rc3, out3, _outputs3, _ = run_step(
             BASH, compose_script, workdir,
             {"PARSE_FAILED": outputs1.get("parse-failed", ""),
-             "DROPPED_COUNT": outputs1.get("dropped-count", "")},
+             "DROPPED_COUNT": outputs1.get("dropped-count", ""),
+             "ISSUE_NUMBER": "1"},
             runner_temp)
         body = None
         body_path = os.path.join(runner_temp, "board-review-body.md")
@@ -242,8 +243,8 @@ SCENARIOS = [
           body_lacks=("No findings.",))),
     ("control: genuinely zero findings, healthy verdict",
      dict(transcript=_fenced_transcript("[]"), review_verdict="healthy"),
-     dict(parse_failed="false", outcome="converged", body_has=("No findings.",),
-          body_lacks=("Inconclusive",))),
+     dict(parse_failed="false", outcome="converged", body_has=("Board loop review of `#1`",),
+          body_lacks=("Inconclusive", "No findings."))),
 ]
 
 
