@@ -62,7 +62,7 @@
 - [ ] T024 [US3] Run the exposure audit over main and record the report in a comment on lifecycle issue #1188 (FR-014) — drafted as `specs/132-workflow-trigger-security/quickstart.md` evidence, posted by the maintainer in Phase 9
 - [ ] T025 [US3] Fold the checkout-before-`./` rule out of `.github/scripts/verify-board-loop-composite-provenance.py` and `.github/scripts/verify-lifecycle-review-gate-composite-provenance.py` into the new gate, or record why each keeps it, with no duplicated rule logic; update their self-tests (FR-016a one-home)
 - [X] T026 [US3] Fix each exposed job the audit finds (including `pr-conversation.yml` `wing-commander-outstanding-task-item` step if still present) without adding an input, secret or output to a published stage (FR-015, SC-009)
-- [ ] T027 [US3] Register the gate in the gate registry and `.github/workflows/lint-workflows.yml` with `paths:` triggers; confirm gates parsing `uses: ./` still pass (FR-017)
+- [X] T027 [US3] Register the gate in the gate registry and `.github/workflows/lint-workflows.yml` with `paths:` triggers; confirm gates parsing `uses: ./` still pass (FR-017)
 
 ## Phase 7: User Story 4 — adopter event policy docs (P2)
 
@@ -71,7 +71,7 @@
 
 - [X] T028 [US4] Update `docs/adoption.md`: events table (what each drives, how gated), `wc-event-policy` sample block, Evaluate-mode advice with the unresolved Enterprise question, fork-PR limit, permissions-vs-trigger explanation, SHA-pin freeze note (FR-018, FR-018a, FR-019, FR-021, FR-022)
 - [X] T029 [US4] Implement `.github/scripts/verify-adopter-event-policy.py`: compare `on:` events of `wing-commander-*.yml` with the `wc-event-policy` block, with `--self-test` fixtures for a missing event (FR-020, SC-006)
-- [ ] T030 [US4] Register the gate in `.github/workflows/lint-workflows.yml` with `paths:` triggers for the wrappers and `docs/adoption.md`
+- [X] T030 [US4] Register the gate in `.github/workflows/lint-workflows.yml` with `paths:` triggers for the wrappers and `docs/adoption.md`
 
 ## Phase 8: Polish
 

@@ -5058,6 +5058,22 @@ jobs:
       - name: Gate 170 self-test — an unwaived node20 pin, a pin with no row, a stale row, stale waivers and malformed registers each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-action-runtime-pins.py --self-test
+      # Gate 175 — specs/132 FR-016a: no `uses: ./` reference resolves inside
+      # a tree an untrusted pull request or artifact could have written.
+      - name: Gate 175 — no local uses reference resolves from an untrusted checkout
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-untrusted-checkout-local-uses.py
+      - name: Gate 175 self-test — an exposed job, an artifact-extracted tree, a safe job and an unlisted workflow_call each get the right verdict
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-untrusted-checkout-local-uses.py --self-test
+      # Gate 176 — specs/132 FR-020: every event a wing-commander-*.yml
+      # wrapper listens on appears in docs/adoption.md's wc-event-policy block.
+      - name: Gate 176 — every wrapper event is in the adopter event policy
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-adopter-event-policy.py
+      - name: Gate 176 self-test — a wrapper event missing from the policy fails
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-adopter-event-policy.py --self-test
       # Gate 172 — this workflow's own concurrency: block. A newer push to a
       # pull request cancels the lint run for its older head, and a push,
       # schedule or dispatch run is never cancelled or queued. Why the block
