@@ -411,8 +411,9 @@ def in_flight_candidate(open_issues, comments_by_issue, pr_state_by_number, bot_
     trigger path (prove-gate/prove, or a maintainer) resolves it.
 
     `awaiting-merge` (#532) never qualifies here either, whatever its PR's
-    state: readiness already reported ready and handed the PR to a human,
-    and no job consumes that step. Treating it as in-flight while its PR
+    state: the readiness job stopped at ready, and the `merge` job
+    (WING_COMMANDER_BOARD_AUTO_MERGE on) or a human (switch off) takes the
+    PR from there; no job consumes that step. Treating it as in-flight while its PR
     was open re-selected the same item every run, re-posted an identical
     readiness report, and starved every other issue until a human merged.
 

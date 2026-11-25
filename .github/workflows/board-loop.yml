@@ -1468,9 +1468,10 @@ jobs:
               step = "prove"
           elif (marker_step in (AWAITING_MERGE_STEP, HANDED_OVER_STEP)
                 and (not pr_from_marker or pr_state == "OPEN")):
-              # #532: readiness already reported this PR ready and handed
-              # it to a human -- or, spec 115, GitHub refused the merge
-              # job's merge and handed-over records the same hand-off.
+              # #532: readiness already reported this PR ready and stopped
+              # there (the merge job, or a human with the switch off, takes
+              # it) -- or, spec 115, GitHub refused the merge job's merge
+              # and handed-over records the hand-off to a human.
               # select() never picks it while its PR may
               # still be open (board_eligibility._awaiting_merge_holds),
               # so this is reached only on a race (reopened between the
