@@ -12,8 +12,8 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 
 ## Phase 1: Setup (inventory)
 
-- [ ] T001 Inventory the current `lint` job in `.github/workflows/lint-workflows.yml`: list every step that installs tools or builds a fixture later gates read (R5), every step with no `!cancelled()` guard (the 70 of FR-009), and every consumer of `jobs.lint` structure or step names (grep `.github/scripts/` for `lint-workflows.yml`, `jobs["lint"]`, `wc_lint_gate_source`). Record the findings as a comment block at the top of the implementing PR description, not in a repo file.
-- [ ] T002 Capture the baseline gate set: the step-name list of `lint` and `harness-tests` from `.github/workflows/lint-workflows.yml` and the list `python .github/scripts/run-local-gates.py` derives, for the SC-002 before/after comparison (kept in the PR description).
+- [X] T001 Inventory the current `lint` job in `.github/workflows/lint-workflows.yml`: list every step that installs tools or builds a fixture later gates read (R5), every step with no `!cancelled()` guard (the 70 of FR-009), and every consumer of `jobs.lint` structure or step names (grep `.github/scripts/` for `lint-workflows.yml`, `jobs["lint"]`, `wc_lint_gate_source`). Record the findings as a comment block at the top of the implementing PR description, not in a repo file.
+- [X] T002 Capture the baseline gate set: the step-name list of `lint` and `harness-tests` from `.github/workflows/lint-workflows.yml` and the list `python .github/scripts/run-local-gates.py` derives, for the SC-002 before/after comparison (kept in the PR description).
 - [ ] T003 Capture per-gate durations from `run-local-gates.py` timing output (2026-11-24 baseline, ~2263 s summed) to drive the shard balancing in T011.
 
 ---
@@ -23,8 +23,8 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 **Purpose**: changes that must land before the job is split.
 
 - [X] T004 Rename the second `Gate 23 self-test — the detector actually detects` step in `.github/workflows/lint-workflows.yml` so every PR-time step name is unique (R4, Key Entities); update every gate that reads that step name (found in T001, e.g. `.github/scripts/verify-gate-wiring.py`, `verify-gate-22*.py`, `verify-gate-23*.py`) and their fixtures.
-- [ ] T005 [P] If T001 found setup/fixture steps shared by several gates, move them into a composite action under `.github/actions/` and call it from the job (single-home rule, R5); otherwise record "none" in the PR description.
-- [ ] T006 [P] In `.github/scripts/wc_gate_registry.py`, make `pr_time_gates` exclude the aggregate job named `lint` by name (R6); update its self-test with a fixture where the aggregate job carries a `run:` step and is excluded.
+- [X] T005 [P] If T001 found setup/fixture steps shared by several gates, move them into a composite action under `.github/actions/` and call it from the job (single-home rule, R5); otherwise record "none" in the PR description.
+- [X] T006 [P] In `.github/scripts/wc_gate_registry.py`, make `pr_time_gates` exclude the aggregate job named `lint` by name (R6); update its self-test with a fixture where the aggregate job carries a `run:` step and is excluded.
 - [X] T007 Add `if: ${{ !cancelled() }}` to every step lacking a survivable guard in `.github/workflows/lint-workflows.yml` except checkout, and guard each self-test step `!cancelled() && steps.<gate id>.outcome != 'failure'` with an `id:` on its paired gate step, paired by step name (FR-009, R3). Run the gate suite and fix any gate that byte-compares the changed text.
 
 **Checkpoint**: single `lint` job still green locally, names unique, isolation in place.
@@ -57,8 +57,8 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 - [X] T014 [US2] Create `.github/scripts/verify-lint-aggregate.py`: parse the aggregate job from `.github/workflows/lint-workflows.yml` and, using `wc_gha_expr.py`, simulate its `if:` and step for needs results success/failure/cancelled/skipped/in-progress on `pull_request` (must run and conclude failure unless all `success`) and on `push`/`schedule`/`workflow_dispatch` (must be skipped) (contract items 4, 5, 9).
 - [X] T015 [US2] Add `--self-test` to `.github/scripts/verify-lint-aggregate.py` with checked-in fixtures (under the existing gate fixture directory convention) for each failure branch: `if:` using `!cancelled()`, missing `always()`, skip-tolerant result check, aggregate that does not list `harness-tests`.
 - [X] T016 [US2] Register the new gate as its own step in a shard job of `.github/workflows/lint-workflows.yml` (with its self-test step, guarded per T007) and in whatever gate registry/index the existing gates use (see `.github/scripts/wc_gate_registry.py` and `verify-gate-wiring.py` expectations).
-- [ ] T017 [P] [US2] Verify the verdict readers (`board_readiness.gate_suite_green`, `lifecycle_readiness`'s copy, `lifecycle_merge_preconditions.gate_suite_green_in_rollup`, `wc_board_status.py`) still match check-run `lint` / workflow `lint · workflows` / file `lint-workflows.yml`; add a regression test in the existing test module of each reader only if one lacks coverage of a skipped-vs-failure `lint` check.
-- [ ] T018 [US2] Pass the changed workflow through the `review-step-gating` skill (aggregate `always()` vs `!cancelled()`, cancelled-run behaviour per R2) and fix findings in this PR.
+- [X] T017 [P] [US2] Verify the verdict readers (`board_readiness.gate_suite_green`, `lifecycle_readiness`'s copy, `lifecycle_merge_preconditions.gate_suite_green_in_rollup`, `wc_board_status.py`) still match check-run `lint` / workflow `lint · workflows` / file `lint-workflows.yml`; add a regression test in the existing test module of each reader only if one lacks coverage of a skipped-vs-failure `lint` check.
+- [X] T018 [US2] Pass the changed workflow through the `review-step-gating` skill (aggregate `always()` vs `!cancelled()`, cancelled-run behaviour per R2) and fix findings in this PR.
 
 ---
 
@@ -71,7 +71,7 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 - [X] T019 [US3] Create `.github/scripts/verify-lint-shard-layout.py` enforcing contract items 1–3, 6, 7 and 8: workflow name; exactly one job named `lint`; every PR-time job other than the aggregate is in the aggregate's `needs` and every `needs` entry exists; step names unique; no gate invocation (script + args) in two units; every non-checkout step has a survivable guard, self-tests paired by step name; `pr_time_gates` output equals the union of gate invocations across units, aggregate exempt by name (FR-005, FR-007, FR-009).
 - [X] T020 [US3] Add `--self-test` to `.github/scripts/verify-lint-shard-layout.py` with a fixture per failure branch (unit not under aggregate, aggregate lists missing job, shard named `lint`, duplicate step name, gate in two units, unguarded step, self-test guard paired to the wrong gate, derived/union divergence).
 - [X] T021 [US3] Register `verify-lint-shard-layout.py` and its self-test as steps in `.github/workflows/lint-workflows.yml` (guarded per T007) and confirm `.github/scripts/run-local-gates.py` derives both with no edit to its source beyond any exemption T006 requires (FR-005); if `run-local-gates.py` needs an aggregate exemption by name, add it there with a self-test case.
-- [ ] T022 [US3] Confirm US3 scenario 2: temporarily move one gate step between shards locally and check `python .github/scripts/run-local-gates.py` lists it unchanged and `verify-lint-shard-layout.py` stays green (not committed).
+- [X] T022 [US3] Confirm US3 scenario 2: temporarily move one gate step between shards locally and check `python .github/scripts/run-local-gates.py` lists it unchanged and `verify-lint-shard-layout.py` stays green (not committed).
 
 ---
 
@@ -88,7 +88,7 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 ## Phase 7: Polish & cross-cutting
 
 - [X] T024 [P] Update `docs/reference.md` where it describes the lint job, its check names and limits: shard jobs, aggregate `lint`, `harness tests` as a unit, the new gates, the 10-minute target (FR-011); follow `docs/reference.md`'s own rule for which changes must update it.
-- [ ] T025 [P] Add a "single home" check if any shared logic was consolidated (T005) to the nearest existing gate (CLAUDE.md "Shared logic has exactly one home").
+- [X] T025 [P] Add a "single home" check if any shared logic was consolidated (T005) to the nearest existing gate (CLAUDE.md "Shared logic has exactly one home").
 - [ ] T026 Run `python .github/scripts/run-local-gates.py` to green on the final tree, then validate against `specs/129-parallel-pr-lint/quickstart.md`.
 
 ---

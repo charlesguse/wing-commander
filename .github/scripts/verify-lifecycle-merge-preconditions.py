@@ -422,6 +422,11 @@ EXPECTED_CASES = {
     "round-not-clean", "unresolved-human-review",
     "head-sha-moved-since-round", "all-clear",
     "clean-round-head-matches-reviewed-sha",
+    # specs/129-parallel-pr-lint: a failed shard under the always() `lint`
+    # aggregate, which failed with it, is not mergeable, and the reader
+    # matching the check named `lint` sees the aggregate, never a shard
+    # (see verify-board-readiness.py).
+    "failed-unit-failed-aggregate",
 }
 
 
@@ -464,7 +469,10 @@ def run():
         expected = spec["expected"]
 
         ok = (got["may_merge"] == expected["may_merge"]
-              and got.get("unmet_reason") == expected.get("unmet_reason"))
+              and got.get("unmet_reason") == expected.get("unmet_reason")
+              and ("gate_suite_green" not in expected
+                   or got.get("gate_suite_green")
+                   == expected["gate_suite_green"]))
         if not ok:
             failures += 1
             print("::error::verify-lifecycle-merge-preconditions: {0}: "

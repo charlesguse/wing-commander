@@ -17,9 +17,9 @@ specs/129-parallel-pr-lint/contracts/lint-workflow-layout.md, items 1, 2, 3,
   * item 8: the gate set wc_gate_registry derives for run-local-gates.py
     (pr_time_invocations plus the runnable inline heredoc steps) equals the
     union of the units' own gate calls. The aggregate is exempt by name
-    because it may carry no gate at all: a repository script or a python
-    heredoc in its steps fails here, so the registry needs no exemption
-    for it and a gate cannot hide in the one job that is not a unit.
+    (wc_gate_registry.AGGREGATE_JOB, T006) because it may carry no gate at
+    all: a repository script or a python heredoc in its steps fails here,
+    so a gate cannot hide in the one job that is not a unit.
 
 Which jobs are PR-time is the registry's own reading
 (wc_gate_registry._job_runs_on_pull_request), so this gate and the local
