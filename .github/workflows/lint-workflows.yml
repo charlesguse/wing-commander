@@ -4731,14 +4731,15 @@ jobs:
       # account (a review pass report, a proof after merge, a decision
       # record) have one writer and one reader, wc_session_record.py. Each
       # kind builds to one opening and the same few parts and reads back as
-      # the same record, a record with a part missing is refused, and the
+      # the same record, a record with a part missing is refused by the
+      # writer itself, OPENINGS is what render() writes, and the
       # documents that tell a session to write one (CLAUDE.md and three
       # skills) point at the script and quote the opening it writes. Path
       # triggers: .github/scripts/**, *.md and the three skills above.
       - name: "Gate 169 — a session's review report, proof and decision record have one writer and one form"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-session-record.py
-      - name: "Gate 169 self-test — a dropped verdict line, a lax SHA check, a drifted opening and a missing pointer each fail"
+      - name: "Gate 169 self-test — a dropped verdict line, a lax SHA check, a writer whose refusals only its reader makes, a fixture with no expectation, an opening render() does not write, a drifted opening and a missing pointer each fail"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-session-record.py --self-test
 

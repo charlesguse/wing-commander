@@ -104,7 +104,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import resolve_bash, run_step, use_utf8_stdout, find_step  # noqa: E402
-from wc_push_grant import PREDICATE_NAMES, is_push_capable  # noqa: E402
+from wc_push_grant import PREDICATE_NAMES, PUSH_GRANT_TOKEN, is_push_capable  # noqa: E402
 
 WORKFLOWS_GLOB = ".github/workflows/*.yml"
 GUIDANCE_ACTION_PATH = ".github/actions/wing-commander-commit-message-guidance/action.yml"
@@ -324,12 +324,17 @@ def push_predicate_home_check(root):
             continue
         with open(path, encoding="utf-8", errors="replace") as fh:
             text = fh.read()
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
         for m in PREDICATE_DEF_RE.finditer(text):
-            rel = os.path.relpath(path, root).replace(os.sep, "/")
             failures.append(
                 f"{rel} defines {m.group(1)}(), a copy of the push-capable "
                 f"predicate whose one home is {PUSH_GRANT_HOME}; import it "
                 f"from there instead.")
+        if PUSH_GRANT_TOKEN in text:
+            failures.append(
+                f"{rel} spells the grant regex {PUSH_GRANT_TOKEN} itself, a "
+                f"copy of PUSH_GRANT_RE whose one home is {PUSH_GRANT_HOME}; "
+                f"import it from there instead.")
     return failures
 
 
@@ -859,6 +864,16 @@ jobs:
         print("ok    (9a) a copy of the push predicate outside wc_push_grant.py fails")
     else:
         failed.append("(9a) a copy of the push predicate outside wc_push_grant.py passed")
+    regex_root = tempfile.mkdtemp(dir=root)
+    os.makedirs(os.path.join(regex_root, ".github", "scripts"))
+    with open(os.path.join(regex_root, ".github", "scripts", "verify-copy.py"),
+              "w", encoding="utf-8") as fh:
+        fh.write('import re\nGRANT = re.compile(r"(?:^|,)\\s*' + PUSH_GRANT_TOKEN
+                 + '\\s*(?:,|$)")\n')
+    if push_predicate_home_check(regex_root):
+        print("ok    (9c) a copy of the push-grant regex outside wc_push_grant.py fails")
+    else:
+        failed.append("(9c) a copy of the push-grant regex outside wc_push_grant.py passed")
     shipped_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     home_failures = push_predicate_home_check(shipped_root)
     if home_failures:
