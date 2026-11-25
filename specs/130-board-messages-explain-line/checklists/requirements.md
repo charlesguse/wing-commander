@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,6 +31,6 @@
 
 ## Notes
 
-- Three [NEEDS CLARIFICATION] markers remain (FR-008 review output form, FR-013 where the one-decision question goes and how the answer is picked up, FR-016 scope of surfaces). They are posted to the lifecycle issue #1215 for the clarify stage.
+- The three [NEEDS CLARIFICATION] markers (FR-008 review output form, FR-013 where the one-decision question goes and how the answer is picked up, FR-016 scope of surfaces) were resolved from the reply on #1215: Q1 A (named parts plus a gate), Q2 A (comment on #889 keyed by the `bl-` identifier), Q3 A (board-loop fix PRs only, for now). See the spec's Clarifications section.
 - The issue's open questions 1, 4 and 5 were given defaults recorded under Assumptions (FR-004, FR-017, FR-018); clarify may revisit them.
 - The spec names existing repository artefacts (the auto-merge switch, the kill switch, `spec-proposal`, the Maintenance backlog) because they are the subject of the feature, not implementation choices.

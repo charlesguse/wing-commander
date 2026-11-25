@@ -18,6 +18,14 @@ The board loop works Maintenance backlog lines (#889) into fix PRs. Its comments
 
 Separately, the route agent cannot ask the owner anything, so a backlog line that needs even one small decision is filed as a `spec-proposal` (`reason=agent_proposed_spec`). On 2026-11-24 six lines went this way (#1174, #1185, #1204, #1209, #1210, #1211); four were small choices an owner's session would have settled under CLAUDE.md "Deciding without the owner", and the owner had them handled as fix PRs instead.
 
+## Clarifications
+
+### Session 2026-11-25
+
+- Q1: Review agent output form? → A: structured named parts (asked / checked / decided / not decided / open) in the review agent's result schema, with a gate that fails a comment missing any part (answered from the `wc_session_record.py` precedent, recorded 2026-11-24). → FR-008, Story 2.
+- Q2: Where is a one-decision question posted and how is the answer picked up? → A: a comment on the Maintenance backlog issue (#889) against the line's `bl-` identifier; the owner answers by replying with that identifier and the chosen option. → FR-013, Story 4.
+- Q3: Which surfaces do the message rules cover? → A: board-loop fix PRs only, for now. Lifecycle-review-gate rounds, pr-conversation and the watchdog may be added by a later spec; the named-parts schema and gate stay general enough for that but those surfaces are not built now. → FR-016, FR-008.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - The first comment explains the line (Priority: P1)
@@ -49,6 +57,7 @@ The owner reads the board loop's review comment and sees what was asked, what th
 1. **Given** a review that returns no findings, **When** the loop posts the review comment, **Then** the comment names the line's identifier ("no open findings on the fix for bl-…") and contains: Asked, Checked, Not decided (what the fix leaves to the owner and how the owner would choose otherwise, e.g. by reverting), and Other candidates / open items.
 2. **Given** a review that returns findings, **When** the loop posts the review comment, **Then** the same four parts appear and the open findings are listed under the open part.
 3. **Given** a review agent output that lacks any of the four parts, **When** the loop would post it, **Then** the loop does not post a comment missing a part; it records the gap (for example "the review did not say what it checked") in place of the missing part rather than omitting it silently.
+4. **Given** a review comment in which any named part is absent (neither filled nor marked as a gap), **When** the gate runs, **Then** the gate fails.
 
 ---
 
@@ -80,9 +89,9 @@ When a backlog line needs one small owner decision but is otherwise fix-shaped, 
 **Acceptance Scenarios**:
 
 1. **Given** a backlog line that is deterministic except for one choice, **When** the route step runs, **Then** it records the outcome "fix, but needs one decision" and files no `spec-proposal`.
-2. **Given** a line routed as needing one decision, **When** the loop posts its question, **Then** the question contains the quoted line, the issue, why it matters, two or more options with their implications, the evidence, and a recommendation.
+2. **Given** a line routed as needing one decision, **When** the loop posts its question, **Then** the question is a comment on the Maintenance backlog issue (#889) naming the line's `bl-` identifier and contains the quoted line, the issue, why it matters, two or more options with their implications, the evidence, and a recommendation.
 3. **Given** the question is unanswered, **When** later loop cycles run, **Then** the line is held (not fixed, not re-asked, not re-routed to a spec).
-4. **Given** the owner answers the question, **When** the next loop cycle runs, **Then** the loop picks up the answer, fixes the line per the chosen option, and the fix PR's first comment cites the question and the answer.
+4. **Given** the owner replies on #889 with the line's `bl-` identifier and a chosen option, **When** the next loop cycle runs, **Then** the loop picks up the answer, fixes the line per the chosen option, and the fix PR's first comment cites the question and the answer.
 5. **Given** a line that is spec-shaped by CLAUDE.md's routing rule (a design trade-off across several stages, or work that needs clarify's questions), **When** the route step runs, **Then** it still files a `spec-proposal`.
 
 ---
@@ -113,7 +122,7 @@ When a backlog line needs one small owner decision but is otherwise fix-shaped, 
 - **FR-005**: The loop's review comment MUST contain four parts: what was asked (in the line's own terms), what the review checked, what the fix does and does not decide (including how the owner would choose a different option), and what is open or why nothing is open.
 - **FR-006**: The review comment MUST name the line's backlog identifier and MUST NOT consist of, or reduce to, a bare "No findings" verdict.
 - **FR-007**: When the review output lacks one of the four parts, the loop MUST state the gap in that part's place rather than omit the part.
-- **FR-008**: The review agent's output MUST be [NEEDS CLARIFICATION: structured with named parts (asked / checked / decided / not decided / open) that a gate can verify, or free prose the loop posts as written?].
+- **FR-008**: The review agent's output MUST be structured with named parts (asked / checked / decided / not decided / open) in the review agent's result schema, and a gate MUST fail a review comment that is missing any part. The schema and the gate MUST be defined independently of the board loop, so that a later spec can apply them to other surfaces (see FR-016) without reworking them. *(Clarified 2026-11-24, Q1 option A, from the precedent of `wc_session_record.py`, which refuses to build a record with a named part missing.)*
 
 **Truthful fixed text**
 
@@ -124,13 +133,13 @@ When a backlog line needs one small owner decision but is otherwise fix-shaped, 
 **One-decision route**
 
 - **FR-012**: The route step MUST offer an outcome "fix, but needs one decision" for a line that is fix-shaped except for one reversible choice; only lines that are spec-shaped by CLAUDE.md's routing rule MAY be routed to `spec-proposal`.
-- **FR-013**: For a line on that route, the loop MUST post one question containing the quoted line, the issue, why it matters, the options with implications, the evidence and a recommendation, and MUST hold the line until an answer is recorded. The question MUST be posted [NEEDS CLARIFICATION: where — as a reply on the Maintenance backlog issue (#889) against the line, on a new issue per question, or on the Board status issue — and how the owner's answer is recognised and picked up by the loop?].
+- **FR-013**: For a line on that route, the loop MUST post one question containing the quoted line, the issue, why it matters, the options with implications, the evidence and a recommendation, and MUST hold the line until an answer is recorded. The question MUST be posted as a comment on the Maintenance backlog issue (#889) naming the line's `bl-` identifier; the owner answers by replying on that issue with the same identifier and the chosen option, and the loop recognises an answer by that identifier and picks it up on its next cycle. *(Clarified 2026-11-25, Q2 option A, owner's choice.)*
 - **FR-014**: A held line MUST appear among the items waiting on the owner in the Board status report until answered.
 - **FR-015**: After an answer is recorded, the loop MUST fix the line per the chosen option, and the fix PR's first comment MUST cite the question and the answer.
 
 **Scope, length and backlog record**
 
-- **FR-016**: These message rules MUST apply to [NEEDS CLARIFICATION: board-loop fix PRs only, or also to lifecycle-review-gate rounds, pr-conversation replies and watchdog comments?].
+- **FR-016**: These message rules MUST apply to board-loop fix PRs only. Lifecycle-review-gate rounds, pr-conversation replies and watchdog comments are out of scope for this feature and MUST NOT be changed by it; the owner may extend the rules to them in a later spec, which is why FR-008's schema and gate stay surface-independent. *(Clarified 2026-11-25, Q3 option A, owner's choice "for now".)*
 - **FR-017**: When the loop ticks a backlog line as fixed, the ticked line MUST carry a one-line record of what was decided and a link to the explaining comment, so #889 keeps the "why". *(Default for the issue's open question 4.)*
 - **FR-018**: Each explaining or review comment MUST lead with its parts in plain text that fits on one screen; supporting evidence beyond that (long quotes, file lists, logs) MUST go in a collapsed `<details>` section rather than be cut. *(Default for the issue's open question 5.)*
 
@@ -140,7 +149,7 @@ When a backlog line needs one small owner decision but is otherwise fix-shaped, 
 - **Explanation**: the issue, why it matters, the options, and what the PR does — attached to one backlog line and one fix PR.
 - **Review report**: asked, checked, decided / not decided, open — attached to one review pass of one fix PR.
 - **Fixed-text message**: a loop message whose wording is fixed in code, with the switch and PR-class conditions under which each variant is posted.
-- **One-decision question**: the question, options, evidence and recommendation for a held line, its location, and the recorded answer.
+- **One-decision question**: the question, options, evidence and recommendation for a held line, posted as a comment on #889 naming the line's `bl-` identifier, and the owner's reply on #889 carrying that identifier and the chosen option.
 
 ## Success Criteria *(mandatory)*
 
@@ -161,4 +170,5 @@ When a backlog line needs one small owner decision but is otherwise fix-shaped, 
 - Main has no required checks, branch protection or rulesets (confirmed by the owner 2026-11-25); the truthfulness rule applies to that state and to any later one.
 - The board loop's existing switches (`WING_COMMANDER_BOARD_AUTO_MERGE`, the kill switch) and PR classes are unchanged by this feature; only the messages describing them change.
 - "Deciding without the owner" in CLAUDE.md addresses the owner's own sessions, not the board loop; this feature does not let the loop decide the choice itself — it asks and waits.
+- Scope is board-loop fix PRs only (FR-016); extending the rules to lifecycle-review-gate rounds, pr-conversation and the watchdog is a possible later spec, decided once the owner has seen this one in use.
 - The owner-reviewed #1202 / bl-b9677278 draft in the issue is the reference shape for both the first comment and the review comment.
