@@ -4844,14 +4844,16 @@ jobs:
       # stages admit a comment only from a non-bot OWNER, MEMBER or
       # COLLABORATOR (constitution 3.0.0, Principle V). It checks every
       # comment-triggered wrapper, clarify's own check and its grant, the
-      # shared comment filter, the Spec Kit updater's gate, the e2e clarify
-      # decision and the relay paragraph's single home, and runs the
-      # shipped clarify check and relay composite against a stub gh.
+      # shared comment filter, the Spec Kit updater's gate,
+      # pr-conversation's actor gate, the e2e clarify decision, the live
+      # docs and contracts, and the single homes of the relay paragraph
+      # and its step comment, and runs the shipped clarify check and relay
+      # composite against a stub gh.
       # Numbered 174 because PR #1184 claims 171 and PR #1205 claims 173.
       - name: Gate 174 — comment-triggered stages act only on maintainers
         if: "!cancelled()"
         run: python3 .github/scripts/verify-maintainer-only-comments.py
-      - name: Gate 174 self-test — each surface admitting the issue's author, a moved or unconditioned check, a widened grant and a copied relay paragraph each fail
+      - name: Gate 174 self-test — each surface or live contract admitting the issue's author, a moved or unconditioned check, a widened grant and a copied relay paragraph or comment each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-maintainer-only-comments.py --self-test
       # Gate 165 — specs/116-review-convergence-analyze. It keeps the review
