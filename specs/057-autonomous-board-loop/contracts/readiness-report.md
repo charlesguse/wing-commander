@@ -51,10 +51,11 @@ claim about who merges.
 
 The issue record carries a board item marker with step `awaiting-merge`
 (not `readiness`), keeping `pr` (#532). That step is the handover: the
-loop stops at "ready to merge", so the item releases the board rather than
-holding it until a human merges. `select` never treats an `awaiting-merge`
-item as in flight, and its oldest-first fallback passes the item over
-until the PR is positively known to be CLOSED or MERGED
+readiness job stops at ready, and the item releases the board rather
+than holding it until the PR merges (for who merges it, see the `merge`
+job's header comment in `board-loop.yml`). `select` never treats an
+`awaiting-merge` item as in flight, and its oldest-first fallback passes
+the item over until the PR is positively known to be CLOSED or MERGED
 (specs/061-marker-owned-in-flight/contracts/in-flight-detection.md). After
 that, resume sends the still-open issue to a fresh `triage`
 (specs/061-marker-owned-in-flight/contracts/resume-recovery.md). A human

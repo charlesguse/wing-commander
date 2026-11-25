@@ -522,6 +522,50 @@ class ReviewRound2Fixes(unittest.TestCase):
         with self.assertRaises(sr.GhReadError):
             sr.confirmed_from_github(1, "bot", "main", "o/r", lambda a: None)
 
+    def test_run_and_artifact_reads_use_the_runs_reader(self):
+        # Run 45614694181: the App is granted no Actions scope, so earlier
+        # rounds' runs and artifacts are read with the job's own token. The
+        # comments read stays on the App reader; nothing under actions/
+        # reaches it.
+        app_paths, run_paths = [], []
+        comment = {"user": {"login": "bot"}, "body": "x"}
+
+        def app(args):
+            app_paths.append(args[0])
+            return [[comment]]
+
+        def runs(args):
+            run_paths.append(args[0])
+            return {"artifacts": []} if args[0].endswith("/artifacts") else {}
+        from unittest import mock
+        with mock.patch.object(sr, "parse_records", lambda flat, bot: [{"run_id": "7"}]), \
+                mock.patch.object(sr, "confirm_record", lambda *a: False):
+            sr.confirmed_from_github(1, "bot", "main", "o/r", app, runs)
+        self.assertEqual(app_paths, ["repos/o/r/issues/1/comments"])
+        self.assertEqual(run_paths, ["repos/o/r/actions/runs/7", "repos/o/r/actions/runs/7/artifacts"])
+
+    def test_gh_api_token_overrides_gh_token_for_one_call(self):
+        import subprocess
+        from unittest import mock
+        seen = {}
+
+        def fake(argv, **kw):
+            seen["env"] = kw.get("env")
+            return subprocess.CompletedProcess(argv, 0, "{}", "")
+        with mock.patch.object(subprocess, "run", fake), mock.patch.dict(os.environ, {"GH_TOKEN": "app"}):
+            sr._gh_api(["repos/o/r/actions/runs/1"], token="run")
+            self.assertEqual(seen["env"]["GH_TOKEN"], "run")
+            sr._gh_api(["repos/o/r/issues/1/comments"])
+            self.assertIsNone(seen["env"])  # inherits GH_TOKEN (the App token)
+
+    def test_state_without_run_token_fails_closed(self):
+        from unittest import mock
+        env = {k: v for k, v in os.environ.items() if k != "RUN_TOKEN"}
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(sr, "confirmed_from_github", side_effect=AssertionError("read")):
+            self.assertEqual(sr.main(["state", "--pr", "1", "--bot-login", "b[bot]",
+                                      "--default-branch", "main", "--repository", "o/r"]), 1)
+
 
 class ReviewRound3Fixes(unittest.TestCase):
     """Gate round 3 findings on #1184, built by hand."""

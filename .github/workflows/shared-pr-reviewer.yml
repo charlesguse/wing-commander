@@ -131,13 +131,17 @@ jobs:
           persist-credentials: false
           path: reviewer
 
+      # No Actions scope: the App is granted none (docs/setup.md), and a
+      # mint that asks for one is refused with HTTP 422. Earlier rounds'
+      # runs and artifacts are read with this job's own github.token
+      # (RUN_TOKEN below, `actions: read`); Gate 12 checks every
+      # `permission-*` asked of the App against that grant.
       - name: Mint a read-only App token
         id: app
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ secrets.app-id }}
           private-key: ${{ secrets.app-private-key }}
-          permission-actions: read
           permission-contents: read
           permission-issues: read
           permission-pull-requests: read
