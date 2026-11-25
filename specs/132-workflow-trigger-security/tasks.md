@@ -31,7 +31,7 @@
 
 - [X] T009 [P] [US1] Move both `inputs.directed-recovery` expansions in `.github/workflows/board-loop.yml` to an `env:` variable, behaviour unchanged for empty string and `false` (FR-007)
 - [X] T010 [P] [US1] Move the `--ref "${{ github.ref_name }}"` expansion in `.github/workflows/wing-commander-rebase.yml` to an `env:` variable, safe for refs containing `/` (FR-007)
-- [ ] T011 [US1] Add a fixture to `verify-zizmor.py --self-test` proving an inline expansion fails and the `env:` form passes (US1 acceptance 2)
+- [X] T011 [US1] Add a fixture to `verify-zizmor.py --self-test` proving an inline expansion fails and the `env:` form passes (US1 acceptance 2)
 - [ ] T012 [US1] Confirm the same verdict locally and in CI on one commit (SC-003) by running `python .github/scripts/run-local-gates.py`
 
 ## Phase 4: User Story 2 — every accepted finding recorded (P1)
@@ -75,7 +75,7 @@
 
 ## Phase 8: Polish
 
-- [ ] T031 [P] Update `docs/reference.md` for every new gate, register, config, pin file and default (FR-023)
+- [X] T031 [P] Update `docs/reference.md` for every new gate, register, config, pin file and default (FR-023)
 - [ ] T032 Run `python .github/scripts/run-local-gates.py`; confirm 0 unwaived findings, 0 stale records and every failure branch has a fixture (SC-001, SC-002); give workflow-touching changes a pass from the `review-step-gating` skill
 - [ ] T033 Confirm no change creates or edits an Actions event policy (FR-024) and no private downstream names appear in any file
 

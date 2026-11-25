@@ -392,6 +392,21 @@ def self_test():
         ("duplicate record",
          {REGISTER_PATH: json.dumps({"waivers": [_entry(), _entry()]})},
          _runner(payload=inj), "duplicate record"),
+        # US1 acceptance 2: an inline `${{ github.event.* }}` in `run:` is a
+        # finding that fails naming file, line and audit; the same value
+        # moved to `env:` yields no finding and passes.
+        ("inline expansion names file line audit",
+         {".github/workflows/a.yml": WF.replace(
+             "echo hi", "echo ${{ github.event.issue.title }}")},
+         _runner(payload=[_finding(".github/workflows/a.yml",
+                                   "template-injection", STEP_ROUTE, row=6)]),
+         "a.yml:7 template-injection"),
+        ("env form passes",
+         {".github/workflows/a.yml": WF.replace(
+             "        run: echo hi\n",
+             "        env:\n          T: ${{ github.event.issue.title }}\n"
+             "        run: echo \"$T\"\n")},
+         _runner(payload=[]), None),
         ("analyser missing", {}, _runner(version=None), "analyser missing"),
         ("wrong version", {}, _runner(version="zizmor 1.0.0"), "wrong version"),
         ("empty file set", {".github/workflows/a.yml": None},
