@@ -38,7 +38,8 @@ WHAT IT CHECKS (default run, on the tree)
     .github/workflows, .github/actions or .github/scripts, nor in a live
     doc or contract (the files (i) reads), compared on letters and digits
     alone, so a copy wrapped at another width, in comment lines, quoted
-    string pieces or a blockquote is still found.
+    string pieces or a blockquote is still found. Each sentence is probed,
+    so a copy of any one of them is found too.
 (i) No live doc or contract in LIVE_DOCS writes an identity comparison (`actor.id ==`, `user.id ==`,
     `== ...author-id`, `commenter-id ==`): they describe the rule by
     association only (FR-009, SC-005).
@@ -52,7 +53,10 @@ WHAT IT CHECKS (default run, on the tree)
     doc or contract describes the issue's author in prose as admitted next
     to the maintainer set ("... or the issue's own author", "the
     association/author-id clause", "a maintainer or the original
-    reporter", "the original requester or trusted members").
+    reporter", "the original requester or trusted members"), contrasts
+    pr-conversation with clarify or intake as if they had an exception
+    ("unlike clarify/intake"), or writes an identity comparison
+    (`actor.id ==`) in a comment.
 Plus two harnesses that run the shipped shell against a stub `gh`:
 - the `comment-author` step: OWNER, MEMBER and COLLABORATOR give
   maintainer=true; NONE, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR and a Bot
@@ -335,9 +339,11 @@ def check_h(tree):
     para = relay_paragraph(tree)
     if not para:
         return ["(h) the relay composite has no RELAY_PARAGRAPH"]
-    probe = _letters(para)[:60]
+    # One probe per sentence, so a copy of any one sentence is found too.
+    probes = [_letters(s)[:60] for s in re.split(r"(?<=[.!?])\s+", para)
+              if len(_letters(s)) >= 30]
     others = [p for p, t in tree.items()
-              if p != RELAY and probe in _letters(t)]
+              if p != RELAY and any(probe in _letters(t) for probe in probes)]
     return [f"(h) the relay paragraph is copied into {p}" for p in others]
 
 
@@ -391,11 +397,17 @@ def check_j(tree):
 # maintainer set, as the removed text did ("OWNER/MEMBER/COLLABORATOR or the
 # issue's own author", "a maintainer or the issue author", "the
 # association/author-id clause", "a maintainer or the original reporter",
-# "the original requester or trusted members"). Matched on text flattened
-# by _flatten.
+# "the original requester or trusted members", "or `user.id` is the issue
+# author's", "or from this id"), contrasts pr-conversation with clarify or
+# intake as if they had an exception ("unlike clarify/intake"), or writes
+# an identity comparison in a comment (`actor.id ==`). Every such sentence
+# spec 130 deleted is caught. Matched on text flattened by _flatten.
 PROSE_EXCEPTION = re.compile(
     r"\bor (?:its author is )?(?:the|an) (?:lifecycle )?issue(?:['’]s)? (?:own )?author\b|"
     r"\bor (?:the )?original (?:requester|reporter)\b|\boriginal (?:requester|reporter) or\b|"
+    r"\bunlike (?:the )?clarify(?:/| and | or )intake\b|\bgate admits (?:the|an) issue['’]s (?:own )?author\b|"
+    r"\bor `?\.?user\.id`? is the issue(?:['’]s)? author|\bor from this id\b|"
+    r"(?:user|actor|author)[._-]id\s*==|"
     r"association/author-id|author-by-id|dropping the author-id clause", re.I)
 
 
@@ -793,6 +805,22 @@ def _callout_reporter_mutant(tree):
                 "            maintainer or the original reporter)")
 
 
+def _sentence_copy_mutant(tree):
+    import textwrap
+    para = relay_paragraph(tree)
+    last = re.split(r"(?<=[.!?])\s+", para)[-1]
+    t = dict(tree)
+    t[INTAKE] = t[INTAKE] + "\n" + "\n".join("# " + l for l in textwrap.wrap(last, 50)) + "\n"
+    return t
+
+
+def _contrast_mutant(tree):
+    p = os.path.join(WF, "pr-conversation.yml")
+    t = dict(tree)
+    t[p] = t[p] + "\n# Deliberately no requester carve-out, unlike clarify/intake (FR-019).\n"
+    return t
+
+
 def _quoted_copy_mutant(tree):
     import textwrap
     para = relay_paragraph(tree)
@@ -836,6 +864,9 @@ MUTANTS = (
     ("(l) the issue-context composite says it admits the issue's own author", _prose_mutant),
     ("(b) clarify's agent step runs under a negated is-open condition", _agent_negated_gate_mutant),
     ("(l) intake's callout counts the original reporter as qualifying", _callout_reporter_mutant),
+    ("(l) a pr-conversation comment contrasts it with clarify/intake", _contrast_mutant),
+    ("(h) the relay paragraph's last sentence alone is copied into intake.yml",
+     _sentence_copy_mutant),
     ("(relay-harness) the relay composite never appends", _relay_never_mutant),
 )
 
