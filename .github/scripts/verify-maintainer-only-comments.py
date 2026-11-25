@@ -20,9 +20,10 @@ WHAT IT CHECKS (default run, on the tree)
 (b) clarify.yml's `clarify` job: the `comment-author` step exists, comes
     before `lifecycle-gate`, and both `lifecycle-gate` and "Note closed
     lifecycle and stop" carry its `maintainer == 'true'` condition. Every
-    later step skips for a refused comment: its `if:` carries the is-open
-    condition, or a condition that is false when an already-gated step was
-    skipped; only the two argument-composing steps run ungated.
+    later step skips for a refused comment: one whole term of its `if:`'s
+    && chain, never one inside a `!( ... )`, is the is-open condition or a
+    condition that is false when an already-gated step was skipped; only
+    the two argument-composing steps run ungated.
 (c) wing-commander-issue-context's trust filter compares no user id (Gate
     96 runs its behaviour).
 (d) auto-update-spec-kit.yml's `comment-reply` job `if:` compares no id.
@@ -50,7 +51,8 @@ WHAT IT CHECKS (default run, on the tree)
 (l) No workflow, composite (.yml or .sh under .github/actions) or live
     doc or contract describes the issue's author in prose as admitted next
     to the maintainer set ("... or the issue's own author", "the
-    association/author-id clause").
+    association/author-id clause", "a maintainer or the original
+    reporter", "the original requester or trusted members").
 Plus two harnesses that run the shipped shell against a stub `gh`:
 - the `comment-author` step: OWNER, MEMBER and COLLABORATOR give
   maintainer=true; NONE, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR and a Bot
@@ -205,14 +207,38 @@ def check_b(tree):
 
 # (b)'s second half: a refused comment leaves lifecycle-gate skipped, so its
 # is-open output is empty. Every later step in the clarify job must skip
-# then: its `if:` (an && chain, no ||) carries the is-open condition, or a
-# condition that is false when an already-gated step was skipped. Only the
-# two steps that compose arguments and write nothing may run ungated.
+# then: one whole term of its `if:` (an && chain, no ||, a term inside a
+# `!( ... )` never counting) is the is-open condition, or a condition that
+# is false when an already-gated step was skipped. Only the two steps that
+# compose arguments and write nothing may run ungated.
 IS_OPEN_COND = "steps.lifecycle-gate.outputs.is-open == 'true'"
 UNGATED_OK = {"commit-guidance-clarify", "tool-args-clarify"}
 SKIP_SAFE = re.compile(
     r"steps\.([\w-]+)\.(?:outputs\.[\w-]+\s*==\s*'[^']+'|outputs\.[\w-]+\s*!=\s*''|"
     r"outcome\s*!=\s*'skipped')")
+
+
+def _conjuncts(cond):
+    """The top-level terms of an && chain, each a whole term. A negated
+    group `!( ... )` becomes one opaque term, and a plain grouping `( ... )`
+    is opened, so a term inside a negation never counts as a gate. A
+    function call (`always()`, `contains(...)`) becomes one opaque term."""
+    prev = None
+    while prev != cond:
+        prev = cond
+        cond = re.sub(r"(?<![\w.])[A-Za-z_]\w*\s*\([^()]*\)", " call ", cond)
+        cond = re.sub(r"!\s*\([^()]*\)", " !negated ", cond)
+        cond = re.sub(r"(?<![\w!])\(([^()]*)\)", r" \1 ", cond)
+    return [" ".join(t.split()) for t in cond.split("&&")]
+
+
+def _gates_on_skip(term, gated):
+    """True when the whole term is false whenever an already-gated step
+    was skipped (its outputs empty, its outcome 'skipped')."""
+    if term in (IS_OPEN_COND, MAINTAINER_COND):
+        return True
+    m = SKIP_SAFE.fullmatch(term)
+    return bool(m) and m.group(1) in gated
 
 
 def _ungated_after_gate(steps, gi):
@@ -224,8 +250,7 @@ def _ungated_after_gate(steps, gi):
         cond = re.sub(r"^\$\{\{\s*|\s*\}\}$", "", cond)
         ok = False
         if cond and "||" not in cond:
-            ok = IS_OPEN_COND in cond or MAINTAINER_COND in cond or any(
-                m.group(1) in gated for m in SKIP_SAFE.finditer(cond))
+            ok = any(_gates_on_skip(t, gated) for t in _conjuncts(cond))
         if ok:
             if sid:
                 gated.add(sid)
@@ -365,9 +390,12 @@ def check_j(tree):
 # (l): prose that describes the issue's author as admitted next to the
 # maintainer set, as the removed text did ("OWNER/MEMBER/COLLABORATOR or the
 # issue's own author", "a maintainer or the issue author", "the
-# association/author-id clause"). Matched on text flattened by _flatten.
+# association/author-id clause", "a maintainer or the original reporter",
+# "the original requester or trusted members"). Matched on text flattened
+# by _flatten.
 PROSE_EXCEPTION = re.compile(
     r"\bor (?:its author is )?(?:the|an) (?:lifecycle )?issue(?:['’]s)? (?:own )?author\b|"
+    r"\bor (?:the )?original (?:requester|reporter)\b|\boriginal (?:requester|reporter) or\b|"
     r"association/author-id|author-by-id|dropping the author-id clause", re.I)
 
 
@@ -752,6 +780,19 @@ def _agent_ungated_mutant(tree):
                 "id: agent\n        if: steps.tool-args-clarify.outputs.allowed-tools != ''")
 
 
+def _agent_negated_gate_mutant(tree):
+    cond = "steps.lifecycle-gate.outputs.is-open == 'true' && steps.tool-args-clarify.outputs.allowed-tools != ''"
+    return _sub(tree, CLARIFY, "id: agent\n        if: " + cond,
+                "id: agent\n        if: \"!(" + cond + ")\"")
+
+
+def _callout_reporter_mutant(tree):
+    return _sub(tree, INTAKE, "this issue did not qualify for the specification (not from a\n"
+                "            maintainer)",
+                "this issue did not qualify for the specification (not from a\n"
+                "            maintainer or the original reporter)")
+
+
 def _quoted_copy_mutant(tree):
     import textwrap
     para = relay_paragraph(tree)
@@ -793,6 +834,8 @@ MUTANTS = (
     ("(h) the relay paragraph is copied into a gate script as a wrapped Python string",
      _quoted_copy_mutant),
     ("(l) the issue-context composite says it admits the issue's own author", _prose_mutant),
+    ("(b) clarify's agent step runs under a negated is-open condition", _agent_negated_gate_mutant),
+    ("(l) intake's callout counts the original reporter as qualifying", _callout_reporter_mutant),
     ("(relay-harness) the relay composite never appends", _relay_never_mutant),
 )
 
