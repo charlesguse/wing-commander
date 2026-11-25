@@ -718,15 +718,18 @@ def _pin_static_self_test():
         shutil.rmtree(tmp, ignore_errors=True)
     problems.extend(_dockerfile_pin_read_self_test())
     import wc_actionlint
+    real_host = wc_actionlint.host
+    wc_actionlint.host = lambda: ("linux", "riscv64")
     try:
-        wc_actionlint._pin(wc_actionlint.SHELLCHECK_SHA256, "linux", "riscv64",
-                           wc_actionlint.SHELLCHECK_PIN_FILE)
-        problems.append("wc_actionlint._pin returned a digest for linux/riscv64")
+        wc_actionlint.ensure_shellcheck()
+        problems.append("ensure_shellcheck found a digest for linux/riscv64")
     except SystemExit as e:
         if "shellcheck.pin" not in str(e):
             problems.append(f"a host with no shellcheck hash is told to add it "
                             f"somewhere other than shellcheck.pin, which the "
                             f"single-home scan would then reject: {e}")
+    finally:
+        wc_actionlint.host = real_host
     return problems
 
 
