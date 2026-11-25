@@ -41,7 +41,7 @@
 
 - [ ] T013 [US2] Add the 7 `dangerous-triggers` records to `.github/scripts/zizmor-findings-waivers.json`, each naming `control` and `issue` tracker (the Maintenance backlog issue) per data-model.md `zizmor-findings-waivers.json` `control` and `issue` (FR-012, SC-004)
 - [ ] T014 [US2] Triage each `github-env`, `artipacked`, `excessive-permissions` and `github-app` finding one at a time: fix in the owning workflow under `.github/workflows/` or `.github/actions/`, or add a register record with `reason` (FR-008)
-- [ ] T015 [US2] Verify gate 124 (`.github/scripts/verify-waiver-citations.py`) discovers the new register by name with no change, and add a fixture or check proving a closed tracker is caught (FR-013)
+- [X] T015 [US2] Verify gate 124 (`.github/scripts/verify-waiver-citations.py`) discovers the new register by name with no change, and add a fixture or check proving a closed tracker is caught (FR-013)
 - [X] T016 [US2] Add a `verify-zizmor.py` check that fails when the `self-repository` disable `reason` in `.github/zizmor.yml` is missing, with a fixture (FR-016, SC-011)
 
 ## Phase 5: Third-party pins and trusted-publisher home (cross-cutting, FR-009–FR-009b, FR-017a)
