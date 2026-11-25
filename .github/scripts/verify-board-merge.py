@@ -12,8 +12,9 @@ evaluator cannot look identical to a working one. The workflow half is
 structural: the `merge` job may call `gh pr merge` only pinned to the head SHA
 it evaluated, never with `--admin`, `--auto`, an approval, or a second merge
 method, only behind both switches, and without dispatching proof runs itself.
-Because that job merges, no board-loop document may say the whole loop never
-merges (UNSCOPED_MERGE_CLAIMS).
+Because that job merges, the documents unscoped_merge_claim_docs() lists may
+not bring back the retired whole-loop "never merges" sentences
+(UNSCOPED_MERGE_CLAIMS).
 
 Fixtures live in .github/scripts/fixtures/board-merge/, named
 `<class>-<condition>[-variant].json` (a case where that condition is the
@@ -429,10 +430,9 @@ def check_readiness_stale_claims_self_test():
 
 
 # The prose half of the same claim (#889, found by the code review of #1227):
-# with WING_COMMANDER_BOARD_AUTO_MERGE on, the `merge` job merges, so a
-# document describing the board loop may say the readiness job (or any job
-# but `merge`) never merges, never that the whole loop does, nor that
-# readiness always hands over to a human. Matched after comment markers,
+# the `merge` job can merge, so these retired sentences, each of which said
+# the whole loop never merges, must not come back. Exact sentences, a
+# regression guard, not a paraphrase detector. Matched after comment markers,
 # quotes and line breaks are folded away, so a phrase wrapped across comment
 # or docstring lines is still found.
 UNSCOPED_MERGE_CLAIMS = (

@@ -4903,8 +4903,9 @@ jobs:
       # method, no --admin/--auto/approval, both switches in its `if:`, the
       # App token (so prove-gate sees the closed event), and no decision
       # logic of its own. The auto-update stage posts the verification record
-      # and never merges, and none of the board-loop documents it scans
-      # (unscoped_merge_claim_docs) claims the whole loop never merges.
+      # and never merges, and the documents it scans
+      # (unscoped_merge_claim_docs) don't bring back the retired whole-loop
+      # "never merges" sentences.
       - name: Gate 165 — board loop self-merge decision, refusal classes and merge-job shape
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-merge.py

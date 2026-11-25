@@ -9,10 +9,8 @@ WHY THIS EXISTS
 ---------------
 FR-068 is a hard invariant for every board-loop job except `merge`: none
 of them merges, approves, or enables auto-merge. The `merge` job
-(specs/115-board-loop-self-merge) merges a fix PR or a verified Spec Kit
-upgrade PR when WING_COMMANDER_BOARD_AUTO_MERGE is on, and
-verify-board-merge.py pins its shape; even there approvals and auto-merge
-stay forbidden. The one thing
+(specs/115-board-loop-self-merge) is verify-board-merge.py's to check;
+approvals and auto-merge stay forbidden there too. The one thing
 standing between "ready" and a merge of stale evidence is this
 decision — a regression that reported ready against a check that ran on
 an earlier push, or against unresolved findings, would look identical to
