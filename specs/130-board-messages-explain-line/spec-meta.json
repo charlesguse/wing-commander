@@ -1,3 +1,11 @@
-{"issue": 1215, "spec_dir": "specs/130-board-messages-explain-line",
- "feature_num": "130", "stage": "implement", "iteration": 1,
- "spec_branch": "spec/130-board-messages-explain-line"}
+{
+  "issue": 1215,
+  "spec_dir": "specs/130-board-messages-explain-line",
+  "feature_num": "130",
+  "stage": "implement",
+  "iteration": 1,
+  "spec_branch": "spec/130-board-messages-explain-line",
+  "truncated_count": 0,
+  "truncated_tier": null,
+  "gate_suite_ready": true
+}
