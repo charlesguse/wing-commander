@@ -14,7 +14,7 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 
 - [X] T001 Inventory the current `lint` job in `.github/workflows/lint-workflows.yml`: list every step that installs tools or builds a fixture later gates read (R5), every step with no `!cancelled()` guard (the 70 of FR-009), and every consumer of `jobs.lint` structure or step names (grep `.github/scripts/` for `lint-workflows.yml`, `jobs["lint"]`, `wc_lint_gate_source`). Record the findings as a comment block at the top of the implementing PR description, not in a repo file.
 - [X] T002 Capture the baseline gate set: the step-name list of `lint` and `harness-tests` from `.github/workflows/lint-workflows.yml` and the list `python .github/scripts/run-local-gates.py` derives, for the SC-002 before/after comparison (kept in the PR description).
-- [ ] T003 Capture per-gate durations from `run-local-gates.py` timing output (2026-11-24 baseline, ~2263 s summed) to drive the shard balancing in T011.
+- [X] T003 Capture per-gate durations from `run-local-gates.py` timing output (2026-11-24 baseline, ~2263 s summed) to drive the shard balancing in T011.
 
 ---
 
@@ -40,7 +40,7 @@ Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gate
 - [X] T008 [US1] Compute the shard assignment: greedy-balance the gate steps (with each self-test kept adjacent to its gate, and fixture-sharing gates together) across 8 groups using the T003 durations; the result exists only as step placement (FR-007), so keep any scratch table out of the repo.
 - [X] T009 [US1] In `.github/workflows/lint-workflows.yml`, replace job `lint` with jobs `lint-shard-1` … `lint-shard-8`, each with `if: github.event_name == 'pull_request'`, `contents: read` permissions, the same runner and checkout/setup as today (or the T005 composite), and its assigned steps moved verbatim (FR-001, FR-006).
 - [X] T010 [US1] Add the aggregate job `lint` (`name: lint`, `needs:` all eight shards and `harness-tests`, `if: always() && github.event_name == 'pull_request'`) whose single step fails unless every `needs.<job>.result` is exactly `success` and prints each non-success job by name (FR-003, FR-004, FR-004a, R2). Keep the workflow `name: lint · workflows`.
-- [ ] T011 [US1] Re-balance if local per-shard sums from T003 exceed ~300 s for any shard (move whole gate+self-test pairs only); confirm the floor shard (Gate 97 self-test, 156 s) fits.
+- [X] T011 [US1] Re-balance if local per-shard sums from T003 exceed ~300 s for any shard (move whole gate+self-test pairs only); confirm the floor shard (Gate 97 self-test, 156 s) fits.
 - [X] T012 [P] [US1] Adapt `.github/scripts/verify-lint-supersedes-pr-runs.py` and every other gate that read the single `lint` job's `if`, `steps` or concurrency (list from T001) so each finds its subject across the shard jobs and cannot pass vacuously (FR-008); extend each one's self-test with a fixture for the sharded layout.
 - [ ] T013 [US1] Run `python .github/scripts/run-local-gates.py` and compare the executed gate set with T002 (SC-002: none dropped, none duplicated).
 

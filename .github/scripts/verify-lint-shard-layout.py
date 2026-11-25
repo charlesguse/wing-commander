@@ -160,7 +160,15 @@ def check(doc, derived=None):
                 want = ids.get(
                     next((n for n in ids if n and n.startswith(m.group(1) + " —")), None))
                 got = _OUTCOME.search(str(s.get("if") or ""))
-                if got and want and got.group(1) != want:
+                if got and got.group(1) not in ids.values():
+                    # A step id from another job reads as '' here, so the
+                    # guard would never hold the self-test back: the pair
+                    # was split across units.
+                    fails.append("self-test step {0!r} guards on step id "
+                                 "{1!r}, which is not a step of '{2}'; a "
+                                 "gate and its self-test share a "
+                                 "unit".format(name, got.group(1), k))
+                elif got and want and got.group(1) != want:
                     fails.append("self-test step {0!r} guards on step id "
                                  "{1!r}, not its pair {2!r}".format(
                                      name, got.group(1), want))
@@ -236,9 +244,16 @@ def self_test():
          lambda d: J(d, "lint-shard-2")["steps"][0].pop("if"),
          "no !cancelled() guard")
     case("a self-test guarded on another gate's id fails",
-         lambda d: J(d, "lint-shard-1")["steps"][2].update(
-             {"if": "${{ !cancelled() && steps.other.outcome != 'failure' }}"}),
+         lambda d: (J(d, "lint-shard-1")["steps"].append(
+             {"name": "Gate 9 — other", "id": "other",
+              "if": "${{ !cancelled() }}", "run": "true"}),
+             J(d, "lint-shard-1")["steps"][2].update(
+             {"if": "${{ !cancelled() && steps.other.outcome != 'failure' }}"})),
          "not its pair")
+    case("a self-test split from its gate into another unit fails",
+         lambda d: J(d, "lint-shard-2")["steps"].append(
+             J(d, "lint-shard-1")["steps"].pop(2)),
+         "share a unit")
     case("an aggregate that runs a gate script fails",
          lambda d: J(d, "lint")["steps"].append(
              {"name": "sneak", "run": "python3 .github/scripts/verify-c.py"}),
