@@ -73,11 +73,21 @@ NOTICE_STEP = "Post the notice"
 
 SPEC_DIR = "specs/041-implement-stall-notice"
 ISSUE = "231"
+REPOSITORY = "example/repo"
 
 BASH = None
 
+# GH_GRAPHQL_EXIT / GH_API_EXIT fail gh's GraphQL-backed `issue edit` /
+# `issue comment` and its REST `api` calls the way finalize run 45649229707's
+# writes failed (#889); both default to success.
 GH_STUB = """#!/bin/sh
 echo "gh $*" >> "$GH_CALLS"
+case "$1 $2" in
+  "issue edit"|"issue comment")
+    [ "${GH_GRAPHQL_EXIT:-0}" = 0 ] || { echo "GraphQL: Something went wrong" >&2; exit "$GH_GRAPHQL_EXIT"; } ;;
+  api*)
+    exit "${GH_API_EXIT:-0}" ;;
+esac
 exit 0
 """
 
@@ -136,6 +146,11 @@ def new_gh_stub(work):
               newline="\n") as fh:
         fh.write(GH_STUB)
     os.chmod(os.path.join(bindir, "gh"), 0o755)
+    # The REST fallbacks pause first; no scenario waits on that.
+    with open(os.path.join(bindir, "sleep"), "w", encoding="utf-8",
+              newline="\n") as fh:
+        fh.write("#!/bin/sh\nexit 0\n")
+    os.chmod(os.path.join(bindir, "sleep"), 0o755)
     return bindir, calls
 
 
@@ -151,12 +166,15 @@ def run_mark(steps, repo, runner_temp, spec_dir, agent_ran=""):
 
 
 def run_labels(steps, repo, runner_temp, bindir, calls, stage_label,
-               record_status, mark_record="true", post_notice="true"):
+               record_status, mark_record="true", post_notice="true",
+               spec_dir=SPEC_DIR, gh_fail=None):
     return run_step(
         BASH, steps[LABELS_STEP], repo,
         {"GH_TOKEN": "x", "ISSUE": ISSUE, "STAGE_LABEL": stage_label,
          "RECORD_STATUS": record_status, "GH_CALLS": calls,
          "MARK_RECORD": mark_record, "POST_NOTICE": post_notice,
+         "SPEC_DIR": spec_dir, "GITHUB_REPOSITORY": REPOSITORY,
+         **(gh_fail or {}),
          "PATH": bindir + os.pathsep + os.environ["PATH"]},
         runner_temp)
 
@@ -164,7 +182,8 @@ def run_labels(steps, repo, runner_temp, bindir, calls, stage_label,
 def run_notice(steps, repo, runner_temp, bindir, calls, reason,
                restart_command, record_status, run_url="", agent_ran="",
                agent_conclusion="", commits_published="", push_ok="",
-               mark_record="true", spec_dir=SPEC_DIR, agent_started=""):
+               mark_record="true", spec_dir=SPEC_DIR, agent_started="",
+               gh_fail=None):
     return run_step(
         BASH, steps[NOTICE_STEP], repo,
         {"GH_TOKEN": "x", "ISSUE": ISSUE, "REASON": reason,
@@ -186,7 +205,8 @@ def run_notice(steps, repo, runner_temp, bindir, calls, reason,
          # a real composite invocation of this file.
          "GITHUB_ACTION_PATH": os.path.abspath(os.path.dirname(COMPOSITE)),
          "MARK_RECORD": mark_record, "SPEC_DIR": spec_dir,
-         "GH_CALLS": calls,
+         "GH_CALLS": calls, "GITHUB_REPOSITORY": REPOSITORY,
+         **(gh_fail or {}),
          "PATH": bindir + os.pathsep + os.environ["PATH"]},
         runner_temp)
 
@@ -675,6 +695,84 @@ PLAIN_RESTART_FIXTURES = [
 ]
 
 
+def scenario_transient_graphql(steps, root):
+    """#889 (finalize run 45649229707): gh's GraphQL path failed on the
+    stage:stalled add and on the notice comment, so the record read stalled
+    while the issue carried neither the label nor the notice. Each write
+    must fall back to REST; when REST fails too, the label step still
+    succeeds (the notice must still post) and the notice step fails loudly
+    rather than leaving a silent stall.
+    """
+    failures = []
+    for gql, rest in (("1", "0"), ("1", "1")):
+        where = f"scenario: GraphQL exit {gql}, REST exit {rest} (#889)"
+        gh_fail = {"GH_GRAPHQL_EXIT": gql, "GH_API_EXIT": rest}
+        work, repo = make_workspace(root, reachable_remote=True)
+        runner_temp = os.path.join(work, "runner_temp")
+        os.makedirs(runner_temp, exist_ok=True)
+        bindir, calls = new_gh_stub(work)
+
+        rc, out, _, _ = run_labels(steps, repo, runner_temp, bindir, calls,
+                                   "stage:implement", "marked",
+                                   gh_fail=gh_fail)
+        if rc != 0:
+            failures.append(f"{where}: {LABELS_STEP!r} exited {rc}; a label "
+                            f"write must not stop the notice: {out.strip()}")
+        got = read_calls(calls)
+        base = f"api -X POST repos/{REPOSITORY}/issues/{ISSUE}"
+        if not any(base + "/labels" in c and "labels[]=stage:stalled" in c
+                   for c in got):
+            failures.append(f"{where}: no REST fallback for the "
+                            f"stage:stalled add: {got}")
+        if not any(f"api -X DELETE repos/{REPOSITORY}/issues/{ISSUE}/labels/"
+                   f"stage%3Aimplement" in c for c in got):
+            failures.append(f"{where}: no REST fallback for the "
+                            f"stage:implement removal: {got}")
+        if (rest != "0") != ("::warning::" in out):
+            failures.append(f"{where}: {LABELS_STEP!r} should warn exactly "
+                            f"when REST fails too: {out.strip()}")
+
+        rc, out, _, _ = run_notice(steps, repo, runner_temp, bindir, calls,
+                                   "the implement stage never started", "",
+                                   "marked", gh_fail=gh_fail)
+        got = read_calls(calls)
+        if not any(base + "/comments" in c and "body=@" in c for c in got):
+            failures.append(f"{where}: no REST fallback for the notice "
+                            f"comment: {got}")
+        if rest == "0" and rc != 0:
+            failures.append(f"{where}: {NOTICE_STEP!r} exited {rc} although "
+                            f"the REST post succeeded: {out.strip()}")
+        if rest != "0" and (rc == 0 or "::error::" not in out):
+            failures.append(f"{where}: {NOTICE_STEP!r} exited {rc} with no "
+                            f"error when neither API posted the notice -- a "
+                            f"silent stall: {out.strip()}")
+    return failures
+
+
+def scenario_empty_spec_dir_stage_label(steps, root):
+    """#889 (code review of #1112): with no record to mark (spec-dir empty,
+    as clarify passes before its spec PR merges), a passed stage-label is
+    still removed, so a stalled clarify does not keep stage:clarify beside
+    stage:stalled."""
+    failures = []
+    where = "scenario: spec-dir empty with a stage-label (clarify)"
+    work, repo = make_workspace(root, reachable_remote=True)
+    runner_temp = os.path.join(work, "runner_temp")
+    os.makedirs(runner_temp, exist_ok=True)
+    bindir, calls = new_gh_stub(work)
+    rc, out, _, _ = run_labels(steps, repo, runner_temp, bindir, calls,
+                               "stage:clarify", "", spec_dir="")
+    if rc != 0:
+        failures.append(f"{where}: {LABELS_STEP!r} exited {rc}: {out.strip()}")
+        return failures
+    got = read_calls(calls)
+    if not [c for c in got if "--remove-label stage:clarify" in c]:
+        failures.append(f"{where}: stage:clarify was not removed: {got}")
+    if not [c for c in got if "--add-label stage:stalled" in c]:
+        failures.append(f"{where}: stage:stalled was not added: {got}")
+    return failures
+
+
 def suite(steps, root):
     failures = []
     failures += scenario_marked(steps, root)
@@ -686,6 +784,8 @@ def suite(steps, root):
     failures += scenario_agent_ran_success(steps, root)
     failures += scenario_agent_never_started(steps, root)
     failures += scenario_commits_published(steps, root)
+    failures += scenario_transient_graphql(steps, root)
+    failures += scenario_empty_spec_dir_stage_label(steps, root)
     for stage, cmd in PLAIN_RESTART_FIXTURES:
         failures += scenario_restart_command_verbatim(
             steps, root, stage, cmd,
@@ -705,8 +805,38 @@ def _mut_labels_removes_regardless_of_status(steps):
     """The stage-label is removed even when the mark never landed — implies
     a successful hand-off that never happened."""
     steps[LABELS_STEP] = steps[LABELS_STEP].replace(
-        '[ -n "$STAGE_LABEL" ] && [ "$RECORD_STATUS" = "marked" ]',
+        '[ -n "$STAGE_LABEL" ] && { [ "$RECORD_STATUS" = "marked" ] || [ -z "$SPEC_DIR" ]; }',
         '[ -n "$STAGE_LABEL" ]')
+
+
+def _mut_labels_keeps_stage_label_without_record(steps):
+    """#889 reverted: with spec-dir empty the stage-label is never removed."""
+    steps[LABELS_STEP] = steps[LABELS_STEP].replace(
+        '{ [ "$RECORD_STATUS" = "marked" ] || [ -z "$SPEC_DIR" ]; }',
+        '[ "$RECORD_STATUS" = "marked" ]')
+
+
+def _cut_fallback(text, start_marker):
+    """Replace one `if ! <graphql write>; then ... fi` block with the bare
+    write, so a GraphQL failure is final again."""
+    start = text.index(start_marker)
+    cond_end = text.index("; then\n", start)
+    write = text[start + len("if ! "):cond_end]
+    indent = text[:start].rsplit("\n", 1)[1]
+    end = text.index("\n" + indent + "fi\n", cond_end) + len(indent) + 4
+    return text[:start] + write + "\n" + text[end:]
+
+
+def _mut_labels_no_rest_fallback(steps):
+    """#889 reverted: the stage:stalled add has no REST fallback."""
+    steps[LABELS_STEP] = _cut_fallback(
+        steps[LABELS_STEP], 'if ! gh issue edit "$ISSUE" --add-label "stage:stalled"')
+
+
+def _mut_notice_no_rest_fallback(steps):
+    """#889 reverted: the notice comment has no REST fallback."""
+    steps[NOTICE_STEP] = _cut_fallback(
+        steps[NOTICE_STEP], 'if ! gh issue comment "$ISSUE"')
 
 
 def _mut_notice_ignores_restart_command(steps):
@@ -780,6 +910,12 @@ MUTATIONS = [
      _mut_notice_ignores_commits_published),
     ("labels step removes stage-label even when the mark never landed",
      _mut_labels_removes_regardless_of_status),
+    ("labels step keeps stage-label when there is no record to mark",
+     _mut_labels_keeps_stage_label_without_record),
+    ("stage:stalled add has no REST fallback",
+     _mut_labels_no_rest_fallback),
+    ("notice comment has no REST fallback",
+     _mut_notice_no_rest_fallback),
     ("notice ignores the caller's restart-command",
      _mut_notice_ignores_restart_command),
     ("notice ignores agent-ran and always claims the stage never started",
@@ -833,7 +969,7 @@ def main():
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
-    print(f"chain-stop-notice composite body: 9 base scenario(s), "
+    print(f"chain-stop-notice composite body: 11 base scenario(s), "
           f"{len(PLAIN_RESTART_FIXTURES)} restart-command fixture(s), "
           f"{len(MUTATIONS)} mutation(s); {len(failures)} failure(s).")
     sys.exit(1 if failures else 0)

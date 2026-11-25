@@ -17,8 +17,10 @@ name: wing-commander-chain-stop-notice
 description: >
   Best-effort: mark spec-meta.json stalled, flip the stage:stalled label,
   and post a "stage did not start" notice on the lifecycle issue (or PR).
-  Never fails the calling job — a checkout/push failure degrades the
-  notice's wording to "record could not be updated" instead.
+  A checkout/push failure never fails the calling job — it degrades the
+  notice's wording to "record could not be updated" instead. Label and
+  comment writes fall back from GraphQL to REST; only a notice that
+  neither API could post fails the step.
 
 inputs:
   token:
@@ -46,8 +48,9 @@ inputs:
     default: ""
   stage-label:
     description: >
-      stage:<name> label to remove when the mark succeeds. Empty is valid
-      (nothing to remove, e.g. intake).
+      stage:<name> label to remove when the mark succeeds, or, with
+      spec-dir empty (no record to mark), whenever mark-record is "true".
+      Empty is valid (nothing to remove, e.g. intake).
     required: false
     default: ""
   run-url:
@@ -201,14 +204,33 @@ runs:
         RECORD_STATUS: ${{ steps.mark.outputs.record-status }}
         MARK_RECORD: ${{ inputs.mark-record }}
         POST_NOTICE: ${{ inputs.post-notice }}
+        SPEC_DIR: ${{ inputs.spec-dir }}
       run: |
         set -uo pipefail
+        # Each write tries gh's GraphQL path first and, on failure, the REST
+        # endpoint after a pause: a transient GraphQL error once dropped the
+        # stage:stalled label while the record was already marked stalled,
+        # and nothing re-drove it (finalize run 45649229707, #889). A write
+        # that still fails is a warning, never a failed step, so the notice
+        # below still posts.
         if [ "$POST_NOTICE" = "true" ]; then
           gh label create "stage:stalled" --color E99695 --description "Stage did not complete; manual restart required" --force || true
-          gh issue edit "$ISSUE" --add-label "stage:stalled" || true
+          if ! gh issue edit "$ISSUE" --add-label "stage:stalled"; then
+            sleep 5
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$ISSUE/labels" -f "labels[]=stage:stalled" >/dev/null \
+              || echo "::warning::wing-commander-chain-stop-notice: could not add stage:stalled to #$ISSUE (GraphQL and REST both failed)."
+          fi
         fi
-        if [ "$MARK_RECORD" = "true" ] && [ -n "$STAGE_LABEL" ] && [ "$RECORD_STATUS" = "marked" ]; then
-          gh issue edit "$ISSUE" --remove-label "$STAGE_LABEL" || true
+        # The stage label goes once the record is marked, or when there is
+        # no record to wait on (spec-dir empty: intake, and clarify before
+        # its spec PR merges), so a stalled clarify does not keep
+        # stage:clarify beside stage:stalled (#889, code review of #1112).
+        if [ "$MARK_RECORD" = "true" ] && [ -n "$STAGE_LABEL" ] && { [ "$RECORD_STATUS" = "marked" ] || [ -z "$SPEC_DIR" ]; }; then
+          if ! gh issue edit "$ISSUE" --remove-label "$STAGE_LABEL"; then
+            sleep 5
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$ISSUE/labels/$(printf '%s' "$STAGE_LABEL" | jq -sRr @uri)" >/dev/null \
+              || echo "::warning::wing-commander-chain-stop-notice: could not remove $STAGE_LABEL from #$ISSUE (GraphQL and REST both failed)."
+          fi
         fi
 
     - name: Post the notice
@@ -310,4 +332,13 @@ runs:
           echo "$restart"
         } > "$RUNNER_TEMP/wcsn-notice.md"
 
-        gh issue comment "$ISSUE" --body-file "$RUNNER_TEMP/wcsn-notice.md"
+        # GraphQL first, then REST after a pause (see "Flip labels"). A
+        # notice that reaches neither fails this step, so the stall is never
+        # silent.
+        if ! gh issue comment "$ISSUE" --body-file "$RUNNER_TEMP/wcsn-notice.md"; then
+          sleep 5
+          if ! gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" -F "body=@$RUNNER_TEMP/wcsn-notice.md" >/dev/null; then
+            echo "::error::wing-commander-chain-stop-notice: could not post the stall notice on #$ISSUE (GraphQL and REST both failed)."
+            exit 1
+          fi
+        fi
