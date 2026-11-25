@@ -281,8 +281,12 @@ jobs:
           # can only delay a review, never repeat one. When no candidate is
           # ready, the oldest is selected anyway, as before #889, so
           # `readiness` still posts its unmet condition on the lifecycle
-          # issue (spec 062 US1 scenario 4).
+          # issue (spec 062 US1 scenario 4) -- except a candidate whose only
+          # unmet condition is the lint aggregate not having reported yet
+          # (select_prefilter's `pending`): that clears on its own, so it is
+          # left for a later run rather than stood down (code review of #1233).
           mapfile -t ordered < <(printf '%s\n' "${candidates[@]}" | sort)
+          fallback=""
           for cand in "${ordered[@]}"; do
             [ -z "$cand" ] && continue
             IFS=$'\t' read -r _created number meta_issue spec_dir head_sha recorded_head_sha <<< "$cand"
@@ -290,10 +294,16 @@ jobs:
               | python3 .wc-pristine-repo/.github/scripts/lifecycle_readiness.py --select)"; then
               echo "::warning::lifecycle-review-gate select: could not read PR #$number's checks and mergeability -- PR #$number is skipped this run."
               echo "lifecycle-review-gate: PR #$number skipped -- its checks and mergeability could not be read." >> "$GITHUB_STEP_SUMMARY"
+              [ -z "$fallback" ] && fallback="$cand"
               continue
             fi
             if [ "$(printf '%s' "$prefilter" | jq -r '.ready')" != "true" ]; then
+              if [ "$(printf '%s' "$prefilter" | jq -r '.pending')" = "true" ]; then
+                echo "lifecycle-review-gate: PR #$number skipped -- the lint aggregate has not reported yet (self-clearing; a later run re-evaluates it)." >> "$GITHUB_STEP_SUMMARY"
+                continue
+              fi
               echo "lifecycle-review-gate: PR #$number skipped -- not ready yet ($(printf '%s' "$prefilter" | jq -r '.unmet_reason // "unknown"') unmet)." >> "$GITHUB_STEP_SUMMARY"
+              [ -z "$fallback" ] && fallback="$cand"
               continue
             fi
             best_number="$number"
@@ -303,9 +313,9 @@ jobs:
             best_review_gate_head_sha="$recorded_head_sha"
             break
           done
-          if [ -z "$best_number" ] && [ -n "${ordered[0]:-}" ]; then
-            IFS=$'\t' read -r _created best_number best_issue best_spec_dir best_head_sha best_review_gate_head_sha <<< "${ordered[0]}"
-            echo "lifecycle-review-gate: no candidate is ready -- PR #$best_number, the oldest, goes to readiness to post its unmet condition." >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$best_number" ] && [ -n "$fallback" ]; then
+            IFS=$'\t' read -r _created best_number best_issue best_spec_dir best_head_sha best_review_gate_head_sha <<< "$fallback"
+            echo "lifecycle-review-gate: no candidate is ready -- PR #$best_number, the oldest not pending, goes to readiness to post its unmet condition." >> "$GITHUB_STEP_SUMMARY"
           fi
 
           if [ -z "$best_number" ]; then
@@ -440,10 +450,14 @@ jobs:
           decision="$(printf '%s' "$payload" | python3 .wc-pristine-repo/.github/scripts/lifecycle_readiness.py)"
           ready="$(printf '%s' "$decision" | jq -r '.ready')"
           unmet_reason="$(printf '%s' "$decision" | jq -r '.unmet_reason // empty')"
+          # Code review of #1233: the lint aggregate not having reported yet
+          # clears on its own, so it is never posted as a stand-down.
+          pending="$(printf '%s' "$decision" | jq -r '.pending // false')"
 
           echo "ready=$ready" >> "$GITHUB_OUTPUT"
           echo "unmet-reason=$unmet_reason" >> "$GITHUB_OUTPUT"
-          echo "lifecycle-review-gate: PR #$PR_NUMBER readiness=$ready unmet_reason=${unmet_reason:-<none>}." >> "$GITHUB_STEP_SUMMARY"
+          echo "pending=$pending" >> "$GITHUB_OUTPUT"
+          echo "lifecycle-review-gate: PR #$PR_NUMBER readiness=$ready unmet_reason=${unmet_reason:-<none>} pending=$pending." >> "$GITHUB_STEP_SUMMARY"
 
       # FR-001 scenario 4/FR-006: unmet_reason is a plain condition name
       # (constitution IX), translated here into one human-legible sentence
@@ -451,7 +465,7 @@ jobs:
       # agent.
       - name: Translate the unmet condition into a sentence
         id: phrase
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.decide.outputs.ready == 'false'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.decide.outputs.ready == 'false' && steps.decide.outputs.pending != 'true'
         env:
           UNMET_REASON: ${{ steps.decide.outputs.unmet-reason }}
         run: |
@@ -467,7 +481,7 @@ jobs:
           echo "phrase=$phrase" >> "$GITHUB_OUTPUT"
 
       - name: Post the unmet condition on the lifecycle issue
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.decide.outputs.ready == 'false'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.decide.outputs.ready == 'false' && steps.decide.outputs.pending != 'true'
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}
@@ -1931,6 +1945,8 @@ jobs:
               fh.write("may-merge={0}\n".format(
                   "true" if decision["may_merge"] else "false"))
               fh.write("unmet-reason={0}\n".format(decision["unmet_reason"] or ""))
+              fh.write("pending={0}\n".format(
+                  "true" if decision["pending"] else "false"))
               fh.write("head-sha={0}\n".format(decision["head_sha"] or ""))
           PYEOF
 
@@ -2012,6 +2028,7 @@ jobs:
           REVIEW_GATE_OUTCOME: ${{ steps.review-gate.outcome }}
           MAY_MERGE: ${{ steps.preconditions.outputs.may-merge }}
           UNMET_REASON: ${{ steps.preconditions.outputs.unmet-reason }}
+          PENDING: ${{ steps.preconditions.outputs.pending }}
           MERGED: ${{ steps.merge.outputs.merged }}
           FAILURE_KIND: ${{ steps.merge.outputs.failure-kind }}
           FAILURE_DETAIL: ${{ steps.merge.outputs.failure-detail }}
@@ -2034,6 +2051,11 @@ jobs:
           elif [ "$MAY_MERGE" = "true" ]; then
             body="$(printf "lifecycle-review-gate did **not** merge PR #%s at %s: every precondition held, but the merge call itself failed. The PR is left open for a maintainer; nothing else was attempted.\n\n\`\`\`\n%s\n\`\`\`\n" \
               "$PR_NUMBER" "$HEAD_SHA" "$FAILURE_DETAIL")"
+          elif [ "${PENDING:-}" = "true" ]; then
+            # Code review of #1233: lint-workflows' units finished but its
+            # lint aggregate has not reported yet -- self-clearing.
+            body="$(printf "lifecycle-review-gate did **not** merge PR #%s at %s yet: the lint-workflows units finished but the \`lint\` aggregate has not reported yet. That clears on its own; the PR is re-evaluated on a later run.\n" \
+              "$PR_NUMBER" "$HEAD_SHA")"
           elif [ -n "$UNMET_REASON" ]; then
             body="$(printf "lifecycle-review-gate did **not** merge PR #%s at %s: the precondition \`%s\` does not hold.\n\nConditions checked, in order: %s. The PR stays open for a maintainer and is re-evaluated on a later run.\n" \
               "$PR_NUMBER" "$HEAD_SHA" "$UNMET_REASON" "$conditions")"
