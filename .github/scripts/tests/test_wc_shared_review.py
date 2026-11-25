@@ -760,5 +760,27 @@ class ReviewRound3Fixes(unittest.TestCase):
         self.assertIsNone(d(["fixtures/sub/run-tests.sh"]))
 
 
+class ReviewRound5Fixes(unittest.TestCase):
+    def test_defuse_walks_into_the_renamed_claude_directory(self):
+        # Round 5, finding 1: a .claude/ that holds its own CLAUDE.md,
+        # .mcp.json or .claude/ is defused all the way down, so a PR that
+        # adds one does not end its round incomplete.
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            for rel in ("pr-tree/.claude/skills/x/CLAUDE.md", "pr-tree/.claude/.mcp.json",
+                        "pr-tree/.claude/.claude/settings.json"):
+                path = os.path.join(root, *rel.split("/"))
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write("x")
+            renamed = sr.defuse_agent_config(root)
+            self.assertEqual(sr.agent_config_left(root), [])
+            self.assertEqual(len(renamed), 4)
+            top = os.path.join(root, "pr-tree", ".claude.as-data")
+            self.assertTrue(os.path.isfile(os.path.join(top, "skills", "x", "CLAUDE.md.as-data")))
+            self.assertTrue(os.path.isfile(os.path.join(top, ".claude.as-data", "settings.json")))
+            self.assertEqual(sr.main(["defuse-agent-config", "--root", root]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

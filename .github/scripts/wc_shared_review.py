@@ -981,7 +981,9 @@ def defuse_agent_config(root):
             os.rename(src, dst)
             renamed.append(os.path.relpath(src, root))
             if name in dirs:
-                dirs.remove(name)
+                # Walk on into the renamed directory: a .claude/ can hold
+                # its own CLAUDE.md, .mcp.json or .claude/ (round 5).
+                dirs[dirs.index(name)] = os.path.basename(dst)
     return renamed
 
 
