@@ -874,5 +874,24 @@ class Round6Fixes(unittest.TestCase):
         self.assertEqual(_round({"round": 1, "prior": []}, find_out, checked)["verdict"], "clean")
 
 
+    def test_the_next_round_is_past_the_highest_and_never_reuses_ids(self):
+        # Round 6, finding 3: with round 1's record no longer confirming,
+        # the count gives round 2 again, and F2-1 would be overwritten.
+        self.assertEqual(sr.next_round([]), 1)
+        self.assertEqual(sr.next_round([rec(2), rec(3)]), 4)
+        prior = [finding("F2-1", title="kept")]
+        cand = {"key": "k", "title": "new", "file": "a.py", "line": 1,
+                "failing_case": {"state": "s", "wrong_result": "w"}}
+        check = {"answers": self.ANSWERS, "checks": [{"id": "F2-1", "outcome": "confirmed"},
+                                                     {"key": "k", "outcome": "upheld", "in_scope": True,
+                                                      "reachable": True}]}
+        out = _round({"round": 2, "prior": prior}, {"answers": {}, "candidates": [cand]}, check)
+        self.assertEqual(out["verdict"], "incomplete")
+        self.assertEqual([(f["id"], f["title"]) for f in out["open_set"]], [("F2-1", "kept")])
+        self.assertTrue(any("reuse the ids" in n for n in out["notes"]))
+        out = _round({"round": 3, "prior": prior}, {"answers": {}, "candidates": [cand]}, check)
+        self.assertEqual(sorted(f["id"] for f in out["open_set"]), ["F2-1", "F3-1"])
+
+
 if __name__ == "__main__":
     unittest.main()

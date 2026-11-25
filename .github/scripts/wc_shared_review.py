@@ -430,6 +430,14 @@ def guard(ref, default_branch, kind, paused, dismissals=None):
 
 # --------------------------------------------------------------- budget ---
 
+def next_round(confirmed_rounds):
+    """The next round's number: one past the highest confirmed round, never
+    the count. A record whose run's artifact has expired stops confirming,
+    so the count can fall back onto a round number already used, and its
+    F{round}-{n} ids would then overwrite that round's findings (round 6)."""
+    return max([r["round"] for r in confirmed_rounds or []] or [0]) + 1
+
+
 def budget_spent(confirmed_rounds, budget=DEFAULT_BUDGET):
     try:
         budget = int(budget)
@@ -566,6 +574,15 @@ def finalize_round(state, find_out, check_out, code_run, purpose, head_sha, dism
     if validate_output(check_out, "check", state.get("prior"), (find_out or {}).get("candidates")):
         check_out = None
     prior, applied, notes = apply_dismissals(state.get("prior") or [], dismissals)
+    # New ids are F{round}-{n}: a round whose number an earlier finding
+    # already carries would overwrite it, so the round is refused as
+    # incomplete and the earlier findings stand unchanged (round 6).
+    reused = sorted(str(f.get("id")) for f in prior
+                    if isinstance(f, dict) and str(f.get("id") or "").startswith("F{0}-".format(round_no)))
+    if reused:
+        notes.append("round {0} would reuse the ids of earlier findings ({1}); nothing from this "
+                     "round's agents was applied".format(round_no, ", ".join(reused)))
+        find_out = check_out = None
     code_status = (code_run or {}).get("status") if (code_run or {}).get("status") == "staged" else "missing"
     agent_ok = bool(agent_ok and isinstance(find_out, dict) and isinstance(check_out, dict))
     findings, more = process_round(prior, (find_out or {}).get("candidates") or [],
@@ -1169,7 +1186,7 @@ def main(argv=None):
         confirmed = confirmed_from_github(args.pr, args.bot_login, args.default_branch,
                                           args.repository, _gh_api)
         spent, budget = budget_spent(confirmed, args.budget)
-        print(json.dumps({"rounds": len(confirmed), "round": len(confirmed) + 1, "budget": budget,
+        print(json.dumps({"rounds": len(confirmed), "round": next_round(confirmed), "budget": budget,
                           "spent": spent, "open_set": open_set(fold_open_set(confirmed)),
                           "prior": fold_open_set(confirmed), "confirmed": confirmed}))
         return 0
