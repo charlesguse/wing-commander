@@ -118,6 +118,19 @@ on:
       # Gate 165 reads spec 059's convergence-signal contract for its
       # pointers at spec 117.
       - "specs/059-converged-means-tasks-done/contracts/convergence-signal.md"
+      # Gate 174 (i) reads these live contracts (and docs/**, above): none
+      # may describe a comment admitted by its author's identity.
+      - "specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md"
+      - "specs/029-intake-issue-comments/contracts/comment-trust-gate.md"
+      - "specs/029-intake-issue-comments/contracts/notice-callout.md"
+      - "specs/032-structured-clarification-gate/contracts/decision-points.md"
+      - "specs/033-pr-conversation-commands/contracts/reusable-pr-conversation.md"
+      - "specs/033-pr-conversation-commands/contracts/wrapper-gate.md"
+      - "specs/055-unattended-e2e-gates/contracts/gate-decision-scripts.md"
+      - "specs/057-autonomous-board-loop/contracts/triage.md"
+      - "specs/063-stage-clarify-label/contracts/e2e-clarification-label-assertion.md"
+      - "specs/115-board-loop-self-merge/contracts/board-merge.md"
+      - "specs/130-maintainer-only-comments/contracts/comment-author-rule.md"
       - ".claude/skills/spec-cross-reference/SKILL.md"
       # Gate 169 compares these three skills, and CLAUDE.md (covered by *.md
       # above), with wc_session_record.py: each tells a session to write a

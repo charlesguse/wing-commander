@@ -14,9 +14,9 @@ from coming back.
 WHAT IT CHECKS (default run, on the tree)
 -----------------------------------------
 (a) Every wrapper triggered by issue_comment, pull_request_review or
-    pull_request_review_comment: no job `if:` compares an identity
-    (`.user.id`, `issue-author-id`, `commenter-id ==`, actor/author ids),
-    and no job passes `issue-author-id`.
+    pull_request_review_comment: no job `if:`, step `if:`, step `env:`
+    value or `with:` value compares or passes an identity (`.user.id`,
+    `issue-author-id`, `commenter-id ==`, actor/author ids).
 (b) clarify.yml's `clarify` job: the `comment-author` step exists, comes
     before `lifecycle-gate`, and both `lifecycle-gate` and "Note closed
     lifecycle and stop" carry its `maintainer == 'true'` condition.
@@ -31,7 +31,16 @@ WHAT IT CHECKS (default run, on the tree)
     and under the same `if:`, by wing-commander-requester-relay-note on
     the same body file.
 (h) Single home: the relay paragraph's text appears in no other file under
-    .github/workflows, .github/actions or .github/scripts.
+    .github/workflows, .github/actions or .github/scripts, nor in a live
+    doc or contract (the files (i) reads), compared with
+    whitespace collapsed and `#` comment markers removed, so a copy wrapped
+    at another width is still found.
+(i) No live doc or contract in LIVE_DOCS writes an identity comparison (`actor.id ==`, `user.id ==`,
+    `== ...author-id`, `commenter-id ==`): they describe the rule by
+    association only (FR-009, SC-005).
+(j) pr-conversation.yml's stage-side "Authorized-actor gate" (id
+    actor-gate) admits by `inputs.actor-association` alone: its `if:`,
+    `env:` and `run:` compare no identity (FR-010 names stages too).
 Plus two harnesses that run the shipped shell against a stub `gh`:
 - the `comment-author` step: OWNER, MEMBER and COLLABORATOR give
   maintainer=true; NONE, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR and a Bot
@@ -71,6 +80,33 @@ IF_IDENTITY = re.compile(
     r"\.user\.id\b|issue-author-id|commenter-id\s*==|==\s*inputs\.commenter-id|"
     r"\bactor[._-]id\b|\bauthor[._-]id\b|issue\.user\b")
 JQ_IDENTITY = re.compile(r"\.user\.id\b|\$aid\b|author_id")
+DOC_IDENTITY = re.compile(
+    r"(?:user|actor|author)[._-]id\s*==|==\s*[\w.$-]*(?:user\.id|author[._-]id|\$aid)\b|"
+    r"commenter-id\s*==")
+PR_CONVERSATION = os.path.join(WF, "pr-conversation.yml")
+# (i)'s subjects: the live docs and contracts that describe who a
+# comment-triggered stage admits (spec 130's T001 inventory). A literal list,
+# not a directory walk, so verify-gate-wiring.py can see each subject and
+# hold lint-workflows.yml's pull_request paths: to it. A missing file fails
+# the gate loudly.
+LIVE_DOCS = (
+    "docs/adoption.md",
+    "docs/architecture.md",
+    "specs/010-reusable-pipeline/contracts/stage-interfaces.md",
+    "specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md",
+    "specs/029-intake-issue-comments/contracts/comment-trust-gate.md",
+    "specs/029-intake-issue-comments/contracts/notice-callout.md",
+    "specs/032-structured-clarification-gate/contracts/clarification-schema.md",
+    "specs/032-structured-clarification-gate/contracts/decision-points.md",
+    "specs/033-pr-conversation-commands/contracts/reusable-pr-conversation.md",
+    "specs/033-pr-conversation-commands/contracts/wrapper-gate.md",
+    "specs/055-unattended-e2e-gates/contracts/gate-decision-scripts.md",
+    "specs/057-autonomous-board-loop/contracts/triage.md",
+    "specs/063-stage-clarify-label/contracts/e2e-clarification-label-assertion.md",
+    "specs/115-board-loop-self-merge/contracts/board-merge.md",
+    "specs/130-maintainer-only-comments/contracts/comment-author-rule.md",
+)
+WRAPPER_GATE_DOC = os.path.normpath("specs/033-pr-conversation-commands/contracts/wrapper-gate.md")
 BASH = None
 
 
@@ -120,6 +156,16 @@ def check_a(tree):
                                 f"identity, not only by author_association")
             if "issue-author-id" in (job.get("with") or {}):
                 failures.append(f"(a) {path} job {job_id!r} passes issue-author-id")
+            for key, val in (job.get("with") or {}).items():
+                if key != "issue-author-id" and IF_IDENTITY.search(str(val)):
+                    failures.append(f"(a) {path} job {job_id!r} passes an identity as {key!r}")
+            for n, step in enumerate(job.get("steps") or []):
+                parts = [str(step.get("if", ""))]
+                parts += [str(v) for v in (step.get("env") or {}).values()]
+                parts += [str(v) for v in (step.get("with") or {}).values()]
+                if IF_IDENTITY.search(" ".join(parts)):
+                    failures.append(f"(a) {path} job {job_id!r} step {step.get('name') or n!r}: "
+                                    f"its if:, env: or with: reads an identity")
     return failures
 
 
@@ -221,12 +267,53 @@ def check_h(tree):
     para = relay_paragraph(tree)
     if not para:
         return ["(h) the relay composite has no RELAY_PARAGRAPH"]
-    probe = para[:60]
-    others = [p for p, t in tree.items() if p != RELAY and probe in t]
+    probe = _flatten(para)[:60]
+    others = [p for p, t in tree.items()
+              if p != RELAY and probe in _flatten(t)]
     return [f"(h) the relay paragraph is copied into {p}" for p in others]
 
 
-STATIC_CHECKS = (check_a, check_b, check_c, check_d, check_e, check_f, check_g, check_h)
+def _flatten(text):
+    """Text with each line's leading `#` comment markers removed and all
+    whitespace collapsed, so a copy wrapped at another width, or wrapped
+    into `#` comment lines, compares equal to the folded paragraph."""
+    lines = (re.sub(r"^\s*#+", " ", l) for l in text.splitlines())
+    return re.sub(r"\s+", " ", " ".join(lines))
+
+
+def check_i(tree):
+    failures = []
+    for path, text in sorted(tree.items()):
+        if not path.endswith(".md"):
+            continue
+        for n, line in enumerate(text.splitlines(), 1):
+            if DOC_IDENTITY.search(line):
+                failures.append(f"(i) {path}:{n}: a live doc or contract writes an identity "
+                                f"comparison; describe the rule by association only")
+    return failures
+
+
+def check_j(tree):
+    doc = load_yaml(tree[PR_CONVERSATION])
+    for job in (doc.get("jobs") or {}).values():
+        _, step = find(job.get("steps") or [], "id", "actor-gate")
+        if step is None:
+            continue
+        env = step.get("env") or {}
+        text = " ".join([str(step.get("if", "")), str(step.get("run", ""))]
+                        + [f"{k} {v}" for k, v in env.items()])
+        failures = []
+        if "inputs.actor-association" not in " ".join(str(v) for v in env.values()):
+            failures.append("(j) pr-conversation.yml: the actor-gate step does not read "
+                            "inputs.actor-association")
+        if IF_IDENTITY.search(text) or JQ_IDENTITY.search(text) or re.search(r"_ID\b", text):
+            failures.append("(j) pr-conversation.yml: the actor-gate step reads an identity")
+        return failures
+    return ["(j) pr-conversation.yml: no step with id 'actor-gate'"]
+
+
+STATIC_CHECKS = (check_a, check_b, check_c, check_d, check_e, check_f, check_g, check_h,
+                 check_i, check_j)
 
 
 # --------------------------------------------------------------------------
@@ -251,7 +338,7 @@ jq -r "$expr" "$STUB_JSON"
 
 
 def _run_with_stub(script, payload, stub_path, env_extra, fail=False, files=None):
-    root = tempfile.mkdtemp(prefix="gate172-")
+    root = tempfile.mkdtemp(prefix="gate174-")
     try:
         bindir = os.path.join(root, "bin")
         workdir = os.path.join(root, "work")
@@ -368,6 +455,9 @@ def load_tree():
                         continue
                     with open(p, encoding="utf-8", errors="replace") as fh:
                         tree[os.path.normpath(p)] = fh.read()
+    for p in LIVE_DOCS:
+        with open(p, encoding="utf-8") as fh:
+            tree[os.path.normpath(p)] = fh.read()
     return tree
 
 
@@ -486,6 +576,75 @@ def _copy_mutant(tree):
     return t
 
 
+def _wrapped_copy_mutant(tree):
+    import textwrap
+    para = relay_paragraph(tree)
+    t = dict(tree)
+    lines = "\n".join("      # " + l for l in textwrap.wrap(para, 40))
+    t[INTAKE] = t[INTAKE] + "\n" + lines + "\n"
+    return t
+
+
+def _doc_mutant(tree):
+    p = WRAPPER_GATE_DOC
+    t = dict(tree)
+    t[p] = t[p] + ("\nUnlike clarify's comment-reading precedent, there is no\n"
+                   "`|| actor.id == issue.author.id` carve-out here.\n")
+    return t
+
+
+def _updater_step_mutant(tree):
+    p = os.path.join(WF, "wing-commander-auto-update-spec-kit.yml")
+    def edit(doc):
+        for job in doc["jobs"].values():
+            if "uses" in job:
+                job.setdefault("with", {})["commenter-id"] = "${{ github.event.comment.user.id || '' }}"
+                return
+    return _yaml_edit(tree, p, edit)
+
+
+def _pr_conversation_mutant(tree):
+    def edit(doc):
+        for job in doc["jobs"].values():
+            _, s = find(job.get("steps") or [], "id", "actor-gate")
+            if s is not None:
+                s.setdefault("env", {})["ISSUE_AUTHOR_ID"] = "${{ inputs.issue-author-id }}"
+                s["run"] = s["run"].replace(
+                    "case ", '[ "$ACTOR_ID" = "$ISSUE_AUTHOR_ID" ] && ACTOR_ASSOCIATION=OWNER\ncase ', 1)
+                return
+    return _yaml_edit(tree, PR_CONVERSATION, edit)
+
+
+def _wrapper_step_mutant(tree):
+    p = os.path.join(WF, "wing-commander-2-clarify.yml")
+    def edit(doc):
+        doc["jobs"]["author-probe"] = {"runs-on": "ubuntu-latest", "steps": [{
+            "name": "Admit the issue's author",
+            "if": "github.event.comment.user.id == github.event.issue.user.id",
+            "run": "true"}]}
+    return _yaml_edit(tree, p, edit)
+
+
+def _actor_gate_gone_mutant(tree):
+    def edit(doc):
+        for job in doc["jobs"].values():
+            _, s = find(job.get("steps") or [], "id", "actor-gate")
+            if s is not None:
+                s["id"] = "actor-gate-renamed"
+                return
+    return _yaml_edit(tree, PR_CONVERSATION, edit)
+
+
+def _actor_gate_no_association_mutant(tree):
+    def edit(doc):
+        for job in doc["jobs"].values():
+            _, s = find(job.get("steps") or [], "id", "actor-gate")
+            if s is not None:
+                s["env"] = {"ACTOR_ASSOCIATION": "OWNER"}
+                return
+    return _yaml_edit(tree, PR_CONVERSATION, edit)
+
+
 def _relay_never_mutant(tree):
     def edit(doc):
         for s in doc["runs"]["steps"]:
@@ -506,6 +665,15 @@ MUTANTS = (
     ("(f) clarify is granted gh issue view", _grant_mutant),
     ("(g) intake's questions lose the relay composite", _relay_dropped_mutant),
     ("(h) the relay paragraph is copied into clarify.yml", _copy_mutant),
+    ("(h) the relay paragraph is copied into intake.yml as 40-column comment lines",
+     _wrapped_copy_mutant),
+    ("(i) a live contract describes the issue-author carve-out", _doc_mutant),
+    ("(a) the Spec Kit wrapper passes the commenter's user id", _updater_step_mutant),
+    ("(j) pr-conversation's actor gate admits the issue's author", _pr_conversation_mutant),
+    ("(a) a clarify wrapper step admits the issue's author", _wrapper_step_mutant),
+    ("(j) pr-conversation's actor-gate step is gone", _actor_gate_gone_mutant),
+    ("(j) pr-conversation's actor gate stops reading actor-association",
+     _actor_gate_no_association_mutant),
     ("(relay-harness) the relay composite never appends", _relay_never_mutant),
 )
 
