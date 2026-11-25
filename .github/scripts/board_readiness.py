@@ -7,8 +7,7 @@ WHY THIS EXISTS
 Readiness may report a PR ready, but the readiness job never merges,
 approves, or enables auto-merge (FR-068) -- readiness is a report, not an
 action; the loop's own merge, if any, is board-loop.yml's separate `merge`
-job (spec 115). Every
-condition is re-derived against the PR's exact head SHA, fetched fresh at
+job (spec 115). Every condition is re-derived against the PR's exact head SHA, fetched fresh at
 evaluation time (FR-036) -- never a value this run captured earlier, since
 a check that completed against an earlier push must never be read as
 covering a later one (FR-037).

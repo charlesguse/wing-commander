@@ -84,10 +84,10 @@ SELF_MANAGED_LABELS = ("auto-update:tracking", "auto-release:failed")
 # recorded PR to still resolve OPEN (FR-002).
 #
 # AWAITING_MERGE_STEP (#532) is the step readiness records when it reports
-# ready and hands the PR on (spec 057: the readiness job stops at ready; who
-# merges next is board-loop.yml's `merge` job header). It is a fix-or-later
-# step -- its marker carries the PR it waits
-# on -- so FIX_OR_LATER_STEPS stays the one list the select job's PR-state
+# ready and hands the PR on (spec 057: the readiness job stops at ready; for
+# who merges next, see the `merge` job's header comment in board-loop.yml).
+# It is a fix-or-later step -- its marker carries the PR it waits on -- so
+# FIX_OR_LATER_STEPS stays the one list the select job's PR-state
 # lookup pass and the resume step's step resolution read to find which
 # markers name a PR worth resolving; there is no second, parallel
 # "PR-bearing steps" list. Unlike the other fix-or-later steps it never
