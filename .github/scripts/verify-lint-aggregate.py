@@ -195,6 +195,10 @@ def check(doc, bash=None):
     # Item 5 and SC-005: run the step itself.
     if not bash:
         return fails + ["no bash on PATH to run the aggregate step"]
+    if not shutil.which("jq"):
+        return fails + ["jq required on PATH to run the aggregate step "
+                        "(the step calls jq); install jq, this is not a "
+                        "workflow defect"]
     for results in _combos(needs):
         code, log, summary = _run_step(step, results, bash)
         bad = [k for k, v in results.items() if v != "success"]
@@ -220,26 +224,18 @@ def check(doc, bash=None):
 
 
 def _base():
+    """The shipped `lint` job (parsed from lint-workflows.yml, so the
+    mutation cases test the real step, never a copy) over synthetic units
+    named from its own `needs`."""
     pr = "github.event_name == 'pull_request'"
-    jobs = {"lint-shard-%d" % i: {"if": pr, "steps": []} for i in (1, 2)}
-    jobs["harness-tests"] = {"name": "harness tests", "if": pr, "steps": []}
+    with open(WORKFLOW, encoding="utf-8") as fh:
+        real = (yaml.safe_load(fh) or {}).get("jobs") or {}
+    lint = copy.deepcopy(real[AGGREGATE])
+    jobs = {n: {"if": pr, "steps": []} for n in lint.get("needs") or []}
+    jobs["harness-tests"]["name"] = "harness tests"
     jobs["names-and-tags"] = {"if": "github.event_name != 'pull_request'",
                               "steps": []}
-    jobs["lint"] = {
-        "if": "${{ always() && " + pr + " }}",
-        "needs": ["lint-shard-1", "lint-shard-2", "harness-tests"],
-        "steps": [{
-            "name": "Every lint unit succeeded",
-            "if": "${{ always() }}",
-            "env": {"NEEDS": NEEDS_ENV},
-            "run": ("bad=\"$(printf '%s' \"$NEEDS\" | jq -r 'to_entries[] | "
-                    "select(.value.result != \"success\") | "
-                    "\"\\(.key): \\(.value.result)\"')\"\n"
-                    "if [ -n \"$bad\" ]; then\n"
-                    "  printf '%s\\n' \"$bad\"\n"
-                    "  printf '%s\\n' \"$bad\" >> \"$GITHUB_STEP_SUMMARY\"\n"
-                    "  exit 1\n"
-                    "fi\n")}]}
+    jobs[AGGREGATE] = lint
     return {"jobs": jobs}
 
 
@@ -298,7 +294,7 @@ def self_test():
          lambda d: s(d)["env"].update({"NEEDS": "${{ needs }}"}),
          "env NEEDS")
     case("an aggregate that omits harness-tests fails",
-         lambda d: j(d).update({"needs": ["lint-shard-1", "lint-shard-2"]}),
+         lambda d: j(d)["needs"].remove("harness-tests"),
          "'harness-tests' is not in")
     case("an aggregate needing a missing job fails",
          lambda d: j(d)["needs"].append("lint-shard-9"),
@@ -307,8 +303,8 @@ def self_test():
          lambda d: d["jobs"]["lint-shard-1"].update({"name": "lint"}),
          "exactly one job")
     case("an unlisted PR-time shard fails",
-         lambda d: d["jobs"].update({"lint-shard-3": {"if": pr, "steps": []}}),
-         "'lint-shard-3' is not in")
+         lambda d: d["jobs"].update({"lint-shard-99": {"if": pr, "steps": []}}),
+         "'lint-shard-99' is not in")
     case("a unit that also runs on push fails",
          lambda d: d["jobs"]["lint-shard-2"].pop("if"),
          "unit 'lint-shard-2' runs on push")

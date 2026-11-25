@@ -15,7 +15,7 @@
         "conclusion": "CANCELLED"
       },
       {
-        "name": "harness-tests",
+        "name": "harness tests",
         "workflowName": "lint · workflows",
         "status": "COMPLETED",
         "conclusion": "CANCELLED"

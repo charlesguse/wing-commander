@@ -39,6 +39,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import wc_gate_registry as registry  # noqa: E402
+import wc_gha_expr as gha  # noqa: E402
 
 WORKFLOW = os.path.join(".github", "workflows", "lint-workflows.yml")
 AGGREGATE = "lint"
@@ -56,9 +57,34 @@ def _is_checkout(step):
     return str((step or {}).get("uses") or "").startswith("actions/checkout")
 
 
+class _Ctx(dict):
+    """Status functions as given; every steps.<id>.outcome reads 'success'
+    (a self-test's own gate passed, so its pair guard holds)."""
+
+    def get(self, key, default=None):
+        if str(key).startswith("steps.") and key.endswith(".outcome"):
+            return "success"
+        return super().get(key, default)
+
+
 def _guarded(step):
-    cond = str((step or {}).get("if") or "")
-    return "!cancelled()" in cond or "always()" in cond
+    """FR-009: the step still runs when an EARLIER step failed (so one
+    failing gate does not hide the rest), and on a clean run. Evaluated
+    with wc_gha_expr, so `failure() && !cancelled()` or `always() && false`
+    -- which a substring match accepts -- fail."""
+    cond = (step or {}).get("if")
+    if cond in (None, ""):
+        return False
+    expr = str(cond).strip()
+    for ok, failed in ((True, False), (False, True)):
+        ctx = _Ctx({"always()": True, "cancelled()": False,
+                    "success()": ok, "failure()": failed})
+        try:
+            if not gha.evaluate_if(expr, ctx, known=("steps.", "github.")):
+                return False
+        except ValueError:
+            return False
+    return True
 
 
 def _unit_gate_set(units):
@@ -113,7 +139,7 @@ def check(doc, derived=None):
         if n not in jobs:
             fails.append("the aggregate needs '{0}', which is not a job".format(n))
     units = {k: j for k, j in jobs.items()
-             if k != AGGREGATE and _runs_on_pr(j)}
+             if _runs_on_pr(j) and not registry._is_aggregate(k, j)}
     for k in units:
         if k not in needs:
             fails.append("PR-time unit '{0}' is not in the aggregate's "
@@ -160,7 +186,11 @@ def check(doc, derived=None):
                 want = ids.get(
                     next((n for n in ids if n and n.startswith(m.group(1) + " —")), None))
                 got = _OUTCOME.search(str(s.get("if") or ""))
-                if got and got.group(1) not in ids.values():
+                if not got and want:
+                    fails.append("self-test step {0!r} lacks the paired "
+                                 "steps.{1}.outcome != 'failure' guard".format(
+                                     name, want))
+                elif got and got.group(1) not in ids.values():
                     # A step id from another job reads as '' here, so the
                     # guard would never hold the self-test back: the pair
                     # was split across units.
@@ -243,6 +273,20 @@ def self_test():
     case("an unguarded step fails",
          lambda d: J(d, "lint-shard-2")["steps"][0].pop("if"),
          "no !cancelled() guard")
+    case("a guard that skips after a failure fails",
+         lambda d: J(d, "lint-shard-2")["steps"][0].update(
+             {"if": "${{ failure() && !cancelled() }}"}),
+         "no !cancelled() guard")
+    case("a guard that is always false fails",
+         lambda d: J(d, "lint-shard-2")["steps"][0].update(
+             {"if": "${{ always() && false }}"}),
+         "no !cancelled() guard")
+    case("a self-test without its pair guard fails",
+         lambda d: J(d, "lint-shard-1")["steps"][2].update(
+             {"if": "${{ !cancelled() }}"}),
+         "lacks the paired")
+    case("an aggregate with no needs is one definition with the registry",
+         lambda d: J(d, "lint").pop("needs"), "not in the aggregate's needs")
     case("a self-test guarded on another gate's id fails",
          lambda d: (J(d, "lint-shard-1")["steps"].append(
              {"name": "Gate 9 — other", "id": "other",

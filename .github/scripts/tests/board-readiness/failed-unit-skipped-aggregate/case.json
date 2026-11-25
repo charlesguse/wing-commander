@@ -15,7 +15,7 @@
         "conclusion": "FAILURE"
       },
       {
-        "name": "harness-tests",
+        "name": "harness tests",
         "workflowName": "lint · workflows",
         "status": "COMPLETED",
         "conclusion": "SUCCESS"
