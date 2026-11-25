@@ -520,6 +520,7 @@ def render_announcement(decision, outcome, snapshot=None, merge_sha=None, refusa
                 "Nothing reached main by another route; handed to a maintainer.".format(
                     head, klass, refusal_class, quoted))
     elif outcome == "transient":
+        # fixed-message: merge-transient-fix (board-fixed-messages.json)
         after = ("the readiness report's hand-off stands, so a maintainer may merge it"
                  if klass == "fix" else "the next board-loop run re-evaluates it from a fresh snapshot")
         text = ("The merge of head_sha {0} ({1} class) failed transiently twice, refusal_class {2}:\n\n"

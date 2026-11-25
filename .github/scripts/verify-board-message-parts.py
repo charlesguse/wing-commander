@@ -151,8 +151,137 @@ def check_all():
     return problems
 
 
+REGISTRY = os.path.join(HERE, "board-fixed-messages.json")
+TAG_RE = re.compile(r"#\s*fixed-message:\s*([a-z0-9-]+)")
+KNOWN_CLAIMS = ("board_merges_next_run", "maintainer_merges", "gate_suite_ran")
+
+
+def claim_holds(claim, cfg):
+    if claim == "board_merges_next_run":
+        return cfg["auto_merge"] and not cfg["kill_switch"]
+    return claim in KNOWN_CLAIMS
+
+
+def _matches(when, cfg):
+    return all(cfg.get(k) == v for k, v in (when or {}).items())
+
+
+def check_registry(registry, read_source):
+    """Mode 2: every configuration (auto-merge x kill switch x PR class) a
+    registered message can be posted in has exactly one variant whose
+    claims hold there; every tag in a source names a registered id."""
+    problems = []
+    messages = registry.get("messages") or []
+    ids = {m.get("id") for m in messages}
+    sources = {m.get("source") for m in messages}
+    for m in messages:
+        reach = m.get("reachable") or {}
+        for auto in (True, False):
+            for kill in (True, False):
+                for klass in ("fix", "bump"):
+                    cfg = {"auto_merge": auto, "kill_switch": kill,
+                           "pr_class": klass}
+                    if not _matches(reach, cfg):
+                        continue
+                    hits = [v for v in m.get("variants") or []
+                            if _matches(v.get("when"), cfg)]
+                    if len(hits) != 1:
+                        problems.append("{0}: {1} variant(s) match {2}".format(
+                            m.get("id"), len(hits), cfg))
+                        continue
+                    for claim in hits[0].get("claims") or []:
+                        if not claim_holds(claim, cfg):
+                            problems.append(
+                                "{0}: claim {1} contradicted under {2}".format(
+                                    m.get("id"), claim, cfg))
+        # T018: the posting-time source still carries the registered text.
+        text_src = read_source(m.get("source"))
+        flat = re.sub(r'"\s*\n\s*"', "", text_src or "")
+        if text_src is None:
+            problems.append("{0}: source {1} unreadable".format(
+                m.get("id"), m.get("source")))
+            continue
+        for v in m.get("variants") or []:
+            if v.get("text") not in flat:
+                problems.append("{0}: registered text no longer in {1}: "
+                                "{2!r}".format(m.get("id"), m.get("source"),
+                                               v.get("text")))
+        if "fixed-message: {0}".format(m.get("id")) not in text_src:
+            problems.append("{0}: source {1} lacks its fixed-message tag"
+                            .format(m.get("id"), m.get("source")))
+    for source in sources:
+        for tag in TAG_RE.findall(read_source(source) or ""):
+            if tag not in ids:
+                problems.append("unregistered fixed message {0} in {1}"
+                                .format(tag, source))
+    return problems
+
+
+def _read_source(name):
+    try:
+        with open(os.path.join(HERE, name), encoding="utf-8") as fh:
+            return fh.read()
+    except (OSError, TypeError):
+        return None
+
+
+WORKFLOWS = os.path.join(HERE, os.pardir, "workflows")
+PASTED_RE = re.compile(r"\*\*(The line|The code|Why it matters|Not decided)\*\*"
+                       r"|_PARTS\s*=|def (render_explanation|render_review)")
+
+
+def single_home_problems(texts):
+    """T020 / CLAUDE.md "one home": no workflow carries the renderer's
+    labels or part tables; they call wc_message_parts.py."""
+    return ["{0}: pasted renderer logic ({1!r}); call wc_message_parts.py"
+            .format(name, m.group(0))
+            for name, text in texts for m in [PASTED_RE.search(text)] if m]
+
+
+def single_home_check():
+    texts = []
+    for path in sorted(glob.glob(os.path.join(WORKFLOWS, "*.yml"))):
+        with open(path, encoding="utf-8") as fh:
+            texts.append((os.path.basename(path), fh.read()))
+    return single_home_problems(texts)
+
+
+def registry_check():
+    try:
+        with open(REGISTRY, encoding="utf-8") as fh:
+            registry = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return ["fixed-message registry unreadable: {0}".format(exc)]
+    return check_registry(registry, _read_source)
+
+
+def registry_self_test():
+    """Each failure branch of check_registry is caught."""
+    failed = []
+    base = {"messages": [{"id": "m", "source": "s",
+                          "variants": [{"when": {}, "text": "hello",
+                                        "claims": ["maintainer_merges"]}]}]}
+    src = "# fixed-message: m\nx = 'hello'\n"
+    if check_registry(base, lambda _n: src):
+        failed.append("sound registry flagged")
+    contra = copy.deepcopy(base)
+    contra["messages"][0]["variants"][0]["claims"] = ["board_merges_next_run"]
+    if not check_registry(contra, lambda _n: src):
+        failed.append("contradicted claim accepted")
+    if not check_registry(base, lambda _n: src + "# fixed-message: other\n"):
+        failed.append("unregistered fixed message accepted")
+    if not check_registry(base, lambda _n: "# fixed-message: m\n"):
+        failed.append("drifted source text accepted")
+    split = copy.deepcopy(base)
+    split["messages"][0]["variants"] = [
+        {"when": {"pr_class": "fix"}, "text": "hello", "claims": []}]
+    if not check_registry(split, lambda _n: src):
+        failed.append("uncovered configuration accepted")
+    return failed
+
+
 def self_test():
-    good = render("render-review", "bl-b9677278", {"parts": {}, "findings": []})
+    good =render("render-review", "bl-b9677278", {"parts": {}, "findings": []})
     data = {"parts": {}}
     broken = {
         "dropped part": good.replace("**Checked**", "**X**"),
@@ -170,6 +299,9 @@ def self_test():
         failed.append("closing keyword accepted")
     except mp.Refusal:
         pass
+    failed += registry_self_test()
+    if not single_home_problems([("x.yml", "echo '**Why it matters**'")]):
+        failed.append("pasted renderer label accepted")
     return failed
 
 
@@ -182,7 +314,7 @@ def main(argv):
         if not failed:
             print("verify-board-message-parts self-test: every mutation caught")
         return 1 if failed else 0
-    problems = check_all()
+    problems = check_all() + registry_check() + single_home_check()
     for problem in problems:
         print("::error::verify-board-message-parts: {0}".format(problem))
     if not problems:

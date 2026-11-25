@@ -113,7 +113,8 @@ def actions_only(changed_paths):
         return False, "docs/**/specs/**-only change"
 
     if all(fnmatch.fnmatch(p, VERIFY_SCRIPT_GLOB) for p in changed_paths):
-        return False, "verify-*.py-only change, already proven by the merged PR's own required checks"
+        # fixed-message: prove-verify-only (board-fixed-messages.json)
+        return False, "verify-*.py-only change, already run by the gate suite on the merged PR"
 
     return True, "changed path(s) outside docs/**, specs/**, and .github/scripts/verify-*.py"
 

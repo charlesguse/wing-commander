@@ -3753,7 +3753,7 @@
           "number": 1043
         }
       ],
-      "needs_reason": "verify-*.py-only change, already proven by the merged PR's own required checks",
+      "needs_reason": "verify-*.py-only change, already run by the gate suite on the merged PR",
       "needs_run": false,
       "pr": 1044,
       "reaching": [],
@@ -3827,7 +3827,7 @@
           "number": 1050
         }
       ],
-      "needs_reason": "verify-*.py-only change, already proven by the merged PR's own required checks",
+      "needs_reason": "verify-*.py-only change, already run by the gate suite on the merged PR",
       "needs_run": false,
       "pr": 1052,
       "reaching": [],

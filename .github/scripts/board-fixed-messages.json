@@ -1,0 +1,33 @@
+{
+  "_comment": "spec 130 FR-009..FR-011: fixed-text board messages whose wording makes a next-action or protection claim. Read by verify-board-message-parts.py mode 2. A variant's `when` keys (auto_merge, kill_switch, pr_class) are wildcards when absent; `reachable` limits the configurations a message can be posted in. Claims: board_merges_next_run (false when the kill switch is set or auto-merge is off), maintainer_merges (always true), gate_suite_ran (claims only the gate suite, never a branch-protection rule).",
+  "messages": [
+    {
+      "id": "merge-transient-fix",
+      "source": "board_merge.py",
+      "reachable": {"auto_merge": true, "kill_switch": false},
+      "variants": [
+        {
+          "when": {"pr_class": "fix"},
+          "text": "the readiness report's hand-off stands, so a maintainer may merge it",
+          "claims": ["maintainer_merges"]
+        },
+        {
+          "when": {"pr_class": "bump"},
+          "text": "the next board-loop run re-evaluates it from a fresh snapshot",
+          "claims": ["board_merges_next_run"]
+        }
+      ]
+    },
+    {
+      "id": "prove-verify-only",
+      "source": "board_prove.py",
+      "variants": [
+        {
+          "when": {},
+          "text": "already run by the gate suite on the merged PR",
+          "claims": ["gate_suite_ran"]
+        }
+      ]
+    }
+  ]
+}

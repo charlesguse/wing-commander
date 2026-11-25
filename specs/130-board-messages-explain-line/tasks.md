@@ -47,15 +47,15 @@
 **Goal**: every fixed-text message matches switch/class configuration and repository protections (FR-009–FR-011).
 **Independent Test**: gate mode 2 enumerates auto-merge × kill switch × PR class with zero mismatches.
 
-- [ ] T015 [US3] Create `.github/scripts/board-fixed-messages.json` registering each fixed message with `id`, `source`, `variants[].when` (`auto_merge`, `kill_switch`, `pr_class`), `text` and `claims[]` per `data-model.md` Fixed-text message.
-- [ ] T016 [US3] Make fixed wording truthful in `.github/scripts/board_readiness.py` (merge/wait wording per auto-merge and class, stopped wording under kill switch) and `.github/scripts/board_prove.py` (replace "required checks" with what actually ran) (FR-009, FR-010).
-- [ ] T017 [US3] Add mode 2 to `.github/scripts/verify-board-message-parts.py`: enumerate the registry across all configurations, fail on a contradicted claim or an unregistered fixed message (FR-011); add a failing fixture for each branch.
-- [ ] T018 [P] [US3] Add a check in `.github/scripts/verify-board-message-parts.py` that the posting-time sources named by the registry still contain the registered text, so drift fails.
+- [x] T015 [US3] Create `.github/scripts/board-fixed-messages.json` registering each fixed message with `id`, `source`, `variants[].when` (`auto_merge`, `kill_switch`, `pr_class`), `text` and `claims[]` per `data-model.md` Fixed-text message.
+- [x] T016 [US3] Make fixed wording truthful in `.github/scripts/board_readiness.py` (merge/wait wording per auto-merge and class, stopped wording under kill switch) and `.github/scripts/board_prove.py` (replace "required checks" with what actually ran) (FR-009, FR-010).
+- [x] T017 [US3] Add mode 2 to `.github/scripts/verify-board-message-parts.py`: enumerate the registry across all configurations, fail on a contradicted claim or an unregistered fixed message (FR-011); add a failing fixture for each branch.
+- [x] T018 [P] [US3] Add a check in `.github/scripts/verify-board-message-parts.py` that the posting-time sources named by the registry still contain the registered text, so drift fails.
 
 ## Phase 6: Polish
 
 - [ ] T019 [P] Update `docs/reference.md` if any default, limit or switch description changed, per its stated rule.
-- [ ] T020 Add the "single home" check (no pasted renderer logic in workflows) to `.github/scripts/verify-board-message-parts.py`, per CLAUDE.md.
+- [x] T020 Add the "single home" check (no pasted renderer logic in workflows) to `.github/scripts/verify-board-message-parts.py`, per CLAUDE.md.
 - [ ] T021 Walk `specs/130-board-messages-explain-line/quickstart.md` against the fixtures and fix mismatches in code.
 
 ## Phase 7: Maintainer follow-up
