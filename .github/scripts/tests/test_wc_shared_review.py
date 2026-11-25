@@ -986,7 +986,10 @@ class Round6Fixes(unittest.TestCase):
         import json as _json
         from unittest import mock
         buf = io.StringIO()
+        # state reads earlier rounds' runs with RUN_TOKEN and fails closed
+        # without it (#1240).
         with mock.patch.object(sr, "confirmed_from_github", return_value=[rec(2), rec(3)]), \
+                mock.patch.dict(os.environ, {"RUN_TOKEN": "run"}), \
                 contextlib.redirect_stdout(buf):
             self.assertEqual(sr.main(["state", "--pr", "7", "--bot-login", "b[bot]", "--default-branch", "main",
                                       "--repository", "o/r"]), 0)
