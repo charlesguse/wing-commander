@@ -249,14 +249,13 @@ def self_test():
     finally:
         wsr._sha = sha
 
-    # A writer that leaves a decision's missing parts to the reader: its
-    # refusals then come only from read() of the comment it wrote.
+    # A writer that leaves to the reader every refusal the reader also
+    # makes: where read() of the comment it would write refuses for the
+    # same parts, it writes that comment and refuses nothing itself.
+    # Dropping all of a decision's checks instead is caught by fixtures
+    # whose read-back refusal differs from the writer's, before #889 too,
+    # so it would not show the writer's own refusal is what is checked.
     strict_record, strict_read = wsr.record, wsr.read
-
-    def lax_record(kind, fields):
-        if kind != "decision":
-            return strict_record(kind, fields)
-        return wsr._decision(fields, [])
 
     def reader(body):
         wsr.record = strict_record
@@ -264,6 +263,22 @@ def self_test():
             return strict_read(body)
         finally:
             wsr.record = lax_record
+
+    def lax_record(kind, fields):
+        try:
+            return strict_record(kind, fields)
+        except wsr.RecordError as error:
+            if kind not in wsr._KINDS:
+                raise
+            unchecked = wsr._KINDS[kind](fields, [])
+            try:
+                reader(wsr.render(unchecked))
+            except wsr.RecordError as again:
+                if _names(again.problems) == _names(error.problems):
+                    return unchecked
+            except (KeyError, TypeError, ValueError):
+                pass
+            raise
 
     wsr.record, wsr.read = lax_record, reader
     try:
