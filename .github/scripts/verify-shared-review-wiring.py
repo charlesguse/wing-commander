@@ -37,12 +37,18 @@ def callable_problems(wf):
     for name, job in jobs.items():
         text = yaml.safe_dump(job)
         if name != "record" and ("issues: write" in text or "permission-issues: write" in text
-                                 or "-X POST" in text):
+                                 or "pull-requests: write" in text or "-X POST" in text):
             problems.append("{0} writes or posts; only record may".format(name))
         if name not in ("prepare", "record") and "create-github-app-token" in text:
             problems.append("{0} mints an App token".format(name))
     if "record" not in jobs or "-X POST" not in yaml.safe_dump(jobs["record"]):
         problems.append("record no longer posts the comment")
+    # The record is a comment on a pull request: GitHub refuses it from an
+    # App token without pull-requests: write (HTTP 403, T044 run 45628429265).
+    mints = [s for s in (jobs["record"].get("steps") or [])
+             if "create-github-app-token" in str(s.get("uses", ""))]
+    if not any((s.get("with") or {}).get("permission-pull-requests") == "write" for s in mints):
+        problems.append("record's App token lacks pull-requests: write, so its PR comment is refused")
     for name in ("find", "check", "code-run", "record"):
         needs = jobs[name].get("needs") or []
         needs = [needs] if isinstance(needs, str) else needs
@@ -366,6 +372,12 @@ def main():
             "find posts": lambda c: c["jobs"]["find"].update({"permissions": {"issues": "write"}}),
             "check loses its model": lambda c: c["jobs"]["check"]["steps"].clear(),
             "prepare loses the guard": lambda c: c["jobs"]["prepare"].update({"needs": []}),
+            "record's token cannot comment on a pull request": lambda c: next(
+                s for s in c["jobs"]["record"]["steps"]
+                if "create-github-app-token" in str(s.get("uses", "")))["with"].update(
+                {"permission-pull-requests": "read"}),
+            "find gets pull-requests: write": lambda c: c["jobs"]["find"].update(
+                {"permissions": {"pull-requests": "write"}}),
         }
         for label, mutate in muts.items():
             clone = copy.deepcopy(cal)

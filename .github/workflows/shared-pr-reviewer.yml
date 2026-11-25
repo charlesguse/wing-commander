@@ -656,8 +656,12 @@ jobs:
         with:
           client-id: ${{ secrets.app-id }}
           private-key: ${{ secrets.app-private-key }}
+          # The record is a comment on a pull request, and GitHub refuses
+          # that comment with issues: write alone ("Resource not accessible
+          # by integration", HTTP 403, T044 run 45628429265), so the token
+          # also carries pull-requests: write. No other job mints it.
           permission-issues: write
-          permission-pull-requests: read
+          permission-pull-requests: write
       - name: Build the record
         id: build
         shell: bash
