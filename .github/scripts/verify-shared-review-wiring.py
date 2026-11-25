@@ -59,9 +59,12 @@ def callable_problems(wf):
         if extra:
             problems.append("record's App token asks for more than issues and pull requests: "
                             + ", ".join(extra))
-    users = [s for s in (jobs["record"].get("steps") or [])
-             if "steps.app.outputs.token" in yaml.safe_dump(s)]
-    if yaml.safe_dump(jobs["record"]).count("steps.app.outputs.token") != 1 or len(users) != 1:
+    record_text = yaml.safe_dump(jobs["record"])
+    if len(mints) != 1 or record_text.count("secrets.app-private-key") != 1:
+        problems.append("record mints its App token more than once")
+    token = "steps.{0}.outputs.token".format((mints[0].get("id") if mints else None) or "app")
+    users = [s for s in (jobs["record"].get("steps") or []) if token in yaml.safe_dump(s)]
+    if record_text.count(token) != 1 or len(users) != 1:
         problems.append("record's write token reaches more than the one comment step")
     else:
         lines = [ln.strip() for ln in str(users[0].get("run") or "").splitlines()
@@ -410,6 +413,10 @@ def main():
                 {"permission-contents": "write"}),
             "record approves the pull request": lambda c: _record_post_step(c).update(
                 {"run": _record_post_step(c)["run"] + 'gh pr review "$PR" --approve\n'}),
+            "record mints a second write token": lambda c: c["jobs"]["record"]["steps"].insert(
+                -1, dict(copy.deepcopy(next(s for s in c["jobs"]["record"]["steps"]
+                                            if "create-github-app-token" in str(s.get("uses", "")))),
+                         id="app2")),
             "record's token reaches the build step": lambda c: next(
                 s for s in c["jobs"]["record"]["steps"] if s.get("id") == "build")["env"].update(
                 {"GH_TOKEN": "${{ steps.app.outputs.token }}"}),
