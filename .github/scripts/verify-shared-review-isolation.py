@@ -282,10 +282,14 @@ def base_tree_problems(wf):
     if "--base-tree trees/base-tree" not in str((code_run_step(wf) or {}).get("run") or ""):
         problems.append("code-run does not run the named check without the fix (--base-tree)")
     # R1: a fix that extends an existing check names it through the
-    # modified-files list.
-    if "--diff-filter=M" not in builder.replace("git diff --name-only --diff-filter=A", "") \
-            or "modified-files.txt" not in builder:
-        problems.append("prepare does not list the PR's modified files")
+    # modified-files list. Round 5: both lists are NUL-separated (no
+    # C-quoted path) and a renamed file is listed as modified.
+    lists = {name: line for line in builder.splitlines() for name in ("added-files.txt", "modified-files.txt")
+             if line.strip().startswith("git diff") and name in line}
+    if not re.search(r"\s--diff-filter=MR\s", lists.get("modified-files.txt", "")):
+        problems.append("prepare does not list the PR's modified and renamed files")
+    if not all(re.search(r"\s-z\s", lists.get(name, "")) for name in ("added-files.txt", "modified-files.txt")):
+        problems.append("prepare's file lists are not NUL-separated (git diff -z)")
     if "--modified-files input/modified-files.txt" not in str((code_run_step(wf) or {}).get("run") or ""):
         problems.append("code-run does not consider a modified check (--modified-files)")
     return problems
@@ -428,7 +432,7 @@ def dynamic_problems(wf):
         _reviewer_tree(os.path.join(trees, "reviewer-tree"))
         os.makedirs(os.path.join(work, "input"))
         with open(os.path.join(work, "input", "added-files.txt"), "w", encoding="utf-8") as fh:
-            fh.write(PROBE + "\n")
+            fh.write(PROBE + "\0")
         open(os.path.join(work, "input", "modified-files.txt"), "w").close()
         env = dict(os.environ)
         runner_files = {}
@@ -517,6 +521,13 @@ def main():
                 {"permissions": {"contents": "write"}}),
             "prepare stops neutralising the tree symlinks": lambda w: [
                 st.update({"run": st["run"].replace("neutralise-links", "true #")})
+                for st in w["jobs"]["prepare"]["steps"] if "git archive" in str(st.get("run"))],
+            "prepare's file lists are newline-separated again": lambda w: [
+                st.update({"run": st["run"].replace("git diff -z -M --name-only --diff-filter=A",
+                                                    "git diff -M --name-only --diff-filter=A")})
+                for st in w["jobs"]["prepare"]["steps"] if "git archive" in str(st.get("run"))],
+            "a renamed check drops out of the modified list": lambda w: [
+                st.update({"run": st["run"].replace("--diff-filter=MR", "--diff-filter=M")})
                 for st in w["jobs"]["prepare"]["steps"] if "git archive" in str(st.get("run"))],
             "the tree artifact uploads more than the neutralised root": lambda w: [
                 st["with"].update({"path": "review-trees/\nreviewer/\n"})

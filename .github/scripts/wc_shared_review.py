@@ -603,6 +603,14 @@ def discover_named_check(added_files):
     return named_check_argv(path) if path else None
 
 
+def read_path_list(path):
+    """The paths in a `git diff -z --name-only` list: NUL-separated and
+    never C-quoted, so a non-ASCII or spaced name arrives as it is."""
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    return [p.decode("utf-8", "surrogateescape") for p in raw.split(b"\0") if p]
+
+
 def named_check_argv(path):
     base = path.rsplit("/", 1)[-1]
     if re.fullmatch(r"verify-[\w.-]+\.py", base):
@@ -1138,12 +1146,8 @@ def main(argv=None):
                           "prior": fold_open_set(confirmed), "confirmed": confirmed}))
         return 0
     if args.cmd == "code-run":
-        with open(args.added_files, encoding="utf-8") as fh:
-            added = [line.strip() for line in fh if line.strip()]
-        modified = []
-        if args.modified_files:
-            with open(args.modified_files, encoding="utf-8") as fh:
-                modified = [line.strip() for line in fh if line.strip()]
+        added = read_path_list(args.added_files)
+        modified = read_path_list(args.modified_files) if args.modified_files else []
         write_private(args.out, json.dumps(stage_code_run(args.pr_tree, args.reviewer_tree, added,
                                                          base_tree=args.base_tree,
                                                          origin_url=args.origin_url,

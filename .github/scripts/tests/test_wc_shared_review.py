@@ -800,6 +800,17 @@ class ReviewRound5Fixes(unittest.TestCase):
                                 staged, {"type": "issue", "ref": "7"}, "a" * 40, [], 5, "b" * 40, "open")
         self.assertEqual(out["verdict"], "incomplete")
 
+    def test_file_lists_are_nul_separated_and_never_quoted(self):
+        # Round 5, finding 3: prepare writes `git diff -z --name-only`, so a
+        # non-ASCII or spaced path arrives as itself and can be the check.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "modified-files.txt")
+            with open(path, "wb") as fh:
+                fh.write("tests/test_ü.py\0a b/README.md\0".encode("utf-8"))
+            self.assertEqual(sr.read_path_list(path), ["tests/test_ü.py", "a b/README.md"])
+            self.assertEqual(sr.named_check_file([], sr.read_path_list(path)), "tests/test_ü.py")
+
 
 if __name__ == "__main__":
     unittest.main()

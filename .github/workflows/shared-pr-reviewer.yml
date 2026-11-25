@@ -185,8 +185,11 @@ jobs:
           # A failed read stops the round: an empty diff would be reviewed as
           # a change with nothing wrong in it. No added file is a real case.
           git diff "origin/${DEFAULT_BRANCH}...FETCH_HEAD" > ../input/pr.diff
-          git diff --name-only --diff-filter=A "origin/${DEFAULT_BRANCH}...FETCH_HEAD" > ../input/added-files.txt
-          git diff --name-only --diff-filter=M "origin/${DEFAULT_BRANCH}...FETCH_HEAD" > ../input/modified-files.txt
+          # NUL-separated, so no path is C-quoted. A renamed file is listed
+          # as modified: its PR version is overlaid on the base tree, and
+          # code never decides a modified check negative (N1).
+          git diff -z -M --name-only --diff-filter=A "origin/${DEFAULT_BRANCH}...FETCH_HEAD" > ../input/added-files.txt
+          git diff -z -M --name-only --diff-filter=MR "origin/${DEFAULT_BRANCH}...FETCH_HEAD" > ../input/modified-files.txt
           git log --format='%H %s' "origin/${DEFAULT_BRANCH}..FETCH_HEAD" > ../input/commits.txt
           [ -s ../input/pr.diff ] || { echo "::error::the PR's diff against ${DEFAULT_BRANCH} is empty"; exit 1; }
           mkdir -p ../review-trees/pr-tree ../review-trees/reviewer-tree ../review-trees/base-tree
