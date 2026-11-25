@@ -547,7 +547,8 @@ def check_single_home(repo_root="."):
 
     1. Each SCRIPT_CALLERS step runs SCRIPT_INVOCATION and nothing else, as
        a `shell: bash` run: step (not a `uses:`).
-    2. No composite under .github/actions/ has a `uses: ./.github/...`
+    2. No composite under .github/actions/ (at any depth, action.yml or
+       action.yaml) has a `uses: ./.github/...`
        step: inside a composite that path resolves against the CALLER's
        $GITHUB_WORKSPACE root, not the composite's own directory, so it
        either does not exist or runs whatever copy the caller's own
@@ -580,15 +581,17 @@ def check_single_home(repo_root="."):
             failures.append(f"{path}: step {name!r} must declare shell: bash.")
 
     actions_dir = os.path.join(repo_root, ".github", "actions")
-    for entry in sorted(os.listdir(actions_dir)):
-        action = os.path.join(actions_dir, entry, "action.yml")
-        if not os.path.isfile(action):
-            continue
+    actions = sorted(
+        os.path.join(dirpath, name)
+        for dirpath, _dirs, files in os.walk(actions_dir)
+        for name in files if name in ("action.yml", "action.yaml"))
+    for action in actions:
+        rel = os.path.relpath(action, repo_root).replace(os.sep, "/")
         for step in _composite_steps(action):
             uses = str(step.get("uses") or "")
             if uses.startswith("./.github/"):
                 failures.append(
-                    f".github/actions/{entry}/action.yml: step "
+                    f"{rel}: step "
                     f"{step.get('name') or step.get('id')!r} uses {uses!r}. "
                     f"Inside a composite a `./.github/` path resolves against the "
                     f"caller's $GITHUB_WORKSPACE, not this composite's "
@@ -654,6 +657,13 @@ def _fixture_nested_uses(tree, caller_steps):
         {"name": "nested", "uses": "./.github/actions/wing-commander-lifecycle-gate"}]
 
 
+def _fixture_nested_uses_under_shared(tree, caller_steps):
+    _write(tree, ".github/actions/_shared/x/action.yaml", yaml.safe_dump(
+        {"runs": {"using": "composite", "steps": [
+            {"name": "nested",
+             "uses": "./.github/actions/wing-commander-lifecycle-gate"}]}}))
+
+
 def _fixture_pasted_copy(tree, caller_steps):
     _write(tree, ".github/actions/_shared/pasted.sh", BODY_SIGNATURE + "\n")
 
@@ -671,6 +681,8 @@ def _fixture_script_lost_body(tree, caller_steps):
 SINGLE_HOME_FIXTURES = [
     ("a composite with a nested `uses: ./.github/actions/...` step",
      _fixture_nested_uses, "resolves against the"),
+    ("a composite under _shared/<name>/action.yaml with a nested `uses:` step",
+     _fixture_nested_uses_under_shared, "_shared/x/action.yaml: step"),
     ("a pasted copy of the read in another file", _fixture_pasted_copy,
      "carries a copy of the lifecycle read"),
     ("a SCRIPT_CALLERS step that `uses:` the lifecycle gate",

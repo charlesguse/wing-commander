@@ -584,7 +584,7 @@ def closed_check_shell_check(action=None, verbose=True):
             if outputs.get("is-open") != expected:
                 problems.append("is-open={0!r}, expected {1!r}".format(
                     outputs.get("is-open"), expected))
-            if not calls or not calls[0].startswith(REPO + "|issue view 1 "):
+            if len(calls) != 1 or not calls[0].startswith(REPO + "|issue view 1 "):
                 problems.append("expected one `gh issue view 1` with GH_REPO={0}, "
                                 "got {1!r}".format(REPO, calls))
             if problems:
@@ -620,6 +620,28 @@ def closed_check_gh_repo_mutation():
     return 0
 
 
+def closed_check_double_read_mutation():
+    """A closed-check step that reads the issue twice must fail the harness
+    above: it checks for exactly one live read, not only the first."""
+    with open(COMPOSITE, encoding="utf-8") as fh:
+        action = yaml.safe_load(fh)
+    step = next((st for st in action["runs"]["steps"]
+                 if st.get("id") == CLOSED_CHECK_ID), None)
+    if step is None or not step.get("run"):
+        print("::error::verify-board-stop-check: the {0} step has no run: "
+              "to mutate.".format(CLOSED_CHECK_ID))
+        return 1
+    run = step["run"].strip()
+    step["run"] = run + " && " + run + "\n"
+    if not closed_check_shell_check(action, verbose=False):
+        print("::error::verify-board-stop-check: mutation 'the {0} step "
+              "reads the issue twice' was NOT caught.".format(CLOSED_CHECK_ID))
+        return 1
+    print("note: mutation caught (the {0} step reads the issue twice)."
+          .format(CLOSED_CHECK_ID))
+    return 0
+
+
 def run():
     failures = 0
 
@@ -641,6 +663,7 @@ def run():
     failures += composite_shell_check()
     failures += closed_check_shell_check()
     failures += closed_check_gh_repo_mutation()
+    failures += closed_check_double_read_mutation()
 
     print("verify-board-stop-check: {0} failure(s).".format(failures))
     return 1 if failures else 0
