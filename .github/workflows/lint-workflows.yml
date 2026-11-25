@@ -3568,7 +3568,7 @@ jobs:
 
       # implement.yml's escalation retry clears the cycle agent's transcript
       # under its own guard, skips a cycle agent that never started, and
-      # every `mirrors "<step>"` pointer names a step that exists (#889).
+      # every step a quoted "mirrors" pointer names exists (#889).
       # Not numbered, as above.
       - name: Implement retry starts clean and skips an agent that never started
         if: "!cancelled()"
