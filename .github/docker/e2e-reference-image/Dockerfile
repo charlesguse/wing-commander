@@ -68,10 +68,13 @@ RUN apt-get update \
 # no linux hash for fails the build rather than installing something else.
 # CRs are dropped first: a Windows checkout (core.autocrlf) hands the build
 # a CRLF pin, which Gate 48's reader accepts, so this one must read it alike.
+# tr and POSIX sed only: Gate 62's self-test runs these lines on the
+# maintainer's host too, which may have BSD sed.
 COPY shellcheck.pin /tmp/shellcheck.pin
 RUN set -eu; \
     pin=/tmp/shellcheck.pin; \
-    sed -i 's/\r$//' "$pin"; \
+    tr -d '\r' < "$pin" > "$pin.lf"; \
+    mv "$pin.lf" "$pin"; \
     version="$(sed -n 's/^version=//p' "$pin")"; \
     case "$(dpkg --print-architecture)" in \
         amd64) arch=amd64; machine=x86_64 ;; \

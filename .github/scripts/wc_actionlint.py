@@ -78,17 +78,25 @@ def read_shellcheck_pin(path=SHELLCHECK_PIN_FILE):
     """-> (version, {(osname, arch): sha256}) from the pin file.
 
     Lines are `version=X` and `sha256.<os>.<arch>=<hex>`; `#` lines and
-    blanks are skipped. Anything else, a repeated key, or a file with no
-    version is a hard failure: a pin that half-parses would download one
-    version and hash-check another. shellcheck ships one Windows archive
-    (x86-64), so a windows/amd64 hash also answers for windows/arm64.
+    blanks are skipped. Anything else, a repeated key, a key line with
+    whitespace around it, or a file with no version is a hard failure: a
+    pin that half-parses would download one version and hash-check
+    another. Whitespace fails rather than being stripped because the
+    Dockerfile's sed reads the same lines and would keep it (#1204); a CR
+    line ending is the one thing both readers drop. shellcheck ships one
+    Windows archive (x86-64), so a windows/amd64 hash also answers for
+    windows/arm64.
     """
     version, table = None, {}
     with open(path, encoding="utf-8") as fh:
         for n, raw in enumerate(fh, 1):
-            line = raw.strip()
-            if not line or line.startswith("#"):
+            line = raw.rstrip("\r\n")
+            if not line.strip() or line.lstrip().startswith("#"):
                 continue
+            if line != line.strip():
+                sys.exit(f"{path}:{n}: whitespace around a pin line, which the "
+                         f"reference image's Dockerfile would read differently: "
+                         f"{line!r}")
             key, sep, value = line.partition("=")
             parts = key.split(".")
             if sep and key == "version" and version is None and value:
@@ -143,7 +151,7 @@ def host():
 
 
 def ensure_pinned_tool(cache_name, exe_name, url, member, sha256,
-                       cache_root=None):
+                       cache_root=None, home="wc_actionlint.py"):
     """Path to a pinned binary, downloading `url` into the temp cache once.
 
     `member` is the archive entry holding the binary; the archive kind
@@ -151,7 +159,8 @@ def ensure_pinned_tool(cache_name, exe_name, url, member, sha256,
     <cache>/<cache_name>/<exe_name>; the version belongs in cache_name.
     `sha256` is the archive's expected digest, checked before
     extraction; a mismatch is a hard failure, never a warning.
-    `cache_root` overrides the OS temp dir (self-tests only).
+    `cache_root` overrides the OS temp dir (self-tests only). `home` is
+    the file that holds the pin, named when the digest does not match.
 
     Extracted next to the target under a per-process name and renamed
     into place, so a second process racing this one sees either nothing
@@ -179,7 +188,7 @@ def ensure_pinned_tool(cache_name, exe_name, url, member, sha256,
                  f"{digest} ({len(payload)} bytes). The release asset is "
                  f"not the one this repository pinned; nothing was "
                  f"extracted. If the publisher re-cut the asset, update "
-                 f"the pin in wc_actionlint.py deliberately.")
+                 f"the pin in {home} deliberately.")
     part = f"{target}.{os.getpid()}.part"
     if url.endswith(".zip"):
         with zipfile.ZipFile(io.BytesIO(payload)) as z, \
@@ -251,4 +260,5 @@ def ensure_shellcheck():
         member = f"shellcheck-v{SHELLCHECK_VERSION}/shellcheck"
     return ensure_pinned_tool(f"wc-shellcheck-{SHELLCHECK_VERSION}", exe,
                               url, member, _pin(SHELLCHECK_SHA256, osname, arch,
-                                                SHELLCHECK_PIN_FILE))
+                                                SHELLCHECK_PIN_FILE),
+                              home=SHELLCHECK_PIN_FILE)

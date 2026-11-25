@@ -716,6 +716,7 @@ def _pin_static_self_test():
             problems.append("a Dockerfile that stopped COPYing shellcheck.pin was NOT reported")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    problems.extend(_pin_whitespace_self_test())
     problems.extend(_dockerfile_pin_read_self_test())
     import wc_actionlint
     real_host = wc_actionlint.host
@@ -730,7 +731,71 @@ def _pin_static_self_test():
                             f"single-home scan would then reject: {e}")
     finally:
         wc_actionlint.host = real_host
+    problems.extend(_pin_mismatch_message_self_test(wc_actionlint))
     return problems
+
+
+def _pin_whitespace_self_test():
+    """-> problems: a pin line with whitespace around it must stop Gate 48's
+    reader. The Dockerfile's sed would keep a trailing space in the version
+    or hash, and miss an indented key, so a reader that stripped it would
+    pass Gate 48 and break the image build."""
+    with io.open(SHELLCHECK_PIN, encoding="utf-8") as fh:
+        text = fh.read()
+    problems = []
+    tmp = tempfile.mkdtemp(prefix="verify_gate_62_pinws_")
+    try:
+        for label, old, new in (
+                ("a trailing space after the version", "\nversion=", None),
+                ("an indented version line", "\nversion=", "\n  version="),
+                ("a trailing space after a hash", "\nsha256.linux.amd64=", None)):
+            if new is None:
+                i = text.index(old) + 1
+                eol = text.index("\n", i)
+                bad = text[:eol] + " " + text[eol:]
+            else:
+                bad = text.replace(old, new, 1)
+            pin = os.path.join(tmp, "shellcheck.pin")
+            with io.open(pin, "w", encoding="utf-8", newline="") as fh:
+                fh.write(bad)
+            try:
+                read_shellcheck_pin(pin)
+                problems.append(f"read_shellcheck_pin accepted {label}, which the "
+                                f"Dockerfile reads differently (#1204)")
+            except SystemExit:
+                pass
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return problems
+
+
+def _pin_mismatch_message_self_test(wc_actionlint):
+    """-> problems: a shellcheck download that fails its sha256 check must
+    send the maintainer to shellcheck.pin, the hashes' one home, not to
+    wc_actionlint.py, where the single-home scan would reject a new hash."""
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    real_open, real_root = wc_actionlint.urllib.request.urlopen, wc_actionlint._cache_root
+    tmp = tempfile.mkdtemp(prefix="verify_gate_62_pinsha_")
+    wc_actionlint.urllib.request.urlopen = lambda url, timeout=None: _Resp(b"not the asset")
+    wc_actionlint._cache_root = lambda: tmp
+    try:
+        wc_actionlint.ensure_shellcheck()
+        return ["ensure_shellcheck accepted an archive whose sha256 is not the pin's"]
+    except SystemExit as e:
+        if "shellcheck.pin" not in str(e):
+            return [f"a shellcheck sha256 mismatch tells the maintainer to update "
+                    f"the pin somewhere other than shellcheck.pin: {e}"]
+        return []
+    finally:
+        wc_actionlint.urllib.request.urlopen = real_open
+        wc_actionlint._cache_root = real_root
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _dockerfile_pin_read_self_test():
@@ -738,7 +803,8 @@ def _dockerfile_pin_read_self_test():
     on an LF and a CRLF copy of the pin (a Windows checkout with
     core.autocrlf), must read the version and linux/amd64 hash Gate 48's
     read_shellcheck_pin reads. Runs the RUN block from its `pin=` line up to
-    its `[ -n "$version" ]` check, with dpkg answering amd64."""
+    its `[ -n "$version" ]` check, with dpkg answering amd64 and a sed that
+    takes POSIX options only (a maintainer's macOS has BSD sed)."""
     df = os.path.join(DOCKERFILE_DIR, "Dockerfile")
     with io.open(df, encoding="utf-8") as fh:
         lines = fh.read().splitlines()
@@ -754,13 +820,28 @@ def _dockerfile_pin_read_self_test():
     with io.open(SHELLCHECK_PIN, encoding="utf-8") as fh:
         text = fh.read()
     problems = []
+    real_sed = shutil.which("sed")
+    if not shutil.which("sh") or not real_sed:
+        print("Gate 62: no sh or sed on PATH here, so the Dockerfile's pin-reading "
+              "lines were not run; CI runs them")
+        return problems
     tmp = tempfile.mkdtemp(prefix="verify_gate_62_pinread_")
     try:
+        # A sed with POSIX options only, ahead of the host's: the lines must
+        # also read the pin on macOS, whose BSD sed takes -i's argument as a
+        # backup suffix, so a GNU-only option there misreads the pin.
+        shim = os.path.join(tmp, "bin")
+        os.makedirs(shim)
+        with io.open(os.path.join(shim, "sed"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write('#!/bin/sh\nfor a in "$@"; do case "$a" in -i*|--*) '
+                     'echo "sed: $a is not a POSIX sed option" >&2; exit 2 ;; esac; done\n'
+                     f'exec "{real_sed}" "$@"\n')
+        os.chmod(os.path.join(shim, "sed"), 0o755)
         for label, eol in (("LF", "\n"), ("CRLF", "\r\n")):
             pin = os.path.join(tmp, "shellcheck.pin").replace(os.sep, "/")
             with io.open(pin, "w", encoding="utf-8", newline="") as fh:
                 fh.write(text.replace("\n", eol))
-            script = ("set -eu\ndpkg() { echo amd64; }\n"
+            script = (f'set -eu\nPATH="{shim}:$PATH"\ndpkg() {{ echo amd64; }}\n'
                       + body.replace("/tmp/shellcheck.pin", pin)
                       + '\nprintf "%s|%s" "$version" "$sha"\n')
             proc = subprocess.run(["sh", "-c", script], capture_output=True)
@@ -779,6 +860,13 @@ def _static_self_test():
     """-> problems: each implement.yml drift read_implement_subject must report."""
     import yaml
     problems = _pin_static_self_test()
+    # The drifted build keeps a shellcheck (apt's), so it no longer shows the
+    # prompted-command check naming shellcheck; check here that the prompt
+    # still yields it, or the check could stop covering shellcheck unseen.
+    if "shellcheck" not in read_implement_subject(".")[1]:
+        problems.append(f"{IMPLEMENT_WORKFLOW}'s agent prompt no longer yields "
+                        f"`shellcheck` as a prompted lint tool, so Gate 62 no "
+                        f"longer checks the image has it")
     cases = []
 
     def drop_env(wf):
