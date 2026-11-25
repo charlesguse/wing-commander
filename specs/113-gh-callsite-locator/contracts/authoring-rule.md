@@ -39,7 +39,9 @@ fails too. A string with no `gh` in it passes untouched.
 (`$CMD`, `"$@"`, `${X:-…}`, the `$SUDO` of `$SUDO gh`), and an `eval`,
 backtick or unquoted heredoc body holding an expansion, fails as a
 disallowed form when the `run:` block also holds a `gh` word that is
-neither a located call nor a provable mention (`GH=gh`, `set -- gh api x`).
+neither a located call nor a provable mention (`GH=gh`, `GH=${X:-gh}`,
+`set -- gh api x`); a `gh` in a `${…}` value, quoted or not, is never a
+mention.
 Gate 12 cannot see what a variable holds, so never run `gh` through one.
 
 **Mentions that need no rewriting**: `gh` in a quoted string with no `$(`
