@@ -10,6 +10,7 @@ fetched -- never a forced write.
     python .github/scripts/board_backlog_edit.py --issue N --op tick-fixed --line-id ID [--detail TEXT]
 """
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -92,24 +93,29 @@ def _gh(args, stdin=None):
     return proc.stdout
 
 
+def _issue_path(issue):
+    """The REST path of the issue. `gh issue view/edit/comment` go through
+    GraphQL, which cloud sessions are refused (`HTTP 403: GitHub GraphQL is
+    not available`), so every call here is `gh api` REST. `{owner}/{repo}`
+    is gh's own placeholder for the current checkout's repository."""
+    repo = os.environ.get("GITHUB_REPOSITORY") or "{owner}/{repo}"
+    return "repos/{0}/issues/{1}".format(repo, issue)
+
+
 def gh_fetch(issue):
-    repo = os.environ.get("GITHUB_REPOSITORY")
-    repo_args = ["-R", repo] if repo else []
-    out = _gh(["issue", "view", str(issue)] + repo_args + ["--json", "body", "--jq", ".body"])
+    out = _gh(["api", _issue_path(issue), "--jq", '.body // ""'])
     # --jq appends exactly one newline; strip only that one.
     return out[:-1] if out.endswith("\n") else out
 
 
 def gh_write(issue, body):
-    repo = os.environ.get("GITHUB_REPOSITORY")
-    repo_args = ["-R", repo] if repo else []
-    _gh(["issue", "edit", str(issue)] + repo_args + ["--body-file", "-"], stdin=body)
+    _gh(["api", "-X", "PATCH", _issue_path(issue), "--input", "-"],
+        stdin=json.dumps({"body": body}))
 
 
 def gh_comment(issue, body):
-    repo = os.environ.get("GITHUB_REPOSITORY")
-    repo_args = ["-R", repo] if repo else []
-    _gh(["issue", "comment", str(issue)] + repo_args + ["--body-file", "-"], stdin=body)
+    _gh(["api", "-X", "POST", _issue_path(issue) + "/comments", "--input", "-"],
+        stdin=json.dumps({"body": body}))
 
 
 def report_text(op, line_id, result):

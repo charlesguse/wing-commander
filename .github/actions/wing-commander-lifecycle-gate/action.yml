@@ -47,6 +47,9 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
+        # The workspace need not be a checkout for `gh issue view` to know
+        # the repository -- see wing-commander-board-stop-check.
+        GH_REPO: ${{ github.repository }}
         ISSUE_NUMBER: ${{ inputs.issue-number }}
       # The read itself lives in _shared/lifecycle-issue-state.sh, its one
       # home: wing-commander-board-stop-check runs the same script from its

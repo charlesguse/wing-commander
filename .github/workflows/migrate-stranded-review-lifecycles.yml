@@ -76,7 +76,10 @@ jobs:
           stage="${STAGE:-}"
           state="$(gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json state --jq '.state | ascii_downcase')"
           marker=false
-          if gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json comments --jq '.comments[].body' | grep -qF '<!-- wing-commander-migrate-stranded-review -->'; then marker=true; fi
+          # Capture, then test: `gh | grep -q` under pipefail reads a gh
+          # SIGPIPE'd by grep's early exit as "no marker" and re-posts.
+          comments="$(gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json comments --jq '.comments[].body')" || exit 1
+          if grep -qF '<!-- wing-commander-migrate-stranded-review -->' <<<"$comments"; then marker=true; fi
           verdict="$(bash .github/actions/_shared/migrate-stranded-review-lifecycles.sh decide "$state" "$stage" "$marker" "$count")"
           echo "#$ISSUE: $verdict"
           {
