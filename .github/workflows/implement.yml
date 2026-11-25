@@ -2149,13 +2149,14 @@ jobs:
             echo "⚠️ gate-suite preflight (retry): missing prerequisites —$missing; skipping the local gate suite for this retry." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # FR-009: mirrors "Run local gate suite (cycle)" above. Only when the
-      # retry agent is due (its own ok/escalation-model conditions): every
+      # FR-009: mirrors "Run the cycle-start gate suite (credential-free)"
+      # (in gate-suite-implement-cycle, spec 095). Only when the retry agent
+      # is due (its own ok/escalation-model/started conditions): every
       # reader of this step's outputs is retry-only, and on a converged cycle
       # the suite would only hold the job up to its step timeout.
       - name: Run local gate suite (retry)
         id: gate-suite-retry
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.gate-suite-preflight-retry.outputs.ready == 'true' && steps.outcome.outputs.ok == 'false' && steps.effective-model.outputs.model != inputs.escalation-model
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.guard.outputs.skip != 'true' && steps.gate-suite-preflight-retry.outputs.ready == 'true' && steps.outcome.outputs.ok == 'false' && steps.effective-model.outputs.model != inputs.escalation-model && steps.agent-ran-cycle.outputs.started != 'false'
         continue-on-error: true
         # The step timeout -- see "Run the cycle-start gate suite
         # (credential-free)" above in this file.
@@ -2245,7 +2246,10 @@ jobs:
 
       # One automatic retry of the SAME iteration, one tier up
       # (→ inputs.escalation-model). Skipped when the failing attempt already
-      # ran on the escalation tier — that goes straight to stalled.
+      # ran on the escalation tier — that goes straight to stalled — and when
+      # the cycle's agent never started (agent-ran-cycle started=false, e.g.
+      # an image missing unzip): the retry runs on the same image and would
+      # fail its setup the same way, on a more expensive model.
       - name: Compose commit-message guidance (implement.retry)
         id: commit-guidance-retry
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance
@@ -2280,6 +2284,7 @@ jobs:
           steps.guard.outputs.skip != 'true' &&
           steps.outcome.outputs.ok == 'false' &&
           steps.effective-model.outputs.model != inputs.escalation-model &&
+          steps.agent-ran-cycle.outputs.started != 'false' &&
           steps.tool-args-retry.outputs.allowed-tools != ''
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling
         with:
@@ -2297,6 +2302,7 @@ jobs:
           steps.guard.outputs.skip != 'true' &&
           steps.outcome.outputs.ok == 'false' &&
           steps.effective-model.outputs.model != inputs.escalation-model &&
+          steps.agent-ran-cycle.outputs.started != 'false' &&
           steps.tool-args-retry.outputs.allowed-tools != ''
         env:
           SLUG: ${{ steps.spec.outputs.slug }}
@@ -2316,12 +2322,30 @@ jobs:
           steps.guard.outputs.skip != 'true' &&
           steps.outcome.outputs.ok == 'false' &&
           steps.effective-model.outputs.model != inputs.escalation-model &&
+          steps.agent-ran-cycle.outputs.started != 'false' &&
           steps.tool-args-retry.outputs.allowed-tools != '' &&
           steps.project.outputs.project != ''
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-containment
         with:
           mode: install-pre-push
           project: ${{ steps.project.outputs.project }}
+
+      # The cycle agent's transcript is still at this path, and the retry
+      # agent step writes its own only once its agent starts. Without this,
+      # a retry that fails in its own setup hands the retry's agent-ran
+      # signal (started), verdict, metrics and refusal probe the cycle's
+      # transcript as if it were the retry's. Same guard as the retry step,
+      # for the reason "Clear previous attempt's transcript (progress)"
+      # gives.
+      - name: Clear previous attempt's transcript (retry)
+        if: >-
+          steps.lifecycle-gate.outputs.is-open == 'true' &&
+          steps.guard.outputs.skip != 'true' &&
+          steps.outcome.outputs.ok == 'false' &&
+          steps.effective-model.outputs.model != inputs.escalation-model &&
+          steps.agent-ran-cycle.outputs.started != 'false' &&
+          steps.tool-args-retry.outputs.allowed-tools != ''
+        run: rm -f "$RUNNER_TEMP/claude-execution-output.json"
 
       # This step's prompt carries the retry-bound paragraph for the
       # credential-expiry `git push` signature -- see clarify.yml.
@@ -2332,6 +2356,7 @@ jobs:
           steps.guard.outputs.skip != 'true' &&
           steps.outcome.outputs.ok == 'false' &&
           steps.effective-model.outputs.model != inputs.escalation-model &&
+          steps.agent-ran-cycle.outputs.started != 'false' &&
           steps.tool-args-retry.outputs.allowed-tools != ''
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
