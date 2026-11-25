@@ -289,7 +289,7 @@ class CodeRun(unittest.TestCase):
         self.assertEqual(out["gate_suite"]["exit"], 3)
         self.assertEqual(box.opened, (os.path.abspath("tree"), os.path.abspath("rev")))
         self.assertEqual(box.ran[0], (["python3", "-I", "verify-probe-check.py"], 60, 1))
-        self.assertEqual(box.ran[1], (["python3", "-I", "/box/run-local-gates.py"], 60, 2))
+        self.assertEqual(box.ran[1], (["python3", "-I", "/box/run-local-gates.py"], sr.GATE_SUITE_TIMEOUT, 2))
         self.assertTrue(box.closed)
 
     def test_no_named_check_is_none_not_failure(self):
@@ -888,6 +888,155 @@ class ReviewRound5Fixes(unittest.TestCase):
             out = sr.stage_code_run("tree", "rev", ["x/test_fix.py"], timeout=60,
                                     sandbox=FakeSandbox({1: ok, 3: ok, 2: ok}), base_tree=base)
         self.assertEqual(sr.check_fails_without_fix(out)[0], sr.NEGATIVE)
+
+
+
+def _round(state, find_out, check_out, dismissals=()):
+    ok = {"exit": 0, "output_tail": ""}
+    code_run = {"status": "staged", "named_check": ok, "named_check_tier": "added",
+                "named_check_without_fix": {"exit": 1, "output_tail": "AssertionError"}, "gate_suite": ok}
+    return sr.finalize_round(state, find_out, check_out, code_run, {"type": "issue", "ref": "7"},
+                             "a" * 40, list(dismissals), 5, "b" * 40, "open")
+
+
+class Round6Fixes(unittest.TestCase):
+    ANSWERS = {k: sr.POSITIVE for k in sr.ANSWER_KEYS}
+
+    def test_a_candidate_with_no_check_makes_the_round_incomplete(self):
+        # Round 6, finding 1: FR-010 asks the checking job to evaluate every
+        # candidate; one it leaves out used to be dismissed as "checker did
+        # not uphold", so a real defect could end the round clean.
+        cand = {"key": "k", "title": "t", "file": "a.py", "line": 1,
+                "failing_case": {"state": "s", "wrong_result": "w"}}
+        find_out = {"answers": {}, "candidates": [cand]}
+        unchecked = {"answers": self.ANSWERS, "checks": []}
+        self.assertEqual(sr.validate_output(unchecked, "check", [], [cand]),
+                         ["candidate 'k' was not evaluated (FR-010)"])
+        self.assertEqual(_round({"round": 1, "prior": []}, find_out, unchecked)["verdict"], "incomplete")
+        checked = {"answers": self.ANSWERS, "checks": [{"key": "k", "outcome": "dismissed", "reason": "no"}]}
+        self.assertEqual(sr.validate_output(checked, "check", [], [cand]), [])
+        self.assertEqual(_round({"round": 1, "prior": []}, find_out, checked)["verdict"], "clean")
+
+
+    def test_the_next_round_is_past_the_highest_and_never_reuses_ids(self):
+        # Round 6, finding 3: with round 1's record no longer confirming,
+        # the count gives round 2 again, and F2-1 would be overwritten.
+        self.assertEqual(sr.next_round([]), 1)
+        self.assertEqual(sr.next_round([rec(2), rec(3)]), 4)
+        prior = [finding("F2-1", title="kept")]
+        cand = {"key": "k", "title": "new", "file": "a.py", "line": 1,
+                "failing_case": {"state": "s", "wrong_result": "w"}}
+        check = {"answers": self.ANSWERS, "checks": [{"id": "F2-1", "outcome": "confirmed"},
+                                                     {"key": "k", "outcome": "upheld", "in_scope": True,
+                                                      "reachable": True}]}
+        out = _round({"round": 2, "prior": prior}, {"answers": {}, "candidates": [cand]}, check)
+        self.assertEqual(out["verdict"], "incomplete")
+        self.assertEqual([(f["id"], f["title"]) for f in out["open_set"]], [("F2-1", "kept")])
+        self.assertTrue(any("reuse the ids" in n for n in out["notes"]))
+        out = _round({"round": 3, "prior": prior}, {"answers": {}, "candidates": [cand]}, check)
+        self.assertEqual(sorted(f["id"] for f in out["open_set"]), ["F2-1", "F3-1"])
+
+
+    def test_dismissals_that_are_not_json_or_not_id_and_reason_refuse_the_run(self):
+        # Round 6, finding 4: they used to read as [] at finalize, so the
+        # requested dismissal was dropped and the finding stayed open.
+        import contextlib
+        import io
+        import json as _json
+
+        def decide(text):
+            buf = io.StringIO()
+            argv = ["guard", "--ref", "refs/heads/main", "--default-branch", "main", "--kind", "fix"]
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(sr.main(argv + ([] if text is None else ["--dismissals", text])), 0)
+            return _json.loads(buf.getvalue())
+        for text in ('[{"id": "F1-1", "reason": "ok"}', '{"id": "F1-1"}', '[{"id": "F1-1"}]', '["F1-1"]'):
+            out = decide(text)
+            self.assertFalse(out["proceed"], text)
+            self.assertTrue(out["reason"].startswith("refused: dismissals")
+                            or out["reason"].startswith("refused: each dismissal"), out)
+        for text in (None, "", "[]", '[{"id": "F1-1", "reason": "ok"}]'):
+            self.assertEqual(decide(text), {"proceed": True, "reason": None}, text)
+
+
+    def test_a_candidate_check_upholds_or_dismisses_it_once(self):
+        # Pass 1 of #1219's review: a check that "confirms" a new candidate
+        # (the word the prompt gives re-checks), or answers it twice, used
+        # to validate, and process_round dismissed it, so the round with a
+        # real defect ended clean.
+        cand = {"key": "k", "title": "t", "file": "a.py", "line": 1,
+                "failing_case": {"state": "s", "wrong_result": "w"}}
+        find_out = {"answers": {}, "candidates": [cand]}
+        upheld = {"key": "k", "outcome": "upheld", "in_scope": True, "reachable": True, "reason": "real"}
+        for checks in ([dict(upheld, outcome="confirmed")], [dict(upheld, outcome="resolved")],
+                       [upheld, {"key": "k", "outcome": "dismissed", "reason": "no"}]):
+            check = {"answers": self.ANSWERS, "checks": checks}
+            self.assertTrue(sr.validate_output(check, "check", [], [cand]), checks)
+            self.assertEqual(_round({"round": 1, "prior": []}, find_out, check)["verdict"], "incomplete", checks)
+        # A re-check of an earlier finding still confirms it by id.
+        prior = [finding("F1-1")]
+        check = {"answers": self.ANSWERS, "checks": [upheld, {"id": "F1-1", "outcome": "confirmed"}]}
+        self.assertEqual(sr.validate_output(check, "check", prior, [cand]), [])
+
+    def test_the_state_command_numbers_the_round_past_the_highest(self):
+        # Pass 1 of #1219's review: only next_round() itself was tested, so
+        # the state command could go back to len(confirmed) + 1 unnoticed.
+        import contextlib
+        import io
+        import json as _json
+        from unittest import mock
+        buf = io.StringIO()
+        # state reads earlier rounds' runs with RUN_TOKEN and fails closed
+        # without it (#1240).
+        with mock.patch.object(sr, "confirmed_from_github", return_value=[rec(2), rec(3)]), \
+                mock.patch.dict(os.environ, {"RUN_TOKEN": "run"}), \
+                contextlib.redirect_stdout(buf):
+            self.assertEqual(sr.main(["state", "--pr", "7", "--bot-login", "b[bot]", "--default-branch", "main",
+                                      "--repository", "o/r"]), 0)
+        out = _json.loads(buf.getvalue())
+        self.assertEqual((out["rounds"], out["round"]), (2, 4))
+
+    def test_null_dismissals_refuse_the_run(self):
+        # Pass 1 of #1219's review: null is not a list (round-record.md),
+        # but parsed to None, which the guard reads as "not given".
+        self.assertEqual(sr.parse_dismissals("null"), (None, "refused: dismissals is not a list"))
+        self.assertEqual(sr.parse_dismissals("[]"), ([], None))
+
+    def test_a_dismissals_value_starting_with_a_dash_refuses_from_the_environment(self):
+        # Pass 2 of #1219's review: as an argument, "-x" is read by argparse
+        # as an option and the guard exits 2, failing prepare instead of
+        # refusing in the summary; the workflow passes --dismissals-env
+        # (verify-shared-review-wiring.py checks that form).
+        import contextlib
+        import io
+        import json as _json
+        from unittest import mock
+        argv = ["guard", "--ref", "refs/heads/main", "--default-branch", "main", "--kind", "fix"]
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            sr.main(argv + ["--dismissals", "-x"])
+
+        def decide(env):
+            buf = io.StringIO()
+            with mock.patch.dict(os.environ, env, clear=False), contextlib.redirect_stdout(buf):
+                self.assertEqual(sr.main(argv + ["--dismissals-env", "WC_TEST_DISMISSALS"]), 0)
+            return _json.loads(buf.getvalue())
+        self.assertEqual(decide({"WC_TEST_DISMISSALS": "-x"}),
+                         {"proceed": False, "reason": "refused: dismissals is not valid JSON"})
+        self.assertEqual(decide({"WC_TEST_DISMISSALS": "[]"}), {"proceed": True, "reason": None})
+        self.assertEqual(decide({"WC_TEST_DISMISSALS": '[{"id": "F1-1", "reason": "ok"}]'}),
+                         {"proceed": True, "reason": None})
+
+    def test_the_gate_suite_has_its_own_limit(self):
+        # Round 6, finding 5: the suite took 361 s on 4 CPUs, so it no
+        # longer shares the named check's 600 s.
+        import tempfile
+        self.assertGreater(sr.GATE_SUITE_TIMEOUT, sr.CODE_RUN_TIMEOUT)
+        ok = {"exit": 0, "output_tail": ""}
+        with tempfile.TemporaryDirectory() as base:
+            box = FakeSandbox({1: ok, 3: ok, 2: ok})
+            sr.stage_code_run("tree", "rev", ["x/test_fix.py"], sandbox=box, base_tree=base)
+        self.assertEqual({n: t for _, t, n in box.ran},
+                         {1: sr.CODE_RUN_TIMEOUT, 3: sr.CODE_RUN_TIMEOUT, 2: sr.GATE_SUITE_TIMEOUT})
 
 
 if __name__ == "__main__":

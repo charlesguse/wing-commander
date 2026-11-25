@@ -3,7 +3,7 @@
 Layer: consuming instrument. Not part of the published contract. Live: fixed like code.
 
 ## Dispatch
-`wing-commander-shared-pr-reviewer.yml` `workflow_dispatch` inputs: `pr` (number, required), `dismissals` (JSON list of `{id, reason}`, optional, default `[]`). Runs only on the default branch; any other ref ends in the `guard` job with a summary refusal and no record. The callable `shared-pr-reviewer.yml` takes the same two inputs plus wrapper-supplied `default_branch`, models, turn limits, budget and paused flag; it declares only the secrets it uses.
+`wing-commander-shared-pr-reviewer.yml` `workflow_dispatch` inputs: `pr` (number, required), `dismissals` (JSON list of `{id, reason}`, optional, default `[]`; a value that is not JSON, not a list, or has an entry without an `id` and a `reason` ends the run in `prepare` with a summary refusal and no record). Runs only on the default branch; any other ref ends in the `guard` job with a summary refusal and no record. The callable `shared-pr-reviewer.yml` takes the same two inputs plus wrapper-supplied `default_branch`, models, turn limits, budget and paused flag; it declares only the secrets it uses.
 
 ## Record comment
 Posted once per round by the `record` job as an issue comment on the PR, authored by the pipeline App. Body: one human header line, a findings table, then LAST:
