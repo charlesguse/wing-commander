@@ -37,6 +37,11 @@ import sys
 import yaml
 
 
+# The registry's path from a repository root, named once: the loader below
+# opens it, and a test fixture that writes one uses this name.
+REGISTRY_PATH = ".github/scripts/unpublished-callables.json"
+
+
 def unpublished_callables(root="."):
     """Workflow basenames registered as internal callables, with reasons.
 
@@ -47,8 +52,7 @@ def unpublished_callables(root="."):
     """
     import json
     try:
-        with open(os.path.join(root, ".github", "scripts",
-                               "unpublished-callables.json"), encoding="utf-8") as fh:
+        with open(os.path.join(root, *REGISTRY_PATH.split("/")), encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, ValueError):
         return {}
