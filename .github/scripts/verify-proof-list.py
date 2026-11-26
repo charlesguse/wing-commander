@@ -1119,8 +1119,11 @@ def check_progress():
     bad = [line for line in lines if not shape.match(line)]
     if bad or not lines:
         problems.append("progress: lines without elapsed time and call counts: {0}".format(bad or lines))
-    elif int(shape.match(lines[-1]).group(1)) == 0:
-        problems.append("progress: the git calls the build made were not counted")
+    elif int(shape.match(lines[-1]).group(1)) < 12:
+        # At least one per merge: each merge's changed-path listing is a git
+        # call, made by diff_name_list outside _subprocess.
+        problems.append("progress: {0} git calls counted for 12 merges; each merge's "
+                        "changed-path listing was not counted".format(shape.match(lines[-1]).group(1)))
     saved = pl.collect
     pl.collect = lambda *a, **k: (_ for _ in ()).throw(pl.ReadError("stop"))
     try:

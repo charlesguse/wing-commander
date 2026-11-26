@@ -639,6 +639,9 @@ class Collector:
                 merged = [p for p in pulls if p.get("merged_at")]
                 pr = merged[0] if len(merged) == 1 else None
             changed = diff_name_list(sha + "^1", sha)
+            # diff_name_list runs its own git, outside _subprocess: count it
+            # here so the progress lines' git count is every git call.
+            _progress["git"] += 1
             needs_run, reason = actions_only(changed)
             entry = {"sha": sha, "merged_at": utc_text(when),
                      "pr": pr["number"] if pr else None, "named_issues": [],
