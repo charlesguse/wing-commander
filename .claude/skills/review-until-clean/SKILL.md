@@ -156,8 +156,11 @@ and stop.
   silently.
 - **Already dismissed:** it matches the dismissed list in your prompt.
   One line.
-- **Out of scope:** real, but not this PR's. Don't fix it; list it in your
-  report.
+- **Out of scope:** real, but not this PR's. Sort it by CLAUDE.md's
+  "Filing review findings" rule (in "Working the issue board"): fix it
+  here only when that rule says fix it now; otherwise list it in your
+  report as *record* (with how it fails silently) or *dropped* (with the
+  reason).
 
 A comment or wording nit counts as a finding only if it touches something
 a gate reads. Workflow comments are load-bearing (gates byte-compare
@@ -239,7 +242,8 @@ Your report file holds:
 - every candidate, with its verdict, file:line and one line of why;
 - which test covers each fix;
 - the gate result, naming any failure you waived and why;
-- the out-of-scope list.
+- the out-of-scope list, each one marked record or dropped as step 3
+  says.
 
 End the comment with the attribution footer (pass it as `--footer` unless
 your posting tool adds one), and end the session with the same report.
@@ -296,7 +300,8 @@ Rules:
 Stopping means asking the owner. Give them what is still open, the
 signals that tripped, and these options, recommending one:
 
-- **(a) Merge as is,** with the remaining findings filed as backlog lines.
+- **(a) Merge as is,** with the remaining findings filed by CLAUDE.md's
+  "Filing review findings" rule.
   This fits when they are edge cases in new code that fails closed.
 - **(b) One targeted pass with a different method,** e.g. differential
   fuzzing against real bash for a parser (#969's option b).
@@ -395,8 +400,9 @@ If it can't merge:
 After merge:
 
 - tick the PR's backlog line;
-- file the passes' out-of-scope findings as backlog lines carrying
-  `(found by the code review of #N)`;
+- file the passes' out-of-scope findings marked *record* as backlog
+  lines carrying `(found by the code review of #N)`, by CLAUDE.md's
+  "Filing review findings" rule; the *dropped* ones are filed nowhere;
 - if the change runs only in Actions, prove it with the `prove-after-merge`
   skill.
 

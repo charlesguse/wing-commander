@@ -49,9 +49,20 @@ def check(name, ok, detail="", quiet=False):
         print("::error::verify-sync-from-main: {0} -- {1}".format(name, detail))
 
 
+def _allow_bare(env):
+    """The fixtures read a bare origin; a host with safe.bareRepository=explicit
+    would refuse it, so set the option for the git children (appended to any
+    config the environment already passes)."""
+    n = int(env.get("GIT_CONFIG_COUNT", "0") or 0)
+    env["GIT_CONFIG_KEY_{0}".format(n)] = "safe.bareRepository"
+    env["GIT_CONFIG_VALUE_{0}".format(n)] = "all"
+    env["GIT_CONFIG_COUNT"] = str(n + 1)
+    return env
+
+
 def sh(cwd, *args, check_rc=True):
-    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
-               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t", GIT_EDITOR="true")
+    env = _allow_bare(dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                           GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t", GIT_EDITOR="true"))
     r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env)
     if check_rc and r.returncode != 0:
         raise RuntimeError("{0}: {1}".format(" ".join(args), r.stderr))
@@ -65,7 +76,8 @@ def write(path, text):
 
 
 def helper(src, cwd, *args):
-    return subprocess.run([sys.executable, src, *args], cwd=cwd, capture_output=True, text=True)
+    return subprocess.run([sys.executable, src, *args], cwd=cwd, capture_output=True, text=True,
+                          env=_allow_bare(dict(os.environ)))
 
 
 def make_repo(tmp):
@@ -109,6 +121,20 @@ def suite(src, quiet=False):
     """Run every case against helper source `src`; return the failure names."""
     start = len(results)
     q = quiet
+
+    # Every git-spawning call path carries the bare-repo allowance, appended to
+    # (never replacing) config the environment already passes.
+    pre = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "a.b", "GIT_CONFIG_VALUE_0": "c"}
+    e = _allow_bare(dict(pre))
+    check("allow-bare: appended after existing GIT_CONFIG entries",
+          e["GIT_CONFIG_COUNT"] == "2" and e["GIT_CONFIG_KEY_0"] == "a.b"
+          and e["GIT_CONFIG_KEY_1"] == "safe.bareRepository" and e["GIT_CONFIG_VALUE_1"] == "all",
+          repr(e), q)
+    r = helper(src, ".", "validate-method", "")
+    probe = subprocess.run(["git", "config", "--get", "safe.bareRepository"], capture_output=True,
+                           text=True, env=_allow_bare(dict(os.environ)))
+    check("allow-bare: git children see safe.bareRepository=all",
+          probe.stdout.strip() == "all" and r.returncode == 0, probe.stdout + probe.stderr, q)
 
     for val, want_rc, want_out in (("", 0, "rebase"), ("rebase", 0, "rebase"), ("merge", 0, "merge"),
                                    ("bogus", 1, None), ("Merge", 1, None),
@@ -357,7 +383,7 @@ def suite(src, quiet=False):
         b = head(w)
         m = advance_main(w, "a.txt", "one\nMAIN\nthree\n")
         t = sh(w, "git", "merge-tree", "--write-tree", "--no-messages", m, "HEAD", check_rc=False).stdout.split()[0]
-        env_idx = dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "idx"))
+        env_idx = _allow_bare(dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "idx")))
         subprocess.run(["git", "read-tree", t], cwd=w, env=env_idx, check=True)
         subprocess.run(["git", "update-index", "--force-remove", "a.txt"], cwd=w, env=env_idx, check=True)
         t_no_a = subprocess.run(["git", "write-tree"], cwd=w, env=env_idx, capture_output=True,

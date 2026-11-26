@@ -46,9 +46,13 @@ jobs:
       head-ref: ${{ steps.select.outputs.head-ref }}
       dispatch: ${{ steps.select.outputs.dispatch }}
     steps:
+      # Full history: the stop-note re-arm (wc_convergence.py rearmed)
+      # diffs the stopped head against main, and a shallow clone has
+      # neither, so every moved head would read as re-armed (FR-019).
       - name: Checkout
         uses: actions/checkout@v5
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Checkout this job's own trusted copy (composites)
@@ -744,7 +748,7 @@ jobs:
               lines += ["", "No findings."]
           if checked.get("blocked"):
               lines += ["", "{0} fix(es) were blocked by the path, size or precedent check and are report-only:".format(len(checked["blocked"]))]
-              lines += ["- {0} ({1})".format(b.get("finding"), b.get("reason")) for b in checked["blocked"]]
+              lines += ["- {0} ({1})".format(b.get("title", b.get("finding")), b.get("reason")) for b in checked["blocked"]]
           cost = os.environ.get("COST_LINE") or ""
           if cost:
               lines += ["", cost]

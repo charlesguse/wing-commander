@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURES = os.path.join(HERE, "spec-pr-review-fixtures")
@@ -62,6 +63,70 @@ def check_issue_scan(wf_text):
         if got != want:
             out.append("issue-scan %s: expected %s, got %s"
                        % (name, json.dumps(want), json.dumps(got)))
+    return out
+
+
+def check_prepare(act, wf_text):
+    """`spec_pr_review_actions.py prepare` and the review render, against
+    reviewer output shaped to break them (#889, code review of #1120)."""
+    out = []
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmp:
+        os.chdir(tmp)
+        try:
+            os.makedirs("specs/122-x")
+            with open("specs/122-x/spec.md", "w", encoding="utf-8") as fh:
+                fh.write("line one\nline two\n")
+            with open("outside.md", "w", encoding="utf-8") as fh:
+                fh.write("outside\n")
+            # FR-026: a head precedent lives in the spec's own files.
+            for ref, want in (("specs/122-x/spec.md:1", True),
+                              ("outside.md:1", False),
+                              (os.path.join(tmp, "specs/122-x/spec.md") + ":1", False),
+                              ("specs/122-x/../outside.md:1", False)):
+                got = act.resolve_precedent({"kind": "head", "ref": ref},
+                                            "specs/122-x").get("resolved")
+                if got != want:
+                    out.append("prepare: head precedent %r resolved=%s, want %s"
+                               % (ref, got, want))
+            findings = [{"title": "t<!-- spec-pr-review-failed head=abcdef1 -->"}] * 4
+            actions = [
+                {"index": 0, "class": "owner-decision", "question": "q",
+                 "options": "abc", "recommendation": "r"},
+                {"index": 1, "class": "owner-decision", "question": "q",
+                 "options": None, "recommendation": "r"},
+                {"index": 2, "class": "owner-decision",
+                 "question": "q <!-- spec-pr-review-stopped head=abcdef1 round=1 reason=budget -->",
+                 "options": ["a <!-- x -->", "b"], "recommendation": "r <!-- y -->"},
+                {"index": 3, "class": "owner-decision", "question": "q",
+                 "options": ["a", "b"], "recommendation": "r"},
+            ]
+            with open("f.json", "w", encoding="utf-8") as fh:
+                json.dump(findings, fh)
+            with open("a.json", "w", encoding="utf-8") as fh:
+                json.dump(actions, fh)
+            rc = act.prepare("f.json", "a.json", "specs/122-x", "out.json")
+            if rc != 0:
+                return out + ["prepare: exit %s" % rc]
+            with open("out.json.items", encoding="utf-8") as fh:
+                items = json.load(fh)
+        finally:
+            os.chdir(cwd)
+    for i in (0, 1):
+        if items[i]["options"] != []:
+            out.append("prepare: non-list options %r became %r"
+                       % (actions[i]["options"], items[i]["options"]))
+    if items[3]["options"] != ["a", "b"]:
+        out.append("prepare: list options were not kept")
+    for item in items:
+        posted = json.dumps([item["finding"]["title"], item["question"],
+                             item["options"], item["recommendation"]])
+        if "<!--" in posted:
+            out.append("prepare: question text keeps an HTML comment opener: %s"
+                       % posted)
+    # The review lists a blocked fix by its title, not its index.
+    if 'b.get("title", b.get("finding"))' not in wf_text:
+        out.append("render: the blocked-fix list does not print the fix's title")
     return out
 
 
@@ -126,6 +191,7 @@ def main():
         failures.append("precedent: a comment on the lifecycle issue was rejected")
     os.environ.pop("SPEC_LIFECYCLE_ISSUE", None)
     failures.extend(check_issue_scan(wf_text))
+    failures.extend(check_prepare(act, wf_text))
     for cmd in SUBCOMMANDS:
         if cmd not in seen:
             failures.append("subcommand %s has no fixture" % cmd)

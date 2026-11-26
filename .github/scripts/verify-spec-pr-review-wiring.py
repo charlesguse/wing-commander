@@ -14,6 +14,8 @@ Static structure only (yaml.safe_load plus text scans). Asserts:
   FR-016  the commit-status context is `spec-pr-review`, which differs from
           lifecycle-review-gate's; the failure state is the default and
           success is reachable only from "ready for the owner".
+  FR-019  the `select` job's checkout has full history (fetch-depth: 0),
+          so the stop-note re-arm can diff the stopped head.
   FR-020  the kill-switch variable is read in the `select` job.
   FR-022  no workflow_call trigger (no input, secret or output surface).
   FR-023  the cost line comes from the metrics-summary composite; the
@@ -93,6 +95,12 @@ def check(text):
         problems.append("FR-018: the select job does not read the stop note")
     if "wc_convergence.py rearmed" not in select_run:
         problems.append("FR-019: select does not re-arm through wc_convergence.py rearmed")
+    # FR-019: the re-arm diffs the stopped head against main, which a
+    # shallow checkout cannot do.
+    first = next((s for s in select.get("steps", [])
+                  if "actions/checkout" in str(s.get("uses", ""))), {})
+    if str((first.get("with") or {}).get("fetch-depth")) != "0":
+        problems.append("FR-019: the select job's checkout is shallow (needs fetch-depth: 0)")
     for s in act_steps:
         if "spec-pr-review-stopped" in str(s.get("with", {}).get("body", "")):
             break
@@ -117,6 +125,8 @@ def self_test(text):
         "select ignoring the stop note": text.replace("<!-- spec-pr-review-stopped head=(?<sha>",
                                                       "<!-- spec-pr-review-other head=(?<sha>", 1),
         "select without the rearm check": text.replace("wc_convergence.py rearmed", "wc_convergence.py other"),
+        "a shallow select checkout": text.replace("          fetch-depth: 0\n          persist-credentials: false\n\n      - name: Checkout this job's own trusted copy",
+                                                  "          persist-credentials: false\n\n      - name: Checkout this job's own trusted copy", 1),
         "no act step recording the stop note": text.replace("<!-- spec-pr-review-stopped head={0}",
                                                             "<!-- spec-pr-review-x head={0}", 1),
     }
