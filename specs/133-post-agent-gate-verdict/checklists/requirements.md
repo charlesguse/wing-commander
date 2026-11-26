@@ -1,0 +1,39 @@
+# Specification Quality Checklist: Post-agent full-suite verdict for implement cycles
+
+**Purpose**: Validate specification completeness and quality before proceeding to planning
+**Created**: 2026-11-26
+**Feature**: [spec.md](../spec.md)
+
+## Content Quality
+
+- [x] No implementation details (languages, frameworks, APIs)
+- [x] Focused on user value and business needs
+- [x] Written for non-technical stakeholders
+- [x] All mandatory sections completed
+
+## Requirement Completeness
+
+- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] Requirements are testable and unambiguous
+- [x] Success criteria are measurable
+- [x] Success criteria are technology-agnostic (no implementation details)
+- [x] All acceptance scenarios are defined
+- [x] Edge cases are identified
+- [x] Scope is clearly bounded
+- [x] Dependencies and assumptions identified
+
+## Feature Readiness
+
+- [x] All functional requirements have clear acceptance criteria
+- [x] User scenarios cover primary flows
+- [x] Feature meets measurable outcomes defined in Success Criteria
+- [x] No implementation details leak into specification
+
+## Notes
+
+- Two [NEEDS CLARIFICATION] markers remain (Edge Cases): missing-prerequisite
+  handling in the post-agent job, and whether spec 117's stall handoff also
+  waits on the verdict. They are posted to #1180 for the owner.
+- The spec names the gate runner, the credential boundary and the pipeline's
+  own stages because this repository's "users" are pipeline operators; those
+  names are the domain, not an implementation choice.
