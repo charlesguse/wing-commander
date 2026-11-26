@@ -1,0 +1,8 @@
+{
+  "mode": "extract-explanation",
+  "id": "bl-b9677278",
+  "input": {
+    "result": "Committed the fix; no block."
+  },
+  "expect": {}
+}

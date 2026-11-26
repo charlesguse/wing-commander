@@ -1,0 +1,12 @@
+{
+  "mode": "render-options",
+  "id": "bl-b9677278",
+  "expect": "ok",
+  "input": {
+    "parts": {
+      "options": {
+        "state": "follow"
+      }
+    }
+  }
+}

@@ -8,8 +8,11 @@ text goes through `fenced_section` (#580); labels and gap text are
 fixed and sit outside the fence.
 
 CLI: python3 -I wc_message_parts.py render-explanation|render-review|summary
-         --in FILE --id ID
-Exit 0 with the body on stdout; exit 2 on refusal.
+         |render-options --in FILE --id ID
+     python3 -I wc_message_parts.py extract-explanation --in TRANSCRIPT
+Exit 0 with the body on stdout; exit 2 on refusal. extract-explanation
+prints the fixer's explanation parts as one line of JSON and always
+exits 0 ({} when the transcript carries no usable block).
 """
 
 import argparse
@@ -47,6 +50,14 @@ CLOSING_RE = re.compile(
     r"\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[\s:]*"
     r"(?:[\w.-]+/[\w.-]+)?(?:#\d+|https?://\S+/(?:issues|pull)/\d+)",
     re.IGNORECASE)
+
+
+# The fenced block the board loop's fixer ends its final message with
+# (board-loop.yml's "Fixer" prompt); the loop supplies `line` itself.
+EXPLANATION_TAG = "wing-commander-explanation"
+AGENT_EXPLANATION_PARTS = ("code", "issue", "why_it_matters", "options",
+                           "what_this_pr_does")
+AGENT_PART_CAP = 8000
 
 
 class Refusal(Exception):
@@ -209,14 +220,94 @@ def render_summary(issue, pr, identifier, first_comment=""):
     return _cap("\n".join(out))
 
 
+def _capped(value):
+    return value[:AGENT_PART_CAP] if isinstance(value, str) else None
+
+
+def explanation_from_text(text):
+    """The fixer's explanation parts from its final message: the last
+    ```wing-commander-explanation``` block, kept to the agent's parts
+    (never `line`, which the loop quotes verbatim) and to string values
+    or an options `{"state": "follow", "text": ...}`. Anything else is
+    dropped, so the renderer shows it as a gap."""
+    from wc_fence_extract import extract_fenced_json
+    parsed, _err = extract_fenced_json(text, EXPLANATION_TAG)
+    if not isinstance(parsed, dict):
+        return {}
+    parts = {}
+    for key in AGENT_EXPLANATION_PARTS:
+        value = parsed.get(key)
+        if (key == "options" and isinstance(value, dict)
+                and value.get("state") == "follow"):
+            parts[key] = {"state": "follow",
+                          "text": _capped(value.get("text")) or ""}
+        elif _capped(value) is not None:
+            parts[key] = _capped(value)
+    return parts
+
+
+def explanation_from_transcript(path):
+    """explanation_from_text() of the last result record in a
+    claude-execution-output.json; {} when there is none."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            transcript = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    entries = transcript if isinstance(transcript, list) else [transcript]
+    results = [e for e in entries
+               if isinstance(e, dict) and e.get("type") == "result"]
+    if not results or not isinstance(results[-1].get("result"), str):
+        return {}
+    return explanation_from_text(results[-1]["result"])
+
+
+def explanation_parts(agent_parts, line, pr_title=""):
+    """The first comment's parts: the agent's, with `line` always the
+    loop's own verbatim text and `what_this_pr_does` falling back to the
+    PR title when the agent gave none."""
+    parts = {k: v for k, v in (agent_parts or {}).items()
+             if k in AGENT_EXPLANATION_PARTS}
+    parts["line"] = line
+    if normalize_part(parts.get("what_this_pr_does"))[0] != "filled":
+        if isinstance(pr_title, str) and pr_title.strip():
+            parts["what_this_pr_does"] = pr_title
+    return parts
+
+
+def options_follow(parts):
+    """True when the first comment's Options part says they follow
+    (FR-003), so the later options comment is owed."""
+    options = (parts or {}).get("options") if isinstance(parts, dict) else None
+    return normalize_part(options)[0] == "follow"
+
+
+def render_options(parts, identifier):
+    """The later comment FR-003 owes when Options said they follow: the
+    alternatives, fenced, or gap text naming that none were given."""
+    _check_identifier(identifier)
+    options = (parts or {}).get("options") if isinstance(parts, dict) else None
+    text = options.get("text") if isinstance(options, dict) else options
+    return _assemble(
+        "Board loop: the options for `{0}`, as the first comment said would "
+        "follow.".format(identifier), (("options", "Options"),),
+        {"options": text})
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "mode", choices=("render-explanation", "render-review", "summary",
-                         "render-incomplete"))
+                         "render-incomplete", "render-options",
+                         "extract-explanation"))
     parser.add_argument("--in", dest="infile", default="")
-    parser.add_argument("--id", dest="identifier", required=True)
+    parser.add_argument("--id", dest="identifier", default="")
     args = parser.parse_args(argv)
+    if args.mode == "extract-explanation":
+        sys.stdout.write(json.dumps(
+            explanation_from_transcript(args.infile), sort_keys=True,
+            separators=(",", ":")) + "\n")
+        return 0
     data = {}
     if args.infile:
         try:
@@ -227,13 +318,36 @@ def main(argv=None):
     if not isinstance(data, dict):
         data = {}
     try:
-        if args.mode == "render-explanation":
+        if args.mode == "render-explanation" and "line" in data:
+            # board-loop.yml's fix job: the fixer's parts plus the loop's
+            # own line text and PR title (explanation_parts()).
+            body = render_explanation(
+                explanation_parts(data.get("parts"), data["line"],
+                                  data.get("pr_title", "")),
+                args.identifier)
+        elif args.mode == "render-explanation":
             body = render_explanation(data.get("parts", data), args.identifier)
         elif args.mode == "render-review":
             body = render_review(data.get("parts", {}), args.identifier,
                                  data.get("findings", []))
         elif args.mode == "render-incomplete":
             body = render_incomplete_review(args.identifier)
+        elif args.mode == "render-options":
+            # Empty output when Options did not say they follow: no later
+            # comment is owed (FR-003).
+            parts = data.get("parts", data)
+            body = (render_options(parts, args.identifier)
+                    if options_follow(parts) else "")
+            if not body:
+                return 0
+        elif "parts" in data:
+            # board-loop.yml's "Open the PR": the fixer's parts, with the
+            # PR title standing in for an unfilled What this PR does.
+            parts = explanation_parts(data.get("parts"), "",
+                                      data.get("pr_title", ""))
+            body = render_summary(parts.get("issue"),
+                                  parts.get("what_this_pr_does"),
+                                  args.identifier)
         else:
             body = render_summary(data.get("issue"), data.get("pr"),
                                   args.identifier,

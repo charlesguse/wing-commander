@@ -1,0 +1,14 @@
+{
+  "mode": "extract-explanation",
+  "id": "bl-b9677278",
+  "input": {
+    "result": "An example first:\n```wing-commander-explanation\n{\"issue\": \"ignored\"}\n```\nCommitted the fix.\n\n```wing-commander-explanation\n{\"issue\": \"x\", \"options\": {\"state\": \"follow\", \"text\": \"A, B or C\"}}\n```\n"
+  },
+  "expect": {
+    "issue": "x",
+    "options": {
+      "state": "follow",
+      "text": "A, B or C"
+    }
+  }
+}

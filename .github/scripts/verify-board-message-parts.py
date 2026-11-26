@@ -27,13 +27,23 @@ import wc_message_parts as mp  # noqa: E402
 FIXTURES = os.path.join(HERE, "fixtures", "board-message-parts")
 PART_SETS = {"render-explanation": mp.EXPLANATION_PARTS,
              "render-review": mp.REVIEW_PARTS,
+             "render-incomplete": mp.REVIEW_PARTS,
+             "render-options": (("options", "Options"),),
              "summary": (("issue", "The issue"),
                          ("what_this_pr_does", "What this PR does"))}
 
 
 def render(mode, identifier, data):
+    if mode == "render-explanation" and "line" in data:
+        return mp.render_explanation(
+            mp.explanation_parts(data.get("parts"), data["line"],
+                                 data.get("pr_title", "")), identifier)
     if mode == "render-explanation":
         return mp.render_explanation(data.get("parts", data), identifier)
+    if mode == "render-incomplete":
+        return mp.render_incomplete_review(identifier)
+    if mode == "render-options":
+        return mp.render_options(data.get("parts", data), identifier)
     if mode == "render-review":
         return mp.render_review(data.get("parts", {}), identifier,
                                 data.get("findings", []))
@@ -48,7 +58,7 @@ def check_body(mode, identifier, body, data):
             problems.append("part {0!r} absent".format(label))
     if mode != "summary" and identifier not in body:
         problems.append("identifier {0} not named".format(identifier))
-    if mode == "render-review":
+    if mode in ("render-review", "render-incomplete"):
         if re.fullmatch(r"\W*No findings\.?\W*", body.strip()):
             problems.append("review reduces to a bare 'No findings'")
     if mp.utf16_len(body) > mp.TOTAL_BUDGET:
@@ -92,7 +102,19 @@ def _outside_fences(body):
     return "\n".join(out)
 
 
+def run_extract_case(name, fx):
+    """An extract-explanation fixture: the fixer's final message in, the
+    parts the loop keeps out (exactly)."""
+    got = mp.explanation_from_text(fx["input"].get("result", ""))
+    if got != fx["expect"]:
+        return ["{0}: extracted {1!r}, expected {2!r}".format(
+            name, got, fx["expect"])]
+    return []
+
+
 def run_case(name, mode, identifier, data, expect):
+    if mode == "extract-explanation":
+        return run_extract_case(name, {"input": data, "expect": expect})
     try:
         body = render(mode, identifier, data)
     except mp.Refusal:
@@ -116,7 +138,7 @@ def load_fixtures():
 def derived_cases(name, fx):
     """One part missing per part, an empty variant, and over-length."""
     mode = fx["mode"]
-    if mode == "summary":
+    if mode not in ("render-explanation", "render-review"):
         return
     key = "parts"
     for part, _label in PART_SETS[mode]:
@@ -238,6 +260,101 @@ def single_home_problems(texts):
             for name, text in texts for m in [PASTED_RE.search(text)] if m]
 
 
+BOARD_LOOP = os.path.join(WORKFLOWS, "board-loop.yml")
+
+
+def _step(text, name):
+    """The text of the step called `name` up to the next step, or ''."""
+    m = re.search(r"\n      - name: " + re.escape(name) + r"\n", text)
+    if not m:
+        return ""
+    end = text.find("\n      - name: ", m.end())
+    return text[m.end(): end if end != -1 else len(text)]
+
+
+def wiring_problems(text):
+    """T023 (FR-001..FR-004): the fixer is asked for every part it
+    supplies, in the block wc_message_parts reads; fix-agent extracts
+    them and hands them on; fix renders the first comment, the body
+    summary and the options comment from them, for issue items too."""
+    problems = []
+    fixer = _step(text, "Fixer")
+    if "```" + mp.EXPLANATION_TAG not in fixer:
+        problems.append("Fixer prompt does not ask for a ```{0}``` block"
+                        .format(mp.EXPLANATION_TAG))
+    for part in mp.AGENT_EXPLANATION_PARTS:
+        if '"{0}"'.format(part) not in fixer:
+            problems.append("Fixer prompt does not ask for part {0!r}"
+                            .format(part))
+    if '"state": "follow"' not in fixer:
+        problems.append("Fixer prompt does not offer options state follow")
+    extract = _step(text, "Extract the fixer's explanation parts")
+    if "wc_message_parts.py\" extract-explanation" not in extract:
+        problems.append("fix-agent does not extract the explanation parts "
+                        "with wc_message_parts.py extract-explanation")
+    if "explain-parts: ${{ steps.explain-extract.outputs.parts }}" not in text:
+        problems.append("fix-agent does not output explain-parts")
+    consumer = "${{ needs.fix-agent.outputs.explain-parts }}"
+    opener = _step(text, "Open the PR")
+    if consumer not in opener or "wc_message_parts.py\" summary" not in opener:
+        problems.append("Open the PR does not render the body summary from "
+                        "explain-parts")
+    explain = _step(text, "Explain the line on the PR (fix)")
+    if consumer not in explain:
+        problems.append("Explain the line on the PR (fix) does not read "
+                        "explain-parts")
+    if "wc_message_parts.py\" render-options" not in explain:
+        problems.append("Explain the line on the PR (fix) never posts the "
+                        "options comment")
+    m = re.search(r"(?:^|\n)        if: ([^\n]*)", explain)
+    if m and "BOARD_LINE_ID" in m.group(1):
+        problems.append("Explain the line on the PR (fix) skips issue items "
+                        "(FR-001a)")
+    return problems
+
+
+def wiring_check():
+    try:
+        with open(BOARD_LOOP, encoding="utf-8") as fh:
+            return wiring_problems(fh.read())
+    except OSError as exc:
+        return ["board-loop.yml unreadable: {0}".format(exc)]
+
+
+def wiring_self_test():
+    """Each wiring branch is caught on a mutated board-loop.yml."""
+    with open(BOARD_LOOP, encoding="utf-8") as fh:
+        text = fh.read()
+    failed = []
+    if wiring_problems(text):
+        failed.append("sound board-loop.yml flagged")
+    mutations = {
+        "missing explanation tag": ("```" + mp.EXPLANATION_TAG, "```x"),
+        "missing why_it_matters ask": ('"why_it_matters": "why', '"w": "why'),
+        "missing follow offer": ('"state": "follow"', '"state": "x"'),
+        "no extract step": ("extract-explanation --in", "x --in"),
+        "no explain-parts output":
+            ("explain-parts: ${{ steps.explain-extract", "x: ${{ steps.e"),
+        "no options comment": ("render-options --in", "x --in"),
+        "issue items skipped":
+            ("        if: steps.push-pr.outputs.pr-url != ''\n        env:\n"
+             "          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}\n"
+             "          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}\n"
+             "          PR_NUMBER",
+             "        if: steps.push-pr.outputs.pr-url != '' && "
+             "env.BOARD_LINE_ID != ''\n        env:\n"
+             "          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}\n"
+             "          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}\n"
+             "          PR_NUMBER"),
+    }
+    for label, (old, new) in mutations.items():
+        if old not in text:
+            failed.append("{0} (mutation target gone)".format(label))
+        elif not wiring_problems(text.replace(old, new)):
+            failed.append(label)
+    return failed
+
+
 def single_home_check():
     texts = []
     for path in sorted(glob.glob(os.path.join(WORKFLOWS, "*.yml"))):
@@ -300,6 +417,7 @@ def self_test():
     except mp.Refusal:
         pass
     failed += registry_self_test()
+    failed += wiring_self_test()
     if not single_home_problems([("x.yml", "echo '**Why it matters**'")]):
         failed.append("pasted renderer label accepted")
     return failed
@@ -314,7 +432,8 @@ def main(argv):
         if not failed:
             print("verify-board-message-parts self-test: every mutation caught")
         return 1 if failed else 0
-    problems = check_all() + registry_check() + single_home_check()
+    problems = (check_all() + registry_check() + single_home_check()
+                + wiring_check())
     for problem in problems:
         print("::error::verify-board-message-parts: {0}".format(problem))
     if not problems:

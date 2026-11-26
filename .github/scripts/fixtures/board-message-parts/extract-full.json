@@ -1,0 +1,14 @@
+{
+  "mode": "extract-explanation",
+  "id": "bl-b9677278",
+  "input": {
+    "result": "Committed the fix.\n\n```wing-commander-explanation\n{\"code\": \"board-loop.yml, step \\\"Post the review comment\\\"\", \"issue\": \"A clean review and an empty review read the same.\", \"why_it_matters\": \"The owner cannot tell a checked PR from an unchecked one.\", \"options\": \"Keep the bare line; or list what was checked.\", \"what_this_pr_does\": \"Lists what was checked.\", \"line\": \"the agent may not supply the line\"}\n```\n"
+  },
+  "expect": {
+    "code": "board-loop.yml, step \"Post the review comment\"",
+    "issue": "A clean review and an empty review read the same.",
+    "why_it_matters": "The owner cannot tell a checked PR from an unchecked one.",
+    "options": "Keep the bare line; or list what was checked.",
+    "what_this_pr_does": "Lists what was checked."
+  }
+}
