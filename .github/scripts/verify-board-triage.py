@@ -1994,6 +1994,8 @@ def run():
     problems.extend(_mutation_check_defer_wiring(board_loop_text))
 
     problems.extend(run_any_run_url_cases())
+    problems.extend(run_run_url_case_cases())
+    problems.extend(run_run_url_single_home_cases())
 
     for problem in problems:
         print("::error::verify-board-triage: {0}".format(problem))
@@ -2021,6 +2023,71 @@ def run_any_run_url_cases():
                 text, got, expected))
     if not problems:
         print("[ok] any_run_url_pattern: any repository, job links, repository and run id captured")
+    return problems
+
+
+def run_run_url_case_cases():
+    """#889 (found by the code review of #1131): GitHub owner and repository
+    names are case-insensitive, so a run link written in other casing is
+    still this repository's run; another repository's run is still not."""
+    pattern = re.compile(board_triage.run_url_pattern("Own/Repo"))
+    cases = [
+        ("see https://github.com/own/repo/actions/runs/123 ok", "https://github.com/own/repo/actions/runs/123"),
+        ("https://github.com/OWN/REPO/actions/runs/7", "https://github.com/OWN/REPO/actions/runs/7"),
+        ("https://github.com/own/other/actions/runs/7", None),
+        ("https://github.com/own/repo/ACTIONS/runs/7", None),
+    ]
+    problems = []
+    for text, expected in cases:
+        match = pattern.search(text)
+        got = match.group(0) if match else None
+        if got != expected:
+            problems.append("run_url_pattern('Own/Repo') on {0!r}: got {1}, expected {2}".format(
+                text, got, expected))
+    cited = board_triage.find_cited_run("see https://github.com/OWN/repo/actions/runs/9", "own/REPO")
+    if cited != "https://github.com/OWN/repo/actions/runs/9":
+        problems.append("find_cited_run missed a run link in other casing: got {0!r}".format(cited))
+    if not problems:
+        print("[ok] run_url_pattern: owner/repo match in any letter case, other repositories still refused")
+    return problems
+
+
+def run_url_literals(source):
+    """The string literals of `source` (docstrings excluded) that spell a
+    run link's `actions/runs` path."""
+    import ast
+    tree = ast.parse(source)
+    docstrings = {id(node.body[0].value) for node in ast.walk(tree)
+                  if isinstance(node, (ast.Module, ast.FunctionDef, ast.ClassDef, ast.AsyncFunctionDef))
+                  and node.body and isinstance(node.body[0], ast.Expr)
+                  and isinstance(node.body[0].value, ast.Constant)}
+    return [node.value for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+            and id(node) not in docstrings and "actions/runs" in node.value]
+
+
+def run_run_url_single_home_cases(path=None):
+    """CLAUDE.md "Shared logic has exactly one home" (#889, found by the
+    code review of #1154): board_triage.py spells the run-link path in one
+    literal, _RUN_URL_TEMPLATE, which run_url_pattern() and
+    any_run_url_pattern() both fill in. A mutant that re-types the pattern
+    in a second literal must be refused."""
+    path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), "board_triage.py")
+    with open(path, encoding="utf-8") as fh:
+        source = fh.read()
+    problems = []
+    literals = run_url_literals(source)
+    if len(literals) != 1 or literals[0] != board_triage._RUN_URL_TEMPLATE:
+        problems.append("board_triage.py spells the run-link path in {0} literal(s), expected only "
+                        "_RUN_URL_TEMPLATE: {1}".format(len(literals), literals))
+    mutant = source.replace(
+        'return _RUN_URL_TEMPLATE.format(repository="([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)",',
+        'return r"https://github\\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/actions/runs/([0-9]+)" or '
+        '_RUN_URL_TEMPLATE.format(repository="([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)",', 1)
+    if mutant == source or len(run_url_literals(mutant)) == 1:
+        problems.append("the run-link single-home check does not refuse a re-typed pattern")
+    if not problems:
+        print("[ok] run-link pattern: one literal in board_triage.py, a re-typed copy is refused")
     return problems
 
 

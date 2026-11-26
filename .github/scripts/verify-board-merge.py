@@ -173,7 +173,8 @@ def _verification_run(head, run_id=1):
     """What fetch_snapshot() reads for a run that confirms a record at `head`."""
     return {"id": run_id, "path": board_merge.AUTO_UPDATE_WRAPPER_PATH, "event": "schedule",
             "head_branch": "main", "repository": "o/r", "status": "completed", "conclusion": "success",
-            "referenced_workflows": ["o/r/{0}@abc0123".format(board_merge.AUTO_UPDATE_STAGE_PATH)],
+            "referenced_workflows": [{"path": "o/r/{0}@abc0123".format(board_merge.AUTO_UPDATE_STAGE_PATH),
+                                      "ref": "refs/heads/main"}],
             "artifacts": [board_merge.BUMP_VERIFICATION_ARTIFACT_PREFIX + head]}
 
 
@@ -1014,6 +1015,7 @@ def check_889_findings():
     for problem in verified_head_upload_problems(stage):
         fail("{0}: {1}".format(AUTO_UPDATE, problem))
     check_verification_run_read_warns()
+    check_verification_run_keeps_ref()
 
 
 def verified_head_upload_problems(stage):
@@ -1059,6 +1061,41 @@ def check_verification_run_read_warns():
         fail("an unreadable verification run is not reported on stderr (got {0!r})".format(err.getvalue()))
     else:
         ok("an unreadable verification run fails closed and names the refusal")
+
+
+def check_verification_run_keeps_ref():
+    """#889 (found by the code review of #1084): the snapshot carries each
+    called workflow's resolved `ref` beside its path, and a run whose stage
+    call resolved to a ref other than main does not confirm a record, even
+    with head_branch main. The shape is the Actions API's (a schedule run
+    of the wrapper on main: path `<repo>/<stage>@<sha>`, ref refs/heads/main)."""
+    import json as _json
+    api_run = {"id": 9, "path": board_merge.AUTO_UPDATE_WRAPPER_PATH, "event": "schedule",
+               "head_branch": "main", "repository": {"full_name": "o/r"}, "status": "completed",
+               "conclusion": "success",
+               "referenced_workflows": [{"path": "o/r/{0}@abc0123".format(board_merge.AUTO_UPDATE_STAGE_PATH),
+                                         "ref": "refs/heads/main", "sha": "abc0123"}]}
+    head = "cccc333"
+    saved_gh, saved_items = board_merge._gh, board_merge._gh_items
+    board_merge._gh = lambda args, token=None: _json.dumps(api_run)
+    board_merge._gh_items = lambda path, token, jq: [
+        {"name": board_merge.BUMP_VERIFICATION_ARTIFACT_PREFIX + head}]
+    try:
+        run = board_merge._fetch_verification_run("o/r", {"run_id": "9"}, "t")
+    finally:
+        board_merge._gh, board_merge._gh_items = saved_gh, saved_items
+    record = {"run_id": "9", "head_sha": head, "result": "passed"}
+    problems = []
+    if not board_merge.verification_run_confirms(record, run, head):
+        problems.append("a fetched main run calling the stage from main does not confirm its record")
+    for ref in ("refs/heads/attacker-branch", None):
+        other = dict(run, referenced_workflows=[dict(w, ref=ref) for w in run["referenced_workflows"]])
+        if board_merge.verification_run_confirms(record, other, head):
+            problems.append("a run whose stage call resolved to {0!r} confirms a record".format(ref))
+    for problem in problems:
+        fail(problem)
+    if not problems:
+        ok("the verification run's stage call must resolve to refs/heads/main")
 
 
 def check_auto_update():
