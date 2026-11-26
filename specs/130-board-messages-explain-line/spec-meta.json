@@ -2,13 +2,11 @@
   "issue": 1215,
   "spec_dir": "specs/130-board-messages-explain-line",
   "feature_num": "130",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 10,
   "spec_branch": "spec/130-board-messages-explain-line",
   "truncated_count": 0,
   "truncated_tier": null,
   "gate_suite_ready": true,
-  "pending_re_review_from": [
-    "charlesguse"
-  ]
+  "pending_re_review_from": []
 }
