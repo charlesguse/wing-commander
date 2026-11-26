@@ -33,6 +33,20 @@ verdict, and the cycle's "converged" decision — which today reads only whether
 tasks.md has unchecked tasks — hands the spec to finalize without any full
 suite having judged the head that is handed off.
 
+## Clarifications
+
+### Session 2026-11-26
+
+- Q: Should a converging cycle whose post-agent suite cannot run because a
+  prerequisite is missing be held not converged, or converge with a visible
+  "suite skipped" note? → A: If the repository has a gate suite, hold it not
+  converged (fail closed); an adopter repository with no suite converges on
+  tasks alone (FR-013).
+- Q: Does spec 117's stall hand-off to finalize also wait on a passing
+  post-agent verdict? → A: The post-agent full suite also runs on the stall
+  hand-off; its verdict goes to finalize as information and does not block the
+  hand-off (FR-014).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A converging cycle is judged by the full suite before hand-off (Priority: P1)
@@ -70,6 +84,15 @@ convergence and the hand-off to finalize.
 4. **Given** the post-agent gate job hangs, is cancelled, crashes, or leaves no
    readable verdict bound to the pushed head, **When** convergence is decided,
    **Then** the cycle is treated as not converged, never as converged.
+5. **Given** a repository with the local gate suite and a converging cycle
+   whose post-agent suite cannot run because a prerequisite or the pipeline
+   checkout is missing, **When** convergence is decided, **Then** the cycle is
+   recorded not converged and the reason names the missing prerequisite.
+6. **Given** a cycle that stalls with only human-only work left (spec 117's
+   hand-off), **When** the hand-off to finalize happens, **Then** the
+   post-agent suite runs on the handed-off head and its verdict reaches
+   finalize as information, and a red or missing verdict does not stop the
+   hand-off.
 
 ---
 
@@ -140,16 +163,17 @@ and quote the first failing gate.
 - The repository has no local gate suite (an adopter repository): no
   post-agent suite runs and convergence is decided by tasks alone, as today.
 - The suite's prerequisites, or the pipeline checkout the job needs, are
-  missing from the job's environment:
-  [NEEDS CLARIFICATION: should a converging cycle whose post-agent suite cannot
-  run because a prerequisite is missing (a) be held not converged, or (b)
-  converge with a visible "suite skipped — missing prerequisite" note, as the
-  cycle-start job degrades today?]
+  missing from the job's environment: in a repository that has the local gate
+  suite, a cycle that would converge is held not converged (fail closed) and
+  the reason names the missing prerequisite; it does not degrade to a skip the
+  way the cycle-start job does. A repository with no local gate suite still
+  converges on tasks alone (owner answer on #1180, 2026-11-26, Q1).
 - The cycle hands off early to finalize because it stalled with only
-  human-only work left (spec 117's handoff), rather than converging:
-  [NEEDS CLARIFICATION: does a stall handoff to finalize also wait on a passing
-  post-agent verdict, or does the post-agent suite run only on a cycle that
-  converges, leaving handoffs unchanged?]
+  human-only work left (spec 117's handoff), rather than converging: the
+  post-agent full suite also runs on the head being handed off, and its
+  verdict is passed to finalize as information. It does not block the
+  hand-off — a red, absent or unrunnable verdict is reported, not used to hold
+  the cycle (owner answer on #1180, 2026-11-26, Q2).
 
 ## Requirements *(mandatory)*
 
@@ -164,7 +188,8 @@ and quote the first failing gate.
   separate from the job holding the App token — the boundary spec 095 (FR-001,
   FR-005) sets for every gate-suite call site.
 - **FR-003**: The post-agent suite MUST NOT run on a cycle that would not
-  converge (tasks unchecked, truncated, or failed).
+  converge (tasks unchecked, truncated, or failed), except for spec 117's
+  stall hand-off to finalize, which FR-014 governs.
 - **FR-004**: A cycle MUST be recorded converged only when the post-agent
   verdict is a pass bound to the head being handed off. A red verdict, or a
   verdict that is absent, unreadable, malformed or bound to a different head,
@@ -196,14 +221,31 @@ and quote the first failing gate.
 - **FR-012**: The live reference documentation MUST describe the post-agent
   gate job, its budget and its effect on convergence, as docs/reference.md
   requires of changes to a stage's loops and limits.
+- **FR-013**: In a repository that has the local gate suite, when the
+  post-agent suite cannot run because a prerequisite or the pipeline checkout
+  the job needs is missing, a cycle that would converge MUST be recorded not
+  converged (fail closed), and the non-convergence reason MUST name the
+  missing prerequisite. It MUST NOT degrade to a converged cycle with a
+  "suite skipped" note. A repository with no local gate suite MUST still
+  converge on tasks alone, with no post-agent suite run.
+- **FR-014**: When a cycle hands off early to finalize under spec 117's stall
+  hand-off, the post-agent full suite MUST also run on the head being handed
+  off, in the same credential-free context as FR-002, and its verdict (pass or
+  fail, first failing gate, head judged) MUST be passed to finalize as
+  information. The verdict MUST NOT block or delay the hand-off: a red,
+  absent, unreadable or unrunnable verdict is reported to finalize as such,
+  and the hand-off proceeds as it does today.
 
 ### Key Entities
 
 - **Post-agent verdict**: the result of one full-suite run on a cycle's pushed
   head — pass or fail, the first failing gate's text, and the head it judged.
 - **Converging cycle**: a completed, non-truncated implement attempt whose
-  pushed head has zero unchecked tasks; the only kind of cycle the post-agent
-  suite judges.
+  pushed head has zero unchecked tasks; the only kind of cycle whose
+  convergence the post-agent verdict decides.
+- **Stall hand-off**: spec 117's early hand-off to finalize when only
+  human-only work is left; the post-agent suite also judges its head, but the
+  verdict is information for finalize, not a gate on the hand-off.
 
 ## Success Criteria *(mandatory)*
 
@@ -219,7 +261,13 @@ and quote the first failing gate.
   10-minute tool limit.
 - **SC-004**: No job that runs the post-agent suite holds a credential able to
   write to the repository.
-- **SC-005**: Cycles that do not converge incur no additional full-suite run.
+- **SC-005**: Cycles that do not converge incur no additional full-suite run,
+  except a spec 117 stall hand-off to finalize, which incurs exactly one.
+- **SC-006**: In a repository with the local gate suite, 0% of cycles whose
+  post-agent suite could not run are recorded converged.
+- **SC-007**: 100% of spec 117 stall hand-offs to finalize carry a post-agent
+  verdict (or a report that none could be produced) to finalize, and none is
+  delayed or blocked by it.
 
 ## Assumptions
 

@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,11 @@
 
 ## Notes
 
-- Two [NEEDS CLARIFICATION] markers remain (Edge Cases): missing-prerequisite
-  handling in the post-agent job, and whether spec 117's stall handoff also
-  waits on the verdict. They are posted to #1180 for the owner.
+- Both [NEEDS CLARIFICATION] markers were resolved by the owner's answer on
+  #1180 (2026-11-26): a missing prerequisite fails closed in a repository with
+  a gate suite (FR-013), and spec 117's stall hand-off also runs the
+  post-agent suite, with its verdict passed to finalize as information only
+  (FR-014).
 - The spec names the gate runner, the credential boundary and the pipeline's
   own stages because this repository's "users" are pipeline operators; those
   names are the domain, not an implementation choice.
