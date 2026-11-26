@@ -681,6 +681,29 @@ def self_test():
                       lambda n: "closed") == [],
            "check-open looks nothing up for a permanent entry")
 
+    # specs/132 FR-013: the zizmor accepted-findings register is found by
+    # its name alone, in its own record shape, and a closed tracker it
+    # cites fails --check-open like any other register's.
+    zz = {SCRIPTS_DIR + "/zizmor-findings-waivers.json": json.dumps({
+        "waivers": [{"file": ".github/workflows/a.yml",
+                     "audit": "dangerous-triggers", "location": "workflow",
+                     "reason": "r", "control": "author-association",
+                     "issue": "#889", "decided_by": "#1188"}]})}
+    root = _tree(zz)
+    try:
+        zz_entries, zz_failures = collect(root)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    report(not zz_failures and [e.issues for e in zz_entries] == [[889]],
+           "zizmor-findings-waivers.json is discovered by name, its record "
+           "shape accepted", "entries {0}, failures {1}".format(
+               [e.issues for e in zz_entries], zz_failures))
+    zz_closed = check_open(zz_entries, lambda n: "closed")
+    report(any("zizmor-findings-waivers.json" in f and "cites #889, which "
+               "is CLOSED" in f for f in zz_closed),
+           "check-open: a closed tracker in the zizmor register fails",
+           "failures: {0}".format(zz_closed or "none"))
+
     # gh_issue_state, with subprocess.run stubbed.
     saved_env = os.environ.get("GITHUB_REPOSITORY")
     saved_run = subprocess.run

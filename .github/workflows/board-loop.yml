@@ -1205,8 +1205,11 @@ jobs:
           && steps.recovery-killswitch-recheck.outputs.paused != 'true'
           && steps.recovery-busy-check.outcome == 'success'
           && steps.recovery-busy-check.outputs.busy == 'true'
+        env:
+          RECOVERY_ISSUE: ${{ steps.recovery-candidate.outputs.issue-number }}
+          RECOVERY_REASON: ${{ steps.recovery-candidate.outputs.outcome-reason }}
         run: |
-          echo "board-loop: issue #${{ steps.recovery-candidate.outputs.issue-number }}'s stranded prove (${{ steps.recovery-candidate.outputs.outcome-reason }}) stays recoverable -- the directed-proof group is busy this tick (FR-011a)." >> "$GITHUB_STEP_SUMMARY"
+          echo "board-loop: issue #${RECOVERY_ISSUE}'s stranded prove (${RECOVERY_REASON}) stays recoverable -- the directed-proof group is busy this tick (FR-011a)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dispatch the recovered prove (FR-011)
         id: recovery-dispatch
@@ -1750,25 +1753,33 @@ jobs:
       - name: Determine this run's outcome for the metrics record
         id: outcome
         if: always()
+        env:
+          KILLSWITCH_STATUS: ${{ steps.killswitch.outputs.status }}
+          STAND_DOWN_STATUS: ${{ steps.stand-down.outputs.status }}
+          SELECT_OUTCOME: ${{ steps.select.outcome }}
+          RESUME_OUTCOME: ${{ steps.resume.outcome }}
+          LINE_ID: ${{ steps.line.outputs.line-id }}
+          LINE_ISSUE: ${{ steps.line.outputs.issue-number }}
+          SELECTED_ISSUE: ${{ steps.select.outputs.issue-number }}
         run: |
           set -uo pipefail
-          if [ "${{ steps.killswitch.outputs.status }}" = "paused" ]; then
+          if [ "$KILLSWITCH_STATUS" = "paused" ]; then
             label="kill switch"
-          elif [ "${{ steps.stand-down.outputs.status }}" = "in-flight" ]; then
+          elif [ "$STAND_DOWN_STATUS" = "in-flight" ]; then
             label="implement cycle in flight"
-          elif [ "${{ steps.select.outcome }}" = "failure" ]; then
+          elif [ "$SELECT_OUTCOME" = "failure" ]; then
             # #557: a failed read is not "no eligible issue".
             label="selection failed"
-          elif [ "${{ steps.resume.outcome }}" = "failure" ] && [ -n "${{ steps.line.outputs.line-id }}" ]; then
-            label="resume failed for backlog line ${{ steps.line.outputs.line-id }} on #${{ steps.line.outputs.issue-number }}"
-          elif [ "${{ steps.resume.outcome }}" = "failure" ]; then
-            label="resume failed for issue #${{ steps.select.outputs.issue-number }}"
-          elif [ -n "${{ steps.line.outputs.line-id }}" ]; then
-            label="selected backlog line ${{ steps.line.outputs.line-id }} on #${{ steps.line.outputs.issue-number }}"
-          elif [ -z "${{ steps.select.outputs.issue-number }}" ]; then
+          elif [ "$RESUME_OUTCOME" = "failure" ] && [ -n "$LINE_ID" ]; then
+            label="resume failed for backlog line $LINE_ID on #$LINE_ISSUE"
+          elif [ "$RESUME_OUTCOME" = "failure" ]; then
+            label="resume failed for issue #$SELECTED_ISSUE"
+          elif [ -n "$LINE_ID" ]; then
+            label="selected backlog line $LINE_ID on #$LINE_ISSUE"
+          elif [ -z "$SELECTED_ISSUE" ]; then
             label="no eligible issue"
           else
-            label="selected issue #${{ steps.select.outputs.issue-number }}"
+            label="selected issue #$SELECTED_ISSUE"
           fi
           echo "label=$label" >> "$GITHUB_OUTPUT"
 
@@ -7335,6 +7346,8 @@ jobs:
           DISAMBIGUATED_REASON: ${{ steps.disambiguate.outputs.reason }}
           STOP_CAUSE_RUN_LABEL: ${{ steps.killswitch-recheck.outputs.stop-cause-run-label }}
           RECOVERY: ${{ inputs.directed-recovery }}
+          RECHECK_PAUSED: ${{ steps.killswitch-recheck.outputs.paused }}
+          ACTIONS_ONLY: ${{ steps.decide.outputs.actions-only }}
         run: |
           set -uo pipefail
           # specs/097-recorded-stop-point FR-014/FR-015: name the cause
@@ -7343,9 +7356,9 @@ jobs:
           # "stood down" for every cause. Read from the wing-commander-
           # board-stop-check composite's own `stop-cause-run-label` output,
           # the one home for this suffix (maintainer review fold leg-2).
-          if [ "${{ steps.killswitch-recheck.outputs.paused }}" = "true" ]; then
+          if [ "$RECHECK_PAUSED" = "true" ]; then
             label="prove: $STOP_CAUSE_RUN_LABEL"
-          elif [ "${{ steps.decide.outputs.actions-only }}" != "true" ]; then
+          elif [ "$ACTIONS_ONLY" != "true" ]; then
             if [ "$RECOVERY" = "true" ]; then
               label="closed on merge evidence alone (recovered)"
             else

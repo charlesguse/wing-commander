@@ -1,3 +1,139 @@
 {
-  "waivers": []
+  "waivers": [
+    {
+      "file": ".github/workflows/wing-commander-2-clarify.yml",
+      "audit": "dangerous-triggers",
+      "location": "workflow",
+      "reason": "issue_comment drives clarify answers. The job runs only on a non-PR issue labelled spec: and stage:spec or stage:clarify, for a non-bot commenter who is OWNER, MEMBER or COLLABORATOR or the issue's author; the workflow-level token is permissions: {}.",
+      "control": "author-association",
+      "issue": "#889",
+      "decided_by": "#1188"
+    },
+    {
+      "file": ".github/workflows/wing-commander-8-watchdog.yml",
+      "audit": "dangerous-triggers",
+      "location": "workflow",
+      "reason": "workflow_run on the stage wrappers. It inspects runs of this repository's own workflows and checks out no code from the triggering run; the workflow-level token is permissions: {} and the WING_COMMANDER_WATCHDOG_PAUSED kill switch gates every job.",
+      "control": "permissions-empty",
+      "issue": "#889",
+      "decided_by": "#1188"
+    },
+    {
+      "file": ".github/workflows/wing-commander-8b-watchdog-self.yml",
+      "audit": "dangerous-triggers",
+      "location": "workflow",
+      "reason": "workflow_run on the watchdog itself, to verify its run. It reads run metadata only and checks out no code from the triggering run; the workflow-level token is permissions: {} and the WING_COMMANDER_WATCHDOG_PAUSED kill switch gates the job.",
+      "control": "permissions-empty",
+      "issue": "#889",
+      "decided_by": "#1188"
+    },
+    {
+      "file": ".github/workflows/wing-commander-9-pr-conversation.yml",
+      "audit": "dangerous-triggers",
+      "location": "workflow",
+      "reason": "issue_comment and pull_request_review events drive PR conversation. Bot authors are skipped in the wrapper, and the stage acts only when the commenter's author_association passes its FR-019 check; the workflow-level token is permissions: {}.",
+      "control": "author-association",
+      "issue": "#889",
+      "decided_by": "#1188"
+    },
+    {
+      "file": ".github/workflows/wing-commander-9b-fold-cycle-guard.yml",
+      "audit": "dangerous-triggers",
+      "location": "workflow",
+      "reason": "workflow_run on the implement wrapper. The job runs only when that run was cancelled, re-dispatches it at most once and checks out no code from the triggering run; the workflow-level token is permissions: {}.",
+      "control": "permissions-empty",
+      "issue": "#889",
+      "decided_by": "#1188"
+    },
+    {
+      "file": ".github/workflows/wing-commander-auto-update-spec-kit.yml",
+      "audit": "dangerous-triggers",
+      "location": "workflow",
+      "reason": "issue_comment resumes a Spec Kit update question. A comment is acted on only on a non-PR issue carrying the auto-update:tracking label or marker, from a non-bot commenter the stage verifies as OWNER, MEMBER, COLLABORATOR or the issue's author; the workflow-level token is permissions: {} and WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED stops it.",
+      "control": "author-association",
+      "issue": "#889",
+      "decided_by": "#1188"
+    },
+    {
+      "file": ".github/workflows/wing-commander-metrics-persist.yml",
+      "audit": "dangerous-triggers",
+      "location": "workflow",
+      "reason": "workflow_run on the stage wrappers, to record each run's metrics. It reads run metadata and artifacts as data and checks out no code from the triggering run; the workflow-level token is permissions: {} and WING_COMMANDER_METRICS_PAUSED stops it.",
+      "control": "permissions-empty",
+      "issue": "#889",
+      "decided_by": "#1188"
+    },
+    {
+      "file": ".github/actions/_shared/scoped-app-token/action.yml",
+      "audit": "github-app",
+      "location": "workflow",
+      "reason": "The token is minted with owner and repositories set, so it reaches one named repository only. Its permissions are the App installation's configured set; the callers need different subsets, so narrowing them here is a separate change.",
+      "control": "repository-scoped-token",
+      "issue": "#889",
+      "decided_by": "#1188"
+    },
+    {
+      "file": ".github/actions/wing-commander-context/action.yml",
+      "audit": "github-app",
+      "location": "workflow",
+      "reason": "The token is minted for the running repository only. Its permissions are the App installation's configured set, which the published stages document as the App's required permissions; narrowing them per stage is a separate change.",
+      "control": "repository-scoped-token",
+      "issue": "#889",
+      "decided_by": "#1188"
+    },
+    {
+      "file": ".github/workflows/auto-update-spec-kit-scratch-preflight.yml",
+      "audit": "github-app",
+      "location": "job:scratch-preflight/step:target-token",
+      "reason": "The token is minted with owner and repositories set to the one scratch repository the readiness check reads. Its permissions are the App installation's configured set.",
+      "control": "repository-scoped-token",
+      "issue": "#889",
+      "decided_by": "#1188"
+    },
+    {
+      "file": ".github/actions/wing-commander-context/action.yml",
+      "audit": "github-env",
+      "location": "workflow",
+      "reason": "Writes WC_BOT_TOKEN, the token minted in the step before, to GITHUB_ENV. The value comes from the App token action, not from event or user input.",
+      "control": "fixed-value",
+      "issue": "#889",
+      "decided_by": "#1188"
+    },
+    {
+      "file": ".github/actions/wing-commander-install-actionlint/action.yml",
+      "audit": "github-env",
+      "location": "workflow",
+      "reason": "Appends the fixed directory $RUNNER_TEMP/bin to GITHUB_PATH after installing actionlint there. No event or user input reaches the value.",
+      "control": "fixed-value",
+      "issue": "#889",
+      "decided_by": "#1188"
+    },
+    {
+      "file": ".github/actions/wing-commander-chain-stop-notice/action.yml",
+      "audit": "artipacked",
+      "location": "workflow",
+      "reason": "The spec-branch checkout keeps its credential because a later step in the same composite commits and pushes spec-meta.json to that branch.",
+      "control": "push-needs-credential",
+      "issue": "#889",
+      "decided_by": "#1188"
+    },
+    {
+      "file": ".github/workflows/migrate-stranded-review-lifecycles.yml",
+      "audit": "artipacked",
+      "location": "job:migrate/step:#0",
+      "reason": "Manually dispatched job that fetches and pushes the spec branch it migrates, so the checkout keeps its credential.",
+      "control": "push-needs-credential",
+      "issue": "#889",
+      "decided_by": "#1188"
+    },
+    {
+      "file": ".github/workflows/release.yml",
+      "audit": "artipacked",
+      "location": "job:release/step:Checkout",
+      "reason": "The release job pushes the release tag and the moving major tag with git push, so the checkout keeps its credential.",
+      "control": "push-needs-credential",
+      "issue": "#889",
+      "decided_by": "#1188"
+    }
+  ]
 }

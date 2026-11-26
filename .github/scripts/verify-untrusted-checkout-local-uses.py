@@ -180,6 +180,99 @@ PR_HEAD = {"uses": "actions/checkout@v5",
 LOCAL = {"uses": "./.github/actions/x"}
 
 
+def _real_step(docs, fname, job_id, pred):
+    for step in docs[fname]["jobs"][job_id]["steps"]:
+        if pred(step or {}):
+            return step
+    raise LookupError("the step this mutation needs is gone from {0} job {1}; "
+                      "update the self-test alongside the workflow."
+                      .format(fname, job_id))
+
+
+def _mut_consumer_raw_reference(docs):
+    """pr-conversation.yml's act job resolves its outstanding-task-item
+    composite from the PR branch it checked out at the root."""
+    step = _real_step(docs, "pr-conversation.yml", "act", lambda s: (
+        "wing-commander-outstanding-task-item" in str(s.get("uses", ""))))
+    step["uses"] = "./.github/actions/wing-commander-outstanding-task-item"
+
+
+def _mut_untrusted_root_ref(docs):
+    """shared-pr-reviewer.yml's find job checks the PR head out at the root
+    instead of the commit its composites come from."""
+    step = _real_step(docs, "shared-pr-reviewer.yml", "find", lambda s: (
+        str(s.get("uses", "")).startswith("actions/checkout@")))
+    step["with"] = dict(step.get("with") or {},
+                        ref="${{ needs.prepare.outputs.head-sha }}")
+
+
+def _mut_side_checkout_moved_to_root(docs):
+    """The watchdog's metrics-branch checkout loses its path:, so the
+    trial-bound composite after it resolves from the metrics branch."""
+    step = _real_step(docs, "wing-commander-8-watchdog.yml", "trial-bound",
+                      lambda s: (s.get("with") or {}).get("path")
+                      == ".wing-commander-metrics")
+    del step["with"]["path"]
+
+
+# Moved here from Gate 104's former rule (g) (specs/132 FR-016a one home):
+# each mutates the shipped workflows and must be reported as exposed.
+REAL_MUTATIONS = (
+    ("pr-conversation.yml act job: raw composite after the PR-branch root "
+     "checkout", "pr-conversation.yml", _mut_consumer_raw_reference),
+    ("shared-pr-reviewer.yml find job: PR head checked out at the root",
+     "shared-pr-reviewer.yml", _mut_untrusted_root_ref),
+    ("watchdog trial-bound job: metrics-branch checkout moved to the root",
+     "wing-commander-8-watchdog.yml", _mut_side_checkout_moved_to_root),
+)
+
+
+def _real_tree_mutations(root="."):
+    """-> number of failures. The shipped tree must be clean, and each
+    REAL_MUTATIONS entry must make its own workflow exposed."""
+    src = os.path.join(root, ".github", "workflows")
+    if not os.path.isdir(src):
+        print("SELF-TEST FAIL: run from the repository root; {0} not found."
+              .format(src))
+        return 1
+    bad = 0
+    if scan(root):
+        bad += 1
+        print("SELF-TEST FAIL: the shipped workflows already fail: {0}"
+              .format(scan(root)))
+    for name, fname, mutate in REAL_MUTATIONS:
+        docs = {}
+        for f in os.listdir(src):
+            if f.endswith((".yml", ".yaml")):
+                with io.open(os.path.join(src, f), encoding="utf-8") as fh:
+                    docs[f] = yaml.safe_load(fh)
+        try:
+            mutate(docs)
+        except (LookupError, KeyError, TypeError) as e:
+            bad += 1
+            print("SELF-TEST FAIL: {0}: {1}".format(name, e))
+            continue
+        d = tempfile.mkdtemp(prefix="untrusted-selftest-")
+        try:
+            os.makedirs(os.path.join(d, ".github", "workflows"))
+            for f, doc in docs.items():
+                with io.open(os.path.join(d, ".github", "workflows", f), "w",
+                             encoding="utf-8") as fh:
+                    yaml.safe_dump(doc, fh, sort_keys=False)
+            reg = os.path.join(root, REPO_ONLY_PATH)
+            if os.path.isfile(reg):
+                os.makedirs(os.path.dirname(os.path.join(d, REPO_ONLY_PATH)),
+                            exist_ok=True)
+                shutil.copy(reg, os.path.join(d, REPO_ONLY_PATH))
+            got = [r for r in scan(d) if r[0].endswith("/" + fname)]
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        if not got:
+            bad += 1
+            print("SELF-TEST FAIL: {0}: not reported as exposed.".format(name))
+    return bad
+
+
 def self_test():
     sidecar = {"uses": "actions/checkout@v5", "with": {
         "repository": "${{ inputs.pipeline-repo }}",
@@ -228,7 +321,7 @@ def self_test():
           REPO_ONLY_PATH: json.dumps({"workflows": ["a.yml"]})},
          "a.yml", False),
     ]
-    bad = 0
+    bad = _real_tree_mutations()
     for name, files, wf, want_exposed in cases:
         d = tempfile.mkdtemp(prefix="untrusted-selftest-")
         try:
@@ -247,8 +340,8 @@ def self_test():
                 name, got, want_exposed))
     if bad:
         return 1
-    print("verify-untrusted-checkout-local-uses self-test: {0} cases ok."
-          .format(len(cases)))
+    print("verify-untrusted-checkout-local-uses self-test: {0} cases and {1} "
+          "shipped-workflow mutations ok.".format(len(cases), len(REAL_MUTATIONS)))
     return 0
 
 

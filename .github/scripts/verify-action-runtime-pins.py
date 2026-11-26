@@ -360,6 +360,18 @@ def self_test():
          ["actions/checkout@v5"], {"actions/checkout@v5": "node24"},
          "{not json", [WAIVERS_PATH + " does not parse"])
 
+    # SC-010 / FR-017a: the update automation's rewrite (wc_action_pins.py,
+    # the one home of that rewrite) applied to a copy of the shipped tree --
+    # one pin moved to another SHA and comment with its rows passes, the
+    # same rewrite without its rows fails, and a bump to a deprecated
+    # runtime with no waiver still fails.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import wc_action_pins
+    for label, ok, detail in wc_action_pins.self_test_cases("."):
+        results.append(ok)
+        print("[{0}] {1}{2}".format("ok" if ok else "FAIL", label,
+                                    "" if ok else " -- got: " + detail))
+
     passed = sum(results)
     print("verify-action-runtime-pins self-test: {0}/{1} passed".format(
         passed, len(results)))

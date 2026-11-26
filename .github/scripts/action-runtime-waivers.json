@@ -21,17 +21,17 @@
       "reason": "migrate-stranded-review-lifecycles.yml's one checkout; every other checkout is @v5 (node24). Found by the code review of #1128; tracked as a line on the Maintenance backlog #889."
     },
     {
-      "uses": "aws-actions/configure-aws-credentials@v4",
+      "uses": "aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a",
       "issue": "#889",
       "reason": "v4 declares node20. Found by the code review of #1128; tracked as a line on the Maintenance backlog #889."
     },
     {
-      "uses": "docker/build-push-action@v6",
+      "uses": "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
       "issue": "#889",
       "reason": "v6 declares node20. Found by the code review of #1128; tracked as a line on the Maintenance backlog #889."
     },
     {
-      "uses": "docker/login-action@v3",
+      "uses": "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
       "issue": "#889",
       "reason": "v3 declares node20. Found by the code review of #1128; tracked as a line on the Maintenance backlog #889."
     }

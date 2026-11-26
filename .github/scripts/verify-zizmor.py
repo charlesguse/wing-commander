@@ -142,15 +142,28 @@ def location_of(finding, doc):
 
 
 def _finding_file(finding):
+    # zizmor 1.33.1 names the input path `verbatim_path`; older releases
+    # used `given_path`.
     for loc in finding.get("locations") or []:
         key = ((loc.get("symbolic") or {}).get("key") or {}).get("Local") or {}
-        if key.get("given_path"):
-            return str(key["given_path"]).replace(os.sep, "/")
+        for field in ("verbatim_path", "given_path"):
+            if key.get(field):
+                path = str(key[field]).replace(os.sep, "/")
+                return path[2:] if path.startswith("./") else path
     return None
 
 
+def _primary_first(finding):
+    """Locations with the Primary one first: zizmor lists Hidden and
+    Related context locations too, and the line a finding names is its
+    Primary location's."""
+    locs = list(finding.get("locations") or [])
+    return sorted(locs, key=lambda l: (
+        (l.get("symbolic") or {}).get("kind") != "Primary"))
+
+
 def _finding_line(finding):
-    for loc in finding.get("locations") or []:
+    for loc in _primary_first(finding):
         pt = (((loc.get("concrete") or {}).get("location") or {})
               .get("start_point") or {})
         if "row" in pt:
@@ -223,6 +236,26 @@ def load_register(root):
     return entries, failures
 
 
+def self_repository_reason(text):
+    """-> the non-empty reason recorded for the disabled self-repository
+    audit, or None."""
+    lines = text.splitlines()
+    in_block = False
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*self-repository:\s*$", line):
+            in_block, indent = True, len(line) - len(line.lstrip())
+            continue
+        if not in_block:
+            continue
+        if line.strip() and not line.lstrip().startswith("#") and (
+                len(line) - len(line.lstrip())) <= indent:
+            return None
+        if re.match(r"^\s*disable:\s*true\s*$", line):
+            m = re.match(r"^\s*#\s*reason:\s*(.*?)\s*$", lines[i - 1]) if i else None
+            return m.group(1) if m and m.group(1) else None
+    return None
+
+
 def check_config(root):
     failures = []
     try:
@@ -232,8 +265,11 @@ def check_config(root):
     except yaml.YAMLError as e:
         return ["{0}: not valid YAML ({1}).".format(CONFIG_PATH, e)]
     sr = ((cfg.get("rules") or {}).get("self-repository")) or {}
-    if sr.get("disable") is True and not (
-            isinstance(sr.get("reason"), str) and sr["reason"].strip()):
+    # zizmor rejects unknown keys in its config, so the reason lives in a
+    # `# reason: <text>` comment on the line directly above `disable: true`
+    # inside the `self-repository:` block (research D5).
+    if sr.get("disable") is True and not self_repository_reason(
+            _read(root, CONFIG_PATH)):
         failures.append("{0}: the disabled `self-repository` audit needs a "
                         "non-empty `reason`.".format(CONFIG_PATH))
     if "self-repository" not in ((cfg.get("rules") or {})):
@@ -332,7 +368,7 @@ def evaluate(root, runner=run_zizmor):
 
 def _finding(file, audit, route, row=3):
     return {"ident": audit, "ignored": False, "locations": [{
-        "symbolic": {"kind": "Primary", "key": {"Local": {"given_path": file}},
+        "symbolic": {"kind": "Primary", "key": {"Local": {"verbatim_path": file}},
                      "route": {"route": route}},
         "concrete": {"location": {"start_point": {"row": row, "column": 0}}}}]}
 
@@ -340,7 +376,7 @@ def _finding(file, audit, route, row=3):
 STEP_ROUTE = [{"Key": "jobs"}, {"Key": "j"}, {"Key": "steps"}, {"Index": 0}]
 WF = ("on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n"
       "      - id: s\n        run: echo hi\n")
-CFG = ("rules:\n  self-repository:\n    disable: true\n    reason: because\n"
+CFG = ("rules:\n  self-repository:\n    # reason: because\n    disable: true\n"
        "  unpinned-uses:\n    config:\n      policies:\n"
        "        \"actions/*\": ref-pin\n        \"github/*\": ref-pin\n"
        "        \"anthropics/*\": ref-pin\n        \"*\": hash-pin\n")
@@ -378,6 +414,39 @@ def _entry(**kw):
     return e
 
 
+def _real_analyser_policy_case():
+    """FR-006/FR-009: with the shipped .github/zizmor.yml, the real analyser
+    fails a tag-pinned action outside the trusted set and accepts a tag on a
+    trusted publisher. Runs only when the pinned zizmor is installed; without
+    it the gate itself already fails with "analyser missing"."""
+    pin = read_pin(".")
+    try:
+        ver = subprocess.run(["zizmor", "--version"], capture_output=True,
+                             text=True, timeout=60).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        ver = ""
+    if not pin or ver.split()[-1:] != [pin]:
+        print("note: real-analyser policy case skipped: zizmor {0} is not "
+              "installed.".format(pin))
+        return 0
+    wf = ("on: push\npermissions: {}\njobs:\n  j:\n    runs-on: ubuntu-latest\n"
+          "    steps:\n      - uses: actions/checkout@v5\n"
+          "        with:\n          persist-credentials: false\n"
+          "      - uses: docker/login-action@v3\n")
+    d = _tree({".github/workflows/a.yml": wf,
+               CONFIG_PATH: _read(".", CONFIG_PATH)})
+    try:
+        got = evaluate(d)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    unpinned = [g for g in got if "unpinned-uses" in g]
+    if len(unpinned) == 1 and "a.yml:10 " in unpinned[0]:
+        return 0
+    print("SELF-TEST FAIL: tag-pinned action outside the trusted set: wanted "
+          "one unpinned-uses finding on a.yml:10 only, got {0}".format(got))
+    return 1
+
+
 def self_test():
     inj = [_finding(".github/workflows/a.yml", "template-injection", STEP_ROUTE)]
     cases = [
@@ -401,19 +470,38 @@ def self_test():
          _runner(payload=[_finding(".github/workflows/a.yml",
                                    "template-injection", STEP_ROUTE, row=6)]),
          "a.yml:7 template-injection"),
+        # zizmor lists Hidden/Related context locations before the Primary
+        # one; the line named must be the Primary location's.
+        ("primary location names the line",
+         {}, _runner(payload=[{"ident": "template-injection", "ignored": False,
+                               "locations": [
+             {"symbolic": {"kind": "Hidden",
+                           "key": {"Local": {"verbatim_path": ".github/workflows/a.yml"}},
+                           "route": {"route": STEP_ROUTE}},
+              "concrete": {"location": {"start_point": {"row": 1, "column": 0}}}}]
+             + _finding(".github/workflows/a.yml", "template-injection",
+                        STEP_ROUTE, row=6)["locations"]}]),
+         "a.yml:7 template-injection (job:j/step:s)"),
+        ("self-repository reason left empty",
+         {CONFIG_PATH: CFG.replace("# reason: because", "# reason:")},
+         _runner(payload=[]), "non-empty `reason`"),
         ("env form passes",
          {".github/workflows/a.yml": WF.replace(
              "        run: echo hi\n",
              "        env:\n          T: ${{ github.event.issue.title }}\n"
              "        run: echo \"$T\"\n")},
          _runner(payload=[]), None),
+        ("tag-pinned action outside the trusted set",
+         {}, _runner(payload=[_finding(".github/workflows/a.yml",
+                                       "unpinned-uses", STEP_ROUTE)]),
+         "unpinned-uses (job:j/step:s): unwaived finding"),
         ("analyser missing", {}, _runner(version=None), "analyser missing"),
         ("wrong version", {}, _runner(version="zizmor 1.0.0"), "wrong version"),
         ("empty file set", {".github/workflows/a.yml": None},
          _runner(payload=[]), "empty set"),
         ("unparsable output", {}, _runner(raw="not json"), "not parsable"),
         ("self-repository reason removed",
-         {CONFIG_PATH: CFG.replace("    reason: because\n", "")},
+         {CONFIG_PATH: CFG.replace("    # reason: because\n", "")},
          _runner(payload=[]), "non-empty `reason`"),
         ("trusted list second copy",
          {".github/scripts/other.json": "{\"actions/*\": \"ref-pin\"}"},
@@ -426,7 +514,7 @@ def self_test():
              {k: v for k, v in _entry().items() if k != "control"}]})},
          _runner(payload=inj), "missing `control`"),
     ]
-    bad = 0
+    bad = _real_analyser_policy_case()
     for name, files, runner, want in cases:
         d = _tree(files)
         try:
