@@ -3652,7 +3652,7 @@ jobs:
           issue-number: ${{ inputs.issue-number }}
           kind: info
           summary: "Not resuming — candidate v${{ steps.guard.outputs.candidate }} is not newer than the pinned v${{ steps.guard.outputs.pinned }}"
-          body: "The updater only proposes an upgrade. This issue's candidate is the same as, or older than, the Spec Kit version pinned on the default branch (or one of the two could not be read), so the reply was not acted on and no PR will be opened. The next scheduled run re-checks upstream releases."
+          body: "The updater only proposes an upgrade. This issue's candidate is the same as, or older than, the Spec Kit version pinned on the default branch (or one of the two could not be read), so the reply was not acted on and no PR will be opened. While this issue stays open awaiting a decision, the updater leaves it untouched and watches no newer release, so close it: the next scheduled run then opens a fresh tracking issue if upstream has a release newer than the pin."
 
       # T026: the triggering comment body and the posted question (issue body
       # + comments, which include the option labels) are UNTRUSTED — fetched

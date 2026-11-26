@@ -616,6 +616,22 @@ def main():
         FAILED.append("tracking label drift")
         print("    FAIL settle=%r comment-reply guard=%r" % (settle_label, guard_label))
 
+    # ---- the candidate refusal tells the maintainer how to unstick it ----
+    # A refused issue still carries awaiting-decision=true, which settle
+    # leaves untouched on every later run, so nothing clears it but a human
+    # closing it. The refusal must say so rather than promise the next run.
+    print("\n--- comment-reply refusal: tells the maintainer to close the issue ---")
+    refuse = [st for st in stage_doc["jobs"]["comment-reply"]["steps"]
+              if (st.get("if") or "").strip() == "steps.guard.outputs.refused == 'true'"]
+    refuse_body = ((refuse[0].get("with") or {}).get("body") or "") if len(refuse) == 1 else ""
+    if "close it" in refuse_body and "opens a fresh tracking issue" in refuse_body:
+        PASS += 1
+        print("    ok   the refusal says to close the issue")
+    else:
+        FAIL += 1
+        FAILED.append("refusal does not say to close the stranded issue")
+        print("    FAIL refusal body: %r" % refuse_body)
+
     print("\n==================== T7 job gating ====================")
     print("passed: %d   failed: %d" % (PASS, FAIL))
     for f in FAILED:
