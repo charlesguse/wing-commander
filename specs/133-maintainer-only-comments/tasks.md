@@ -128,7 +128,7 @@ description: "Task list for spec 133: comment-triggered stages act only on maint
   - [X] T019d [US3] After review pass 5: the `comment-reply` read-back refuses a multi-line chosen value (FR-002). Fails without it: `t6_reply.sh`'s "a multi-line choice holding a posted label -> not recognized". Since T019e's exact match that check passes without the multi-line refusal too; T019f's check pins it.
   - [X] T019e [US3] After review pass 5 (owner's decision, 2026-11-25): evaluate-path's ambiguous-options question records its option labels on its last line, and the `comment-reply` read-back accepts only a label the newest question records, never re-reading the rendered option list (FR-002). `auto-update-spec-kit-tests/extract.py` now extracts the `wing-commander-callout` composite, so t6 posts the question through it. Update `contracts/comment-author-rule.md` and `specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md`. Fails without it: `t6_reply.sh`'s "an earlier question's labels and another callout's record do not count" and "the question's record holds exactly its labels".
   - [X] T019f After review pass 6: Gate 179 (a) treats every read of the issue's author, except its kind (`issue.user.type`), as an identity; new check (m): `contracts/comment-author-rule.md`'s enforcement table names every comment-triggered wrapper, and the contract says the Spec Kit updater's tracking-issue check limits which issue a reply counts on and admits no commenter; t6 pins the read-back's multi-line refusal with a recorded two-line label (FR-002, FR-010). Fails without it: Gate 179 `--self-test`'s "the Spec Kit wrapper admits the issue's author by node_id" and "... as a whole object" mutants, its "(m) the rule contract has no row for the Spec Kit wrapper" mutant, and `t6_reply.sh`'s "a recorded label holding a newline -> not recognized".
-- [ ] T020 Run the scratch-repository proof (quickstart §3) in `charlesguse/wing-commander-auto-release-scratch`, outside auto-release's 09:09 UTC run, and restore the wrapper pins afterwards. Record the evidence in `specs/133-maintainer-only-comments/tasks.md` "Notes".
+- [X] T020 Run the scratch-repository proof (quickstart §3) in `charlesguse/wing-commander-auto-release-scratch`, outside auto-release's 09:09 UTC run, and restore the wrapper pins afterwards. Record the evidence in `specs/133-maintainer-only-comments/tasks.md` "Notes".
 - [ ] T021 Prepare the publish:
   - Re-check the number 130 against open pipeline branches, and rename the directory and branch if it is taken.
   - Add `specs/133-maintainer-only-comments/spec-meta.json`, pointing at a neutrally titled tracking issue opened at publish time (precedent: spec 037 and #216).
@@ -159,6 +159,14 @@ description: "Task list for spec 133: comment-triggered stages act only on maint
 ## Notes
 
 (T001 inventory, T017 gate results and T020 scratch evidence are recorded here.)
+
+### T020 scratch-repository run (2026-11-26, on PR #1292's head `0286ab22`)
+
+Run in `charlesguse/wing-commander-auto-release-scratch` at 17:08–17:25 UTC, with its intake and clarify wrappers pinned to `0286ab22` and restored afterwards to `e2e-verify-45790535069-1`. Each run's referenced workflow is `…@0286ab22c7738265e9fe3f6afa3619f462b397df`. Both requests were opened and answered by the owner's account (`author_association` `OWNER`).
+
+- Request #249 (clear): intake run 45865128207 succeeded and asked no questions. The owner's reply started clarify run 45865729740. "Check the triggering comment is from a maintainer" passed and every step gated on its `maintainer == 'true'` output ran. The agent made no edit, because the draft had no open question.
+- Request #251 (needs clarification): intake run 45866287683 succeeded. Its "Answer the open clarification questions" comment carries no relay paragraph, as the issue's author is a maintainer (SC-007). The owner answered "Q1: C". Clarify run 45866770516 passed the check, skipped the relay step, and folded the answer into the draft (`spec-draft/033-release-cadence-docs` commit `13ee5530`, "spec: resolve clarifications from #251"). Then it flipped the issue back to `stage:spec` and announced the spec PR.
+- The scratch requests and their draft PRs (#250, #252) are closed. As quickstart §3 says, a private repository has no non-maintainer commenter, so the refusal and relay-present paths rest on Gate 179's harnesses (section 2).
 
 ### T001 inventory (2026-11-24)
 
