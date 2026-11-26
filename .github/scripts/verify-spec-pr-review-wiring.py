@@ -17,6 +17,14 @@ Static structure only (yaml.safe_load plus text scans). Asserts:
   FR-019  the `select` job's checkout has full history (fetch-depth: 0),
           so the stop-note re-arm can diff the stopped head.
   FR-020  the kill-switch variable is read in the `select` job.
+  FR-011  the stale notice is composed into the review body, never appended
+          after it, so the round record stays last.
+  FR-005  the review job's `outcome` is `failed` when the review POST did not
+          succeed, so a round with no round record gets the failed marker.
+  FR-028  the failed-attempt marker is written only for outcome `failed`
+          (a re-check that stood down before any reviewer ran is not a
+          failed attempt), and at the cap (spec_pr_review.py failed-cap,
+          fed select's failed-attempts) the act job posts a hand-off.
   FR-022  no workflow_call trigger (no input, secret or output surface).
   FR-023  the cost line comes from the metrics-summary composite; the
           formatter is not inlined.
@@ -106,6 +114,35 @@ def check(text):
             break
     else:
         problems.append("FR-018: no act step records the stop note")
+    review = jobs.get("review", {})
+    review_steps = review.get("steps", [])
+    ids = [s.get("id") for s in review_steps]
+    compose_at = ids.index("compose-review") if "compose-review" in ids else None
+    if compose_at is None or "stale" not in ids or ids.index("stale") > compose_at:
+        problems.append("FR-011: the stale check does not run before the review body is composed")
+    else:
+        for s in review_steps[compose_at + 1:]:
+            if re.search(r">>\s*\"?\$RUNNER_TEMP/spec-review-body\.md", s.get("run") or ""):
+                problems.append("FR-011: %s appends to the review body after the round record" % s.get("name"))
+        if "STALE_NOW" not in (review_steps[compose_at].get("run") or ""):
+            problems.append("FR-011: the composed review body does not carry the stale notice")
+    post = [s for s in review_steps if "wing-commander-post-review-comment" in str(s.get("uses", ""))]
+    out = str((review.get("outputs") or {}).get("outcome", ""))
+    if len(post) != 1 or not post[0].get("id") or \
+            "steps.%s.outcome != 'success' && 'failed'" % post[0].get("id") not in out:
+        problems.append("FR-005: the review outcome does not turn failed when the review POST fails")
+    failed_body = [s for s in act_steps if "spec-pr-review-failed" in str(s.get("with", {}).get("body", ""))]
+    if len(failed_body) != 1:
+        problems.append("FR-028: expected exactly one step writing the failed-attempt marker")
+    elif "needs.review.outputs.outcome == 'failed'" not in str(failed_body[0]["with"]["body"]):
+        problems.append("FR-028: the failed-attempt marker is not gated on outcome 'failed'")
+    cap = [s for s in act_steps if "spec_pr_review.py\" failed-cap" in (s.get("run") or "")]
+    if len(cap) != 1 or "needs.select.outputs.failed-attempts" not in str(cap[0].get("env", {})) \
+            or "failed-attempts" not in str(select.get("outputs", {})):
+        problems.append("FR-028: the act job does not run failed-cap on select's failed-attempts")
+    elif not any("steps.%s.outputs.stop == 'true'" % cap[0].get("id") in str(s.get("if", ""))
+                 and "wing-commander-callout" in str(s.get("uses", "")) for s in act_steps):
+        problems.append("FR-028: no hand-off is posted at the failed-attempt cap")
     if "claude-opus-5-5" not in text or "WING_COMMANDER_SPEC_REVIEW_MODEL" not in text:
         problems.append("FR-008: reviewer model is not the variable with its default")
     if "WING_COMMANDER_SPEC_REVIEW_EFFORT" not in text or ":-high" not in text:
@@ -127,6 +164,17 @@ def self_test(text):
         "select without the rearm check": text.replace("wc_convergence.py rearmed", "wc_convergence.py other"),
         "a shallow select checkout": text.replace("          fetch-depth: 0\n          persist-credentials: false\n\n      - name: Checkout this job's own trusted copy",
                                                   "          persist-credentials: false\n\n      - name: Checkout this job's own trusted copy", 1),
+        "a stale notice appended after the round record": text.replace(
+            "      - name: Post the review on the PR\n",
+            "      - name: Late stale notice\n        run: printf 'x' >> \"$RUNNER_TEMP/spec-review-body.md\"\n\n"
+            "      - name: Post the review on the PR\n", 1),
+        "an outcome blind to the review POST": text.replace(
+            "steps.post-review.outcome != 'success' && 'failed'", "false", 1),
+        "a failed marker for a stood-down round": text.replace(
+            "body: ${{ needs.review.outputs.outcome == 'failed' && format('<!-- spec-pr-review-failed",
+            "body: ${{ needs.review.outputs.outcome != 'reviewed' && format('<!-- spec-pr-review-failed", 1),
+        "no failed-cap check": text.replace('spec_pr_review.py" failed-cap', 'spec_pr_review.py" verdict', 1),
+        "no hand-off at the cap": text.replace("steps.failcap.outputs.stop == 'true'", "false", 1),
         "no act step recording the stop note": text.replace("<!-- spec-pr-review-stopped head={0}",
                                                             "<!-- spec-pr-review-x head={0}", 1),
     }
