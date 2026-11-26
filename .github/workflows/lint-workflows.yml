@@ -4553,8 +4553,9 @@ jobs:
       # Gate 147 — specs/112-agent-startup-image-check (FR-008, SC-003): the
       # agent start-up classifier is driven over a checked-in log fixture per
       # verdict branch, agent-startup-check.yml's startup-agent /
-      # classify-startup jobs keep their no-credential, fail-closed shape and
-      # run beside (not behind) the image prerequisite check,
+      # classify-startup jobs keep their no-credential, fail-closed shape,
+      # classify-startup reports the image prerequisite check's result
+      # beside its verdict (the jobs' if: is Gate 23's alone),
       # private-image-dogfood.yml grants no permission (FR-010), and
       # wing-commander-private-image-dogfood.yml refuses (fails) a
       # dispatched image outside the owner's GHCR namespace.
