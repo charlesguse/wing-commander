@@ -3540,7 +3540,8 @@ jobs:
       # cannot reach the sweep. And (#889) every workflow that uploads a
       # metrics-record artifact, directly, through a composite, or through
       # a reusable workflow it calls, is in the sweep's workflow paths and,
-      # unless sweep-only (watchdog, board-loop), the completion trigger --
+      # unless sweep-only (watchdog, board-loop, lifecycle-review-gate),
+      # the completion trigger --
       # board-loop.yml was in neither, so its records expired unpersisted.
       - name: Gate 79 — the metrics wrapper drops the watchdog trigger and its sweep cron stands alone
         if: "!cancelled()"
