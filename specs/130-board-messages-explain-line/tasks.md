@@ -78,3 +78,68 @@ MVP = Phases 1–3 (US1), since every later message depends on the explanation. 
 
 - [x] T023 Have the fix agent's result schema and prompt in `.github/workflows/board-loop.yml` supply the explanation parts (`code`, `issue`, `why_it_matters`, `options`, `what_this_pr_does`) so the "Explain the line on the PR (fix)" step fills them instead of leaving gaps, and post the later `options` comment when state is `follow`, per FR-001/FR-003 (partial)
 - [x] T024 Hold readiness in `.github/scripts/board_readiness.py` while the loop's first comment says the options follow and no later loop options comment lists them, read back from the PR's own comments by the first-line markers `wc_message_parts.py` writes (research.md D4; owner decision on #890), with a human-readable reason; "Evaluate readiness" in `.github/workflows/board-loop.yml` passes the PR's comments (unreadable comments hold readiness). Fixtures in `.github/scripts/tests/board-readiness/options-*` (owed and missing, owed and posted, not owed, another author's options comment, unreadable)
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Closing keyword in fixer explanation aborts the whole fix PR
+
+  In board-loop.yml 'Open the PR', a summary refusal (exit 2) from wc_message_parts.py hits exit 1 after the branch is pushed, so agent prose like 'fixes #12' stops the PR from opening; open without the summary and warn instead.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: A fixer 'what_this_pr_does' of 'Fixes #1202 by rendering the parts' makes summary exit 2, then exit 1, and no PR is opened.
+
+- [ ] Review finding: Gate 165 comment header altered and Gate 175 inserted out of order
+
+  lint-workflows.yml changes '# Gate 165 — specs/115-...' to '# Gate 165— ...', dropping a space; workflow comments are byte-compared by gates, so restore the original text and place the new block in order.
+
+  - .github/workflows/lint-workflows.yml
+
+  Detail: A gate that parses the '# Gate NNN —' headers may fail or skip Gate 165's block.
+
+- [ ] Review finding: Options-owed readiness hold is opt-in via pr_comments=None
+
+  evaluate_from_snapshot defaults pr_comments=None, meaning clear, and evaluate() and main never pass comments, so those callers report ready while the promised options comment is missing; make it required or fail closed.
+
+  - .github/scripts/board_readiness.py
+
+  Detail: A PR whose first comment says options=follow gets ready: true from evaluate() or the CLI.
+
+- [ ] Review finding: Failed options comment post leaves PR held with no retry
+
+  If the options comment post fails, the step only warns and exits 0, and readiness holds durably as 'owed'. Nothing reposts it, so the PR never becomes ready; add a retry, reorder the posts, or say which step to repeat.
+
+  - .github/workflows/board-loop.yml
+  - .github/scripts/board_readiness.py
+
+  Detail: A transient gh pr comment failure on the second post leaves options=follow with no options comment.
+
+- [ ] Review finding: _cap truncates body without closing open fences or details
+
+  wc_message_parts._cap hard-cuts at a UTF-16 offset, which can leave a code fence or <details> block open before the '(truncated)' marker; close any open fence or details block after cutting.
+
+  - .github/scripts/wc_message_parts.py
+
+  Detail: A body just over 57000 units cut mid-fence renders the rest of the comment, including the marker line, inside a code block.
+
+- [ ] Review finding: Incidental whitespace edit 'in_scope =[f for f' in workflow
+
+  An unrelated whitespace change in the findings-writing Python snippet in board-loop.yml risks byte-compare gate drift; revert to 'in_scope = [f ...'.
+
+  - .github/workflows/board-loop.yml
+
+- [ ] Review finding: render_review called with findings=[] shows Open as 'not provided'
+
+  A review that has findings still renders the Open part as 'not provided -- the author did not provide it' unless the agent filled it; pass the real kept findings or render Open from their count.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: With 2 in-scope findings and no 'open' from the agent, the comment says Open: not provided above the findings list.
+
+- [ ] Review finding: tick_record claims explanation is in first PR comment without guarantee
+
+  board_backlog_lines.tick_record says the explanation is in the first comment on the PR, but the Explain step can be skipped on failure with only a warning; post the record only when the explaining comment exists, or link to it.
+
+  - .github/scripts/board_backlog_lines.py
+
+  Detail: If the explain step fails, the backlog record still points at an unrelated or empty first comment.
