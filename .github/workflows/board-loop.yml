@@ -3823,15 +3823,15 @@ jobs:
           fi
           # specs/130 FR-004: the body's short summary of the explanation.
           # wc_message_parts.py is the one home; its exit 2 is the
-          # closing-keyword refusal, which opens no PR like any other
-          # PR-body text.
+          # closing-keyword refusal (agent prose such as "fixes #12"),
+          # which drops the summary and warns: the pushed branch still
+          # gets its PR, with the issue_pr() body that carries no keyword.
           summary_id="${BOARD_LINE_ID:-#$ISSUE_NUMBER}"
           jq -n --argjson parts "$EXPLAIN_JSON" --arg title "$pr_title" '{parts: $parts, pr_title: $title}' > "$RUNNER_TEMP/board-explain-summary.json"
           summary_rc=0
           summary="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_message_parts.py" summary --in "$RUNNER_TEMP/board-explain-summary.json" --id "$summary_id")" || summary_rc=$?
           if [ "$summary_rc" -eq 2 ]; then
-            echo "::error::board-loop fix: the PR body's summary carries a closing keyword -- no PR is opened (specs/130 FR-004)."
-            exit 1
+            echo "::warning::board-loop fix: the PR body's summary carries a closing keyword -- the PR opens without the summary (specs/130 FR-004)."
           elif [ "$summary_rc" -eq 0 ]; then
             pr_body="$(printf '%s\n\n%s' "$pr_body" "$summary")"
           else
@@ -3896,8 +3896,16 @@ jobs:
           # Empty when Options did not say they follow: nothing is owed.
           options="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_message_parts.py" render-options --in "$RUNNER_TEMP/board-explain-parts.json" --id "$explain_id")" || options=""
           if [ -n "$options" ]; then
-            gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$options" \
-              || echo "::warning::board-loop fix: the options comment the first comment promised could not be posted on PR #$PR_NUMBER (specs/130 FR-003)."
+            # Readiness holds while this comment is owed, so a transient
+            # failure is retried; if all tries fail the warning names the
+            # step to re-run.
+            options_posted=0
+            for attempt in 1 2 3; do
+              if gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$options"; then options_posted=1; break; fi
+              sleep $((attempt * 3))
+            done
+            [ "$options_posted" -eq 1 ] \
+              || echo "::warning::board-loop fix: the options comment the first comment promised could not be posted on PR #$PR_NUMBER after 3 tries; readiness holds until it is -- re-run 'Explain the line on the PR (fix)' or post the options by hand (specs/130 FR-003)."
           fi
 
       # T029/FR-021/FR-018: route_final_diff() re-applies the SAME backstop
@@ -4667,7 +4675,7 @@ jobs:
           with open(os.path.join(runner_temp, "board-review-report.json"), "w", encoding="utf-8") as fh:
               json.dump({"parts": report}, fh)
 
-          in_scope =[f for f in kept if f.get("in_scope") is True]
+          in_scope = [f for f in kept if f.get("in_scope") is True]
           out_of_scope = [f for f in kept if f.get("in_scope") is False]
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write("in-scope-count={0}\n".format(len(in_scope)))
@@ -4771,6 +4779,14 @@ jobs:
               if os.path.isfile(report_path):
                   with open(report_path, encoding="utf-8") as fh:
                       report_parts = json.load(fh).get("parts", {})
+              if not isinstance(report_parts, dict):
+                  report_parts = {}
+              # The Open part is the real kept findings, never "not
+              # provided" above a findings list.
+              kept_count = len([f for f in findings if isinstance(f, dict) and f.get("in_scope") is True])
+              if kept_count and not report_parts.get("open"):
+                  report_parts = dict(report_parts)
+                  report_parts["open"] = "{0} in-scope finding(s) open; listed below.".format(kept_count)
               try:
                   lines.append(render_review(report_parts, identifier, []))
               except Refusal:

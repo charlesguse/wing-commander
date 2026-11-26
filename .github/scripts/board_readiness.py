@@ -16,6 +16,7 @@ must never be read as covering a later one (FR-037).
 `gh` call; `evaluate()` is the runtime wrapper that fetches the snapshot.
 """
 import json
+import os
 import re
 import subprocess
 import sys
@@ -416,8 +417,20 @@ def evaluate(pr_number, open_in_scope_findings, backstop_holds, kill_switch_paus
         ["gh", "pr", "view", str(pr_number), "--json", "headRefOid,statusCheckRollup"],
         capture_output=True, text=True, check=True)
     snapshot = json.loads(proc.stdout)
+    # specs/130 FR-003: the options check fails closed -- comments that
+    # cannot be read hold readiness rather than skip the check.
+    try:
+        comments_proc = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", "comments"],
+            capture_output=True, text=True, check=True)
+        pr_comments = json.loads(comments_proc.stdout).get("comments")
+        if not isinstance(pr_comments, list):
+            pr_comments = COMMENTS_UNREADABLE
+    except (subprocess.CalledProcessError, ValueError, OSError):
+        pr_comments = COMMENTS_UNREADABLE
     return evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
-                                  kill_switch_paused)
+                                  kill_switch_paused, pr_comments=pr_comments,
+                                  bot_login=os.environ.get("BOT_LOGIN", ""))
 
 
 def main():
@@ -427,7 +440,9 @@ def main():
     payload = json.load(sys.stdin)
     decision = evaluate_from_snapshot(
         payload["snapshot"], payload["open_in_scope_findings"],
-        payload["backstop_holds"], payload["kill_switch_paused"])
+        payload["backstop_holds"], payload["kill_switch_paused"],
+        pr_comments=payload.get("pr_comments", COMMENTS_UNREADABLE),
+        bot_login=payload.get("bot_login", ""))
     print(json.dumps(decision))
 
 

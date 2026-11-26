@@ -5229,18 +5229,18 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-shared-review-wiring.py --self-test
 
-      # Gate 175 — specs/130-board-messages-explain-line (FR-008): the
+      # Gate 176 — specs/130-board-messages-explain-line (FR-008): the
       # board loop's message renderer shows every part, filled or as gap
       # text, for each checked-in fixture and each derived missing-part
       # variant.
-      - name: Gate 175 — every board message fixture renders every part, fenced, under budget, never a bare "No findings"
+      - name: Gate 176 — every board message fixture renders every part, fenced, under budget, never a bare "No findings"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-message-parts.py
-      - name: Gate 175 self-test — a dropped part, bare "No findings", unnamed identifier, unclosed fence, over-budget body and closing keyword each fail
+      - name: Gate 176 self-test — a dropped part, bare "No findings", unnamed identifier, unclosed fence, over-budget body and closing keyword each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-message-parts.py --self-test
 
-      # Gate 165— specs/115-board-loop-self-merge (FR-013, FR-015): every
+      # Gate 165 — specs/115-board-loop-self-merge (FR-013, FR-015): every
       # merge-blocking condition and every refusal branch of board_merge.py
       # has a checked-in fixture under .github/scripts/fixtures/board-merge/
       # that must block (or classify), and board-loop.yml's `merge` job is

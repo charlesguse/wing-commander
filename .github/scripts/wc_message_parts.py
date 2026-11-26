@@ -162,7 +162,26 @@ def _cap(body):
     if utf16_len(body) <= TOTAL_BUDGET:
         return body
     cut = body.encode("utf-16-le")[: (TOTAL_BUDGET - 100) * 2]
-    return cut.decode("utf-16-le", errors="ignore") + "\n\n(truncated)"
+    text = cut.decode("utf-16-le", errors="ignore")
+    # Close what the cut left open, so the marker is not swallowed by a
+    # code fence or a <details> block.
+    fence = None
+    details = 0
+    for line in text.split("\n"):
+        stripped = line.lstrip()
+        run = len(stripped) - len(stripped.lstrip("`"))
+        if run >= 3:
+            if fence is None:
+                fence = run
+            elif run >= fence and not stripped.strip("`"):
+                fence = None
+        elif fence is None:
+            details += stripped.count("<details>") - stripped.count("</details>")
+    closing = ""
+    if fence is not None:
+        closing += "\n" + "`" * fence
+    closing += "\n</details>" * max(details, 0)
+    return text + closing + "\n\n(truncated)"
 
 
 def render_explanation(parts, identifier):

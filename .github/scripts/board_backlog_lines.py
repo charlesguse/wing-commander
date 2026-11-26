@@ -160,9 +160,10 @@ def tick(body, line_id, annotation_state, detail=""):
 
 def tick_record(line_id, pr):
     """The one-line decision record posted when a line is ticked (specs/130
-    FR-017): it names the line and links the PR whose first comment explains it."""
-    return ("Backlog line `{0}` ticked as fixed by #{1}; the explanation is in the first "
-            "comment on that PR.".format(line_id, int(pr)))
+    FR-017): it names the line and links the PR. It does not promise where the
+    explanation is: the Explain step can be skipped with a warning."""
+    return ("Backlog line `{0}` ticked as fixed by #{1}; see that PR's comments "
+            "for the explanation, when the loop posted one.".format(line_id, int(pr)))
 
 
 def clear_note(body, line_id):
