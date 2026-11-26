@@ -168,10 +168,11 @@ prove. Each step has a rule.
   same PR. The `review-until-clean` skill is the procedure: every pass
   is a brand-new session that reviews with no findings cap and fixes,
   each fix carries a test that fails without it, and the loop checks for
-  thrash after every pass. A bug the review surfaces outside the PR's
-  scope becomes a new checklist line on the Maintenance backlog issue
-  carrying `found by the code review of #N`, never a new issue and never
-  an extra commit that widens the PR.
+  thrash after every pass. A finding the review surfaces outside the
+  PR's scope is sorted by "Filing review findings" below; one it records
+  becomes a checklist line on the Maintenance backlog issue carrying
+  `found by the code review of #N`, never a new issue and never an extra
+  commit that widens the PR.
 - A session dispatches the shared reviewer on each of its fix PRs, on the
   head its hand review covers, during report-only use.
 - Spec documents are not defects. An error in a spec's own spec.md,
@@ -208,6 +209,27 @@ prove. Each step has a rule.
   with the `workflow` scope. When GitHub refuses for that reason, hand the
   merge to the maintainer (`gh auth refresh -h github.com -s workflow`);
   never push to main around the refusal.
+
+**Filing review findings** (owner decision, 2026-11-24). Sort each
+finding by the first of these that fits:
+
+1. **Fix it now** when it is in scope, or when the fix is a line or two
+   in a file the PR already changes. It goes in the same PR, with a
+   test, as now.
+2. **Record it** as a Maintenance backlog line only when it is outside
+   the PR's scope and it can fail *silently*: produce a wrong result, a
+   wrong reading or a wrong decision, or skip a check, with no error,
+   red gate or "unreadable" to show it. Say in the line how it fails
+   silently.
+3. **Drop it** when it is outside scope and can only fail *loudly* (a
+   crash, a red gate, a visible error), or cannot change any output at
+   all (naming, wording, style, "could be clearer"). Name it in the
+   review report as dropped, with that reason, so a later pass doesn't
+   rediscover it as new.
+
+A loud failure is filed when it happens, from the evidence of that run.
+A finding marked important or security is never dropped: fix it or
+record it.
 
 ## Other repo-specific rules
 
