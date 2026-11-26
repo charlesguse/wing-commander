@@ -63,9 +63,18 @@ def check(name, cond, detail=""):
         print("::error::verify-board-review-fixup-push: {0} -- {1}".format(name, detail))
 
 
+def clean_env(**extra):
+    """os.environ without the ambient GIT_* variables (GIT_DIR, GIT_CONFIG_*,
+    GIT_OBJECT_DIRECTORY...) a surrounding git hook or runner may export: they
+    would steer the harness's own git calls at the wrong repository (#1298)."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(extra)
+    return env
+
+
 def git(cwd, *args):
     return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True,
-                          text=True).stdout.strip()
+                          text=True, env=clean_env()).stdout.strip()
 
 
 def build(tmp, touched, refuse):
@@ -126,8 +135,8 @@ def run(steps, touched, can_push="false", refuse=False):
         if rc == 0 and outputs.get("held") == "false":
             push = subprocess.run(
                 ["bash", HARDENED_PUSH, BRANCH, git(work, "rev-parse", "HEAD")], cwd=work,
-                env=dict(os.environ, PUSH_SERVER_URL="file://" + tmp,
-                         GITHUB_REPOSITORY="origin"),
+                env=clean_env(PUSH_SERVER_URL="file://" + tmp,
+                              GITHUB_REPOSITORY="origin"),
                 capture_output=True, text=True)
             output += push.stdout + push.stderr
             push_outcome = "success" if push.returncode == 0 else "failure"
@@ -139,8 +148,8 @@ def run(steps, touched, can_push="false", refuse=False):
         if runs:
             rc2, out2, _, summary2 = run_step(BASH, advance, work, env, runner_temp)
             rc, output, summary = rc or rc2, output + out2, summary + summary2
-        pushed = subprocess.run(["git", "rev-parse", BRANCH], cwd=origin, capture_output=True,
-                                text=True).stdout.strip() == git(work, "rev-parse", "HEAD")
+        pushed = git(origin, "--git-dir=" + origin, "rev-parse",
+                     "refs/heads/" + BRANCH) == git(work, "rev-parse", "HEAD")
         return rc, output, summary, open(log).read(), pushed
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
