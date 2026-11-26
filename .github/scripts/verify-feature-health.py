@@ -709,7 +709,7 @@ def on_schedule(*crons):
     return "on:\n  schedule:\n" + "".join("    - cron: {0}\n".format(c) for c in crons)
 
 
-def check_review_round_three():
+def check_cron_forms_and_bounded_reads():
     """Unquoted and ranged cron, bounded triage and comment reads."""
     problems = []
     for text, want in ((on_schedule("0 */4 * * *"), 4),
@@ -928,7 +928,7 @@ def check_multi_workflow_callouts():
     return problems
 
 
-def check_review_round_two():
+def check_cron_truncation_and_shortening():
     """Cron parsing, truncated reads, shortened-section detection."""
     problems = []
     wf = "on:\n  schedule:\n    - cron: '0 */6 * * *'\n    # - cron: \"0 1 * * *\"\n    - cron: \"0 3,15 * * *\"\n"
@@ -964,7 +964,7 @@ def check_review_round_two():
     return problems
 
 
-def check_review_round_five(registry):
+def check_section_built_own_marker(registry):
     """section_built with the registry's own marker: a title mentioning the
     workflow file must not stand in for the section's opener."""
     problems = []
@@ -981,6 +981,13 @@ def check_review_round_five(registry):
     return problems
 
 
+def check_check_names(source):
+    """This gate's checks are named for what they check, never for the review
+    round that added them (#889)."""
+    return ["check {0}() is named for a review round; name it by subject".format(m)
+            for m in re.findall(r"^def (check_\w*round\w*)\(", source, re.M)]
+
+
 def main():
     with open(os.path.join(REPO, "docs", "reference.md"), encoding="utf-8") as fp:
         ref_text = fp.read()
@@ -995,11 +1002,15 @@ def main():
     problems += check_unreadable(load("unreadable", "scenarios.json"))
     problems += check_workflow()
     problems += check_shared_sources()
-    problems += check_review_round_two()
-    problems += check_review_round_three()
-    problems += check_review_round_five(registry)
+    problems += check_cron_truncation_and_shortening()
+    problems += check_cron_forms_and_bounded_reads()
+    problems += check_section_built_own_marker(registry)
     problems += check_schedule_and_comment_reads()
     problems += check_multi_workflow_callouts()
+    with open(os.path.abspath(__file__), encoding="utf-8") as fp:
+        problems += check_check_names(fp.read())
+    if check_check_names("def check_review_round_two():\n") == []:
+        problems.append("check_check_names self-test: a round-named check was not noticed")
     problems += check_capture_bounds()
     real, note = check_sc001(os.path.join(FIXTURES, "sc001"), EXEMPT_SC001_PENDING)
     problems += real + self_check(fx) + self_check_sc001(os.path.join(FIXTURES, "sc001"))
