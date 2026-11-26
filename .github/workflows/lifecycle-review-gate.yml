@@ -259,15 +259,18 @@ jobs:
             # select, as the marker read above does.
             # #889 (code review of #1062): a budget-exhausted PR follows the
             # same rule, so rebase.yml's force-push no longer re-selects it
-            # to post another budget-exhausted round. Its marker's round is
-            # past the budget and has no round record; the fingerprint it is
-            # compared with is the last reviewed round's, the budget's own
-            # (the marker's round when the budget has since been raised).
+            # to post another budget-exhausted round. The exhausted round was
+            # itself reviewed, and the review job posted its record at the
+            # marker's head, so the marker's round is the one compared, as
+            # for not-converging. Once the budget has been raised past that
+            # round the PR is no longer stopped: the moved head alone
+            # re-selects it, and the next round is reviewed.
             stop_outcome="$(printf '%s' "$review_gate_json" | jq -r '.outcome // empty')"
             stop_round="$(printf '%s' "$review_gate_json" | jq -r '.round // 0')"
-            if [ "$stop_outcome" = "budget-exhausted" ]; then
-              stop_round="$(printf '%s' "$review_gate_json" \
-                | jq -r --argjson budget "$LIFECYCLE_REVIEW_ROUND_BUDGET" '[(.round // 0), $budget] | min')"
+            if [ "$stop_outcome" = "budget-exhausted" ] \
+              && printf '%s' "$review_gate_json" \
+                | jq -e --argjson budget "$LIFECYCLE_REVIEW_ROUND_BUDGET" '(.round // 0) < $budget' >/dev/null; then
+              stop_outcome="budget-raised"
             fi
             if [ "$stop_outcome" = "not-converging" ] || [ "$stop_outcome" = "budget-exhausted" ]; then
               if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$number/reviews" --paginate --jq '.[]' \
@@ -1746,7 +1749,7 @@ jobs:
             detail="No in-scope findings. A passing status was posted on the reviewed head SHA."
           elif [ "$DISPOSITION_OUTCOME" = "budget-exhausted" ]; then
             result="budget-exhausted"
-            detail="The round budget is spent with ${FINDINGS_OPEN:-0} in-scope finding(s) still open. This PR is not selected again until its diff against main changes: a rebase or a merge of main that leaves its own changes as they were does not re-select it (any head move does, when the last reviewed round's record stores no diff fingerprint)."
+            detail="The round budget is spent with ${FINDINGS_OPEN:-0} in-scope finding(s) still open. This PR is not selected again until its diff against main changes: a rebase or a merge of main that leaves its own changes as they were does not re-select it (any head move does, when the record of this round stores no diff fingerprint or the round budget is raised past it)."
           elif [ "$DISPOSITION_OUTCOME" = "not-converging" ]; then
             # specs/116 FR-006/FR-008: the budget-exhaustion hand-off, with
             # the signals that tripped. Nothing was folded.

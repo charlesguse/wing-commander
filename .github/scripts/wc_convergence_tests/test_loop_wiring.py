@@ -375,11 +375,27 @@ class LifecycleSelect(LoopRepo):
         self.git("push", "-q", "-f", "origin", "main", "spec/001-x")
         return head
 
-    def select(self, head, record_fp=True, outcome="not-converging", marker_round=3, budget="3"):
+    def exhausted_round(self, pr_lines):
+        """Round 4, reviewed past a budget of 3 at a head the round-3 fold
+        moved (its diff changed), as the review job posts it: the round's
+        own record, then a budget-exhausted marker at that head."""
+        self.git("checkout", "-q", "spec/001-x")
+        self.git("reset", "-q", "--hard", self.stopped)
+        head = self.pr_commit(pr_lines, "")
+        self.git("push", "-q", "-f", "origin", "spec/001-x")
+        return head
+
+    def select(self, head, record_fp=True, outcome="not-converging", marker_round=3, budget="3",
+               marker_head=None):
         fp = wc.diff_fingerprint(self.base, self.stopped, self.repo) if record_fp else None
-        record = {"body": "review\n\n" + wc.round_record_marker(3, self.stopped, [], 2, fp),
-                  "submitted_at": "t3", "user": {"login": BOT, "type": "Bot"}}
-        gate = wc_marker.write_marker(marker_round, self.stopped, outcome, 1, [], [], None)
+        records = [{"body": "review\n\n" + wc.round_record_marker(3, self.stopped, [], 2, fp),
+                    "submitted_at": "t3", "user": {"login": BOT, "type": "Bot"}}]
+        if marker_head:
+            records.append({"body": "review\n\n" + wc.round_record_marker(
+                                marker_round, marker_head, [], 3,
+                                wc.diff_fingerprint(self.base, marker_head, self.repo)),
+                            "submitted_at": "t4", "user": {"login": BOT, "type": "Bot"}})
+        gate = wc_marker.write_marker(marker_round, marker_head or self.stopped, outcome, 1, [], [], None)
         comment = {"body": "round 3\n\n" + gate, "created_at": "t3",
                    "user": {"login": BOT, "type": "Bot"}}
         pr = {"number": 7, "headRefName": "spec/001-x", "headRefOid": head,
@@ -387,10 +403,13 @@ class LifecycleSelect(LoopRepo):
         bindir = os.path.join(self.tmp.name, "bin")
         os.makedirs(bindir, exist_ok=True)
         data = {}
-        for name, obj in (("pr", pr), ("comment", comment), ("review", record)):
+        for name, obj in (("pr", pr), ("comment", comment), ("review", records)):
             data[name] = os.path.join(self.tmp.name, name + ".json")
             with open(data[name], "w", encoding="utf-8") as fh:
-                json.dump(obj, fh)
+                if name == "review":
+                    fh.write("".join(json.dumps(r) + "\n" for r in obj))
+                else:
+                    json.dump(obj, fh)
         stub = os.path.join(bindir, "gh")
         with open(stub, "w", encoding="utf-8") as fh:
             fh.write("#!/usr/bin/env bash\n"
@@ -433,22 +452,32 @@ class LifecycleSelect(LoopRepo):
         self.assertEqual(self.select(head, record_fp=False), "7")
 
     # #889 (code review of #1062): a budget-exhausted PR is not re-selected
-    # by a rebase alone either. Its marker's round (4) is past the budget
-    # (3) and has no round record; the last reviewed round's (3) is used.
+    # by a rebase alone either. The exhausted round (4, past a budget of 3)
+    # was reviewed at a head round 3's fold moved, and its own record is
+    # the one compared: round 3's, at the older diff, would re-select it on
+    # every rebase (code review of #1297, pass 1).
     def test_a_rebase_alone_does_not_re_select_a_budget_exhausted_pr(self):
-        head = self.rebase_onto_new_main("pr1-fixed\nfix1\n")
-        self.assertEqual(self.select(head, outcome="budget-exhausted", marker_round=4), "")
+        exhausted = self.exhausted_round("pr1-fixed\nfix1\nfold\n")
+        head = self.rebase_onto_new_main("pr1-fixed\nfix1\nfold\n")
+        self.assertEqual(self.select(head, outcome="budget-exhausted", marker_round=4,
+                                     marker_head=exhausted), "")
 
     def test_a_push_that_changes_the_diff_re_selects_a_budget_exhausted_pr(self):
-        head = self.rebase_onto_new_main("pr1-fixed\nfix1\nhuman\n")
-        self.assertEqual(self.select(head, outcome="budget-exhausted", marker_round=4), "7")
+        exhausted = self.exhausted_round("pr1-fixed\nfix1\nfold\n")
+        head = self.rebase_onto_new_main("pr1-fixed\nfix1\nfold\nhuman\n")
+        self.assertEqual(self.select(head, outcome="budget-exhausted", marker_round=4,
+                                     marker_head=exhausted), "7")
 
     def test_a_raised_budget_re_selects_a_budget_exhausted_pr(self):
-        # Budget raised to 5 after exhaustion at round 4: round 4 has no
-        # record, so the moved head re-arms it and round 5 is reviewed.
-        head = self.rebase_onto_new_main("pr1-fixed\nfix1\n")
+        # Budget raised to 5 after exhaustion at round 4: the PR is no
+        # longer stopped, so the moved head re-selects it and round 5 is
+        # reviewed. A budget of 4 still leaves round 5 past it.
+        exhausted = self.exhausted_round("pr1-fixed\nfix1\nfold\n")
+        head = self.rebase_onto_new_main("pr1-fixed\nfix1\nfold\n")
         self.assertEqual(self.select(head, outcome="budget-exhausted", marker_round=4,
-                                     budget="5"), "7")
+                                     marker_head=exhausted, budget="5"), "7")
+        self.assertEqual(self.select(head, outcome="budget-exhausted", marker_round=4,
+                                     marker_head=exhausted, budget="4"), "")
 
     def test_other_outcomes_still_re_arm_on_a_moved_head(self):
         head = self.rebase_onto_new_main("pr1-fixed\nfix1\n")
