@@ -679,6 +679,8 @@ class _Scan:
                    and not words[k + 1].raw.startswith("-"))
         k += 2 * timeout
         if k >= len(words):
+            if timeout:                # `timeout "$@"`: the duration is an argument too
+                self._fn_args(words[k - 2:])
             return
         head, args = words[k], words[k + 1:]
         self._fn_args(words[k:])

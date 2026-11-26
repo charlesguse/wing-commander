@@ -822,6 +822,9 @@ LOCATOR_CASES = [
      'r() { local c=$1; shift; "$c" "$@"; }; r \'/usr/bin/gh\' y\n'
      'e() { local c="$1"; eval "$c"; }; e "gh api z"',
      [dis("dynamic-command")] * 3),
+    # `timeout "$@"` takes its duration from the arguments too (pass 2).
+    ("a function running timeout \"$@\" called with a duration and gh",
+     'w() { timeout "$@"; }; w 30 gh api x; w 30 \'gh\' y', [dis("dynamic-command")] * 2),
     ("a function running \"$@\" called with a message that mentions gh runs none",
      'log() { "$@"; }; log "gh failed"; w() { bash v.sh "$1"; }; w "gh x"; f() { :; }; f \'gh\'',
      [men("quoted")] * 3),
