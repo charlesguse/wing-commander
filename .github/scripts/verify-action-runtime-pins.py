@@ -165,7 +165,9 @@ def evaluate(found, pins, waivers):
         if pin not in found:
             failures.append(
                 "{0}: {1} is not used by any workflow or composite action; "
-                "remove the stale row.".format(PINS_PATH, pin))
+                "remove the stale row (`python3 .github/scripts/"
+                "wc_action_pins.py --write` does it after a bump).".format(
+                    PINS_PATH, pin))
 
     for pin, sites in sorted(found.items()):
         sites = sorted(set(sites))
@@ -173,7 +175,11 @@ def evaluate(found, pins, waivers):
         if runtime is None:
             failures.append(
                 "{0} (used at {1}) has no row in {2}. Read runs.using from "
-                "the action's own action.yml at that ref and add it.".format(
+                "the action's own action.yml at that ref and add it. On a "
+                "Dependabot bump pull request, add the rows by hand or run "
+                "`python3 .github/scripts/wc_action_pins.py --write`, which "
+                "adds the new ref's row and drops the replaced ref's row and "
+                "waiver (specs/132 FR-017a).".format(
                     pin, ", ".join(sites), PINS_PATH))
         elif runtime in DEPRECATED and pin not in waived:
             failures.append(
@@ -336,6 +342,15 @@ def self_test():
     case("a pin with no row fails",
          ["actions/checkout@v5", "docker/login-action@v3"], good,
          [], ["docker/login-action@v3", "has no row"])
+    # specs/132 FR-017a: a Dependabot bump rewrites the SHA and its comment
+    # but not the register; the failure must tell the human how to finish.
+    dep_old = "docker/login-action@" + "1" * 40
+    dep_new = "docker/login-action@" + "2" * 40
+    case("a Dependabot SHA bump without its rows fails, naming the fix",
+         ["actions/checkout@v5", dep_new + " # v4.0.0"],
+         {"actions/checkout@v5": "node24", dep_old: "node24"}, [],
+         [dep_new, "has no row", "Dependabot", "wc_action_pins.py --write",
+          dep_old, "remove the stale row"])
     case("a row nothing uses fails as stale",
          ["actions/checkout@v5"], good, [],
          ["actions/download-artifact@v7", "remove the stale row"])

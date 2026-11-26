@@ -9,7 +9,7 @@ Prerequisite: zizmor at the version in `.github/scripts/zizmor-pin.txt` on PATH.
 5. Exposure audit: `python3 .github/scripts/verify-untrusted-checkout-local-uses.py --audit` lists exposed jobs; empty on main once FR-015 fixes land.
 6. Self-tests: each new gate with `--self-test`; every failure fixture must fail.
 7. Event policy: add `on: discussion:` to a wrapper; `verify-adopter-event-policy.py` fails until the docs block lists it.
-8. Pin bump: rewrite one SHA pin with its register rows; the suite passes. Without the rows, Gate 170 fails.
+8. Pin bump: rewrite one SHA pin with its register rows; the suite passes. Without the rows, Gate 170 fails and names the fix. On a Dependabot bump PR (`.github/dependabot.yml`), run `python3 .github/scripts/wc_action_pins.py --write` on its branch and push before merging; it adds the new refs' rows and drops the replaced ones. A human merges the PR.
 9. Local and CI parity: compare the verdicts for the same commit.
 
 Contracts: [zizmor-gate.md](contracts/zizmor-gate.md), [untrusted-checkout-gate.md](contracts/untrusted-checkout-gate.md).

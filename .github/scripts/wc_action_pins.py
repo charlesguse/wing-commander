@@ -7,16 +7,16 @@ WHY THIS EXISTS
 Actions outside the trusted-publisher set (its one home is the
 `unpinned-uses` policy in .github/zizmor.yml) are pinned to a full commit
 SHA with a `# vX.Y.Z` comment naming the release. A SHA never moves, so
-without automation those pins only age. This module is the rewrite the
-pin-update automation runs (FR-009b); the pull requests it opens are merged
-by a human (no bot merge class). The workflow that runs it on a schedule is
-not on this branch yet: pushing a change under .github/workflows/ needs the
-App's Workflows permission, which docs/setup.md does not grant (an owner
-decision). Until then a maintainer runs `--write` locally and opens the PR.
+without automation those pins only age. Dependabot (.github/dependabot.yml,
+owner decision on #890 for FR-009b) opens the bump pull requests, rewriting
+each SHA and its version comment together; a human merges them (no bot
+merge class). Dependabot cannot write Gate 170's registers, so the human
+runs `--write` on the bump branch before merging (FR-017a).
 
 Gate 170 (verify-action-runtime-pins.py) keys its register on the full
 `uses:` string, so a bump that rewrites only the workflow line fails it.
-`apply` therefore rewrites three things together:
+`sync_rows` (`--write`) repairs the registers after such a bump. `apply`
+(`--bump --write`) does the bump itself and rewrites three things together:
   * every `uses: <action>@<old-sha> # <old-tag>` line, SHA and comment;
   * .github/scripts/action-runtime-pins.json: the new ref's row (the
     runtime read from the action's own action.yml at the new SHA) replaces
@@ -30,8 +30,10 @@ publishers on tags are never rewritten and this module needs no copy of
 the trusted-publisher list (FR-009a).
 
 Usage:
-    python3 .github/scripts/wc_action_pins.py               # report only
-    python3 .github/scripts/wc_action_pins.py --write [--summary FILE]
+    # On a Dependabot bump PR: add the new refs' rows, drop the old ones.
+    python3 .github/scripts/wc_action_pins.py --write
+    # By hand: report, or apply, a bump of every SHA pin to its newest release.
+    python3 .github/scripts/wc_action_pins.py --bump [--write] [--summary FILE]
 Imported by verify-action-runtime-pins.py, whose --self-test runs
 `self_test_cases` (the SC-010 bump fixture).
 """
@@ -218,6 +220,60 @@ def apply(root, bumps, runtime_of=remote_runtime):
     return notes
 
 
+def sync_rows(root, runtime_of=remote_runtime):
+    """Bring both Gate 170 registers in line with the pins as they stand --
+    the step a Dependabot bump pull request needs, since Dependabot rewrites
+    the SHA and its comment but not the registers. A pin in use with no row
+    gets one (runs.using read at that ref); a row nothing uses is dropped; a
+    waiver for a ref nothing uses moves to the same action's new ref while
+    that ref's runtime is still deprecated, and is dropped otherwise.
+    -> [note] lines."""
+    found, failures = _gate170().discover(root)
+    if failures:
+        raise RuntimeError("; ".join(failures))
+    pins_path = os.path.join(root, PINS_PATH)
+    waivers_path = os.path.join(root, WAIVERS_PATH)
+    pins_doc = json.loads(_read(pins_path))
+    waivers_doc = json.loads(_read(waivers_path))
+    rows = pins_doc["pins"]
+    notes, added = [], []
+    for pin in sorted(found):
+        if pin not in rows:
+            runtime = runtime_of(pin)
+            if not runtime:
+                raise RuntimeError("could not read runs.using of {0}".format(pin))
+            rows[pin] = runtime
+            added.append(pin)
+            notes.append("added the row {0}: {1}.".format(pin, runtime))
+    for pin in sorted(set(rows) - set(found)):
+        del rows[pin]
+        notes.append("dropped the row for {0}, which nothing uses.".format(pin))
+    kept = []
+    for w in waivers_doc.get("waivers", []):
+        if w.get("uses") in found:
+            kept.append(w)
+            continue
+        action = str(w.get("uses", "")).split("@", 1)[0]
+        successor = [p for p in added if p.split("@", 1)[0] == action
+                     and rows[p] in DEPRECATED]
+        if len(successor) == 1 and not any(
+                k.get("uses") == successor[0] for k in kept):
+            notes.append("moved the waiver for {0} to {1}, which still "
+                         "declares {2}.".format(w["uses"], successor[0],
+                                                rows[successor[0]]))
+            w["uses"] = successor[0]
+            kept.append(w)
+        else:
+            notes.append("dropped the waiver for {0}, which nothing uses."
+                         .format(w.get("uses")))
+    waivers_doc["waivers"] = kept
+    pins_doc["pins"] = dict(sorted(rows.items()))
+    _write(pins_path, json.dumps(pins_doc, indent=2, ensure_ascii=False) + "\n")
+    _write(waivers_path,
+           json.dumps(waivers_doc, indent=2, ensure_ascii=False) + "\n")
+    return notes
+
+
 def summary(bumps, notes):
     lines = ["Bumps the SHA-pinned third-party actions to their newest "
              "release (specs/132 FR-009b). Each pin's SHA and `# vX.Y.Z` "
@@ -355,6 +411,43 @@ def self_test_cases(root="."):
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
+    # A Dependabot-shaped bump (SHA and comment rewritten, registers not):
+    # Gate 170 fails it; sync_rows (`--write`) repairs both registers and
+    # Gate 170 then passes.
+    for label, runtime, want_waivers in (
+            ("--write after a Dependabot bump adds the new row, drops the "
+             "old one and moves the waiver to a still-deprecated ref",
+             "node20", ["o/r@" + SHA_B]),
+            ("--write after a Dependabot bump drops the waiver once the new "
+             "ref is not deprecated", "node24", [])):
+        d = tempfile.mkdtemp(prefix="wc-action-pins-")
+        try:
+            os.makedirs(os.path.join(d, ".github", "workflows"))
+            os.makedirs(os.path.join(d, ".github", "scripts"))
+            _write(os.path.join(d, ".github", "workflows", "w.yml"),
+                   "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n"
+                   "    steps:\n      - uses: actions/checkout@v5\n"
+                   "      - uses: o/r@{0} # v2.0.0\n".format(SHA_B))
+            _write(os.path.join(d, PINS_PATH), json.dumps({"pins": {
+                "actions/checkout@v5": "node24", "o/r@" + SHA_A: "node20"}}))
+            _write(os.path.join(d, WAIVERS_PATH), json.dumps({"waivers": [
+                {"uses": "o/r@" + SHA_A, "issue": "#889", "reason": "r"}]}))
+            _, before = gate.run(d)
+            asked = []
+            sync_rows(d, lambda pin: asked.append(pin) or runtime)
+            rows = json.loads(_read(os.path.join(d, PINS_PATH)))["pins"]
+            w = [x["uses"] for x in json.loads(
+                _read(os.path.join(d, WAIVERS_PATH)))["waivers"]]
+            _, after = gate.run(d)
+            check(label, any("wc_action_pins.py --write" in f for f in before)
+                  and asked == ["o/r@" + SHA_B]
+                  and sorted(rows) == ["actions/checkout@v5", "o/r@" + SHA_B]
+                  and w == want_waivers and not after,
+                  "before {0}; asked {1}; rows {2}; waivers {3}; after {4}"
+                  .format(before, asked, rows, w, after))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     # A pin already on its newest release, and a tag-pinned trusted action,
     # are left alone.
     d = tempfile.mkdtemp(prefix="wc-action-pins-")
@@ -385,18 +478,34 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--root", default=".")
     ap.add_argument("--write", action="store_true",
-                    help="rewrite the pins and registers in place")
-    ap.add_argument("--summary", help="write the pull request body here")
+                    help="bring the Gate 170 registers in line with the pins "
+                         "in place (the step a Dependabot bump PR needs)")
+    ap.add_argument("--bump", action="store_true",
+                    help="first bump every SHA pin to its newest release "
+                         "(with --write, rewrite them; alone, report only)")
+    ap.add_argument("--summary", help="write a pull request body here")
     args = ap.parse_args(argv)
-    bumps = plan(args.root)
-    if not bumps:
-        print("wc_action_pins: every SHA-pinned action is on its newest release.")
-        return 0
-    notes = apply(args.root, bumps) if args.write else []
-    body = summary(bumps, notes)
-    if args.summary:
-        _write(args.summary, body)
-    print(body)
+    bumps, notes = [], []
+    if args.bump:
+        bumps = plan(args.root)
+        if args.write and bumps:
+            notes += apply(args.root, bumps)
+        if not bumps:
+            print("wc_action_pins: every SHA-pinned action is on its newest "
+                  "release.")
+    if args.write:
+        notes += sync_rows(args.root)
+        for n in notes:
+            print("wc_action_pins: " + n)
+        if not notes:
+            print("wc_action_pins: the Gate 170 registers already match the pins.")
+    if bumps:
+        body = summary(bumps, notes)
+        if args.summary:
+            _write(args.summary, body)
+        print(body)
+    elif not args.write and not args.bump:
+        ap.print_help()
     return 0
 
 
