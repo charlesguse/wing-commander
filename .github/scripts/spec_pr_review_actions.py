@@ -62,13 +62,30 @@ def _trusted_comment(raw):
     return str(data.get("issue_url", "")).endswith("/issues/" + issue)
 
 
-def resolve_precedent(prec):
+def _in_spec_dir(path, spec_dir):
+    """A relative path under SPEC_DIR with no `..` segment (FR-026: a head
+    precedent lives in the spec's own files)."""
+    base = spec_dir.strip("/")
+    return (bool(base) and not path.startswith("/")
+            and ".." not in path.split("/") and path.startswith(base + "/"))
+
+
+def _plain(text):
+    """Agent text bound for an App-authored comment must not open an HTML
+    comment: the select job trusts the App's `<!-- spec-pr-review-stopped`
+    / `-failed` markers, so a reviewer could otherwise forge one."""
+    return str(text).replace("<!--", "&lt;!--")
+
+
+def resolve_precedent(prec, spec_dir=""):
     if not isinstance(prec, dict):
         return {}
     kind, ref = prec.get("kind"), str(prec.get("ref") or "")
     out = {"kind": kind, "ref": ref, "resolved": False}
     if kind in ("default-branch", "head"):
         path, _, line = ref.rpartition(":")
+        if kind == "head" and not _in_spec_dir(path, spec_dir):
+            return out
         if path and line.isdigit() and int(line) >= 1:
             lines = _lines(path, "origin/main" if kind == "default-branch" else None)
             out["resolved"] = lines is not None and int(line) <= len(lines)
@@ -114,14 +131,20 @@ def prepare(findings_path, actions_path, spec_dir, out_path):
                 fixes.append({
                     "id": i, "finding": f.get("title"), "paths": [path], "kind": "fix",
                     "lines_changed": len(old.splitlines()) + len(new.splitlines()),
-                    "precedent": resolve_precedent(act.get("precedent"))})
+                    "precedent": resolve_precedent(act.get("precedent"), spec_dir)})
             else:
                 item["class"] = cls = "owner-decision"
         if cls == "owner-decision":
-            q = str(act.get("question") or f.get("what") or f.get("title") or "")
+            q = _plain(act.get("question") or f.get("what") or f.get("title") or "")
             item["question"] = q.replace("\n", " ").replace("]", ")")
-            item["options"] = [str(o) for o in act.get("options", [])][:4]
-            item["recommendation"] = str(act.get("recommendation") or "")
+            # Anything but a list is no options (a string would split into
+            # characters, null would fail the round); the marker is then
+            # blocked as question-incomplete.
+            opts = act.get("options")
+            item["options"] = [_plain(o) for o in opts][:4] if isinstance(opts, list) else []
+            item["recommendation"] = _plain(act.get("recommendation") or "")
+            if isinstance(f, dict) and "title" in f:
+                item["finding"] = dict(f, title=_plain(f.get("title")))
             fixes.append({"id": i, "finding": f.get("title"),
                           "options_count": len(item["options"]),
                           "has_recommendation": bool(item["recommendation"].strip()),
