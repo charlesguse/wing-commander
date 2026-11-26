@@ -24,6 +24,7 @@ import re
 import stat
 import sys
 import tempfile
+import types
 import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -604,6 +605,85 @@ def self_check(fx):
     return [] if weakened else ["self-check: the state fixtures did not notice a disabled quiet rule"]
 
 
+def triage_close_grounds_reached(module):
+    """The grounds `module.triage()` returns with outcome "closed", found by
+    calling it with each evidence check stubbed to fire in turn (and none, to
+    check the no-evidence path closes nothing). The module's own evidence
+    checks are restored afterwards."""
+    saved = (module.check_rate_limit, module.check_action_bump)
+    grounds = set()
+    with tempfile.TemporaryDirectory() as tmp:
+        transcript = os.path.join(tmp, "transcript.jsonl")
+        with open(transcript, "w", encoding="utf-8") as out:
+            out.write("{}\n")
+        issue = {"cited_run_url": "https://example.invalid/run/1", "cited_run_commit_sha": "0" * 40,
+                 "cited_run_transcript_path": transcript, "cited_run_workflow_path": "x.yml",
+                 "workflow_files": ["x.yml"], "agent_proposal": {}}
+        try:
+            for rate, bump in ((None, None), ({"stub": 1}, None), (None, {"stub": 1})):
+                module.check_rate_limit = lambda _path, r=rate: r
+                module.check_action_bump = lambda *_a, b=bump: b
+                got = module.triage(dict(issue), issue["cited_run_url"])
+                if got.get("outcome") == "closed":
+                    grounds.add(got.get("ground"))
+        finally:
+            module.check_rate_limit, module.check_action_bump = saved
+    return grounds
+
+
+def check_board_status_updated_line():
+    """issue_updated reads the board-status job's own Updated line; read it
+    back from the renderer that writes it, so a change to that line's format
+    fails here instead of making the board status feature read quiet."""
+    import wc_board_status as bs
+    body = bs.render({"now": "2026-11-20T06:31:00Z"})
+    got = fh.board_status_updated_at(body)
+    if got != "2026-11-20T06:31:00Z":
+        return ["issue_updated: wc_board_status.render's Updated line reads back as {0}, "
+                "expected 2026-11-20T06:31:00Z".format(got)]
+    return []
+
+
+def check_paged_signal_reads():
+    """merged_pr and release page until the window cutoff, not a fixed page
+    count (#889): a match past the old 3-page / 30-release limit is found, and
+    the read stops at the first page that ends before the window."""
+    problems = []
+    since = fh.parse_time("2026-10-20T00:00:00Z")
+
+    def busy(path):
+        found = re.search(r"&page=(\d+)", path)
+        page = int(found.group(1)) if found else 1
+        if "/pulls?" in path:
+            if page < 6:
+                return [{"merged_at": None, "updated_at": "2026-11-15T00:00:00Z", "head": {"ref": "fix/x"}}] * 100
+            if page == 6:
+                return ([{"merged_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-01T00:00:00Z",
+                          "head": {"ref": "fix/late"}}]
+                        + [{"merged_at": None, "updated_at": "2026-10-01T00:00:00Z", "head": {"ref": "fix/y"}}] * 99)
+            problems.append("merged_pr: read page {0} after a page that ended before the window".format(page))
+            return []
+        if "/releases?" in path:
+            if page == 1:
+                return [{"published_at": "2026-11-10T00:00:00Z"}] * 100
+            if page == 2:
+                # A draft has no published_at and must not end the read.
+                return ([{"published_at": None}, {"published_at": "2026-10-25T00:00:00Z"}]
+                        + [{"published_at": "2026-10-01T00:00:00Z"}] * 98)
+            problems.append("release: read page {0} after a page that reached before the window".format(page))
+            return []
+        return []
+    for signal, want in (({"kind": "merged_pr", "head_prefixes": ["fix/"]}, "2026-11-01T00:00:00Z"),
+                         ({"kind": "release"}, "2026-11-10T00:00:00Z")):
+        try:
+            got = fh.read_signal(signal, "own/repo", since, busy, {})
+        except RuntimeError as exc:
+            got = "raised: {0}".format(exc)
+        if got != want:
+            problems.append("{0}: a busy repository read {1}, expected {2}".format(signal["kind"], got, want))
+    return problems
+
+
 def check_shared_sources():
     """FR-003/FR-004 single home: triage grounds come from board_triage.py and
     switch values from wc_board_status._switch_on."""
@@ -612,11 +692,17 @@ def check_shared_sources():
     problems = []
     if fh.TRIAGE_CLOSE_GROUNDS is not board_triage.TRIAGE_CLOSE_GROUNDS:
         problems.append("triage grounds are not imported from board_triage.py")
-    with open(os.path.join(HERE, "board_triage.py"), encoding="utf-8") as fp:
-        src = fp.read()
-    for g in board_triage.TRIAGE_CLOSE_GROUNDS:
-        if '"outcome": "closed", "ground": "{0}"'.format(g) not in src:
-            problems.append("board_triage.py no longer closes on ground {0}".format(g))
+    # Drive board_triage.triage() itself down each close path rather than
+    # match its source text (#889): the grounds it closes on are the grounds
+    # the triage_close reader counts.
+    closed = triage_close_grounds_reached(board_triage)
+    if set(closed) != set(board_triage.TRIAGE_CLOSE_GROUNDS):
+        problems.append("board_triage.triage() closes on grounds {0}, but TRIAGE_CLOSE_GROUNDS is {1}".format(
+            sorted(closed), list(board_triage.TRIAGE_CLOSE_GROUNDS)))
+    fake = types.SimpleNamespace(check_rate_limit=None, check_action_bump=None,
+                                 triage=lambda issue, run: {"outcome": "closed", "ground": "new_ground"})
+    if triage_close_grounds_reached(fake) != {"new_ground"}:
+        problems.append("self-check: a triage() that closes on a new ground is not noticed")
     if re.search(r'"grounds"\s*:', json.dumps(fh.load_registry())):
         problems.append("registry holds a literal triage grounds list")
     if fh.TRIAGE_CLOSE_COMMENT_PREFIX is not board_triage.TRIAGE_CLOSE_COMMENT_PREFIX:
@@ -947,7 +1033,7 @@ def check_cron_truncation_and_shortening():
         problems.append("_pages: a full last page did not raise")
     except RuntimeError:
         pass
-    shortened = ("<!-- wing-commander-feature-health -->\n**Feature health** — built x\n\n"
+    shortened = ("<!-- wing-commander-feature-health -->\n**Feature health** — built 2026-11-20 06:38Z\n\n"
                  "_Table shortened: it did not fit._\n<!-- /wing-commander-feature-health -->")
     if not fh.section_built(shortened, fh.MARKER_BEGIN):
         problems.append("section_built: a shortened section reads as not built")
@@ -1005,6 +1091,8 @@ def main():
     problems += check_cron_truncation_and_shortening()
     problems += check_cron_forms_and_bounded_reads()
     problems += check_section_built_own_marker(registry)
+    problems += check_board_status_updated_line()
+    problems += check_paged_signal_reads()
     problems += check_schedule_and_comment_reads()
     problems += check_multi_workflow_callouts()
     with open(os.path.abspath(__file__), encoding="utf-8") as fp:
