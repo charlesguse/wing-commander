@@ -135,6 +135,10 @@ check "spec 130: no choice carried for an unposted label" "$D_CHOSEN" ""
 readback false success '{"recognized":true,"chosen_option":"Use the documented replacement flag"}' success NONE
 check "spec 130: no posted-options list -> not recognized" "$D_REC" "false"
 
+readback false success '{"recognized":true,"chosen_option":"Pin to the old release\nUse the documented replacement flag"}' success
+check "spec 130: a multi-line choice holding a posted label -> not recognized" "$D_REC" "false"
+check "spec 130: no choice carried for a multi-line value" "$D_CHOSEN" ""
+
 echo
 echo "=== spec 130: the agent's context holds the pipeline's and maintainers' comments only ==="
 new_step_env
@@ -159,6 +163,21 @@ check_not_contains "spec 130: context drops a non-maintainer's comment" "$QC" "p
 check_not_contains "spec 130: context drops another bot's comment" "$QC" "planted by another app"
 check "spec 130: posted options are the pipeline's labels only" "$(tr -d '\r' < "$RUNNER_TEMP/posted-options.txt" | paste -sd, -)" "A,B"
 check "spec 130: the reply itself is staged" "$(cat "$RUNNER_TEMP/reply-comment.md")" "go with B"
+
+echo "--- spec 130: posted options are the question's option list, not its reasoning ---"
+new_step_env
+"$PY" -c "
+import json,os
+json.dump({'issues':{'42':{'number':42,'state':'open','labels':[],
+ 'body':'watching\n<!-- wing-commander-auto-update-spec-kit: candidate=0.15.1 observed=1 awaiting-decision=true -->',
+ 'comments':[
+  {'id':511,'user':'wcbot[bot]','body':'> [!NOTE]\n> - **E**: a bullet in another pipeline note'},
+  {'id':512,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path**\n> Upstream changed two things:\n> - **Breaking change**: a reasoning bullet\n> \n> **Options:**\n> \n> - **A**: first\n> - **B**: second\n> \n> **Sources:**\n> \n> - **S**: after the option list\n> - [v0.15.1 notes](https://x)'},
+  {'id':515,'user':'charlesguse','author_association':'OWNER','body':'go with B'}]}}}, open(os.environ['GH_STATE'],'w'))"
+GHA_SUBST=("steps.ctx.outputs.token=stub")
+export GH_TOKEN=stub ISSUE_NUMBER=42 COMMENT_ID=515 BOT_LOGIN='wcbot[bot]'
+run_step 'auto-update-spec-kit__comment-reply__*stage-the-reply*.sh' >/dev/null 2>&1
+check "spec 130: only the option list's labels are posted options" "$(tr -d '\r' < "$RUNNER_TEMP/posted-options.txt" 2>/dev/null | paste -sd, -)" "A,B"
 
 echo
 echo "=== Scenario 13: resume clears the flag and records who decided ==="
