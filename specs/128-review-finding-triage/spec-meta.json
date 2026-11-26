@@ -2,10 +2,11 @@
   "issue": 1189,
   "spec_dir": "specs/128-review-finding-triage",
   "feature_num": "128",
-  "stage": "implement",
+  "stage": "review",
   "iteration": 1,
   "spec_branch": "spec/128-review-finding-triage",
   "truncated_count": 0,
   "truncated_tier": null,
-  "gate_suite_ready": true
+  "gate_suite_ready": true,
+  "pending_re_review_from": []
 }
