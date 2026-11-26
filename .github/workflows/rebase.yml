@@ -1391,12 +1391,21 @@ jobs:
               fi
             fi
           elif [ "$CREDENTIAL_OK" = "false" ] && ! grep -q '(stale info)' "$RUNNER_TEMP/push-err.txt"; then
-            # The lease did not refuse it ("stale info" is git's own lease
-            # rejection, which stays the branch race below whatever the
+            # The race did not refuse it ("stale info" is git's own lease
+            # rejection, or the one push_branch echoes for a merge-mode
+            # "[rejected]", which stays the branch race below whatever the
             # credential), and the wing-commander-bot credential was not
             # re-established after the agent ran, so the refusal is most
-            # likely authentication (#661). Fail loudly, naming it.
-            echo "::error::${SPEC_PREFIX}$SLUG: push refused after the post-agent wing-commander-bot credential could not be re-established. This is most likely a credential failure, not a branch race (the lease did not refuse it); the rebased result was not published."
+            # likely authentication (#661). Fail loudly, naming it and the
+            # push this mode made.
+            if [ "${SYNC_METHOD:-}" = merge ]; then
+              not_race="the plain push was not rejected as a non-fast-forward"
+              lost="the sync commit was not published"
+            else
+              not_race="the lease did not refuse it"
+              lost="the rebased result was not published"
+            fi
+            echo "::error::${SPEC_PREFIX}$SLUG: push refused after the post-agent wing-commander-bot credential could not be re-established. This is most likely a credential failure, not a branch race (${not_race}); ${lost}."
             {
               echo "${SPEC_PREFIX}$SLUG: push refused with a failed post-agent credential; not treated as a branch race."
               sed 's/^/    /' "$RUNNER_TEMP/push-err.txt"
