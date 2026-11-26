@@ -895,11 +895,11 @@ def _apply_changed(base, gates, texts):
     print(f"--changed: {len(changed)} file(s) differ from {base}")
     for path in changed:
         print(f"  {path}")
-    inputs = gate_inputs(".", gates, texts)
-    picked, reasons, whole = select_changed(changed, inputs)
     if not changed:
         print("--changed: no file changed, so no gate runs.")
         return []
+    inputs = gate_inputs(".", gates, texts)
+    picked, reasons, whole = select_changed(changed, inputs)
     if whole:
         print(f"--changed: running every gate: {whole}.\n")
         return gates
