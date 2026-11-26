@@ -246,7 +246,8 @@ def check_failed_reads():
          [("*workflows/wrap.yml/runs*", ("404", "Not Found")),
           ("*--paginate*actions/runs?*", _PAGES_OF_NONE),
           ("*actions/runs?*", '{"total_count": 2000}')],
-         lambda c: c.workflow_runs(runs), pl.ReadError, "a deleted workflow's runs cannot be read completely"),
+         lambda c: c.workflow_runs(runs), pl.ReadError,
+         "wrap.yml (deleted; the repository's runs): more than 1000 runs in one day"),
     ]
     old_path, saved_gh = os.environ["PATH"], pl.gh_text
     for label, arms, act, want, text in cases:
@@ -1043,6 +1044,181 @@ def check_run_list_cost():
     return problems
 
 
+def check_deleted_workflow_runs():
+    """#889: a workflow gone from the default branch is read from the
+    repository's run list, sliced by day as the main path is (the repository
+    passes 1,000 runs in any window here), and a run whose `path` carries an
+    `@refs/...` suffix is still that workflow's run."""
+    problems = []
+    gone = ".github/workflows/wrap.yml"
+
+    def api(path, paginate):
+        if "/workflows/wrap.yml/" in path:
+            raise pl.NotFound("gh api {0}: (HTTP 404)".format(path))
+        if not paginate:
+            return {"total_count": 1500 if "created=%3E%3D" in path else 40, "workflow_runs": []}
+        if "created=2026-10-10T12:00:00Z.." not in path:
+            return []
+        return [{"id": 1, "path": gone + "@refs/heads/main"}, {"id": 2, "path": gone},
+                {"id": 3, "path": ".github/workflows/other.yml"},
+                {"id": 4, "path": gone + ".bak"}]
+    with _FakeReads(api=api) as fake:
+        try:
+            got = pl.Collector("own/repo", "2026-11-10T12:00:00Z").workflow_runs(gone)
+        except pl.ReadError as exc:
+            return ["deleted workflow: the repository's run list over the cap failed the read: {0}".format(exc)]
+    ids = sorted(r["id"] for r in got)
+    if ids != [1, 2]:
+        problems.append("deleted workflow: kept runs {0}, expected [1, 2] (the @refs suffix "
+                        "stripped, other paths dropped)".format(ids))
+    days = [c[1] for c in fake.calls if c[2] and "/actions/runs?" in c[1]]
+    if len(days) != 31:
+        problems.append("deleted workflow: {0} day-sliced paged reads, expected 31".format(len(days)))
+    return problems
+
+
+def check_progress():
+    """#889: a build logs each phase, and every PROGRESS_EVERY merges, with
+    elapsed time and calls so far, so a slow build's log says where the time
+    went; it is silent until main() turns it on, and main() turns it off."""
+    import contextlib
+    import io
+    import re
+    problems = []
+    shape = re.compile(r"^wc_proof_list: .+ \(\d+\.\d s; \d+ gh and (\d+) git calls so far\)$")
+    quiet = io.StringIO()
+    with contextlib.redirect_stderr(quiet), contextlib.redirect_stdout(quiet):
+        pl.progress("not started")
+    if quiet.getvalue():
+        problems.append("progress: printed before main() turned it on: {0!r}".format(quiet.getvalue()))
+    with _InRepo() as repo:
+        _commit(repo.root, {"a.txt": "a\n"}, "2026-10-01T00:00:00 +0000")
+        for n in range(12):
+            _commit(repo.root, {".github/workflows/x.yml": "# {0}\n".format(n)},
+                    "2026-11-0{0}T{1:02d}:00:00 +0000".format(1 + n % 9, n))
+
+        def gh(args):
+            if "rate_limit" in args:
+                return "5000\n"
+            raise AssertionError("unexpected gh " + " ".join(args))
+        stream = io.StringIO()
+        pl.start_progress(stream)
+        try:
+            with _FakeReads(api=lambda path, paginate: [], gh=gh, tree=lambda s, c: []):
+                pl.collect("own/repo", "2026-11-10T12:00:00Z")
+        except (pl.ReadError, AssertionError) as exc:
+            return ["progress: the faked build failed: {0}".format(exc)]
+        finally:
+            pl._progress["stream"] = None
+    lines = stream.getvalue().splitlines()
+    for want in ("start: 5000 API requests remain", "entries: 10 of 12 merges read",
+                 "entries: 12 merges read, 12 need a run", "comments: 0 threads read",
+                 "runs: 0 runs of 0 reaching workflows read", "named runs: 0 read"):
+        if not any(line.startswith("wc_proof_list: " + want + " (") for line in lines):
+            problems.append("progress: no {0!r} line in {1}".format(want, lines))
+    bad = [line for line in lines if not shape.match(line)]
+    if bad or not lines:
+        problems.append("progress: lines without elapsed time and call counts: {0}".format(bad or lines))
+    elif int(shape.match(lines[-1]).group(1)) == 0:
+        problems.append("progress: the git calls the build made were not counted")
+    saved = pl.collect
+    pl.collect = lambda *a, **k: (_ for _ in ()).throw(pl.ReadError("stop"))
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            pl.main(["build", "--repository", "own/repo", "--out", os.devnull])
+    finally:
+        pl.collect = saved
+    if pl._progress["stream"] is not None:
+        problems.append("progress: main() left the progress lines on")
+    return problems
+
+
+# Research D6 "Reused homes": wc_proof_list.py keeps no copy of these. Each
+# seed is a copy the scan must catch when appended to the real source.
+FORBIDDEN_HOME_SEEDS = (
+    ("a `Board item:` pattern", 'BOARD_ITEM_RE = re.compile(r"Board item: #(\\d+)")\n'),
+    ("a closing-keyword pattern",
+     'CLOSES_RE = re.compile(r"(?i)\\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\\s+#(\\d+)")\n'),
+    ("a run-link pattern", 'RUN_RE = re.compile(r"https://github\\.com/([^/]+/[^/]+)/actions/runs/(\\d+)")\n'),
+    ("the board item marker's name", 'MARKER = "<!-- wing-commander-board-item: "\n'),
+    ("a UTF-16 counter", 'def units(text):\n    return len(text.encode("utf-16-le")) // 2\n'),
+    ("a UTF-16 counter", 'def units(text):\n    return sum(2 if ord(c) > 0xFFFF else 1 for c in text)\n'),
+    ("a `git diff --name-only` call", 'def changed(a, b):\n    return git("diff", "--name-only", a, b)\n'),
+    ("a `git diff --name-only` call", 'CHANGED = "git diff --name-only {0} {1}"\n'),
+    ("a call to `_gh_json`", 'def read(path):\n    return wc_board_status._gh_json(path)\n'),
+    ("a call to `_gh_json`", 'from wc_board_status import _gh_json\n'),
+)
+_REGEX_CHARS = set("\\([|+*^$")
+
+
+def forbidden_home_problems(source):
+    """What `source` defines that research D6 puts in another home: a
+    `Board item:`, closing-keyword or run-link pattern, the board item
+    marker's name, a UTF-16 counter, a `git diff --name-only` call or a
+    `_gh_json` call. Docstrings are prose and are not read."""
+    import ast
+    import re
+    tree = ast.parse(source)
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                docstrings.add(id(body[0].value))
+    closing = re.compile(r"(?i)\b(?:fix|close|resolve)")
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and id(node) not in docstrings:
+            value = node.value
+            if isinstance(value, str):
+                regexy = bool(_REGEX_CHARS & set(value)) or "#" in value
+                if "board item" in value.lower():
+                    found.add("a `Board item:` pattern")
+                if closing.search(value) and regexy:
+                    found.add("a closing-keyword pattern")
+                if "actions/runs" in value and bool(_REGEX_CHARS & set(value)):
+                    found.add("a run-link pattern")
+                if "wing-commander-board-item" in value:
+                    found.add("the board item marker's name")
+                if re.search(r"\bdiff\s+--name-only\b", value):
+                    found.add("a `git diff --name-only` call")
+            elif isinstance(value, int) and not isinstance(value, bool) and value in (0xFFFF, 0x10000):
+                found.add("a UTF-16 counter")
+        elif isinstance(node, (ast.Call, ast.List, ast.Tuple)):
+            items = node.args if isinstance(node, ast.Call) else node.elts
+            consts = {a.value for a in items if isinstance(a, ast.Constant) and isinstance(a.value, str)}
+            if "diff" in consts and "--name-only" in consts:
+                found.add("a `git diff --name-only` call")
+            # An encoding to UTF-16 (a message naming "UTF-16 units" is prose).
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ("encode", "decode")
+                    and any(re.search(r"(?i)utf[-_]?16", c) for c in consts)):
+                found.add("a UTF-16 counter")
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and re.search(r"(?i)utf_?16", node.name):
+            found.add("a UTF-16 counter")
+        elif isinstance(node, ast.Name) and node.id == "_gh_json":
+            found.add("a call to `_gh_json`")
+        elif isinstance(node, ast.Attribute) and node.attr == "_gh_json":
+            found.add("a call to `_gh_json`")
+        elif isinstance(node, ast.alias) and node.name == "_gh_json":
+            found.add("a call to `_gh_json`")
+    return sorted(found)
+
+
+def check_forbidden_homes():
+    """Research D6: wc_proof_list.py defines none of the patterns, counters or
+    calls that have a home elsewhere; one seeded copy of each is caught."""
+    with open(os.path.join(HERE, "wc_proof_list.py"), encoding="utf-8") as fh:
+        source = fh.read()
+    problems = ["wc_proof_list.py defines {0}; D6 puts it in its one home".format(what)
+                for what in forbidden_home_problems(source)]
+    for what, seed in FORBIDDEN_HOME_SEEDS:
+        if what not in forbidden_home_problems(source + "\n\n" + seed):
+            problems.append("forbidden-home fixture: a seeded copy of {0} was not caught: {1!r}".format(
+                what, seed.strip()))
+    return problems
+
+
 WRITE_CALLS = ("gh workflow run", "gh issue comment", "gh issue close", "gh issue edit", "gh pr comment",
                "gh label", "createWorkflowDispatch", "-X POST", "-X PATCH", "-X PUT", "-X DELETE",
                "--method POST", "--method PATCH", "claude-code-action", "create-github-app-token")
@@ -1387,7 +1563,7 @@ def main():
         print("[ok] verify-proof-list: {0}".format(note))
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
                 + check_failed_reads() + check_main_errors() + check_section_file_home() + check_review_fixes(fx) + check_lifecycle_issue()
-                + check_entries() + check_closed_by_commit(fx) + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_budget() + check_tree_cost() + check_run_list_cost() + check_workflow()
+                + check_entries() + check_closed_by_commit(fx) + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_budget() + check_tree_cost() + check_run_list_cost() + check_deleted_workflow_runs() + check_progress() + check_forbidden_homes() + check_workflow()
                 + real + check_sc001_fixtures(fx) + fixtures_name_no_live_table(check_sc001_fixtures))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4
