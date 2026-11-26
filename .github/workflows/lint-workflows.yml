@@ -5048,6 +5048,12 @@ jobs:
       - name: Gate 168 — stranded-review migration decisions (specs/123)
         if: "!cancelled()"
         run: python3 .github/scripts/verify-migrate-stranded-review-lifecycles.py
+      - name: Gate 177 — review-finding triage lists every drop and reject, never drops important/security or unreadable (specs/128)
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-finding-triage-report.py
+      - name: Gate 177 self-test — a missing drop, a missing reason, a reject shown as dropped, a dropped important/security/unreadable finding and a reimplemented rule each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-finding-triage-report.py --self-test
       # Gate 170 — #1127/#1128: every external action pin has its runtime
       # recorded in action-runtime-pins.json, and none targets node20 or
       # older unless action-runtime-waivers.json waives it with an open

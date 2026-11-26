@@ -89,6 +89,15 @@ deterministic read-back. `research.md` D10 is the design rationale;
      redundant safety net rather than the only one.
 6. Emit the summary block and step outputs.
 
+Spec 128 amends step 3-4: after the errata and in-flight filters and before
+the cap, each survivor (a `routed-task` run is exempt) is routed by
+`wc_finding_triage.route_all` with `in_scope=False`. Only `record` findings
+reach the cap, and a recorded finding's body carries its one-line silent
+description. Drops and rejects are kept in `state.json.triaged_out` and
+listed with their reasons under "Dropped and rejected" in the summary; a
+reject also emits a warning. The optional finding fields are
+`failure_class`, `silent_description`, `severity` and `security`.
+
 ## Call-site wiring (all six stage jobs)
 
 Each stage job gains, immediately after its existing deterministic

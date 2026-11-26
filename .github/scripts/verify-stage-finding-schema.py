@@ -112,6 +112,8 @@ def _validate_value(value, spec, where):
         return _validate_array(value, spec, where)
     if kind == "string":
         return _validate_string(value, spec, where)
+    if kind == "boolean" and not isinstance(value, bool):
+        return "{0} must be a boolean, got {1}".format(where, type(value).__name__)
     return None
 
 
@@ -142,8 +144,8 @@ def _fixture_files():
     # Pinned count (verify-metrics-record-schema.py precedent): a bare glob
     # makes a deleted fixture read as a smaller clean pass. Update
     # deliberately with the fixture set.
-    if len(found) != 9:
-        sys.exit("::error::stage-finding-schema: expected exactly 9 fixtures "
+    if len(found) != 10:
+        sys.exit("::error::stage-finding-schema: expected exactly 10 fixtures "
                  "under {0}, found {1} — a fixture was added or removed "
                  "without updating this pin.".format(FIXTURES_DIR, len(found)))
     return found

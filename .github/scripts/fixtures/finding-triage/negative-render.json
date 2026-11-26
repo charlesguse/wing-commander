@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {"name": "missing drop in list", "expect_error": "missing",
+     "records": [{"title": "a", "outcome": "drop", "reason": "fails loudly"},
+                 {"title": "b", "outcome": "drop", "reason": "no output change"}],
+     "rendered": "- `a` -- dropped: fails loudly"},
+    {"name": "missing reason", "expect_error": "reason",
+     "records": [{"title": "a", "outcome": "drop", "reason": "fails loudly"}],
+     "rendered": "- `a` -- dropped"},
+    {"name": "reject rendered as dropped", "expect_error": "rejected",
+     "records": [{"title": "a", "outcome": "reject", "reason": "silent, no description"}],
+     "rendered": "- `a` -- dropped: silent, no description"}
+  ]
+}

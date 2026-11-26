@@ -763,8 +763,21 @@ jobs:
               "evidence": {"file_paths": ["..."], "detail": "optional"},
               "in_scope": true|false,
               "line": 42,
+              "failure_class": "silent|loud|none",
+              "silent_description": "one line, only when failure_class is silent",
+              "severity": "important|nit|pre_existing",
+              "security": true|false,
               "fingerprint_basis": {"file_path": "...", "gate_or_artifact": "one line naming what this is"}}]
             ```
+
+            `failure_class` says how a finding outside this PR's scope fails:
+            `silent` when it can produce a wrong result, reading or decision,
+            or skip a check, with no error, red gate or "unreadable" to show
+            it (then `silent_description` must say how, in one line); `loud`
+            when it can only crash, turn a gate red or show a visible error;
+            `none` when it cannot change any output at all (naming, wording,
+            style). Mark `severity` important and `security` true wherever
+            they apply: those are never dropped.
 
             `line` is optional: the 1-based line in fingerprint_basis.file_path,
             at this PR's head, where the finding sits. Give it whenever the
@@ -941,6 +954,20 @@ jobs:
               print("::warning::lifecycle-review-gate reviewer: {0} finding(s) were extracted but all were malformed -- the round will be treated as not completed, not as zero findings".format(dropped))
               parse_failed = True
 
+          # specs/128: annotate each finding with its triage outcome; the
+          # rule lives only in wc_finding_triage. Fallback if it cannot load:
+          # every finding is recorded, never dropped.
+          try:
+              from wc_finding_triage import route as _triage_route
+          except ImportError:
+              _triage_route = None
+          for item in kept:
+              if _triage_route is None:
+                  item["triage"] = {"outcome": "record", "reason": "class unreadable"}
+              else:
+                  _outcome, _reason = _triage_route(item, item.get("in_scope"))
+                  item["triage"] = {"outcome": _outcome, "reason": _reason}
+
           runner_temp = os.environ["RUNNER_TEMP"]
           with open(os.path.join(runner_temp, "lifecycle-review-findings.json"), "w", encoding="utf-8") as fh:
               json.dump(kept, fh)
@@ -996,6 +1023,7 @@ jobs:
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
           from board_spec_request_body import fenced_section
           from board_spec_request_body import utf16_len
+          from wc_finding_triage import render_triaged
           from wc_convergence import diff_fingerprint, recorded_diff_lines, round_findings, round_record_marker, void_round_record_marker
 
           runner_temp = os.environ["RUNNER_TEMP"]
@@ -1065,6 +1093,16 @@ jobs:
           if len(findings) > len(shown):
               lines.append("")
               lines.append("{0} more finding(s) not shown.".format(len(findings) - len(shown)))
+          # specs/128: every dropped or rejected finding is listed here with
+          # its reason, rendered by code from the extract step's annotation.
+          triaged = render_triaged([
+              {"title": f.get("title", ""), **(f.get("triage") or {})}
+              for f in findings])
+          if triaged:
+              lines.extend(["", "### Dropped and rejected", "", triaged])
+              for f in findings:
+                  if (f.get("triage") or {}).get("outcome") == "reject":
+                      print("::warning::lifecycle-review-gate reviewer: a finding was rejected (silent, no description) -- it is listed in the review body, not filed")
           lines.extend(tail)
 
           with open(os.path.join(runner_temp, "lifecycle-review-body.md"), "w", encoding="utf-8") as fh:
@@ -1340,6 +1378,7 @@ jobs:
           sys.path.insert(0, ".wc-pristine-repo/.github/scripts")
           from wc_review_finding_fingerprint import fingerprint, norm
           from wc_convergence import evaluate, read_round_records, round_findings
+          from wc_finding_triage import route, silent_note
 
           runner_temp = os.environ["RUNNER_TEMP"]
           issue = os.environ["ISSUE"]
@@ -1403,7 +1442,10 @@ jobs:
               if f.get("in_scope") is True:
                   in_scope_survivors.append((f, fp))
               elif f.get("in_scope") is False and fp not in folded_fps:
-                  out_of_scope_survivors.append((f, fp))
+                  # specs/128: the outcome is re-derived here, never read
+                  # from the artifact's annotation; only `record` is filed.
+                  if route(f, False)[0] == "record":
+                      out_of_scope_survivors.append((f, fp))
 
           # Spec 116 FR-002/FR-004/FR-006: an in-scope finding already
           # folded in an earlier round is a recurrence -- it keeps this round
@@ -1465,6 +1507,9 @@ jobs:
               text.extend("- {0}".format(p) for p in paths)
               if detail:
                   text.extend(["", "Detail:", str(detail)])
+              note = silent_note(f)
+              if note:
+                  text.extend(["", "How it fails silently: {0}".format(note)])
               body_lines = ["Found by the code review of #{0}.".format(os.environ["PR_NUMBER"]),
                            "", "\n".join(text), "", marker]
               body_path = os.path.join(oos_dir, "oos-{0}.md".format(i))

@@ -66,7 +66,7 @@ Limits and rules:
 | Implement on Haiku | off; the `model:haiku` label opts in (retry goes to Sonnet, `model:opus` wins) | label, `WING_COMMANDER_IMPLEMENT_HAIKU_MAX_TURNS` (180) |
 | Hard turn stop | every agent step's `--max-turns` is 2.5 × its turn budget, rounded up | fixed (`wing-commander-turn-ceiling`) |
 | Paths the implement agent may not write | `.claude/`, `.git/` | `WING_COMMANDER_IMPLEMENT_NO_WRITE_PATHS` |
-| Defects a stage files while working | implement and finalize file them, intake, clarify, plan and tasks do not; at most 3 per run, labelled `found-by:<stage>` | `WING_COMMANDER_<STAGE>_FINDINGS_FILING_ENABLED`, `WING_COMMANDER_FINDINGS_CAP`, `WING_COMMANDER_FINDINGS_LABEL_PREFIX` |
+| Defects a stage files while working | implement and finalize file them, intake, clarify, plan and tasks do not; only a defect that can fail silently is filed, a loud or no-effect one is dropped and listed with its reason in the run summary; at most 3 per run after the drops, labelled `found-by:<stage>` | `WING_COMMANDER_<STAGE>_FINDINGS_FILING_ENABLED`, `WING_COMMANDER_FINDINGS_CAP`, `WING_COMMANDER_FINDINGS_LABEL_PREFIX` |
 | Concurrency | one spec's stages run one at a time; different specs run in parallel; intake runs one at a time | fixed |
 | Lifecycles in implement at once | three, by convention only ([CLAUDE.md](../CLAUDE.md)); no code enforces it | none |
 | Runner and container | `ubuntu-latest`, no container | `WING_COMMANDER_RUNNER`, `WING_COMMANDER_CONTAINER_IMAGE` |

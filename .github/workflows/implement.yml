@@ -1414,8 +1414,17 @@ jobs:
               "what": "what is wrong, one line, no line breaks",
               "evidence": {"file_paths": ["path/of/the/file"],
                            "detail": "optional: the lines you saw, quoted"},
+              "failure_class": "silent, loud or none: how the defect fails",
+              "silent_description": "only when silent: one line on how",
+              "severity": "important, nit or pre_existing",
+              "security": true or false,
               "fingerprint_basis": {"file_path": "path/of/the/file",
                                     "gate_or_artifact": "the heading, job, or gate it concerns"}}]
+            ("silent" = a wrong result, reading or decision, or a skipped
+            check, with no error to show it; "loud" = only a crash, red gate
+            or visible error; "none" = cannot change any output. The four
+            added keys are optional; mark important and security wherever
+            they apply.)
             "detail" is the only optional key. "gate_or_artifact" is half of
             the dedup key, so give it a stable name (a heading, a job name, a
             gate name), never a sentence. It must occur, verbatim once
@@ -2478,8 +2487,17 @@ jobs:
               "what": "what is wrong, one line, no line breaks",
               "evidence": {"file_paths": ["path/of/the/file"],
                            "detail": "optional: the lines you saw, quoted"},
+              "failure_class": "silent, loud or none: how the defect fails",
+              "silent_description": "only when silent: one line on how",
+              "severity": "important, nit or pre_existing",
+              "security": true or false,
               "fingerprint_basis": {"file_path": "path/of/the/file",
                                     "gate_or_artifact": "the heading, job, or gate it concerns"}}]
+            ("silent" = a wrong result, reading or decision, or a skipped
+            check, with no error to show it; "loud" = only a crash, red gate
+            or visible error; "none" = cannot change any output. The four
+            added keys are optional; mark important and security wherever
+            they apply.)
             "detail" is the only optional key. "gate_or_artifact" is half of
             the dedup key, so give it a stable name (a heading, a job name, a
             gate name), never a sentence. It must occur, verbatim once
