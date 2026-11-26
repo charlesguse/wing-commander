@@ -49,7 +49,8 @@ itself a mention; a value
 that only mentions `gh` later (`msg="the gh call failed"`) does not count,
 so start a message with other words (`"the gh call exited 0"`).
 A call of a function whose body runs its arguments (`"$@"`, `$@`, `"$1"`,
-`"${@}"`, alone or after a wrapper such as `timeout` or `command`) fails
+`"${@}"`, or any variable, which may hold them, alone or after a wrapper
+such as `timeout` or `command`) fails
 the same way for each argument that is `gh` or a path to it, quoted or not
 (`retry() { "$@"; }; retry 'gh' api x`), or, when the body splits or
 evaluates them (`$@`, `eval "$@"`, `sh -c "$1"`), that starts with `gh`.

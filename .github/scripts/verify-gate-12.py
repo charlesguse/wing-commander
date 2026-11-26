@@ -815,6 +815,13 @@ LOCATOR_CASES = [
     ("a function that only echoes its arguments, or tests for one, runs none",
      "say() { echo \"$@\"; }; say 'gh' api x; c() { command -v \"$1\"; }; c 'gh'",
      [men("quoted")] * 2),
+    # A body may hold its arguments in a variable first (review-until-clean
+    # pass 1 of #1275): any expansion it runs or evaluates counts as one.
+    ("a function running its arguments through a local, an array or eval",
+     'run() { local cmd=("$@"); "${cmd[@]}"; }; run \'gh\' api x\n'
+     'r() { local c=$1; shift; "$c" "$@"; }; r \'/usr/bin/gh\' y\n'
+     'e() { local c="$1"; eval "$c"; }; e "gh api z"',
+     [dis("dynamic-command")] * 3),
     ("a function running \"$@\" called with a message that mentions gh runs none",
      'log() { "$@"; }; log "gh failed"; w() { bash v.sh "$1"; }; w "gh x"; f() { :; }; f \'gh\'',
      [men("quoted")] * 3),

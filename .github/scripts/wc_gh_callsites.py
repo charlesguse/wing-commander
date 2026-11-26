@@ -588,7 +588,9 @@ class _Scan:
         if not self.fn_open:
             return
         base = _base(head.lit)
-        pos = [w for w in words if POSITIONAL.fullmatch(w.raw)]
+        # A variable may hold the arguments (`local c=("$@"); "${c[@]}"`,
+        # `local c=$1; eval "$c"`): fail closed, any expansion counts as one.
+        pos = [w for w in words if POSITIONAL.fullmatch(w.raw) or w.lit is None]
         if not pos:
             return
         stringy = (any(not w.raw.startswith('"') for w in pos)
@@ -599,11 +601,12 @@ class _Scan:
         # hands it to the script as data.
         given = [j for j, w in enumerate(words) if _shell_string(w.lit, base in PWSH,
                                                                   base == "fish")]
-        runs = (POSITIONAL.fullmatch(head.raw) is not None
+        runs = (head.lit is None
                 or base in WRAPPERS
                 and not (base == "command" and any(w.lit in ("-v", "-V") for w in args))
                 or base in SHELLS and bool(given) and any(
-                    POSITIONAL.fullmatch(w.raw) for w in words[given[0] + 1:]))
+                    POSITIONAL.fullmatch(w.raw) or w.lit is None
+                    for w in words[given[0] + 1:]))
         if runs:
             self.fn_open[-1][2] = _merge(self.fn_open[-1][2], mode)
         elif head.lit is not None:
