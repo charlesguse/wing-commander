@@ -832,22 +832,34 @@ def check_schedule_and_comment_reads():
             problems.append("an hourly cron with a run {0} h ago classed {1!r}, expected {2}".format(
                 hours_ago, state, want))
     # A monthly cron whose last run is older than the 31-day window but inside
-    # twice its interval: the run read must reach back to the threshold.
-    last = fh.fmt_time(now - datetime.timedelta(days=45))
+    # twice its interval: the run read must reach back to the threshold, so it
+    # is not "not running", and the run before the window counts for nothing
+    # else, so it is idle (FR-017, spec 126 scenario 6), not healthy and not
+    # failing (#889). Past the threshold it is "not running".
+    def monthly_at(days_ago, conclusion="success"):
+        last = fh.fmt_time(now - datetime.timedelta(days=days_ago))
 
-    def monthly(path):
-        m = re.search(r"created=([0-9TZ:-]+)\.\.", path)
-        if m:
-            runs = ([{"id": 1, "event": "schedule", "conclusion": "success", "run_started_at": last,
-                      "created_at": last}] if m.group(1) <= last else [])
-            return {"total_count": len(runs), "workflow_runs": runs}
-        return []
+        def monthly(path):
+            m = re.search(r"created=([0-9TZ:-]+)\.\.", path)
+            if m:
+                runs = ([{"id": 1, "event": "schedule", "conclusion": conclusion, "run_started_at": last,
+                          "created_at": last}] if m.group(1) <= last else [])
+                return {"total_count": len(runs), "workflow_runs": runs}
+            return []
+        return monthly
     entry = [{"name": "f", "workflows": [{"file": "m.yml", "cadence": "schedule"}]}]
-    readings, signals, ctx = fh.collect(entry, "own/repo", now, gh=monthly, environ={},
+    for days_ago, conclusion, want in ((45, "success", "idle"), (45, "failure", "idle"),
+                                       (70, "success", "not running")):
+        readings, signals, ctx = fh.collect(entry, "own/repo", now, gh=monthly_at(days_ago, conclusion),
+                                            environ={}, read_text=lambda _n: on_schedule('"0 6 1 * *"'))
+        rows = fh.classify_all(entry, readings, signals, ctx, now)
+        if rows[0]["state"] != want:
+            problems.append("a monthly cron whose only run ({0}) was {1} days ago classed {2!r}, expected "
+                            "{3}".format(conclusion, days_ago, rows[0]["state"], want))
+    readings, signals, ctx = fh.collect(entry, "own/repo", now, gh=monthly_at(45), environ={},
                                         read_text=lambda _n: on_schedule('"0 6 1 * *"'))
-    rows = fh.classify_all(entry, readings, signals, ctx, now)
-    if rows[0]["state"] != "healthy":
-        problems.append("a monthly cron that ran 45 days ago classed {0!r}, expected healthy".format(rows[0]["state"]))
+    if not fh.classify_all(entry, readings, signals, ctx, now)[0]["last_run"]:
+        problems.append("a monthly cron that ran 45 days ago lost its last run date")
     # One triage-close candidate with a full page of other comments: the close
     # on its second page is found, not a truncation error.
     close = fh.TRIAGE_CLOSE_COMMENT_PREFIX + fh.TRIAGE_CLOSE_GROUNDS[0] + ", see the run."

@@ -118,7 +118,15 @@ def classify_workflow(ref, entry, reading, ctx, now):
         detail["reason"] = "{0}: no cron found".format(ref["file"])
         return "unreadable", detail
     runs = sorted(reading.get("runs") or [], key=lambda r: r["started_at"], reverse=True)
-    qualifying = [r for r in runs if r.get("conclusion") not in NOT_QUALIFYING]
+    # collect() may read a scheduled workflow back past the window, to the
+    # not-running threshold (#1261); those earlier runs count only for the
+    # not-running test and last_run. Every other rule reads in-window runs,
+    # so a weekly or monthly cron whose only run predates the window is idle
+    # (FR-017), not healthy (#889).
+    window_start = reading.get("window_start")
+    in_window = ([r for r in runs if parse_time(r["started_at"]) >= parse_time(window_start)]
+                 if window_start else runs)
+    qualifying = [r for r in in_window if r.get("conclusion") not in NOT_QUALIFYING]
     detail["qualifying"] = len(qualifying)
     for r in qualifying:
         if r["conclusion"] == "success" and not detail["last_success"]:
@@ -128,7 +136,7 @@ def classify_workflow(ref, entry, reading, ctx, now):
     detail["last_run"] = runs[0]["started_at"] if runs else None
     if switch:
         return "paused", detail
-    if not have_var and runs and all(r.get("conclusion") == "skipped" for r in runs):
+    if not have_var and in_window and all(r.get("conclusion") == "skipped" for r in in_window):
         return "not configured", detail
     last = qualifying[:FAILING_WINDOW]
     if last and all(r["conclusion"] != "success" for r in last):
@@ -576,6 +584,8 @@ def collect(registry, repo, now, gh=gh_json, environ=None, read_text=None, start
                     since = min(start, now - datetime.timedelta(hours=not_running_hours(interval)))
                 runs = fetch_runs(gh, repo, ref["file"], since, now, ref.get("events"))
                 readings[ref["file"]] = {"runs": runs, "interval_hours": interval}
+                if since < start:
+                    readings[ref["file"]]["window_start"] = fmt_time(start)
             except (RuntimeError, OSError, ValueError, KeyError, TypeError) as exc:
                 readings[ref["file"]] = {"unreadable": str(exc) or "read failed"}
         if entry.get("signal"):
