@@ -5182,14 +5182,14 @@ jobs:
       - name: Gate 175 self-test — any dispatch reference to a number or boolean input outside the fromJSON, JSON-fallback or boolean-bare forms fails, as does a non-fallback form beside another trigger, an undeclared workflow_call input or a trailing newline, and each message names the form to use
         if: "!cancelled()"
         run: python3 .github/scripts/verify-dispatch-input-types.py --self-test
-      # Gate 176 — specs/130-board-messages-explain-line (FR-008): the
+      # Gate 177 — specs/130-board-messages-explain-line (FR-008): the
       # board loop's message renderer shows every part, filled or as gap
       # text, for each checked-in fixture and each derived missing-part
       # variant.
-      - name: Gate 176 — every board message fixture renders every part, fenced, under budget, never a bare "No findings"
+      - name: Gate 177 — every board message fixture renders every part, fenced, under budget, never a bare "No findings"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-message-parts.py
-      - name: Gate 176 self-test — a dropped part, bare "No findings", unnamed identifier, unclosed fence, over-budget body and closing keyword each fail
+      - name: Gate 177 self-test — a dropped part, bare "No findings", unnamed identifier, unclosed fence, over-budget body and closing keyword each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-message-parts.py --self-test
       # Gate 165 — specs/116-review-convergence-analyze. It keeps the review

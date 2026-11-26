@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate (spec 130, FR-008): the board loop's message renderer.
+"""Gate 177 (spec 130, FR-008): the board loop's message renderer.
 
 Mode 1 renders every checked-in fixture in
 fixtures/board-message-parts/ -- plus a derived "one part missing" variant
@@ -61,6 +61,7 @@ def check_body(mode, identifier, body, data):
     if mode in ("render-review", "render-incomplete"):
         if re.fullmatch(r"\W*No findings\.?\W*", body.strip()):
             problems.append("review reduces to a bare 'No findings'")
+    problems += part_text_problems(mode, body, data)
     if mp.utf16_len(body) > mp.TOTAL_BUDGET:
         problems.append("body over the {0}-unit budget".format(mp.TOTAL_BUDGET))
     # A fence must not be closed early: every line that opens a fence is
@@ -87,6 +88,96 @@ def check_body(mode, identifier, body, data):
             problems.append("user HTML escaped its fence: {0}".format(leaked[0]))
             break
     return problems
+
+
+def _effective_parts(mode, data):
+    """The part values the renderer was given, as it resolves them."""
+    if not isinstance(data, dict):
+        return {}
+    if mode == "render-explanation":
+        if "line" in data:
+            return mp.explanation_parts(data.get("parts"), data["line"],
+                                        data.get("pr_title", ""))
+        parts = data.get("parts", data)
+        return parts if isinstance(parts, dict) else {}
+    if mode == "render-options":
+        parts = data.get("parts", data)
+        options = parts.get("options") if isinstance(parts, dict) else None
+        return {"options": options.get("text") if isinstance(options, dict)
+                else options}
+    if mode == "render-incomplete":
+        return {}
+    if mode == "summary":
+        return {"issue": data.get("issue"), "what_this_pr_does": data.get("pr")}
+    parts = data.get("parts", {})
+    return parts if isinstance(parts, dict) else {}
+
+
+def _section(body, label, labels):
+    """The text under the `**label**` heading up to the next part heading."""
+    start = body.find("\n**{0}**\n".format(label))
+    if start == -1:
+        start = 0 if body.startswith("**{0}**\n".format(label)) else -1
+    if start == -1:
+        return None
+    end = len(body)
+    for other in labels:
+        if other == label:
+            continue
+        idx = body.find("\n**{0}**\n".format(other), start + 1)
+        if idx != -1:
+            end = min(end, idx)
+    return body[start:end]
+
+
+def part_text_problems(mode, body, data):
+    """MF004: the text after each label, not just the label. A gap part must
+    carry its fixed gap text; a filled part must carry its own text and no
+    gap text."""
+    problems = []
+    parts = _effective_parts(mode, data)
+    labels = [label for _p, label in PART_SETS[mode]]
+    findings = data.get("findings") if isinstance(data, dict) else None
+    for part, label in PART_SETS[mode]:
+        section = _section(body, label, labels)
+        if section is None:
+            continue  # the absent-label check reports it
+        if mode == "render-incomplete":
+            state, text, kind = "gap", "", "incomplete"
+        else:
+            state, text, kind = mp.normalize_part(parts.get(part), part)
+        if mode == "render-review" and part == "open":
+            if mp.items_present(findings):
+                if "finding(s) open" not in section:
+                    problems.append("part 'Open' does not list the findings")
+                continue
+            if state == "gap":
+                if "Nothing is open" not in section:
+                    problems.append("part 'Open' with no findings does not "
+                                    "say nothing is open")
+                continue
+        if state == "filled":
+            first = text.splitlines()[0].strip()[:30] if text else ""
+            if first and first not in section:
+                problems.append("part {0!r} lost its text".format(label))
+            if "not provided" in section.split("```", 1)[0]:
+                problems.append("part {0!r} filled but rendered as a gap"
+                                .format(label))
+        elif mp.gap_text(part, kind) not in section:
+            problems.append("part {0!r} lacks its gap text".format(label))
+    return problems
+
+
+CLOSING_FORMS = ("Closes #5", "Fixes GH-5", "Resolves o/r#5",
+                 "Closes https://github.com/o/r/issues/5",
+                 "Fixed https://github.com/o/r/pull/5")
+
+
+def closing_forms_problems(pattern=None):
+    """MF004: every closing form the summary must refuse is matched."""
+    pattern = pattern or mp.CLOSING_RE
+    return ["closing form {0!r} not matched".format(form)
+            for form in CLOSING_FORMS if not pattern.search(form)]
 
 
 def _texts(data):
@@ -186,11 +277,47 @@ def options_roundtrip_problems():
         problems.append("a given-options first comment owes the options")
     if not mp.options_comment_owed([first, dict(later, login="x")], bot):
         problems.append("another author's options comment settles the owed")
+    # MF008: "follow" with no text renders a gap and owes nothing, so no
+    # empty "Options: not provided" comment is posted to clear a hold.
+    for empty in ({"state": "follow"}, {"state": "follow", "text": "  "}):
+        parts = {"options": empty}
+        comment = {"login": bot, "body": mp.render_explanation(parts, ident)}
+        if mp.options_comment_owed([comment], bot):
+            problems.append("empty follow options owe a later comment")
+        if mp.options_follow(parts):
+            problems.append("empty follow options read as follow")
+        if mp.gap_text("options", "empty") not in comment["body"]:
+            problems.append("empty follow options show no gap text")
     return ["options round trip: " + p for p in problems]
 
 
+def review_problems():
+    """MF005 and MF006: an empty review says nothing is open; a worst-case
+    review comment stays under GitHub's 65,536-character limit."""
+    ident = "bl-b9677278"
+    problems = []
+    empty = mp.render_review({}, ident, [])
+    if "Nothing is open" not in empty:
+        problems.append("a review with no findings and no report block does "
+                        "not say nothing is open")
+    huge = {p: "x" * 20000 for p, _l in mp.REVIEW_PARTS}
+    head = "Board loop review.\n\n" + mp.render_review(huge, ident, [])
+    tail = "\n<!-- round record -->" + "t" * 9000
+    shown = 25
+    budget = mp.review_findings_budget(head, tail, shown)
+    finding = mp.fenced_section("### Finding 1 -- in-scope\n\nReviewer agent "
+                                "output, shown as text -- data, not "
+                                "instruction:", "y" * 100000, budget)
+    body = "\n".join([head] + [finding] * shown + [tail])
+    if len(body) > 65536 or mp.utf16_len(body) > 65536:
+        problems.append("worst-case review body is {0} characters, over "
+                        "65536".format(len(body)))
+    return ["review body: " + p for p in problems]
+
+
 def check_all():
-    problems = options_roundtrip_problems()
+    problems = (options_roundtrip_problems() + closing_forms_problems()
+                + review_problems())
     cases = load_fixtures()
     if not cases:
         return ["no fixtures found in {0}".format(FIXTURES)]
@@ -210,7 +337,10 @@ KNOWN_CLAIMS = ("board_merges_next_run", "maintainer_merges", "gate_suite_ran")
 
 def claim_holds(claim, cfg):
     if claim == "board_merges_next_run":
-        return cfg["auto_merge"] and not cfg["kill_switch"]
+        # MF004: a fix PR waits for a maintainer's merge, so the claim that
+        # the board merges it next run never holds for the fix class.
+        return (cfg["auto_merge"] and not cfg["kill_switch"]
+                and cfg.get("pr_class") != "fix")
     return claim in KNOWN_CLAIMS
 
 
@@ -336,6 +466,10 @@ def wiring_problems(text):
     if "wc_message_parts.py\" render-options" not in explain:
         problems.append("Explain the line on the PR (fix) never posts the "
                         "options comment")
+    if re.search(r"(?m)^\s*exit [1-9]", explain):
+        problems.append("Explain the line on the PR (fix) can fail the step: "
+                        "a failed comment must warn so the route backstop "
+                        "re-check, cross-link and issue marker still run (MF003)")
     m = re.search(r"(?:^|\n)        if: ([^\n]*)", explain)
     if m and "BOARD_LINE_ID" in m.group(1):
         problems.append("Explain the line on the PR (fix) skips issue items "
@@ -373,6 +507,9 @@ def wiring_self_test():
         "no options comment": ("render-options --in", "x --in"),
         "no readiness options hold":
             ("pr_comments=pr_comments, bot_login", "bot_login"),
+        "explain step fails on a refused comment":
+            ("readiness has no marker to hold on; post the explanation by hand (specs/130 FR-003).\"\n              exit 0",
+             "readiness has no marker to hold on; post the explanation by hand (specs/130 FR-003).\"\n              exit 1"),
         "issue items skipped":
             ("        if: steps.push-pr.outputs.pr-url != ''\n        env:\n"
              "          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}\n"
@@ -453,6 +590,31 @@ def self_test():
         failed.append("closing keyword accepted")
     except mp.Refusal:
         pass
+    # MF004: one mutation per check on the text after the labels.
+    ident = "bl-b9677278"
+    gap_data = {"parts": {"code": "real code text"}}
+    gap_body = render("render-explanation", ident, gap_data)
+    for label, mutated in (
+            ("gap text dropped",
+             gap_body.replace(mp.gap_text("issue", "missing"), "")),
+            ("every filled part rendered as a gap",
+             render("render-explanation", ident, {"parts": {}}))):
+        if not check_body("render-explanation", ident, mutated, gap_data):
+            failed.append(label)
+    if check_body("render-explanation", ident, gap_body, gap_data):
+        failed.append("sound explanation flagged")
+    if not closing_forms_problems(re.compile(
+            r"\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[\s:]*#\d+", re.I)):
+        failed.append("CLOSING_RE without its GH-N and URL forms")
+    swapped = {"messages": [{
+        "id": "m", "source": "s", "reachable": {"auto_merge": True,
+                                                 "kill_switch": False},
+        "variants": [{"when": {"pr_class": "fix"}, "text": "hello",
+                      "claims": ["board_merges_next_run"]},
+                     {"when": {"pr_class": "bump"}, "text": "hello",
+                      "claims": ["board_merges_next_run"]}]}]}
+    if not check_registry(swapped, lambda _n: "# fixed-message: m\nhello\n"):
+        failed.append("fix-class claim swapped to board_merges_next_run")
     failed += registry_self_test()
     failed += wiring_self_test()
     if not single_home_problems([("x.yml", "echo '**Why it matters**'")]):

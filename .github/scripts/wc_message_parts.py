@@ -109,7 +109,12 @@ def normalize_part(raw, part="options"):
         return "gap", "", "missing"
     if isinstance(raw, dict):
         if raw.get("state") == "follow" and part == "options":
-            return "follow", "", "follow"
+            # MF008: "options follow" with no text to follow is a gap, so
+            # no later comment is owed and none is posted empty.
+            text = raw.get("text")
+            if isinstance(text, str) and text.strip():
+                return "follow", "", "follow"
+            return "gap", "", "empty"
         return normalize_part(raw.get("text"), part) if "text" in raw else (
             "gap", "", "missing")
     if not isinstance(raw, str):
@@ -195,9 +200,36 @@ def render_explanation(parts, identifier):
         EXPLANATION_PARTS, parts)
 
 
+REVIEW_PART_CAP = 4000
+REVIEW_BODY_LIMIT = 57000
+FINDING_OVERHEAD = 400
+
+
+def review_findings_budget(head_text, tail_text, shown):
+    """UTF-16 units each shown finding may take so the whole review comment
+    (head: header and review-report block; findings; tail) stays under
+    REVIEW_BODY_LIMIT, itself under GitHub's 65536 limit (MF006). The head
+    and tail come out of the limit first, then each finding's own fence
+    overhead."""
+    remaining = (REVIEW_BODY_LIMIT - utf16_len(head_text) - utf16_len(tail_text)
+                 - 300 - FINDING_OVERHEAD * max(1, shown))
+    return max(200, remaining // max(1, shown))
+
+
 def render_review(parts, identifier, findings):
     _check_identifier(identifier)
     parts = dict(parts) if isinstance(parts, dict) else {}
+    # MF006: review-report parts are agent text; cap each as the
+    # explanation parts are, so the block cannot crowd the findings out.
+    for key, value in list(parts.items()):
+        if isinstance(value, str) and len(value) > REVIEW_PART_CAP:
+            parts[key] = value[:REVIEW_PART_CAP]
+    if not items_present(findings):
+        existing = parts.get("open")
+        if normalize_part(existing)[0] != "filled":
+            # MF005 (Story 2 scenario 1, FR-005): no findings kept and no
+            # report block says nothing is open, not "not provided".
+            parts["open"] = "Nothing is open: no in-scope finding was kept."
     items = []
     for finding in findings or []:
         if isinstance(finding, str):
@@ -215,6 +247,10 @@ def render_review(parts, identifier, findings):
     return _assemble(
         "Board loop review of `{0}` against its stated question.".format(
             identifier), REVIEW_PARTS, parts)
+
+
+def items_present(findings):
+    return any(isinstance(f, (str, dict)) for f in (findings or []))
 
 
 def render_incomplete_review(identifier):

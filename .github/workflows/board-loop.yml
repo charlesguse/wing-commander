@@ -3910,10 +3910,12 @@ jobs:
           done
           if [ "$first_posted" -ne 1 ]; then
             if [ -n "$options" ]; then
-              # No marker is on the PR, so readiness would read 'clear' with
-              # the options unexplained: fail the step instead.
-              echo "::error::board-loop fix: the explaining comment could not be posted on PR #$PR_NUMBER and its options are owed -- failing so readiness does not read clear without a marker (specs/130 FR-003)."
-              exit 1
+              # No marker is on the PR. A failing step would strand the route
+              # backstop re-check, the cross-link and the issue marker below
+              # (MF003), so this warns and the step exits 0; the unexplained
+              # PR is named for a human.
+              echo "::warning::board-loop fix: the explaining comment could not be posted on PR #$PR_NUMBER and its options are owed -- readiness has no marker to hold on; post the explanation by hand (specs/130 FR-003)."
+              exit 0
             fi
             echo "::warning::board-loop fix: the explaining comment could not be posted on PR #$PR_NUMBER (specs/130 FR-003)."
             exit 0
@@ -4781,7 +4783,7 @@ jobs:
           # specs/130 FR-005..FR-007: the five review parts come from
           # wc_message_parts (the one home), never a bare "No findings.".
           # A failed round posts "review did not complete".
-          from wc_message_parts import Refusal, render_incomplete_review, render_review
+          from wc_message_parts import Refusal, render_incomplete_review, render_review, review_findings_budget
           identifier = os.environ.get("BOARD_LINE_ID") or "#{0}".format(os.environ.get("ISSUE_NUMBER", ""))
           lines = ["Board loop review."]
           lines.append("")
@@ -4865,7 +4867,9 @@ jobs:
               tail.append(void_round_record_marker())
           MAX_SHOWN = 25
           shown = findings[:MAX_SHOWN]
-          budget = (57000 - utf16_len("\n".join(tail))) // max(1, len(shown))
+          # MF006: the review-report block above comes out of the same
+          # budget (wc_message_parts.review_findings_budget, the one home).
+          budget = review_findings_budget("\n".join(lines), "\n".join(tail), len(shown))
           for n, f in enumerate(shown, 1):
               scope = "in-scope (will be fixed on this PR)" if f.get("in_scope") else "out-of-scope (filed as its own issue)"
               text = [str(f.get("title", "(untitled)")), "", str(f.get("what", ""))]
