@@ -22,8 +22,9 @@ do.
 
 A review-gate-skip case is `<name>.tasks.md` (absent for an unreadable
 count), an optional `<name>.spec-meta.json`, plus `<name>.expected` pinning
-`skip=true|false`; the gate runs
-lifecycle-review-gate.yml's own skip block against it.
+`skip=true|false` and, optionally, `summary-has=<text>`, a line the block
+must write to the step summary; the gate runs lifecycle-review-gate.yml's
+own skip block against it.
 
 Every row above must name a directory that exists, holds fixtures, and is
 read by the gate it names (Gate 166, `check_fixture_readme`).

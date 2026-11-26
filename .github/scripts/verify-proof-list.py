@@ -283,6 +283,91 @@ def check_failed_reads():
     return problems
 
 
+def check_main_errors():
+    """FR-013 (#889): a git, tar or file failure under `build` ends with the
+    one `::error::wc_proof_list:` line and exit 1, never a traceback."""
+    import contextlib
+    import io
+    import subprocess
+    import tarfile
+    problems = []
+    raisers = [
+        ("a failed git call", subprocess.CalledProcessError(128, ["git", "diff"], b"", b"fatal: bad object\n")),
+        ("a missing file", FileNotFoundError(2, "No such file or directory", "x.yml")),
+        ("an OS error", OSError(5, "Input/output error")),
+        ("a bad tar archive", tarfile.ReadError("file could not be opened successfully")),
+    ]
+    saved = pl.collect
+    try:
+        for label, exc in raisers:
+            def boom(*_a, exc=exc, **_k):
+                raise exc
+            pl.collect = boom
+            out = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out):
+                    code = pl.main(["build", "--repository", "own/repo", "--out", os.devnull])
+            except BaseException as raised:  # noqa: BLE001 - escaping at all is the failure
+                problems.append("main: {0} escaped as {1}".format(label, type(raised).__name__))
+                continue
+            if code != 1 or not out.getvalue().startswith("::error::wc_proof_list: "):
+                problems.append("main: {0} gave exit {1} and {2!r}".format(label, code, out.getvalue()[:160]))
+            elif len(out.getvalue().splitlines()) != 1:
+                problems.append("main: {0} printed more than the one error line: {1!r}".format(label, out.getvalue()[:160]))
+            # diff_name_list captures git's stderr, so the line must carry it.
+            elif isinstance(exc, subprocess.CalledProcessError) and "fatal: bad object" not in out.getvalue():
+                problems.append("main: {0} dropped git's reason: {1!r}".format(label, out.getvalue()[:160]))
+    finally:
+        pl.collect = saved
+    return problems
+
+
+def check_section_file_home():
+    """#889: the section file's name has one home, wc_board_status.PROOF_LIST_FILE;
+    the writer uses it, and the workflow writes and uploads exactly that file."""
+    import wc_board_status as bs
+    problems = []
+    if pl.SECTION_FILE is not bs.PROOF_LIST_FILE:
+        problems.append("wc_proof_list.SECTION_FILE is not wc_board_status.PROOF_LIST_FILE")
+    if hasattr(pl, "SECTION_ARTIFACT"):
+        problems.append("wc_proof_list.SECTION_ARTIFACT is back; the artifact name is wc_board_status.PROOF_LIST_ARTIFACT")
+    for name in ("wc_proof_list.py", "wc_board_status.py"):
+        with open(os.path.join(HERE, name), encoding="utf-8") as fh:
+            count = fh.read().count('"{0}"'.format(bs.PROOF_LIST_FILE))
+        if count != (1 if name == "wc_board_status.py" else 0):
+            problems.append("{0}: the section file name is typed {1} time(s); it belongs once, "
+                            "in wc_board_status.PROOF_LIST_FILE".format(name, count))
+    with open(os.path.join(HERE, "..", "workflows", bs.PROOF_LIST_WORKFLOW), encoding="utf-8") as fh:
+        text = fh.read()
+    problems += section_file_problems(text, bs.PROOF_LIST_FILE)
+    renamed = text.replace(bs.PROOF_LIST_FILE, "proof-list.json")
+    if renamed == text or not section_file_problems(renamed, bs.PROOF_LIST_FILE):
+        problems.append("section file fixture: a renamed file in the workflow was not noticed")
+    upload_only = text.replace("path: " + bs.PROOF_LIST_FILE, "path: proof-list.json")
+    if upload_only == text or not section_file_problems(upload_only, bs.PROOF_LIST_FILE):
+        problems.append("section file fixture: a renamed upload path was not noticed")
+    return problems
+
+
+def section_file_problems(text, filename):
+    """The build step writes `--out <filename>` and the upload's `path:` is it."""
+    import shlex
+    import yaml
+    problems = []
+    steps = [s for job in (yaml.safe_load(text).get("jobs") or {}).values() for s in job.get("steps") or []]
+    builds = [s for s in steps if "wc_proof_list.py build" in str(s.get("run"))]
+    if len(builds) != 1:
+        return ["workflow: expected one `wc_proof_list.py build` step, found {0}".format(len(builds))]
+    argv = shlex.split(builds[0]["run"])
+    out = argv[argv.index("--out") + 1] if "--out" in argv[:-1] else None
+    if out != filename:
+        problems.append("workflow: the build writes {0!r}, not {1!r}".format(out, filename))
+    uploads = [s for s in steps if "upload-artifact" in str(s.get("uses"))]
+    if len(uploads) != 1 or (uploads[0].get("with") or {}).get("path") != filename:
+        problems.append("workflow: the upload's path is not {0!r}".format(filename))
+    return problems
+
+
 def check_review_fixes(fx):
     """Round 1 review findings, each with a case that fails without its fix."""
     import tempfile
@@ -1134,7 +1219,7 @@ def main():
     if note:
         print("[ok] verify-proof-list: {0}".format(note))
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
-                + check_failed_reads() + check_review_fixes(fx) + check_lifecycle_issue()
+                + check_failed_reads() + check_main_errors() + check_section_file_home() + check_review_fixes(fx) + check_lifecycle_issue()
                 + check_entries() + check_closed_by_commit(fx) + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_workflow()
                 + real + check_sc001_fixtures(fx) + fixtures_name_no_live_table(check_sc001_fixtures))
     # Self-check: a classifier that ignores the merge time must be caught.
