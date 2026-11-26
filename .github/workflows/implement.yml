@@ -1014,7 +1014,19 @@ jobs:
             exit 1
           fi
           echo "stage=$(jq -r '.stage // empty' "$SPEC_DIR/spec-meta.json")" >> "$GITHUB_OUTPUT"
-          echo "recorded-iteration=$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")" >> "$GITHUB_OUTPUT"
+          # The Idempotency guard below does shell arithmetic on this value,
+          # which evaluates a crafted string (`a[$(cmd)]`) as code; anything
+          # but a plain non-negative integer is refused here.
+          recorded=$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")
+          if ! [[ "$recorded" =~ ^[0-9]+$ ]]; then
+            msg="wing-commander implement stage: spec-meta.json records a non-integer iteration — refusing."
+            echo "::error::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            echo "reason=$msg" >> "$GITHUB_OUTPUT"
+            echo "refused=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "recorded-iteration=$recorded" >> "$GITHUB_OUTPUT"
 
       # Refusal note (research.md D1) — see "Report preflight refusal" above.
       - name: Report spec-artifacts refusal on lifecycle issue
@@ -1816,6 +1828,9 @@ jobs:
           META_STAGE: ${{ steps.meta-cycle.outputs.stage }}
           META_ITERATION: ${{ steps.meta-cycle.outputs.iteration }}
           VERDICT: ${{ steps.cycle-verdict.outputs.verdict }}
+          # Turns used: the verdict composite's reading of the transcript's
+          # .num_turns (digits only), not a jq copy of its own.
+          TURNS_REPORTED: ${{ steps.cycle-verdict.outputs.reported-turns }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           CHECKED_BASE: ${{ steps.checkbox-base-cycle.outputs.checked-count }}
           CHECKED_TIP: ${{ steps.checkbox-tip-cycle.outputs.checked-count }}
@@ -1946,7 +1961,7 @@ jobs:
           # specs/123 FR-003: turns used come from the run's execution record,
           # the budget is the intended-turns input; the line itself is
           # formatted solely by decide-implement-outcome.sh.
-          turns_used="$(jq -r 'if type=="array" then . else [.] end | map(select(.type=="result")) | last | .num_turns // empty' "$RUNNER_TEMP/claude-execution-output.json" 2>/dev/null)" || turns_used=""
+          turns_used="${TURNS_REPORTED:-}"
           decision="$(OK="$ok" TRUNCATED="$truncated" TURNS_USED="$turns_used" TURN_BUDGET="${INTENDED_TURNS:-}" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "$ok" != true ] || { [ "$truncated" != true ] && [ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false; })")"; }
           pick() { printf '%s\n' "$decision" | grep -m1 "^$1=" | cut -d= -f2- || true; }
           converged="$(pick converged)"
@@ -2820,6 +2835,8 @@ jobs:
           # the second alternative rides only on a resolved slug; an empty one would match any bot.
           AGENT_AUTHOR_RE: claude\[bot\]${{ steps.ctx.outputs.bot-slug && format('|{0}\[bot\]', steps.ctx.outputs.bot-slug) || '' }}
           VERDICT: ${{ steps.retry-verdict.outputs.verdict }}
+          # Turns used -- see "Read back cycle outcome".
+          TURNS_REPORTED: ${{ steps.retry-verdict.outputs.reported-turns }}
           ESCALATION_MODEL: ${{ inputs.escalation-model }}
           SPEC_PREFIX: ${{ inputs.spec-prefix }}
           CHECKED_BASE: ${{ steps.checkbox-base-retry.outputs.checked-count }}
@@ -2932,7 +2949,7 @@ jobs:
           # specs/117-implement-stall-handoff: the one shared stop rule,
           # measured from the RETRY's own base -- see "Read back cycle
           # outcome" above.
-          turns_used="$(jq -r 'if type=="array" then . else [.] end | map(select(.type=="result")) | last | .num_turns // empty' "$RUNNER_TEMP/claude-execution-output.json" 2>/dev/null)" || turns_used=""
+          turns_used="${TURNS_REPORTED:-}"
           decision="$(OK="$ok" TRUNCATED="$truncated" TURNS_USED="$turns_used" TURN_BUDGET="${INTENDED_TURNS:-}" IMPL_CHECKED_BASE="${IMPL_CHECKED_BASE:-0}" IMPL_CHECKED_TIP="${IMPL_CHECKED_TIP:-0}" IMPL_UNCHECKED_TIP="${IMPL_UNCHECKED_TIP:-1}" CONVERGE_SHA="$converge_sha" bash "$DECIDE_SCRIPT")" || { echo "::warning::decide-implement-outcome.sh failed; reading convergence from the unchecked implementation count and not handing off so the steps below still run"; decision="$(printf 'converged=%s\nprogressed=false\nhandoff=false\n' "$([ "$ok" != true ] || { [ "$truncated" != true ] && [ "${IMPL_UNCHECKED_TIP:-1}" = 0 ] && echo true || echo false; })")"; }
           pick() { printf '%s\n' "$decision" | grep -m1 "^$1=" | cut -d= -f2- || true; }
           converged="$(pick converged)"
@@ -4109,7 +4126,7 @@ jobs:
             if [ "$ROUTED" = "true" ]; then
               post_handoff_remaining_work \
                 "⚠️ **Remaining work is outside the implement stage's write boundary** — the loop is ending here rather than dispatching another cycle. Remaining work identified by the last convergence pass:" \
-                "Cycle $ITERATION: remaining work is outside the write boundary and was routed — handing off before the iteration cap ($MAX)"
+                "Cycle $ITERATION: remaining work is outside the write boundary and was routed — handing off $([ "$ITERATION" -ge "$MAX" ] && echo at || echo before) the iteration cap ($MAX)"
             else
               post_handoff_remaining_work \
                 "⚠️ **Implementation is stalled** — the loop is ending here after cycle $ITERATION rather than dispatching another cycle. Remaining work identified by the last convergence pass:" \
