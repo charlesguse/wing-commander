@@ -28,6 +28,15 @@
 # (verify-board-loop-helper-provenance.py) and Gate 104
 # (verify-board-loop-composite-provenance.py) are the two halves of this
 # one provenance property.
+#
+# prove-gate and prove are the exception to `github.sha`. They are the only
+# jobs that run on this file's `pull_request: closed` trigger, and on a
+# pull_request event github.sha is the PR's merge commit: for a PR closed
+# without merging, that tree is the PR's own, unreviewed code. Both of their
+# checkouts -- the trusted copy and the workspace root, whose .github/scripts
+# they import -- therefore name the default branch. Gate 104's rule (h)
+# works out from each job's `if:` which jobs can run on a pull_request
+# event and holds every such job to that ref.
 name: "board-loop"
 
 on:
@@ -6591,21 +6600,25 @@ jobs:
       line-id: ${{ steps.gate.outputs.line-id }}
       eligible: ${{ steps.gate.outputs.eligible }}
     steps:
+      # On a pull_request event github.sha is the PR's merge commit -- see
+      # this file's header (prove-gate and prove) for why both checkouts
+      # in this job name the default branch instead.
       - name: Checkout
         uses: actions/checkout@v5
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       # see this file's header for why every job does this
       - name: Checkout board-loop's own trusted copy (composites)
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           path: .wc-pristine-repo
           persist-credentials: false
       - name: Record trusted-copy provenance
         run: |
-          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.event.repository.default_branch }}." >> "$GITHUB_STEP_SUMMARY"
       - name: Write-protect board-loop's own trusted copy (composites)
         run: chmod -R a-w .wc-pristine-repo
 
@@ -6825,21 +6838,25 @@ jobs:
         been displaced or could not be correlated to a dispatch; this
         recovery run addresses that.' || '' }}
     steps:
+      # On a pull_request event github.sha is the PR's merge commit -- see
+      # this file's header (prove-gate and prove) for why both checkouts
+      # in this job name the default branch instead.
       - name: Checkout
         uses: actions/checkout@v5
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       # see this file's header for why every job does this
       - name: Checkout board-loop's own trusted copy (composites)
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           path: .wc-pristine-repo
           persist-credentials: false
       - name: Record trusted-copy provenance
         run: |
-          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.sha }}." >> "$GITHUB_STEP_SUMMARY"
+          echo "board-loop: composites resolved from $(git -C .wc-pristine-repo rev-parse HEAD) at ref ${{ github.event.repository.default_branch }}." >> "$GITHUB_STEP_SUMMARY"
       - name: Write-protect board-loop's own trusted copy (composites)
         run: chmod -R a-w .wc-pristine-repo
 

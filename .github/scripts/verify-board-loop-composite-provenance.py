@@ -31,7 +31,9 @@ feature closes):
       copy (composites)` step, at a step index lower than every such
       reference, every `wing-commander-context` call, and every
       `anthropics/claude-code-action@` step in that same job;
-  (c) that step's `with.ref` is exactly `${{ github.sha }}`;
+  (c) that step's `with.ref` is exactly `${{ github.sha }}` in every job
+      that cannot run on a pull_request event (rule (h) sets the ref in
+      every job that can);
   (d) that step carries no `continue-on-error: true`, and its own `if:`
       (if it has one at all) is not a condition that could skip it while a
       dependent reference still runs;
@@ -48,6 +50,23 @@ feature closes):
 A job with no composite reference at all (today: only `resolve-model`)
 trivially satisfies (a)-(d) and (f); rule (e) is a file-level fact
 independent of any one job.
+
+Rule (h) covers this file's `pull_request: closed` trigger. On a
+pull_request event github.sha is the PR's merge commit, and a checkout with
+no ref gets that same commit. For a PR closed without merging, that is the
+PR's own unreviewed tree, and the job would run its composites with the
+App's private key and import its .github/scripts with the bot token.
+  (h) in every job that can run on a pull_request event, every checkout of
+      this repository -- the trusted copy and the workspace root alike --
+      names `ref: ${{ github.event.repository.default_branch }}`.
+Which jobs can run on that event is worked out from the file, never
+listed. Each job's `if:` is evaluated as it would read on a pull_request
+event: no inputs, `github.event_name` known, every job that cannot run
+there skipped with empty outputs, and everything else unknown, with the
+implicit `success()` a job gets when its `if:` names no status function.
+A job is held to rule (h) unless its condition is certainly false, and an
+`if:` the evaluator cannot parse counts as one that can run (fail closed).
+Today that is prove-gate and prove.
 
 Rule (g) carries the same uses:-block concern to every OTHER workflow in
 .github/workflows/, since a relative `uses: ./.github/actions/<name>`
@@ -69,7 +88,8 @@ Gate 98's own `run:`-block checks (helper-script/schema provenance, the
 gate never inspects a `run:` block, and has no gate-suite exemption to
 state (it never runs the item's own tree).
 
---self-test applies one mutation per rule above, plus a mutation
+--self-test checks rule (h)'s evaluator on fixed conditions, then applies
+one mutation per rule above, plus a mutation
 reintroducing a raw reference in `select` -- a job outside Gate 98's own
 JOBS tuple -- proving rule (a) admits no per-job carve-out, and asserts
 each is caught and attributable to its own rule, plus a baseline assertion
@@ -106,6 +126,249 @@ TRUSTED_ROOT_REFS = (
     "${{ github.event.repository.default_branch }}",
 )
 TRUSTED_ROOT_REPOS = (None, "${{ github.repository }}")
+# Rule (h): the ref every checkout of this repository names in a job that
+# can run on a pull_request event.
+PR_SAFE_REF = "${{ github.event.repository.default_branch }}"
+PR_EVENT = "pull_request"
+
+
+# --- rule (h): which jobs can run on a pull_request event -------------------
+#
+# A three-valued reading of a job's `if:` as it would evaluate on a
+# pull_request event. A value is ("known", v) for one the expression
+# certainly has there (a string or a bool), or UNKNOWN. Only a condition
+# that is certainly false keeps a job out of rule (h).
+
+UNKNOWN = ("unknown", None)
+STATUS_FN_RE = re.compile(r"\b(?:success|always|cancelled|failure)\s*\(")
+_TOKEN_RE = re.compile(
+    r"\s*(?:(\|\||&&|==|!=|<=|>=|<|>|!|\(|\)|,)"
+    r"|'((?:[^']|'')*)'"
+    r"|(-?\d+(?:\.\d+)?)"
+    r"|([A-Za-z_][A-Za-z0-9_-]*(?:\.(?:[A-Za-z_][A-Za-z0-9_-]*|\*))*))")
+
+
+class _Unparsable(Exception):
+    pass
+
+
+def _tokens(text):
+    out, pos, text = [], 0, text.strip()
+    while pos < len(text):
+        m = _TOKEN_RE.match(text, pos)
+        if not m or m.end() == pos:
+            raise _Unparsable(text[pos:])
+        op, string, number, ident = m.groups()
+        if op is not None:
+            out.append(("op", op))
+        elif string is not None:
+            out.append(("str", string.replace("''", "'")))
+        elif number is not None:
+            out.append(("num", number))
+        else:
+            out.append(("id", ident))
+        pos = m.end()
+    return out
+
+
+def _known(x):
+    return ("known", x)
+
+
+def _truth(v):
+    """True, False, or None (unknown) for an abstract value."""
+    if v is UNKNOWN:
+        return None
+    x = v[1]
+    return x != "" if isinstance(x, str) else bool(x)
+
+
+class _PrEval(object):
+    """One `if:` read on a pull_request event. `skipped` holds the jobs that
+    certainly do not run there; `needs` is this job's own needs."""
+
+    def __init__(self, text, skipped, needs):
+        self.toks = _tokens(text)
+        self.i = 0
+        self.skipped = skipped
+        self.needs = needs
+
+    def peek(self):
+        return self.toks[self.i] if self.i < len(self.toks) else (None, None)
+
+    def take(self, want=None):
+        tok = self.peek()
+        if tok[0] is None or (want is not None and tok != want):
+            raise _Unparsable(str(tok))
+        self.i += 1
+        return tok
+
+    def run(self):
+        v = self.or_()
+        if self.i != len(self.toks):
+            raise _Unparsable("trailing " + str(self.peek()))
+        return v
+
+    def or_(self):
+        v = self.and_()
+        while self.peek() == ("op", "||"):
+            self.take()
+            a, b = _truth(v), _truth(self.and_())
+            if a or b:
+                v = _known(True)
+            elif a is False and b is False:
+                v = _known(False)
+            else:
+                v = UNKNOWN
+        return v
+
+    def and_(self):
+        v = self.unary()
+        while self.peek() == ("op", "&&"):
+            self.take()
+            a, b = _truth(v), _truth(self.unary())
+            if a is False or b is False:
+                v = _known(False)
+            elif a and b:
+                v = _known(True)
+            else:
+                v = UNKNOWN
+        return v
+
+    def unary(self):
+        if self.peek() == ("op", "!"):
+            self.take()
+            t = _truth(self.unary())
+            return UNKNOWN if t is None else _known(not t)
+        return self.cmp()
+
+    def cmp(self):
+        left = self.primary()
+        tok = self.peek()
+        if tok[0] != "op" or tok[1] not in ("==", "!=", "<", ">", "<=", ">="):
+            return left
+        self.take()
+        right = self.primary()
+        if tok[1] not in ("==", "!=") or left is UNKNOWN or right is UNKNOWN:
+            return UNKNOWN
+        a, b = left[1], right[1]
+        if isinstance(a, str) and isinstance(b, str):
+            same = a.lower() == b.lower()
+        elif isinstance(a, str) or isinstance(b, str):
+            return UNKNOWN
+        else:
+            same = a == b
+        return _known(same if tok[1] == "==" else not same)
+
+    def primary(self):
+        kind, val = self.take()
+        if (kind, val) == ("op", "("):
+            v = self.or_()
+            self.take(("op", ")"))
+            return v
+        if kind == "str":
+            return _known(val)
+        if kind == "num":
+            return UNKNOWN
+        if kind != "id":
+            raise _Unparsable(str((kind, val)))
+        if self.peek() != ("op", "("):
+            return self.ident(val)
+        self.take()
+        if self.peek() != ("op", ")"):
+            self.or_()
+            while self.peek() == ("op", ","):
+                self.take()
+                self.or_()
+        self.take(("op", ")"))
+        name = val.lower()
+        if name == "always":
+            return _known(True)
+        if name == "success" and any(n in self.skipped for n in self.needs):
+            return _known(False)
+        return UNKNOWN
+
+    def ident(self, name):
+        low = name.lower()
+        if low in ("true", "false"):
+            return _known(low == "true")
+        if low == "null":
+            return _known("")
+        if low == "github.event_name":
+            return _known(PR_EVENT)
+        if low.startswith("inputs."):
+            # A pull_request event has no inputs; a missing one is null,
+            # which compares equal to ''.
+            return _known("")
+        parts = name.split(".")
+        if len(parts) >= 3 and parts[0] == "needs" and parts[1] in self.skipped:
+            if parts[2] == "result":
+                return _known("skipped")
+            if parts[2] == "outputs":
+                return _known("")
+        return UNKNOWN
+
+
+def pr_condition(job_if, skipped, needs):
+    """True when the job certainly does not run on a pull_request event;
+    False when it can, or its condition could not be read."""
+    text = "" if job_if is None else str(job_if).strip()
+    if text.startswith("${{") and text.endswith("}}"):
+        text = text[3:-2].strip()
+    if not text:
+        text = "success()"
+    elif not STATUS_FN_RE.search(text):
+        text = "success() && (" + text + ")"
+    try:
+        return _truth(_PrEval(text, skipped, needs).run()) is False
+    except _Unparsable:
+        return False
+
+
+def _needs(job):
+    n = (job or {}).get("needs") or []
+    return [n] if isinstance(n, str) else [str(x) for x in n]
+
+
+def pr_reachable_jobs(doc):
+    """The jobs of a workflow that can run on a pull_request event."""
+    on = (doc or {}).get("on", (doc or {}).get(True))
+    events = set(on) if isinstance(on, (dict, list)) else ({on} if on else set())
+    jobs = (doc or {}).get("jobs") or {}
+    if PR_EVENT not in events:
+        return set()
+    skipped, done = set(), set()
+    progressed = True
+    while progressed:
+        progressed = False
+        for job_id, job in jobs.items():
+            if job_id in done or any(n in jobs and n not in done for n in _needs(job)):
+                continue
+            if pr_condition((job or {}).get("if"), skipped, _needs(job)):
+                skipped.add(job_id)
+            done.add(job_id)
+            progressed = True
+    # A job left undone sits on a needs cycle: it counts as able to run.
+    return set(jobs) - skipped
+
+
+def rule_h_problems(job_id, job):
+    """(h) every checkout of this repository in a job that can run on a
+    pull_request event names the default branch."""
+    problems = []
+    for i, step in enumerate((job or {}).get("steps") or []):
+        step = step or {}
+        if not str(step.get("uses", "")).startswith("actions/checkout@"):
+            continue
+        w = step.get("with") or {}
+        if w.get("repository") not in TRUSTED_ROOT_REPOS:
+            continue
+        if w.get("ref") != PR_SAFE_REF:
+            problems.append(
+                "{0}: can run on a pull_request event, where github.sha is the PR's merge "
+                "commit, but step {1} ({2!r}) checks out ref {3!r}, not {4!r} -- "
+                "rule (h)".format(job_id, i, step.get("name"), w.get("ref"), PR_SAFE_REF))
+    return problems
 
 
 def rule_a_problems(text):
@@ -143,8 +406,8 @@ def _write_protect_indices(steps):
     return [i for i, s in enumerate(steps) if (s or {}).get("name") == WRITE_PROTECT_NAME]
 
 
-def job_problems(job_id, job):
-    problems = []
+def job_problems(job_id, job, pr_reachable=False):
+    problems = rule_h_problems(job_id, job) if pr_reachable else []
     steps = (job or {}).get("steps") or []
     dependents = _dependent_indices(steps)
     if not dependents:
@@ -166,7 +429,7 @@ def job_problems(job_id, job):
                     job_id, checkout, d, (steps[d] or {}).get("name", d)))
     step = steps[checkout] or {}
     ref = ((step.get("with") or {})).get("ref")
-    if ref != EXPECTED_REF:
+    if not pr_reachable and ref != EXPECTED_REF:
         problems.append("{0}: trusted-copy checkout ref is {1!r}, not {2!r} -- rule (c)".format(
             job_id, ref, EXPECTED_REF))
     if step.get("continue-on-error") is True:
@@ -215,8 +478,9 @@ def gitignore_problems(text):
 def check(text, gitignore_text):
     problems = rule_a_problems(text)
     doc = yaml.safe_load(text)
+    reachable = pr_reachable_jobs(doc)
     for job_id, job in (doc.get("jobs") or {}).items():
-        problems += job_problems(job_id, job)
+        problems += job_problems(job_id, job, job_id in reachable)
     problems += gitignore_problems(gitignore_text)
     return problems
 
@@ -227,8 +491,9 @@ def check_doc(doc, gitignore_text):
     it (a plain `uses: <value>` mapping always dumps as one line)."""
     dumped = yaml.dump(doc, default_flow_style=False, sort_keys=False)
     problems = rule_a_problems(dumped)
+    reachable = pr_reachable_jobs(doc)
     for job_id, job in (doc.get("jobs") or {}).items():
-        problems += job_problems(job_id, job)
+        problems += job_problems(job_id, job, job_id in reachable)
     problems += gitignore_problems(gitignore_text)
     return problems
 
@@ -397,6 +662,72 @@ def mut_gate_job_raw_reference(doc):
     return doc
 
 
+def _checkout_named(steps, name):
+    for s in steps:
+        if (s or {}).get("name") == name and str(s.get("uses", "")).startswith("actions/checkout@"):
+            return s
+    sys.exit("::error::Gate 104 self-test: no {0!r} checkout found; update the self-test "
+             "alongside the workflow.".format(name))
+
+
+def mut_prove_gate_side_ref_sha(doc):
+    """prove-gate's trusted copy goes back to github.sha: on an unmerged
+    close, the PR's own composites run with the App's private key."""
+    _checkout_named(_job_steps(doc, "prove-gate"), CHECKOUT_NAME)["with"]["ref"] = EXPECTED_REF
+    return doc
+
+
+def mut_prove_root_ref_dropped(doc):
+    """prove's workspace checkout loses its ref, so the .github/scripts it
+    imports would be the PR's merge commit again."""
+    del _checkout_named(_job_steps(doc, "prove"), "Checkout")["with"]["ref"]
+    return doc
+
+
+def mut_select_runs_on_pull_request(doc):
+    """select's pull_request exclusion is dropped, so a job still at
+    github.sha can run on the closed trigger. No job list has to change for
+    rule (h) to see it."""
+    job = doc["jobs"]["select"]
+    job["if"] = str(job["if"]).replace("github.event_name != 'pull_request' && ", "")
+    if "pull_request" in job["if"]:
+        sys.exit("::error::Gate 104 self-test: select's if: no longer has the expected "
+                 "pull_request exclusion; update the self-test alongside the workflow.")
+    return doc
+
+
+# Rule (h)'s evaluator on fixed conditions: (if:, jobs certainly skipped on
+# a pull_request event, this job's needs, True when it is certainly skipped).
+PR_CONDITION_CASES = [
+    ("github.event_name != 'pull_request' && inputs.directed-stage == ''", set(), [], True),
+    ("github.event_name == 'pull_request' || inputs.x == 'prove'", set(), [], False),
+    (None, set(), [], False),
+    (None, {"a"}, ["a"], True),
+    ("needs.a.outputs.ok == 'true'", {"a"}, ["a"], True),
+    ("needs.a.outputs.ok == 'true'", set(), ["a"], False),
+    ("!cancelled() && needs.a.result != 'failure' && "
+     "(needs.a.outputs.n != '' || inputs.n != '')", {"a"}, ["a"], True),
+    ("!cancelled() && needs.a.result != 'failure'", {"a"}, ["a"], False),
+    ("always()", {"a"}, ["a"], False),
+    ("vars.PAUSED != 'true'", set(), [], False),
+    ("contains(github.event.pull_request.labels.*.name, 'x')", set(), [], False),
+    ("${{ github.event_name == 'schedule' }}", set(), [], True),
+    ("github.event_name == 'pull_request' &&& x", set(), [], False),
+]
+
+
+def pr_condition_case_failures():
+    out = []
+    for job_if, skipped, needs, want in PR_CONDITION_CASES:
+        got = pr_condition(job_if, skipped, needs)
+        if got != want:
+            out.append("rule (h)'s evaluator read if: {0!r} (skipped={1}, needs={2}) as {3}, "
+                       "expected {4}".format(job_if, sorted(skipped), needs,
+                                             "skipped" if got else "able to run",
+                                             "skipped" if want else "able to run"))
+    return out
+
+
 def mut_gitignore_removed(text):
     return "".join(line for line in text.splitlines(keepends=True)
                    if SIDECAR_PATH not in line)
@@ -470,6 +801,12 @@ MUTATIONS = [
     ("the watchdog's metrics-branch checkout moves to the root before the trial-bound "
      "composite",
      "others", mut_side_checkout_moved_to_root, "rule (g)"),
+    ("prove-gate's trusted copy goes back to github.sha",
+     "doc", mut_prove_gate_side_ref_sha, "rule (h)"),
+    ("prove's workspace checkout loses its default-branch ref",
+     "doc", mut_prove_root_ref_dropped, "rule (h)"),
+    ("select can run on the pull_request trigger with its checkouts still at github.sha",
+     "doc", mut_select_runs_on_pull_request, "rule (h)"),
 ]
 
 
@@ -486,6 +823,7 @@ def main():
         base = check(text, gitignore_text) + others
         if base:
             failures += ["the shipped workflow already fails: {0}".format(p) for p in base]
+        failures += pr_condition_case_failures()
         for label, kind, mutate, expect in MUTATIONS:
             if kind == "others":
                 caught = check_others(mutate(load_other_workflows()))
@@ -510,8 +848,9 @@ def main():
     if failures:
         return 1
     if self_test:
-        print("Gate 104 self-test: {0} mutation(s), each caught and attributed to its own "
-              "rule.".format(len(MUTATIONS)))
+        print("Gate 104 self-test: rule (h)'s evaluator read {0} fixed condition(s) as "
+              "expected; {1} mutation(s), each caught and attributed to its own "
+              "rule.".format(len(PR_CONDITION_CASES), len(MUTATIONS)))
     else:
         print("Gate 104: every uses: ./.github/actions/ reference in board-loop.yml "
               "resolves from the trusted copy, never the workspace; no other workflow "
