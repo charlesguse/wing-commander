@@ -59,7 +59,7 @@ while [ "$attempt" -lt "$max_attempts" ]; do
     if [ -n "$state" ]; then
       break
     fi
-    [ -z "$diagnostic" ] && diagnostic="gh exited 0 but returned an empty state"
+    [ -z "$diagnostic" ] && diagnostic="the gh call exited 0 but returned an empty state"
   else
     rc=$?
     diagnostic="$(cat "$stderr_file")"
