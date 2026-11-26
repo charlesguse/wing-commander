@@ -511,8 +511,7 @@ def current_lines(body):
 
 def snapshot(repo, switches):
     item_jq = ('.[] | {number, title, created_at, pull_request: (.pull_request != null), '
-               'labels: [.labels[].name], body: (.body // ""), user_type: .user.type, '
-               'author: .user.login}')
+               'labels: [.labels[].name], body: (.body // ""), user_type: .user.type}')
     items = _gh_lines("repos/{0}/issues?state=open&per_page=100".format(repo), item_jq)
     issues = [i for i in items if not i["pull_request"]]
     prs = [i for i in items if i["pull_request"]]
@@ -531,17 +530,15 @@ def snapshot(repo, switches):
             roadmap = issue["number"]
     for issue in issues:
         if "stage:clarify" in issue["labels"]:
-            # Who spoke last among the bot (its questions), a maintainer
-            # and the issue's own author (the answers). A passer-by's
-            # comment on this public repository answers nothing.
+            # Who spoke last between the bot (its questions) and a
+            # maintainer (the answers; spec 134: clarify acts on a maintainer's
+            # reply only). Anyone else's comment answers nothing.
             speakers = _gh_lines("repos/{0}/issues/{1}/comments?per_page=100".format(
                 repo, issue["number"]),
-                '.[] | select(.user.type == "Bot" or .user.login == "{0}" or '
-                '(.author_association | IN("OWNER", "MEMBER", "COLLABORATOR"))) | .user.type'.format(
-                    issue.get("author", "")))
+                '.[] | select(.user.type == "Bot" or '
+                '(.author_association | IN("OWNER", "MEMBER", "COLLABORATOR"))) | .user.type')
             issue["last_comment_by_bot"] = bool(speakers) and speakers[-1] == "Bot"
         issue.pop("body", None)
-        issue.pop("author", None)
     # branch=main also matches a fork PR whose head branch is its own main,
     # so the first run on this repository's main that is not a PR run.
     runs = _gh_json("repos/{0}/actions/workflows/{1}/runs?branch=main&per_page=20".format(

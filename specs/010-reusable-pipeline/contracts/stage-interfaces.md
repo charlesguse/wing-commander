@@ -104,11 +104,14 @@ by the tool interface itself. Render contract and guarantees enumerated in
 
 **Wrapper gate obligations** (documented, adopter-owned — constitution V
 guidance shipped in docs/adoption.md): maintainer-label entry gate before
-intake; commenter is maintainer-or-author and not a bot before clarify;
+intake; commenter is a maintainer (`OWNER`/`MEMBER`/`COLLABORATOR`) and
+not a bot before clarify (the clarify stage checks the triggering comment
+again itself, specs/134-maintainer-only-comments);
 never pass fork-PR head refs as checkout targets; commenter/reviewer is
-`OWNER`/`MEMBER`/`COLLABORATOR` and not a bot before pr-conversation — with
-**no** requester carve-out, unlike clarify/intake
-(`specs/033-pr-conversation-commands/contracts/wrapper-gate.md`).
+`OWNER`/`MEMBER`/`COLLABORATOR` and not a bot before pr-conversation
+(`specs/033-pr-conversation-commands/contracts/wrapper-gate.md`). No
+comment-triggered stage gives the issue's own author any exception
+(constitution 3.0.0, Principle V).
 
 **Chaining payload contract**: when a stage dispatches a `next-workflow` /
 `self-workflow`, the dispatch target is a *wrapper file in the consuming
@@ -130,7 +133,7 @@ docs/adoption.md's wrapper examples MUST show these signatures verbatim.
 |---|---|
 | Inputs | `issue-number` (number, required); `model` (string, default `claude-opus-5`); `max-turns` (number, default `50`) |
 | Preconditions | spec-kit present in consumer checkout |
-| Behavior | Allocate next feature number (scans `specs/` + open pipeline branches); fetch the issue's comments and stage only those from OWNER/MEMBER/COLLABORATOR accounts or the original issue author (never bots) to a data file, posting a visible notice if substantive comments existed but none qualified (specs/029-intake-issue-comments); run `/speckit-specify` against the issue title, body, and staged qualifying comments; create `spec-draft/NNN-slug` + draft spec PR to the default branch, write `spec-meta.json`, label issue (`spec:NNN-slug`, `stage:spec`), post clarification questions or ready-for-review comment |
+| Behavior | Allocate next feature number (scans `specs/` + open pipeline branches); fetch the issue's comments and stage only those from OWNER/MEMBER/COLLABORATOR accounts (never bots) to a data file, posting a visible notice if substantive comments existed but none qualified (specs/029-intake-issue-comments); run `/speckit-specify` against the issue title, body, and staged qualifying comments; create `spec-draft/NNN-slug` + draft spec PR to the default branch, write `spec-meta.json`, label issue (`spec:NNN-slug`, `stage:spec`), post clarification questions or ready-for-review comment |
 | Outputs | `spec-dir`, `feature-num` |
 
 ## reusable-clarify.yml
@@ -224,7 +227,7 @@ resolving a single `trigger` input before calling this stage.
 
 | | |
 |---|---|
-| Inputs | `trigger` (string, required — `scheduled`\|`dispatch`\|`pr-merged`\|`comment-reply`); `pr-number` (string); `pr-merged` (boolean, default `false`); `issue-number` (string); `comment-id` (string); `commenter-association` (string); `commenter-id` (string); `issue-author-id` (string); `stabilization-checks` (string, default `1`); `model` (string, default `claude-sonnet-5`) |
+| Inputs | `trigger` (string, required — `scheduled`\|`dispatch`\|`pr-merged`\|`comment-reply`); `pr-number` (string); `pr-merged` (boolean, default `false`); `issue-number` (string); `comment-id` (string); `commenter-association` (string); `commenter-id` (string; accepted and ignored since spec 134); `issue-author-id` (string; accepted and ignored since spec 134); `stabilization-checks` (string, default `1`); `model` (string, default `claude-sonnet-5`) |
 | Preconditions | none as a refusal gate — self-recognition is best-effort and marker-based (a `pull_request`/`issue_comment` event lacking this feature's PR/issue marker is a silent no-op; the `comment-reply` path additionally gates the commenter to a maintainer (`OWNER`/`MEMBER`/`COLLABORATOR`) replying on the App's own `auto-update:tracking` issue, and refuses with a comment a candidate not newer than the pinned version). One `concurrency: wing-commander-auto-update-spec-kit` group serializes all cycles |
 | Behavior | `health-check → detect → settle → evaluate-path → prepare → verify → act` plus `pr-merged`/`comment-reply` entry jobs: re-verify the pinned version (rollback on failure); detect the latest eligible upstream release and classify the delta; run a consecutive-daily-check settle window in the lifecycle issue's body marker; one read-only agent decides clean-bump / needs-migration / ambiguous-options; prepare the version-bump diff; verify it (lightweight always, +end-to-end for minor/major) in an isolated worktree; open the version-bump PR (pass), flag the issue (fail), or open a revert PR (health-check failure) |
 | Outputs | none (side effects only): lifecycle-issue comments/label (`auto-update:failed` on any failure/rollback) and a version-bump/revert PR to the default branch — **never merged by this stage** (constitution V, FR-017); the success path closes its issue only via the PR's own `Closes #N` keyword on merge |
@@ -334,7 +337,7 @@ already read-only via its allowed list; see footnote).
 | Stage | Internal step (`step-label`) | Default allowed | Default disallowed |
 |---|---|---|---|
 | intake | `intake` | `Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git ls-tree:*),Bash(echo:*),Bash(ls:*),Bash(mkdir:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(printenv SPECIFY_FEATURE_DIRECTORY),Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh label create:*)` | `WebFetch,ScheduleWakeup,Monitor,SendMessage` |
-| clarify | `clarify` | `Read,Edit,Write,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr edit:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
+| clarify | `clarify` | `Read,Edit,Write,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(gh issue comment:*),Bash(gh pr list:*),Bash(gh pr view:*),Bash(gh pr edit:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | plan | `plan.direct-commit` | `Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(ls:*),Bash(mkdir:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(printenv SPECIFY_FEATURE_DIRECTORY),Bash(.specify/scripts/bash/setup-plan.sh:*),Bash(bash .specify/scripts/bash/setup-plan.sh:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue list:*)` | `WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | plan | `plan.pr` | same as `plan.direct-commit` plus `Bash(git checkout:*),Bash(git switch:*),Bash(gh pr create:*)` | `WebFetch,ScheduleWakeup,Monitor,SendMessage` |
 | tasks | `tasks.direct-commit` | `Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git ls-tree:*),Bash(git branch:*),Bash(echo:*),Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(printenv SPECIFY_FEATURE_DIRECTORY),Bash(.specify/scripts/bash/setup-tasks.sh:*),Bash(bash .specify/scripts/bash/setup-tasks.sh:*),Bash(.specify/scripts/bash/check-prerequisites.sh:*),Bash(bash .specify/scripts/bash/check-prerequisites.sh:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue list:*)` | `WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage` |

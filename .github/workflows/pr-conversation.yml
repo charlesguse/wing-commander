@@ -726,8 +726,9 @@ jobs:
       # T004/FR-019/FR-021: the wrapper has already excluded bots outright
       # (contracts/wrapper-gate.md — a bot actor gets no run at all). This
       # is the second, narrower gate: a non-bot, non-maintainer actor
-      # reaches here and gets a notice, not silence — deliberately NO
-      # requester carve-out, unlike clarify/intake (FR-019).
+      # reaches here and gets a notice, not silence. As with every
+      # comment-triggered stage, there is no requester carve-out (FR-019;
+      # constitution 3.0.0, Principle V).
       - name: Authorized-actor gate
         id: actor-gate
         if: needs.resolve-identity.outputs.qualifies == 'true' && steps.lifecycle-gate.outputs.is-open == 'true'
