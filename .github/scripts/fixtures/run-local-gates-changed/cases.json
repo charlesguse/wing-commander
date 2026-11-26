@@ -1,0 +1,161 @@
+{
+  "tree": {
+    ".github/workflows/lint-workflows.yml": "name: lint\non: [pull_request]\njobs:\n  lint-shard-1:\n    runs-on: ubuntu-latest\n    steps:\n      - run: python3 .github/scripts/verify-alpha.py\n      - run: python3 .github/scripts/verify-beta.py\n      - run: python3 .github/scripts/verify-beta.py --self-test\n      - run: python3 .github/scripts/verify-gamma.py\n      - run: bash .github/scripts/delta-tests/run-tests.sh\n",
+    ".github/workflows/alpha.yml": "name: alpha\non: [push]\njobs: {}\n",
+    ".github/workflows/gamma.yml": "name: gamma\non: [push]\njobs: {}\n",
+    ".github/scripts/verify-alpha.py": "\"\"\"Reads alpha.yml by an os.path.join.\"\"\"\nimport os\nROOT = \".\"\nopen(os.path.join(ROOT, \".github\", \"workflows\", \"alpha.yml\")).read()\nprint(\"ok\")\n",
+    ".github/scripts/verify-beta.py": "\"\"\"Reads alpha.yml through a helper module, and docs/beta.md.\"\"\"\nimport sys\nsys.path.insert(0, \".github/scripts\")\nfrom wc_fixture_lib import load_alpha\nload_alpha()\nopen(\"docs/beta.md\").read()\nprint(\"ok\")\n",
+    ".github/scripts/verify-gamma.py": "\"\"\"Reads gamma.yml. This docstring names .github/workflows/alpha.yml,\nwhich the gate never opens, so a change to alpha.yml must not pick it.\"\"\"\nopen(\".github/workflows/gamma.yml\").read()\nprint(\"ok\")\n",
+    ".github/scripts/wc_fixture_lib.py": "\"\"\"Fixture helper module.\"\"\"\n\n\ndef load_alpha():\n    return open(\".github/workflows/alpha.yml\").read()\n\n\ndef load_unused():\n    return open(\"docs/unused.md\").read()\n",
+    ".github/scripts/delta-tests/run-tests.sh": "#!/usr/bin/env bash\nset -e\ncat \"$(dirname \"$0\")/data.txt\" >/dev/null\necho ok\n",
+    ".github/scripts/delta-tests/data.txt": "delta\n",
+    "docs/beta.md": "beta\n",
+    "docs/unused.md": "read only by a helper no gate calls\n",
+    "notes/unmapped.txt": "no gate reads this\n"
+  },
+  "all": [
+    "verify-alpha.py",
+    "verify-beta.py",
+    "verify-beta.py --self-test",
+    "verify-gamma.py",
+    "delta-tests/run-tests.sh"
+  ],
+  "cases": [
+    {
+      "name": "no change runs nothing and says so",
+      "edit": [],
+      "args": [
+        "--changed"
+      ],
+      "expect": [],
+      "say": "no file changed, so no gate runs"
+    },
+    {
+      "name": "a gate script change picks that gate",
+      "edit": [
+        ".github/scripts/verify-gamma.py"
+      ],
+      "args": [
+        "--changed"
+      ],
+      "expect": [
+        "verify-gamma.py"
+      ],
+      "say": "1 of 5 gate(s) picked"
+    },
+    {
+      "name": "a workflow change picks every gate that reads that workflow, and not one whose docstring only names it",
+      "edit": [
+        ".github/workflows/alpha.yml"
+      ],
+      "args": [
+        "--changed"
+      ],
+      "expect": [
+        "verify-alpha.py",
+        "verify-beta.py",
+        "verify-beta.py --self-test"
+      ],
+      "say": "3 of 5 gate(s) picked"
+    },
+    {
+      "name": "a helper module change picks the gates that import it",
+      "edit": [
+        ".github/scripts/wc_fixture_lib.py"
+      ],
+      "args": [
+        "--changed"
+      ],
+      "expect": [
+        "verify-beta.py",
+        "verify-beta.py --self-test"
+      ],
+      "say": "2 of 5 gate(s) picked"
+    },
+    {
+      "name": "a harness data file picks its harness",
+      "edit": [
+        ".github/scripts/delta-tests/data.txt"
+      ],
+      "args": [
+        "--changed"
+      ],
+      "expect": [
+        "delta-tests/run-tests.sh"
+      ],
+      "say": "1 of 5 gate(s) picked"
+    },
+    {
+      "name": "an untracked unmapped path falls back to everything",
+      "add": [
+        "notes/new.txt"
+      ],
+      "args": [
+        "--changed"
+      ],
+      "expect": [
+        "verify-alpha.py",
+        "verify-beta.py",
+        "verify-beta.py --self-test",
+        "verify-gamma.py",
+        "delta-tests/run-tests.sh"
+      ],
+      "say": "running every gate: notes/new.txt is read by no gate"
+    },
+    {
+      "name": "a file only an uncalled helper reads is unmapped, so everything runs",
+      "edit": [
+        "docs/unused.md"
+      ],
+      "args": [
+        "--changed"
+      ],
+      "expect": [
+        "verify-alpha.py",
+        "verify-beta.py",
+        "verify-beta.py --self-test",
+        "verify-gamma.py",
+        "delta-tests/run-tests.sh"
+      ],
+      "say": "running every gate: docs/unused.md is read by no gate"
+    },
+    {
+      "name": "a change to the workflow the registry reads runs everything",
+      "edit": [
+        ".github/workflows/lint-workflows.yml"
+      ],
+      "args": [
+        "--changed"
+      ],
+      "expect": [
+        "verify-alpha.py",
+        "verify-beta.py",
+        "verify-beta.py --self-test",
+        "verify-gamma.py",
+        "delta-tests/run-tests.sh"
+      ],
+      "say": "running every gate: .github/workflows/lint-workflows.yml defines the gate suite"
+    },
+    {
+      "name": "an explicit BASE is honoured and a filter still narrows",
+      "commit": [
+        [
+          ".github/scripts/verify-gamma.py"
+        ],
+        [
+          ".github/workflows/alpha.yml"
+        ]
+      ],
+      "args": [
+        "--changed",
+        "HEAD~1",
+        "beta"
+      ],
+      "expect": [
+        "verify-beta.py",
+        "verify-beta.py --self-test"
+      ],
+      "say": "3 of 5 gate(s) picked"
+    }
+  ]
+}

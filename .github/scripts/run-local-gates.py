@@ -4,6 +4,8 @@
     python .github/scripts/run-local-gates.py
     python .github/scripts/run-local-gates.py sentinel gate-7   # filter
     python .github/scripts/run-local-gates.py --jobs 1          # serial
+    python .github/scripts/run-local-gates.py --changed         # what a change reaches
+    python .github/scripts/run-local-gates.py --changed HEAD~3  # ... since HEAD~3
 
 WHY THIS EXISTS
 ---------------
@@ -47,6 +49,47 @@ bare `python3` on Windows is the Microsoft Store stub, the same trap
 command_for avoids for the scripts. A heredoc step that cannot be run
 verbatim (an env: block, a shell:, a working-directory:, a `${{ }}`
 expression) is not silently dropped: verify-gate-wiring.py fails on it.
+
+CHANGED-FILE SELECTION (--changed [BASE])
+-----------------------------------------
+`--changed` runs only the gates whose inputs differ from BASE (#1180), and
+prints the changed files, then each gate it picked with the file and the
+rule that picked it. BASE is any commit git resolves; without one it is
+`git merge-base HEAD origin/main`. "Differ" is the working tree against
+BASE: commits, staged and unstaged edits, deletions (both names of a
+rename), and untracked files git does not ignore. `--changed=BASE` is the
+unambiguous spelling; after a bare `--changed`, the next token is BASE only
+when git resolves it to a commit, and is a filter otherwise. Filters still
+narrow the picked set, and `--jobs` applies as usual.
+
+What a gate reads is derived from its text, as the gate list is, never
+listed. A gate's own files are its script, or a `<dir>/run-tests.sh`
+harness's whole directory. Its references are read from those files and,
+transitively, from code under .github/scripts/ and .github/actions/ that
+they pull in (a file named by path, a file name only one file carries, a
+composite's action.yml). Python is read off its syntax tree, so a path
+in a docstring or a comment, or a sys.path entry, is not a read; a module
+it imports counts only as far as it is used: the top-level statements,
+the defs and constants the importer names, and what those use in turn.
+Other files are read as text with their `#` comment lines dropped. A
+reference is a string literal holding a path, an os.path.join/Path chain
+of literals, or a shell word with a `/`; a variable or pattern component
+(`$ROOT`, `{n}`, `*.yml`) stands for anything below what comes before it,
+so `glob(os.path.join(ROOT, ".github", "workflows", "*.yml"))` reads every
+workflow. A changed file picks a gate when it is one of the gate's own or
+pulled-in files, lies under or starts with one of its references, or has
+a file name the gate's code names. A gate that lists every tracked file
+(`git ls-files` with flags only), walks a root, or globs from `**` is
+picked by any change.
+
+It fails closed: a changed file no gate's inputs cover runs every gate,
+and so does a change to SUITE_INPUTS -- this runner, the registry and the
+helpers it loads gates through, and lint-workflows.yml, which the gate
+list and the inline gates come from. No change runs no gate, and says so.
+What it can miss is a read that no text shows (a path assembled from data
+another file holds, or a reference only a sys.path entry carries), which
+is why the full suite still runs before a push lands.
+verify-run-local-gates-changed.py (Gate 176) drives each rule end to end.
 
 WHAT IT DOES NOT RUN
 --------------------
@@ -149,6 +192,7 @@ reality automatically.
     whole contract above is byte-identical output to the pre-cache
     script.
 """
+import ast
 import concurrent.futures
 import json
 import os
@@ -157,10 +201,12 @@ import subprocess
 import sys
 import tempfile
 import time
+import warnings
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_gate_registry import (gate_label, pr_time_inline_steps,  # noqa: E402
                               pr_time_invocations)
+from wc_repo_files import git_env, repo_files  # noqa: E402
 from wc_shell_harness import (UNSPECIFIED_SHELL_HOSTED, ensure_jq,  # noqa: E402
                               resolve_bash, use_utf8_stdout)
 
@@ -341,6 +387,532 @@ def _parse_jobs_flag(argv):
     return jobs, filters
 
 
+# --- --changed ------------------------------------------------------------
+# See CHANGED-FILE SELECTION in the module docstring for the rules; every
+# name below is one of them.
+
+# A change to any of these changes WHICH gates exist or HOW they run, so it
+# runs the whole suite: this runner, the registry that derives the gate
+# list, the harness module it resolves bash and jq through, and the
+# workflow the registry reads the gate calls (and the inline gates) from.
+SUITE_INPUTS = (
+    ".github/scripts/run-local-gates.py",
+    ".github/scripts/wc_gate_registry.py",
+    ".github/scripts/wc_shell_harness.py",
+    ".github/scripts/wc_repo_files.py",
+    ".github/workflows/lint-workflows.yml",
+)
+# A gate whose text carries one of these reads files no path in it names
+# (a listing of every tracked file, a recursive walk of a root, a glob
+# rooted at `**`), so it is picked by every change.
+_READS_ANY = re.compile(
+    r"""\bls-files(?:[ \t]+-[\w-]+(?:=\S+)?)*[ \t]*(?:$|[|;&)>`"'])"""
+    r"""|\.rglob\(|glob\(\s*["']\*\*"""
+    r"""|os\.walk\(\s*(?:ROOT|root|REPO\w*|repo_root|["']\.["'])\s*[,)]""",
+    re.M)
+_QUOTED = re.compile(r""""([^"\\\n]*)"|'([^'\\\n]*)'""")
+# Two or more string literals in a row, separated by `,` (os.path.join
+# arguments) or `/` (pathlib): read as one path.
+_LITERAL_RUN = re.compile(
+    r"""(?:"[^"\\\n]*"|'[^'\\\n]*')"""
+    r"""(?:\s*[,/]\s*(?:"[^"\\\n]*"|'[^'\\\n]*'))+""")
+_PATH_TOKEN = re.compile(r"[\w.\-/*?{}$%<>\[\]]*/[\w.\-/*?{}$%<>\[\]]*")
+_FILE_NAME = re.compile(
+    r"[\w.\-]*\w\.(?:py|sh|bash|jq|ya?ml|json|md|txt|toml|bats|cfg|ini)\b")
+_IMPORT = re.compile(r"^\s*(?:from|import)\s+(\w+)", re.M)
+_ROOT_NAME = re.compile(r"(?:ROOT|root|REPO\w*|repo\w*)$")
+_WILD = re.compile(r"[*?{}$%<>\[\]]")
+# Files a gate's own text pulls in, read for THEIR references too: code
+# under these trees, never a workflow or a document (which name far more
+# than the gate that reads them reads).
+_FOLLOW_ROOTS = (".github/scripts/", ".github/actions/")
+_FOLLOW_EXT = re.compile(r"(?:\.(?:py|sh|bash|jq)|/action\.ya?ml)$")
+
+
+def _path_ref(raw):
+    """One reference as a '/'-joined path: leading variable components
+    (`$ROOT`, `{root}`, `..`) dropped, then cut at the first component
+    that is still a pattern, so `f"{root}/.github/workflows/{n}.yml"`
+    and `$REPO/.github/workflows/*.yml` both read `.github/workflows`."""
+    parts = [p for p in raw.replace("\\", "/").split("/")
+             if p not in ("", ".", "..")]
+    while parts and _WILD.search(parts[0]):
+        parts.pop(0)
+    out = []
+    for part in parts:
+        if _WILD.search(part):
+            break
+        out.append(part)
+    return "/".join(out)
+
+
+def _dotted(node):
+    """`os.path.join` for the node of that expression, else ''."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+        return ".".join(reversed(parts))
+    return ""
+
+
+def _str_of(node):
+    """A string literal or f-string as text (`{}` for each field), else
+    None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(v.value if isinstance(v, ast.Constant) else "{}"
+                       for v in node.values)
+    return None
+
+
+def _joined(parts):
+    """One path reference from a join's arguments, or ''."""
+    if not any(p is not None for p in parts):
+        return ""
+    return _path_ref("/".join("{}" if p is None else p for p in parts))
+
+
+class _Part:
+    """What one top-level statement of a Python file reads (paths, file
+    names, reads-any match) and what it uses (identifiers, `alias.attr`
+    pairs, imports as (module, local name, imported name or None))."""
+
+    def __init__(self):
+        self.paths, self.names, self.any = set(), set(), None
+        self.idents, self.attrs, self.imports = set(), set(), []
+
+
+def _scan_py_node(top):
+    """A _Part for one top-level statement, read off its syntax tree:
+    string literals in CODE only (a docstring or other bare string
+    statement names paths the script never opens), sys.path entries
+    skipped (an import directory is not a read), os.path.join/Path/`/`
+    chains joined into one path."""
+    part = _Part()
+    skip, strings = set(), []
+    extended = {id(n.left) for n in ast.walk(top)
+                if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Add)}
+    for node in ast.walk(top):
+        if isinstance(node, ast.Expr) and _str_of(node.value) is not None:
+            skip.add(id(node.value))
+        elif isinstance(node, (ast.List, ast.Tuple)) and id(node) not in extended:
+            # `git ls-files` with flags only, nothing appended after it:
+            # a listing of every file. A pathspec after it reads those.
+            elts = [_str_of(e) for e in node.elts]
+            if "ls-files" in elts:
+                tail = elts[elts.index("ls-files") + 1:]
+                if all(e is not None and e.startswith("-") for e in tail):
+                    part.any = part.any or "git ls-files"
+        elif isinstance(node, ast.Name):
+            part.idents.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name):
+                part.attrs.add((node.value.id, node.attr))
+        elif isinstance(node, ast.Import):
+            part.imports.extend((a.name.split(".")[0],
+                                 (a.asname or a.name).split(".")[0], None)
+                                for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            part.imports.extend((node.module.split(".")[0],
+                                 a.asname or a.name, a.name)
+                                for a in node.names)
+        elif isinstance(node, ast.Call):
+            name = _dotted(node.func)
+            first = node.args[0] if node.args else None
+            if name.startswith("sys.path."):
+                skip.update(id(n) for a in node.args for n in ast.walk(a))
+            elif name in ("os.walk", "walk") and first is not None and (
+                    (isinstance(first, ast.Name) and _ROOT_NAME.match(first.id))
+                    or _str_of(first) == "."):
+                part.any = part.any or f"{name}({ast.unparse(first)})"
+            elif name.endswith("rglob"):
+                part.any = part.any or f"{name}(...)"
+            elif name.endswith("glob") and (_str_of(first) or "").startswith("**"):
+                part.any = part.any or f"{name}({_str_of(first)!r})"
+            if ((name.endswith(".join") and not isinstance(
+                    getattr(node.func, "value", None), ast.Constant))
+                    or name in ("Path", "pathlib.Path", "PurePosixPath")):
+                ref = _joined([_str_of(a) for a in node.args]) \
+                    if len(node.args) > 1 else ""
+                if ref:
+                    part.paths.add(ref)
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            chain, cur = [], node
+            while isinstance(cur, ast.BinOp) and isinstance(cur.op, ast.Div):
+                chain.append(cur.right)
+                cur = cur.left
+            chain.append(cur)
+            ref = _joined([_str_of(a) for a in reversed(chain)])
+            if ref:
+                part.paths.add(ref)
+    for node in ast.walk(top):
+        if id(node) in skip or not isinstance(node, (ast.Constant,
+                                                      ast.JoinedStr)):
+            continue
+        if isinstance(node, ast.JoinedStr):
+            skip.update(id(v) for v in node.values)
+        value = _str_of(node)
+        if value is not None:
+            strings.append(value)
+            hit = _READS_ANY.search(value) if "ls-files " in value else None
+            if hit:
+                part.any = part.any or hit.group(0).strip()
+    code = "\n".join(strings)
+    part.paths.update(r for r in map(_path_ref, _PATH_TOKEN.findall(code)) if r)
+    part.names.update(_FILE_NAME.findall(code))
+    return part
+
+
+def _scan_text(text):
+    """A _Part for a file read as text (shell, YAML, a Python file that
+    does not parse), `#` comment lines dropped."""
+    part = _Part()
+    text = "\n".join(l for l in text.splitlines()
+                     if not l.lstrip().startswith("#"))
+    for m in _LITERAL_RUN.finditer(text):
+        ref = _path_ref("/".join(a or b for a, b in _QUOTED.findall(m.group(0))))
+        if ref:
+            part.paths.add(ref)
+    part.paths.update(r for r in map(_path_ref, _PATH_TOKEN.findall(text)) if r)
+    part.names.update(_FILE_NAME.findall(text))
+    part.imports.extend((mod, mod, None) for mod in _IMPORT.findall(text))
+    hit = _READS_ANY.search(text)
+    part.any = hit.group(0) if hit else None
+    return part
+
+
+def _top_keys(top):
+    """The names a top-level statement defines -- a def, a class, or an
+    assignment to plain names (`SCRIPTS_DIR = ".github/scripts"`) -- or
+    [""] for any other statement, which runs on import."""
+    if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return [top.name]
+    targets = (top.targets if isinstance(top, ast.Assign)
+               else [top.target] if isinstance(top, ast.AnnAssign) else [])
+    names = []
+    for t in targets:
+        for n in (t.elts if isinstance(t, ast.Tuple) else [t]):
+            if not isinstance(n, ast.Name):
+                return [""]
+            names.append(n.id)
+    return names or [""]
+
+
+def _scan_file_parts(rel, text):
+    """{key: _Part}: for Python, one per name a top-level statement
+    defines (_top_keys) plus "" for the statements that run on import;
+    anything else is one "" part."""
+    if rel.endswith(".py"):
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                tree = ast.parse(text)
+        except (SyntaxError, ValueError):
+            tree = None
+        if tree is not None:
+            parts = {"": _Part()}
+            for top in tree.body:
+                got = _scan_py_node(top)
+                for key in _top_keys(top):
+                    if key in parts:
+                        base = parts[key]
+                        base.paths |= got.paths
+                        base.names |= got.names
+                        base.any = base.any or got.any
+                        base.idents |= got.idents
+                        base.attrs |= got.attrs
+                        base.imports += got.imports
+                    else:
+                        parts[key] = got
+            return parts
+    return {"": _scan_text(text)}
+
+
+def _refs_for(path):
+    """Every reference that covers a changed `path`: each whole component
+    (`"workflows"`, from a join on a variable), and each string that
+    starts at a component and runs at least into the next one -- so a
+    reference may stop part-way through its last component
+    (`".github/workflows/wing-commander-" + n`)."""
+    parts = path.split("/")
+    out = set(parts)
+    for i in range(len(parts) - 1):
+        tail = "/".join(parts[i:])
+        first = len(parts[i]) + 1
+        out.update(tail[:j] for j in range(first + 1, len(tail) + 1))
+    return out
+
+
+class GateInputs:
+    """What one gate reads, as far as its text (and the code it pulls in)
+    says: its own files, the path references, the file names, and whether
+    it reads the whole tree."""
+
+    def __init__(self, label):
+        self.label = label
+        self.own = set()       # files, or directories ending in "/"
+        self.paths = set()
+        self.names = set()
+        self.reads_any = None  # (file, match) when it reads every file
+        self.where = {}        # path reference or file name -> file it is in
+        self.pulled = set()    # files read for references: imported, run
+
+    def why(self, path, refs=None):
+        """The rule that picks this gate for `path`, or None. `refs` is
+        _refs_for(path), passed in when the caller asks many gates."""
+        for own in sorted(self.own):
+            if path == own or (own.endswith("/") and path.startswith(own)):
+                return "its own file"
+        if path in self.pulled:
+            return "its code pulls this file in"
+        hits = self.paths & (_refs_for(path) if refs is None else refs)
+        if hits:
+            ref = max(hits, key=len)
+            return f"reads {ref!r} ({self.where.get(ref, '?')})"
+        name = path.rsplit("/", 1)[-1]
+        if name in self.names:
+            return f"names {name!r} ({self.where.get(name, '?')})"
+        return None
+
+
+def gate_inputs(root, gates, texts=None):
+    """{label: GateInputs} for every (script, args) in `gates`.
+
+    `texts` maps a label to text standing in for the script's file (the
+    inline gates, whose run: block is the text). A gate's own file is its
+    script; a `<dir>/run-tests.sh` harness owns its whole directory. Every
+    own file is read whole. So is each file under _FOLLOW_ROOTS that a
+    read part names by path, or by a file name only one file carries. A
+    Python module a read part imports is read only as far as it is used:
+    its top-level statements, the defs the importer names
+    (`from m import f`, `m.f`), and the defs those use in turn -- most
+    gates import wc_shell_harness for resolve_bash, not for the
+    workflow sweep beside it.
+    """
+    texts = texts or {}
+    files = repo_files(root)
+    by_name = {}
+    for f in files:
+        by_name.setdefault(f.rsplit("/", 1)[-1], []).append(f)
+    cache = {}
+
+    def parts_of(rel):
+        if rel not in cache:
+            try:
+                with open(os.path.join(root, rel), encoding="utf-8",
+                          errors="replace") as fh:
+                    text = fh.read()
+            except OSError:
+                text = ""
+            cache[rel] = _scan_file_parts(rel, text)
+        return cache[rel]
+
+    def followable(f):
+        # Never this runner: a gate that loads it does so for one helper,
+        # and a change to it runs every gate anyway (SUITE_INPUTS).
+        return (f != SUITE_INPUTS[0]
+                and f.startswith(_FOLLOW_ROOTS) and _FOLLOW_EXT.search(f)
+                and os.path.isfile(os.path.join(root, f)))
+
+    def visit(inputs, src, parts, want, queue):
+        """Fold the parts of one file `want` reaches into `inputs`, and
+        queue what they pull in as (file, wanted names or None)."""
+        keys = set(parts) if want is None else {""} | (want & set(parts))
+        todo = list(keys)
+        while todo:
+            for ident in parts[todo.pop()].idents:
+                if ident in parts and ident not in keys:
+                    keys.add(ident)
+                    todo.append(ident)
+        idents, attrs = set(), set()
+        for key in keys:
+            part = parts[key]
+            for ref in (part.paths | part.names) - inputs.paths - inputs.names:
+                inputs.where[ref] = src
+            inputs.paths |= part.paths
+            inputs.names |= part.names
+            if part.any and inputs.reads_any is None:
+                inputs.reads_any = (src, part.any)
+            idents |= part.idents
+            attrs |= part.attrs
+            for n in part.names:
+                if len(by_name.get(n, ())) == 1:
+                    queue.append((by_name[n][0], None))
+            for ref in part.paths:
+                if "/" in ref:
+                    queue.extend((f, None) for f in
+                                 by_name.get(ref.rsplit("/", 1)[-1], ())
+                                 if ("/" + f).endswith("/" + ref))
+        for key in keys:
+            for mod, local, name in parts[key].imports:
+                target = f".github/scripts/{mod}.py"
+                if name == "*" or not src.endswith(".py"):
+                    queue.append((target, None))
+                elif name is not None:
+                    if local in idents:
+                        queue.append((target, {name}))
+                else:
+                    used = {a for v, a in attrs if v == local}
+                    if used:
+                        queue.append((target, used))
+                    elif local in idents:
+                        queue.append((target, None))
+
+    out = {}
+    for script, args in gates:
+        label = gate_label(script, args)
+        inputs = out.setdefault(label, GateInputs(label))
+        queue = []
+        if label in texts:
+            visit(inputs, "(inline step)", _scan_file_parts("", texts[label]),
+                  None, queue)
+        elif script.endswith("/run-tests.sh"):
+            own_dir = script.rsplit("/", 1)[0] + "/"
+            inputs.own.add(own_dir)
+            queue.extend((f, None) for f in files if f.startswith(own_dir))
+        else:
+            inputs.own.add(script)
+            queue.append((script, None))
+        done = {}
+        while queue:
+            rel, want = queue.pop()
+            if not (rel in inputs.own or any(
+                    rel.startswith(o) for o in inputs.own if o.endswith("/"))
+                    or followable(rel)):
+                continue
+            had = done.get(rel, set())
+            if had is None or (want is not None and want <= had):
+                continue
+            done[rel] = None if want is None else had | want
+            inputs.pulled.add(rel)
+            visit(inputs, rel, parts_of(rel),
+                  None if want is None else want | had, queue)
+    return out
+
+
+def select_changed(changed, inputs):
+    """-> (labels to run, {label: [reason]}, whole-suite reason or None).
+
+    `changed` is the list of repo-relative paths; `inputs` is
+    gate_inputs()'s map, in run order. Fails closed: a SUITE_INPUTS file,
+    or a file no gate's own files, references or names cover, returns
+    every label with the reason.
+    """
+    labels = list(inputs)
+    if not changed:
+        return [], {}, None
+    for path in changed:
+        if path in SUITE_INPUTS:
+            return labels, {}, f"{path} defines the gate suite"
+    reasons = {}
+    for path in changed:
+        covered = False
+        refs = _refs_for(path)
+        for label in labels:
+            why = inputs[label].why(path, refs)
+            if why:
+                covered = True
+                reasons.setdefault(label, []).append(f"{path}: {why}")
+        if not covered:
+            return labels, {}, (f"{path} is read by no gate this runner "
+                                f"can map, so nothing rules a gate out")
+    for label in labels:
+        if inputs[label].reads_any and label not in reasons:
+            src, match = inputs[label].reads_any
+            reasons[label] = [f"reads every file ({match!r} in {src})"]
+    return [l for l in labels if l in reasons], reasons, None
+
+
+def _git_out(root, *args):
+    proc = subprocess.run(["git", "-C", root, *args], env=git_env(),
+                          capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)}: "
+                           f"{(proc.stderr or '').strip() or proc.returncode}")
+    return proc.stdout
+
+
+def default_base(root="."):
+    """The merge-base of HEAD with origin/main."""
+    return _git_out(root, "merge-base", "HEAD", "origin/main").strip()
+
+
+def changed_files(root, base):
+    """Every path that differs from `base` in the working tree: committed,
+    staged or not, deleted (under both names for a rename), and untracked
+    files git does not ignore."""
+    out = set(_git_out(root, "diff", "--name-only", "--no-renames", "-z",
+                       base, "--").split("\0"))
+    out |= set(_git_out(root, "ls-files", "--others", "--exclude-standard",
+                        "-z").split("\0"))
+    return sorted(p for p in out if p)
+
+
+def _parse_changed_flag(argv, root="."):
+    """Pull `--changed`, `--changed=BASE` or `--changed BASE` out of argv.
+
+    -> (base or None when the flag is absent, the rest). A token after a
+    bare `--changed` is BASE only when git resolves it to a commit;
+    otherwise it stays a filter, so `--changed gate-7` means "changed
+    gates matching gate-7" against the default base.
+    """
+    base = None
+    rest = []
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "--changed" or tok.startswith("--changed="):
+            base = tok[len("--changed="):] if "=" in tok else ""
+            if (not base and i + 1 < len(argv)
+                    and not argv[i + 1].startswith("-")):
+                probe = subprocess.run(
+                    ["git", "-C", root, "rev-parse", "--verify", "--quiet",
+                     argv[i + 1] + "^{commit}"],
+                    env=git_env(), capture_output=True)
+                if probe.returncode == 0:
+                    base = argv[i + 1]
+                    i += 1
+            i += 1
+            continue
+        rest.append(tok)
+        i += 1
+    return base, rest
+
+
+def _apply_changed(base, gates, texts):
+    """Narrow `gates` to the ones a change since `base` reaches, printing
+    the base, the changed files, and each pick with its reason."""
+    try:
+        base = base or default_base()
+        changed = changed_files(".", base)
+    except RuntimeError as exc:
+        sys.exit(f"--changed: {exc}. Pass a base commit: --changed BASE")
+    print(f"--changed: {len(changed)} file(s) differ from {base}")
+    for path in changed:
+        print(f"  {path}")
+    inputs = gate_inputs(".", gates, texts)
+    picked, reasons, whole = select_changed(changed, inputs)
+    if not changed:
+        print("--changed: no file changed, so no gate runs.")
+        return []
+    if whole:
+        print(f"--changed: running every gate: {whole}.\n")
+        return gates
+    print(f"--changed: {len(picked)} of {len(inputs)} gate(s) picked:")
+    for label in picked:
+        print(f"  {label}")
+        for why in reasons[label]:
+            print(f"      {why}")
+    print()
+    keep = set(picked)
+    return [(sc, ar) for sc, ar in gates if gate_label(sc, ar) in keep]
+
+
 def _run_one(script, args, bash, label):
     """Invoke one gate and collect its result. Runs on a pool thread.
 
@@ -367,12 +939,25 @@ def main(argv):
 
     all_gates = pr_time_invocations() + _inline_gate_files(bash)
 
+    changed_base, argv = _parse_changed_flag(argv)
     jobs, argv = _parse_jobs_flag(argv)
 
     gates = all_gates
+    if changed_base is not None:
+        texts = {}
+        for script, args in all_gates:
+            if script in _INLINE_SCRIPTS:
+                with open(script, encoding="utf-8") as fh:
+                    texts[gate_label(script, args)] = fh.read()
+        gates = _apply_changed(changed_base, gates, texts)
+        if not gates:
+            return 0
     if argv:
         gates = [(sc, ar) for sc, ar in gates
                  if any(t in gate_label(sc, ar) or t in sc for t in argv)]
+    if not gates and changed_base is not None:
+        print(f"--changed: no picked gate matched {argv!r}; nothing to run.")
+        return 0
     if not gates:
         sys.exit(f"no gates matched {argv!r}. Available:\n  "
                  + "\n  ".join(gate_label(sc, ar)

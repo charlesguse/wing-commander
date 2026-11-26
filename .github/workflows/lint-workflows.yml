@@ -4879,6 +4879,14 @@ jobs:
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-triage.py
 
+      # Gate 176 — `run-local-gates.py --changed [BASE]` (#1180) runs the
+      # gates a change since BASE reaches and every gate when it cannot
+      # tell. Driven end to end over a synthetic repository; no live
+      # subject.
+      - name: Gate 176 self-test — no change runs no gate, a gate, workflow, helper or harness change picks the gates that read it, and an unmapped path or a gate-list change runs every gate
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-run-local-gates-changed.py --self-test
+
   lint-shard-8:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
