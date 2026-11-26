@@ -58,7 +58,7 @@ the `sweep` job. The stage's `warn-sweep-backstop` job carries no
 `container:`: FR-007's warning must survive the caller's image failing to
 pull or start, which a job inside that image cannot.
 
-32 subject mutations and two discovery mutations must each break an
+33 subject mutations and two discovery mutations must each break an
 assertion. Each check in suite() is the only one some mutation trips --
 a mutation that a second check also catches would keep passing with its
 target check deleted -- except the missing-`if:` check, which the
@@ -377,7 +377,9 @@ def record_owners(root=".", follow_composites=True, follow_callers=True):
 # addition (#889). A spelled-out count before "completion-trigger
 # workflows" or "-stage path" in these live files must equal the shipped
 # trigger list's length; prose that names no number is not checked. The
-# count may be spelled out (up to "twenty") or written in digits.
+# count may be spelled out (up to "twenty") or written in digits; a
+# hyphenated word ("twenty-one") is reported as unreadable, asking for
+# digits, rather than read as its last part.
 COUNT_CLAIM_FILES = [WRAPPER, CONTRACT, WRAPPER_CONTRACT,
                      os.path.join(WORKFLOWS, "metrics-persist.yml"),
                      os.path.join("docs", "adoption.md")]
@@ -392,15 +394,30 @@ _COUNT_CLAIM = re.compile(
     re.IGNORECASE)
 
 
+def count_claims_in(path, text):
+    """[(file, line, count)] for every count claim in `text`. count is an
+    int, or the claim's whole token (a str) when it is a hyphenated number
+    word such as "twenty-one", which this gate cannot read."""
+    out = []
+    for m in _COUNT_CLAIM.finditer(text):
+        start = m.start(1)
+        if start and text[start - 1] == "-":
+            # "twenty-one": the regex matched only "one"; take the token.
+            head = re.search(r"[\w-]*$", text[:start]).group(0)
+            out.append((path, text.count("\n", 0, start) + 1,
+                        head + m.group(1)))
+            continue
+        out.append((path, text.count("\n", 0, m.start()) + 1,
+                    parse_count(m.group(1))))
+    return out
+
+
 def count_claims():
     """[(file, line, count)] for every count claim in COUNT_CLAIM_FILES."""
     out = []
     for path in COUNT_CLAIM_FILES:
         with open(path, encoding="utf-8") as fh:
-            text = fh.read()
-        for m in _COUNT_CLAIM.finditer(text):
-            out.append((path, text.count("\n", 0, m.start()) + 1,
-                        parse_count(m.group(1))))
+            out += count_claims_in(path, fh.read())
     return out
 
 
@@ -464,6 +481,16 @@ def mutation_claim_self_check_failures():
     m = _COUNT_CLAIM.search("its 21 completion-trigger workflows")
     if not m or parse_count(m.group(1)) != 21:
         out.append("self-check: a digit-form count claim is not read")
+    for text, want in (("its twenty-one completion-trigger workflows",
+                        "twenty-one"),
+                       ("the unchanged twenty-one-stage path", "twenty-one"),
+                       ("its nine completion-trigger workflows", 9),
+                       ("the unchanged nine-stage path", 9)):
+        got = [n for _, _, n in count_claims_in("x", text)]
+        if got != [want]:
+            out.append(f"self-check: count_claims_in({text!r}) read {got}, "
+                       f"expected [{want!r}] -- a hyphenated number word "
+                       f"must be reported whole, not read as its last part")
     return out
 
 
@@ -641,7 +668,12 @@ def suite(subject):
                      f"the shipped one {subject['workflows']}")
 
     for path, line, n in subject["count-claims"]:
-        if n != len(subject["workflows"]):
+        if isinstance(n, str):
+            broke.append(f"{path}:{line} states the completion path's "
+                         f"workflow count as {n!r}, which is not a count "
+                         f"this gate can read -- write "
+                         f"{len(subject['workflows'])} in digits")
+        elif n != len(subject["workflows"]):
             broke.append(f"{path}:{line} says the completion path covers {n} "
                          f"workflow(s); {WRAPPER} ships "
                          f"{len(subject['workflows'])} -- stale prose about "
@@ -842,6 +874,14 @@ def mut_stale_count_claim(subject):
     return s
 
 
+def mut_hyphenated_count_claim(subject):
+    s = dict(subject)
+    # count_claims() reports a hyphenated word whole, as a str.
+    s["count-claims"] = subject["count-claims"] + [
+        (CONTRACT, 50, "twenty-one")]
+    return s
+
+
 def _persisting(subject, which, edit):
     """The subject with one persisting job rewritten by edit(job) -- or
     removed when edit returns None. which is 'implement' or 'finalize'."""
@@ -967,6 +1007,8 @@ MUTATIONS = [
      mut_wrapper_contract_drifts),
     ("live prose keeps a stale completion-workflow count",
      mut_stale_count_claim),
+    ("live prose spells the completion-workflow count as a hyphenated word",
+     mut_hyphenated_count_claim),
     ("the watchdog is restored to the completion trigger, docs and all",
      mut_watchdog_restored),
     ("the sweep-only board-loop joins the completion trigger, docs and all",
