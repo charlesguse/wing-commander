@@ -13,7 +13,8 @@ fast-forward; rejected when the remote head moved), and every verify-scope
 failure branch. It runs rebase.yml's own `Attempt rebase` step, extracted
 from the workflow, in merge mode against a fixture clone: a `decide` that
 fails or prints neither word must end at outcome=error with the branch
-untouched, never at an empty sync commit (FR-016). Each MUTATION disables one verify-scope guard in the helper
+untouched, never at an empty sync commit, and a real `merge` must
+still land its sync commit (FR-016). Each MUTATION disables one verify-scope guard in the helper
 source and asserts the suite then fails (FR-016). It also pins the wrapper
 wiring: the stage reads no `vars.*`; the wrapper feeds the switch.
 
@@ -506,10 +507,13 @@ def single_home_files():
 
 
 ATTEMPT_DECIDES = (
-    # (label, stub helper body or None for the real helper, outcome, head moves)
-    ("decide exits non-zero", "import sys\nsys.exit(1)\n", "error", False),
-    ("decide prints neither word", "print('banana')\n", "error", False),
-    ("decide says current (real helper)", None, "clean", False),
+    # (label, stub helper body or None for the real helper, outcome, head
+    # moves, main moves ahead first). The last case keeps the fail-closed arm
+    # from swallowing a real `merge`: the sync commit must still land.
+    ("decide exits non-zero", "import sys\nsys.exit(1)\n", "error", False, False),
+    ("decide prints neither word", "print('banana')\n", "error", False, False),
+    ("decide says current (real helper)", None, "clean", False, False),
+    ("decide says merge (real helper)", None, "clean", True, True),
 )
 
 
@@ -528,9 +532,11 @@ def attempt_fail_closed(stage):
     check("rebase.yml has an `Attempt rebase` step (id: attempt)", bool(run), "")
     if not run:
         return
-    for label, body, want, moves in ATTEMPT_DECIDES:
+    for label, body, want, moves, ahead in ATTEMPT_DECIDES:
         with tempfile.TemporaryDirectory() as tmp:
             _origin, work = make_repo(tmp)
+            if ahead:
+                advance_main(work, "main-only.txt", "main\n")
             stub = os.path.join(work, ".wing-commander-pipeline", ".github", "scripts",
                                 "wc_sync_from_main.py")
             if body is None:
