@@ -431,11 +431,11 @@ def proof_list_half():
     check("a build older than 48 hours is failed", run([mk(5, "2026-11-17T06:19:00Z")], {5: True})["status"] == "failed")
     check("a successful run that stood down on the switch is paused", run([fresh], {3: False})["status"] == "paused")
     # #889: a run that succeeded but skipped its build, older than 48 hours,
-    # reads "failed" (too old to stand for today), not "paused".
+    # reads "failed" (too old to stand for today), not "paused". The last
+    # good build is older still: runs come newest first.
+    skipped_old = run([mk(6, "2026-11-17T06:19:00Z"), mk(1, "2026-11-16T06:19:00Z")], {6: False, 1: True})
     check("a successful skipped-build run older than 48 hours is failed",
-          run([mk(6, "2026-11-17T06:19:00Z"), old], {6: False, 2: True}) ==
-          {"status": "failed", "last_good_at": "2026-11-19T06:19:00Z"},
-          run([mk(6, "2026-11-17T06:19:00Z"), old], {6: False, 2: True}))
+          skipped_old == {"status": "failed", "last_good_at": "2026-11-16T06:19:00Z"}, skipped_old)
     check("the switch set is paused whatever the history", run([fresh], {3: True}, {"proof_list_paused": "true"})["status"] == "paused")
     check("a refused run (another event or repository) is not read",
           run([dict(fresh, event="push")], {3: True})["status"] == "never"
