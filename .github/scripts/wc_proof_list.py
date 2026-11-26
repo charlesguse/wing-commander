@@ -404,6 +404,9 @@ def _subprocess(argv, **kwargs):
     try:
         return subprocess.run(argv, timeout=timeout, **kwargs)
     except subprocess.TimeoutExpired:
+        if timeout < CALL_TIMEOUT:
+            raise ReadError("the build ran past its {0}-minute budget during `{1}`".format(
+                BUILD_BUDGET_SECONDS // 60, " ".join(argv[:4])))
         raise ReadError("`{0}` gave no answer within {1:.0f} s".format(" ".join(argv[:4]), timeout))
 
 

@@ -918,8 +918,9 @@ def check_budget():
         try:
             pl._run(slow)
             problems.append("budget: a call outlived the build's budget")
-        except pl.ReadError:
-            pass
+        except pl.ReadError as exc:
+            if "ran past its 13-minute budget during" not in str(exc):
+                problems.append("budget: a call cut short by the budget failed with {0!r}".format(str(exc)[:160]))
         if time.monotonic() - began > 5:
             problems.append("budget: a call was allowed CALL_TIMEOUT though the budget had less left")
     finally:
