@@ -29,12 +29,14 @@ local composite that does, or through a reusable workflow it calls -- is
 named in BOTH the wrapper's `workflow_run.workflows` (by display name) and
 its sweep's `sweep-workflow-paths` (by path). A workflow missing from both
 is a record nobody persists, and nothing fails: the artifact simply
-expires. board-loop.yml shipped that way. The watchdog (FR-030(b) above)
-and board-loop are the sweep-only exceptions, and must stay OFF the
-completion trigger: board-loop runs hourly and nothing reads its records
+expires. board-loop.yml shipped that way. The watchdog (FR-030(b) above),
+board-loop and lifecycle-review-gate are the sweep-only exceptions, and must
+stay OFF the completion trigger: board-loop and lifecycle-review-gate run
+hourly and nothing reads its records
 promptly, so a per-completion run is the same ~24 job-minutes a day the
 watchdog's removal was made to save (FR-030(a) keeps the trigger to the
-promptly-read stages). The discovery itself is pinned by
+promptly-read stages). Each sweep-only name must itself still upload a
+record, so the exception list cannot outlive its reason. The discovery itself is pinned by
 an in-memory fixture tree (a direct uploader, a composite uploader, a
 reusable uploader reached through its caller, a non-uploader), so a
 discovery that stops following one of those edges fails here instead of
@@ -54,7 +56,7 @@ the `sweep` job. The stage's `warn-sweep-backstop` job carries no
 `container:`: FR-007's warning must survive the caller's image failing to
 pull or start, which a job inside that image cannot.
 
-31 subject mutations and two discovery mutations must each break an
+32 subject mutations and two discovery mutations must each break an
 assertion. Each check in suite() is the only one some mutation trips --
 a mutation that a second check also catches would keep passing with its
 target check deleted -- except the missing-`if:` check, which the
@@ -92,9 +94,10 @@ ACTIONS = os.path.join(".github", "actions")
 WATCHDOG_NAME = "Wing Commander · 8 watchdog"
 WATCHDOG_PATH = ".github/workflows/wing-commander-8-watchdog.yml"
 BOARD_LOOP_NAME = "board-loop"
+LIFECYCLE_REVIEW_GATE_NAME = "lifecycle-review-gate"
 # Record owners that must be ABSENT from workflow_run.workflows: reached by
 # the daily sweep only (FR-030(a)/(b)). Their paths must still be swept.
-SWEEP_ONLY = {WATCHDOG_NAME, BOARD_LOOP_NAME}
+SWEEP_ONLY = {WATCHDOG_NAME, BOARD_LOOP_NAME, LIFECYCLE_REVIEW_GATE_NAME}
 RECORD_PREFIX = "metrics-record"
 SWEEP_JOB = "sweep"
 PERSIST_JOB = "persist"
@@ -614,6 +617,11 @@ def suite(subject):
         broke.append("no workflow in this repository uploads a "
                      f"{RECORD_PREFIX}* artifact -- the discovery this "
                      "coverage check relies on has stopped seeing them")
+    owner_names = set(subject["record-owners"].values())
+    for name in sorted(SWEEP_ONLY - {WATCHDOG_NAME} - owner_names):
+        broke.append(f"the sweep-only {name!r} uploads no {RECORD_PREFIX}* "
+                     f"artifact -- its records are never persisted, and its "
+                     f"sweep-only exception has outlived its reason (#889)")
     for path, name in sorted(subject["record-owners"].items()):
         if name not in SWEEP_ONLY and name not in subject["workflows"]:
             broke.append(f"{path} uploads a {RECORD_PREFIX}* artifact but its "
@@ -704,6 +712,13 @@ def _schedule(subject, crons):
 
 def mut_watchdog_restored(subject):
     return _trigger_list(subject, subject["workflows"] + [WATCHDOG_NAME])
+
+
+def mut_sweep_only_owner_stops_uploading(subject):
+    s = dict(subject)
+    s["record-owners"] = {p: n for p, n in subject["record-owners"].items()
+                          if n != LIFECYCLE_REVIEW_GATE_NAME}
+    return s
 
 
 def mut_board_loop_on_trigger(subject):
@@ -954,6 +969,8 @@ MUTATIONS = [
      mut_watchdog_restored),
     ("the sweep-only board-loop joins the completion trigger, docs and all",
      mut_board_loop_on_trigger),
+    ("the sweep-only lifecycle-review-gate stops uploading its record",
+     mut_sweep_only_owner_stops_uploading),
     ("the completion trigger is emptied, docs and all",
      mut_trigger_emptied),
     ("the 058 delta contract's trigger list drifts from the shipped one",

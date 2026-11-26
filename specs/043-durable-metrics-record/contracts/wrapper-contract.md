@@ -38,7 +38,7 @@ on:
 Every workflow in this repository that uploads a `metrics-record*`
 artifact (itself, through a local composite, or through a reusable
 workflow it calls) is named in this list -- the watchdog and this repository's own
-`board-loop` excepted, which are sweep-only -- and in the sweep's
+`board-loop` and `lifecycle-review-gate` excepted, which are sweep-only -- and in the sweep's
 `sweep-workflow-paths`. Gate 79
 (`verify-metrics-wrapper-trigger-drops-watchdog.py`) derives that set
 from the workflows and fails on a missing one, and compares this block's
