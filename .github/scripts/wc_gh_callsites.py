@@ -68,8 +68,10 @@ HEREDOC = re.compile(r"<<(-?)[ \t]*((?:'[^']*'|\"[^\"]*\"|\\.|[^\s;&|<>()`'\"\\]
 DELIM_PIECE = re.compile(r"'([^']*)'|\"([^\"]*)\"|\\(.)")
 FUNCTION_NAME = re.compile(r"[ \t]+[^\s;&|()<>]")    # `function NAME`, not `function)`
 TIME_GAP = re.compile(r"(?:[ \t]|\\\n)*")
-GH_VALUE = re.compile(r"\s*gh(?![\w-])")         # a value whose first word is gh
-GH_VALUE_RAW = re.compile(r"[\s\"'(]*gh(?![\w-])")  # the same, in source (`=('gh'`)
+# A value whose first word is gh, or a path to it (`$DIR/gh`, read in _Word.pat),
+# and the same in source (`=('gh'`, `=("$DIR/gh"`).
+GH_VALUE = re.compile(r"\s*(?:gh(?![\w-])|\S*/gh(?!\S))")
+GH_VALUE_RAW = re.compile(r"[\s\"'(]*(?:gh(?![\w-])|[^\s\"'()]*/gh(?![^\s\"')]))")
 ASSIGN = re.compile(r"[A-Za-z_]\w*(?:\[[^\]\n]*\])?\+?=")    # `a=`, `a+=`, `a[$k]=`
 DECLARE = frozenset(("declare", "local", "typeset", "readonly", "export"))
 GLOB = re.compile(r"\[(?:\[:[a-z]+:\]|[^\[\]/])+\]|[*?]")
@@ -576,12 +578,13 @@ class _Scan:
         if not self.gh_valued:
             decl = k < len(words) and words[k].lit in DECLARE
             self.gh_valued = any(map(_gh_value, words[:k] + (words[k + 1:] if decl else [])))
-            # `printf -v CMD gh`, `for CMD in 'gh'`: the same value, set another way.
-            setter = k < len(words) and (words[k].lit in ("for", "select") or (
+            # `printf -v CMD gh`, `for CMD in 'gh'`, `set -- 'gh'` (for `"$@"`):
+            # the same value, set another way.
+            setter = k < len(words) and (words[k].lit in ("for", "select", "set") or (
                 words[k].lit == "printf" and any((w.lit or "").startswith("-v")
                                                  for w in words[k + 1:])))
             self.gh_valued = self.gh_valued or setter and any(
-                GH_VALUE.match(w.lit if w.lit is not None else w.pre) for w in words[k + 2:])
+                GH_VALUE.match(w.pat) for w in words[k + 1 + (words[k].lit != "set"):])
         tokens = [w.raw[9:] for w in words[:k] if w.raw.startswith("GH_TOKEN=")]
         prefix = (tokens or [None])[-1]
         odd_prefix = len(tokens) < k or any("=(" in w.raw for w in words[:k])
@@ -643,15 +646,16 @@ class _Scan:
 
 def _gh_value(w):
     """Whether word `w` is an assignment whose value, quoted or not, starts
-    with the word gh (`CMD=gh`, `CMD='gh'`, `GH="gh api"`): a variable that
+    with the word gh, or is a path to it (`CMD=gh`, `CMD='gh'`, `GH="gh api"`,
+    `GH="$DIR/gh"`): a variable that
     may later run as a command (`$CMD`, `${CMD}`, `"$@"`). A message that
     only mentions gh later in its value (`msg="the gh call failed"`) is not
     one."""
     m = ASSIGN.match(w.raw)
     if not m:
         return False
-    text = w.lit if w.lit is not None else w.pre   # the literal text before any expansion
-    if text.startswith(m.group()):
+    text = w.pat                    # the word's text, an expansion as EXP
+    if text.startswith(m.group()) and w.raw[m.end():m.end() + 1] != "(":
         return GH_VALUE.match(text, len(m.group())) is not None
     # An array (`a=('gh' api x)`) or a subscript holding an expansion
     # (`a[$k]=gh`): read the source after the `=`, past quotes and `(`.

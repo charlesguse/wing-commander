@@ -42,8 +42,10 @@ disallowed form when the `run:` block also holds a `gh` word that is
 neither a located call nor a provable mention (`GH=gh`, `GH=${X:-gh}`,
 `set -- gh api x`); a `gh` in a `${…}` value, quoted or not, is never a
 mention. It fails the same way when the `run:` block assigns a variable a
-value whose first word is `gh`, quoted or not (`CMD='gh'`, `CMD=gh`,
-`export GH="gh api"`), though that quoted `gh` is itself a mention; a value
+value whose first word is `gh` or a path to it, quoted or not (`CMD='gh'`,
+`CMD=gh`, `export GH="gh api"`, `GH="$DIR/gh"`), or sets one another way
+(`printf -v`, `for`, `select`, `set -- 'gh'`), though that quoted `gh` is
+itself a mention; a value
 that only mentions `gh` later (`msg="the gh call failed"`) does not count,
 so start a message with other words (`"the gh call exited 0"`).
 Gate 12 cannot see what a variable holds, so never run `gh` through one.

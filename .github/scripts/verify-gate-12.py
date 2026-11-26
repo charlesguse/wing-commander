@@ -788,6 +788,14 @@ LOCATOR_CASES = [
      'msg="the gh call failed"; "$@" x; $CMD y; source "$F"', [men("quoted")]),
     ("an assignment-shaped argument or a gh-prefixed word is no gh-valued variable",
      "echo CMD='gh'; X=ghost; Y=gh-x; $CMD y", [men("quoted")]),
+    ("gh-valued variable: a quoted path to gh", "CMD='/usr/bin/gh'; $CMD api x",
+     [men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: a path to gh under an expansion",
+     'GH="$RUNNER_TEMP/gh"; "$GH" api x', [men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: positional parameters set by set --",
+     "set -- 'gh' api x; \"$@\"", [men("quoted"), dis("dynamic-command")]),
+    ("a path through a gh directory, or set -- with a message, sets none",
+     'u="https://x/gh/releases"; set -- "the gh call"; "$@" y', [men("quoted")]),
 ]
 
 
