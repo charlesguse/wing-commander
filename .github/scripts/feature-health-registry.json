@@ -160,7 +160,7 @@
   },
   {
     "name": "gate suite",
-    "reference_names": ["lint-workflows.yml", "the gate suite on main"],
+    "reference_names": ["lint-workflows.yml", "the gate suite on main", "workflow-security gates in lint-workflows.yml"],
     "workflows": [{"file": "lint-workflows.yml", "cadence": "schedule", "events": ["schedule", "push"]}],
     "kill_switch": null,
     "requires_var": null,

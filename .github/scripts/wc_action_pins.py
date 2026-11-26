@@ -7,9 +7,12 @@ WHY THIS EXISTS
 Actions outside the trusted-publisher set (its one home is the
 `unpinned-uses` policy in .github/zizmor.yml) are pinned to a full commit
 SHA with a `# vX.Y.Z` comment naming the release. A SHA never moves, so
-without automation those pins only age. update-action-pins.yml runs this
-module on a schedule and opens one pull request with every bump; a human
-merges it (no bot merge class, FR-009b).
+without automation those pins only age. This module is the rewrite the
+pin-update automation runs (FR-009b); the pull requests it opens are merged
+by a human (no bot merge class). The workflow that runs it on a schedule is
+not on this branch yet: pushing a change under .github/workflows/ needs the
+App's Workflows permission, which docs/setup.md does not grant (an owner
+decision). Until then a maintainer runs `--write` locally and opens the PR.
 
 Gate 170 (verify-action-runtime-pins.py) keys its register on the full
 `uses:` string, so a bump that rewrites only the workflow line fails it.
