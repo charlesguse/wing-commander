@@ -94,3 +94,69 @@
 ## Implementation Strategy
 
 MVP = Phases 1–3 (zizmor gate plus the three injection fixes, green on main). Then US2 records, pins, US3 gate, US4 docs. Standing guidance: keep the gate suite green after each phase.
+
+## Review Gate Round 1 Findings
+
+- [ ] Review finding: Gate 177 covers less than the Gate 104 rule (g1) it replaces
+
+  Gate 104's (g1) banned any raw ./.github/actions reference in a published stage. Gate 177 only flags a ./ reference after a checkout, download-artifact or tar/unzip step it can see in the same job, so a composite that writes the workspace slips through.
+
+  - .github/scripts/verify-untrusted-checkout-local-uses.py
+
+  Detail: A published stage calls a composite that checks out the PR branch at '.', then a later uses: ./.github/actions/x is not flagged. Keep an unconditional published-stage ban on raw ./.github/actions/ references.
+
+- [ ] Review finding: New gates fail open on unparsable workflows or a missing register
+
+  scan skips workflows that raise YAML errors or are not dicts, and load_repo_only returns an empty set when repo-only-reusable-workflows.json is missing or invalid. verify-adopter-event-policy.wrapper_events does the same for wrapper files.
+
+  - .github/scripts/verify-untrusted-checkout-local-uses.py
+
+  Detail: A workflow with a YAML syntax error is silently skipped. A deleted or corrupt register makes shared-pr-reviewer.yml a published stage. Report parse errors and an unreadable register as failures.
+
+- [ ] Review finding: verify-zizmor location_of collapses composite findings to 'workflow'
+
+  Findings inside a composite action (route starts with runs) get location 'workflow'. A waiver keyed (file, audit, 'workflow') therefore covers every present and future finding of that audit in that composite.
+
+  - .github/scripts/verify-zizmor.py
+
+  Detail: The artipacked waiver on wing-commander-chain-stop-notice and the github-env waiver on wing-commander-context would also accept a new unsafe checkout or GITHUB_ENV write in the same composite. Produce step:<id-or-name> from runs.steps[idx].
+
+- [ ] Review finding: tar/unzip with no -C/-d is treated as extracting to the whole workspace
+
+  A run step with tar -x or unzip and no destination is recorded as an untrusted tree at '.', though it may extract elsewhere. A later checkout at '.' also fails to drop earlier nested entries.
+
+  - .github/scripts/verify-untrusted-checkout-local-uses.py
+
+  Detail: An unzip in a scratch directory causes false positives on every following ./.github/actions reference. Use working-directory, or treat the destination as unknown. Drop nested entries when '.' is re-checked-out.
+
+- [ ] Review finding: run_zizmor does not handle errors from the scan call
+
+  Only the --version call is wrapped for OSError and SubprocessError. A timeout or a vanished binary during the scan crashes the gate with a traceback instead of the promised 'analyser missing' failure.
+
+  - .github/scripts/verify-zizmor.py
+
+  Detail: A scan that exceeds the 600 s timeout raises an uncaught TimeoutExpired, so the ::error::verify-zizmor annotation is never emitted.
+
+- [ ] Review finding: wc_action_pins plan can downgrade pins with short version comments
+
+  _version accepts only three-part tags. A pin commented '# v4' or '# v10.0' parses to None, so the downgrade guard is skipped and the pin moves to the newest release whenever the SHA differs.
+
+  - .github/scripts/wc_action_pins.py
+
+  Detail: PIN_RE accepts those comment forms. A pin on a commit newer than v4.9.0 with the comment '# v4' is rewritten to the older v4.9.0 commit by --bump --write.
+
+- [ ] Review finding: Dependabot composite coverage is hand-listed and its path is not in the lint trigger
+
+  dependabot.yml lists composite directories by hand, while Gate 178 and wc_action_pins discover composites with **. Deeper nesting is not covered. lint-workflows.yml's pull_request.paths also omits .github/dependabot.yml.
+
+  - .github/dependabot.yml
+
+  Detail: A composite at .github/actions/_shared/foo/bar/action.yml has SHA pins that Dependabot never bumps. A PR editing only dependabot.yml does not trigger lint. Add a coverage gate and add the file to the paths filter.
+
+- [ ] Review finding: Default or github.sha checkout is trusted on pull_request-triggered workflows
+
+  TRUSTED_RUNNING_REFS treats a checkout with no ref, or ref github.sha, of the running repository as trusted in every top-level workflow. On pull_request, github.sha is the PR merge commit, which the PR author controls.
+
+  - .github/scripts/verify-untrusted-checkout-local-uses.py
+
+  Detail: A pull_request job that runs actions/checkout with no ref and then uses: ./.github/actions/x is reported safe. Don't trust that checkout on pull_request-style events, or add an explicit allowlist.
