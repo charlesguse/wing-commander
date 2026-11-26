@@ -654,6 +654,22 @@ def check_implement_wiring():
     CASES += 1
     if "the cycle checked nothing new, so the loop is ending here" in impl:
         fail("implement.yml still carries the inline zero-progress hand-off rule")
+    # #889: turns used come from wing-commander-agent-verdict's
+    # reported-turns output, the one home of that transcript read; no
+    # inline `.num_turns` jq copy may come back in either read-back arm.
+    CASES += 1
+    if re.search(r"\|\s*\.num_turns\b", impl):
+        fail("implement.yml reads .num_turns inline; take wing-commander-agent-verdict's "
+             "reported-turns output instead")
+    for name, vid in (("Read back cycle outcome", "cycle-verdict"),
+                      ("Read back retry outcome", "retry-verdict")):
+        st = _workflow_step(name)
+        CASES += 1
+        if ((st.get("env") or {}).get("TURNS_REPORTED")
+                != f"${{{{ steps.{vid}.outputs.reported-turns }}}}"
+                or 'turns_used="${TURNS_REPORTED:-}"' not in st.get("run", "")):
+            fail(f"implement.yml: {name!r} must take turns used from "
+                 f"steps.{vid}.outputs.reported-turns")
 
 
 def run_dispatch_step(env_over):
@@ -705,6 +721,17 @@ def check_dispatch_stall_reporting():
             if proc.returncode != 0 or needle not in calls:
                 fail(f"dispatch step ({name}): the issue comment lacks {needle!r}; "
                      f"rc={proc.returncode} calls={calls!r} stderr={proc.stderr}")
+    # #889: the routed hand-off's step summary says "at" the cap on the
+    # cycle that reached it, "before" it on an earlier cycle.
+    for iteration, want, unwanted in (("5", "at the iteration cap (5)", "before the iteration cap"),
+                                      ("3", "before the iteration cap (5)", "at the iteration cap")):
+        proc, _, summary = run_dispatch_step({"ITERATION": iteration, "HANDOFF": "true",
+                                              "ROUTED": "true", "REASON": wb,
+                                              "STALL_COMMENT": stall})
+        CASES += 1
+        if proc.returncode != 0 or want not in summary or unwanted in summary:
+            fail(f"dispatch step (routed hand-off at cycle {iteration} of 5): the step "
+                 f"summary must say {want!r}; summary={summary!r} stderr={proc.stderr}")
     blocker = "Implement stopped with 2 implementation task(s) still unchecked: the agent reported a blocker: missing-tool: no jq (T007)."
     proc, calls, summary = run_dispatch_step({"ITERATION": "1", "HANDOFF": "true",
                                               "STALL_COMMENT": blocker})
@@ -712,6 +739,52 @@ def check_dispatch_stall_reporting():
     if proc.returncode != 0 or "iteration cap" in summary or blocker not in summary:
         fail(f"dispatch step (blocker hand-off at cycle 1 of 5): the step summary must "
              f"quote the stop reason, not the iteration cap; summary={summary!r}")
+
+
+def check_recorded_iteration_validated():
+    """#889: the Idempotency guard does `$((RECORDED + 1))`, and bash
+    arithmetic evaluates a crafted value (`a[$(cmd)]`) as code. The shipped
+    "Verify spec artifacts match the dispatch" body must refuse a
+    spec-meta.json whose iteration is not a plain integer, before it reaches
+    the guard, and pass an integer through unchanged."""
+    global CASES
+    script = _workflow_step("Verify spec artifacts match the dispatch")["run"]
+    spec_dir = "specs/117-x"
+    for label, value, want_refused in (
+            ("integer", 3, False),
+            ("integer as a string", "4", False),
+            ("absent", None, False),
+            ("arithmetic payload", "a[$(touch pwned)]", True),
+            ("negative", "-1", True),
+            ("string with a newline", "2\nstage=review", True)):
+        tmp = _tmpdir("wc-117-meta-")
+        os.makedirs(os.path.join(tmp, spec_dir))
+        for f in ("spec.md", "plan.md", "tasks.md"):
+            with open(os.path.join(tmp, spec_dir, f), "w", encoding="utf-8") as fh:
+                fh.write("x\n")
+        meta = {"issue": 1, "spec_dir": spec_dir, "stage": "implement"}
+        if value is not None:
+            meta["iteration"] = value
+        with open(os.path.join(tmp, spec_dir, "spec-meta.json"), "w", encoding="utf-8") as fh:
+            json.dump(meta, fh)
+        proc, out = _run_block(script, tmp, {"SPEC_DIR": spec_dir, "SPEC_DIR_REL": spec_dir,
+                                             "ISSUE": "1"})
+        refused = out.get("refused") == "true"
+        CASES += 1
+        if refused != want_refused or (proc.returncode != 0) != want_refused:
+            fail(f"spec-meta iteration ({label}): refused={refused} rc={proc.returncode}, "
+                 f"want refused={want_refused}; stderr={proc.stderr}")
+            continue
+        CASES += 1
+        if "recorded-iteration" in out and want_refused:
+            fail(f"spec-meta iteration ({label}): a refused value still reached "
+                 "recorded-iteration, which the Idempotency guard evaluates")
+        if not want_refused:
+            want = "0" if value is None else str(value)
+            CASES += 1
+            if out.get("recorded-iteration") != want:
+                fail(f"spec-meta iteration ({label}): recorded-iteration="
+                     f"{out.get('recorded-iteration')!r}, want {want!r}")
 
 
 def check_review_stage_comment():
@@ -886,6 +959,7 @@ def main():
     check_prompts()
     check_implement_wiring()
     check_dispatch_stall_reporting()
+    check_recorded_iteration_validated()
     check_prompt_parity()
     check_reentry_lifecycle_notice()
     check_review_explained_lookup()
