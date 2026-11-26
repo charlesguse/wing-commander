@@ -10,7 +10,11 @@ lives in wc_sync_from_main.py, so this gate builds real local git fixtures
 commands the workflow runs against them: method validation, the
 already-current test, the clean and same-tree merges, the publish push (plain
 fast-forward; rejected when the remote head moved), and every verify-scope
-failure branch. Each MUTATION disables one verify-scope guard in the helper
+failure branch. It runs rebase.yml's own `Attempt rebase` step, extracted
+from the workflow, in merge mode against a fixture clone: a `decide` that
+fails or prints neither word must end at outcome=error with the branch
+untouched, never at an empty sync commit, and a real `merge` must
+still land its sync commit (FR-016). Each MUTATION disables one verify-scope guard in the helper
 source and asserts the suite then fails (FR-016). It also pins the wrapper
 wiring: the stage reads no `vars.*`; the wrapper feeds the switch.
 
@@ -22,6 +26,8 @@ import re
 import subprocess
 import sys
 import tempfile
+
+import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import wc_sync_from_main  # noqa: E402
@@ -44,9 +50,20 @@ def check(name, ok, detail="", quiet=False):
         print("::error::verify-sync-from-main: {0} -- {1}".format(name, detail))
 
 
+def _allow_bare(env):
+    """The fixtures read a bare origin; a host with safe.bareRepository=explicit
+    would refuse it, so set the option for the git children (appended to any
+    config the environment already passes)."""
+    n = int(env.get("GIT_CONFIG_COUNT", "0") or 0)
+    env["GIT_CONFIG_KEY_{0}".format(n)] = "safe.bareRepository"
+    env["GIT_CONFIG_VALUE_{0}".format(n)] = "all"
+    env["GIT_CONFIG_COUNT"] = str(n + 1)
+    return env
+
+
 def sh(cwd, *args, check_rc=True):
-    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
-               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t", GIT_EDITOR="true")
+    env = _allow_bare(dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                           GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t", GIT_EDITOR="true"))
     r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env)
     if check_rc and r.returncode != 0:
         raise RuntimeError("{0}: {1}".format(" ".join(args), r.stderr))
@@ -60,7 +77,8 @@ def write(path, text):
 
 
 def helper(src, cwd, *args):
-    return subprocess.run([sys.executable, src, *args], cwd=cwd, capture_output=True, text=True)
+    return subprocess.run([sys.executable, src, *args], cwd=cwd, capture_output=True, text=True,
+                          env=_allow_bare(dict(os.environ)))
 
 
 def make_repo(tmp):
@@ -104,6 +122,20 @@ def suite(src, quiet=False):
     """Run every case against helper source `src`; return the failure names."""
     start = len(results)
     q = quiet
+
+    # Every git-spawning call path carries the bare-repo allowance, appended to
+    # (never replacing) config the environment already passes.
+    pre = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "a.b", "GIT_CONFIG_VALUE_0": "c"}
+    e = _allow_bare(dict(pre))
+    check("allow-bare: appended after existing GIT_CONFIG entries",
+          e["GIT_CONFIG_COUNT"] == "2" and e["GIT_CONFIG_KEY_0"] == "a.b"
+          and e["GIT_CONFIG_KEY_1"] == "safe.bareRepository" and e["GIT_CONFIG_VALUE_1"] == "all",
+          repr(e), q)
+    r = helper(src, ".", "validate-method", "")
+    probe = subprocess.run(["git", "config", "--get", "safe.bareRepository"], capture_output=True,
+                           text=True, env=_allow_bare(dict(os.environ)))
+    check("allow-bare: git children see safe.bareRepository=all",
+          probe.stdout.strip() == "all" and r.returncode == 0, probe.stdout + probe.stderr, q)
 
     for val, want_rc, want_out in (("", 0, "rebase"), ("rebase", 0, "rebase"), ("merge", 0, "merge"),
                                    ("bogus", 1, None), ("Merge", 1, None),
@@ -352,7 +384,7 @@ def suite(src, quiet=False):
         b = head(w)
         m = advance_main(w, "a.txt", "one\nMAIN\nthree\n")
         t = sh(w, "git", "merge-tree", "--write-tree", "--no-messages", m, "HEAD", check_rc=False).stdout.split()[0]
-        env_idx = dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "idx"))
+        env_idx = _allow_bare(dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "idx")))
         subprocess.run(["git", "read-tree", t], cwd=w, env=env_idx, check=True)
         subprocess.run(["git", "update-index", "--force-remove", "a.txt"], cwd=w, env=env_idx, check=True)
         t_no_a = subprocess.run(["git", "write-tree"], cwd=w, env=env_idx, capture_output=True,
@@ -474,6 +506,64 @@ def single_home_files():
     return found
 
 
+ATTEMPT_DECIDES = (
+    # (label, stub helper body or None for the real helper, outcome, head
+    # moves, main moves ahead first). The last case keeps the fail-closed arm
+    # from swallowing a real `merge`: the sync commit must still land.
+    ("decide exits non-zero", "import sys\nsys.exit(1)\n", "error", False, False),
+    ("decide prints neither word", "print('banana')\n", "error", False, False),
+    ("decide says current (real helper)", None, "clean", False, False),
+    ("decide says merge (real helper)", None, "clean", True, True),
+)
+
+
+def attempt_step_run(stage):
+    for job in (yaml.safe_load(stage).get("jobs") or {}).values():
+        for step in job.get("steps") or []:
+            if step.get("id") == "attempt":
+                return step.get("run") or ""
+    return ""
+
+
+def attempt_fail_closed(stage):
+    """Run the `Attempt rebase` step's merge arm against each decide in
+    ATTEMPT_DECIDES on an already-current branch."""
+    run = attempt_step_run(stage)
+    check("rebase.yml has an `Attempt rebase` step (id: attempt)", bool(run), "")
+    if not run:
+        return
+    for label, body, want, moves, ahead in ATTEMPT_DECIDES:
+        with tempfile.TemporaryDirectory() as tmp:
+            _origin, work = make_repo(tmp)
+            if ahead:
+                advance_main(work, "main-only.txt", "main\n")
+            stub = os.path.join(work, ".wing-commander-pipeline", ".github", "scripts",
+                                "wc_sync_from_main.py")
+            if body is None:
+                with open(HELPER, encoding="utf-8") as fh:
+                    body = fh.read()
+            write(stub, body)
+            out, summary = os.path.join(tmp, "out"), os.path.join(tmp, "summary")
+            before = head(work)
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                       GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t", GIT_EDITOR="true",
+                       DB="main", SLUG="x", SPEC_PREFIX="spec/", SYNC_METHOD="merge",
+                       BOT_SLUG="t", GITHUB_OUTPUT=out, GITHUB_STEP_SUMMARY=summary,
+                       RUNNER_TEMP=tmp)
+            r = subprocess.run(["bash", "-c", run], cwd=work, env=env,
+                               capture_output=True, text=True)
+            got = ""
+            if os.path.exists(out):
+                with open(out, encoding="utf-8") as fh:
+                    got = next((ln[len("outcome="):] for ln in fh.read().splitlines()
+                                if ln.startswith("outcome=")), "")
+            ok = r.returncode == 0 and got == want and (head(work) != before) == moves
+            check("attempt step, {0} -> outcome={1}, branch {2}".format(
+                label, want, "moved" if moves else "untouched"), ok,
+                "rc={0} outcome={1!r} head moved={2}: {3}".format(
+                    r.returncode, got, head(work) != before, r.stderr[-400:]))
+
+
 def main():
     with open(HELPER, encoding="utf-8") as fh:
         source = fh.read()
@@ -503,6 +593,7 @@ def main():
         stage = fh.read()
     with open(WRAPPER, encoding="utf-8") as fh:
         wrapper = fh.read()
+    attempt_fail_closed(stage)
     check("stage reads no vars.* for the sync switch", "vars.WING_COMMANDER_SPEC_BRANCH_SYNC" not in stage
           and not re.search(r"\bvars\.", stage), "rebase.yml must take the switch as an input")
     check("wrapper passes the switch with a rebase default", SWITCH in wrapper, "missing: " + SWITCH)

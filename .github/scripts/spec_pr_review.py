@@ -192,7 +192,10 @@ def check_fixes(data):
             elif not prec.get("resolved"):
                 reason = "precedent-unresolvable"
         if reason:
-            blocked.append({"finding": finding, "reason": reason})
+            # `finding` is the join key (often the index); `title` is what a
+            # reader of the round's review is shown.
+            blocked.append({"finding": finding, "reason": reason,
+                            "title": str(fx.get("finding", finding))})
         else:
             pushable.append(finding)
     return {"pushable": pushable, "blocked": blocked}

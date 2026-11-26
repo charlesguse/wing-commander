@@ -292,11 +292,17 @@ def append_section(body, block):
     return body + "\n" + block if block else body
 
 
-def section_fits(body, block):
-    """True when append_section(body, block) stays within MAX_BODY_UNITS."""
+def _scripts_on_path():
+    """Put this directory on sys.path once, however often a reader that
+    imports a sibling module runs (#889)."""
     here = os.path.dirname(os.path.abspath(__file__))
     if here not in sys.path:
         sys.path.insert(0, here)
+
+
+def section_fits(body, block):
+    """True when append_section(body, block) stays within MAX_BODY_UNITS."""
+    _scripts_on_path()
     import board_spec_request_body as bsrb
     return bsrb.utf16_len(append_section(body, block)) <= bsrb.MAX_BODY_UNITS
 
@@ -320,6 +326,9 @@ def _fitting_or_left_out(body, block, what):
 # --------------------------------------------------------------------------
 PROOF_LIST_WORKFLOW = "wing-commander-proof-list.yml"
 PROOF_LIST_ARTIFACT = "proof-list-section"
+# The file inside that artifact: wc_proof_list.SECTION_FILE is this constant,
+# and verify-proof-list.py checks the workflow's `--out` and `path:` (#889).
+PROOF_LIST_FILE = "proof-list-section.json"
 PROOF_LIST_BUILD_STEP = "Build the proof list"
 PROOF_LIST_STALE_HOURS = 48
 PROOF_LIST_NOTICES = {
@@ -493,7 +502,7 @@ def current_lines(body):
     """The backlog lines the board loop has claimed (annotation state
     `in-progress`), parsed by board_backlog_lines -- the single home of the
     line grammar (specs/121-board-backlog-line-items FR-018)."""
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    _scripts_on_path()
     import board_backlog_lines as bbl
     return [{"id": line["id"], "text": line["text"], "detail": line["detail"] or ""}
             for line in bbl.parse_lines(body)
@@ -600,7 +609,7 @@ def trusted_watcher_run(run, repo):
 
 
 def section_snapshot(repo, switches, workflow, artifact, switch_key, now, gh_obj, build_ok, download,
-                     titles=None, filename="proof-list-section.json", stale_hours=PROOF_LIST_STALE_HOURS,
+                     titles=None, filename=PROOF_LIST_FILE, stale_hours=PROOF_LIST_STALE_HOURS,
                      load=None, stale_keeps_section=False):
     """The section's status (research D17): paused, never, failed, built or
     unreadable, plus the last good build's time. The readers are parameters so

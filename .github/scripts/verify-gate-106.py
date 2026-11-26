@@ -397,8 +397,15 @@ def suite_config(script, env, tmproot, source_root=REPO_ROOT):
 # `{"jobs": [...]}` -- through STUB_GH_JQ_PRELUDE's `emit`, so a wrong key
 # in the shipped `--jq` (`.runs[]` for `.workflow_runs[]`) fails. A `*_RAW`
 # variable is emit's RAW. A jobs read for a run id with no fixture fails
-# the way GitHub's 404 does.
+# the way GitHub's 404 does. GH_STUB_RUNS_REST_2 is the run list's second
+# page: gh prints it, through the same program, only under --paginate, so
+# a run that sits on page 2 is read only by a call that asks for every
+# page (#889, code review of #960).
 STUB_GH_EXECUTION = STUB_GH_JQ_PRELUDE + r'''
+paginate=""
+for arg in "$@"; do
+  [ "$arg" = "--paginate" ] && paginate=1
+done
 if [ "$1" = "api" ]; then
   case "$2" in
     repos/*/actions/runs\?*)
@@ -406,8 +413,12 @@ if [ "$1" = "api" ]; then
         echo "${GH_STUB_RUNS_ERR:-unexpected error}" >&2
         exit 1
       fi
-      emit "${GH_STUB_RUNS_REST:-}" "${GH_STUB_RUNS_RAW:-}"
-      exit $?
+      emit "${GH_STUB_RUNS_REST:-}" "${GH_STUB_RUNS_RAW:-}" || exit $?
+      if [ -n "$paginate" ] && [ -n "${GH_STUB_RUNS_REST_2:-}" ]; then
+        emit "${GH_STUB_RUNS_REST_2}"
+        exit $?
+      fi
+      exit 0
       ;;
     repos/*/actions/runs/*/jobs)
       if [ "${GH_STUB_JOBS_FAIL:-}" = "true" ]; then
@@ -522,6 +533,7 @@ EXECUTION_BASE_ENV = dict(
     # of them -- one value per matched item, as a paginated read through
     # `--jq '.workflow_runs[] | {...}'` does.
     GH_STUB_RUNS_REST=runs_page((111, WRAPPER_PATH)), GH_STUB_RUNS_RAW="",
+    GH_STUB_RUNS_REST_2="",
     GH_STUB_JOBS_111=jobs_page(JOB_CONTAINERIZED),
     GH_STUB_JOBS_RAW_111="",
     GH_STUB_RUNS_FAIL="", GH_STUB_RUNS_ERR="",
@@ -729,6 +741,38 @@ EXECUTION_SCENARIOS = [
         reached_pass=False,
         failing_check="container image configured but stage jobs did not execute inside a container",
     ),
+    # #889 (code review of #960): the run list is paginated, and the
+    # completed and queued runs a release reads can fall on different
+    # pages. Every run on every page is judged by its own status.
+    dict(
+        name="#889 paginated: a completed containerized run on page 1, a queued run with no jobs on page 2: reaches pass",
+        env=dict(GH_STUB_RUNS_REST_2=runs_page((555, WRAPPER_PATH, "queued")),
+                 GH_STUB_JOBS_555=jobs_page()),
+        reached_pass=True,
+    ),
+    dict(
+        name="#889 paginated: a queued run with no jobs on page 1, a completed containerized run on page 2: reaches pass",
+        env=dict(GH_STUB_RUNS_REST=runs_page((555, WRAPPER_PATH, "queued")),
+                 GH_STUB_RUNS_REST_2=runs_page((111, WRAPPER_PATH)),
+                 GH_STUB_JOBS_555=jobs_page()),
+        reached_pass=True,
+    ),
+    dict(
+        name="#889 paginated: a completed non-containerized run on page 2: fails, not containerized",
+        env=dict(GH_STUB_RUNS_REST_2=runs_page(
+            (555, WRAPPER_PATH, "queued"), (666, WRAPPER_PATH, "completed")),
+            GH_STUB_JOBS_555=jobs_page(),
+            GH_STUB_JOBS_666=jobs_page(JOB_NOT_CONTAINERIZED)),
+        reached_pass=False,
+        failing_check="container image configured but stage jobs did not execute inside a container",
+    ),
+    dict(
+        name="#889 paginated: a completed zero-jobs run on page 2: unreadable, not carried by page 1",
+        env=dict(GH_STUB_RUNS_REST_2=runs_page((666, WRAPPER_PATH, "completed", "startup_failure")),
+                 GH_STUB_JOBS_666=jobs_page()),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+    ),
     dict(
         name="#766 the REST run list does not parse: gh --jq fails, unreadable",
         env=dict(GH_STUB_RUNS_REST="{not json"),
@@ -853,6 +897,13 @@ def mut_runs_jq_wrong_key(text):
     return _mut_fragment_text(text, "--jq '.workflow_runs[] |", "--jq '.runs[] |")
 
 
+def mut_runs_paginate_dropped(text):
+    """#889: the run list read stops at its first page."""
+    return _mut_fragment_text(
+        text, '\\\n              --paginate --jq \'.workflow_runs[] |',
+        '\\\n              --jq \'.workflow_runs[] |')
+
+
 def mut_jobs_jq_wrong_key(text):
     """#766: a wrong top-level key in the jobs --jq program."""
     return _mut_fragment_text(text, "--jq '.jobs[]'", "--jq '.job[]'")
@@ -898,6 +949,9 @@ WORKFLOW_MUTATIONS = [
      mut_empty_jobs_guard_removed),
     ("the run-list --jq reads .runs[] instead of .workflow_runs[] (#766)",
      mut_runs_jq_wrong_key),
+    ("the run-list read drops --paginate (a run on a later page would "
+     "never be judged, #889)",
+     mut_runs_paginate_dropped),
     ("the jobs --jq reads .job[] instead of .jobs[] (#766)",
      mut_jobs_jq_wrong_key),
     ("the execution-evidence fragment's failing_check branch removed "

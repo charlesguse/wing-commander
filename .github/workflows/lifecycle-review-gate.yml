@@ -191,6 +191,8 @@ jobs:
                   continue
                   ;;
               esac
+            else
+              echo "lifecycle-review-gate: PR #$number -- could not count buildable tasks in specs/$slug/tasks.md (the counter failed); not skipped on that account." >> "$GITHUB_STEP_SUMMARY"
             fi
 
             # T074/F3: review_gate no longer lives in spec-meta.json -- it
@@ -791,6 +793,20 @@ jobs:
           verdict-reason: ${{ steps.review-verdict.outputs.reason }}
           stage: lifecycle-review-gate
           spec-identity-is-own: 'false'
+
+      # Durable record (specs/043-durable-metrics-record): the artifact the
+      # metrics wrapper's daily sweep persists (sweep-only, like board-loop;
+      # Gate 79). Same gate as the summary that writes it; continue-on-error
+      # so a failed upload never skips the round's own reporting below.
+      - name: Upload metrics record (reviewer)
+        if: always() && steps.reviewer.outcome != 'skipped'
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: metrics-record
+          path: ${{ runner.temp }}/wing-commander-metrics-record.json
+          if-no-files-found: ignore
+          retention-days: 90
 
       # review-step-gating resolution 4: continue-on-error: true, not a
       # hard exit -- the extract/post-review steps below are this job's own

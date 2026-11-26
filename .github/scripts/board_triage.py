@@ -547,20 +547,29 @@ def _unquoted_unfenced(text):
     return "\n".join(kept)
 
 
+# The one spelling of an Actions run link (#889): run_url_pattern() and
+# any_run_url_pattern() both fill it in, so the two can never drift apart.
+# GitHub owner and repository names are case-insensitive, so the
+# repository part matches in any letter case.
+_RUN_URL_TEMPLATE = r"https://github\.com/(?i:{repository})/actions/runs/{run_id}"
+
+
 def run_url_pattern(repository):
     """The one home of the run-link pattern: a regex source matching
     https://github.com/<repository>/actions/runs/<id> and nothing else --
-    no other repository's runs. find_cited_run(), latest_occurrence() and
+    no other repository's runs. `repository` matches in any letter case,
+    as GitHub resolves it. find_cited_run(), latest_occurrence() and
     board_backlog_lines.line_context() all match runs through it."""
-    return r"https://github\.com/{0}/actions/runs/[0-9]+".format(re.escape(repository))
+    return _RUN_URL_TEMPLATE.format(repository=re.escape(repository), run_id="[0-9]+")
 
 
 def any_run_url_pattern():
     """Any Actions run URL, job links included
     (https://github.com/<owner>/<repo>/actions/runs/<id>[/job/<id>]); groups:
     1 repository (owner/repo), 2 run id. run_url_pattern() stays the
-    this-repository-only form."""
-    return r"https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/actions/runs/([0-9]+)(?:/jobs?/[0-9]+)?"
+    this-repository-only form; both fill in _RUN_URL_TEMPLATE."""
+    return _RUN_URL_TEMPLATE.format(repository="([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)",
+                                    run_id="([0-9]+)") + r"(?:/jobs?/[0-9]+)?"
 
 
 def find_cited_run(text, repository):

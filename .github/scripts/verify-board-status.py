@@ -395,8 +395,14 @@ def proof_list_half():
           "name: {0}\n".format(bs.PROOF_LIST_ARTIFACT) in wf)
     check("the proof-list workflow's build step is the writer's build-step constant",
           "- name: {0}\n".format(bs.PROOF_LIST_BUILD_STEP) in wf)
+    with open(os.path.join(root, ".github", "workflows", "board-status.yml"), encoding="utf-8") as fh:
+        board_status_wf = fh.read()
+    paused_line = re.compile(r"^\s+PROOF_LIST_PAUSED: \$\{\{ vars\.WING_COMMANDER_PROOF_LIST_PAUSED \}\}\s*$", re.M)
     check("proof_list_paused is in SWITCH_ENV and passed by board-status.yml",
-          bs.SWITCH_ENV.get("proof_list_paused") == "PROOF_LIST_PAUSED")
+          bs.SWITCH_ENV.get("proof_list_paused") == "PROOF_LIST_PAUSED" and paused_line.search(board_status_wf))
+    # #889: the check above reads the workflow, so dropping the env line fails it.
+    check("dropping board-status.yml's PROOF_LIST_PAUSED env line is noticed",
+          not paused_line.search(paused_line.sub("", board_status_wf)))
 
     now = datetime.datetime(2026, 11, 20, 12, 0, 0)
     section = {"schema": 1, "built_at": "2026-11-20T06:19:00Z", "full": "FULLFORM\n", "names_only": "NAMESONLY\n"}
@@ -411,10 +417,10 @@ def proof_list_half():
 
         def dl(repo, rid, tmp):
             if download == "ok" or isinstance(download, dict):
-                with open(os.path.join(tmp, "proof-list-section.json"), "w", encoding="utf-8") as fh:
+                with open(os.path.join(tmp, bs.PROOF_LIST_FILE), "w", encoding="utf-8") as fh:
                     json.dump(section if download == "ok" else download, fh)
             elif download == "bad":
-                with open(os.path.join(tmp, "proof-list-section.json"), "w", encoding="utf-8") as fh:
+                with open(os.path.join(tmp, bs.PROOF_LIST_FILE), "w", encoding="utf-8") as fh:
                     fh.write("{")
         return bs.proof_list_snapshot("o/r", switches or {}, now, gh_obj, lambda rid: ok.get(rid, False), dl)
 
@@ -431,6 +437,12 @@ def proof_list_half():
     check("a cancelled latest build is failed", run([mk(4, "2026-11-20T06:19:00Z", "cancelled")], {})["status"] == "failed")
     check("a build older than 48 hours is failed", run([mk(5, "2026-11-17T06:19:00Z")], {5: True})["status"] == "failed")
     check("a successful run that stood down on the switch is paused", run([fresh], {3: False})["status"] == "paused")
+    # #889: a run that succeeded but skipped its build, older than 48 hours,
+    # reads "failed" (too old to stand for today), not "paused". The last
+    # good build is older still: runs come newest first.
+    skipped_old = run([mk(6, "2026-11-17T06:19:00Z"), mk(1, "2026-11-16T06:19:00Z")], {6: False, 1: True})
+    check("a successful skipped-build run older than 48 hours is failed",
+          skipped_old == {"status": "failed", "last_good_at": "2026-11-16T06:19:00Z"}, skipped_old)
     check("the switch set is paused whatever the history", run([fresh], {3: True}, {"proof_list_paused": "true"})["status"] == "paused")
     check("a refused run (another event or repository) is not read",
           run([dict(fresh, event="push")], {3: True})["status"] == "never"
@@ -454,6 +466,15 @@ def proof_list_half():
     names = bs.proof_list_block({"status": "built", "section": dict(section, full="F" * 5000)}, near)
     check("a body too full for the full form gets the names-only form", "NAMESONLY" in names and "FFFF" not in names, names[:200])
     over = bs.proof_list_block({"status": "built", "section": dict(section, full="F" * 5000, names_only="N" * 5000)}, "y" * 59000)
+    # #889: the begin marker's last-good= attribute carries the snapshot's
+    # last good build, on the built form and on every notice.
+    check("the built form's begin marker carries last-good=",
+          '<!-- wc-proof-list:begin status="built" built="2026-11-20T06:19:00Z" last-good="x" -->' in full, full[:200])
+    for status, last in (("failed", "2026-11-19T06:19:00Z"), ("paused", "never"), ("unreadable", "unknown")):
+        blk = bs.proof_list_block({"status": status, "last_good_at": last}, body)
+        check("the {0} notice's begin marker carries last-good={1!r}".format(status, last),
+              blk.startswith('<!-- wc-proof-list:begin status="{0}" built="none" last-good="{1}" -->'.format(status, last)),
+              blk[:200])
     check("when neither form fits the failed notice shows, with no list",
           'status="failed"' in over and "NNNN" not in over and "too large" in over, over[:300])
     for status, last, text in (("paused", "never", "never been a good build"),
@@ -706,6 +727,18 @@ def feature_health_half():
           cut.endswith(bs.FEATURE_HEALTH_MARKER_END) and "| row |" not in cut and "Table shortened" in cut, cut)
 
 
+def path_half():
+    """#889: the readers that import a sibling module put this directory on
+    sys.path once, not once per call."""
+    here = os.path.dirname(os.path.abspath(bs.__file__))
+    before = sys.path.count(here)
+    for _ in range(3):
+        bs.current_lines("")
+        bs.section_fits("body\n", "x\n")
+    check("current_lines and section_fits do not grow sys.path on each call",
+          sys.path.count(here) == max(before, 1), (before, sys.path.count(here)))
+
+
 def fit_half():
     """#889: every section render appends keeps the whole body within
     MAX_BODY_UNITS, at and around the boundary, whatever the section's status.
@@ -770,6 +803,7 @@ def main():
     merge_evidence_half()
     feature_health_half()
     fit_half()
+    path_half()
     print("verify-board-status: {0} failure(s).".format(len(failures)))
     return 1 if failures else 0
 
