@@ -1,0 +1,24 @@
+{
+  "snapshot": {
+    "headRefOid": "aaaa111",
+    "statusCheckRollup": [
+      {
+        "name": "lint",
+        "workflowName": "lint · workflows",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS"
+      }
+    ]
+  },
+  "open_in_scope_findings": 0,
+  "backstop_holds": true,
+  "kill_switch_paused": false,
+  "bot_login": "wing-commander-test[bot]",
+  "pr_comments": "unreadable",
+  "expected": {
+    "ready": false,
+    "reason_contains": "could not be read",
+    "unmet_class": "durable",
+    "options_comment": "unreadable"
+  }
+}

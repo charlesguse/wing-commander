@@ -60,6 +60,17 @@ AGENT_EXPLANATION_PARTS = ("code", "issue", "why_it_matters", "options",
 AGENT_PART_CAP = 8000
 
 
+# First-line markers on the loop's own explaining and options comments, so
+# readiness can read back from the PR whether a later options comment is
+# owed and whether it was posted (research.md D4; board_readiness.py reads
+# them). Fixed text: agent text never starts a comment.
+EXPLANATION_MARKER = "<!-- wing-commander-explanation id={0} options={1} -->"
+OPTIONS_MARKER = "<!-- wing-commander-options id={0} -->"
+EXPLANATION_MARKER_RE = re.compile(
+    r"<!-- wing-commander-explanation id=(\S+) options=(follow|given) -->")
+OPTIONS_MARKER_RE = re.compile(r"<!-- wing-commander-options id=(\S+) -->")
+
+
 class Refusal(Exception):
     """The input cannot be rendered safely; the CLI exits 2."""
 
@@ -156,7 +167,9 @@ def _cap(body):
 
 def render_explanation(parts, identifier):
     _check_identifier(identifier)
-    return _assemble(
+    marker = EXPLANATION_MARKER.format(
+        identifier, "follow" if options_follow(parts) else "given")
+    return marker + "\n" + _assemble(
         "Board loop: what `{0}` is and what this PR does.".format(identifier),
         EXPLANATION_PARTS, parts)
 
@@ -288,10 +301,37 @@ def render_options(parts, identifier):
     _check_identifier(identifier)
     options = (parts or {}).get("options") if isinstance(parts, dict) else None
     text = options.get("text") if isinstance(options, dict) else options
-    return _assemble(
+    return OPTIONS_MARKER.format(identifier) + "\n" + _assemble(
         "Board loop: the options for `{0}`, as the first comment said would "
         "follow.".format(identifier), (("options", "Options"),),
         {"options": text})
+
+
+def options_comment_owed(comments, bot_login):
+    """research.md D4, read back from the PR's own comments (oldest
+    first; each {"login"|"user": {"login"}, "body"}): the loop's own
+    explaining comment said the options follow, and no later loop options
+    comment for the same identifier exists. Comments by anyone but
+    `bot_login` are never evidence either way."""
+    owed = set()
+    for comment in comments or []:
+        if not isinstance(comment, dict):
+            continue
+        login = comment.get("login") or (comment.get("user") or {}).get("login")
+        if not bot_login or login != bot_login:
+            continue
+        first = (comment.get("body") or "").split("\n", 1)[0].strip()
+        m = EXPLANATION_MARKER_RE.fullmatch(first)
+        if m:
+            if m.group(2) == "follow":
+                owed.add(m.group(1))
+            else:
+                owed.discard(m.group(1))
+            continue
+        m = OPTIONS_MARKER_RE.fullmatch(first)
+        if m:
+            owed.discard(m.group(1))
+    return bool(owed)
 
 
 def main(argv=None):

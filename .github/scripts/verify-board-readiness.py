@@ -99,6 +99,13 @@ EXPECTED_CASES = {
     # review after pr-conversation's group cancelled a pending one) never
     # sets aside the cancelled run's dropped request.
     "cancelled-pending-other-workflow-run-self-clearing",
+    # specs/130 FR-003 / research.md D4: the loop's first comment said the
+    # options follow -- not ready until a later loop comment lists them
+    # (durable); ready once it does, or when they never followed. Only the
+    # loop's own comments count, and unreadable comments fail closed.
+    "options-owed-missing-durable", "options-owed-posted-ready",
+    "options-not-owed-ready", "options-owed-other-author-durable",
+    "options-comments-unreadable",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"
@@ -265,7 +272,8 @@ def run():
         got = evaluate_from_snapshot(
             spec["snapshot"], spec["open_in_scope_findings"],
             spec["backstop_holds"], spec["kill_switch_paused"],
-            now=spec.get("now"))
+            now=spec.get("now"), pr_comments=spec.get("pr_comments"),
+            bot_login=spec.get("bot_login", ""))
         expected = spec["expected"]
 
         ok = got["ready"] == expected["ready"]
@@ -273,6 +281,10 @@ def run():
             ok = ok and expected["reason_contains"] in (got.get("unmet_reason") or "")
         if "unmet_class" in expected:
             ok = ok and got.get("unmet_class") == expected["unmet_class"]
+        # specs/130: the options check actually ran and read the comments
+        # this way -- a ready case alone would pass with no check at all.
+        if "options_comment" in expected:
+            ok = ok and got.get("options_comment") == expected["options_comment"]
         if not ok:
             failures += 1
             print("::error::verify-board-readiness: {0}: expected {1!r}, "

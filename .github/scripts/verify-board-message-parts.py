@@ -159,8 +159,31 @@ def derived_cases(name, fx):
     yield "{0}[over-length]".format(name), mode, fx["id"], data
 
 
-def check_all():
+def options_roundtrip_problems():
+    """research.md D4: what the renderer posts is what readiness reads
+    back -- a follow first comment owes the options comment, the options
+    comment settles it, a given-options first comment owes nothing."""
+    bot = "bot[bot]"
+    ident = "bl-b9677278"
+    follow = {"options": {"state": "follow", "text": "A or B"}}
+    first = {"login": bot, "body": mp.render_explanation(follow, ident)}
+    later = {"login": bot, "body": mp.render_options(follow, ident)}
+    given = {"login": bot, "body": mp.render_explanation(
+        {"options": "A or B"}, ident)}
     problems = []
+    if not mp.options_comment_owed([first], bot):
+        problems.append("a follow first comment does not owe the options")
+    if mp.options_comment_owed([first, later], bot):
+        problems.append("the options comment does not settle what is owed")
+    if mp.options_comment_owed([given], bot):
+        problems.append("a given-options first comment owes the options")
+    if not mp.options_comment_owed([first, dict(later, login="x")], bot):
+        problems.append("another author's options comment settles the owed")
+    return ["options round trip: " + p for p in problems]
+
+
+def check_all():
+    problems = options_roundtrip_problems()
     cases = load_fixtures()
     if not cases:
         return ["no fixtures found in {0}".format(FIXTURES)]
@@ -310,6 +333,11 @@ def wiring_problems(text):
     if m and "BOARD_LINE_ID" in m.group(1):
         problems.append("Explain the line on the PR (fix) skips issue items "
                         "(FR-001a)")
+    readiness = _step(text, "Evaluate readiness")
+    if ("/comments\" --paginate" not in readiness
+            or "pr_comments=pr_comments" not in readiness):
+        problems.append("Evaluate readiness does not pass the PR's comments "
+                        "to board_readiness (research.md D4 options hold)")
     return problems
 
 
@@ -336,6 +364,8 @@ def wiring_self_test():
         "no explain-parts output":
             ("explain-parts: ${{ steps.explain-extract", "x: ${{ steps.e"),
         "no options comment": ("render-options --in", "x --in"),
+        "no readiness options hold":
+            ("pr_comments=pr_comments, bot_login", "bot_login"),
         "issue items skipped":
             ("        if: steps.push-pr.outputs.pr-url != ''\n        env:\n"
              "          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}\n"

@@ -1,0 +1,31 @@
+{
+  "snapshot": {
+    "headRefOid": "aaaa111",
+    "statusCheckRollup": [
+      {
+        "name": "lint",
+        "workflowName": "lint · workflows",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS"
+      }
+    ]
+  },
+  "open_in_scope_findings": 0,
+  "backstop_holds": true,
+  "kill_switch_paused": false,
+  "bot_login": "wing-commander-test[bot]",
+  "pr_comments": [
+    {
+      "login": "wing-commander-test[bot]",
+      "body": "<!-- wing-commander-explanation id=bl-b9677278 options=given -->\nBoard loop: what `bl-b9677278` is and what this PR does."
+    },
+    {
+      "login": "wing-commander-test[bot]",
+      "body": "Board loop review."
+    }
+  ],
+  "expected": {
+    "ready": true,
+    "options_comment": "clear"
+  }
+}
