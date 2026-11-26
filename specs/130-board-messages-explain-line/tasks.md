@@ -241,3 +241,39 @@ MVP = Phases 1–3 (US1), since every later message depends on the explanation. 
   - .github/scripts/verify-board-message-parts.py
 
   Detail: Test each user text against the body outside fences instead of the fixed payload.
+
+## Review Gate Round 4 Findings
+
+- [ ] Review finding: Agent summary text can stop the backlog-line fix PR from opening
+
+  The summary is appended to pr_body before the closing-keyword check, which exits 1 using board_backlog_lines.closing_keyword_hits, a different matcher from CLOSING_RE. Any hit leaves a pushed branch with no PR. Run the check on the base body first and fatally, then run it on the body with the summary and drop the summary on a hit.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: check-closing-keywords now runs on the combined pr_body, including agent-written text
+
+- [ ] Review finding: A failed first options comment leaves readiness reading 'clear'
+
+  When the first gh pr comment is refused or fails, the step exits 0 and no marker is left on the PR. If the fixer asked for follow options, readiness then reads 'clear' and the PR proceeds toward merge with no explanation. Post a minimal marker comment, or fail the step.
+
+  - .github/workflows/board-loop.yml
+
+  Detail: The failure path warns and exits 0 with no readable marker
+
+- [ ] Review finding: board_readiness.evaluate() depends on an unset BOT_LOGIN
+
+  evaluate() takes bot_login from os.environ BOT_LOGIN, and no caller was changed to set it. An empty value makes _options_state return 'unreadable', so readiness is held for every PR this entry point evaluates. Take bot_login as a parameter, or confirm that no caller uses evaluate().
+
+  - .github/scripts/board_readiness.py
+
+- [ ] Review finding: options_clear is missing from the CONDITIONS tuple
+
+  The new options_clear readiness condition is not in CONDITIONS, which verify-board-merge.py imports as READINESS_CONDITIONS. Gates that enumerate the conditions will not cover the options hold.
+
+  - .github/scripts/board_readiness.py
+
+- [ ] Review finding: The tick-fixed request's pr field is never read
+
+  The tick-fixed request now carries a pr field, but board_backlog_lines.py passes only line_id, detail and url to bbe._operations. The field is ignored. Wire it through or revert the hunk.
+
+  - .github/workflows/board-loop.yml
