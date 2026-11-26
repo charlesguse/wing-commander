@@ -1470,7 +1470,11 @@ jobs:
       # whole tail of this job once a final PR exists, so a re-dispatch never
       # gets a second chance at these labels. A label not written here is
       # never written. For the same reason neither the read nor the write
-      # below may fail the job: the stage's real work is already done.
+      # below may fail the job: the stage's real work is already done. A
+      # transient GraphQL error on the add once failed this step and skipped
+      # the metadata commit below (run 45649229707, #889), so the add falls
+      # back to the REST endpoint after a pause, and a write that still
+      # fails is a warning on the run, not a red job.
       - name: Flip stage label
         id: flip-label
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && env.WC_BUILDABLE_REFUSED != 'true'
@@ -1479,8 +1483,12 @@ jobs:
           ISSUE: ${{ inputs.issue-number }}
           PR: ${{ steps.verify-pr.outputs.pr-number }}
         run: |
-          gh label create "stage:review" --color FBCA04 --description "Final PR awaiting review" --force
-          gh issue edit "$ISSUE" --add-label "stage:review"
+          gh label create "stage:review" --color FBCA04 --description "Final PR awaiting review" --force || true
+          if ! gh issue edit "$ISSUE" --add-label "stage:review"; then
+            sleep 5
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$ISSUE/labels" -f "labels[]=stage:review" >/dev/null \
+              || echo "::warning::wing-commander finalize: could not add stage:review to #$ISSUE (GraphQL and REST both failed); add it by hand."
+          fi
           # Every other stage:* goes, not stage:implement alone — a finalize
           # hand-dispatched after a stalled implement finds stage:stalled on
           # the issue, which the mirror below would otherwise copy onto the
