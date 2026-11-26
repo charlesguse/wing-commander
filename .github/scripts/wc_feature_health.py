@@ -208,6 +208,13 @@ def classify_feature(entry, readings, signal_reading, ctx, now):
         row["signal_label"] = entry["signal"].get("label") or entry["signal"]["kind"]
         at = (signal_reading or {}).get("signal_at")
         row["last_signal"] = day(at) if "unreadable" not in (signal_reading or {"unreadable": 1}) else NOT_MEASURED
+    # A failing or not-running call-out quotes the dates of the workflows in
+    # that state, not a healthy sibling's (#889); the table keeps the
+    # feature-wide dates.
+    in_state = [d for _r, s, d in counted if s == state and s in ("failing", "not running")]
+    if in_state:
+        row["callout_dates"] = {k: max((d[k] for d in in_state if d[k]), default=None)
+                                for k in ("last_success", "last_failure", "last_run")}
     rows = [row]
     for ref, s, d in results:
         if ref.get("stage"):
@@ -236,9 +243,10 @@ def _callout(row):
 
 def _callout_line(row):
     name, state = row["feature"], row["state"]
+    dates = row.get("callout_dates") or row
     if state == "failing":
         return "- `{0}` — failing: last success {1}, last failure {2}".format(
-            name, day(row["last_success"]), day(row["last_failure"]))
+            name, day(dates["last_success"]), day(dates["last_failure"]))
     if state == "quiet":
         if row["last_signal"] in (NOT_MEASURED, NEVER, None):
             return "- `{0}` — quiet: no {1} in the last {2} days".format(
@@ -246,7 +254,7 @@ def _callout_line(row):
         return "- `{0}` — quiet: no {1} since {2} (threshold {3} days)".format(
             name, row["signal_label"], row["last_signal"], row["threshold_days"])
     if state == "not running":
-        last = day(row["last_run"])
+        last = day(dates["last_run"])
         if last == NEVER:
             return "- `{0}` — not running: no run in the window".format(name)
         return "- `{0}` — not running: no run since {1}".format(name, last)

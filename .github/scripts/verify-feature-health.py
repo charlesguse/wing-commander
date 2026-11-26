@@ -904,6 +904,30 @@ def check_schedule_and_comment_reads():
     return problems
 
 
+def check_multi_workflow_callouts():
+    """A feature with several workflows: its failing or not-running call-out
+    quotes the dates of the workflow in that state, not a healthy sibling's
+    (#889)."""
+    problems = []
+    now = fh.parse_time("2026-11-20T12:00:00Z")
+    ago = lambda hours: fh.fmt_time(now - datetime.timedelta(hours=hours))  # noqa: E731
+    entry = {"name": "f", "workflows": [{"file": "a.yml", "cadence": "schedule"},
+                                        {"file": "b.yml", "cadence": "schedule"}]}
+    ok = {"runs": [{"started_at": ago(1), "conclusion": "success"},
+                   {"started_at": ago(2), "conclusion": "failure"}], "interval_hours": 1}
+    stopped = {"runs": [{"started_at": ago(30), "conclusion": "success"}], "interval_hours": 1}
+    failing = {"runs": [{"started_at": ago(h), "conclusion": "failure"} for h in (3, 4, 5)]
+               + [{"started_at": ago(50), "conclusion": "success"}], "interval_hours": 1}
+    for b, want in ((stopped, "- `f` — not running: no run since {0}".format(fh.day(ago(30)))),
+                    (failing, "- `f` — failing: last success {0}, last failure {1}".format(
+                        fh.day(ago(50)), fh.day(ago(3))))):
+        rows = fh.classify_feature(entry, {"a.yml": ok, "b.yml": b}, None, {}, now)
+        got = fh._callout(rows[0])
+        if got != want:
+            problems.append("multi-workflow call-out: got {0!r}, expected {1!r}".format(got, want))
+    return problems
+
+
 def check_review_round_two():
     """Cron parsing, truncated reads, shortened-section detection."""
     problems = []
@@ -975,6 +999,7 @@ def main():
     problems += check_review_round_three()
     problems += check_review_round_five(registry)
     problems += check_schedule_and_comment_reads()
+    problems += check_multi_workflow_callouts()
     problems += check_capture_bounds()
     real, note = check_sc001(os.path.join(FIXTURES, "sc001"), EXEMPT_SC001_PENDING)
     problems += real + self_check(fx) + self_check_sc001(os.path.join(FIXTURES, "sc001"))
