@@ -550,7 +550,7 @@
    ".github/scripts/board_triage.py",
    ".github/scripts/verify-board-backlog-lines.py"
   ],
-  "digest": "2d50b95197755e7e9e43f6f4fb34bfce0a675e55835b6722048b201c06c0063e",
+  "digest": "0e94c211b0c6697013f338b2f0f0cea80adc46c303520a7a01c47ad9bdb1c39d",
   "reads": [
    ".github/actions/wing-commander-issue-context/action.yml",
    ".github/scripts/board_backlog_edit.py",
@@ -585,7 +585,7 @@
    ".github/scripts/board_triage.py",
    ".github/scripts/verify-board-backlog-lines.py"
   ],
-  "digest": "2d50b95197755e7e9e43f6f4fb34bfce0a675e55835b6722048b201c06c0063e",
+  "digest": "0e94c211b0c6697013f338b2f0f0cea80adc46c303520a7a01c47ad9bdb1c39d",
   "reads": [
    ".github/actions/wing-commander-issue-context/action.yml",
    ".github/scripts/board_backlog_edit.py",
@@ -1072,7 +1072,7 @@
    ".github/scripts/board_readiness.py",
    ".github/scripts/verify-board-merge.py"
   ],
-  "digest": "d1a49aab0f483171272f4f0bd439f03d26f117bb274b0d26fcf3ae3f1b878abb",
+  "digest": "d8c6db6076c826c7d2f5783cfa94f5ea86eafa0c16a775e906a693d7abed6f2c",
   "reads": [
    ".github/scripts/",
    ".github/workflows/",
@@ -1080,7 +1080,8 @@
    "specs/057-autonomous-board-loop/contracts/readiness-report.md",
    "specs/061-marker-owned-in-flight/contracts/in-flight-detection.md",
    "specs/061-marker-owned-in-flight/contracts/resume-recovery.md",
-   "specs/062-lifecycle-review-gate/contracts/readiness-and-merge.md"
+   "specs/062-lifecycle-review-gate/contracts/readiness-and-merge.md",
+   "specs/115-board-loop-self-merge/contracts/board-merge.md"
   ]
  },
  "verify-board-prove-displacement.py": {
@@ -1282,7 +1283,7 @@
    ".github/scripts/wc_repo_files.py",
    ".github/scripts/wc_shell_harness.py"
   ],
-  "digest": "abbaaaff11e41bfecb450abd3110eb443fbaf983a862b5bbda6148d7a2ecd9c1",
+  "digest": "3c2feeabebcfe1eefcfe53932717915adc853905a7bd4d4e6b1250e1eb1b604f",
   "reads": [
    ".github",
    ".github/actions/",
@@ -1919,7 +1920,7 @@
    ".github/scripts/wc_feature_health.py",
    ".github/scripts/wc_shell_harness.py"
   ],
-  "digest": "f1324b08bb64f3e36b1307ef81c6eb832ae2abe214539395f7d2b1fad6395381",
+  "digest": "a575ef60cde5a809b9e831acc2f1bfe3d479820f53f8cfd0d0b0ab66b587a45e",
   "reads": [
    ".github/scripts/board_prove.py",
    ".github/scripts/board_triage.py",
@@ -2047,7 +2048,7 @@
    ".github/scripts/verify-fold-dispatch-composite.py",
    ".github/scripts/wc_shell_harness.py"
   ],
-  "digest": "35d3ace973c15e348390393bb1879b580f989380683529d25b99b0da175735d7",
+  "digest": "26f548d80b8d537f83139f2d0084e94ccf836515c52ed12bbba1a2bb8fe34456",
   "reads": [
    ".github/actions/",
    ".github/scripts/verify-fold-dispatch-composite.py",
@@ -2065,7 +2066,7 @@
    ".github/scripts/verify-fold-dispatch-composite.py",
    ".github/scripts/wc_shell_harness.py"
   ],
-  "digest": "35d3ace973c15e348390393bb1879b580f989380683529d25b99b0da175735d7",
+  "digest": "26f548d80b8d537f83139f2d0084e94ccf836515c52ed12bbba1a2bb8fe34456",
   "reads": [
    ".github/actions/",
    ".github/scripts/verify-fold-dispatch-composite.py",
@@ -2083,7 +2084,7 @@
    ".github/scripts/verify-fold-dispatch-once.py",
    ".github/scripts/wc_shell_harness.py"
   ],
-  "digest": "e4760b9ff5d588f338379ae1ef5c21d8ae927c2b63e3d1420a5b5e3ddec0dac3",
+  "digest": "058dc7b55f4226c8d6f269dfad88cdf6718d7912ac3b1f3553cab8f83f33d13d",
   "reads": [
    ".github/actions/",
    ".github/scripts/verify-fold-dispatch-once.py",
@@ -3483,7 +3484,7 @@
    ".github/scripts/wc_lifecycle_review_marker.py",
    ".github/scripts/wc_merge_evidence.py"
   ],
-  "digest": "c25bf1ddb301d09cfb471cb627fa98e8a0bdf3719b4a48a585f5178be8772ce4",
+  "digest": "ba96cb7f3c7a37d8bbc6bb78d334383e34dfdfa8fecf9ab167f4a0623cf2fde3",
   "reads": [
    ".github/actions/wing-commander-watch-guard/action.yml",
    ".github/scripts/board_item_marker.py",
@@ -3758,16 +3759,17 @@
   ],
   "code": [
    ".github/scripts/verify-buildable-classification.py",
-   ".github/scripts/verify-migrate-stranded-review-lifecycles.py"
+   ".github/scripts/verify-migrate-stranded-review-lifecycles.py",
+   ".github/scripts/wc_shell_harness.py"
   ],
-  "digest": "59806de412a791f2c49dd56a4e38e3d16686a1252369b73f318101600fc5d341",
+  "digest": "8f56f222a5d74427bffad820b126d9ba69e2fa2ea4c6d6d279cfe54c78702cd2",
   "reads": [
-   ".github/actions/_shared/count-tasks-checkboxes.sh",
-   ".github/actions/_shared/migrate-stranded-review-lifecycles.sh",
+   ".github/actions/",
    ".github/scripts/fixtures/123-implement-task-completion/migration/",
    ".github/scripts/verify-buildable-classification.py",
    ".github/scripts/verify-migrate-stranded-review-lifecycles.py",
-   ".github/workflows/migrate-stranded-review-lifecycles.yml",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
    "specs"
   ]
  },
@@ -4014,7 +4016,7 @@
    ".github/scripts/wc_proof_list.py",
    ".github/scripts/wc_shell_harness.py"
   ],
-  "digest": "7f8ee68592f775b67313db602506333b719b3d0d51fc9987cfa022cce44946e4",
+  "digest": "580a89ee26b76edbdbb5c94c2f0161a02510e155c526181229f714894dded60a",
   "reads": [
    ".github",
    ".github/actions/wing-commander-watch-guard/action.yml",
