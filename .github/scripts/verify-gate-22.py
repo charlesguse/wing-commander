@@ -369,6 +369,11 @@ CASES = [
      {"agent-startup-check.yml": stage(job("classify-startup", "    runs-on: ubuntu-latest\n"))},
      True, ("'classify-startup'", "runner-passthrough ternary")),
 
+    ("the spec 112 exception is that classify-startup runs with no "
+     "container: a container: block on it fails, even the bound one (#889)",
+     {"agent-startup-check.yml": stage(job("classify-startup", BOUND))},
+     True, ("'classify-startup'", "no container:")),
+
     ("the spec 112 exception is scoped to its file: classify-startup "
      "elsewhere is checked like any job",
      {"stage.yml": stage(job("classify-startup", RUNNER_ONLY))},
