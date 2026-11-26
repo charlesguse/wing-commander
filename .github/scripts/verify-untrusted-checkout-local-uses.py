@@ -51,8 +51,18 @@ import yaml
 
 REPO_ONLY_PATH = ".github/scripts/repo-only-reusable-workflows.json"
 ERROR_JOB = "<error>"  # scan() entries with this job are failures, not exposures
-EXTRACT_RE =re.compile(r"\b(tar\s+-?[a-zA-Z]*x|unzip\b)")
+# Anchored to command position: start of a line, or after `;`, `&`, `|`, `(`.
+EXTRACT_RE = re.compile(
+    r"(?m)(?:^|[;&|(])[ \t]*(?:sudo[ \t]+)?(tar[ \t]+-?[a-zA-Z]*x|unzip\b)")
 DEST_RE = re.compile(r"(?:-C|-d|--directory)\s+(\S+)")
+# Run steps that put another ref's or run's files into the workspace.
+CHECKOUT_CMD_RE = re.compile(
+    r"(?m)(?:^|[;&|(])[ \t]*(?:gh[ \t]+pr[ \t]+checkout|gh[ \t]+run[ \t]+"
+    r"download|gh[ \t]+release[ \t]+download|git[ \t]+(?:checkout|switch)"
+    r"(?![ \t]+--[ \t]))\b")
+COPY_RE = re.compile(
+    r"(?m)(?:^|[;&|(])[ \t]*cp[ \t]+(?:-[a-zA-Z]+[ \t]+)*-[a-zA-Z]*[rRa]"
+    r"[a-zA-Z]*[ \t]+[^;&|\n]*?[ \t]+(\S+)[ \t]*(?:$|[;&|])")
 
 
 def _norm(path):
@@ -96,6 +106,8 @@ TRUSTED_RUNNING_REFS = ("", "${{ github.sha }}",
 # On a `pull_request` event github.sha is the merge commit the PR author
 # controls, and a checkout with no ref gets that same commit.
 MERGE_COMMIT_REFS = ("", "${{ github.sha }}")
+PR_MERGE_EVENTS = {"pull_request", "pull_request_review",
+                   "pull_request_review_comment"}
 # Workflows whose `pull_request` trigger may still trust github.sha, each
 # with the reason. Keep this list short: an entry is an accepted risk.
 PULL_REQUEST_SHA_ALLOWLIST = {
@@ -171,9 +183,25 @@ def analyse_job(job, published, pr_merge=False):
                            clean=str(with_.get("clean", True)).lower()
                            != "false")
         elif uses.startswith("actions/download-artifact@"):
-            trees = _place(trees, _norm(with_.get("path")), False)
+            trees = _place(trees, _norm(with_.get("path")), False, clean=False)
+        elif uses.startswith("actions/cache/restore@") or \
+                uses.startswith("actions/cache@"):
+            first = str(with_.get("path") or ".").splitlines()
+            trees = _place(trees, _norm(first[0] if first else "."), False,
+                           clean=False)
         elif step.get("run") and EXTRACT_RE.search(str(step["run"])):
-            trees = _place(trees, _extract_dest(step), False)
+            trees = _place(trees, _extract_dest(step), False, clean=False)
+        elif step.get("run") and CHECKOUT_CMD_RE.search(str(step["run"])):
+            # Replaces only the tree at the working directory: nested trusted
+            # trees (a pristine copy, a pipeline sidecar) stay in place.
+            trees = _place(trees, _norm(step.get("working-directory")), False,
+                           clean=False)
+        elif step.get("run") and COPY_RE.search(str(step["run"])):
+            dest = _norm(COPY_RE.search(str(step["run"])).group(1))
+            base = _norm(step.get("working-directory"))
+            dest = dest if dest.startswith("/") else \
+                posixpath.normpath(posixpath.join(base, dest))
+            trees = _place(trees, dest, False, clean=False)
         elif uses.startswith("./"):
             ref_path = _norm(uses[2:] if uses != "./" else ".")
             best = None
@@ -215,7 +243,7 @@ def scan(root):
                         "mapping", "-"))
             continue
         published = _is_published_stage(os.path.basename(p), doc, repo_only)
-        pr_merge = ("pull_request" in _events(doc)
+        pr_merge = (bool(_events(doc) & PR_MERGE_EVENTS)
                     and os.path.basename(p) not in PULL_REQUEST_SHA_ALLOWLIST)
         for jid, job in sorted((doc.get("jobs") or {}).items()):
             if not isinstance(job, dict):
@@ -412,6 +440,45 @@ def self_test():
              {"uses": "actions/checkout@v5", "with": {"clean": False}},
              {"uses": "./.wing-commander-pipeline/.github/actions/x"}])},
          "a.yml", False),
+        ("pull_request_review: default checkout is the merge commit",
+         {"a.yml": _wf("pull_request_review", [
+             {"uses": "actions/checkout@v5"}, LOCAL])}, "a.yml", True),
+        ("pull_request_review_comment: github.sha is the merge commit",
+         {"a.yml": _wf({"pull_request_review_comment": {}}, [
+             {"uses": "actions/checkout@v5",
+              "with": {"ref": "${{ github.sha }}"}}, LOCAL])}, "a.yml", True),
+        ("gh pr checkout places an untrusted tree",
+         {"a.yml": _wf("push", [
+             {"uses": "actions/checkout@v5"},
+             {"run": "gh pr checkout 5"}, LOCAL])}, "a.yml", True),
+        ("git checkout of another ref places an untrusted tree",
+         {"a.yml": _wf("push", [
+             {"uses": "actions/checkout@v5"},
+             {"run": "git checkout origin/pr-branch"}, LOCAL])},
+         "a.yml", True),
+        ("gh run download places an untrusted tree",
+         {"a.yml": _wf("push", [
+             {"uses": "actions/checkout@v5"},
+             {"run": "gh run download 7"}, LOCAL])}, "a.yml", True),
+        ("cp -r into the root places an untrusted tree",
+         {"a.yml": _wf("push", [
+             {"uses": "actions/checkout@v5"},
+             {"run": "cp -r other/. ."}, LOCAL])}, "a.yml", True),
+        ("cache restore into the root places an untrusted tree",
+         {"a.yml": _wf("push", [
+             {"uses": "actions/checkout@v5"},
+             {"uses": "actions/cache/restore@v4",
+              "with": {"path": ".", "key": "k"}}, LOCAL])}, "a.yml", True),
+        ("artifact download keeps a nested trusted sidecar",
+         {"a.yml": _wf({"workflow_call": {}}, [
+             {"uses": "actions/checkout@v5"}, sidecar,
+             {"uses": "actions/download-artifact@v5", "with": {"path": "."}},
+             {"uses": "./.wing-commander-pipeline/.github/actions/x"}])},
+         "a.yml", False),
+        ("`unzip` inside an echo is not an extraction",
+         {"a.yml": _wf("push", [
+             {"uses": "actions/checkout@v5"},
+             {"run": "echo 'run unzip later'"}, LOCAL])}, "a.yml", False),
         ("unparsable workflow fails",
          {"a.yml": "on: [push\njobs: {"}, "a.yml", True),
         ("missing register fails",

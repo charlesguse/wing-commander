@@ -163,7 +163,7 @@ MVP = Phases 1–3 (zizmor gate plus the three injection fixes, green on main). 
 
 ## Review Gate Round 2 Findings
 
-- [ ] Review finding: Gate 177 ignores pull_request_review events as PR-merge checkouts
+- [X] Review finding: Gate 177 ignores pull_request_review events as PR-merge checkouts
 
   pr_merge is only set for the pull_request event, so workflows on pull_request_review or pull_request_review_comment that check out the default ref or github.sha and then use a local ./ action pass although the PR author controls that commit.
 
@@ -171,7 +171,7 @@ MVP = Phases 1–3 (zizmor gate plus the three injection fixes, green on main). 
 
   Detail: Set pr_merge for pull_request_review and pull_request_review_comment too, and add self-test cases.
 
-- [ ] Review finding: Gate 177 tree tracker misses run-step ways to place untrusted code
+- [X] Review finding: Gate 177 tree tracker misses run-step ways to place untrusted code
 
   Only actions/checkout, download-artifact and tar/unzip run steps are modelled; git checkout, gh pr checkout, gh run download, curl|tar, cp -r and cache restore are not, so a later ./ action reference is judged against a trusted tree.
 
@@ -179,7 +179,7 @@ MVP = Phases 1–3 (zizmor gate plus the three injection fixes, green on main). 
 
   Detail: Model common git and gh checkout commands as untrusted placements, or fail a ./ reference that follows an unrecognised workspace-touching run step.
 
-- [ ] Review finding: Artifact and extract placements wrongly clean nested trusted trees
+- [X] Review finding: Artifact and extract placements wrongly clean nested trusted trees
 
   _place defaults to clean=True for download-artifact and extract steps, which drops trusted sidecar trees and gives false failures; EXTRACT_RE also matches 'unzip' anywhere in a run body.
 
@@ -187,7 +187,7 @@ MVP = Phases 1–3 (zizmor gate plus the three injection fixes, green on main). 
 
   Detail: Pass clean=False for these placements and anchor EXTRACT_RE to command position.
 
-- [ ] Review finding: Findings-register schema location pattern rejects shipped records
+- [X] Review finding: Findings-register schema location pattern rejects shipped records
 
   The location pattern does not allow the bare step:<id> form that verify-zizmor.py accepts and the shipped register uses, so the live contract rejects the register it describes.
 
@@ -195,7 +195,7 @@ MVP = Phases 1–3 (zizmor gate plus the three injection fixes, green on main). 
 
   Detail: Change the pattern to ^(workflow|step:.+|job:[^/]+(/step:.+)?)$.
 
-- [ ] Review finding: Pin downgrade guard misses multi-part version comments
+- [X] Review finding: Pin downgrade guard misses multi-part version comments
 
   A comment such as '# v1.2.3.4' passes PIN_RE but not RELEASE_TAG_RE, so the pin is rewritten to an older commit with no version comparison.
 
@@ -203,7 +203,7 @@ MVP = Phases 1–3 (zizmor gate plus the three injection fixes, green on main). 
 
   Detail: Skip any pin whose comment _version() cannot parse, not only the short forms.
 
-- [ ] Review finding: sync_rows silently drops waivers when no unique successor exists
+- [X] Review finding: sync_rows silently drops waivers when no unique successor exists
 
   A node20 waiver is moved only when exactly one added pin of the same action is still deprecated; otherwise it is dropped with a vague note, and the tracker it cited is lost.
 

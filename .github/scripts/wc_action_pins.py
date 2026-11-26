@@ -161,12 +161,13 @@ def plan(root=".", tags_of=remote_tags):
             continue
         new_tag, new_sha = newest
         cur = _version(tag)
-        if cur is None and PIN_RE_SHORT.match(tag):
-            # A comment like `# v4` or `# v10.0` names no exact release, so
-            # the pinned commit may be newer than the newest tag we see:
-            # never rewrite it (that could move the pin to an older commit).
+        if cur is None:
+            # A comment like `# v4`, `# v10.0` or `# v1.2.3.4` names no exact
+            # release, so the pinned commit may be newer than the newest tag
+            # we see: never rewrite it (that could move the pin to an older
+            # commit).
             continue
-        if new_sha == sha or (cur is not None and _version(new_tag) <= cur):
+        if new_sha == sha or _version(new_tag) <= cur:
             continue
         bumps.append({"action": action, "old_sha": sha, "old_tag": tag,
                       "new_sha": new_sha, "new_tag": new_tag,
@@ -271,6 +272,13 @@ def sync_rows(root, runtime_of=remote_runtime):
                                                 rows[successor[0]]))
             w["uses"] = successor[0]
             kept.append(w)
+        elif len(successor) > 1 or (len(successor) == 1 and any(
+                k.get("uses") == successor[0] for k in kept)):
+            # Ambiguous: dropping would lose the tracker the waiver cites.
+            raise RuntimeError(
+                "the waiver for {0} (tracker {1}) has no unique successor "
+                "among {2}; move it by hand.".format(
+                    w.get("uses"), w.get("issue"), ", ".join(successor)))
         else:
             notes.append("dropped the waiver for {0}, which nothing uses."
                          .format(w.get("uses")))
@@ -456,6 +464,30 @@ def self_test_cases(root="."):
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
+    # Two new deprecated refs of one action leave no unique successor: the
+    # sync fails loudly instead of dropping the waiver and its tracker.
+    d = tempfile.mkdtemp(prefix="wc-action-pins-")
+    try:
+        os.makedirs(os.path.join(d, ".github", "workflows"))
+        os.makedirs(os.path.join(d, ".github", "scripts"))
+        _write(os.path.join(d, ".github", "workflows", "w.yml"),
+               "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n"
+               "    steps:\n      - uses: o/r@{0} # v2.0.0\n"
+               "      - uses: o/r@{1} # v2.1.0\n".format(SHA_B, "c" * 40))
+        _write(os.path.join(d, PINS_PATH), json.dumps({"pins": {
+            "o/r@" + SHA_A: "node20"}}))
+        _write(os.path.join(d, WAIVERS_PATH), json.dumps({"waivers": [
+            {"uses": "o/r@" + SHA_A, "issue": "#889", "reason": "r"}]}))
+        try:
+            sync_rows(d, lambda pin: "node20")
+            raised = False
+        except RuntimeError as e:
+            raised = "#889" in str(e)
+        check("sync_rows fails, naming the tracker, when a waiver has no "
+              "unique successor", raised)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
     # A pin already on its newest release, and a tag-pinned trusted action,
     # are left alone.
     d = tempfile.mkdtemp(prefix="wc-action-pins-")
@@ -472,7 +504,7 @@ def self_test_cases(root="."):
 
     # A short version comment (`# v4`, `# v10.0`) names no exact release, so
     # the pin may be newer than the newest tag: it is never rewritten.
-    for short in ("v4", "v1.0"):
+    for short in ("v4", "v1.0", "v1.2.3.4"):
         d = tempfile.mkdtemp(prefix="wc-action-pins-")
         try:
             os.makedirs(os.path.join(d, ".github", "workflows"))

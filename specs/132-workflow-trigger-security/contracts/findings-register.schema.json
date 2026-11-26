@@ -13,7 +13,7 @@
         "properties": {
           "file": {"type": "string"},
           "audit": {"type": "string"},
-          "location": {"type": "string", "pattern": "^(workflow|job:[^/]+(/step:.+)?)$"},
+          "location": {"type": "string", "pattern": "^(workflow|step:.+|job:[^/]+(/step:.+)?)$"},
           "reason": {"type": "string", "minLength": 1},
           "control": {"type": "string", "minLength": 1},
           "issue": {"type": ["string", "null"], "pattern": "^#[0-9]+$"},
