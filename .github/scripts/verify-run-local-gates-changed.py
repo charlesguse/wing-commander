@@ -15,7 +15,11 @@ ran:
     only names it;
   * a helper module change picks the gates that import it;
   * a gate that globs or lists its own directory through a name bound to
-    `__file__`'s directory (`..` included) is picked by a change there;
+    `__file__`'s directory (`..` included) is picked by a change there,
+    and so is one that walks a directory a def derives from `__file__`
+    (its parent), or copies its own directory;
+  * a gate that runs the code in a directory it names (unittest
+    discovery) is picked by a change to a module that code imports;
   * a harness data file picks that harness;
   * an unmapped path (untracked, or read only by a helper function no gate
     calls) runs every gate;

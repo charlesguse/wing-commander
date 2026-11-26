@@ -76,12 +76,18 @@ reference is a string literal holding a path, an os.path.join/Path chain
 of literals, or a shell word with a `/`; a variable or pattern component
 (`$ROOT`, `{n}`, `*.yml`) stands for anything below what comes before it,
 so `glob(os.path.join(ROOT, ".github", "workflows", "*.yml"))` reads every
-workflow. A module-level name bound to the file's own directory
-(`HERE = os.path.dirname(os.path.abspath(__file__))`) stands for that
-directory, `..` included, so `glob(os.path.join(HERE, "**", "*.py"))`
-reads everything beside the script. A changed file picks a gate when it is one of the gate's own or
-pulled-in files, lies under or starts with one of its references, or has
-a file name the gate's code names. A gate that lists every tracked file
+workflow. A name bound to the file's own directory
+(`HERE = os.path.dirname(os.path.abspath(__file__))`), at module level or
+in a def, stands for that directory, and so does one derived from it (its
+dirname or `.parent`, a join with literals): `..` included,
+`glob(os.path.join(HERE, "**", "*.py"))` reads everything beside the
+script, and `os.walk`, `listdir` or `shutil.copytree` of such a name reads
+that directory. Code files in a directory a gate names below
+.github/scripts/ or .github/actions/ (a `unittest` discovery of
+.github/scripts/tests) are pulled in, like a file it names. A changed
+file picks a gate when it is one of the gate's own or pulled-in files,
+lies under or starts with one of its references, or has a file name the
+gate's code names. A gate that lists every tracked file
 (`git ls-files` with flags only), walks a root, or globs from `**` is
 picked by any change.
 
@@ -90,8 +96,9 @@ and so does a change to SUITE_INPUTS -- this runner, the registry and the
 helpers it loads gates through, and lint-workflows.yml, which the gate
 list and the inline gates come from. No change runs no gate, and says so.
 What it can miss is a read that no text shows (a path assembled from data
-another file holds, or a reference only a sys.path entry carries), which
-is why the full suite still runs before a push lands.
+another file holds, such as the documents Gate 47 opens because a workflow
+comment points at them, or a reference only a sys.path entry carries),
+which is why the full suite still runs before a push lands.
 verify-run-local-gates-changed.py (Gate 176) drives each rule end to end.
 
 WHAT IT DOES NOT RUN
@@ -442,7 +449,11 @@ _HERE_VALUES = frozenset(f"{wrap}(__file__){tail}" for wrap, tail in (
     ("Path", ".parent"),
     ("pathlib.Path", ".resolve().parent"),
     ("pathlib.Path", ".parent")))
-_LISTS_DIR = ("glob", "iglob", "listdir", "scandir", "walk", "iterdir")
+# Calls that read a whole directory named by their first argument (or, as
+# a method, by the object): a listing, a walk, or a copy of the tree that
+# the gate then runs from (`shutil.copytree(HERE, pristine)`).
+_LISTS_DIR = ("glob", "iglob", "listdir", "scandir", "walk", "iterdir",
+              "copytree")
 
 
 def _path_ref(raw):
@@ -512,14 +523,61 @@ class _Part:
 
 
 def _here_names(tree, rel):
-    """{name: rel's directory} for each module-level `NAME = <the file's
-    own directory>` (_HERE_VALUES)."""
+    """{name: directory} for each name bound, at module level or inside a
+    def, to the file's own directory (_HERE_VALUES) or to one derived from
+    such a name: its `os.path.dirname`/`.parent`, an abspath/realpath/
+    resolve/str/Path of it, or an os.path.join of it with literals --
+    `github_dir = os.path.dirname(scripts_dir)` is `.github`. "." is the
+    repository root. A name bound to two directories keeps the shorter."""
+    own = rel.rsplit("/", 1)[0] if "/" in rel else "."
     out = {}
-    for top in tree.body:
-        if (isinstance(top, ast.Assign) and len(top.targets) == 1
-                and isinstance(top.targets[0], ast.Name)
-                and ast.unparse(top.value) in _HERE_VALUES):
-            out[top.targets[0].id] = rel.rsplit("/", 1)[0] if "/" in rel else "."
+
+    def up(d):
+        return None if d in (None, ".") else (d.rsplit("/", 1)[0]
+                                              if "/" in d else ".")
+
+    def value(node):
+        if ast.unparse(node) in _HERE_VALUES:
+            return own
+        if isinstance(node, ast.Name):
+            return out.get(node.id)
+        if isinstance(node, ast.Attribute):
+            return up(value(node.value)) if node.attr == "parent" else None
+        if not isinstance(node, ast.Call):
+            return None
+        name = _dotted(node.func)
+        if (isinstance(node.func, ast.Attribute) and not node.args
+                and node.func.attr in ("resolve", "absolute")):
+            return value(node.func.value)
+        if len(node.args) == 1 and name in (
+                "os.path.abspath", "os.path.realpath", "os.path.normpath",
+                "str", "Path", "pathlib.Path"):
+            return value(node.args[0])
+        if len(node.args) == 1 and name == "os.path.dirname":
+            return up(value(node.args[0]))
+        if name == "os.path.join" and node.args:
+            head = value(node.args[0])
+            tail = [_str_of(a) for a in node.args[1:]]
+            if head is None or any(t is None or _WILD.search(t) for t in tail):
+                return None
+            joined = posixpath.normpath(posixpath.join(head, *tail))
+            return None if joined.startswith("..") else joined
+        return None
+
+    binds = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)
+             and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)]
+    changed = True
+    while changed:
+        changed = False
+        for node in binds:
+            got = value(node.value)
+            key = node.targets[0].id
+            if got is None or out.get(key) == got:
+                continue
+            if key in out and len(out[key]) <= len(got):
+                continue
+            out[key] = got
+            changed = True
     return out
 
 
@@ -583,10 +641,17 @@ def _scan_py_node(top, here=None):
                     and func.attr in _LISTS_DIR + ("rglob",)
                     and isinstance(func.value, ast.Name)
                     and func.value.id in here):
-                part.paths.add(here[func.value.id])  # HERE.glob("*.py")
+                listed = func.value                  # HERE.glob("*.py")
             elif (name.rsplit(".", 1)[-1] in _LISTS_DIR
                     and isinstance(first, ast.Name) and first.id in here):
-                part.paths.add(here[first.id])       # os.listdir(HERE)
+                listed = first                       # os.listdir(HERE)
+            else:
+                listed = None
+            if listed is not None and here[listed.id] == ".":
+                # The root, listed or walked: every file.
+                part.any = part.any or f"{name} of {listed.id} (the root)"
+            elif listed is not None:
+                part.paths.add(here[listed.id])
             if ((name.endswith(".join") and not isinstance(
                     getattr(node.func, "value", None), ast.Constant))
                     or name in ("Path", "pathlib.Path", "PurePosixPath")):
@@ -773,6 +838,21 @@ def gate_inputs(root, gates, texts=None):
                 and f.startswith(_FOLLOW_ROOTS) and _FOLLOW_EXT.search(f)
                 and os.path.isfile(os.path.join(root, f)))
 
+    under = {}
+
+    def code_under(ref):
+        # A directory below _FOLLOW_ROOTS that a gate names is code it may
+        # run (`unittest` discovery of .github/scripts/tests, a loop over
+        # a harness directory), so its code files are pulled in too. Not
+        # a root itself: naming .github/scripts is not running all of it.
+        if ref not in under:
+            d = ref.rstrip("/") + "/"
+            under[ref] = ([f for f in files if f.startswith(d)
+                           and followable(f)]
+                          if d.startswith(_FOLLOW_ROOTS)
+                          and d not in _FOLLOW_ROOTS else [])
+        return under[ref]
+
     def visit(inputs, src, parts, want, queue):
         """Fold the parts of one file `want` reaches into `inputs`, and
         queue what they pull in as (file, wanted names or None)."""
@@ -802,6 +882,7 @@ def gate_inputs(root, gates, texts=None):
                     queue.extend((f, None) for f in
                                  by_name.get(ref.rsplit("/", 1)[-1], ())
                                  if ("/" + f).endswith("/" + ref))
+                    queue.extend((f, None) for f in code_under(ref))
         for key in keys:
             for mod, local, name in parts[key].imports:
                 target = f".github/scripts/{mod}.py"
