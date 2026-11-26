@@ -18,17 +18,19 @@ It also pins the workflow side in agent-startup-check.yml: the
 startup-agent job carries continue-on-error: true on the action step, no
 model credential, a prompt and the github-actions bot in allowed_bots (else
 the action skips setup), and no always() gate; classify-startup retries the
-job-log fetch; classify-startup's `if:` contains !cancelled(); the
-classifier is invoked as a script (single home) and no inline copy of its
-marker or verdict logic appears in the workflow.
+job-log fetch; the classifier is invoked as a script (single home) and no
+inline copy of its marker or verdict logic appears in the workflow.
 
 Both start-up jobs run whatever verify-image-prerequisites found, and
 classify-startup reports that result beside its verdict: spec 112's edge
 case ("the required-tool list and the start-up check disagree ... both
 results are reported; neither silently overrides the other"), and SC-001's
 proof (an image without `unzip`, which the tool list also rejects) is
-unreachable otherwise. An `if:` that reads the prerequisite check's result
-fails here.
+unreachable otherwise. The two jobs' `if:` has one home, Gate 23
+(lint-workflows.yml, REPORTED_BESIDE_IMAGE_CHECK), which requires it to be
+exactly "!cancelled() && inputs.container-image != ''": a missing
+!cancelled() or a read of the prerequisite check's result fails there. This
+gate checks neither, and its self-test fails if it starts to again (#889).
 
 FR-010 / SC-005: the start-up jobs live in their own reusable workflow
 because GitHub checks every nested job's permissions when a reusable
@@ -186,8 +188,6 @@ def check_workflow(path):
     if classify is None:
         errors.append("agent-startup-check.yml has no classify-startup job")
     else:
-        if "!cancelled()" not in str(classify.get("if", "")):
-            errors.append("classify-startup's if: must contain !cancelled()")
         runs = "\n".join(str(s.get("run", "")) for s in classify.get("steps") or [])
         if "classify-agent-startup.py" not in runs:
             errors.append("classify-startup must invoke classify-agent-startup.py")
@@ -221,13 +221,9 @@ def check_workflow(path):
                           "the pipeline checkout's gh-allows-escape-sequences.sh says this gh takes it")
     if re.search(r"AUTH_MARKERS|failed at authentication", text):
         errors.append("agent-startup-check.yml carries an inline copy of the classifier's marker logic")
-    # Spec 112's edge case: the tool-list result never gates the start-up
-    # check; both are reported.
-    for name in ("startup-agent", "classify-startup"):
-        job = jobs.get(name)
-        if isinstance(job, dict) and "verify-image-prerequisites.result" in str(job.get("if", "")):
-            errors.append("%s's if: reads verify-image-prerequisites' result, so a failed tool-list check "
-                          "hides the start-up verdict (spec 112 edge case: both are reported)" % name)
+    # Spec 112's edge case (the tool-list result never gates the start-up
+    # check; both are reported) is the two jobs' exact if:, checked in
+    # Gate 23 only -- see the docstring.
     if classify is not None:
         if "container" in classify:
             errors.append("classify-startup must run on the runner, not in the image under test: there it "
@@ -749,20 +745,22 @@ def self_test():
                mutated(classify_sparse(".github/actions")), "must pass --allow-escape-sequences")
         expect("no continue-on-error", mutated(drop_coe), "continue-on-error")
         expect("credential input", mutated(add_key), "model credential input")
-        expect("no !cancelled", mutated(drop_cancelled), "!cancelled()")
-
-        # O2 regression: the start-up jobs gated on the tool-list result, the
-        # shape that made SC-001's image-without-unzip proof unreachable.
+        # The start-up jobs' if: has one home, Gate 23 (verify-gate-23.py
+        # drives these same shapes, the O2 regression included: the jobs
+        # gated on the tool-list result, which made SC-001's
+        # image-without-unzip proof unreachable). A second, partial copy
+        # here is what #889 removed; these stay clean so it cannot return.
         def gate_on_prereq(name):
             def fn(jobs):
                 jobs[name]["if"] = ("!cancelled() && needs.verify-image-prerequisites.result != 'failure' "
                                     "&& inputs.container-image != ''")
             return fn
 
-        expect("startup-agent gated on prereqs", mutated(gate_on_prereq("startup-agent")),
-               "startup-agent's if: reads verify-image-prerequisites")
-        expect("classify-startup gated on prereqs", mutated(gate_on_prereq("classify-startup")),
-               "classify-startup's if: reads verify-image-prerequisites")
+        for label, errs in (("no !cancelled", mutated(drop_cancelled)),
+                            ("startup-agent gated on prereqs", mutated(gate_on_prereq("startup-agent"))),
+                            ("classify-startup gated on prereqs", mutated(gate_on_prereq("classify-startup")))):
+            expect_clean(label + " (Gate 23's check, not this gate's)", errs, "if:")
+            expect_clean(label + " (Gate 23's check, not this gate's)", errs, "!cancelled()")
 
         def drop_prereq_report(jobs):
             for s in jobs["classify-startup"]["steps"]:

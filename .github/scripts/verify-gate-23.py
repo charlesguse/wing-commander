@@ -701,6 +701,30 @@ WIRING_CASES = [
              if_expr="!cancelled()"))},
      True, ("'startup-agent'", "clean no-op")),
 
+    # The start-up jobs' if: has this one home (#889): Gate 147 no longer
+    # carries a partial copy, so both jobs' shapes are driven here.
+    ("an exempt classify-startup without !cancelled() is skipped by a failed "
+     "image check after all",
+     {"agent-startup-check.yml": stage(
+         job("classify-startup", needs=["verify-image-prerequisites", "startup-agent"],
+             if_expr="inputs.container-image != ''"))},
+     True, ("'classify-startup'", "is not exactly")),
+
+    ("spec 112 O2 regression: a start-up job gated on the image check's "
+     "result hides the start-up verdict",
+     {"agent-startup-check.yml": stage(
+         job("startup-agent", needs="verify-image-prerequisites",
+             if_expr="!cancelled() && needs.verify-image-prerequisites.result != 'failure' "
+                     "&& inputs.container-image != ''"))},
+     True, ("'startup-agent'", "is not exactly")),
+
+    ("spec 112 O2 regression on classify-startup",
+     {"agent-startup-check.yml": stage(
+         job("classify-startup", needs=["verify-image-prerequisites", "startup-agent"],
+             if_expr="!cancelled() && needs.verify-image-prerequisites.result != 'failure' "
+                     "&& inputs.container-image != ''"))},
+     True, ("'classify-startup'", "is not exactly")),
+
     ("an exempt start-up job must still need the image check",
      {"agent-startup-check.yml": stage(
          job("startup-agent", if_expr="!cancelled() && inputs.container-image != ''"))},
