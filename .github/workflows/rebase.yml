@@ -808,8 +808,16 @@ jobs:
             helper=.wing-commander-pipeline/.github/scripts/wc_sync_from_main.py
             main_sha="$(git rev-parse "refs/remotes/origin/$DB")"
             echo "main=$main_sha" >> "$GITHUB_OUTPUT"
-            if [ "$(python3 "$helper" decide --main "$main_sha")" = current ]; then
+            # Fail closed (spec 118 FR-016): a decide that exits non-zero or
+            # prints neither word is an error, never read as `merge` -- that
+            # reading would run the merge below on an already-current branch
+            # and push an empty `commit --allow-empty` sync commit.
+            decision="$(python3 "$helper" decide --main "$main_sha")" || decision=""
+            if [ "$decision" = current ]; then
               outcome=clean
+            elif [ "$decision" != merge ]; then
+              echo "::error::sync-from-main ${SPEC_PREFIX}$SLUG: the already-current test failed (decide printed '${decision}'); not merging."
+              outcome=error
             else
               # The conflicted tree is the merge with markers in conflicted
               # paths only; exit 1 on conflict is expected, the tree is line 1.
