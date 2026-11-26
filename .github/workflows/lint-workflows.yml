@@ -5044,6 +5044,8 @@ jobs:
         run: python3 .github/scripts/verify-shared-review-fixtures.py
       - name: Gate 171 isolation — code-run holds no permission or secret, the agents hold no write token, web or Bash tool
         if: "!cancelled()"
+        env:
+          WING_COMMANDER_REQUIRE_ISOLATION_PROOF: "true"
         run: python3 .github/scripts/verify-shared-review-isolation.py
       - name: Gate 171 isolation self-test — each mutation fails
         if: "!cancelled()"

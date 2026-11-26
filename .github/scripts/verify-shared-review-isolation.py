@@ -16,13 +16,19 @@ SC-008 (a)-(d), FR-012, FR-022, FR-027).
       and the default branch's run-local-gates.py;
   (d) neither agent job holds a write token, a web tool or a Bash tool.
 
-The dynamic proof of (a) and (b) needs a Linux runner with passwordless
-sudo (the code-run sandbox, wc_shared_review.UidSandbox). Under GitHub
-Actions it is required; elsewhere, where the sandbox cannot be set up, it
-is reported as not proven here and the static checks still run.
+The dynamic proof of (a) and (b) needs a Linux runner with a non-root user
+and passwordless sudo (the code-run sandbox, wc_shared_review.UidSandbox).
+It is required only where the caller opts in with
+WING_COMMANDER_REQUIRE_ISOLATION_PROOF=true, which lint-workflows.yml's
+isolation step sets (#1235). Everywhere else -- a local sweep, or the
+implement stage's root container, which is also GitHub Actions -- a proof
+that cannot run is skipped with a note naming why, and every other check
+still runs. Where the opt-in is set, a proof that cannot run fails.
 
-`--self-test` proves the static checks fail on a mutated workflow and that
-the proof is required under Actions.
+`--self-test` proves the static checks fail on a mutated workflow, that
+the proof is required exactly where the opt-in is set, that a missing
+proof fails under the opt-in, and that a root container without it skips
+with the note.
 """
 import copy
 import json
@@ -387,9 +393,21 @@ def static_problems(wf):
     return problems
 
 
+OPT_IN = "WING_COMMANDER_REQUIRE_ISOLATION_PROOF"
+
+
 def proof_required(environ):
-    """The dynamic proof may be skipped only off Actions."""
-    return environ.get("GITHUB_ACTIONS") == "true"
+    """The dynamic proof is required only where the caller opts in (#1235)."""
+    return environ.get(OPT_IN) == "true"
+
+
+def unproven_outcome(environ, reason):
+    """(problems, notes) for an SC-008 (a)/(b) proof that cannot run here."""
+    if proof_required(environ):
+        return (["the code-run sandbox cannot be set up on this runner ({0}), "
+                 "so SC-008 (a)/(b) is unproven".format(reason)], [])
+    return ([], ["note: SC-008 (a)/(b) not proven here: {0}; {1} is not set, so the "
+                 "proof is skipped (it is required on the lint runner)".format(reason, OPT_IN)])
 
 
 def sandbox_unavailable_reason():
@@ -571,8 +589,19 @@ def main():
             if not static_problems(clone):
                 print("::error::self-test: mutation not caught: " + label)
                 bad += 1
-        if not proof_required({"GITHUB_ACTIONS": "true"}) or proof_required({}):
-            print("::error::self-test: the isolation proof is not required exactly under Actions")
+        if (not proof_required({OPT_IN: "true"}) or proof_required({})
+                or proof_required({"GITHUB_ACTIONS": "true"})):
+            print("::error::self-test: the isolation proof is not required exactly under " + OPT_IN)
+            bad += 1
+        root = "needs a non-root POSIX runner user"
+        got, notes = unproven_outcome({OPT_IN: "true", "GITHUB_ACTIONS": "true"}, root)
+        if not got or notes:
+            print("::error::self-test: a missing proof passes where " + OPT_IN + " is set")
+            bad += 1
+        got, notes = unproven_outcome({"GITHUB_ACTIONS": "true"}, root)
+        if got or not any(root in n and OPT_IN in n for n in notes):
+            print("::error::self-test: a root container without " + OPT_IN
+                  + " does not skip the proof with a note naming why")
             bad += 1
         return 1 if bad else (1 if problems else 0)
     if os.path.exists("/proc/self/environ") and hasattr(os, "symlink"):
@@ -580,18 +609,18 @@ def main():
     elif proof_required(os.environ):
         problems.append("the symlink proof (A1) needs Linux /proc, so it is unproven")
     else:
-        print("note: the symlink proof (A1) needs Linux /proc; it is proven on the lint runner")
+        print("note: the symlink proof (A1) needs Linux /proc; {0} is not set, so it is "
+              "skipped (it is required on the lint runner)".format(OPT_IN))
     reason = sandbox_unavailable_reason()
     if reason is None:
         problems += dynamic_problems(wf)
         problems += git_root_proof_problems()
         problems += without_fix_proof_problems()
-    elif proof_required(os.environ):
-        problems.append("the code-run sandbox cannot be set up on this runner ({0}), "
-                        "so SC-008 (a)/(b) is unproven".format(reason))
     else:
-        print("note: SC-008 (a)/(b) not proven here: {0}; it is proven on the lint "
-              "runner".format(reason))
+        got, notes = unproven_outcome(os.environ, reason)
+        problems += got
+        for note in notes:
+            print(note)
     for p in problems:
         print("::error::verify-shared-review-isolation: " + p)
     if not problems:
