@@ -947,7 +947,12 @@ def main(argv=None):
     except (ReadError, ValueError, subprocess.CalledProcessError, OSError, tarfile.TarError) as exc:
         # FR-013: a failed git, tar or file read ends the build with this one
         # line, never a traceback (#889). OSError covers FileNotFoundError.
-        print("::error::wc_proof_list: {0}".format(exc))
+        # A failed git call's own reason is in its captured stderr.
+        err = getattr(exc, "stderr", None)
+        if isinstance(err, bytes):
+            err = err.decode("utf-8", "replace")
+        why = " ".join(err.split()) if isinstance(err, str) else ""
+        print("::error::wc_proof_list: {0}{1}".format(exc, ": " + why if why else ""))
         return 1
 
 

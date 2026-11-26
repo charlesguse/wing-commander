@@ -292,7 +292,7 @@ def check_main_errors():
     import tarfile
     problems = []
     raisers = [
-        ("a failed git call", subprocess.CalledProcessError(128, ["git", "diff"], "", "fatal: bad object")),
+        ("a failed git call", subprocess.CalledProcessError(128, ["git", "diff"], b"", b"fatal: bad object\n")),
         ("a missing file", FileNotFoundError(2, "No such file or directory", "x.yml")),
         ("an OS error", OSError(5, "Input/output error")),
         ("a bad tar archive", tarfile.ReadError("file could not be opened successfully")),
@@ -312,6 +312,11 @@ def check_main_errors():
                 continue
             if code != 1 or not out.getvalue().startswith("::error::wc_proof_list: "):
                 problems.append("main: {0} gave exit {1} and {2!r}".format(label, code, out.getvalue()[:160]))
+            elif len(out.getvalue().splitlines()) != 1:
+                problems.append("main: {0} printed more than the one error line: {1!r}".format(label, out.getvalue()[:160]))
+            # diff_name_list captures git's stderr, so the line must carry it.
+            elif isinstance(exc, subprocess.CalledProcessError) and "fatal: bad object" not in out.getvalue():
+                problems.append("main: {0} dropped git's reason: {1!r}".format(label, out.getvalue()[:160]))
     finally:
         pl.collect = saved
     return problems
