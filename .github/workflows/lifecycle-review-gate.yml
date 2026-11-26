@@ -216,6 +216,23 @@ jobs:
             case "$meta_issue" in
               ''|*[!0-9]*) continue ;;
             esac
+            # #889 (code review of #1186): a candidate whose lifecycle issue
+            # is closed is skipped here, before its marker read. `readiness`
+            # stands such a PR down (its lifecycle gate), but select used to
+            # pick it as the oldest candidate on every run, so younger ready
+            # PRs waited behind it for good. A failed read does not skip the
+            # PR: `readiness` re-reads the state live and stays the last word,
+            # and a deleted issue is handled by the marker read below.
+            if ! issue_state="$(gh api "repos/$GITHUB_REPOSITORY/issues/$meta_issue" --jq '.state' 2>/dev/null)"; then
+              issue_state=""
+              echo "lifecycle-review-gate: PR #$number -- could not read lifecycle issue #$meta_issue's state; not skipped on that account (readiness re-reads it)." >> "$GITHUB_STEP_SUMMARY"
+            fi
+            case "$issue_state" in
+              closed|CLOSED)
+                echo "lifecycle-review-gate: PR #$number skipped -- its lifecycle issue #$meta_issue is closed." >> "$GITHUB_STEP_SUMMARY"
+                continue
+                ;;
+            esac
             if ! review_gate_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$meta_issue/comments" --paginate --jq '.[]' \
               2> "$RUNNER_TEMP/lifecycle-comments-$meta_issue.err" \
               | jq -s '.' \
@@ -240,10 +257,22 @@ jobs:
             # (wc_convergence.rearmed_after_stop); a record with none falls
             # back to the moved head. A failed reviews read or fetch stops
             # select, as the marker read above does.
-            if [ "$(printf '%s' "$review_gate_json" | jq -r '.outcome // empty')" = "not-converging" ]; then
+            # #889 (code review of #1062): a budget-exhausted PR follows the
+            # same rule, so rebase.yml's force-push no longer re-selects it
+            # to post another budget-exhausted round. Its marker's round is
+            # past the budget and has no round record; the fingerprint it is
+            # compared with is the last reviewed round's, the budget's own
+            # (the marker's round when the budget has since been raised).
+            stop_outcome="$(printf '%s' "$review_gate_json" | jq -r '.outcome // empty')"
+            stop_round="$(printf '%s' "$review_gate_json" | jq -r '.round // 0')"
+            if [ "$stop_outcome" = "budget-exhausted" ]; then
+              stop_round="$(printf '%s' "$review_gate_json" \
+                | jq -r --argjson budget "$LIFECYCLE_REVIEW_ROUND_BUDGET" '[(.round // 0), $budget] | min')"
+            fi
+            if [ "$stop_outcome" = "not-converging" ] || [ "$stop_outcome" = "budget-exhausted" ]; then
               if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$number/reviews" --paginate --jq '.[]' \
                 | jq -s '.' > "$RUNNER_TEMP/lifecycle-select-reviews-$number.json"; then
-                echo "::error::lifecycle-review-gate select: could not read PR #$number's reviews for its round records -- select stops here rather than re-arm a not-converging stop unchecked."
+                echo "::error::lifecycle-review-gate select: could not read PR #$number's reviews for its round records -- select stops here rather than re-arm a $stop_outcome stop unchecked."
                 exit 1
               fi
               if [ -z "$main_fetched" ]; then
@@ -257,13 +286,13 @@ jobs:
               fi
               if ! rearmed="$(python3 .wc-pristine-repo/.github/scripts/wc_convergence.py rearmed \
                 --reviews "$RUNNER_TEMP/lifecycle-select-reviews-$number.json" --bot-login "$BOT_LOGIN" \
-                --round "$(printf '%s' "$review_gate_json" | jq -r '.round // 0')" \
+                --round "$stop_round" \
                 --head-sha "$head_sha" --base origin/main)"; then
-                echo "::error::lifecycle-review-gate select: could not compare PR #$number's diff with its not-converging round's."
+                echo "::error::lifecycle-review-gate select: could not compare PR #$number's diff with its $stop_outcome round's."
                 exit 1
               fi
               if [ "$rearmed" != "true" ]; then
-                echo "lifecycle-review-gate: PR #$number stopped as not-converging and its head moved, but its diff against main did not -- not selected." >> "$GITHUB_STEP_SUMMARY"
+                echo "lifecycle-review-gate: PR #$number stopped as $stop_outcome and its head moved, but its diff against main did not -- not selected." >> "$GITHUB_STEP_SUMMARY"
                 continue
               fi
             fi
@@ -1717,7 +1746,7 @@ jobs:
             detail="No in-scope findings. A passing status was posted on the reviewed head SHA."
           elif [ "$DISPOSITION_OUTCOME" = "budget-exhausted" ]; then
             result="budget-exhausted"
-            detail="The round budget is spent with ${FINDINGS_OPEN:-0} in-scope finding(s) still open. This PR is not selected again until a human intervenes."
+            detail="The round budget is spent with ${FINDINGS_OPEN:-0} in-scope finding(s) still open. This PR is not selected again until its diff against main changes: a rebase or a merge of main that leaves its own changes as they were does not re-select it (any head move does, when the last reviewed round's record stores no diff fingerprint)."
           elif [ "$DISPOSITION_OUTCOME" = "not-converging" ]; then
             # specs/116 FR-006/FR-008: the budget-exhaustion hand-off, with
             # the signals that tripped. Nothing was folded.

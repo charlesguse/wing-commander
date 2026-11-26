@@ -375,11 +375,11 @@ class LifecycleSelect(LoopRepo):
         self.git("push", "-q", "-f", "origin", "main", "spec/001-x")
         return head
 
-    def select(self, head, record_fp=True, outcome="not-converging"):
+    def select(self, head, record_fp=True, outcome="not-converging", marker_round=3, budget="3"):
         fp = wc.diff_fingerprint(self.base, self.stopped, self.repo) if record_fp else None
         record = {"body": "review\n\n" + wc.round_record_marker(3, self.stopped, [], 2, fp),
                   "submitted_at": "t3", "user": {"login": BOT, "type": "Bot"}}
-        gate = wc_marker.write_marker(3, self.stopped, outcome, 1, [], [], None)
+        gate = wc_marker.write_marker(marker_round, self.stopped, outcome, 1, [], [], None)
         comment = {"body": "round 3\n\n" + gate, "created_at": "t3",
                    "user": {"login": BOT, "type": "Bot"}}
         pr = {"number": 7, "headRefName": "spec/001-x", "headRefOid": head,
@@ -396,6 +396,7 @@ class LifecycleSelect(LoopRepo):
             fh.write("#!/usr/bin/env bash\n"
                      "case \"$1 $2\" in\n"
                      "  'pr list') jq -r '@base64' '{pr}' ;;\n"
+                     "  'api repos/o/r/issues/{issue}') echo open ;;\n"
                      "  'api repos/o/r/issues/{issue}/comments') jq -c . '{comment}' ;;\n"
                      "  'api repos/o/r/pulls/7/reviews') jq -c . '{review}' ;;\n"
                      # #889: select's readiness snapshot -- green and mergeable,
@@ -408,6 +409,7 @@ class LifecycleSelect(LoopRepo):
         os.chmod(stub, os.stat(stub).st_mode | stat.S_IEXEC)
         selected = self.run_shipped(LIFECYCLE, self.STEP, {
             "GH_TOKEN": "x", "GITHUB_REPOSITORY": "o/r", "BOT_LOGIN": BOT,
+            "LIFECYCLE_REVIEW_ROUND_BUDGET": budget,
             "PATH": bindir + os.pathsep + os.environ["PATH"]}, path_prepend=bindir)["pr-number"]
         # The readiness prefilter really ran: a lifecycle_readiness.py that
         # cannot load its imports lands in the "could not read" branch, and
@@ -429,6 +431,24 @@ class LifecycleSelect(LoopRepo):
     def test_a_record_without_a_fingerprint_falls_back_to_the_moved_head(self):
         head = self.rebase_onto_new_main("pr1-fixed\nfix1\n")
         self.assertEqual(self.select(head, record_fp=False), "7")
+
+    # #889 (code review of #1062): a budget-exhausted PR is not re-selected
+    # by a rebase alone either. Its marker's round (4) is past the budget
+    # (3) and has no round record; the last reviewed round's (3) is used.
+    def test_a_rebase_alone_does_not_re_select_a_budget_exhausted_pr(self):
+        head = self.rebase_onto_new_main("pr1-fixed\nfix1\n")
+        self.assertEqual(self.select(head, outcome="budget-exhausted", marker_round=4), "")
+
+    def test_a_push_that_changes_the_diff_re_selects_a_budget_exhausted_pr(self):
+        head = self.rebase_onto_new_main("pr1-fixed\nfix1\nhuman\n")
+        self.assertEqual(self.select(head, outcome="budget-exhausted", marker_round=4), "7")
+
+    def test_a_raised_budget_re_selects_a_budget_exhausted_pr(self):
+        # Budget raised to 5 after exhaustion at round 4: round 4 has no
+        # record, so the moved head re-arms it and round 5 is reviewed.
+        head = self.rebase_onto_new_main("pr1-fixed\nfix1\n")
+        self.assertEqual(self.select(head, outcome="budget-exhausted", marker_round=4,
+                                     budget="5"), "7")
 
     def test_other_outcomes_still_re_arm_on_a_moved_head(self):
         head = self.rebase_onto_new_main("pr1-fixed\nfix1\n")

@@ -1836,7 +1836,16 @@ fi
 # the answer: ok (an empty comment list under `--paginate --jq '.[]'`
 # prints nothing), gone (the issue was deleted: HTTP 404 on stderr) or down
 # (HTTP 500: gh prints the error body on stdout and the status on stderr).
+# #889 (code review of #1186): the lifecycle issue's own state, read before
+# the marker. STUB_ISSUE_STATE picks it: open (the default), closed, or
+# down (the read fails).
 case "$1 $2" in
+  "api repos/example/example/issues/{issue}")
+    case "${{STUB_ISSUE_STATE:-open}}" in
+      open) echo open; exit 0 ;;
+      closed) echo closed; exit 0 ;;
+      down) echo 'gh: Server Error (HTTP 502)' >&2; exit 1 ;;
+    esac ;;
   "api repos/example/example/issues/{issue}/comments")
     case "${{STUB_COMMENTS:-ok}}" in
       ok) exit 0 ;;
@@ -1912,7 +1921,8 @@ def _stage_select_trusted_copy(repo):
 
 
 def run_lifecycle_select(select_script, tmproot, comments="ok", issue=SELECT_ISSUE,
-                         pending="", view_fail="", summary=False, agg_pending=""):
+                         pending="", view_fail="", summary=False, agg_pending="",
+                         issue_state="open"):
     repo = _make_select_repo(tmproot, issue=issue)
     _stage_select_trusted_copy(repo)
     bindir = os.path.join(tmproot, "select-bin")
@@ -1924,7 +1934,7 @@ def run_lifecycle_select(select_script, tmproot, comments="ok", issue=SELECT_ISS
     env = {"GH_TOKEN": "x", "BOT_LOGIN": "wing-commander-bot[bot]",
           "GITHUB_REPOSITORY": "example/example", "STUB_COMMENTS": comments,
           "STUB_PENDING": pending, "STUB_VIEW_FAIL": view_fail,
-          "STUB_AGG_PENDING": agg_pending,
+          "STUB_AGG_PENDING": agg_pending, "STUB_ISSUE_STATE": issue_state,
           "PATH": bindir + os.pathsep + os.environ.get("PATH", "")}
     rc, out, outputs, step_summary = run_step(BASH, select_script, repo, env, runner_temp)
     if summary:
@@ -2074,6 +2084,68 @@ def check_lifecycle_select_readiness_mutations(select_script, tmproot):
             failures.append("mutation 'lifecycle select #889: {0}' was NOT caught".format(title))
         else:
             print("note: mutation 'lifecycle select #889: {0}' confirmed caught.".format(title))
+    return failures
+
+
+# #889 (code review of #1186): select skips a candidate whose lifecycle
+# issue is closed, so an older closed lifecycle's PR is not the one picked
+# (and stood down by readiness) on every run while younger ready PRs wait.
+# A failed state read does not skip: readiness re-reads the state live.
+# Every fixture PR shares issue #77, so "skipped" reads as an empty
+# pr-number on a successful step.
+SELECT_CLOSED_CASES = (
+    # (title, issue state mode, expected pr-number, summary text)
+    ("a closed lifecycle issue skips the candidate", "closed", "",
+     "PR #3 skipped -- its lifecycle issue #77 is closed"),
+    ("an unreadable issue state does not skip the candidate", "down", "3",
+     "could not read lifecycle issue #77's state; not skipped"),
+    ("an open lifecycle issue is selected", "open", "3", "selected PR #3"),
+)
+
+
+def select_closed_failures(select_script, tmproot, cases=SELECT_CLOSED_CASES):
+    failures = []
+    for title, state, want, text in cases:
+        rc, out, outputs, summary = run_lifecycle_select(
+            select_script, tmproot, summary=True, issue_state=state)
+        if rc != 0 or outputs.get("pr-number") != want or text not in summary:
+            failures.append("lifecycle select closed-issue `{0}`: rc={1} pr-number={2!r} "
+                            "(want {3!r}); summary: {4}".format(
+                                title, rc, outputs.get("pr-number"), want,
+                                summary.strip()[-400:] or out.strip()[-400:]))
+    return failures
+
+
+def check_lifecycle_select_closed_issue(select_script, tmproot):
+    failures = select_closed_failures(select_script, tmproot)
+    if not failures:
+        print("[ok] #889 lifecycle select: a closed lifecycle issue skips the "
+              "candidate; an unreadable state does not")
+    return failures
+
+
+SELECT_CLOSED_MUTATIONS = (
+    # (title, old, new, the case that must then fail)
+    ("closed-issue skip removed", "    closed|CLOSED)\n",
+     "    never-matches)\n", SELECT_CLOSED_CASES[0]),
+    ("an unreadable state skips the candidate",
+     "    issue_state=\"\"\n", "    issue_state=\"\"; continue\n",
+     SELECT_CLOSED_CASES[1]),
+)
+
+
+def check_lifecycle_select_closed_issue_mutations(select_script, tmproot):
+    failures = []
+    for title, old, new, case in SELECT_CLOSED_MUTATIONS:
+        if select_script.count(old) != 1:
+            failures.append("lifecycle select closed-issue mutation {0!r}: expected one "
+                            "{1!r} in the select step; update this harness.".format(title, old))
+            continue
+        if not select_closed_failures(select_script.replace(old, new, 1), tmproot,
+                                      cases=(case,)):
+            failures.append("mutation 'lifecycle select closed-issue: {0}' was NOT caught".format(title))
+        else:
+            print("note: mutation 'lifecycle select closed-issue: {0}' confirmed caught.".format(title))
     return failures
 
 
@@ -2402,6 +2474,8 @@ def main():
         failures += check_lifecycle_select_marker_read_mutations(lifecycle_select_script, tmproot)
         failures += check_lifecycle_select_readiness(lifecycle_select_script, tmproot)
         failures += check_lifecycle_select_readiness_mutations(lifecycle_select_script, tmproot)
+        failures += check_lifecycle_select_closed_issue(lifecycle_select_script, tmproot)
+        failures += check_lifecycle_select_closed_issue_mutations(lifecycle_select_script, tmproot)
         failures += check_lifecycle_disposition_failed_reports_error(
             lifecycle_outcome_script, tmproot, lifecycle_status_script)
         failures += check_lifecycle_disposition_failed_status_mutation(
