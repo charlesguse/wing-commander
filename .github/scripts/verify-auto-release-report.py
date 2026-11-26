@@ -1174,6 +1174,26 @@ MUTATIONS = [
 ]
 
 
+CLOSE_STEP = "Close the failure issue on success"
+
+
+def close_site_failures():
+    """The close site names the issue detect read (found by the code review
+    of #977): the composite's label lookup would close whatever issue
+    carries the label at report time, even one opened or reopened after
+    detect computed the close decision from another issue's record. The
+    composite's own handling of `issue-number` is driven in
+    stage-findings-tests/run_fixtures.py."""
+    with_ = find_step(WORKFLOW, CLOSE_STEP).get("with") or {}
+    got = str(with_.get("issue-number", "")).strip()
+    want = "${{ needs.detect.outputs.failure-issue }}"
+    if got != want:
+        return [f"{CLOSE_STEP!r} must pass issue-number: {want} (got {got!r}), "
+                f"so it closes the issue detect read and never one a fresh "
+                f"label lookup finds"]
+    return []
+
+
 def main():
     global BASH
     use_utf8_stdout()
@@ -1188,7 +1208,7 @@ def main():
     tmproot = tempfile.mkdtemp()
     failures = []
     try:
-        failures = suite(script, env, tmproot)
+        failures = suite(script, env, tmproot) + close_site_failures()
         for f in failures:
             print(f"::error::{f}")
         for label, mutate in MUTATIONS:

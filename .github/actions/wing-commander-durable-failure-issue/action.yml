@@ -37,7 +37,8 @@ name: wing-commander-durable-failure-issue
 description: >
   Looks up an open issue by label (optionally narrowed by a body marker);
   on operation "report", comments on it if found or creates (and labels)
-  it if not; on operation "close", closes it if found or no-ops if not.
+  it if not; on operation "close", closes it if found or no-ops if not
+  (or closes the caller's own `issue-number`, if still open).
 
 inputs:
   token:
@@ -91,6 +92,16 @@ inputs:
     default: "open"
   close-comment:
     description: Comment to leave when closing (close only)
+    required: false
+    default: ""
+  issue-number:
+    description: >
+      The issue to close (close only), when the caller already read one.
+      Set, the close acts on exactly that issue, if it is still open, and
+      never repeats the label lookup: an issue someone closed mid-run is
+      left alone and one opened or reopened since is never closed in its
+      place (found by the code review of #977). Empty (the default) keeps
+      the label lookup below.
     required: false
     default: ""
   fail-on-api-error:
@@ -150,6 +161,7 @@ runs:
         MARKER: ${{ inputs.marker }}
         STATE_SCOPE: ${{ inputs.state-scope }}
         CLOSE_COMMENT: ${{ inputs.close-comment }}
+        CLOSE_ISSUE_NUMBER: ${{ inputs.issue-number }}
         FAIL_ON_API_ERROR: ${{ inputs.fail-on-api-error }}
       run: |
         set -uo pipefail
@@ -158,7 +170,22 @@ runs:
         # the fail-on-api-error check at the bottom of this step.
         degraded=""
 
-        if [ -n "$MARKER" ]; then
+        # The caller's own issue (see the issue-number input): its state
+        # is read rather than the label listed, so only that issue can
+        # close. An unreadable state closes nothing. Defaulted, because
+        # the harnesses that export this step's env predate the input.
+        close_issue_number="${CLOSE_ISSUE_NUMBER:-}"
+        if [ "$OPERATION" = "close" ] && [ -n "$close_issue_number" ]; then
+          existing=""
+          matched_closed=""
+          if ! [[ "$close_issue_number" =~ ^[0-9]+$ ]]; then
+            echo "::warning::wing-commander-durable-failure-issue: issue-number '$close_issue_number' is not an issue number -- closing nothing."
+          elif ! close_state="$(gh issue view "$close_issue_number" --repo "$GITHUB_REPOSITORY" --json state --jq '.state')"; then
+            echo "::warning::wing-commander-durable-failure-issue: could not read the state of #$close_issue_number -- closing nothing."
+          elif [ "$close_state" = "OPEN" ]; then
+            existing="$close_issue_number"
+          fi
+        elif [ -n "$MARKER" ]; then
           scope="$STATE_SCOPE"
           [ "$scope" = "open" ] || [ "$scope" = "all" ] || scope="open"
           # review-gate-round-1 items 3/6: an explicit --limit, since this
