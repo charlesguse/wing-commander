@@ -14,6 +14,8 @@ ran:
     an os.path.join or an imported helper, and not a gate whose docstring
     only names it;
   * a helper module change picks the gates that import it;
+  * a gate that globs or lists its own directory through a name bound to
+    `__file__`'s directory (`..` included) is picked by a change there;
   * a harness data file picks that harness;
   * an unmapped path (untracked, or read only by a helper function no gate
     calls) runs every gate;

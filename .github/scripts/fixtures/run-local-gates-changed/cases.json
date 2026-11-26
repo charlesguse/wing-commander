@@ -1,6 +1,6 @@
 {
   "tree": {
-    ".github/workflows/lint-workflows.yml": "name: lint\non: [pull_request]\njobs:\n  lint-shard-1:\n    runs-on: ubuntu-latest\n    steps:\n      - run: python3 .github/scripts/verify-alpha.py\n      - run: python3 .github/scripts/verify-beta.py\n      - run: python3 .github/scripts/verify-beta.py --self-test\n      - run: python3 .github/scripts/verify-gamma.py\n      - run: bash .github/scripts/delta-tests/run-tests.sh\n",
+    ".github/workflows/lint-workflows.yml": "name: lint\non: [pull_request]\njobs:\n  lint-shard-1:\n    runs-on: ubuntu-latest\n    steps:\n      - run: python3 .github/scripts/verify-alpha.py\n      - run: python3 .github/scripts/verify-beta.py\n      - run: python3 .github/scripts/verify-beta.py --self-test\n      - run: python3 .github/scripts/verify-gamma.py\n      - run: bash .github/scripts/delta-tests/run-tests.sh\n      - run: python3 .github/scripts/verify-epsilon.py\n",
     ".github/workflows/alpha.yml": "name: alpha\non: [push]\njobs: {}\n",
     ".github/workflows/gamma.yml": "name: gamma\non: [push]\njobs: {}\n",
     ".github/scripts/verify-alpha.py": "\"\"\"Reads alpha.yml by an os.path.join.\"\"\"\nimport os\nROOT = \".\"\nopen(os.path.join(ROOT, \".github\", \"workflows\", \"alpha.yml\")).read()\nprint(\"ok\")\n",
@@ -11,14 +11,16 @@
     ".github/scripts/delta-tests/data.txt": "delta\n",
     "docs/beta.md": "beta\n",
     "docs/unused.md": "read only by a helper no gate calls\n",
-    "notes/unmapped.txt": "no gate reads this\n"
+    "notes/unmapped.txt": "no gate reads this\n",
+    ".github/scripts/verify-epsilon.py": "\"\"\"Sweeps every .py beside it, and lists the workflows, through a name\nbound to its own directory.\"\"\"\nimport glob\nimport os\nHERE = os.path.dirname(os.path.abspath(__file__))\nglob.glob(os.path.join(HERE, \"**\", \"*.py\"), recursive=True)\nos.listdir(os.path.join(HERE, \"..\", \"workflows\"))\nprint(\"ok\")\n"
   },
   "all": [
     "verify-alpha.py",
     "verify-beta.py",
     "verify-beta.py --self-test",
     "verify-gamma.py",
-    "delta-tests/run-tests.sh"
+    "delta-tests/run-tests.sh",
+    "verify-epsilon.py"
   ],
   "cases": [
     {
@@ -31,7 +33,7 @@
       "say": "no file changed, so no gate runs"
     },
     {
-      "name": "a gate script change picks that gate",
+      "name": "a gate script change picks that gate, and a gate that globs the gate's directory",
       "edit": [
         ".github/scripts/verify-gamma.py"
       ],
@@ -39,9 +41,10 @@
         "--changed"
       ],
       "expect": [
-        "verify-gamma.py"
+        "verify-gamma.py",
+        "verify-epsilon.py"
       ],
-      "say": "1 of 5 gate(s) picked"
+      "say": "2 of 6 gate(s) picked"
     },
     {
       "name": "a workflow change picks every gate that reads that workflow, and not one whose docstring only names it",
@@ -54,12 +57,13 @@
       "expect": [
         "verify-alpha.py",
         "verify-beta.py",
-        "verify-beta.py --self-test"
+        "verify-beta.py --self-test",
+        "verify-epsilon.py"
       ],
-      "say": "3 of 5 gate(s) picked"
+      "say": "4 of 6 gate(s) picked"
     },
     {
-      "name": "a helper module change picks the gates that import it",
+      "name": "a helper module change picks the gates that import it, and a gate that globs its own directory through __file__",
       "edit": [
         ".github/scripts/wc_fixture_lib.py"
       ],
@@ -68,12 +72,13 @@
       ],
       "expect": [
         "verify-beta.py",
-        "verify-beta.py --self-test"
+        "verify-beta.py --self-test",
+        "verify-epsilon.py"
       ],
-      "say": "2 of 5 gate(s) picked"
+      "say": "3 of 6 gate(s) picked"
     },
     {
-      "name": "a harness data file picks its harness",
+      "name": "a harness data file picks its harness, and a gate that globs the directory above it",
       "edit": [
         ".github/scripts/delta-tests/data.txt"
       ],
@@ -81,9 +86,10 @@
         "--changed"
       ],
       "expect": [
-        "delta-tests/run-tests.sh"
+        "delta-tests/run-tests.sh",
+        "verify-epsilon.py"
       ],
-      "say": "1 of 5 gate(s) picked"
+      "say": "2 of 6 gate(s) picked"
     },
     {
       "name": "an untracked unmapped path falls back to everything",
@@ -98,7 +104,8 @@
         "verify-beta.py",
         "verify-beta.py --self-test",
         "verify-gamma.py",
-        "delta-tests/run-tests.sh"
+        "delta-tests/run-tests.sh",
+        "verify-epsilon.py"
       ],
       "say": "running every gate: notes/new.txt is read by no gate"
     },
@@ -115,7 +122,8 @@
         "verify-beta.py",
         "verify-beta.py --self-test",
         "verify-gamma.py",
-        "delta-tests/run-tests.sh"
+        "delta-tests/run-tests.sh",
+        "verify-epsilon.py"
       ],
       "say": "running every gate: docs/unused.md is read by no gate"
     },
@@ -132,7 +140,8 @@
         "verify-beta.py",
         "verify-beta.py --self-test",
         "verify-gamma.py",
-        "delta-tests/run-tests.sh"
+        "delta-tests/run-tests.sh",
+        "verify-epsilon.py"
       ],
       "say": "running every gate: .github/workflows/lint-workflows.yml defines the gate suite"
     },
@@ -155,7 +164,7 @@
         "verify-beta.py",
         "verify-beta.py --self-test"
       ],
-      "say": "3 of 5 gate(s) picked"
+      "say": "4 of 6 gate(s) picked"
     }
   ]
 }

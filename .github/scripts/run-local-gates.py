@@ -76,7 +76,10 @@ reference is a string literal holding a path, an os.path.join/Path chain
 of literals, or a shell word with a `/`; a variable or pattern component
 (`$ROOT`, `{n}`, `*.yml`) stands for anything below what comes before it,
 so `glob(os.path.join(ROOT, ".github", "workflows", "*.yml"))` reads every
-workflow. A changed file picks a gate when it is one of the gate's own or
+workflow. A module-level name bound to the file's own directory
+(`HERE = os.path.dirname(os.path.abspath(__file__))`) stands for that
+directory, `..` included, so `glob(os.path.join(HERE, "**", "*.py"))`
+reads everything beside the script. A changed file picks a gate when it is one of the gate's own or
 pulled-in files, lies under or starts with one of its references, or has
 a file name the gate's code names. A gate that lists every tracked file
 (`git ls-files` with flags only), walks a root, or globs from `**` is
@@ -196,6 +199,7 @@ import ast
 import concurrent.futures
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -427,6 +431,18 @@ _WILD = re.compile(r"[*?{}$%<>\[\]]")
 # than the gate that reads them reads).
 _FOLLOW_ROOTS = (".github/scripts/", ".github/actions/")
 _FOLLOW_EXT = re.compile(r"(?:\.(?:py|sh|bash|jq)|/action\.ya?ml)$")
+# A module-level name bound to the file's own directory: what it stands
+# for is known, so `glob(os.path.join(HERE, "**", "*.py"))` reads that
+# directory rather than nothing.
+_HERE_VALUES = frozenset(f"{wrap}(__file__){tail}" for wrap, tail in (
+    ("os.path.dirname(os.path.abspath", ")"),
+    ("os.path.dirname(os.path.realpath", ")"),
+    ("os.path.dirname", ""),
+    ("Path", ".resolve().parent"),
+    ("Path", ".parent"),
+    ("pathlib.Path", ".resolve().parent"),
+    ("pathlib.Path", ".parent")))
+_LISTS_DIR = ("glob", "iglob", "listdir", "scandir", "walk", "iterdir")
 
 
 def _path_ref(raw):
@@ -473,7 +489,16 @@ def _joined(parts):
     """One path reference from a join's arguments, or ''."""
     if not any(p is not None for p in parts):
         return ""
-    return _path_ref("/".join("{}" if p is None else p for p in parts))
+    comps = "/".join("{}" if p is None else p for p in parts).split("/")
+    known = next((i for i, c in enumerate(comps) if _WILD.search(c)),
+                 len(comps))
+    if known:
+        # The known head (a _here_names directory, literals) steps up on
+        # `..`: join(HERE, "..", "workflows") is .github/workflows, and
+        # join(HERE, "..", "..") is the root, which reads as nothing.
+        head = posixpath.normpath("/".join(comps[:known]))
+        comps = ([] if head == "." else [head]) + comps[known:]
+    return _path_ref("/".join(comps))
 
 
 class _Part:
@@ -486,12 +511,32 @@ class _Part:
         self.idents, self.attrs, self.imports = set(), set(), []
 
 
-def _scan_py_node(top):
+def _here_names(tree, rel):
+    """{name: rel's directory} for each module-level `NAME = <the file's
+    own directory>` (_HERE_VALUES)."""
+    out = {}
+    for top in tree.body:
+        if (isinstance(top, ast.Assign) and len(top.targets) == 1
+                and isinstance(top.targets[0], ast.Name)
+                and ast.unparse(top.value) in _HERE_VALUES):
+            out[top.targets[0].id] = rel.rsplit("/", 1)[0] if "/" in rel else "."
+    return out
+
+
+def _scan_py_node(top, here=None):
     """A _Part for one top-level statement, read off its syntax tree:
     string literals in CODE only (a docstring or other bare string
     statement names paths the script never opens), sys.path entries
     skipped (an import directory is not a read), os.path.join/Path/`/`
-    chains joined into one path."""
+    chains joined into one path. `here` is _here_names(): each of those
+    names, in a join or a directory listing, stands for its directory."""
+    here = here or {}
+
+    def arg(node):
+        if isinstance(node, ast.Name) and node.id in here:
+            return here[node.id]
+        return _str_of(node)
+
     part = _Part()
     skip, strings = set(), []
     extended = {id(n.left) for n in ast.walk(top)
@@ -533,10 +578,19 @@ def _scan_py_node(top):
                 part.any = part.any or f"{name}(...)"
             elif name.endswith("glob") and (_str_of(first) or "").startswith("**"):
                 part.any = part.any or f"{name}({_str_of(first)!r})"
+            func = node.func
+            if (isinstance(func, ast.Attribute)
+                    and func.attr in _LISTS_DIR + ("rglob",)
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id in here):
+                part.paths.add(here[func.value.id])  # HERE.glob("*.py")
+            elif (name.rsplit(".", 1)[-1] in _LISTS_DIR
+                    and isinstance(first, ast.Name) and first.id in here):
+                part.paths.add(here[first.id])       # os.listdir(HERE)
             if ((name.endswith(".join") and not isinstance(
                     getattr(node.func, "value", None), ast.Constant))
                     or name in ("Path", "pathlib.Path", "PurePosixPath")):
-                ref = _joined([_str_of(a) for a in node.args]) \
+                ref = _joined([arg(a) for a in node.args]) \
                     if len(node.args) > 1 else ""
                 if ref:
                     part.paths.add(ref)
@@ -546,7 +600,7 @@ def _scan_py_node(top):
                 chain.append(cur.right)
                 cur = cur.left
             chain.append(cur)
-            ref = _joined([_str_of(a) for a in reversed(chain)])
+            ref = _joined([arg(a) for a in reversed(chain)])
             if ref:
                 part.paths.add(ref)
     for node in ast.walk(top):
@@ -615,8 +669,9 @@ def _scan_file_parts(rel, text):
             tree = None
         if tree is not None:
             parts = {"": _Part()}
+            here = _here_names(tree, rel)
             for top in tree.body:
-                got = _scan_py_node(top)
+                got = _scan_py_node(top, here)
                 for key in _top_keys(top):
                     if key in parts:
                         base = parts[key]
