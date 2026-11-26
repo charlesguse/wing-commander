@@ -407,12 +407,31 @@ def evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
     }
 
 
+# fixed-message: readiness-options-hold (board-fixed-messages.json)
 _OPTIONS_REASON = {
     "owed": ("the first comment says the options follow, and no later "
              "board-loop comment on the PR lists them yet"),
     "unreadable": ("the PR's comments could not be read to check whether "
                    "the options the first comment promised were posted"),
 }
+
+
+def next_step_note(auto_merge_on, kill_switch_paused):
+    """What happens to a PR the readiness report calls ready (specs/130
+    FR-009, Story 3 scenarios 1, 2 and 4): the loop merges it, a human must,
+    or the loop is stopped. Registered in board-fixed-messages.json as
+    readiness-next-step; verify-board-message-parts.py checks each claim
+    against the switch settings it is posted under."""
+    # fixed-message: readiness-next-step (board-fixed-messages.json)
+    if kill_switch_paused:
+        return ("Next: the board loop is stopped by the kill switch, so "
+                "nothing merges this PR until the switch is cleared; a "
+                "maintainer may merge it.")
+    if not auto_merge_on:
+        return ("Next: the board loop's auto-merge is off, so this PR waits "
+                "for a maintainer to merge it.")
+    return ("Next: the board loop merges this PR itself on a later run once "
+            "its own merge conditions hold.")
 
 
 def main():

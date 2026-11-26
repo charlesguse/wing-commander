@@ -19,6 +19,38 @@
       ]
     },
     {
+      "id": "readiness-next-step",
+      "source": "board_readiness.py",
+      "variants": [
+        {
+          "when": {"auto_merge": true, "kill_switch": false},
+          "text": "the board loop merges this PR itself on a later run once its own merge conditions hold",
+          "claims": ["board_merges_when_ready"]
+        },
+        {
+          "when": {"auto_merge": false},
+          "text": "the board loop's auto-merge is off, so this PR waits for a maintainer to merge it",
+          "claims": ["maintainer_merges"]
+        },
+        {
+          "when": {"auto_merge": true, "kill_switch": true},
+          "text": "the board loop is stopped by the kill switch, so nothing merges this PR until the switch is cleared; a maintainer may merge it",
+          "claims": ["maintainer_merges"]
+        }
+      ]
+    },
+    {
+      "id": "readiness-options-hold",
+      "source": "board_readiness.py",
+      "variants": [
+        {
+          "when": {},
+          "text": "the first comment says the options follow, and no later board-loop comment on the PR lists them yet",
+          "claims": []
+        }
+      ]
+    },
+    {
       "id": "prove-verify-only",
       "source": "board_prove.py",
       "variants": [

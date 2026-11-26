@@ -6021,6 +6021,8 @@ jobs:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ needs.select.outputs.issue-number || inputs.directed-issue }}
           PR_NUMBER: ${{ steps.pr.outputs.pr-number }}
+          AUTO_MERGE_ON: ${{ vars.WING_COMMANDER_BOARD_AUTO_MERGE }}
+          KILL_SWITCH_PAUSED: ${{ steps.killswitch-recheck.outputs.paused }}
           DIRECTED_ATTRIBUTION: >-
             ${{ inputs.directed-stage != '' && format('_Directed proof run
             (stage: `{0}`), dispatched to prove PR #{1} -- selects no board
@@ -6028,8 +6030,21 @@ jobs:
         run: |
           set -uo pipefail
           decision="$(cat "$RUNNER_TEMP/board-readiness-decision.json")"
-          body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\ndecision: %s' \
-            "$(jq -r '.head_sha' "$RUNNER_TEMP/board-readiness-decision.json")" "$decision")"
+          # specs/130 FR-009: say what happens next -- the loop merges, a
+          # maintainer must, or the loop is stopped (board_readiness.next_step_note).
+          next_step="$(AUTO_MERGE_ON="$AUTO_MERGE_ON" KILL_SWITCH_PAUSED="$KILL_SWITCH_PAUSED" python3 -I - <<'PYEOF'
+          import os
+          import sys
+
+          sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
+          from board_readiness import next_step_note
+
+          print(next_step_note(os.environ.get("AUTO_MERGE_ON") == "true",
+                               os.environ.get("KILL_SWITCH_PAUSED") == "true"))
+          PYEOF
+          )" || next_step=""
+          body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\n%s\n\ndecision: %s' \
+            "$(jq -r '.head_sha' "$RUNNER_TEMP/board-readiness-decision.json")" "$next_step" "$decision")"
           [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
           gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
           # An empty/failed marker here causes readiness to re-drive this

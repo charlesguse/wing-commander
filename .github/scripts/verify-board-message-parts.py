@@ -332,10 +332,23 @@ def check_all():
 
 REGISTRY = os.path.join(HERE, "board-fixed-messages.json")
 TAG_RE = re.compile(r"#\s*fixed-message:\s*([a-z0-9-]+)")
-KNOWN_CLAIMS = ("board_merges_next_run", "maintainer_merges", "gate_suite_ran")
+KNOWN_CLAIMS = ("board_merges_next_run", "board_merges_when_ready",
+                "maintainer_merges", "gate_suite_ran")
+
+# FR-011: every fixed message that claims a next action or a protection is
+# registered. The list is checked, not opt-in: a required id missing from
+# the registry fails, and so does a claim phrase in a registered source that
+# no registered variant carries (an untagged message).
+REQUIRED_IDS = ("merge-transient-fix", "prove-verify-only",
+                "readiness-next-step", "readiness-options-hold")
+CLAIM_PHRASE_RE = re.compile(
+    r"next board-loop run|a maintainer may merge|board loop merges|"
+    r"waits for a maintainer|nothing merges")
 
 
 def claim_holds(claim, cfg):
+    if claim == "board_merges_when_ready":
+        return cfg["auto_merge"] and not cfg["kill_switch"]
     if claim == "board_merges_next_run":
         # MF004: a fix PR waits for a maintainer's merge, so the claim that
         # the board merges it next run never holds for the fix class.
@@ -348,7 +361,7 @@ def _matches(when, cfg):
     return all(cfg.get(k) == v for k, v in (when or {}).items())
 
 
-def check_registry(registry, read_source):
+def check_registry(registry, read_source, required=REQUIRED_IDS):
     """Mode 2: every configuration (auto-merge x kill switch x PR class) a
     registered message can be posted in has exactly one variant whose
     claims hold there; every tag in a source names a registered id."""
@@ -391,8 +404,22 @@ def check_registry(registry, read_source):
         if "fixed-message: {0}".format(m.get("id")) not in text_src:
             problems.append("{0}: source {1} lacks its fixed-message tag"
                             .format(m.get("id"), m.get("source")))
+    for needed in required:
+        if needed not in ids:
+            problems.append("required fixed message {0} is not registered"
+                            .format(needed))
     for source in sources:
-        for tag in TAG_RE.findall(read_source(source) or ""):
+        text_src = read_source(source) or ""
+        flat = re.sub(r'"\s*\n\s*"', "", text_src)
+        registered = " ".join(v.get("text") or ""
+                              for m in messages if m.get("source") == source
+                              for v in m.get("variants") or [])
+        for hit in CLAIM_PHRASE_RE.finditer(flat):
+            if hit.group(0) not in registered:
+                problems.append("untagged fixed message in {0}: the claim "
+                                "phrase {1!r} is in no registered variant"
+                                .format(source, hit.group(0)))
+        for tag in TAG_RE.findall(text_src):
             if tag not in ids:
                 problems.append("unregistered fixed message {0} in {1}"
                                 .format(tag, source))
@@ -553,21 +580,29 @@ def registry_self_test():
                           "variants": [{"when": {}, "text": "hello",
                                         "claims": ["maintainer_merges"]}]}]}
     src = "# fixed-message: m\nx = 'hello'\n"
-    if check_registry(base, lambda _n: src):
+    def chk(registry, read_source, required=("m",)):
+        return check_registry(registry, read_source, required)
+    if chk(base, lambda _n: src):
         failed.append("sound registry flagged")
     contra = copy.deepcopy(base)
     contra["messages"][0]["variants"][0]["claims"] = ["board_merges_next_run"]
-    if not check_registry(contra, lambda _n: src):
+    if not chk(contra, lambda _n: src):
         failed.append("contradicted claim accepted")
-    if not check_registry(base, lambda _n: src + "# fixed-message: other\n"):
+    if not chk(base, lambda _n: src + "# fixed-message: other\n"):
         failed.append("unregistered fixed message accepted")
-    if not check_registry(base, lambda _n: "# fixed-message: m\n"):
+    if not chk(base, lambda _n: "# fixed-message: m\n"):
         failed.append("drifted source text accepted")
     split = copy.deepcopy(base)
     split["messages"][0]["variants"] = [
         {"when": {"pr_class": "fix"}, "text": "hello", "claims": []}]
-    if not check_registry(split, lambda _n: src):
+    if not chk(split, lambda _n: src):
         failed.append("uncovered configuration accepted")
+    # MF002: an untagged message -- a claim phrase in a registered source
+    # that no registered variant carries -- is caught.
+    if not chk(base, lambda _n: src + "z = 'a maintainer may merge it'\n"):
+        failed.append("untagged claim message accepted")
+    if not chk(base, lambda _n: src, required=("m", "gone")):
+        failed.append("missing required message accepted")
     return failed
 
 
@@ -613,7 +648,8 @@ def self_test():
                       "claims": ["board_merges_next_run"]},
                      {"when": {"pr_class": "bump"}, "text": "hello",
                       "claims": ["board_merges_next_run"]}]}]}
-    if not check_registry(swapped, lambda _n: "# fixed-message: m\nhello\n"):
+    if not check_registry(swapped, lambda _n: "# fixed-message: m\nhello\n",
+                          required=("m",)):
         failed.append("fix-class claim swapped to board_merges_next_run")
     failed += registry_self_test()
     failed += wiring_self_test()
