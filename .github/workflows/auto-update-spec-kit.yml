@@ -1653,6 +1653,17 @@ jobs:
           # auto-update:failed and comments the failure on it, pointing the
           # maintainer at this step's own `::error::` line, exactly as it does
           # for the two failures above.
+          #
+          # The CLI's own version stamps (.specify/integration.json, each
+          # manifest's `version` and `installed_at`) DO count, deliberately.
+          # Upstream's `integration upgrade` writes them only after every
+          # file is installed (a failed install is journaled back and exits
+          # non-zero, failing the step above), so a diff of stamps alone with
+          # exit 0 means the candidate's artifacts are byte-identical to the
+          # pin's: a CLI-only release, which is a clean bump. v1.2.3 (#1089)
+          # and v1.3.2 (#1124) were both exactly that. Excluding the stamps
+          # (proposed by the code review of #983) refuses every such release,
+          # and the still-settled tracking issue re-runs and re-fails it daily.
           speckit_changed="$(git status --porcelain -- \
             '.specify' ':(glob).claude/skills/speckit-*/**' \
             ':(exclude).specify/init-options.json')"
@@ -2567,12 +2578,18 @@ jobs:
           fi
 
           # T007: setup-tasks.sh --json — no silent-empty path of its own; a
-          # missing tasks-template.md makes it exit non-zero directly, which
-          # the non-zero-exit branch above already fails on.
+          # missing tasks-template.md makes it exit non-zero directly, so the
+          # refusal lands in this non-zero-exit branch. Still a missing
+          # artifact, so it carries the FR-008 hint as setup-plan.sh's
+          # refusal above does; the absent template is what tells it apart
+          # from an ordinary crash, which does not (FR-009).
           if [ "$pass" = "true" ]; then
             st_out="$(cd "$WORKTREE" && SPECIFY_FEATURE_DIRECTORY="$FEATURE_DIR" bash .specify/scripts/bash/setup-tasks.sh --json 2>&1)" || {
               pass=false
               detail="setup-tasks.sh --json exited non-zero: $(printf '%s' "$st_out" | tail -c 500)"
+              if [ ! -s "$WORKTREE/.specify/templates/tasks-template.md" ]; then
+                detail="$detail -- the candidate ships no tasks-template.md. $reorg_hint"
+              fi
             }
           fi
           if [ "$pass" = "true" ]; then

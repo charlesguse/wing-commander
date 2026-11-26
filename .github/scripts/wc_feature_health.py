@@ -22,6 +22,8 @@ import subprocess
 import sys
 import urllib.parse
 
+import yaml
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
 REGISTRY_PATH = os.path.join(HERE, "feature-health-registry.json")
@@ -41,6 +43,13 @@ RUN_CAP = 1000
 RATE_LIMIT_FLOOR = 300
 COMMENT_READ_CAP = 150
 SEARCH_PAGES = 3
+# Comment pages read per issue by the triage_close and issue_or_comment
+# readers: one issue with more than a page of comments must not make the
+# whole signal unreadable.
+COMMENT_PAGES = 10
+# The not-running threshold never drops below this many hours, so an hourly
+# workflow is not called out for an ordinary GitHub schedule delay.
+NOT_RUNNING_FLOOR_HOURS = 6
 MARKER_BEGIN = "<!-- wing-commander-feature-health -->"
 MARKER_END = "<!-- /wing-commander-feature-health -->"
 SWITCH_PREFIX = "WING_COMMANDER_"
@@ -125,12 +134,18 @@ def classify_workflow(ref, entry, reading, ctx, now):
     if last and all(r["conclusion"] != "success" for r in last):
         return "failing", detail
     if ref.get("cadence") == "schedule" and interval:
-        cutoff = now - datetime.timedelta(hours=2 * interval)
+        cutoff = now - datetime.timedelta(hours=not_running_hours(interval))
         if not runs or parse_time(runs[0]["started_at"]) < cutoff:
             return "not running", detail
     if not qualifying:
         return "idle", detail
     return "healthy", detail
+
+
+def not_running_hours(interval):
+    """Hours without a run after which a scheduled workflow reads "not
+    running": twice its cron interval, floored at NOT_RUNNING_FLOOR_HOURS."""
+    return max(2 * interval, NOT_RUNNING_FLOOR_HOURS)
 
 
 def _rank(state):
@@ -321,14 +336,25 @@ def _cron_hours(expr):
 
 
 def schedule_interval_hours(workflow_text):
-    """Smallest hours between scheduled runs across every uncommented `cron:`
-    entry (double quoted, single quoted or plain); None if none; ValueError
-    if one cannot be parsed, which makes the workflow unreadable."""
+    """Smallest hours between scheduled runs across the workflow's
+    `on.schedule` cron entries; a `cron:` line anywhere else (a `run:` block,
+    a heredoc, a comment) is not a schedule. None if there is none;
+    ValueError if the workflow or a cron cannot be parsed, which makes the
+    workflow unreadable."""
+    try:
+        doc = yaml.safe_load(workflow_text)
+    except yaml.YAMLError as exc:
+        raise ValueError("workflow does not parse as YAML: {0}".format(str(exc).splitlines()[0]))
+    # PyYAML reads the bare key `on` as the boolean True.
+    on = (doc.get("on", doc.get(True)) if isinstance(doc, dict) else None)
+    schedule = on.get("schedule") if isinstance(on, dict) else None
+    if schedule is not None and not isinstance(schedule, list):
+        raise ValueError("on.schedule is not a list")
     crons = []
-    for line in workflow_text.splitlines():
-        m = re.match(r"""^\s*-?\s*cron:\s*(?:"([^"]+)"|'([^']+)'|([^"'#\s][^#]*?))\s*(?:#.*)?$""", line)
-        if m:
-            crons.append(m.group(1) or m.group(2) or m.group(3))
+    for item in schedule or []:
+        if not isinstance(item, dict) or not isinstance(item.get("cron"), str):
+            raise ValueError("on.schedule entry has no cron string: {0!r}".format(item))
+        crons.append(item["cron"].strip())
     if not crons:
         return None
     return min(_cron_hours(c) for c in crons)
@@ -419,7 +445,8 @@ def _triage_close_times(gh, repo, base, since, until=None):
         for i in items:
             if times and i.get("updated_at", "") < max(times):
                 return times
-            for c in _pages(gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s), 1):
+            for c in _pages(gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s),
+                            COMMENT_PAGES):
                 if TRIAGE_CLOSE_RE.search(c.get("body") or "") and (u is None or c["created_at"] <= u):
                     if u and i.get("state") == "open":
                         raise RuntimeError("issue {0} was triage closed at {1} and is open now; its state "
@@ -494,7 +521,7 @@ def read_signal(signal, repo, since, gh, environ, until=None):
             times.append(i["created_at"])
         for i in issues:
             times.extend(c["created_at"] for c in _pages(
-                gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s), 1))
+                gh, "{0}/issues/{1}/comments?since={2}&per_page=100".format(base, i["number"], s), COMMENT_PAGES))
     elif kind == "triage_close":
         times = _triage_close_times(gh, repo, base, since, until)
     elif kind == "branch_commit":
@@ -541,8 +568,13 @@ def collect(registry, repo, now, gh=gh_json, environ=None, read_text=None, start
             if ref["file"] in readings:
                 continue
             try:
-                runs = fetch_runs(gh, repo, ref["file"], start, now, ref.get("events"))
                 interval = schedule_interval_hours(read_text(ref["file"]))
+                # Read back at least as far as the not-running threshold, so a
+                # weekly or monthly cron's last run before the window still counts.
+                since = start
+                if ref.get("cadence") == "schedule" and interval:
+                    since = min(start, now - datetime.timedelta(hours=not_running_hours(interval)))
+                runs = fetch_runs(gh, repo, ref["file"], since, now, ref.get("events"))
                 readings[ref["file"]] = {"runs": runs, "interval_hours": interval}
             except (RuntimeError, OSError, ValueError, KeyError, TypeError) as exc:
                 readings[ref["file"]] = {"unreadable": str(exc) or "read failed"}
