@@ -796,6 +796,28 @@ LOCATOR_CASES = [
      "set -- 'gh' api x; \"$@\"", [men("quoted"), dis("dynamic-command")]),
     ("a path through a gh directory, or set -- with a message, sets none",
      'u="https://x/gh/releases"; set -- "the gh call"; "$@" y', [men("quoted")]),
+    # A function whose body runs its arguments runs the gh it is called with
+    # (owner decision on #890, 2026-11-26; found by the code review of #1268).
+    ("a function running \"$@\" called with a quoted gh", "retry() { \"$@\"; }; retry 'gh' api x",
+     [dis("dynamic-command")]),
+    ("function NAME running \"$@\" called with a bare gh and a quoted one",
+     'function run { "$@"; }; run gh api x; run \'gh\' api y', [dis("dynamic-command")] * 2),
+    ("a function running timeout 30 \"$@\" called with a gh-valued variable",
+     'GH_BIN=\'gh\'; try() { timeout 30 "$@"; }; try "$GH_BIN" api x',
+     [men("quoted"), dis("dynamic-command"), dis("dynamic-command")]),
+    ("function NAME() running command \"$@\" after other arguments, or a body defined later",
+     'function f() { local n=$1; shift; command "$@"; }\nf 3 /usr/bin/gh x\n'
+     "o() { i \"$@\"; }; i() { \"$@\"; }; o 'gh' x",
+     [dis("dynamic-command")] * 2),
+    ("a function evaluating its arguments, or running $1 as sh -c, called with \"gh ...\"",
+     'run() { eval "$@"; }; run "gh api x"; s() { sh -c "$1"; }; s "gh api y"',
+     [dis("dynamic-command")] * 2),
+    ("a function that only echoes its arguments, or tests for one, runs none",
+     "say() { echo \"$@\"; }; say 'gh' api x; c() { command -v \"$1\"; }; c 'gh'",
+     [men("quoted")] * 2),
+    ("a function running \"$@\" called with a message that mentions gh runs none",
+     'log() { "$@"; }; log "gh failed"; w() { bash v.sh "$1"; }; w "gh x"; f() { :; }; f \'gh\'',
+     [men("quoted")] * 3),
 ]
 
 
