@@ -8,7 +8,7 @@ unreadable input (VIII: fail loud, never a pass it did not earn).
 | `select` | list of `SpecPrSnapshot` | `{selected: {pr, head_sha}\|null, skips: [{pr, reason}]}` |
 | `eligible` | one snapshot (fresh) | `EligibilityDecision` |
 | `verdict` | findings[] | `{verdict}`; non-empty ⇒ `not ready` |
-| `check-fixes` | diff stat, per-fix precedent resolutions, spec dir, caps | `{pushable: [..], blocked: [{finding, reason}]}`; marker lines checked for path/size only |
+| `check-fixes` | diff stat, per-fix precedent resolutions, spec dir, caps | `{pushable: [..], blocked: [{finding, reason, title}]}` (`finding` is the join key, `title` the text the review shows); marker lines checked for path/size only |
 | `plan-actions` | verified findings, push results, snapshot freshness | `ActionPlan` |
 | `failed-cap` | per-head failure count | `{stop: bool}` at 2 |
 
