@@ -4,7 +4,7 @@
 # draft spec. A requester who is not a maintainer answers through one
 # (constitution 3.0.0, Principle V). The actor gate is trigger-side and
 # therefore lives HERE; clarify.yml checks the triggering comment again
-# itself (specs/133-maintainer-only-comments). All stage logic lives in
+# itself (specs/134-maintainer-only-comments). All stage logic lives in
 # clarify.yml (docs/adoption.md), called by local path.
 name: "Wing Commander · 2 clarify"
 

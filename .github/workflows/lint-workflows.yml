@@ -145,7 +145,7 @@ on:
       - "specs/057-autonomous-board-loop/contracts/triage.md"
       - "specs/063-stage-clarify-label/contracts/e2e-clarification-label-assertion.md"
       - "specs/115-board-loop-self-merge/contracts/board-merge.md"
-      - "specs/133-maintainer-only-comments/contracts/comment-author-rule.md"
+      - "specs/134-maintainer-only-comments/contracts/comment-author-rule.md"
       - ".claude/skills/spec-cross-reference/SKILL.md"
       # Gate 169 compares these three skills, and CLAUDE.md (covered by *.md
       # above), with wc_session_record.py: each tells a session to write a
@@ -3873,7 +3873,7 @@ jobs:
       # trust filter" step against a stubbed gh with Bot/NONE/MEMBER/OWNER/
       # COLLABORATOR comments submitted out of order, among them the issue's
       # own NONE-association author, who is excluded like any non-maintainer
-      # (spec 133), and a mutation that adds an identity clause back.
+      # (spec 134), and a mutation that adds an identity clause back.
       - name: "Gate 96 — wing-commander-issue-context's trust-filter jq behaves correctly"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-issue-context-trust-filter.py
@@ -5045,7 +5045,7 @@ jobs:
       - name: Gate 172 self-test — no block, the bare string form, no cancel, a per-sha, per-run, run-number, head-branch, constant, per-ref or unprefixed group, and an unmodelled context each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lint-supersedes-pr-runs.py --self-test
-      # Gate 180 — specs/133-maintainer-only-comments: comment-triggered
+      # Gate 180 — specs/134-maintainer-only-comments: comment-triggered
       # stages admit a comment only from a non-bot OWNER, MEMBER or
       # COLLABORATOR (constitution 3.0.0, Principle V). It checks every
       # comment-triggered wrapper, clarify's own check, the gating of every

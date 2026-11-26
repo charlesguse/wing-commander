@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Gate 180 -- comment-triggered stages act only on maintainers
-(specs/133-maintainer-only-comments, contracts/comment-author-rule.md).
+(specs/134-maintainer-only-comments, contracts/comment-author-rule.md).
 
 WHY THIS EXISTS
 ---------------
@@ -8,7 +8,7 @@ Constitution 3.0.0 (Principle V): a comment admits a stage run, or reaches
 an agent as context, only when its author is not a bot and its
 author_association is OWNER, MEMBER or COLLABORATOR. Nothing about the
 commenter's identity or user id is consulted, and owning the issue admits
-no comment. Before spec 133 several surfaces also
+no comment. Before spec 134 several surfaces also
 admitted the issue's own author, and nothing would have stopped that clause
 from coming back.
 
@@ -108,7 +108,7 @@ DOC_IDENTITY = re.compile(
     r"commenter-id\s*==")
 PR_CONVERSATION = os.path.join(WF, "pr-conversation.yml")
 # (i)'s subjects: the live docs and contracts that describe who a
-# comment-triggered stage admits (spec 133's T001 inventory, plus the docs
+# comment-triggered stage admits (spec 134's T001 inventory, plus the docs
 # and contracts its review passes found). A literal list,
 # not a directory walk, so verify-gate-wiring.py can see each subject and
 # hold lint-workflows.yml's pull_request paths: to it. A missing file fails
@@ -130,7 +130,7 @@ LIVE_DOCS = (
     "specs/057-autonomous-board-loop/contracts/triage.md",
     "specs/063-stage-clarify-label/contracts/e2e-clarification-label-assertion.md",
     "specs/115-board-loop-self-merge/contracts/board-merge.md",
-    "specs/133-maintainer-only-comments/contracts/comment-author-rule.md",
+    "specs/134-maintainer-only-comments/contracts/comment-author-rule.md",
 )
 WRAPPER_GATE_DOC = os.path.normpath("specs/033-pr-conversation-commands/contracts/wrapper-gate.md")
 BASH = None
@@ -412,7 +412,7 @@ def check_j(tree):
 # or a maintainer"), contrasts pr-conversation with clarify or
 # intake as if they had an exception ("unlike clarify/intake"), or writes
 # an identity comparison in a comment (`actor.id ==`). Every such sentence
-# spec 133 deleted is caught. Matched on text flattened by _flatten.
+# spec 134 deleted is caught. Matched on text flattened by _flatten.
 PROSE_EXCEPTION = re.compile(
     r"\bor (?:its author is )?(?:the|an) (?:lifecycle )?issue(?:['’]s)? (?:own )?author\b|"
     r"\bor (?:the )?original (?:requester|reporter)\b|\boriginal (?:requester|reporter) or\b|"
@@ -450,7 +450,7 @@ def check_k(tree):
     return []
 
 
-RULE_CONTRACT = os.path.normpath("specs/133-maintainer-only-comments/contracts/comment-author-rule.md")
+RULE_CONTRACT = os.path.normpath("specs/134-maintainer-only-comments/contracts/comment-author-rule.md")
 RULE_TABLE_HEADING = "## Where it is enforced"
 
 

@@ -113,7 +113,7 @@ convention every comment-triggered stage already uses for issue bodies.
 - `outcome: ambiguous-options` → post the options + reasoning + sources
   as a question (`wing-commander-callout`, `kind: action`), workflow
   ends, awaiting a comment reply (FR-012). Since
-  specs/133-maintainer-only-comments the question's last line records its
+  specs/134-maintainer-only-comments the question's last line records its
   option labels, as data the `comment-reply` read-back reads.
 - `outcome: clean-bump` → continue to `prepare`.
 
@@ -175,7 +175,7 @@ this job — nothing to record.
    `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
    inputs.commenter-association)` (the exact condition
    `wing-commander-2-clarify.yml` uses; since
-   specs/133-maintainer-only-comments no user id is compared, and the
+   specs/134-maintainer-only-comments no user id is compared, and the
    `commenter-id` and `issue-author-id` inputs are accepted and ignored;
    owner decision 2026-11-25, #890). Fails → no-op, no comment, no error
    surfaced (never react to an untrusted commenter, constitution V). The
@@ -195,7 +195,7 @@ this job — nothing to record.
    (`--allowedTools "Read"`), structured output mapping the comment body
    onto one of the previously posted options (or "unrecognized," in
    which case the workflow comments asking for a clearer reply and takes
-   no further action). Since specs/133-maintainer-only-comments the
+   no further action). Since specs/134-maintainer-only-comments the
    agent's context holds only the issue body, the pipeline's own comments
    and maintainers' comments, and a chosen option counts only when it is
    one of the labels the newest question records.

@@ -344,7 +344,7 @@ def main():
         ("OWNER", "1", "1", True, "OWNER"),
         ("MEMBER", "9", "1", True, "MEMBER"),
         ("COLLABORATOR", "9", "1", True, "COLLABORATOR"),
-        # Owner decision 2026-11-25 (#890) and spec 133: the issue's own
+        # Owner decision 2026-11-25 (#890) and spec 134: the issue's own
         # author gets no exception.
         ("NONE", "7", "7", False, "non-maintainer who IS the issue author"),
         ("CONTRIBUTOR", "7", "7", False, "CONTRIBUTOR who IS the issue author"),

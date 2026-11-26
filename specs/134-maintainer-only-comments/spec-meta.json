@@ -1,7 +1,7 @@
 {
   "issue": 1291,
-  "spec_dir": "specs/133-maintainer-only-comments",
-  "feature_num": "133",
+  "spec_dir": "specs/134-maintainer-only-comments",
+  "feature_num": "134",
   "stage": "review",
   "iteration": 1,
   "spec_branch": "claude/133-maintainer-only-comments"

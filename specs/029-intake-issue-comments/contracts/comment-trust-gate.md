@@ -25,7 +25,7 @@ A comment qualifies for incorporation if and only if:
    never consulted (FR-003: "regardless of the bot account's association").
 2. AND `author_association` ∈ `{OWNER, MEMBER, COLLABORATOR}`. No user id
    is consulted, the issue's own author included (constitution 3.0.0,
-   Principle V; specs/133-maintainer-only-comments).
+   Principle V; specs/134-maintainer-only-comments).
 
 This is exactly `wing-commander-2-clarify.yml`'s existing trigger-level `if:`
 condition, applied per-comment instead of to one triggering comment.

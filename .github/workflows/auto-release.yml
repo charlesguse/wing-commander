@@ -1533,7 +1533,7 @@ jobs:
           while [ "$SECONDS" -lt "$POLL_BUDGET_SECONDS" ]; do
             # --- Clarification gate (research.md D4, D6, D7, D8) ---
             # A qualifying reply is a non-bot OWNER/MEMBER/COLLABORATOR
-            # comment; no user id is read (specs/133-maintainer-only-comments).
+            # comment; no user id is read (specs/134-maintainer-only-comments).
             if ! gh api "repos/${E2E_REPO}/issues/${ISSUE}/comments" --paginate --jq \
                 '.[] | {id, user: {login: .user.login, id: .user.id, type: .user.type}, author_association, body, created_at}' \
                 > "$RUNNER_TEMP/auto-release-comments.ndjson" 2>"$RUNNER_TEMP/auto-release-comments-err.txt"; then

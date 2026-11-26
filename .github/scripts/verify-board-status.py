@@ -279,7 +279,7 @@ def runtime_half():
     page("repos/o/r/issues/741/comments?per_page=100",
          [comment("User", "OWNER"), comment("Bot")], [comment("User", "NONE")])
     # 742: the issue's own author, not a maintainer, commented after the bot
-    # -- clarify does not act on it (spec 133), so still waiting.
+    # -- clarify does not act on it (spec 134), so still waiting.
     page("repos/o/r/issues/742/comments?per_page=100",
          [comment("Bot")], [comment("User", "NONE", "the-author")])
     # 743: a maintainer answered after the bot.
@@ -324,7 +324,7 @@ def runtime_half():
         clar = {i["number"]: i for i in snap["issues"] if i["number"] in (741, 742, 743)}
         check("a passer-by's comment after the bot's questions answers nothing",
               clar.get(741, {}).get("last_comment_by_bot") is True, clar.get(741))
-        check("the issue's own author who is not a maintainer answers nothing (spec 133)",
+        check("the issue's own author who is not a maintainer answers nothing (spec 134)",
               clar.get(742, {}).get("last_comment_by_bot") is True, clar.get(742))
         check("a maintainer answering after the bot is an answer",
               clar.get(743, {}).get("last_comment_by_bot") is False, clar.get(743))

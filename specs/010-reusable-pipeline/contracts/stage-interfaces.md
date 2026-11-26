@@ -106,7 +106,7 @@ by the tool interface itself. Render contract and guarantees enumerated in
 guidance shipped in docs/adoption.md): maintainer-label entry gate before
 intake; commenter is a maintainer (`OWNER`/`MEMBER`/`COLLABORATOR`) and
 not a bot before clarify (the clarify stage checks the triggering comment
-again itself, specs/133-maintainer-only-comments);
+again itself, specs/134-maintainer-only-comments);
 never pass fork-PR head refs as checkout targets; commenter/reviewer is
 `OWNER`/`MEMBER`/`COLLABORATOR` and not a bot before pr-conversation
 (`specs/033-pr-conversation-commands/contracts/wrapper-gate.md`). No
@@ -227,7 +227,7 @@ resolving a single `trigger` input before calling this stage.
 
 | | |
 |---|---|
-| Inputs | `trigger` (string, required — `scheduled`\|`dispatch`\|`pr-merged`\|`comment-reply`); `pr-number` (string); `pr-merged` (boolean, default `false`); `issue-number` (string); `comment-id` (string); `commenter-association` (string); `commenter-id` (string; accepted and ignored since spec 133); `issue-author-id` (string; accepted and ignored since spec 133); `stabilization-checks` (string, default `1`); `model` (string, default `claude-sonnet-5`) |
+| Inputs | `trigger` (string, required — `scheduled`\|`dispatch`\|`pr-merged`\|`comment-reply`); `pr-number` (string); `pr-merged` (boolean, default `false`); `issue-number` (string); `comment-id` (string); `commenter-association` (string); `commenter-id` (string; accepted and ignored since spec 134); `issue-author-id` (string; accepted and ignored since spec 134); `stabilization-checks` (string, default `1`); `model` (string, default `claude-sonnet-5`) |
 | Preconditions | none as a refusal gate — self-recognition is best-effort and marker-based (a `pull_request`/`issue_comment` event lacking this feature's PR/issue marker is a silent no-op; the `comment-reply` path additionally gates the commenter to a maintainer (`OWNER`/`MEMBER`/`COLLABORATOR`) replying on the App's own `auto-update:tracking` issue, and refuses with a comment a candidate not newer than the pinned version). One `concurrency: wing-commander-auto-update-spec-kit` group serializes all cycles |
 | Behavior | `health-check → detect → settle → evaluate-path → prepare → verify → act` plus `pr-merged`/`comment-reply` entry jobs: re-verify the pinned version (rollback on failure); detect the latest eligible upstream release and classify the delta; run a consecutive-daily-check settle window in the lifecycle issue's body marker; one read-only agent decides clean-bump / needs-migration / ambiguous-options; prepare the version-bump diff; verify it (lightweight always, +end-to-end for minor/major) in an isolated worktree; open the version-bump PR (pass), flag the issue (fail), or open a revert PR (health-check failure) |
 | Outputs | none (side effects only): lifecycle-issue comments/label (`auto-update:failed` on any failure/rollback) and a version-bump/revert PR to the default branch — **never merged by this stage** (constitution V, FR-017); the success path closes its issue only via the PR's own `Closes #N` keyword on merge |

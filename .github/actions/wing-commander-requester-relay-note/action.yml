@@ -1,6 +1,6 @@
 # The single home of the relay paragraph a clarification-question comment
 # carries when the lifecycle issue's own author is not a maintainer
-# (specs/133-maintainer-only-comments, FR-008, research.md D3; constitution
+# (specs/134-maintainer-only-comments, FR-008, research.md D3; constitution
 # 3.0.0, Principle IV). Comment-triggered stages act only on a maintainer's
 # reply, so a requester who is not one is told up front to ask a maintainer
 # to relay their answers. A reply from a non-maintainer is never answered.

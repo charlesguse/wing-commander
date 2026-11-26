@@ -1,6 +1,6 @@
 # Feature Specification: Comment-Triggered Stages Act Only on Maintainers
 
-**Feature Branch**: `133-maintainer-only-comments`
+**Feature Branch**: `134-maintainer-only-comments`
 
 **Created**: 2026-11-23
 

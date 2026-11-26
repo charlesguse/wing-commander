@@ -775,7 +775,7 @@ jobs:
       # Foundational filter (specs/029-intake-issue-comments): fetch every
       # comment, apply the same maintainer-association and bot rule
       # wing-commander-2-clarify.yml's wrapper already applies to its single
-      # triggering comment (no user id, specs/133-maintainer-only-comments),
+      # triggering comment (no user id, specs/134-maintainer-only-comments),
       # and stage only the qualifying
       # comments — ordered oldest to newest — for the agent step to read.
       # Comment bodies move only between gh api/jq and files, never through

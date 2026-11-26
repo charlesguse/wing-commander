@@ -69,12 +69,12 @@ on:
         required: false
         default: ""
       commenter-id:
-        description: "Accepted and ignored since specs/133-maintainer-only-comments: comment-reply admits a commenter by association only. Kept so existing callers do not fail."
+        description: "Accepted and ignored since specs/134-maintainer-only-comments: comment-reply admits a commenter by association only. Kept so existing callers do not fail."
         type: string
         required: false
         default: ""
       issue-author-id:
-        description: "Accepted and ignored since specs/133-maintainer-only-comments: comment-reply admits a commenter by association only. Kept so existing callers do not fail."
+        description: "Accepted and ignored since specs/134-maintainer-only-comments: comment-reply admits a commenter by association only. Kept so existing callers do not fail."
         type: string
         required: false
         default: ""
@@ -1428,7 +1428,7 @@ jobs:
           OPTIONS: ${{ steps.decide-outcome.outputs.options }}
         run: |
           set -uo pipefail
-          # Spec 133: the labels this question offers, recorded as JSON on the
+          # Spec 134: the labels this question offers, recorded as JSON on the
           # posted comment's last line; comment-reply's read-back accepts no
           # other choice. Escaping "-", "<" and ">" keeps the record inside
           # its HTML comment.
@@ -3491,7 +3491,7 @@ jobs:
   # T024 (US4, constitution V): commenter verification is a maintainer
   # (OWNER/MEMBER/COLLABORATOR) only, the same trigger-side rule
   # wing-commander-2-clarify.yml uses; since
-  # specs/133-maintainer-only-comments the issue's own author gets no
+  # specs/134-maintainer-only-comments the issue's own author gets no
   # exception in either. A resumed reply re-enters prepare/verify/act for
   # the candidate in the issue's marker (owner decision 2026-11-25, #890).
   # The commenter-id and issue-author-id inputs are still accepted and no
@@ -3687,7 +3687,7 @@ jobs:
       # + comments, which include the option labels) are UNTRUSTED — fetched
       # from the API straight to files, never shell-interpolated into the
       # prompt, matching wing-commander-2-clarify.yml's convention.
-      # Spec 133: the context holds the issue body, this pipeline's own
+      # Spec 134: the context holds the issue body, this pipeline's own
       # comments (BOT_LOGIN: the posted question and its option labels) and
       # maintainers' comments only; posted-options.json holds the labels the
       # newest question records, and "Read back interpretation" accepts no
@@ -3844,7 +3844,7 @@ jobs:
               fi
             fi
           fi
-          # Spec 133: only a label the newest question records counts as a
+          # Spec 134: only a label the newest question records counts as a
           # choice: the whole value, on one line, equal to one entry of
           # posted-options.json.
           if [ "$recognized" = "true" ]; then

@@ -407,7 +407,7 @@ jobs:
 
       # Constitution 3.0.0 (Principle V): this stage acts only on a comment
       # from a maintainer (OWNER/MEMBER/COLLABORATOR, never a bot), whatever
-      # the calling wrapper admits (specs/133-maintainer-only-comments,
+      # the calling wrapper admits (specs/134-maintainer-only-comments,
       # research.md D1). It reads the comment it is given by id, so the stage
       # still reads no event payload. A refused comment ends the job here:
       # lifecycle-gate and every step gated on it are skipped, so there is no
@@ -1299,7 +1299,7 @@ jobs:
           ' > "$RUNNER_TEMP/clarify-followup.md"
 
       # (canonical copy: requester-relay-note; do not condense)
-      # FR-008 (specs/133-maintainer-only-comments): when the issue's author
+      # FR-008 (specs/134-maintainer-only-comments): when the issue's author
       # is not a maintainer, the questions say up front that only a
       # maintainer's reply is folded in. The paragraph's single home is the
       # composite (Gate 180).
