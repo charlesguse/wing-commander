@@ -49,7 +49,7 @@ PIN_PATH = ".github/scripts/zizmor-pin.txt"
 CONFIG_PATH = ".github/zizmor.yml"
 REGISTER_PATH = ".github/scripts/zizmor-findings-waivers.json"
 TRUSTED_PATTERNS = ("actions/*", "github/*", "anthropics/*")
-LOCATION_RE = re.compile(r"^(workflow|job:[^/]+(/step:.+)?)$")
+LOCATION_RE = re.compile(r"^(workflow|step:.+|job:[^/]+(/step:.+)?)$")
 REQUIRED_FIELDS = ("file", "audit", "location", "reason", "control", "issue")
 # The only home of the trusted-publisher policy is CONFIG_PATH; these are
 # the places a second copy would plausibly appear.
@@ -94,9 +94,14 @@ def run_zizmor(root, files):
         return None, ""
     ver = (v.stdout or "").strip()
     cfg = os.path.join(root, CONFIG_PATH)
-    p = subprocess.run(
-        ["zizmor", "--offline", "--format", "json", "--config", cfg] + files,
-        capture_output=True, text=True, cwd=root, timeout=600)
+    try:
+        p = subprocess.run(
+            ["zizmor", "--offline", "--format", "json", "--config", cfg] + files,
+            capture_output=True, text=True, cwd=root, timeout=600)
+    except (OSError, subprocess.SubprocessError):
+        # A timeout or a vanished binary mid-scan is the same failure as a
+        # missing analyser, not a traceback.
+        return None, ""
     # zizmor exits non-zero when it has findings; the JSON is what counts.
     return ver, p.stdout
 
@@ -111,8 +116,9 @@ def _step_label(step, index):
 
 
 def location_of(finding, doc):
-    """Stable location for a finding: workflow, job:<id> or
-    job:<id>/step:<id-or-name>; never a line."""
+    """Stable location for a finding: workflow, job:<id>,
+    job:<id>/step:<id-or-name>, or step:<id-or-name> inside a composite
+    action; never a line."""
     locs = finding.get("locations") or []
     route = []
     for loc in locs:
@@ -128,8 +134,13 @@ def location_of(finding, doc):
     job = step = None
     if len(keys) >= 2 and keys[0] == "jobs" and isinstance(keys[1], str):
         job = keys[1]
-    elif len(keys) >= 3 and keys[0] == "runs" and keys[1] == "steps":
-        job = None
+    elif len(keys) >= 3 and keys[0] == "runs" and keys[1] == "steps" \
+            and isinstance(keys[2], int):
+        # A composite action: its steps live under runs.steps.
+        steps = ((doc or {}).get("runs") or {}).get("steps") or []
+        idx = keys[2]
+        return "step:{0}".format(_step_label(
+            steps[idx] if idx < len(steps) else None, idx))
     if job and len(keys) >= 4 and keys[2] == "steps" and isinstance(keys[3], int):
         steps = ((doc or {}).get("jobs") or {}).get(job, {}).get("steps") or []
         idx = keys[3]
@@ -310,6 +321,55 @@ def check_single_home(root):
     return failures
 
 
+DEPENDABOT_PATH = ".github/dependabot.yml"
+
+
+def _dir_glob_re(pattern):
+    out, i = "", 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out += "(?:.*/)?"
+            i += 3
+        elif pattern.startswith("**", i):
+            out += ".*"
+            i += 2
+        elif pattern[i] == "*":
+            out += "[^/]*"
+            i += 1
+        else:
+            out += re.escape(pattern[i])
+            i += 1
+    return re.compile("^" + out + "$")
+
+
+def check_dependabot_coverage(root):
+    """Every composite action directory must match a Dependabot
+    `directories` glob, or its SHA pins are never bumped."""
+    try:
+        cfg = yaml.safe_load(_read(root, DEPENDABOT_PATH)) or {}
+    except OSError:
+        return ["{0}: missing; the SHA pins are never bumped.".format(DEPENDABOT_PATH)]
+    except yaml.YAMLError as e:
+        return ["{0}: not valid YAML ({1}).".format(DEPENDABOT_PATH, e)]
+    pats = []
+    for u in cfg.get("updates") or []:
+        if isinstance(u, dict) and u.get("package-ecosystem") == "github-actions":
+            pats += [str(d) for d in (u.get("directories") or [])]
+            if u.get("directory"):
+                pats.append(str(u["directory"]))
+    res = [_dir_glob_re(p) for p in pats]
+    failures = []
+    for f in discover(root):
+        if not f.startswith(".github/actions/"):
+            continue
+        d = "/" + os.path.dirname(f)
+        if not any(r.match(d) for r in res):
+            failures.append("{0}: composite directory `{1}` matches no "
+                            "github-actions `directories` entry, so Dependabot "
+                            "never bumps its pins.".format(DEPENDABOT_PATH, d))
+    return failures
+
+
 def evaluate(root, runner=run_zizmor):
     failures = []
     pin = read_pin(root)
@@ -322,6 +382,7 @@ def evaluate(root, runner=run_zizmor):
                         "under .github/; refusing to pass on an empty set.")
     failures += check_config(root)
     failures += check_single_home(root)
+    failures += check_dependabot_coverage(root)
     entries, reg_failures = load_register(root)
     failures += reg_failures
     if files and pin is not None:
@@ -382,10 +443,39 @@ CFG = ("rules:\n  self-repository:\n    # reason: because\n    disable: true\n"
        "        \"anthropics/*\": ref-pin\n        \"*\": hash-pin\n")
 
 
+DEPENDABOT = ("version: 2\nupdates:\n  - package-ecosystem: github-actions\n"
+              "    directories:\n      - \"/\"\n      - \"/.github/actions/**/*\"\n")
+COMPOSITE = ("name: c\ndescription: d\nruns:\n  using: composite\n  steps:\n"
+             "    - id: first\n      run: echo a\n      shell: bash\n"
+             "    - id: relay\n      run: echo b\n      shell: bash\n")
+
+
+def _scan_timeout_case():
+    """run_zizmor must turn a scan-time failure into 'analyser missing'."""
+    real = subprocess.run
+    calls = []
+
+    def fake(cmd, **kw):
+        calls.append(cmd)
+        if "--version" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "zizmor 1.33.1\n", "")
+        raise subprocess.TimeoutExpired(cmd, 600)
+    subprocess.run = fake
+    try:
+        ver, _ = run_zizmor(".", ["x"])
+    finally:
+        subprocess.run = real
+    if ver is None and len(calls) == 2:
+        return 0
+    print("SELF-TEST FAIL: a scan timeout must report the analyser missing.")
+    return 1
+
+
 def _tree(files):
     d = tempfile.mkdtemp(prefix="zizmor-selftest-")
     base = {".github/workflows/a.yml": WF, CONFIG_PATH: CFG,
             PIN_PATH: "version=1.33.1\n",
+            DEPENDABOT_PATH: DEPENDABOT,
             REGISTER_PATH: json.dumps({"waivers": []})}
     base.update(files)
     for rel, text in base.items():
@@ -509,12 +599,37 @@ def self_test():
         ("policy differing from home",
          {CONFIG_PATH: CFG.replace('"*": hash-pin', '"*": ref-pin')},
          _runner(payload=[]), "must be `hash-pin`"),
+        ("composite finding names its step",
+         {".github/actions/c/action.yml": COMPOSITE},
+         _runner(payload=[_finding(".github/actions/c/action.yml", "github-env",
+                                   [{"Key": "runs"}, {"Key": "steps"},
+                                    {"Index": 1}])]),
+         "github-env (step:relay): unwaived finding"),
+        ("composite waiver does not cover another step",
+         {".github/actions/c/action.yml": COMPOSITE,
+          REGISTER_PATH: json.dumps({"waivers": [_entry(
+              file=".github/actions/c/action.yml", audit="github-env",
+              location="step:relay")]})},
+         _runner(payload=[_finding(".github/actions/c/action.yml", "github-env",
+                                   [{"Key": "runs"}, {"Key": "steps"},
+                                    {"Index": 0}])]),
+         "github-env (step:first): unwaived finding"),
+        ("deeply nested composite is covered by Dependabot",
+         {".github/actions/_shared/a/b/c/action.yml": COMPOSITE},
+         _runner(payload=[]), None),
+        ("composite outside Dependabot's directories",
+         {".github/actions/_shared/a/b/action.yml": COMPOSITE,
+          DEPENDABOT_PATH: DEPENDABOT.replace("/.github/actions/**/*",
+                                              "/.github/actions/*")},
+         _runner(payload=[]), "matches no github-actions `directories`"),
+        ("scan timeout is analyser missing", {},
+         _runner(version=None), "analyser missing"),
         ("record without control",
          {REGISTER_PATH: json.dumps({"waivers": [
              {k: v for k, v in _entry().items() if k != "control"}]})},
          _runner(payload=inj), "missing `control`"),
     ]
-    bad = _real_analyser_policy_case()
+    bad = _real_analyser_policy_case() + _scan_timeout_case()
     for name, files, runner, want in cases:
         d = _tree(files)
         try:

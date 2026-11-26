@@ -11,12 +11,12 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    # "/" covers .github/workflows/; composite actions are listed by
-    # directory, the nested _shared/ ones included.
+    # "/" covers .github/workflows/; "**" covers every composite action
+    # directory however deeply nested (Gate 178 fails when one is not
+    # matched).
     directories:
       - "/"
-      - "/.github/actions/*"
-      - "/.github/actions/_shared/*"
+      - "/.github/actions/**/*"
     schedule:
       interval: weekly
       day: monday

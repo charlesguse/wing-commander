@@ -34,17 +34,23 @@ BLOCK_RE = re.compile(
     re.S | re.M)
 
 
-def wrapper_events(root):
-    """-> {event: [wrapper basename, ...]}."""
+def wrapper_events(root, problems=None):
+    """-> {event: [wrapper basename, ...]}. A wrapper that cannot be read as
+    a workflow mapping is appended to `problems` rather than skipped."""
     out = {}
+    problems = [] if problems is None else problems
     pattern = os.path.join(root, ".github", "workflows", "wing-commander-*.yml")
     for p in sorted(glob.glob(pattern)):
         try:
             with io.open(p, encoding="utf-8") as fh:
                 doc = yaml.safe_load(fh)
         except (OSError, yaml.YAMLError):
+            problems.append("{0}: cannot be parsed, so its events are "
+                            "unknown.".format(os.path.basename(p)))
             continue
         if not isinstance(doc, dict):
+            problems.append("{0}: is not a workflow mapping, so its events "
+                            "are unknown.".format(os.path.basename(p)))
             continue
         on = doc.get("on", doc.get(True))
         if isinstance(on, str):
@@ -82,8 +88,8 @@ def policy_events(root):
 
 
 def evaluate(root):
-    events = wrapper_events(root)
     failures = []
+    events = wrapper_events(root, failures)
     if not events:
         failures.append("no wing-commander-*.yml wrapper with an `on:` event "
                         "was found; refusing to pass on an empty set.")
@@ -129,7 +135,10 @@ def self_test():
         ("empty events", wf, "```yaml wc-event-policy\nevents: {}\n```\n",
          "non-empty"),
         ("no wrappers", {}, _doc(["issues"]), "empty set"),
-        ("string on", {"wing-commander-b.yml": "on: push\njobs: {}\n"},
+        ("unparsable wrapper fails",
+         dict(wf, **{"wing-commander-c.yml": "on: [push\njobs: {"}),
+         _doc(["issues", "schedule"]), "cannot be parsed"),
+        ("string on",{"wing-commander-b.yml": "on: push\njobs: {}\n"},
          _doc(["issues"]), "event `push`"),
     ]
     bad = 0

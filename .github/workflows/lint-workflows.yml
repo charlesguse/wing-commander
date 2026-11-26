@@ -28,6 +28,9 @@ on:
       - ".github/scripts/**"
       # Gate 178 (verify-zizmor.py) reads the analyser configuration.
       - ".github/zizmor.yml"
+      # Gate 178 also checks that Dependabot's directories cover every
+      # composite action.
+      - ".github/dependabot.yml"
       - ".specify/scripts/**"
       # Four gates check a published document rather than code. Without
       # these, a PR editing only the document - the change most likely to

@@ -50,7 +50,8 @@ import tempfile
 import yaml
 
 REPO_ONLY_PATH = ".github/scripts/repo-only-reusable-workflows.json"
-EXTRACT_RE = re.compile(r"\b(tar\s+-?[a-zA-Z]*x|unzip\b)")
+ERROR_JOB = "<error>"  # scan() entries with this job are failures, not exposures
+EXTRACT_RE =re.compile(r"\b(tar\s+-?[a-zA-Z]*x|unzip\b)")
 DEST_RE = re.compile(r"(?:-C|-d|--directory)\s+(\S+)")
 
 
@@ -60,12 +61,16 @@ def _norm(path):
 
 
 def load_repo_only(root):
+    """-> set of file names, or None when the register is unreadable (the
+    caller fails rather than treating every reusable workflow as published)."""
     try:
         with io.open(os.path.join(root, REPO_ONLY_PATH), encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, ValueError):
-        return set()
-    items = data.get("workflows", data) if isinstance(data, dict) else data
+        return None
+    items = data.get("workflows") if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        return None
     return {os.path.basename(str(i)) for i in items if isinstance(i, str)}
 
 
@@ -88,20 +93,32 @@ def _is_published_stage(name, doc, repo_only):
 # is as trusted as github.sha.
 TRUSTED_RUNNING_REFS = ("", "${{ github.sha }}",
                         "${{ github.event.repository.default_branch }}")
+# On a `pull_request` event github.sha is the merge commit the PR author
+# controls, and a checkout with no ref gets that same commit.
+MERGE_COMMIT_REFS = ("", "${{ github.sha }}")
+# Workflows whose `pull_request` trigger may still trust github.sha, each
+# with the reason. Keep this list short: an entry is an accepted risk.
+PULL_REQUEST_SHA_ALLOWLIST = {
+    "board-loop.yml": "its only pull_request trigger is `types: [closed]` "
+                      "(the prove resume path), not a PR-head or opened/"
+                      "synchronize run; listed for the owner to confirm",
+}
 
 
-def checkout_trusted(step_with, published):
+def checkout_trusted(step_with, published, pr_merge=False):
     repo = str(step_with.get("repository") or "").strip()
     ref = str(step_with.get("ref") or "").strip()
+    refs = tuple(r for r in TRUSTED_RUNNING_REFS
+                 if not (pr_merge and r in MERGE_COMMIT_REFS))
     if not repo:
         # Running repository: the caller's tree in a published stage.
         if published:
             return False
-        return ref in TRUSTED_RUNNING_REFS
+        return ref in refs
     if "inputs.pipeline-repo" in repo:
         return "steps.pipeline-ref.outputs.ref" in ref
     if repo == "${{ github.repository }}":
-        return not published and ref in TRUSTED_RUNNING_REFS
+        return not published and ref in refs
     return False
 
 
@@ -110,7 +127,35 @@ def _inside(ref_path, tree_path):
         ref_path.startswith(tree_path + "/")
 
 
-def analyse_job(job, published):
+def _place(trees, path, trusted, clean=True):
+    """A tree placed at `path` replaces everything at or below it, because
+    actions/checkout's default `git clean` deletes the untracked nested
+    trees. `clean: false` keeps them, so only the tree at `path` itself is
+    replaced."""
+    trees = [t for t in trees if not (t[0] == path or (
+        clean and (path == "." or t[0].startswith(path + "/"))))]
+    trees.append((path, trusted))
+    return trees
+
+
+def _extract_dest(step):
+    """-> workspace-relative extraction directory for a tar/unzip step: the
+    -C/-d target, else the step's working-directory or a leading `cd`, else
+    the workspace root (where a bare extraction lands)."""
+    run = str(step["run"])
+    base = _norm(step.get("working-directory"))
+    m = re.match(r"\s*cd\s+(\S+)\s*(?:&&|;|\n)", run)
+    if m:
+        base = posixpath.normpath(posixpath.join(base, _norm(m.group(1))))
+    d = DEST_RE.search(run)
+    if d:
+        target = _norm(d.group(1))
+        return target if target.startswith("/") else \
+            posixpath.normpath(posixpath.join(base, target))
+    return base
+
+
+def analyse_job(job, published, pr_merge=False):
     """-> [(step_label, ref, tree_path)] for every exposed `./` reference."""
     trees = []  # (path, trusted); a later entry at the same path replaces
     exposed = []
@@ -121,18 +166,14 @@ def analyse_job(job, published):
         uses = str(step.get("uses") or "")
         with_ = step.get("with") if isinstance(step.get("with"), dict) else {}
         if uses.startswith("actions/checkout@"):
-            path = _norm(with_.get("path"))
-            trees = [t for t in trees if t[0] != path]
-            trees.append((path, checkout_trusted(with_, published)))
+            trees = _place(trees, _norm(with_.get("path")),
+                           checkout_trusted(with_, published, pr_merge),
+                           clean=str(with_.get("clean", True)).lower()
+                           != "false")
         elif uses.startswith("actions/download-artifact@"):
-            path = _norm(with_.get("path"))
-            trees = [t for t in trees if t[0] != path]
-            trees.append((path, False))
+            trees = _place(trees, _norm(with_.get("path")), False)
         elif step.get("run") and EXTRACT_RE.search(str(step["run"])):
-            m = DEST_RE.search(str(step["run"]))
-            path = _norm(m.group(1)) if m else "."
-            trees = [t for t in trees if t[0] != path]
-            trees.append((path, False))
+            trees = _place(trees, _extract_dest(step), False)
         elif uses.startswith("./"):
             ref_path = _norm(uses[2:] if uses != "./" else ".")
             best = None
@@ -142,6 +183,12 @@ def analyse_job(job, published):
                     best = (path, trusted)
             if best is not None and not best[1]:
                 exposed.append((label, uses, best[0]))
+            elif published and best is None and (
+                    ref_path == ".github/actions"
+                    or ref_path.startswith(".github/actions/")):
+                # A published stage's workspace is the consumer's: a raw
+                # ./.github/actions reference never resolves to pipeline code.
+                exposed.append((label, uses, "."))
     return exposed
 
 
@@ -149,20 +196,31 @@ def scan(root):
     """-> [(file, job, step, uses, tree)] over every workflow."""
     repo_only = load_repo_only(root)
     out = []
+    if repo_only is None:
+        # Fail closed: without the register every reusable workflow would
+        # silently be judged a published stage (or a repo-only one).
+        out.append((REPO_ONLY_PATH, ERROR_JOB, "register",
+                    "an unreadable or invalid register", "-"))
+        repo_only = set()
     for p in sorted(glob.glob(os.path.join(root, ".github", "workflows", "*.y*ml"))):
         rel = os.path.relpath(p, root).replace(os.sep, "/")
         try:
             with io.open(p, encoding="utf-8") as fh:
                 doc = yaml.safe_load(fh)
         except (OSError, yaml.YAMLError):
+            out.append((rel, ERROR_JOB, "parse", "an unparsable workflow", "-"))
             continue
         if not isinstance(doc, dict):
+            out.append((rel, ERROR_JOB, "parse", "a workflow that is not a "
+                        "mapping", "-"))
             continue
         published = _is_published_stage(os.path.basename(p), doc, repo_only)
+        pr_merge = ("pull_request" in _events(doc)
+                    and os.path.basename(p) not in PULL_REQUEST_SHA_ALLOWLIST)
         for jid, job in sorted((doc.get("jobs") or {}).items()):
             if not isinstance(job, dict):
                 continue
-            for label, uses, tree in analyse_job(job, published):
+            for label, uses, tree in analyse_job(job, published, pr_merge):
                 out.append((rel, jid, label, uses, tree))
     return out
 
@@ -320,12 +378,54 @@ def self_test():
              {"uses": "actions/checkout@v5"}, LOCAL]),
           REPO_ONLY_PATH: json.dumps({"workflows": ["a.yml"]})},
          "a.yml", False),
+        ("published stage: raw ./.github/actions with no checkout",
+         {"a.yml": _wf({"workflow_call": {}}, [LOCAL])}, "a.yml", True),
+        ("pull_request: default checkout is the merge commit",
+         {"a.yml": _wf("pull_request", [
+             {"uses": "actions/checkout@v5"}, LOCAL])}, "a.yml", True),
+        ("pull_request: github.sha checkout is the merge commit",
+         {"a.yml": _wf("pull_request", [
+             {"uses": "actions/checkout@v5",
+              "with": {"ref": "${{ github.sha }}"}}, LOCAL])}, "a.yml", True),
+        ("pull_request: default-branch checkout is trusted",
+         {"a.yml": _wf("pull_request", [
+             {"uses": "actions/checkout@v5", "with": {
+                 "ref": "${{ github.event.repository.default_branch }}"}},
+             LOCAL])}, "a.yml", False),
+        ("unzip in a scratch working-directory leaves the root trusted",
+         {"a.yml": _wf("push", [
+             {"uses": "actions/checkout@v5"},
+             {"run": "unzip x.zip", "working-directory": "scratch"},
+             LOCAL])}, "a.yml", False),
+        ("tar -C into a scratch dir leaves the root trusted",
+         {"a.yml": _wf("push", [
+             {"uses": "actions/checkout@v5"},
+             {"run": "tar -xzf x.tgz -C scratch"}, LOCAL])}, "a.yml", False),
+        ("re-checkout at `.` drops an earlier nested untrusted tree",
+         {"a.yml": _wf("push", [
+             {"uses": "actions/download-artifact@v5", "with": {"path": "art"}},
+             {"uses": "actions/checkout@v5"},
+             {"uses": "./art/.github/actions/x"}])}, "a.yml", False),
+        ("re-checkout with clean: false keeps an earlier nested tree",
+         {"a.yml": _wf({"workflow_call": {}}, [
+             {"uses": "actions/checkout@v5"}, sidecar,
+             {"uses": "actions/checkout@v5", "with": {"clean": False}},
+             {"uses": "./.wing-commander-pipeline/.github/actions/x"}])},
+         "a.yml", False),
+        ("unparsable workflow fails",
+         {"a.yml": "on: [push\njobs: {"}, "a.yml", True),
+        ("missing register fails",
+         {"a.yml": _wf("push", [{"uses": "actions/checkout@v5"}, LOCAL]),
+          REPO_ONLY_PATH: None}, "a.yml", True),
     ]
     bad = _real_tree_mutations()
     for name, files, wf, want_exposed in cases:
         d = tempfile.mkdtemp(prefix="untrusted-selftest-")
+        files = dict({REPO_ONLY_PATH: json.dumps({"workflows": []})}, **files)
         try:
             for rel, text in files.items():
+                if text is None:
+                    continue
                 path = os.path.join(d, rel if rel == REPO_ONLY_PATH
                                     else ".github/workflows/" + rel)
                 os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -355,6 +455,10 @@ def main(argv=None):
         return self_test()
     found = scan(args.root)
     for f, job, step, uses, tree in found:
+        if job == ERROR_JOB:
+            print("{0}{1}: cannot judge `./` references: {2}.".format(
+                "" if args.audit else "::error::", f, uses))
+            continue
         print("{0}{1}: job `{2}` step `{3}` runs `{4}` from an untrusted "
               "tree at `{5}`.".format("" if args.audit else "::error::",
                                        f, job, step, uses, tree))

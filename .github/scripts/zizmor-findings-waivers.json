@@ -66,7 +66,7 @@
     {
       "file": ".github/actions/_shared/scoped-app-token/action.yml",
       "audit": "github-app",
-      "location": "workflow",
+      "location": "step:mint",
       "reason": "The token is minted with owner and repositories set, so it reaches one named repository only. Its permissions are the App installation's configured set; the callers need different subsets, so narrowing them here is a separate change.",
       "control": "repository-scoped-token",
       "issue": "#889",
@@ -75,7 +75,7 @@
     {
       "file": ".github/actions/wing-commander-context/action.yml",
       "audit": "github-app",
-      "location": "workflow",
+      "location": "step:app-token",
       "reason": "The token is minted for the running repository only. Its permissions are the App installation's configured set, which the published stages document as the App's required permissions; narrowing them per stage is a separate change.",
       "control": "repository-scoped-token",
       "issue": "#889",
@@ -93,7 +93,7 @@
     {
       "file": ".github/actions/wing-commander-context/action.yml",
       "audit": "github-env",
-      "location": "workflow",
+      "location": "step:Relay bot token to the job environment",
       "reason": "Writes WC_BOT_TOKEN, the token minted in the step before, to GITHUB_ENV. The value comes from the App token action, not from event or user input.",
       "control": "fixed-value",
       "issue": "#889",
@@ -102,7 +102,7 @@
     {
       "file": ".github/actions/wing-commander-install-actionlint/action.yml",
       "audit": "github-env",
-      "location": "workflow",
+      "location": "step:Install actionlint",
       "reason": "Appends the fixed directory $RUNNER_TEMP/bin to GITHUB_PATH after installing actionlint there. No event or user input reaches the value.",
       "control": "fixed-value",
       "issue": "#889",
@@ -111,7 +111,7 @@
     {
       "file": ".github/actions/wing-commander-chain-stop-notice/action.yml",
       "audit": "artipacked",
-      "location": "workflow",
+      "location": "step:checkout",
       "reason": "The spec-branch checkout keeps its credential because a later step in the same composite commits and pushes spec-meta.json to that branch.",
       "control": "push-needs-credential",
       "issue": "#889",

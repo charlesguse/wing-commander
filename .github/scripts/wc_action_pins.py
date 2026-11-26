@@ -95,6 +95,9 @@ def find_pins(root="."):
     return out
 
 
+PIN_RE_SHORT = re.compile(r"^v?[0-9]+(?:\.[0-9]+)?$")
+
+
 def _version(tag):
     m = RELEASE_TAG_RE.match(tag)
     return tuple(int(x) for x in m.groups()) if m else None
@@ -158,6 +161,11 @@ def plan(root=".", tags_of=remote_tags):
             continue
         new_tag, new_sha = newest
         cur = _version(tag)
+        if cur is None and PIN_RE_SHORT.match(tag):
+            # A comment like `# v4` or `# v10.0` names no exact release, so
+            # the pinned commit may be newer than the newest tag we see:
+            # never rewrite it (that could move the pin to an older commit).
+            continue
         if new_sha == sha or (cur is not None and _version(new_tag) <= cur):
             continue
         bumps.append({"action": action, "old_sha": sha, "old_tag": tag,
@@ -461,6 +469,20 @@ def self_test_cases(root="."):
               plan(d, lambda repo: {"v1.0.0": SHA_A, "v2.0.0": SHA_B}) == [])
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+    # A short version comment (`# v4`, `# v10.0`) names no exact release, so
+    # the pin may be newer than the newest tag: it is never rewritten.
+    for short in ("v4", "v1.0"):
+        d = tempfile.mkdtemp(prefix="wc-action-pins-")
+        try:
+            os.makedirs(os.path.join(d, ".github", "workflows"))
+            _write(os.path.join(d, ".github", "workflows", "w.yml"),
+                   "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n"
+                   "    steps:\n      - uses: o/r@{0} # {1}\n".format(SHA_A, short))
+            check("a pin commented `# {0}` is never bumped".format(short),
+                  plan(d, lambda repo: {"v1.0.0": SHA_B, "v1.9.0": SHA_B}) == [])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
     return out
 
 
