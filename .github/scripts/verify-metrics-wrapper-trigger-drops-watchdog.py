@@ -668,12 +668,14 @@ def suite(subject):
                      f"the shipped one {subject['workflows']}")
 
     for path, line, n in subject["count-claims"]:
+        # Two independent checks, the stale one on ints only, so the
+        # hyphenated-word mutation trips only the first (see the docstring).
         if isinstance(n, str):
             broke.append(f"{path}:{line} states the completion path's "
                          f"workflow count as {n!r}, which is not a count "
                          f"this gate can read -- write "
                          f"{len(subject['workflows'])} in digits")
-        elif n != len(subject["workflows"]):
+        if isinstance(n, int) and n != len(subject["workflows"]):
             broke.append(f"{path}:{line} says the completion path covers {n} "
                          f"workflow(s); {WRAPPER} ships "
                          f"{len(subject['workflows'])} -- stale prose about "
