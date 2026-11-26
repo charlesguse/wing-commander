@@ -76,9 +76,16 @@ def check_body(mode, identifier, body, data):
             open_fence = None
     if open_fence is not None:
         problems.append("a fence is never closed")
+    outside = _outside_fences(body)
     for text in _texts(data):
-        if "<script" in text and "<script" in _outside_fences(body):
-            problems.append("user HTML escaped its fence")
+        # Every HTML tag in a user text must stay inside a fence; the
+        # renderer's own <details>/<summary> wrapper is not user text.
+        leaked = [tag for tag in re.findall(r"<[A-Za-z/!][^>\n]*>", text)
+                  if not re.match(r"</?(details|summary)\b", tag, re.I)
+                  and tag in outside]
+        if leaked:
+            problems.append("user HTML escaped its fence: {0}".format(leaked[0]))
+            break
     return problems
 
 

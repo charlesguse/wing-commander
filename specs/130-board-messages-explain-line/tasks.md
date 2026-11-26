@@ -194,7 +194,7 @@ MVP = Phases 1–3 (US1), since every later message depends on the explanation. 
 
 ## Review Gate Round 3 Findings
 
-- [ ] Review finding: Review comment can say 'Nothing open.' above a list of in-scope findings
+- [x] Review finding: Review comment can say 'Nothing open.' above a list of in-scope findings
 
   The Compose step only fills Open when the agent's `open` is empty and calls render_review with [], so a non-empty kept_count can sit under 'Nothing open.'; the ticked Round 2 fix is not in the diff.
 
@@ -202,7 +202,7 @@ MVP = Phases 1–3 (US1), since every later message depends on the explanation. 
 
   Detail: Always set or append the finding line to open when kept_count is non-zero, or pass the real findings to render_review, and add a fixture.
 
-- [ ] Review finding: Options hold fails open when bot_login is empty
+- [x] Review finding: Options hold fails open when bot_login is empty
 
   options_comment_owed skips all comments when bot_login is falsy, and evaluate() defaults BOT_LOGIN to '' (or the bogus '[bot]'), so readiness reports ready with the options comment still owed.
 
@@ -210,7 +210,7 @@ MVP = Phases 1–3 (US1), since every later message depends on the explanation. 
 
   Detail: Treat an empty or bogus bot_login as unreadable when pr_comments is a list, and require a login in evaluate().
 
-- [ ] Review finding: tick_record posted as a separate comment, contrary to research.md D6
+- [x] Review finding: tick_record posted as a separate comment, contrary to research.md D6
 
   Every tick-fixed posts a separate comment on the backlog issue, but D6 chose a suffix on the line itself, so FR-017 is not met as designed.
 
@@ -218,7 +218,7 @@ MVP = Phases 1–3 (US1), since every later message depends on the explanation. 
 
   Detail: Carry the record and a link to the explaining comment in the line's tick annotation, or update the design decision.
 
-- [ ] Review finding: pr_title fallback for what_this_pr_does is closing-keyword-checked
+- [x] Review finding: pr_title fallback for what_this_pr_does is closing-keyword-checked
 
   A title like 'Fix #1202: ...' used as the fallback makes render_summary refuse it, so the PR opens with no summary and only a warning.
 
@@ -226,7 +226,7 @@ MVP = Phases 1–3 (US1), since every later message depends on the explanation. 
 
   Detail: Exempt the title fallback from the closing-keyword check, or build the summary without the title.
 
-- [ ] Review finding: Gate 176 block inserted between Gate 165 blocks, out of order
+- [x] Review finding: Gate 176 block inserted between Gate 165 blocks, out of order
 
   The new Gate 176 block sits between Gate 165 blocks although the Round 1 task said to place it in order; gates byte-compare workflow comments.
 
@@ -234,7 +234,7 @@ MVP = Phases 1–3 (US1), since every later message depends on the explanation. 
 
   Detail: Move the block to its numeric position.
 
-- [ ] Review finding: Injection check in check_body only tests the literal '<script'
+- [x] Review finding: Injection check in check_body only tests the literal '<script'
 
   The loop over text parts never uses its loop variable and tests the string '<script' against the whole body, so other leaked HTML outside the fence passes the gate.
 

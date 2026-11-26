@@ -105,7 +105,7 @@ EXPECTED_CASES = {
     # loop's own comments count, and unreadable comments fail closed.
     "options-owed-missing-durable", "options-owed-posted-ready",
     "options-not-owed-ready", "options-owed-other-author-durable",
-    "options-comments-unreadable",
+    "options-comments-unreadable", "options-bot-login-empty-unreadable",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"

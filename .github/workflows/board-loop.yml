@@ -4736,6 +4736,7 @@ jobs:
           python3 -I - <<'PYEOF'
           import json
           import os
+          import re
           import sys
 
           sys.path.insert(0, os.path.join(os.environ["RUNNER_TEMP"], "wc-pristine", "scripts"))
@@ -4784,9 +4785,14 @@ jobs:
               # The Open part is the real kept findings, never "not
               # provided" above a findings list.
               kept_count = len([f for f in findings if isinstance(f, dict) and f.get("in_scope") is True])
-              if kept_count and not report_parts.get("open"):
+              if kept_count:
                   report_parts = dict(report_parts)
-                  report_parts["open"] = "{0} in-scope finding(s) open; listed below.".format(kept_count)
+                  count_line = "{0} in-scope finding(s) open; listed below.".format(kept_count)
+                  agent_open = report_parts.get("open")
+                  if (isinstance(agent_open, str) and agent_open.strip()
+                          and not re.match(r"\s*(nothing|none|no )", agent_open, re.I)):
+                      count_line = agent_open.strip() + "\n" + count_line
+                  report_parts["open"] = count_line
               try:
                   lines.append(render_review(report_parts, identifier, []))
               except Refusal:

@@ -298,6 +298,11 @@ def _options_state(pr_comments, bot_login):
         return "clear"
     if not isinstance(pr_comments, list):
         return "unreadable"
+    # Without a real login every comment would be skipped and the check
+    # would fail open, so an empty or bare "[bot]" login is unreadable.
+    if (not isinstance(bot_login, str)
+            or not bot_login.replace("[bot]", "").strip()):
+        return "unreadable"
     from wc_message_parts import options_comment_owed
     return "owed" if options_comment_owed(pr_comments, bot_login) else "clear"
 

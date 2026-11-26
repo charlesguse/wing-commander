@@ -227,9 +227,12 @@ def render_incomplete_review(identifier):
     return "\n".join(lines)
 
 
-def render_summary(issue, pr, identifier, first_comment=""):
+def render_summary(issue, pr, identifier, first_comment="", pr_is_title=False):
+    """`pr_is_title`: `pr` is the PR's own title standing in for an unfilled
+    part. The workflow checks the title for closing keywords separately, and
+    the title is already on the PR, so it is exempt here."""
     _check_identifier(identifier)
-    for text in (issue, pr):
+    for text in ((issue,) if pr_is_title else (issue, pr)):
         match = CLOSING_RE.search(text if isinstance(text, str) else "")
         if match:
             raise Refusal("closing keyword in summary: {0!r}".format(
@@ -408,11 +411,17 @@ def main(argv=None):
         elif "parts" in data:
             # board-loop.yml's "Open the PR": the fixer's parts, with the
             # PR title standing in for an unfilled What this PR does.
+            agent_filled = normalize_part(
+                (data.get("parts") or {}).get("what_this_pr_does")
+                if isinstance(data.get("parts"), dict) else None)[0] == "filled"
             parts = explanation_parts(data.get("parts"), "",
                                       data.get("pr_title", ""))
             body = render_summary(parts.get("issue"),
                                   parts.get("what_this_pr_does"),
-                                  args.identifier)
+                                  args.identifier,
+                                  pr_is_title=(not agent_filled and
+                                               parts.get("what_this_pr_does")
+                                               == data.get("pr_title")))
         else:
             body = render_summary(data.get("issue"), data.get("pr"),
                                   args.identifier,

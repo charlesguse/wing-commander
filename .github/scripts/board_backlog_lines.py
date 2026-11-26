@@ -158,14 +158,6 @@ def tick(body, line_id, annotation_state, detail=""):
     return _replace(body, line["index"], _rewrite(line, "x", token))
 
 
-def tick_record(line_id, pr):
-    """The one-line decision record posted when a line is ticked (specs/130
-    FR-017): it names the line and links the PR. It does not promise where the
-    explanation is: the Explain step can be skipped with a warning."""
-    return ("Backlog line `{0}` ticked as fixed by #{1}; see that PR's comments "
-            "for the explanation, when the loop posted one.".format(line_id, int(pr)))
-
-
 def clear_note(body, line_id):
     """Removes the line's annotation (releasing a hold). None when the line
     is missing, duplicated, ticked or not held (it never clears a claim)."""
@@ -890,12 +882,6 @@ def main():
                               fetch=bbe.gh_fetch, write=bbe.gh_write)
             if not request.get("quiet"):
                 bbe.report(request["issue"], op, request["line_id"], result)
-            if op == "tick-fixed" and result == "applied" and request.get("pr"):
-                try:
-                    bbe.gh_comment(request["issue"], tick_record(request["line_id"], request["pr"]))
-                except RuntimeError as exc:
-                    print("::warning::board_backlog_lines: tick record not posted: {0}".format(exc),
-                          file=sys.stderr)
         else:
             raise ValueError("unknown op {0!r}".format(op))
     except (ValueError, KeyError) as exc:
