@@ -25,8 +25,15 @@ generic fail-timeout (specs/070 FR-007).
 
 This harness EXECUTES the shipped poll step (wc_shell_harness.run_step)
 against a `gh` stub that serves one gate PR as mergeable and a sequence of
-issue labels, with `sleep` stubbed out, and records every merge. Each
-MUTATION reverts one rule and asserts the suite then fails.
+issue labels, and records every merge. Each MUTATION reverts one rule and
+asserts the suite then fails.
+
+The step runs on a virtual clock: VIRTUAL_CLOCK, prepended to the script,
+defines `sleep` as a shell function that advances bash's `$SECONDS` by its
+argument instead of waiting, so every budget and allowance below counts
+the poll's own sleeps, not wall time. A no-op `sleep` on PATH used to leave
+the 2-second wall-clock budget racing the machine's load, and the suite
+failed under `run-local-gates.py --jobs 6` while passing alone (#963).
 
 Usage: python3 .github/scripts/verify-auto-release-gate-waits-for-stage.py
 Requires: bash, jq.
@@ -51,7 +58,7 @@ BASE_ENV = {
     "GH_TOKEN": "dummy-gh-token", "HARNESS_TOKEN": "dummy-harness-token",
     "HARNESS_LOGIN": "machine-acct", "E2E_REPO": REPO, "DEFAULT_BRANCH": "main",
     "ISSUE": "42", "ISSUE_URL": "https://github.com/{0}/issues/42".format(REPO),
-    "HEAD_SHA": "a" * 40, "POLL_BUDGET_SECONDS": "2",
+    "HEAD_SHA": "a" * 40, "POLL_BUDGET_SECONDS": "300",
     "GATE_BLOCKED_ALLOWANCE_SECONDS": "1200", "MAX_CLARIFICATION_ROUNDS": "3",
     "MODE": "default-runner",
 }
@@ -92,6 +99,15 @@ case "$*" in
 esac
 '''
 
+# Prepended to the step (see the module docstring). Assigning `SECONDS`
+# makes later reads return the seconds since the assignment plus the value
+# assigned, so each `sleep N` moves the poll's clock N seconds forward. The
+# poll sleeps 30s per pass, so POLL_BUDGET_SECONDS=300 is ten passes; the
+# real seconds the passes take still count, so one pass of slack is
+# allowed, never the hundreds a wall-clock budget gives.
+VIRTUAL_CLOCK = 'sleep() { SECONDS=$((SECONDS + $1)); }\n'
+PASS_SECONDS = 30
+
 BASH = None
 failures = []
 
@@ -116,7 +132,7 @@ def run(script, gate, label_seq, **env_over):
         for name in SHARED:
             shutil.copyfile(os.path.join(".github", "actions", "_shared", name),
                             os.path.join(shared, name))
-        for name, body in (("gh", STUB_GH), ("sleep", "#!/usr/bin/env bash\nexit 0\n")):
+        for name, body in (("gh", STUB_GH),):
             path = os.path.join(bindir, name)
             with open(path, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(body)
@@ -132,7 +148,7 @@ def run(script, gate, label_seq, **env_over):
                     "STUB_COUNTER": counter})
         env.update(env_over)
         env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
-        rc, out, outputs, _ = run_step(BASH, script, workdir, env, runner_temp)
+        rc, out, outputs, _ = run_step(BASH, VIRTUAL_CLOCK + script, workdir, env, runner_temp)
         try:
             verdict = json.loads(outputs.get("verdict", ""))
         except ValueError:
@@ -173,9 +189,14 @@ def cases(script, ck):
        rc == 0 and merges == 0 and views > 1, "rc={0} merges={1} views={2}\n{3}".format(rc, merges, views, out))
     ck("... and a poll budget that runs out mid-wait is the generic timeout (specs/070 FR-007)",
        v.get("outcome") == "fail-timeout", "verdict={0}".format(v))
+    budget_passes = int(BASE_ENV["POLL_BUDGET_SECONDS"]) // PASS_SECONDS
+    ck("the poll's budget is counted in its own sleeps, not wall time, so load cannot "
+       "shorten it (#963): one issue view per {0}s pass".format(PASS_SECONDS),
+       budget_passes - 1 <= views <= budget_passes,
+       "views={0}, want {1}".format(views, budget_passes))
 
     rc, out, v, merges, views = run(script, "plan/", ["stage:spec"],
-                                    GATE_BLOCKED_ALLOWANCE_SECONDS="0", POLL_BUDGET_SECONDS="3")
+                                    GATE_BLOCKED_ALLOWANCE_SECONDS="0", POLL_BUDGET_SECONDS="90")
     ck("a plan stage that never writes stage:plan is a pipeline defect, not a gate stall (specs/055 US3.4)",
        rc == 0 and merges == 0 and v.get("outcome") == "fail-wrong-output"
        and v.get("failing_check") == "the plan stage reports its PR (stage:plan)"
@@ -192,7 +213,7 @@ def cases(script, ck):
        rc == 0 and merges == 0 and v.get("outcome") == "fail-timeout",
        "rc={0} merges={1} verdict={2}\n{3}".format(rc, merges, v, out))
     rc, out, v, merges, views = run(script, "spec/", ["stage:implement"],
-                                    GATE_BLOCKED_ALLOWANCE_SECONDS="0", POLL_BUDGET_SECONDS="3")
+                                    GATE_BLOCKED_ALLOWANCE_SECONDS="0", POLL_BUDGET_SECONDS="90")
     ck("... and a finalize stage that never writes stage:review is named as that stage's defect",
        merges == 0 and v.get("outcome") == "fail-wrong-output"
        and v.get("failing_check") == "the finalize stage reports its PR (stage:review)",

@@ -211,6 +211,13 @@ runs:
         # standalone-mode caller (implement-workflow empty) still needs to
         # tell its reply which iteration a manual dispatch should use.
         recorded="$(git show "$tip:$SPEC_DIR/spec-meta.json" | jq -r '.iteration // 0')"
+        # Shell arithmetic evaluates a crafted string (`a[$(cmd)]`) as code,
+        # so anything but a plain non-negative integer is refused first, as
+        # implement.yml's "Verify spec artifacts match the dispatch" does.
+        if ! [[ "$recorded" =~ ^[0-9]+$ ]]; then
+          echo "::error::wing-commander-fold-dispatch: $SPEC_DIR/spec-meta.json on the spec branch's tip records a non-integer iteration -- refusing to compute the next iteration."
+          exit 1
+        fi
         next=$((recorded + 1))
         echo "new-iteration=$next" >> "$GITHUB_OUTPUT"
 

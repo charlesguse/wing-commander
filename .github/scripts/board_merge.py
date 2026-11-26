@@ -310,8 +310,16 @@ def verification_run_confirms(record, run, head_sha):
         return False
     if run.get("status") != "completed" or run.get("conclusion") != "success":
         return False
-    called = [str(path).split("@", 1)[0] for path in run.get("referenced_workflows") or []]
-    if "{0}/{1}".format(run["repository"], AUTO_UPDATE_STAGE_PATH) not in called:
+    # The stage call itself must also resolve to main (#889, found by the
+    # code review of #1084): the Actions API's `ref` on the
+    # referenced_workflows entry is the ref the call resolved to
+    # (refs/heads/<branch> for a dispatch on that branch), so a run whose
+    # head_branch reads main but whose stage came from elsewhere is not
+    # counted. An entry without `ref` fails closed.
+    stage = "{0}/{1}".format(run["repository"], AUTO_UPDATE_STAGE_PATH)
+    if not any(isinstance(w, dict) and str(w.get("path") or "").split("@", 1)[0] == stage
+               and w.get("ref") == "refs/heads/" + BASE_BRANCH
+               for w in run.get("referenced_workflows") or []):
         return False
     return BUMP_VERIFICATION_ARTIFACT_PREFIX + head_sha in (run.get("artifacts") or [])
 
@@ -614,7 +622,8 @@ def _fetch_verification_run(repo, record, token):
             "head_branch": run.get("head_branch"),
             "repository": (run.get("repository") or {}).get("full_name"),
             "status": run.get("status"), "conclusion": run.get("conclusion"),
-            "referenced_workflows": [(w or {}).get("path") for w in run.get("referenced_workflows") or []],
+            "referenced_workflows": [{"path": (w or {}).get("path"), "ref": (w or {}).get("ref")}
+                                     for w in run.get("referenced_workflows") or []],
             "artifacts": [(a or {}).get("name") for a in artifacts]}
 
 
