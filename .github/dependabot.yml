@@ -12,7 +12,7 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     # "/" covers .github/workflows/; "**" covers every composite action
-    # directory however deeply nested (Gate 178 fails when one is not
+    # directory however deeply nested (Gate 179 fails when one is not
     # matched).
     directories:
       - "/"

@@ -3,7 +3,7 @@
   "spec_dir": "specs/132-workflow-trigger-security",
   "feature_num": "132",
   "stage": "implement",
-  "iteration": 7,
+  "iteration": 8,
   "spec_branch": "spec/132-workflow-trigger-security",
   "truncated_count": 0,
   "truncated_tier": null,

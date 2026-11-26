@@ -45,13 +45,13 @@ every job in the file is scanned the same way.
     `review`, which pre-dates and coexists with (a)-(f)'s composite-only
     copy).
 
-Why (a)-(f) stay here rather than in Gate 177
-(verify-untrusted-checkout-local-uses.py, specs/132 FR-016a): Gate 177 is
+Why (a)-(f) stay here rather than in Gate 178
+(verify-untrusted-checkout-local-uses.py, specs/132 FR-016a): Gate 178 is
 the one home of the general rule that no `./` reference resolves inside an
 untrusted tree, judged by repository and ref. These rules pin this file's
 own canonical trusted-copy steps (their names, `github.sha`, their order
 before the context and agent steps, the write-protect step, .gitignore),
-which Gate 177 does not model; no rule logic is shared between the two.
+which Gate 178 does not model; no rule logic is shared between the two.
 
 Usage: python3 .github/scripts/verify-lifecycle-review-gate-composite-provenance.py [--self-test]
 """

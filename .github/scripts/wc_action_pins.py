@@ -336,7 +336,7 @@ def self_test_cases(root="."):
         out.append((label, bool(ok), detail))
 
     # SC-010: rewrite one real pin to another SHA and comment, with its
-    # register rows, on a copy of the shipped tree; Gate 170 (and Gate 178
+    # register rows, on a copy of the shipped tree; Gate 170 (and Gate 179
     # when the pinned analyser is installed) must still pass.
     pins = find_pins(root)
     if not pins:
@@ -374,7 +374,7 @@ def self_test_cases(root="."):
         if zz is not None and shutil.which("zizmor"):
             got = [g for g in zz.evaluate(d) if "unpinned-uses" in g
                    or "stale record" in g]
-            check("the bumped tree passes Gate 178's pin policy", not got,
+            check("the bumped tree passes Gate 179's pin policy", not got,
                   "; ".join(got))
     finally:
         shutil.rmtree(d, ignore_errors=True)

@@ -26,9 +26,9 @@ on:
       # both the check-prerequisites.sh/plan.md defect and the drifted
       # collector fixture got in.
       - ".github/scripts/**"
-      # Gate 178 (verify-zizmor.py) reads the analyser configuration.
+      # Gate 179 (verify-zizmor.py) reads the analyser configuration.
       - ".github/zizmor.yml"
-      # Gate 178 also checks that Dependabot's directories cover every
+      # Gate 179 also checks that Dependabot's directories cover every
       # composite action.
       - ".github/dependabot.yml"
       - ".specify/scripts/**"
@@ -4148,7 +4148,7 @@ jobs:
       # the default branch before this branch's second rebase landed).
       # The rule for every other workflow (no `./` reference resolves inside
       # a consumer's or an untrusted root checkout), once this gate's rule
-      # (g), lives in Gate 177 (specs/132 FR-016a).
+      # (g), lives in Gate 178 (specs/132 FR-016a).
       - name: "Gate 104 — every uses: ./.github/actions/ reference in board-loop.yml resolves from the trusted copy, never the workspace"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-board-loop-composite-provenance.py
@@ -5059,20 +5059,20 @@ jobs:
       - name: Gate 170 self-test — an unwaived node20 pin, a pin with no row, a stale row, stale waivers and malformed registers each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-action-runtime-pins.py --self-test
-      # Gate 178 — specs/132 FR-001/FR-005: the zizmor static analyser,
+      # Gate 179 — specs/132 FR-001/FR-005: the zizmor static analyser,
       # pinned in .github/scripts/zizmor-pin.txt, finds nothing that
       # .github/scripts/zizmor-findings-waivers.json does not record. This
       # step installs that version and verifies the release checksum from
       # the pin file before extracting it; on any failure the gate step
       # below still runs and fails with "analyser missing", never a pass.
-      - name: Install the pinned zizmor for Gate 178 (checksum-verified)
+      - name: Install the pinned zizmor for Gate 179 (checksum-verified)
         if: "!cancelled()"
         run: |
           set -euo pipefail
           version="$(sed -n 's/^version=//p' .github/scripts/zizmor-pin.txt)"
           sha256="$(sed -n 's/^sha256=//p' .github/scripts/zizmor-pin.txt)"
           if [ -z "$version" ] || [ -z "$sha256" ]; then
-            echo "::error::Gate 178: .github/scripts/zizmor-pin.txt needs version= and sha256= lines."
+            echo "::error::Gate 179: .github/scripts/zizmor-pin.txt needs version= and sha256= lines."
             exit 1
           fi
           archive="$RUNNER_TEMP/zizmor.tar.gz"
@@ -5082,26 +5082,26 @@ jobs:
           mkdir -p "$RUNNER_TEMP/zizmor-bin"
           tar -xzf "$archive" -C "$RUNNER_TEMP/zizmor-bin" zizmor
           echo "$RUNNER_TEMP/zizmor-bin" >> "$GITHUB_PATH"
-      - name: Gate 178 — the pinned zizmor finds nothing the accepted-findings register does not record
+      - name: Gate 179 — the pinned zizmor finds nothing the accepted-findings register does not record
         if: "!cancelled()"
         run: python3 .github/scripts/verify-zizmor.py
-      - name: Gate 178 self-test — an unwaived finding, a stale or duplicate record, a missing or wrong analyser, an empty file set, unparsable output, a removed self-repository reason, a second trusted-publisher list and a differing policy each fail
+      - name: Gate 179 self-test — an unwaived finding, a stale or duplicate record, a missing or wrong analyser, an empty file set, unparsable output, a removed self-repository reason, a second trusted-publisher list and a differing policy each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-zizmor.py --self-test
-      # Gate 177 — specs/132 FR-016a: no `uses: ./` reference resolves inside
+      # Gate 178 — specs/132 FR-016a: no `uses: ./` reference resolves inside
       # a tree an untrusted pull request or artifact could have written.
-      - name: Gate 177 — no local uses reference resolves from an untrusted checkout
+      - name: Gate 178 — no local uses reference resolves from an untrusted checkout
         if: "!cancelled()"
         run: python3 .github/scripts/verify-untrusted-checkout-local-uses.py
-      - name: Gate 177 self-test — an exposed job, an artifact-extracted tree, a safe job, an unlisted workflow_call and three shipped-workflow mutations each get the right verdict
+      - name: Gate 178 self-test — an exposed job, an artifact-extracted tree, a safe job, an unlisted workflow_call and three shipped-workflow mutations each get the right verdict
         if: "!cancelled()"
         run: python3 .github/scripts/verify-untrusted-checkout-local-uses.py --self-test
-      # Gate 176 — specs/132 FR-020: every event a wing-commander-*.yml
+      # Gate 177 — specs/132 FR-020: every event a wing-commander-*.yml
       # wrapper listens on appears in docs/adoption.md's wc-event-policy block.
-      - name: Gate 176 — every wrapper event is in the adopter event policy
+      - name: Gate 177 — every wrapper event is in the adopter event policy
         if: "!cancelled()"
         run: python3 .github/scripts/verify-adopter-event-policy.py
-      - name: Gate 176 self-test — a wrapper event missing from the policy fails
+      - name: Gate 177 self-test — a wrapper event missing from the policy fails
         if: "!cancelled()"
         run: python3 .github/scripts/verify-adopter-event-policy.py --self-test
       # Gate 172 — this workflow's own concurrency: block. A newer push to a

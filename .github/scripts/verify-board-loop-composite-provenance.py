@@ -82,14 +82,14 @@ Today that is prove-gate and prove.
 
 The cross-workflow rule this gate once carried as rule (g) -- no
 `./` reference in any other workflow resolves inside a consumer's or an
-untrusted root checkout -- has one home now, Gate 177
+untrusted root checkout -- has one home now, Gate 178
 (verify-untrusted-checkout-local-uses.py, specs/132 FR-016a), which judges
 every workflow by the repository and ref each tree was checked out from.
 Its three mutations (pr-conversation.yml's act job, shared-pr-reviewer.yml's
 find job, the watchdog's metrics-branch checkout) moved with it. Rules
 (a)-(f) stay here: they pin board-loop.yml's own canonical trusted-copy
 steps (name, ref, order before the context and agent steps, write-protect,
-.gitignore), which Gate 177 does not model.
+.gitignore), which Gate 178 does not model.
 
 Gate 98's own `run:`-block checks (helper-script/schema provenance, the
 `python3 -I` allowlist) are untouched and out of this gate's scope; this

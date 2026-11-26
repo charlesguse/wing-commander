@@ -48,13 +48,17 @@ import yaml
 PIN_PATH = ".github/scripts/zizmor-pin.txt"
 CONFIG_PATH = ".github/zizmor.yml"
 REGISTER_PATH = ".github/scripts/zizmor-findings-waivers.json"
-TRUSTED_PATTERNS = ("actions/*", "github/*", "anthropics/*")
+# The owner-approved publisher names (spec 132 Q1). The patterns themselves
+# live only in CONFIG_PATH; this is the closed set of names a policy key may
+# use, so adding a publisher there is an owner decision this gate refuses.
+APPROVED_PUBLISHERS = frozenset(("actions", "github", "anthropics"))
+IGNORE_COMMENT_RE = re.compile(r"#\s*zizmor\s*:\s*ignore", re.IGNORECASE)
 LOCATION_RE = re.compile(r"^(workflow|step:.+|job:[^/]+(/step:.+)?)$")
 REQUIRED_FIELDS = ("file", "audit", "location", "reason", "control", "issue")
 # The only home of the trusted-publisher policy is CONFIG_PATH; these are
 # the places a second copy would plausibly appear.
 HOME_SCAN_GLOBS = (".github/**/*.yml", ".github/**/*.yaml", ".github/**/*.json",
-                   ".github/**/*.txt")
+                   ".github/**/*.txt", ".github/scripts/*.py")
 
 
 def _read(root, rel):
@@ -293,12 +297,48 @@ def check_config(root):
         failures.append("{0}: `rules.unpinned-uses.config.policies` is "
                         "missing.".format(CONFIG_PATH))
     else:
-        for pat in TRUSTED_PATTERNS:
-            if pol.get(pat) != "ref-pin":
+        # The trusted list is read from its one home; each key must be an
+        # approved publisher's `<name>/*` or the `*` catch-all.
+        trusted = set()
+        for pat, mode in pol.items():
+            m = re.match(r"^([^/*]+)/\*$", str(pat))
+            if str(pat) == "*":
+                continue
+            if not m or m.group(1) not in APPROVED_PUBLISHERS:
+                failures.append("{0}: policy key `{1}` is outside the "
+                                "owner-approved trusted publishers."
+                                .format(CONFIG_PATH, pat))
+            elif mode != "ref-pin":
                 failures.append("{0}: policy `{1}` must be `ref-pin` (trusted "
                                 "publisher).".format(CONFIG_PATH, pat))
+            else:
+                trusted.add(m.group(1))
+        for name in sorted(APPROVED_PUBLISHERS - trusted):
+            failures.append("{0}: trusted publisher `{1}/*` is missing from "
+                            "the policies.".format(CONFIG_PATH, name))
         if pol.get("*") != "hash-pin":
             failures.append("{0}: policy `*` must be `hash-pin`.".format(CONFIG_PATH))
+    for name, rule in sorted(((cfg.get("rules") or {}).items())):
+        if name != "self-repository" and isinstance(rule, dict) \
+                and rule.get("disable"):
+            failures.append("{0}: audit `{1}` is disabled; only "
+                            "`self-repository` may be.".format(CONFIG_PATH, name))
+    return failures
+
+
+def check_inline_ignores(root, files):
+    """A `# zizmor: ignore` comment would hide a finding from the register."""
+    failures = []
+    for rel in files:
+        try:
+            text = _read(root, rel)
+        except OSError:
+            continue
+        for n, line in enumerate(text.splitlines(), 1):
+            if IGNORE_COMMENT_RE.search(line):
+                failures.append("{0}:{1}: inline `zizmor: ignore` comment; "
+                                "record the finding in {2} instead."
+                                .format(rel, n, REGISTER_PATH))
     return failures
 
 
@@ -381,6 +421,7 @@ def evaluate(root, runner=run_zizmor):
         failures.append("no workflow or composite action files were found "
                         "under .github/; refusing to pass on an empty set.")
     failures += check_config(root)
+    failures += check_inline_ignores(root, files)
     failures += check_single_home(root)
     failures += check_dependabot_coverage(root)
     entries, reg_failures = load_register(root)
@@ -411,9 +452,16 @@ def evaluate(root, runner=run_zizmor):
                         failures.append("duplicate record for {0} {1} {2}."
                                         .format(*k))
                     keys[k] = e
+                counts = {}
                 for f, audit, loc, line in findings:
                     k = (f, audit, loc)
-                    if k in keys:
+                    counts[k] = counts.get(k, 0) + 1
+                    if k in keys and counts[k] > 1:
+                        failures.append("{0}:{1} {2} ({3}): a second finding "
+                                        "under one waiver record; each "
+                                        "finding needs its own record."
+                                        .format(f, line, audit, loc))
+                    elif k in keys:
                         seen.add(k)
                     else:
                         failures.append("{0}:{1} {2} ({3}): unwaived finding."
@@ -624,6 +672,30 @@ def self_test():
          _runner(payload=[]), "matches no github-actions `directories`"),
         ("scan timeout is analyser missing", {},
          _runner(version=None), "analyser missing"),
+        ("two findings under one record",
+         {REGISTER_PATH: json.dumps({"waivers": [_entry(
+             audit="dangerous-triggers", location="workflow")]})},
+         _runner(payload=[
+             _finding(".github/workflows/a.yml", "dangerous-triggers",
+                      [{"Key": "on"}]),
+             _finding(".github/workflows/a.yml", "dangerous-triggers",
+                      [{"Key": "on"}], row=4)]),
+         "a second finding under one waiver record"),
+        ("inline zizmor ignore",
+         {".github/workflows/a.yml": WF.replace(
+             "echo hi", "echo hi  # zizmor: ignore[template-injection]")},
+         _runner(payload=[]), "inline `zizmor: ignore`"),
+        ("another audit disabled",
+         {CONFIG_PATH: CFG + "  template-injection:\n    disable: true\n"},
+         _runner(payload=[]), "audit `template-injection` is disabled"),
+        ("policy for an unapproved publisher",
+         {CONFIG_PATH: CFG.replace('        "*": hash-pin',
+                                   '        "docker/*": ref-pin\n'
+                                   '        "*": hash-pin')},
+         _runner(payload=[]), "outside the owner-approved"),
+        ("trusted list copy in a gate script",
+         {".github/scripts/other.py": "X = {'actions/*': 'ref-pin'}\n"},
+         _runner(payload=[]), "second copy"),
         ("record without control",
          {REGISTER_PATH: json.dumps({"waivers": [
              {k: v for k, v in _entry().items() if k != "control"}]})},
