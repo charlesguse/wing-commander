@@ -93,6 +93,7 @@ on:
       # adopter forking that wrapper reads. Editing the document alone is
       # the one change that can make it disagree with the file it describes.
       - "specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md"
+      - "specs/058-per-job-minute-floor/contracts/gate-coverage-058.md"
       # Gate 79 also compares the 043 wrapper contract's published trigger
       # list against the shipped wrapper's (#889).
       - "specs/043-durable-metrics-record/contracts/wrapper-contract.md"
