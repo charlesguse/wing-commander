@@ -239,6 +239,14 @@ s['issues']['42']['comments'].append({'id':777,'user':'charlesguse','author_asso
 json.dump(s,open(os.environ['GH_STATE'],'w'))"
 export COMMENT_ID=777 BOT_LOGIN='wcbot[bot]'
 run_step 'auto-update-spec-kit__comment-reply__*stage-the-reply*.sh' >/dev/null 2>&1
+# The posted question's last line, as GitHub stores it: the record, whose
+# payload must hold no "-", "<" or ">" so it cannot end its HTML comment.
+REC_PAYLOAD="$("$PY" -c 'import json,os,re
+c = json.load(open(os.environ["GH_STATE"]))["issues"]["42"]["comments"][0]["body"]
+m = re.match(r"^> <!-- wing-commander-auto-update-spec-kit-options: (.*) -->$", c.rstrip().splitlines()[-1])
+print(m.group(1) if m else "NO-RECORD")')"
+check "spec 130: the posted question's last line is its label record" "$(printf '%s' "$REC_PAYLOAD" | head -c 1)" "["
+check "spec 130: the record holds no -, < or > that could end its HTML comment" "$(printf '%s' "$REC_PAYLOAD" | tr -cd '<>-')" ""
 check "spec 130: the question's record holds exactly its labels" "$(posted_json)" '["Use `--ai` --> flag","Pin <v1.2.3>"]'
 check_contains "spec 130: the agent's context still lists the options" "$(cat "$RUNNER_TEMP/question-context.md" 2>/dev/null)" '**Pin <v1.2.3>**: '
 check_not_contains "spec 130: the agent's context leaves out the label record" "$(cat "$RUNNER_TEMP/question-context.md" 2>/dev/null)" 'wing-commander-auto-update-spec-kit-options'
