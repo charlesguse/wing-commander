@@ -69,12 +69,12 @@ on:
         required: false
         default: ""
       commenter-id:
-        description: "The commenter's numeric GitHub user id. Only meaningful when trigger == comment-reply."
+        description: "Accepted and ignored since specs/134-maintainer-only-comments: comment-reply admits a commenter by association only. Kept so existing callers do not fail."
         type: string
         required: false
         default: ""
       issue-author-id:
-        description: "The commented-on issue's author numeric GitHub user id. Only meaningful when trigger == comment-reply."
+        description: "Accepted and ignored since specs/134-maintainer-only-comments: comment-reply admits a commenter by association only. Kept so existing callers do not fail."
         type: string
         required: false
         default: ""
@@ -1428,6 +1428,12 @@ jobs:
           OPTIONS: ${{ steps.decide-outcome.outputs.options }}
         run: |
           set -uo pipefail
+          # Spec 134: the labels this question offers, recorded as JSON on the
+          # posted comment's last line; comment-reply's read-back accepts no
+          # other choice. Escaping "-", "<" and ">" keeps the record inside
+          # its HTML comment.
+          labels="$(printf '%s' "$OPTIONS" | jq -r '[.[]?.label | strings] | tojson | gsub("-"; "\\u002d") | gsub("<"; "\\u003c") | gsub(">"; "\\u003e")' 2>/dev/null)" || labels='[]'
+          [ -n "$labels" ] || labels='[]'
           {
             printf '%s\n' "$REASONING"
             echo ""
@@ -1440,6 +1446,8 @@ jobs:
             printf '%s' "$SOURCES" | jq -r '.[]? | "- [\(.title)](\(.url))"' 2>/dev/null || true
             echo ""
             echo "Reply on this issue naming the option you'd like to proceed with. No version is adopted until a maintainer answers."
+            echo ""
+            printf '<!-- wing-commander-auto-update-spec-kit-options: %s -->\n' "$labels"
           } > "$RUNNER_TEMP/ambiguous-body.md"
 
           # Append awaiting-decision=true to the settle-tracking marker so the
@@ -3481,18 +3489,19 @@ jobs:
   # trigger == comment-reply entry point: resumes an ambiguous-options
   # question from a verified maintainer's reply.
   # T024 (US4, constitution V): commenter verification is a maintainer
-  # (OWNER/MEMBER/COLLABORATOR) only. Unlike wing-commander-2-clarify.yml,
-  # the issue's own author is NOT admitted: a resumed reply re-enters
-  # prepare/verify/act for the candidate in the issue's marker, so whoever
-  # can resume can pick the upstream tag a bump PR proposes (owner
-  # decision 2026-11-25, #890). The commenter-id and issue-author-id inputs
-  # are still accepted and no longer consulted. Any other commenter fails
-  # this job-level `if:`, so the job is skipped entirely: no comment, no
-  # error surfaced, silently ignored (never react to an untrusted
-  # commenter). evaluate-path's `needs.comment-reply` gate then sees a
-  # skipped (non-success) result and does not re-enter. The guard step
-  # below adds the other half: the issue must be the App's own tracking
-  # issue, and its candidate must be newer than the pin.
+  # (OWNER/MEMBER/COLLABORATOR) only, the same trigger-side rule
+  # wing-commander-2-clarify.yml uses; since
+  # specs/134-maintainer-only-comments the issue's own author gets no
+  # exception in either. A resumed reply re-enters prepare/verify/act for
+  # the candidate in the issue's marker (owner decision 2026-11-25, #890).
+  # The commenter-id and issue-author-id inputs are still accepted and no
+  # longer consulted. Any other commenter fails this job-level `if:`, so
+  # the job is skipped entirely: no comment, no error surfaced, silently
+  # ignored (never react to an untrusted commenter). evaluate-path's
+  # `needs.comment-reply` gate then sees a skipped (non-success) result and
+  # does not re-enter. The guard step below adds the other half: the issue
+  # must be the App's own tracking issue, and its candidate must be newer
+  # than the pin.
   comment-reply:
     # if: tolerates a skipped image check without widening to run merely
     # because the workflow was not cancelled (#224) -- see clarify.yml.
@@ -3678,6 +3687,11 @@ jobs:
       # + comments, which include the option labels) are UNTRUSTED — fetched
       # from the API straight to files, never shell-interpolated into the
       # prompt, matching wing-commander-2-clarify.yml's convention.
+      # Spec 134: the context holds the issue body, this pipeline's own
+      # comments (BOT_LOGIN: the posted question and its option labels) and
+      # maintainers' comments only; posted-options.json holds the labels the
+      # newest question records, and "Read back interpretation" accepts no
+      # other.
       - name: Stage the reply and question context as data files
         id: stage
         shell: bash
@@ -3686,12 +3700,36 @@ jobs:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           COMMENT_ID: ${{ inputs.comment-id }}
+          BOT_LOGIN: ${{ steps.ctx.outputs.bot-slug }}[bot]
         run: |
           set -uo pipefail
           gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" --jq .body \
             > "$RUNNER_TEMP/reply-comment.md" 2>/dev/null || printf '' > "$RUNNER_TEMP/reply-comment.md"
-          gh issue view "$ISSUE_NUMBER" --json body,comments --jq '.body, (.comments[].body)' \
-            > "$RUNNER_TEMP/question-context.md" 2>/dev/null || printf '' > "$RUNNER_TEMP/question-context.md"
+          # A failed read stages nothing, so the reply reads as unrecognized.
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" --paginate \
+            --jq '.[] | select(.user.login == env.BOT_LOGIN or (.user.type != "Bot" and (.author_association | IN("OWNER", "MEMBER", "COLLABORATOR"))))' \
+            > "$RUNNER_TEMP/context-comments.json" 2>/dev/null || printf '' > "$RUNNER_TEMP/context-comments.json"
+          # The question's label record (below) is data for the read-back, not
+          # for the agent, so its line is left out of the agent's context.
+          {
+            gh issue view "$ISSUE_NUMBER" --json body --jq .body
+            jq -r '.body' "$RUNNER_TEMP/context-comments.json" \
+              | sed '/^> <!-- wing-commander-auto-update-spec-kit-options: /d'
+          } > "$RUNNER_TEMP/question-context.md" 2>/dev/null || printf '' > "$RUNNER_TEMP/question-context.md"
+          # The labels the newest question offers, as a JSON array: the
+          # record on the last line of this pipeline's newest "Choose an
+          # upgrade path" callout (evaluate-path's "Compose ambiguous-options
+          # question" writes it). The rendered option list is never read: its
+          # reasoning and descriptions are agent-written. A question with no
+          # record offers no label.
+          jq -s --arg title '> **Action needed: Choose an upgrade path for Spec Kit v' '
+            [ ([ .[] | select(.user.login == env.BOT_LOGIN) | .body | split("\n")
+                 | select(length > 1 and (.[1] | startswith($title))) ] | last // [])
+              | map(select(test("\\S"))) | (last // "")
+              | capture("^> <!-- wing-commander-auto-update-spec-kit-options: (?<j>.*) -->\\s*$").j
+              | fromjson | .[]? | strings ]' \
+            "$RUNNER_TEMP/context-comments.json" > "$RUNNER_TEMP/posted-options.json" 2>/dev/null \
+            || printf '[]' > "$RUNNER_TEMP/posted-options.json"
 
       # T026: claude-haiku-5-5, bounded, read-only — map the reply onto one
       # of the previously posted options, or "unrecognized". The comment body
@@ -3805,6 +3843,17 @@ jobs:
                 [ -n "$chosen" ] && recognized=true
               fi
             fi
+          fi
+          # Spec 134: only a label the newest question records counts as a
+          # choice: the whole value, on one line, equal to one entry of
+          # posted-options.json.
+          if [ "$recognized" = "true" ]; then
+            case "$chosen" in
+              *$'\n'*) recognized=false ;;
+              *) jq -e --arg c "$chosen" 'type == "array" and any(.[]; . == $c)' \
+                   "$RUNNER_TEMP/posted-options.json" >/dev/null 2>&1 || recognized=false ;;
+            esac
+            [ "$recognized" = "true" ] || chosen=""
           fi
           echo "recognized=$recognized" >> "$GITHUB_OUTPUT"
           {

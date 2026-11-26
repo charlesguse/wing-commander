@@ -5,8 +5,9 @@ correctly (#499 code review round 4).
 WHY THIS EXISTS
 ----------------
 The composite's qualification rule (a comment counts only when
-`user.type != "Bot"` AND (`author_association` is OWNER/MEMBER/
-COLLABORATOR OR the comment's author is the issue's own author, by id))
+`user.type != "Bot"` AND `author_association` is OWNER/MEMBER/
+COLLABORATOR; since spec 134 no user id is consulted, the issue's own
+author included)
 had no behavioural coverage of its own -- Gate 93 checks that nothing
 ELSE re-implements it, and Gate 27/47 check documentation agreement, but
 nothing had ever run the shipped jq programs over real comment shapes and
@@ -22,13 +23,13 @@ WHAT IT CHECKS
 Six comments: a Bot (excluded outright, never counted as excluded-human
 either), a NONE-association non-author (excluded, DOES count as
 excluded-human), the issue's own author commenting with NONE association
-(qualifies via the id clause, not the association clause), and one each
-of MEMBER/OWNER/COLLABORATOR (qualify via the association clause) --
+(excluded and counted as excluded-human since spec 134: authorship never
+qualifies), and one each of MEMBER/OWNER/COLLABORATOR (qualify) --
 submitted to the stub out of `created_at` order, so ordering in
 comments.md/context.md is a real assertion, not an accident of input
 order. Asserts: total-count, qualifying-count, excluded-human-count;
 comments.md's sections appear in oldest-to-newest order and contain
-exactly the four qualifying logins, never the excluded two; context.md
+exactly the three qualifying logins, never the excluded ones; context.md
 carries an "## Issue" section plus the same comment sections.
 
 A second fixture (only the Bot and the NONE non-author comment) asserts
@@ -52,11 +53,12 @@ must stage no occurrence at all, since other agents share the App token
 login check dropped, the sort dropped, the oldest reopen taken, the
 watchdog-issue rule dropped or either half of it) must each be caught.
 
-MUTATION: `or .user.id == $aid` dropped from all three jq programs (the
-qualifying-count filter, the excluded-human-count filter, and the
-comments.md template) -- the issue author's own NONE-association comment
-must then stop qualifying, proving this gate would catch that clause
-being silently dropped.
+MUTATION: an author-id clause (`or .user.id == <the issue author's id>`)
+added back to all three jq programs (the qualifying-count filter, the
+excluded-human-count filter, and the comments.md template) -- the issue
+author's own NONE-association comment then qualifies again, so the full
+fixture must fail, proving this gate would catch the exception returning
+(constitution 3.0.0, Principle V; specs/134-maintainer-only-comments).
 
 Usage: python3 .github/scripts/verify-issue-context-trust-filter.py
 Requires: bash, jq. See wc_shell_harness.py for running this on Windows.
@@ -123,11 +125,12 @@ ALL_COMMENTS = [
     _comment("owner1", 4000, "User", "OWNER", "2024-01-03T00:00:00Z", "owner note"),
     _comment("bot-member", 9002, "Bot", "MEMBER", "2024-01-07T00:00:00Z", "bot pretending to be a member"),
 ]
-# Oldest -> newest among the four that qualify: reporter(02), owner1(03),
-# member1(04), collab1(06). bot-member never qualifies despite its
+# Oldest -> newest among the three that qualify: owner1(03), member1(04),
+# collab1(06). The reporter (the issue's own author, NONE association)
+# never qualifies since spec 134. bot-member never qualifies despite its
 # MEMBER association, and despite sorting after everything else.
-EXPECTED_ORDER = [AUTHOR_LOGIN, "owner1", "member1", "collab1"]
-EXPECTED_EXCLUDED_LOGINS = {"some-bot", "rando", "bot-member"}
+EXPECTED_ORDER = ["owner1", "member1", "collab1"]
+EXPECTED_EXCLUDED_LOGINS = {"some-bot", "rando", "bot-member", AUTHOR_LOGIN}
 
 ZERO_QUALIFYING_COMMENTS = [
     _comment("some-bot", 9001, "Bot", "NONE", "2024-01-01T00:00:00Z", "bot noise"),
@@ -235,13 +238,13 @@ def check_full_fixture(script, label_prefix=""):
 
     if outputs.get("total-count") != "7":
         failures.append(f"{prefix}: total-count={outputs.get('total-count')!r}, expected '7'")
-    if outputs.get("qualifying-count") != "4":
-        failures.append(f"{prefix}: qualifying-count={outputs.get('qualifying-count')!r}, expected '4'")
-    if outputs.get("excluded-human-count") != "1":
-        failures.append(f"{prefix}: excluded-human-count={outputs.get('excluded-human-count')!r}, expected '1' (neither bot -- NONE-association or MEMBER-association -- may count as excluded-human)")
+    if outputs.get("qualifying-count") != "3":
+        failures.append(f"{prefix}: qualifying-count={outputs.get('qualifying-count')!r}, expected '3'")
+    if outputs.get("excluded-human-count") != "2":
+        failures.append(f"{prefix}: excluded-human-count={outputs.get('excluded-human-count')!r}, expected '2' (rando and the NONE-association issue author; neither bot -- NONE-association or MEMBER-association -- may count as excluded-human)")
 
     if not comments_md:
-        failures.append(f"{prefix}: comments.md was not written despite qualifying-count=4")
+        failures.append(f"{prefix}: comments.md was not written despite qualifying-count=3")
         return failures
 
     positions = [comments_md.find(f"@{login}") for login in EXPECTED_ORDER]
@@ -446,19 +449,20 @@ OCCURRENCE_MUTATIONS = (
 )
 
 
-# --- Mutation: drop `or .user.id == $aid` from all three jq programs. ----
+# --- Mutation: add an author-id clause back to all three jq programs. ----
 
-AUTHOR_ID_CLAUSE_RE = re.compile(r'\s*or \.user\.id == \$aid')
+ASSOCIATION_TAIL = '.author_association == "COLLABORATOR")'
 
 
-def mut_drop_author_id_clause(script):
-    new_script, n = AUTHOR_ID_CLAUSE_RE.subn("", script)
+def mut_add_author_id_clause(script):
+    new = f'.author_association == "COLLABORATOR" or .user.id == {AUTHOR_ID})'
+    n = script.count(ASSOCIATION_TAIL)
     if n < 3:
         sys.exit(f"::error::verify-issue-context-trust-filter: expected at "
-                 f"least 3 occurrences of the author-id clause in {ACTION}, "
+                 f"least 3 occurrences of {ASSOCIATION_TAIL!r} in {ACTION}, "
                  f"found {n} -- the step text may have changed shape; "
                  f"update this harness alongside it.")
-    return new_script
+    return script.replace(ASSOCIATION_TAIL, new)
 
 
 # --- Mutation: drop `select(.user.type != "Bot") | ` from ONLY the
@@ -470,12 +474,12 @@ def mut_drop_author_id_clause(script):
 COMMENTS_MD_BOT_FILTER_GOOD = (
     'select(.user.type != "Bot") | select(.author_association == "OWNER" '
     'or .author_association == "MEMBER" or .author_association == '
-    '"COLLABORATOR" or .user.id == $aid)] | sort_by(.created_at)'
+    '"COLLABORATOR")] | sort_by(.created_at)'
 )
 COMMENTS_MD_BOT_FILTER_BROKEN = (
     'select(.author_association == "OWNER" or .author_association == '
-    '"MEMBER" or .author_association == "COLLABORATOR" or .user.id == '
-    '$aid)] | sort_by(.created_at)'
+    '"MEMBER" or .author_association == "COLLABORATOR")] | '
+    'sort_by(.created_at)'
 )
 
 
@@ -510,18 +514,18 @@ def main():
     failures = check_full_fixture(script)
     failures += check_zero_qualifying_fixture(script)
 
-    mutated = mut_drop_author_id_clause(script)
-    mutated_failures = check_full_fixture(mutated, label_prefix="mutation (author-id clause dropped): ")
-    # The mutation must make the author's own NONE-association comment
-    # stop qualifying -- i.e. the full-fixture assertions above (which
-    # assume it qualifies) must now fail.
+    mutated = mut_add_author_id_clause(script)
+    mutated_failures = check_full_fixture(mutated, label_prefix="mutation (author-id clause added back): ")
+    # The mutation lets the author's own NONE-association comment qualify
+    # again -- i.e. the full-fixture assertions above (which assume it is
+    # excluded) must now fail.
     if not mutated_failures:
         failures.append(
-            "mutation (author-id clause dropped) did NOT change the full "
-            "fixture's outcome -- this gate would not catch the author-id "
-            "clause being silently dropped from the trust filter.")
+            "mutation (author-id clause added back) did NOT change the full "
+            "fixture's outcome -- this gate would not catch the issue-author "
+            "exception returning to the trust filter.")
     else:
-        print(f"note: mutation (author-id clause dropped) confirmed "
+        print(f"note: mutation (author-id clause added back) confirmed "
               f"caught: {mutated_failures}")
 
     mutated_bot = mut_drop_comments_md_bot_filter(script)
@@ -564,9 +568,8 @@ def main():
         return 1
     print("Gate 96: the trust-filter jq's counts, ordering, and "
           "zero-qualifying contract and the #520 occurrence staging all "
-          "behave correctly, and dropping "
-          "either the author-id clause or the comments.md bot filter is "
-          "caught.")
+          "behave correctly, and adding back "
+          "an author-id clause or the comments.md bot filter is caught.")
     return 0
 
 

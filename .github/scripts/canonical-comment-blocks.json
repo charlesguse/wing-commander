@@ -12,6 +12,7 @@
     {"file": "clarify.yml", "name": "cost-report-tolerance"},
     {"file": "clarify.yml", "name": "budget-observability"},
     {"file": "clarify.yml", "name": "failed-step-naming"},
+    {"file": "clarify.yml", "name": "requester-relay-note"},
     {"file": "finalize.yml", "name": "handoff-validation"},
     {"file": "intake.yml", "name": "metrics-summary"}
   ]

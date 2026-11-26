@@ -24,7 +24,7 @@ this contract governs the *label*, that one governs the *comment thread*.
 | `timeline` / `timeline_raw` | Existing `gh api issues/<n>/timeline` read | No — stays first |
 | `comments_json` | Existing `gh api issues/<n>/comments` read | **Yes** — moved to immediately after the timeline read, before the label-timeline loop |
 | `markers_json` | Existing `auto-release-e2e-clarify-decision.sh markers` call over `comments_json` | **Yes** — moved to the same point, right after `comments_json` |
-| `author_id`, `clarification_satisfied` | Existing `auto-release-e2e-clarify-decision.sh satisfied` call | No — stays at its current relative position, now consuming the already-computed `comments_json` instead of reading it again |
+| `clarification_satisfied` | Existing `auto-release-e2e-clarify-decision.sh satisfied` call | No — stays at its current relative position, now consuming the already-computed `comments_json` instead of reading it again |
 
 No new `gh api` call, no new script, no new mode of `auto-release-e2e-
 clarify-decision.sh` — this is a reordering of two existing reads plus one

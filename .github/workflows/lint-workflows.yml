@@ -132,6 +132,20 @@ on:
       # Gate 165 reads spec 059's convergence-signal contract for its
       # pointers at spec 117.
       - "specs/059-converged-means-tasks-done/contracts/convergence-signal.md"
+      # Gate 180 (i) and (l) read these live contracts (and docs/**, above):
+      # none may describe a comment admitted by its author's identity.
+      - "specs/022-gate-closed-lifecycle/contracts/lifecycle-gate-points.md"
+      - "specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md"
+      - "specs/029-intake-issue-comments/contracts/comment-trust-gate.md"
+      - "specs/029-intake-issue-comments/contracts/notice-callout.md"
+      - "specs/032-structured-clarification-gate/contracts/decision-points.md"
+      - "specs/033-pr-conversation-commands/contracts/reusable-pr-conversation.md"
+      - "specs/033-pr-conversation-commands/contracts/wrapper-gate.md"
+      - "specs/055-unattended-e2e-gates/contracts/gate-decision-scripts.md"
+      - "specs/057-autonomous-board-loop/contracts/triage.md"
+      - "specs/063-stage-clarify-label/contracts/e2e-clarification-label-assertion.md"
+      - "specs/115-board-loop-self-merge/contracts/board-merge.md"
+      - "specs/134-maintainer-only-comments/contracts/comment-author-rule.md"
       - ".claude/skills/spec-cross-reference/SKILL.md"
       # Gate 169 compares these three skills, and CLAUDE.md (covered by *.md
       # above), with wc_session_record.py: each tells a session to write a
@@ -3856,9 +3870,10 @@ jobs:
       # Gate 96 — #499 code review round 4: the trust-filter jq
       # wing-commander-issue-context ships had no behavioural coverage of
       # its own. Executes the real "Fetch issue and comments, apply the
-      # trust filter" step against a stubbed gh with Bot/NONE/author-by-id/
-      # MEMBER/OWNER/COLLABORATOR comments submitted out of order, and a
-      # mutation dropping the author-id clause.
+      # trust filter" step against a stubbed gh with Bot/NONE/MEMBER/OWNER/
+      # COLLABORATOR comments submitted out of order, among them the issue's
+      # own NONE-association author, who is excluded like any non-maintainer
+      # (spec 134), and a mutation that adds an identity clause back.
       - name: "Gate 96 — wing-commander-issue-context's trust-filter jq behaves correctly"
         if: "!cancelled()"
         run: python3 .github/scripts/verify-issue-context-trust-filter.py
@@ -5030,6 +5045,27 @@ jobs:
       - name: Gate 172 self-test — no block, the bare string form, no cancel, a per-sha, per-run, run-number, head-branch, constant, per-ref or unprefixed group, and an unmodelled context each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lint-supersedes-pr-runs.py --self-test
+      # Gate 180 — specs/134-maintainer-only-comments: comment-triggered
+      # stages admit a comment only from a non-bot OWNER, MEMBER or
+      # COLLABORATOR (constitution 3.0.0, Principle V). It checks every
+      # comment-triggered wrapper, clarify's own check, the gating of every
+      # step after it and its grant, the shared comment filter, the Spec
+      # Kit updater's gate, pr-conversation's actor gate, the e2e clarify
+      # decision, the live docs and contracts, prose in workflows,
+      # composites and live docs that names the issue's author as
+      # admitted, the single homes of the relay paragraph and its step
+      # comment, and the rule contract's row for every comment-triggered
+      # wrapper, and runs the shipped clarify check and relay composite
+      # against a stub gh.
+      # Numbered 180: main's 170 to 176 are taken, and open PRs #1271,
+      # #1272 and #1296 claim 177 to 179.
+      - name: Gate 180 — comment-triggered stages act only on maintainers
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-maintainer-only-comments.py
+      - name: Gate 180 self-test — each surface, live contract or prose admitting the issue's author, a moved or unconditioned check, an ungated clarify step, a widened grant, a copied relay paragraph or comment, and a rule contract missing a wrapper's row each fail
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-maintainer-only-comments.py --self-test
+
       # Gate 175 — a workflow_dispatch input reaches a typed reusable-workflow
       # input only in an allowlisted form: fromJSON(inputs.X), fromJSON over a
       # JSON literal fallback, or a boolean dispatch input bare into a boolean

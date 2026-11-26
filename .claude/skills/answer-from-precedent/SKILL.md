@@ -131,8 +131,7 @@ grep -rn -i "<topic>" CLAUDE.md .specify/memory/ specs/*/contracts/ specs/*/rese
 - **Clarify questions.** Any owner-account comment on such an issue starts
   a clarify run. `wing-commander-2-clarify.yml` gates on a `spec:*` label,
   `stage:spec` or `stage:clarify`, and an OWNER, MEMBER or COLLABORATOR
-  author (or the requester), and a local session's comments post as the
-  owner. So post **one** reply per issue, covering every question, and
+  author, and a local session's comments post as the owner. So post **one** reply per issue, covering every question, and
   only once every question on it is settled or answered by the owner. If
   any question needs the owner, hold the whole reply, raise that question,
   and post once they answer, marking which answers are theirs. Write each
