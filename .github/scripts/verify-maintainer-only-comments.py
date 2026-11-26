@@ -6,8 +6,9 @@ WHY THIS EXISTS
 ---------------
 Constitution 3.0.0 (Principle V): a comment admits a stage run, or reaches
 an agent as context, only when its author is not a bot and its
-author_association is OWNER, MEMBER or COLLABORATOR. Nothing about
-authorship or user id is consulted. Before spec 130 several surfaces also
+author_association is OWNER, MEMBER or COLLABORATOR. Nothing about the
+commenter's identity or user id is consulted, and owning the issue admits
+no comment. Before spec 130 several surfaces also
 admitted the issue's own author, and nothing would have stopped that clause
 from coming back.
 
@@ -499,7 +500,7 @@ jq -r "$expr" "$STUB_JSON"
 
 
 def _run_with_stub(script, payload, stub_path, env_extra, fail=False, files=None):
-    root = tempfile.mkdtemp(prefix="gate174-")
+    root = tempfile.mkdtemp(prefix="gate179-")
     try:
         bindir = os.path.join(root, "bin")
         workdir = os.path.join(root, "work")
