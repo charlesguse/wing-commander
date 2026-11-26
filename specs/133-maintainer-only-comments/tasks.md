@@ -1,11 +1,11 @@
 ---
 
-description: "Task list for spec 130: comment-triggered stages act only on maintainers"
+description: "Task list for spec 133: comment-triggered stages act only on maintainers"
 ---
 
 # Tasks: Comment-Triggered Stages Act Only on Maintainers
 
-**Input**: Design documents from `/specs/130-maintainer-only-comments/`
+**Input**: Design documents from `/specs/133-maintainer-only-comments/`
 
 **Prerequisites**: plan.md, spec.md, research.md (D1–D7), data-model.md, contracts/comment-author-rule.md, quickstart.md
 
@@ -22,7 +22,7 @@ description: "Task list for spec 130: comment-triggered stages act only on maint
 
 ## Phase 1: Setup
 
-- [X] T001 Build the inventory and record it under "Notes" in `specs/130-maintainer-only-comments/tasks.md`. It covers every live site that admits a comment by identity or describes the issue-author exception, across `.github/workflows/`, `.github/actions/` (including `_shared/`), `.github/scripts/`, `docs/` and `specs/*/contracts/`. Expected sites are plan.md's Source Code list plus `verify-clarification-gating.py`, `verify-issue-context-single-home.py`, `verify-diagnose-shadow-acts-on-nothing.py`, the four auto-release e2e decision gates, and the specs/029 `notice-callout.md`, specs/055 and specs/057 contracts. Also record the next free gate number from `.github/workflows/lint-workflows.yml`.
+- [X] T001 Build the inventory and record it under "Notes" in `specs/133-maintainer-only-comments/tasks.md`. It covers every live site that admits a comment by identity or describes the issue-author exception, across `.github/workflows/`, `.github/actions/` (including `_shared/`), `.github/scripts/`, `docs/` and `specs/*/contracts/`. Expected sites are plan.md's Source Code list plus `verify-clarification-gating.py`, `verify-issue-context-single-home.py`, `verify-diagnose-shadow-acts-on-nothing.py`, the four auto-release e2e decision gates, and the specs/029 `notice-callout.md`, specs/055 and specs/057 contracts. Also record the next free gate number from `.github/workflows/lint-workflows.yml`.
 
 ---
 
@@ -119,19 +119,19 @@ description: "Task list for spec 130: comment-triggered stages act only on maint
   - Explain why adopters should not add `gh issue view` back through `extra-allowed-tools` (research D6).
 - [X] T015 [P] Update the remaining live contracts to the rule (FR-009): `specs/010-reusable-pipeline/contracts/stage-interfaces.md`, `specs/033-pr-conversation-commands/contracts/wrapper-gate.md` (its "unlike clarify" contrast) and `specs/057-autonomous-board-loop/contracts/triage.md`.
 - [X] T016 [P] Rewrite the workflow comments that contrast pr-conversation with clarify and intake in `.github/workflows/pr-conversation.yml` (near 730) and `.github/workflows/wing-commander-9-pr-conversation.yml` (near 12). Re-run Gate 47 (`verify-comment-canonical-pointers.py`).
-- [X] T017 Run quickstart §1, the new gate and every gate T001 listed, then `run-local-gates.py` filtered as usual. Compare each failure with an `origin/main` worktree, and record the results in `specs/130-maintainer-only-comments/tasks.md` "Notes". Confirm FR-011 from the diff: no edit to intake's `spec-request` entry, to pr-conversation's actor gate, or to Principle X's board-loop entry.
+- [X] T017 Run quickstart §1, the new gate and every gate T001 listed, then `run-local-gates.py` filtered as usual. Compare each failure with an `origin/main` worktree, and record the results in `specs/133-maintainer-only-comments/tasks.md` "Notes". Confirm FR-011 from the diff: no edit to intake's `spec-request` entry, to pr-conversation's actor gate, or to Principle X's board-loop entry.
 - [X] T018 Run the `review-step-gating` skill on the `if:` changes in `.github/workflows/clarify.yml`, `.github/workflows/auto-update-spec-kit.yml` and `.github/workflows/wing-commander-2-clarify.yml`. Run the `container-shell-safety` skill on the new `run:` step in clarify's container job.
 - [X] T019 Review the local branch with separate local sessions until a pass comes back clean (the review-until-clean procedure, without a PR). Fix each real finding with a test that fails without it. No pass came back clean: the loop closed on the owner's decision after pass 6 (2026-11-26), taking pass 6's fixes.
-  - [X] T019a [US3] After review pass 4 (owner's decision, 2026-11-25): in `.github/workflows/auto-update-spec-kit.yml`'s `comment-reply` job, stage only the issue body, the pipeline's own comments and maintainers' comments for the agent, and accept a chosen option only when it is a label the pipeline posted (FR-002). Update `contracts/comment-author-rule.md` and `specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md`. Fails without it: `auto-update-spec-kit-tests/t6_reply.sh`'s six "spec 130" checks (the stub now lists an issue's comments in the REST shape).
-  - [X] T019b After review pass 4: `.github/scripts/wc_board_status.py` counts a clarify answer only from a maintainer, as clarify acts on no other reply. Fails without it: `verify-board-status.py`'s "the issue's own author who is not a maintainer answers nothing (spec 130)".
+  - [X] T019a [US3] After review pass 4 (owner's decision, 2026-11-25): in `.github/workflows/auto-update-spec-kit.yml`'s `comment-reply` job, stage only the issue body, the pipeline's own comments and maintainers' comments for the agent, and accept a chosen option only when it is a label the pipeline posted (FR-002). Update `contracts/comment-author-rule.md` and `specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md`. Fails without it: `auto-update-spec-kit-tests/t6_reply.sh`'s six "spec 133" checks (the stub now lists an issue's comments in the REST shape).
+  - [X] T019b After review pass 4: `.github/scripts/wc_board_status.py` counts a clarify answer only from a maintainer, as clarify acts on no other reply. Fails without it: `verify-board-status.py`'s "the issue's own author who is not a maintainer answers nothing (spec 133)".
   - [X] T019c After review pass 4 (owner's decision, 2026-11-25): `.claude/skills/answer-from-precedent/SKILL.md` no longer says the clarify wrapper admits the requester. No gate reads it.
   - [X] T019d [US3] After review pass 5: the `comment-reply` read-back refuses a multi-line chosen value (FR-002). Fails without it: `t6_reply.sh`'s "a multi-line choice holding a posted label -> not recognized". Since T019e's exact match that check passes without the multi-line refusal too; T019f's check pins it.
   - [X] T019e [US3] After review pass 5 (owner's decision, 2026-11-25): evaluate-path's ambiguous-options question records its option labels on its last line, and the `comment-reply` read-back accepts only a label the newest question records, never re-reading the rendered option list (FR-002). `auto-update-spec-kit-tests/extract.py` now extracts the `wing-commander-callout` composite, so t6 posts the question through it. Update `contracts/comment-author-rule.md` and `specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md`. Fails without it: `t6_reply.sh`'s "an earlier question's labels and another callout's record do not count" and "the question's record holds exactly its labels".
   - [X] T019f After review pass 6: Gate 179 (a) treats every read of the issue's author, except its kind (`issue.user.type`), as an identity; new check (m): `contracts/comment-author-rule.md`'s enforcement table names every comment-triggered wrapper, and the contract says the Spec Kit updater's tracking-issue check limits which issue a reply counts on and admits no commenter; t6 pins the read-back's multi-line refusal with a recorded two-line label (FR-002, FR-010). Fails without it: Gate 179 `--self-test`'s "the Spec Kit wrapper admits the issue's author by node_id" and "... as a whole object" mutants, its "(m) the rule contract has no row for the Spec Kit wrapper" mutant, and `t6_reply.sh`'s "a recorded label holding a newline -> not recognized".
-- [ ] T020 Run the scratch-repository proof (quickstart §3) in `charlesguse/wing-commander-auto-release-scratch`, outside auto-release's 09:09 UTC run, and restore the wrapper pins afterwards. Record the evidence in `specs/130-maintainer-only-comments/tasks.md` "Notes".
+- [ ] T020 Run the scratch-repository proof (quickstart §3) in `charlesguse/wing-commander-auto-release-scratch`, outside auto-release's 09:09 UTC run, and restore the wrapper pins afterwards. Record the evidence in `specs/133-maintainer-only-comments/tasks.md` "Notes".
 - [ ] T021 Prepare the publish:
   - Re-check the number 130 against open pipeline branches, and rename the directory and branch if it is taken.
-  - Add `specs/130-maintainer-only-comments/spec-meta.json`, pointing at a neutrally titled tracking issue opened at publish time (precedent: spec 037 and #216).
+  - Add `specs/133-maintainer-only-comments/spec-meta.json`, pointing at a neutrally titled tracking issue opened at publish time (precedent: spec 037 and #216).
   - Push one PR whose title names the behaviour change (research D2): clarify's own check, and the Spec Kit updater's narrower reply context (FR-002). The owner merges it, after PR #1194.
 - [ ] T022 After merge (prove-after-merge, quickstart §4): show the next auto-release e2e passing its clarification step (SC-004), and one real clarify run with `maintainer=true`. Record both on the PR.
 
@@ -225,6 +225,7 @@ Same failures as origin/main (Windows-only): Gate 96 (3 file-staging cases under
 - Rebased onto origin/main 08c9495e (was ec1fd4ac). One conflict: main's own Gate 172 (#1196, lint's concurrency gate) sits where this branch registered its gate; both blocks are kept.
 - Renumbered this spec's gate 172 -> 174 (PR #1184 claims 171, PR #1205 claims 173) and the spec 129 -> 130 (open spec PR #1199 holds `specs/129-parallel-pr-lint`). Only this branch's lines changed. The T017 numbers below were taken before the rebase and name the gate by its old number.
 - Renumbered this spec's gate 174 -> 179 at the merge of main (2026-11-26): main's Gate 174 is the sharded lint layout gate, and open PRs #1236 and #1271 claim 176 to 178. This file's other mentions of the gate now read 179.
+- Renumbered the spec 130 -> 133 at publish (2026-11-26): main holds `specs/130-board-messages-explain-line` (#1272), and 131 and 132 are taken too. This file's other mentions of the spec now read 133; the lines above keep the old numbers as history.
 
 ### T017 gate comparison (2026-11-24)
 

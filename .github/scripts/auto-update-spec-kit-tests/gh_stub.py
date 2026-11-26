@@ -230,7 +230,7 @@ def main():
                         return 0
             sys.stderr.write("gh: comment not found\n")
             return 1
-        # An issue's comments in the REST shape (spec 130: comment-reply
+        # An issue's comments in the REST shape (spec 133: comment-reply
         # filters them on user.login, user.type and author_association). A
         # comment record may carry "user_type" and "author_association";
         # otherwise a "[bot]" login is a Bot and the association is NONE.

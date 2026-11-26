@@ -531,7 +531,7 @@ def snapshot(repo, switches):
     for issue in issues:
         if "stage:clarify" in issue["labels"]:
             # Who spoke last between the bot (its questions) and a
-            # maintainer (the answers; spec 130: clarify acts on a maintainer's
+            # maintainer (the answers; spec 133: clarify acts on a maintainer's
             # reply only). Anyone else's comment answers nothing.
             speakers = _gh_lines("repos/{0}/issues/{1}/comments?per_page=100".format(
                 repo, issue["number"]),

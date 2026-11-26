@@ -6,7 +6,7 @@ WHY THIS EXISTS
 ----------------
 The composite's qualification rule (a comment counts only when
 `user.type != "Bot"` AND `author_association` is OWNER/MEMBER/
-COLLABORATOR; since spec 130 no user id is consulted, the issue's own
+COLLABORATOR; since spec 133 no user id is consulted, the issue's own
 author included)
 had no behavioural coverage of its own -- Gate 93 checks that nothing
 ELSE re-implements it, and Gate 27/47 check documentation agreement, but
@@ -23,7 +23,7 @@ WHAT IT CHECKS
 Six comments: a Bot (excluded outright, never counted as excluded-human
 either), a NONE-association non-author (excluded, DOES count as
 excluded-human), the issue's own author commenting with NONE association
-(excluded and counted as excluded-human since spec 130: authorship never
+(excluded and counted as excluded-human since spec 133: authorship never
 qualifies), and one each of MEMBER/OWNER/COLLABORATOR (qualify) --
 submitted to the stub out of `created_at` order, so ordering in
 comments.md/context.md is a real assertion, not an accident of input
@@ -58,7 +58,7 @@ added back to all three jq programs (the qualifying-count filter, the
 excluded-human-count filter, and the comments.md template) -- the issue
 author's own NONE-association comment then qualifies again, so the full
 fixture must fail, proving this gate would catch the exception returning
-(constitution 3.0.0, Principle V; specs/130-maintainer-only-comments).
+(constitution 3.0.0, Principle V; specs/133-maintainer-only-comments).
 
 Usage: python3 .github/scripts/verify-issue-context-trust-filter.py
 Requires: bash, jq. See wc_shell_harness.py for running this on Windows.
@@ -127,7 +127,7 @@ ALL_COMMENTS = [
 ]
 # Oldest -> newest among the three that qualify: owner1(03), member1(04),
 # collab1(06). The reporter (the issue's own author, NONE association)
-# never qualifies since spec 130. bot-member never qualifies despite its
+# never qualifies since spec 133. bot-member never qualifies despite its
 # MEMBER association, and despite sorting after everything else.
 EXPECTED_ORDER = ["owner1", "member1", "collab1"]
 EXPECTED_EXCLUDED_LOGINS = {"some-bot", "rando", "bot-member", AUTHOR_LOGIN}

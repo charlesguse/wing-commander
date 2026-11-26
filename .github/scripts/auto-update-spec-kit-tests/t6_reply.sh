@@ -148,7 +148,7 @@ readback() { # readback <is_error> <subtype> <result> <step-outcome> [posted-opt
   new_step_env
   agent_out "$1" "$2" "$3"
   # The labels the staging step read from the newest question's record
-  # (spec 130), as JSON. NONE leaves the file out, as a failed staging read
+  # (spec 133), as JSON. NONE leaves the file out, as a failed staging read
   # would.
   local posted='["Use the documented replacement flag"]'
   [ -n "${5+x}" ] && posted="$5"
@@ -182,17 +182,17 @@ check "S13 unparseable result -> not recognized" "$D_REC" "false"
 readback false success '{"recognized":true,"chosen_option":"X"}' failure
 check "S13 failed agent step -> not recognized" "$D_REC" "false"
 
-echo "--- spec 130: only a label this pipeline posted counts ---"
+echo "--- spec 133: only a label this pipeline posted counts ---"
 readback false success '{"recognized":true,"chosen_option":"Pin to the old release"}' success '["Use the documented replacement flag"]'
-check "spec 130: a label the pipeline never posted -> not recognized" "$D_REC" "false"
-check "spec 130: no choice carried for an unposted label" "$D_CHOSEN" ""
+check "spec 133: a label the pipeline never posted -> not recognized" "$D_REC" "false"
+check "spec 133: no choice carried for an unposted label" "$D_CHOSEN" ""
 
 readback false success '{"recognized":true,"chosen_option":"Use the documented replacement flag"}' success NONE
-check "spec 130: no posted-options list -> not recognized" "$D_REC" "false"
+check "spec 133: no posted-options list -> not recognized" "$D_REC" "false"
 
 readback false success '{"recognized":true,"chosen_option":"Pin to the old release\nUse the documented replacement flag"}' success
-check "spec 130: a multi-line choice holding a posted label -> not recognized" "$D_REC" "false"
-check "spec 130: no choice carried for a multi-line value" "$D_CHOSEN" ""
+check "spec 133: a multi-line choice holding a posted label -> not recognized" "$D_REC" "false"
+check "spec 133: no choice carried for a multi-line value" "$D_CHOSEN" ""
 
 # The exact match alone would accept this one: the record holds the same
 # two-line label the agent returns. Only a one-line value counts. The
@@ -200,18 +200,18 @@ check "spec 130: no choice carried for a multi-line value" "$D_CHOSEN" ""
 # lines in CRLF), so the exact match would pass here as it would on Linux.
 two_line="$(printf '%s' '{"c":"Pin to the old release\nUse the documented replacement flag"}' | jq -r .c)"
 readback false success '{"recognized":true,"chosen_option":"Pin to the old release\nUse the documented replacement flag"}' success "$(jq -cn --arg c "$two_line" '[$c]')"
-check "spec 130: a recorded label holding a newline -> not recognized" "$D_REC" "false"
-check "spec 130: no choice carried for a recorded multi-line label" "$D_CHOSEN" ""
+check "spec 133: a recorded label holding a newline -> not recognized" "$D_REC" "false"
+check "spec 133: no choice carried for a recorded multi-line label" "$D_CHOSEN" ""
 
 readback false success '{"recognized":true,"chosen_option":"Use the documented"}' success '["Use the documented replacement flag"]'
-check "spec 130: part of a recorded label -> not recognized" "$D_REC" "false"
+check "spec 133: part of a recorded label -> not recognized" "$D_REC" "false"
 
 echo
-# The labels the staging step recorded (spec 130): comma-joined, and as
+# The labels the staging step recorded (spec 133): comma-joined, and as
 # the JSON it wrote (empty when it wrote no file).
 posted_labels() { jq -r '.[]' "$RUNNER_TEMP/posted-options.json" 2>/dev/null | tr -d '\r' | paste -sd, -; }
 posted_json() { jq -c . "$RUNNER_TEMP/posted-options.json" 2>/dev/null | tr -d '\r'; }
-echo "=== spec 130: the agent's context holds the pipeline's and maintainers' comments only ==="
+echo "=== spec 133: the agent's context holds the pipeline's and maintainers' comments only ==="
 new_step_env
 "$PY" -c "
 import json,os
@@ -227,15 +227,15 @@ GHA_SUBST=("steps.ctx.outputs.token=stub")
 export GH_TOKEN=stub ISSUE_NUMBER=42 COMMENT_ID=505 BOT_LOGIN='wcbot[bot]'
 run_step 'auto-update-spec-kit__comment-reply__*stage-the-reply*.sh' >/dev/null 2>&1
 QC="$(cat "$RUNNER_TEMP/question-context.md" 2>/dev/null || echo MISSING)"
-check_contains "spec 130: context keeps the issue body" "$QC" "candidate=0.15.1"
-check_contains "spec 130: context keeps the pipeline's own question" "$QC" "**A**: first"
-check_contains "spec 130: context keeps a maintainer's comment" "$QC" "leaning towards B"
-check_not_contains "spec 130: context drops a non-maintainer's comment" "$QC" "planted by a non-maintainer"
-check_not_contains "spec 130: context drops another bot's comment" "$QC" "planted by another app"
-check "spec 130: posted options are the pipeline's labels only" "$(posted_labels)" "A,B"
-check "spec 130: the reply itself is staged" "$(cat "$RUNNER_TEMP/reply-comment.md")" "go with B"
+check_contains "spec 133: context keeps the issue body" "$QC" "candidate=0.15.1"
+check_contains "spec 133: context keeps the pipeline's own question" "$QC" "**A**: first"
+check_contains "spec 133: context keeps a maintainer's comment" "$QC" "leaning towards B"
+check_not_contains "spec 133: context drops a non-maintainer's comment" "$QC" "planted by a non-maintainer"
+check_not_contains "spec 133: context drops another bot's comment" "$QC" "planted by another app"
+check "spec 133: posted options are the pipeline's labels only" "$(posted_labels)" "A,B"
+check "spec 133: the reply itself is staged" "$(cat "$RUNNER_TEMP/reply-comment.md")" "go with B"
 
-echo "--- spec 130: posted options are the question's record, not its rendered lines ---"
+echo "--- spec 133: posted options are the question's record, not its rendered lines ---"
 new_step_env
 "$PY" -c "
 import json,os
@@ -248,9 +248,9 @@ json.dump({'issues':{'42':{'number':42,'state':'open','labels':[],
 GHA_SUBST=("steps.ctx.outputs.token=stub")
 export GH_TOKEN=stub ISSUE_NUMBER=42 COMMENT_ID=515 BOT_LOGIN='wcbot[bot]'
 run_step 'auto-update-spec-kit__comment-reply__*stage-the-reply*.sh' >/dev/null 2>&1
-check "spec 130: only the option list's labels are posted options" "$(posted_labels)" "A,B"
+check "spec 133: only the option list's labels are posted options" "$(posted_labels)" "A,B"
 
-echo "--- spec 130: only the newest question's record counts ---"
+echo "--- spec 133: only the newest question's record counts ---"
 stage_comments() { # stage_comments <python list of comment dicts>; reply id 599
   new_step_env
   "$PY" -c "
@@ -265,15 +265,15 @@ json.dump({'issues':{'42':{'number':42,'state':'open','labels':[],
 Q1="'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path for Spec Kit v0.15.0**\n> - **A**: a\n> \n> <!-- wing-commander-auto-update-spec-kit-options: [\"A\",\"B\"] -->'"
 Q2="'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path for Spec Kit v0.15.1**\n> - **C**: c\n> \n> <!-- wing-commander-auto-update-spec-kit-options: [\"C\",\"D\"] -->'"
 stage_comments "[{'id':521,'user':'wcbot[bot]','body':$Q1},{'id':522,'user':'wcbot[bot]','body':$Q2},{'id':523,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Reply with one of the posted options**\n> <!-- wing-commander-auto-update-spec-kit-options: [\"X\"] -->'}]"
-check "spec 130: an earlier question's labels and another callout's record do not count" "$(posted_labels)" "C,D"
+check "spec 133: an earlier question's labels and another callout's record do not count" "$(posted_labels)" "C,D"
 stage_comments "[{'id':531,'user':'wcbot[bot]','body':$Q1},{'id':532,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path for Spec Kit v0.15.1**\n> - **C**: c'}]"
-check "spec 130: a newest question with no record offers no label" "$(posted_json)" "[]"
+check "spec 133: a newest question with no record offers no label" "$(posted_json)" "[]"
 stage_comments "[{'id':541,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path for Spec Kit v0.15.1**\n> <!-- wing-commander-auto-update-spec-kit-options: [\"C\"] -->\n> Reply on this issue.'}]"
-check "spec 130: a record that is not the question's last line offers no label" "$(posted_json)" "[]"
+check "spec 133: a record that is not the question's last line offers no label" "$(posted_json)" "[]"
 stage_comments "[{'id':551,'user':'otherapp[bot]','body':$Q2}]"
-check "spec 130: another app's question offers no label" "$(posted_json)" "[]"
+check "spec 133: another app's question offers no label" "$(posted_json)" "[]"
 
-echo "--- spec 130: the record round-trips through the shipped question and callout ---"
+echo "--- spec 133: the record round-trips through the shipped question and callout ---"
 new_step_env
 "$PY" -c "
 import json,os
@@ -306,11 +306,11 @@ REC_PAYLOAD="$("$PY" -c 'import json,os,re
 c = json.load(open(os.environ["GH_STATE"]))["issues"]["42"]["comments"][0]["body"]
 m = re.match(r"^> <!-- wing-commander-auto-update-spec-kit-options: (.*) -->$", c.rstrip().splitlines()[-1])
 print(m.group(1) if m else "NO-RECORD")')"
-check "spec 130: the posted question's last line is its label record" "$(printf '%s' "$REC_PAYLOAD" | head -c 1)" "["
-check "spec 130: the record holds no -, < or > that could end its HTML comment" "$(printf '%s' "$REC_PAYLOAD" | tr -cd '<>-')" ""
-check "spec 130: the question's record holds exactly its labels" "$(posted_json)" '["Use `--ai` --> flag","Pin <v1.2.3>"]'
-check_contains "spec 130: the agent's context still lists the options" "$(cat "$RUNNER_TEMP/question-context.md" 2>/dev/null)" '**Pin <v1.2.3>**: '
-check_not_contains "spec 130: the agent's context leaves out the label record" "$(cat "$RUNNER_TEMP/question-context.md" 2>/dev/null)" 'wing-commander-auto-update-spec-kit-options'
+check "spec 133: the posted question's last line is its label record" "$(printf '%s' "$REC_PAYLOAD" | head -c 1)" "["
+check "spec 133: the record holds no -, < or > that could end its HTML comment" "$(printf '%s' "$REC_PAYLOAD" | tr -cd '<>-')" ""
+check "spec 133: the question's record holds exactly its labels" "$(posted_json)" '["Use `--ai` --> flag","Pin <v1.2.3>"]'
+check_contains "spec 133: the agent's context still lists the options" "$(cat "$RUNNER_TEMP/question-context.md" 2>/dev/null)" '**Pin <v1.2.3>**: '
+check_not_contains "spec 133: the agent's context leaves out the label record" "$(cat "$RUNNER_TEMP/question-context.md" 2>/dev/null)" 'wing-commander-auto-update-spec-kit-options'
 
 echo
 echo "=== Scenario 13: resume clears the flag and records who decided ==="

@@ -3,7 +3,7 @@
 # (specs/029-intake-issue-comments/contracts/comment-trust-gate.md): a
 # comment qualifies only when `user.type != "Bot"` AND its
 # `author_association` is OWNER/MEMBER/COLLABORATOR (constitution 3.0.0,
-# Principle V; specs/130-maintainer-only-comments: no user id is
+# Principle V; specs/133-maintainer-only-comments: no user id is
 # consulted, the issue's author included). Every caller gets the SAME filtered
 # comment set from the SAME code instead of writing, or forgetting to
 # write, its own inline copy -- exactly the gap board-loop.yml shipped

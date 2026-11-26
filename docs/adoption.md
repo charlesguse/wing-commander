@@ -169,7 +169,7 @@ gates. The examples below include them; keep them when you customize:
   comment tells them so. The clarify stage also checks the triggering
   comment itself, so a wrapper that still admits the issue's author is
   refused there; since the release that shipped
-  specs/130-maintainer-only-comments, such a comment ends the run with no
+  specs/133-maintainer-only-comments, such a comment ends the run with no
   reaction, no notice and no change. Do not add `gh issue view` back to the
   clarify agent through `extra-allowed-tools`: the stage hands the agent
   the one comment it is answering, and the thread may hold text from people

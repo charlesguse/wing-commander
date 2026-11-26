@@ -22,7 +22,7 @@
 #
 # A qualifying reply is a non-bot OWNER/MEMBER/COLLABORATOR comment, the
 # same rule the clarify stage applies (constitution 3.0.0, Principle V;
-# specs/130-maintainer-only-comments). No user id is consulted.
+# specs/133-maintainer-only-comments). No user id is consulted.
 #
 # `markers` is the single home for the "[!IMPORTANT] + one of the two
 # clarification-callout phrases" predicate (maintainer feedback: this used
