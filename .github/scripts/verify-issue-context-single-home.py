@@ -1111,20 +1111,41 @@ LINE_MARKER_RE = re.compile(r"^[ \t]*(?:#+(?!\d)|//+|>+|\*+)?[ \t]*",
 _LIVE_FILES_CACHE = {}
 
 
+def _index_path(root):
+    """The index file git uses for the working tree at `root`, or None when
+    git cannot name one. Asked of git rather than built as `.git/index`:
+    in a linked worktree `.git` is a file pointing at
+    `<common>/worktrees/<name>/`, which holds that worktree's index (#889)."""
+    try:
+        proc = subprocess.run(["git", "-C", root, "rev-parse", "--git-path",
+                               "index"], env=git_env(),
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError:
+        return None
+    path = os.fsdecode(proc.stdout).strip()
+    if proc.returncode != 0 or not path:
+        return None
+    return os.path.join(root, path)
+
+
 def _live_text_files(root):
     """Repository-relative paths of the live text files under `root` that
     check 6 reads (see its docstring entry for what is not live). Listed
-    once per process for a root with its own `.git`, keyed by its index
-    mtime; a directory without one (a self-test fixture) is listed afresh."""
+    once per process for a root with its own `.git` (a directory, or the
+    file a linked worktree has), keyed by its index's mtime; a root whose
+    index git cannot name or stat, or one without `.git` (a self-test
+    fixture), is listed afresh every call rather than cached forever."""
     key = None
     if os.path.exists(os.path.join(root, ".git")):
+        index = _index_path(root)
         try:
-            stamp = os.stat(os.path.join(root, ".git", "index")).st_mtime_ns
+            stamp = os.stat(index).st_mtime_ns if index else None
         except OSError:
             stamp = None
-        key = (os.path.realpath(root), stamp)
-        if key in _LIVE_FILES_CACHE:
-            return _LIVE_FILES_CACHE[key]
+        if stamp is not None:
+            key = (os.path.realpath(root), stamp)
+            if key in _LIVE_FILES_CACHE:
+                return _LIVE_FILES_CACHE[key]
     files = sorted(rel for rel in set(repo_files(root))
                    if rel.endswith(RATIONALE_SCAN_EXTS)
                    and not SPEC_DIR_RE.match(rel)
@@ -2993,17 +3014,46 @@ def _mutation_check_read_only_git():
 _PUB_GRANT_LIT = PUBLISHED_GIT_READ_GRANT
 # Diagnose's tool-args line is told from the diagnose shadow's (whose
 # allowed list is the same) by the disallowed list that follows it: the
-# shadow's denies NotebookEdit right after Edit, diagnose's does not. The
-# pushd mutations match each list from its head through `Bash(pushd:*),`
-# and nothing after it, so a deny added after pushd (as spec 101's
-# Bash(gh:*) was) leaves them applying; a deny added before pushd in
-# either list means re-spelling that list's needle.
+# shadow's denies NotebookEdit, diagnose's does not.
 _DENY_HEAD = ('\n          default-disallowed-tools: '
               '"WebSearch,WebFetch,Write,Edit,')
 _DIAGNOSE_TAIL = _DENY_HEAD + 'Bash(git:*)'
-_PUSHD_SPAN = "Bash(git:*),Bash(cd:*),Bash(pushd:*),"
-_DIAGNOSE_PUSHD_DENY = _DENY_HEAD + _PUSHD_SPAN
-_SHADOW_PUSHD_DENY = _DENY_HEAD + "NotebookEdit," + _PUSHD_SPAN
+
+
+class DropDeny:
+    """A mutation that removes the element `token` from the one quoted,
+    comma-separated tool list in a workflow whose line holds every `must`
+    substring and no `must_not` one. It finds its target by membership,
+    not by the list's text, so reordering or extending a deny list (as
+    spec 101's Bash(gh:*) did, #991) leaves it applying (#889)."""
+
+    def __init__(self, token, must=(), must_not=()):
+        self.token, self.must, self.must_not = token, must, must_not
+
+    def resolve(self, text):
+        """-> (old, new) for str.replace, or None unless exactly one list
+        matches."""
+        hits = []
+        for line in text.splitlines(keepends=True):
+            if (any(m not in line for m in self.must)
+                    or any(m in line for m in self.must_not)):
+                continue
+            for quoted in re.findall(r'"([^"]*)"', line):
+                items = quoted.split(",")
+                if self.token in items:
+                    kept = ",".join(i for i in items if i != self.token)
+                    hits.append((line, line.replace(f'"{quoted}"',
+                                                    f'"{kept}"', 1)))
+        if len(hits) != 1 or text.count(hits[0][0]) != 1:
+            return None
+        return hits[0]
+
+    def __repr__(self):
+        return (f"DropDeny({self.token!r}, must={self.must!r}, "
+                f"must_not={self.must_not!r})")
+
+
+_SHADOW = ("default-disallowed-tools:", "NotebookEdit")
 
 # Each mutation rewrites a REAL workflow other than board-loop.yml in
 # memory the way a later edit could reopen #518; check 4b must catch
@@ -3020,26 +3070,24 @@ FLEET_READ_ONLY_GIT_MUTATIONS = (
      "              git log --oneline"),
     (".github/workflows/implement.yml",
      "progress composer stops denying Bash(git:*)",
-     '"WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage,Write,Edit,'
-     'Bash(git:*),Bash(cd:*)',
-     '"WebSearch,WebFetch,ScheduleWakeup,Monitor,SendMessage,Write,Edit,'
-     'Bash(cd:*)'),
+     DropDeny("Bash(git:*)", must=("default-disallowed-tools:",)), None),
     (".github/workflows/implement.yml",
      "progress composer stops denying cd (the #518 review's cd escape)",
-     'Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*)"',
-     'Edit,Bash(git:*),Bash(pushd:*),Bash(popd:*)"'),
+     DropDeny("Bash(cd:*)", must=("default-disallowed-tools:",)), None),
+    (".github/workflows/implement.yml",
+     "progress composer stops denying pushd",
+     DropDeny("Bash(pushd:*)", must=("default-disallowed-tools:",)), None),
     (".github/workflows/implement.yml",
      "progress composer's grant drops -I",
      f'default-allowed-tools: "{_PUB_GRANT_LIT}"',
      f'default-allowed-tools: "{_PUB_GRANT_LIT.replace(" -I", "")}"'),
     (".github/workflows/watchdog.yml",
      "diagnose stops denying pushd",
-     _DIAGNOSE_PUSHD_DENY,
-     _DIAGNOSE_PUSHD_DENY.replace("Bash(pushd:*),", "", 1)),
+     DropDeny("Bash(pushd:*)", must=("default-disallowed-tools:",),
+              must_not=("NotebookEdit",)), None),
     (".github/workflows/watchdog.yml",
      "diagnose shadow stops denying pushd",
-     _SHADOW_PUSHD_DENY,
-     _SHADOW_PUSHD_DENY.replace("Bash(pushd:*),", "", 1)),
+     DropDeny("Bash(pushd:*)", must=_SHADOW), None),
     (".github/workflows/auto-update-spec-kit.yml",
      "evaluate-path's inline --allowedTools regains raw git diff (#518 review)",
      f'--allowedTools "Read,Grep,{_PUB_GRANT_LIT}"',
@@ -3050,15 +3098,13 @@ FLEET_READ_ONLY_GIT_MUTATIONS = (
      f'--allowedTools "Read,Grep,Bash(gh api:*),{_PUB_GRANT_LIT}"'),
     (".github/workflows/auto-update-spec-kit.yml",
      "evaluate-path's inline --disallowedTools stops denying Bash(git:*)",
-     '--disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(git:*),'
-     'Bash(cd:*)',
-     '--disallowedTools "WebSearch,WebFetch,Write,Edit,Bash(cd:*)'),
+     DropDeny("Bash(git:*)", must=("--disallowedTools",)), None),
     (".github/workflows/auto-update-spec-kit.yml",
      "evaluate-path's inline --disallowedTools stops denying cd",
-     'Edit,Bash(git:*),Bash(cd:*),Bash(pushd:*),Bash(popd:*),'
-     'Bash(git commit:*),Bash(git push:*)"',
-     'Edit,Bash(git:*),Bash(pushd:*),Bash(popd:*),'
-     'Bash(git commit:*),Bash(git push:*)"'),
+     DropDeny("Bash(cd:*)", must=("--disallowedTools",)), None),
+    (".github/workflows/auto-update-spec-kit.yml",
+     "evaluate-path's inline --disallowedTools stops denying pushd",
+     DropDeny("Bash(pushd:*)", must=("--disallowedTools",)), None),
     (".github/workflows/auto-update-spec-kit.yml",
      "evaluate-path's prompt names the repo-local wrapper path",
      f"`python3 -I {PUBLISHED_GIT_READ_WRAPPER}`\n            with `log`",
@@ -3082,8 +3128,10 @@ FLEET_READ_ONLY_GIT_MUTATIONS = (
      'Bash(git show:*)"'),
     (".github/workflows/pr-conversation.yml",
      "classify stops denying Bash(git:*)",
-     '"Write,Edit,WebSearch,WebFetch,Bash(git:*),Bash(cd:*)',
-     '"Write,Edit,WebSearch,WebFetch,Bash(cd:*)'),
+     DropDeny("Bash(git:*)", must=("default-disallowed-tools:",)), None),
+    (".github/workflows/pr-conversation.yml",
+     "classify stops denying pushd",
+     DropDeny("Bash(pushd:*)", must=("default-disallowed-tools:",)), None),
     (".github/workflows/pr-conversation.yml",
      "classify's prompt names the repo-local wrapper path",
      f"through `python3 -I {PUBLISHED_GIT_READ_WRAPPER}`",
@@ -3113,6 +3161,16 @@ def _mutation_check_fleet_read_only_git():
                 failures.append(f"mutation {label!r}: could not read "
                                 f"{workflow}: {exc}")
                 continue
+            if isinstance(old, DropDeny):
+                pair = old.resolve(original)
+                if pair is None:
+                    failures.append(
+                        f"mutation {label!r} no longer applies ({old!r} "
+                        f"matches no single tool list in {workflow}) -- "
+                        f"update FLEET_READ_ONLY_GIT_MUTATIONS so this gate "
+                        f"stays proven.")
+                    continue
+                old, new = pair
             if original.count(old) != 1:
                 failures.append(
                     f"mutation {label!r} no longer applies ({old!r} is not "
@@ -3333,6 +3391,79 @@ def _self_test_gh_rationale_home(tmpdir):
     return failures
 
 
+def _self_test_drop_deny():
+    """Fixture 0b: DropDeny finds its list by membership, not by text."""
+    failures = []
+    text = ('      x: "Read"\n'
+            '      default-disallowed-tools: "Bash(gh:*),Edit,Bash(pushd:*),'
+            'Bash(git:*),Bash(cd:*),Bash(new:*)"\n'
+            '      default-disallowed-tools: "NotebookEdit,Bash(pushd:*)"\n')
+    got = DropDeny("Bash(pushd:*)", must=("default-disallowed-tools:",),
+                   must_not=("NotebookEdit",)).resolve(text)
+    want_new = ('      default-disallowed-tools: "Bash(gh:*),Edit,'
+                'Bash(git:*),Bash(cd:*),Bash(new:*)"\n')
+    if not got or got[1] != want_new:
+        failures.append(f"fixture 0b: DropDeny on a reordered, extended deny "
+                        f"list gave {got!r}, not a pair ending {want_new!r}")
+    if DropDeny("Bash(pushd:*)",
+                must=("default-disallowed-tools:",)).resolve(text) is not None:
+        failures.append("fixture 0b: DropDeny resolved a token two lists "
+                        "hold instead of refusing the ambiguous target")
+    if DropDeny("Bash(git",
+                must=("default-disallowed-tools:",)).resolve(text) is not None:
+        failures.append("fixture 0b: DropDeny matched a token prefix rather "
+                        "than a whole list element")
+    if not failures:
+        print("note: fixture 0b (DropDeny matches by membership) passed.")
+    return failures
+
+
+def _self_test_worktree_listing(tmpdir):
+    """Fixture 0: _live_text_files() in a linked worktree sees a file
+    committed to the index after its first listing."""
+    def git(*args, cwd):
+        return subprocess.run(["git", "-c", "user.name=t", "-c",
+                               "user.email=t@t", *args], cwd=cwd,
+                              env=git_env(), stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE)
+    main_tree = os.path.join(tmpdir, "gate-93-wt-main")
+    linked = os.path.join(tmpdir, "gate-93-wt-linked")
+    os.makedirs(main_tree)
+    with open(os.path.join(main_tree, "a.md"), "w", encoding="utf-8") as fh:
+        fh.write("a\n")
+    for args, cwd in ((("init", "-q"), main_tree), (("add", "a.md"), main_tree),
+                      (("commit", "-qm", "a"), main_tree),
+                      (("worktree", "add", "-q", linked), main_tree)):
+        proc = git(*args, cwd=cwd)
+        if proc.returncode != 0:
+            return [f"fixture 0 setup: git {' '.join(args)} failed: "
+                    f"{os.fsdecode(proc.stderr).strip()}"]
+    if not os.path.isfile(os.path.join(linked, ".git")):
+        return ["fixture 0 setup: the linked worktree's .git is not a file"]
+    before = _live_text_files(linked)
+    with open(os.path.join(linked, "b.md"), "w", encoding="utf-8") as fh:
+        fh.write("b\n")
+    proc = git("add", "b.md", cwd=linked)
+    if proc.returncode != 0:
+        return ["fixture 0 setup: git add b.md failed"]
+    # A coarse filesystem clock can leave the rewritten index on the same
+    # mtime; move it on so only a cache that never looks at the index can
+    # still return the first listing.
+    index = _index_path(linked)
+    if index and os.path.exists(index):
+        st = os.stat(index)
+        os.utime(index, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+    after = _live_text_files(linked)
+    if before != ["a.md"] or after != ["a.md", "b.md"]:
+        return [f"fixture 0 (#889): check 6's listing in a linked worktree "
+                f"was {before!r} then {after!r} after `git add b.md`, not "
+                f"['a.md'] then ['a.md', 'b.md'] -- the cache is not keyed "
+                f"on that worktree's index"]
+    print("note: fixture 0 (a linked worktree's listing follows its index) "
+          "passed.")
+    return []
+
+
 def run_self_test():
     failures = []
 
@@ -3363,6 +3494,16 @@ def run_self_test():
                 f"fragment: {grant_problems!r}")
         else:
             print(f"note: fixture 1 (gh issue view grant) caught: {grant_problems}")
+
+        # Fixture 0 (#889): check 6's file listing in a linked worktree,
+        # whose `.git` is a file, is re-read once its index changes --
+        # keyed on a `.git/index` that does not exist there, it was cached
+        # for the process lifetime.
+        failures.extend(_self_test_worktree_listing(tmpdir))
+
+        # Fixture 0b (#889): a deny-removal mutation still applies once its
+        # list is reordered or extended, and refuses an ambiguous target.
+        failures.extend(_self_test_drop_deny())
 
         # Fixture 1b (#499 rounds 4-5): the exact bypasses the reviews
         # found -- a bare subcommand grant (Bash(gh issue:*)), a fully-
