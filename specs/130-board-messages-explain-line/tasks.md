@@ -8,7 +8,7 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Read `.github/scripts/board_spec_request_body.py` (`fenced_section`), `.github/scripts/wc_session_record.py` and the review/PR steps of `.github/workflows/board-loop.yml` to confirm the hook points named in plan.md; no file changes.
+- [x] T001 Read `.github/scripts/board_spec_request_body.py` (`fenced_section`), `.github/scripts/wc_session_record.py` and the review/PR steps of `.github/workflows/board-loop.yml` to confirm the hook points named in plan.md; no file changes.
 - [x] T002 [P] Create fixture directory `.github/scripts/fixtures/board-message-parts/` with a README line naming the gate that reads it.
 
 ## Phase 2: Foundational
@@ -29,8 +29,8 @@
 - [x] T006 [US1] Implement `render_explanation` in `.github/scripts/wc_message_parts.py`: all six parts always present, `options` may be state `follow`, `line` accepts issue title + `#N` (FR-001a).
 - [x] T007 [US1] Implement `summary` mode in `.github/scripts/wc_message_parts.py`: fenced one-sentence issue plus what the PR does, pointing at the first comment; refuse and name any closing keyword (FR-004, spec 121 rule).
 - [x] T008 [P] [US1] Add fixtures under `.github/scripts/fixtures/board-message-parts/`: full #1202 example, one per explanation part missing, no-code line, options-follow, fence/HTML injection, closing keyword, over-length.
-- [ ] T009 [US1] Wire the first comment and PR-body summary into the fix-PR opening step of `.github/workflows/board-loop.yml`, calling the renderer CLI (no pasted shell/jq; one-line fallback only), including a later "options" comment when state is `follow` before the PR is reported ready (FR-003).
-- [ ] T010 [US1] Add the one-line decision record with link to the explaining comment when a backlog line is ticked, in `.github/scripts/board_backlog_lines.py` (FR-017).
+- [x] T009 [US1] Wire the first comment and PR-body summary into the fix-PR opening step of `.github/workflows/board-loop.yml`, calling the renderer CLI (no pasted shell/jq; one-line fallback only), including a later "options" comment when state is `follow` before the PR is reported ready (FR-003).
+- [x] T010 [US1] Add the one-line decision record with link to the explaining comment when a backlog line is ticked, in `.github/scripts/board_backlog_lines.py` (FR-017).
 
 ## Phase 4: User Story 2 - Review comment reports against the line's question (P1)
 
@@ -54,9 +54,9 @@
 
 ## Phase 6: Polish
 
-- [ ] T019 [P] Update `docs/reference.md` if any default, limit or switch description changed, per its stated rule.
+- [x] T019 [P] Update `docs/reference.md` if any default, limit or switch description changed, per its stated rule.
 - [x] T020 Add the "single home" check (no pasted renderer logic in workflows) to `.github/scripts/verify-board-message-parts.py`, per CLAUDE.md.
-- [ ] T021 Walk `specs/130-board-messages-explain-line/quickstart.md` against the fixtures and fix mismatches in code.
+- [x] T021 Walk `specs/130-board-messages-explain-line/quickstart.md` against the fixtures and fix mismatches in code.
 
 ## Phase 7: Maintainer follow-up
 

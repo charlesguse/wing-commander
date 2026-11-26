@@ -3799,6 +3799,28 @@ jobs:
             || { echo "::error::board-loop fix: PR #$pr_number is open but its review marker could not be rendered -- nothing is posted on issue #$ISSUE_NUMBER (#786)."; exit 1; }
           echo "$marker" > "$RUNNER_TEMP/board-fix-marker.txt"
 
+      # specs/130 FR-001..FR-004: the line PR's first comment explains the
+      # line. wc_message_parts.py (the one home) renders every part, filled
+      # or as stated gap text; the fixer supplies the line text and the PR
+      # title, so the parts it did not supply show as gaps, never invented.
+      - name: Explain the line on the PR (fix)
+        if: steps.push-pr.outputs.pr-url != '' && env.BOARD_LINE_ID != ''
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.select.outputs.issue-number }}
+          PR_NUMBER: ${{ steps.push-pr.outputs.pr-number }}
+        run: |
+          set -uo pipefail
+          line_text="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_backlog_lines.py" --line-title "$ISSUE_NUMBER" "$BOARD_LINE_ID")" || line_text=""
+          pr_title="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json title --jq .title)" || pr_title=""
+          jq -n --arg line "$line_text" --arg pr "$pr_title" '{parts: {line: $line, what_this_pr_does: $pr}}' > "$RUNNER_TEMP/board-explain-parts.json"
+          if body="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_message_parts.py" render-explanation --in "$RUNNER_TEMP/board-explain-parts.json" --id "$BOARD_LINE_ID")"; then
+            gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body" \
+              || echo "::warning::board-loop fix: the explaining comment could not be posted on PR #$PR_NUMBER (specs/130 FR-003)."
+          else
+            echo "::warning::board-loop fix: the explanation was refused by wc_message_parts.py (specs/130 FR-003)."
+          fi
+
       # T029/FR-021/FR-018: route_final_diff() re-applies the SAME backstop
       # to the pushed branch's real diff and real file content -- the
       # precise contract_widened() check, unlike route's pre-push
@@ -6868,8 +6890,8 @@ jobs:
           elif [ -n "${BOARD_LINE_ID:-}" ]; then
             # FR-011/FR-020: the merge ticks the line whoever merged it,
             # whatever the backlog-lines switch says.
-            tick="$(jq -n --argjson issue "$issue_number" --arg id "$BOARD_LINE_ID" --arg detail "by #$PR_NUMBER" \
-              '{op: "tick-fixed", issue: $issue, line_id: $id, detail: $detail}' \
+            tick="$(jq -n --argjson issue "$issue_number" --arg id "$BOARD_LINE_ID" --arg detail "by #$PR_NUMBER" --argjson pr "$PR_NUMBER" \
+              '{op: "tick-fixed", issue: $issue, line_id: $id, detail: $detail, pr: $pr}' \
               | python3 .github/scripts/board_backlog_lines.py)" || tick="failed"
             if [ "$tick" = '"applied"' ]; then
               echo "board-loop: backlog line $BOARD_LINE_ID on #$issue_number ticked -- fixed by #$PR_NUMBER (specs/121 FR-011)." >> "$GITHUB_STEP_SUMMARY"
