@@ -127,7 +127,7 @@ description: "Task list for spec 133: comment-triggered stages act only on maint
   - [X] T019c After review pass 4 (owner's decision, 2026-11-25): `.claude/skills/answer-from-precedent/SKILL.md` no longer says the clarify wrapper admits the requester. No gate reads it.
   - [X] T019d [US3] After review pass 5: the `comment-reply` read-back refuses a multi-line chosen value (FR-002). Fails without it: `t6_reply.sh`'s "a multi-line choice holding a posted label -> not recognized". Since T019e's exact match that check passes without the multi-line refusal too; T019f's check pins it.
   - [X] T019e [US3] After review pass 5 (owner's decision, 2026-11-25): evaluate-path's ambiguous-options question records its option labels on its last line, and the `comment-reply` read-back accepts only a label the newest question records, never re-reading the rendered option list (FR-002). `auto-update-spec-kit-tests/extract.py` now extracts the `wing-commander-callout` composite, so t6 posts the question through it. Update `contracts/comment-author-rule.md` and `specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md`. Fails without it: `t6_reply.sh`'s "an earlier question's labels and another callout's record do not count" and "the question's record holds exactly its labels".
-  - [X] T019f After review pass 6: Gate 179 (a) treats every read of the issue's author, except its kind (`issue.user.type`), as an identity; new check (m): `contracts/comment-author-rule.md`'s enforcement table names every comment-triggered wrapper, and the contract says the Spec Kit updater's tracking-issue check limits which issue a reply counts on and admits no commenter; t6 pins the read-back's multi-line refusal with a recorded two-line label (FR-002, FR-010). Fails without it: Gate 179 `--self-test`'s "the Spec Kit wrapper admits the issue's author by node_id" and "... as a whole object" mutants, its "(m) the rule contract has no row for the Spec Kit wrapper" mutant, and `t6_reply.sh`'s "a recorded label holding a newline -> not recognized".
+  - [X] T019f After review pass 6: Gate 180 (a) treats every read of the issue's author, except its kind (`issue.user.type`), as an identity; new check (m): `contracts/comment-author-rule.md`'s enforcement table names every comment-triggered wrapper, and the contract says the Spec Kit updater's tracking-issue check limits which issue a reply counts on and admits no commenter; t6 pins the read-back's multi-line refusal with a recorded two-line label (FR-002, FR-010). Fails without it: Gate 180 `--self-test`'s "the Spec Kit wrapper admits the issue's author by node_id" and "... as a whole object" mutants, its "(m) the rule contract has no row for the Spec Kit wrapper" mutant, and `t6_reply.sh`'s "a recorded label holding a newline -> not recognized".
 - [X] T020 Run the scratch-repository proof (quickstart §3) in `charlesguse/wing-commander-auto-release-scratch`, outside auto-release's 09:09 UTC run, and restore the wrapper pins afterwards. Record the evidence in `specs/133-maintainer-only-comments/tasks.md` "Notes".
 - [ ] T021 Prepare the publish:
   - Re-check the number 130 against open pipeline branches, and rename the directory and branch if it is taken.
@@ -166,7 +166,7 @@ Run in `charlesguse/wing-commander-auto-release-scratch` at 17:08–17:25 UTC, w
 
 - Request #249 (clear): intake run 45865128207 succeeded and asked no questions. The owner's reply started clarify run 45865729740. "Check the triggering comment is from a maintainer" passed and every step gated on its `maintainer == 'true'` output ran. The agent made no edit, because the draft had no open question.
 - Request #251 (needs clarification): intake run 45866287683 succeeded. Its "Answer the open clarification questions" comment carries no relay paragraph, as the issue's author is a maintainer (SC-007). The owner answered "Q1: C". Clarify run 45866770516 passed the check, skipped the relay step, and folded the answer into the draft (`spec-draft/033-release-cadence-docs` commit `13ee5530`, "spec: resolve clarifications from #251"). Then it flipped the issue back to `stage:spec` and announced the spec PR.
-- The scratch requests and their draft PRs (#250, #252) are closed. As quickstart §3 says, a private repository has no non-maintainer commenter, so the refusal and relay-present paths rest on Gate 179's harnesses (section 2).
+- The scratch requests and their draft PRs (#250, #252) are closed. As quickstart §3 says, a private repository has no non-maintainer commenter, so the refusal and relay-present paths rest on Gate 180's harnesses (section 2).
 
 ### T001 inventory (2026-11-24)
 
@@ -206,7 +206,7 @@ Run in `charlesguse/wing-commander-auto-release-scratch` at 17:08–17:25 UTC, w
 
 - **review-step-gating:**
   - Gate 24: 0 failures.
-  - `stranded-steps.py`, compared with origin/main: the only new entry is the relay step. It is stranded only together with the callout it feeds, which has the same `if:` (Gate 179 (g)); that is clarify's hard-exit-in-place design.
+  - `stranded-steps.py`, compared with origin/main: the only new entry is the relay step. It is stranded only together with the callout it feeds, which has the same `if:` (Gate 180 (g)); that is clarify's hard-exit-in-place design.
   - A refused comment ends the clarify job successfully, so `stalled` does not fire.
   - Low note, kept by design: a failed comment read fails the job and `stalled` posts its notice, like any infrastructure failure.
 - **container-shell-safety:**
@@ -217,7 +217,7 @@ Run in `charlesguse/wing-commander-auto-release-scratch` at 17:08–17:25 UTC, w
 
 | Gate | Result |
 |---|---|
-| Gate 179 | pass; self-test catches all 12 mutants |
+| Gate 180 | pass; self-test catches all 12 mutants |
 | Gate 66 (e2e decisions) | pass, plus self-test |
 | Gate 115 (poll credential) | pass, plus self-test |
 | Gate 91 (specs fallback) | pass |
@@ -233,6 +233,7 @@ Same failures as origin/main (Windows-only): Gate 96 (3 file-staging cases under
 - Rebased onto origin/main 08c9495e (was ec1fd4ac). One conflict: main's own Gate 172 (#1196, lint's concurrency gate) sits where this branch registered its gate; both blocks are kept.
 - Renumbered this spec's gate 172 -> 174 (PR #1184 claims 171, PR #1205 claims 173) and the spec 129 -> 130 (open spec PR #1199 holds `specs/129-parallel-pr-lint`). Only this branch's lines changed. The T017 numbers below were taken before the rebase and name the gate by its old number.
 - Renumbered this spec's gate 174 -> 179 at the merge of main (2026-11-26): main's Gate 174 is the sharded lint layout gate, and open PRs #1236 and #1271 claim 176 to 178. This file's other mentions of the gate now read 179.
+- Renumbered this spec's gate 179 -> 180 at the merge of main before the PR's merge (2026-11-26): #1236 merged as Gate 176, and open PRs #1271, #1272 and #1296 claim 177 to 179. This file's other mentions of the gate now read 180.
 - Renumbered the spec 130 -> 133 at publish (2026-11-26): main holds `specs/130-board-messages-explain-line` (#1272), and 131 and 132 are taken too. This file's other mentions of the spec now read 133; the lines above keep the old numbers as history.
 
 ### T017 gate comparison (2026-11-24)
@@ -243,5 +244,5 @@ Same failures as origin/main (Windows-only): Gate 96 (3 file-staging cases under
   - Gate 27 (`verify-stage-tool-lists.py` and its self-test): the specs/010 contract still listed clarify's `Bash(gh issue view:*)`. Fixed in the contract.
   - Gate 126 (`verify-gh-api-error-capture.py`): the new check step's `gh api` capture needed an explicit failure path. Fixed with `if ! info=...; then ... exit 1; fi`.
   - Gate 106 (`verify-gate-106.py` and its self-test): its preamble marker was the removed `author_id=""` line. It now names the next line, so the extracted preamble is unchanged except for the removed block.
-- **After the fixes:** all five pass, and Gate 179 passes with every mutant caught. No other gate fails only on this branch.
+- **After the fixes:** all five pass, and Gate 180 passes with every mutant caught. No other gate fails only on this branch.
 

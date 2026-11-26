@@ -132,7 +132,7 @@ on:
       # Gate 165 reads spec 059's convergence-signal contract for its
       # pointers at spec 117.
       - "specs/059-converged-means-tasks-done/contracts/convergence-signal.md"
-      # Gate 179 (i) and (l) read these live contracts (and docs/**, above):
+      # Gate 180 (i) and (l) read these live contracts (and docs/**, above):
       # none may describe a comment admitted by its author's identity.
       - "specs/022-gate-closed-lifecycle/contracts/lifecycle-gate-points.md"
       - "specs/027-auto-update-spec-kit/contracts/auto-update-spec-kit-workflow.md"
@@ -5045,7 +5045,7 @@ jobs:
       - name: Gate 172 self-test — no block, the bare string form, no cancel, a per-sha, per-run, run-number, head-branch, constant, per-ref or unprefixed group, and an unmodelled context each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-lint-supersedes-pr-runs.py --self-test
-      # Gate 179 — specs/133-maintainer-only-comments: comment-triggered
+      # Gate 180 — specs/133-maintainer-only-comments: comment-triggered
       # stages admit a comment only from a non-bot OWNER, MEMBER or
       # COLLABORATOR (constitution 3.0.0, Principle V). It checks every
       # comment-triggered wrapper, clarify's own check, the gating of every
@@ -5057,12 +5057,12 @@ jobs:
       # comment, and the rule contract's row for every comment-triggered
       # wrapper, and runs the shipped clarify check and relay composite
       # against a stub gh.
-      # Numbered 179: main's 170 to 175 are taken, and open PRs #1236,
-      # #1271 and #1272 claim 176 to 178.
-      - name: Gate 179 — comment-triggered stages act only on maintainers
+      # Numbered 180: main's 170 to 176 are taken, and open PRs #1271,
+      # #1272 and #1296 claim 177 to 179.
+      - name: Gate 180 — comment-triggered stages act only on maintainers
         if: "!cancelled()"
         run: python3 .github/scripts/verify-maintainer-only-comments.py
-      - name: Gate 179 self-test — each surface, live contract or prose admitting the issue's author, a moved or unconditioned check, an ungated clarify step, a widened grant, a copied relay paragraph or comment, and a rule contract missing a wrapper's row each fail
+      - name: Gate 180 self-test — each surface, live contract or prose admitting the issue's author, a moved or unconditioned check, an ungated clarify step, a widened grant, a copied relay paragraph or comment, and a rule contract missing a wrapper's row each fail
         if: "!cancelled()"
         run: python3 .github/scripts/verify-maintainer-only-comments.py --self-test
 

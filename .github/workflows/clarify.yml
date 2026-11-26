@@ -1302,7 +1302,7 @@ jobs:
       # FR-008 (specs/133-maintainer-only-comments): when the issue's author
       # is not a maintainer, the questions say up front that only a
       # maintainer's reply is folded in. The paragraph's single home is the
-      # composite (Gate 179).
+      # composite (Gate 180).
       - name: Add the maintainer-relay note for a requester who is not a maintainer
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'needs-clarification'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-requester-relay-note

@@ -20,7 +20,7 @@ A stage's agent may also read the pipeline's own comments (its App's `<slug>[bot
 | `clarify.yml` | published stage | the check step before `lifecycle-gate`. A refused comment ends the job successfully, with no reaction, no notice and no draft change |
 | `wing-commander-auto-update-spec-kit.yml` | wrapper `if:` | association only, on a Bot-authored issue carrying `auto-update:tracking` |
 | `auto-update-spec-kit.yml` | published stage, `comment-reply` job `if:` | association only. `issue-author-id` is accepted and ignored. Its guard step then requires the App's own tracking issue and a candidate newer than the pin |
-| `auto-update-spec-kit.yml` | published stage, `comment-reply` agent context and read-back | the context holds the issue body, the pipeline's own comments and maintainers' comments; a choice counts only when it is a label the pipeline's newest question records (tested by `t6_reply.sh`, not by Gate 179) |
+| `auto-update-spec-kit.yml` | published stage, `comment-reply` agent context and read-back | the context holds the issue body, the pipeline's own comments and maintainers' comments; a choice counts only when it is a label the pipeline's newest question records (tested by `t6_reply.sh`, not by Gate 180) |
 | `wing-commander-9-pr-conversation.yml` / `pr-conversation.yml` | wrapper + stage | unchanged (spec 033 FR-019) |
 | `wing-commander-issue-context` | shared comment filter (intake, board loop) | association only. Excluded comments are counted |
 | `_shared/auto-release-e2e-clarify-decision.sh` | e2e assertion | association only, matching the stage |
