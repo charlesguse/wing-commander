@@ -34,8 +34,6 @@ jobs:
   review:
     permissions:
       contents: read
-      issues: write
-      pull-requests: read
       actions: read
     uses: ./.github/workflows/shared-pr-reviewer.yml
     with:
