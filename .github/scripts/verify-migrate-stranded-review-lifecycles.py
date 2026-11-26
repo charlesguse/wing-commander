@@ -20,6 +20,88 @@ vbc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vbc)
 
 
+GH_STUB = """#!/bin/sh
+echo "gh $*" >> "$GH_CALLS"
+exit 0
+"""
+
+
+def crafted_iteration_failures():
+    """#889 (found by the code review of #1279): the Hand off step runs the
+    shipped `run:` text against a spec-meta.json whose .iteration is a
+    crafted string. Shell arithmetic would evaluate `ISSUE[$(cmd)0]` as
+    code (ISSUE is set, and reads as a number); the step must refuse it
+    before any write: non-zero exit, the command never run, nothing pushed
+    and no gh call."""
+    import json
+    import shutil
+    import tempfile
+    sys.path.insert(0, HERE)
+    from wc_shell_harness import find_step, resolve_bash, run_step
+    wf_path = os.path.join(".github", "workflows", "migrate-stranded-review-lifecycles.yml")
+    script = find_step(wf_path, "Hand off").get("run") or ""
+    failures = []
+    root = tempfile.mkdtemp(prefix="wc-migrate-crafted-")
+    try:
+        remote = os.path.join(root, "remote.git")
+        repo = os.path.join(root, "repo")
+        pwned = os.path.join(root, "pwned")
+        spec_dir = "specs/999-migrate-harness"
+        branch = "spec/999-migrate-harness"
+        meta = json.dumps({"spec_dir": spec_dir, "stage": "review",
+                           "iteration": f"ISSUE[$(touch {pwned})0]"})
+
+        def git(*args, cwd=repo):
+            return subprocess.run(["git", *args], cwd=cwd, capture_output=True,
+                                  text=True, check=True).stdout.strip()
+
+        subprocess.run(["git", "init", "-q", "--bare", "-b", branch, remote], check=True)
+        subprocess.run(["git", "clone", "-q", remote, repo], check=True,
+                       capture_output=True)
+        git("config", "user.email", "harness@example.invalid")
+        git("config", "user.name", "harness")
+        os.makedirs(os.path.join(repo, spec_dir))
+        with open(os.path.join(repo, spec_dir, "spec-meta.json"), "w") as fh:
+            fh.write(meta + "\n")
+        git("checkout", "-q", "-b", branch)
+        git("add", "-A")
+        git("commit", "-q", "-m", "seed")
+        git("push", "-q", "origin", branch)
+        tip = git("rev-parse", "HEAD")
+        bindir = os.path.join(root, "bin")
+        os.makedirs(bindir)
+        with open(os.path.join(bindir, "gh"), "w") as fh:
+            fh.write(GH_STUB)
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        calls = os.path.join(root, "gh_calls")
+        open(calls, "w").close()
+        runner_temp = os.path.join(root, "runner_temp")
+        os.makedirs(runner_temp)
+        env = {"GH_TOKEN": "x", "ISSUE": "250", "BRANCH": branch,
+               "SPEC_DIR": spec_dir, "COUNT": "1", "ITEMS": "- [ ] T001",
+               "MAINT": "", "VERDICT": "decision=migrate",
+               "DECIDED_TIP": tip, "GITHUB_REPOSITORY": "example/repo",
+               "GH_CALLS": calls,
+               "PATH": bindir + os.pathsep + os.environ.get("PATH", "")}
+        rc, out, _outputs, _summary = run_step(resolve_bash(), script, repo,
+                                               env, runner_temp)
+        where = "migrate workflow: crafted spec-meta.json iteration"
+        if rc == 0:
+            failures.append(f"{where}: the Hand off step exited 0: {out.strip()}")
+        if os.path.exists(pwned):
+            failures.append(f"{where}: shell arithmetic evaluated the "
+                            f"iteration as code (its command ran)")
+        if git("rev-parse", branch, cwd=remote) != tip:
+            failures.append(f"{where}: the hand-off pushed although the "
+                            f"iteration was refused")
+        if open(calls).read().strip():
+            failures.append(f"{where}: gh was called although the iteration "
+                            f"was refused: {open(calls).read().strip()!r}")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    return failures
+
+
 def main():
     failures = []
     d = os.path.join(vbc.FIXTURES, "migration")
@@ -65,6 +147,7 @@ def main():
         failures.append("migrate workflow: a failed comments read must stop the decision, not read as no marker")
     if "iteration=recorded+1" in wf:
         failures.append("migrate workflow: literal recorded+1 iteration")
+    failures.extend(crafted_iteration_failures())
     if failures:
         for f in failures:
             print(f"FAIL: {f}")

@@ -18639,7 +18639,10 @@
      "id": 40172709641,
      "path": ".github/workflows/wing-commander-auto-update-spec-kit.yml",
      "referenced_workflows": [
-      "charlesguse/wing-commander/.github/workflows/auto-update-spec-kit.yml@95d049b0659eb938a963ffee7b8896c3ee266460"
+      {
+       "path": "charlesguse/wing-commander/.github/workflows/auto-update-spec-kit.yml@95d049b0659eb938a963ffee7b8896c3ee266460",
+       "ref": "refs/heads/main"
+      }
      ],
      "repository": "charlesguse/wing-commander",
      "status": "completed"
@@ -22393,7 +22396,10 @@
      "id": 41986173185,
      "path": ".github/workflows/wing-commander-auto-update-spec-kit.yml",
      "referenced_workflows": [
-      "charlesguse/wing-commander/.github/workflows/auto-update-spec-kit.yml@f15a339da376cd6019e7988eadf4738e1efe51f7"
+      {
+       "path": "charlesguse/wing-commander/.github/workflows/auto-update-spec-kit.yml@f15a339da376cd6019e7988eadf4738e1efe51f7",
+       "ref": "refs/heads/main"
+      }
      ],
      "repository": "charlesguse/wing-commander",
      "status": "completed"
@@ -29489,7 +29495,10 @@
      "id": 42458052146,
      "path": ".github/workflows/wing-commander-auto-update-spec-kit.yml",
      "referenced_workflows": [
-      "charlesguse/wing-commander/.github/workflows/auto-update-spec-kit.yml@c7fcf1c1763e1388d3def6664e3bc88619ee1c39"
+      {
+       "path": "charlesguse/wing-commander/.github/workflows/auto-update-spec-kit.yml@c7fcf1c1763e1388d3def6664e3bc88619ee1c39",
+       "ref": "refs/heads/main"
+      }
      ],
      "repository": "charlesguse/wing-commander",
      "status": "completed"
@@ -30971,7 +30980,10 @@
      "id": 43174150641,
      "path": ".github/workflows/wing-commander-auto-update-spec-kit.yml",
      "referenced_workflows": [
-      "charlesguse/wing-commander/.github/workflows/auto-update-spec-kit.yml@87e5738667b733bc045742ab4e79924ce0da8abe"
+      {
+       "path": "charlesguse/wing-commander/.github/workflows/auto-update-spec-kit.yml@87e5738667b733bc045742ab4e79924ce0da8abe",
+       "ref": "refs/heads/main"
+      }
      ],
      "repository": "charlesguse/wing-commander",
      "status": "completed"
