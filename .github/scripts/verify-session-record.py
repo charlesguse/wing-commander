@@ -185,6 +185,44 @@ def out_problems():
     return []
 
 
+def edge_problems():
+    """The small edges no fixture can hold (#889): the own-line refusal
+    names the line; a date's year is read the same on every platform (a
+    Windows-style strftime that pads the year must not let 0999 through);
+    and the usage text says check takes none of --out, --footer, --date."""
+    problems = []
+    fields = dict(SAMPLES["decision"][1], evidence="e\n**Undo:** x")
+    try:
+        wsr.record("decision", fields)
+        problems.append("a decision whose evidence holds an **Undo:** line was accepted")
+    except wsr.RecordError as error:
+        if not any("own lines" in p and "**Undo:** x" in p for p in error.problems):
+            problems.append("the own-line refusal does not name the line: {0}".format(error.problems))
+    import datetime as real
+
+    class PaddedYear(real.datetime):
+        def strftime(self, fmt):
+            return super().strftime(fmt.replace("%Y", "{0:04d}".format(self.year)))
+
+    saved = wsr.datetime
+    wsr.datetime = type("datetime_shim", (), {"datetime": PaddedYear, "date": real.date,
+                                              "timezone": real.timezone})
+    try:
+        for text, ok in (("0999-01-01", False), ("1000-01-01", True), ("2026-02-30", False),
+                         ("2026-11-14", True), ("2026-1-14", False)):
+            got = []
+            wsr._date(text, got)
+            if (not got) != ok:
+                problems.append("date {0!r} under a year-padding strftime: {1}".format(
+                    text, "accepted" if not got else "refused"))
+    finally:
+        wsr.datetime = saved
+    doc = " ".join((wsr.__doc__ or "").split())
+    if "Every kind but check also takes --out" not in doc or "Exit 2: not a record" not in doc:
+        problems.append("the usage text no longer says check takes no --out, or its exit codes")
+    return problems
+
+
 def run(root=ROOT):
     failures = 0
     paths = sorted(glob.glob(FIXTURES))
@@ -199,7 +237,7 @@ def run(root=ROOT):
             print("::error::verify-session-record: {0}: {1}".format(os.path.basename(path), error))
         else:
             print("[ok] {0}".format(os.path.basename(path)))
-    for problem in pointer_problems(root) + opening_problems() + out_problems():
+    for problem in pointer_problems(root) + opening_problems() + out_problems() + edge_problems():
         failures += 1
         print("::error::verify-session-record: {0}".format(problem))
     return failures
