@@ -214,13 +214,35 @@ def subject_files():
             sorted(set(posix(p) for p in shells)))
 
 
+SHELL_INTERPRETERS = frozenset(("sh", "bash", "dash", "zsh", "ksh"))
+
+
+def is_shell_shebang(first):
+    """True when `first` is a `#!` line whose interpreter is a shell:
+    `#!/bin/bash`, `#!/usr/bin/env bash`, `#!/usr/bin/env -S bash -e`.
+    The interpreter is the program the line runs, never a word after it, so
+    `#!/usr/bin/env python3 # not sh` is not a shell script (#889, code
+    review of #1004)."""
+    if not first.startswith("#!"):
+        return False
+    words = []
+    for word in first[2:].split():
+        if word.startswith("#"):
+            break
+        words.append(word)
+    if words and os.path.basename(words[0]) == "env":
+        words = [w for w in words[1:]
+                 if not w.startswith("-") and not re.match(r"[A-Za-z_]\w*=", w)]
+    return bool(words) and os.path.basename(words[0]) in SHELL_INTERPRETERS
+
+
 def _has_shell_shebang(path):
     try:
         with open(path, encoding="utf-8") as fh:
             first = fh.readline(200)
     except (OSError, UnicodeDecodeError):
         return False
-    return first.startswith("#!") and bool(re.search(r"\b(?:ba|da|z|k)?sh\b", first))
+    return is_shell_shebang(first)
 
 
 def sweep():
@@ -502,9 +524,32 @@ def _verdicts(detector):
     return out
 
 
+# (first line, is a shell script) -- which extensionless or .bash files
+# sweep() reads as shell.
+SHEBANG_CASES = [
+    ("#!/bin/bash\n", True),
+    ("#!/bin/sh -e\n", True),
+    ("#!/usr/bin/env bash\n", True),
+    ("#!/usr/bin/env -S bash -euo pipefail\n", True),
+    ("#! /usr/bin/env zsh\n", True),
+    ("#!/usr/bin/env python3 # not sh\n", False),
+    ("#!/usr/bin/python3 -c 'import sh'\n", False),
+    ("#!/usr/bin/env node\n", False),
+    ("#!/usr/bin/env\n", False),
+    ("# bash, but no shebang\n", False),
+]
+
+
 def self_test():
     baseline = _verdicts(Detector())
     problems = []
+
+    for first, want in SHEBANG_CASES:
+        if is_shell_shebang(first) != want:
+            problems.append(("shebang " + repr(first), [
+                "read as {0}a shell script".format("" if not want else "not ")]))
+            print("FAIL  shebang {0!r}: expected {1}".format(
+                first, "shell" if want else "not shell"))
 
     for (name, _text, expect_fail, must_mention), (fired, output) in zip(
             CASES, baseline):
