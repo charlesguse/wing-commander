@@ -24,7 +24,10 @@ hook must not run and the push must land on the real remote, not the decoy.
 And (c) a GIT_CONFIG_KEY_0 the caller already set (a container job's
 safe.directory) survives the hardening: its entries are appended, never
 written over -- overwriting it makes every git call in a container job
-refuse the workspace as dubious ownership.
+refuse the workspace as dubious ownership. The self-test runs (a) and the
+shim guards again under safe.bareRepository=explicit, as the agent's
+session runs git: the gate reads each fixture remote by naming its git
+directory, never by discovery, which that setting refuses.
 
 NOTE ON GATE NUMBERING: this gate was first registered as Gate 142. It is
 numbered 150, not 142: 141-146 were taken by spec 110's PR #982 and 147-148
@@ -214,6 +217,24 @@ def _git(args, cwd, env=None):
                           capture_output=True, text=True)
 
 
+def _read_ref(where, ref):
+    """-> (sha, error) for `ref` in a fixture repository. `where` names it
+    explicitly (["--git-dir=<bare>"], or ["-C", <worktree>]): reading a bare
+    remote by discovery (cwd=the bare directory) is refused where
+    safe.bareRepository=explicit, which claude-code-action sets for the
+    agent's session (#1153). The push had landed, and the refused read
+    reported that it had not (#1179, #1183). An absent ref is ("", ""); a
+    read git refused is an error of its own, never a wrong answer."""
+    got = subprocess.run(["git"] + where + ["rev-parse", "--verify", "-q", ref],
+                         env=git_env(), capture_output=True, text=True)
+    if got.returncode == 0:
+        return got.stdout.strip(), ""
+    if got.returncode == 1 and not got.stderr.strip():
+        return "", ""
+    return "", "could not read {0} in {1}: {2}".format(
+        ref, " ".join(where), (got.stdout + got.stderr).strip()[-300:])
+
+
 def check_behaviour(push_cmd):
     """`push_cmd(workdir, env, head, branch)` runs a push; returns errors."""
     errors = []
@@ -246,9 +267,10 @@ def check_behaviour(push_cmd):
         push_cmd(work, env, head, "main")
         if os.path.exists(marker):
             errors.append("planted pre-push hook ran")
-        landed = subprocess.run(["git", "rev-parse", "--verify", "refs/heads/main"],
-                                cwd=real, capture_output=True, text=True)
-        if landed.returncode != 0 or landed.stdout.strip() != head:
+        landed, err = _read_ref(["--git-dir=" + real], "refs/heads/main")
+        if err:
+            errors.append(err)
+        elif landed != head:
             errors.append("push did not land on the real remote "
                           "(planted insteadOf redirected it)")
     return errors
@@ -298,20 +320,23 @@ def check_shim_guards(hardening=HARDENING):
                  "harness", hardening, head, branch], cwd=cwd, env=env,
                 capture_output=True, text=True)
 
-        if push("HEAD", linked).returncode == 0 or subprocess.run(
-                ["git", "rev-parse", "--verify", "refs/heads/HEAD"], cwd=bare,
-                capture_output=True).returncode == 0:
+        pushed_head = push("HEAD", linked).returncode == 0
+        literal, err = _read_ref(["--git-dir=" + bare], "refs/heads/HEAD")
+        if err:
+            errors.append(err)
+        if pushed_head or literal:
             errors.append("wc_push_from_shim pushed a branch literally named HEAD")
         got = push("main", linked)
-        landed = subprocess.run(["git", "rev-parse", "--verify", "refs/heads/main"], cwd=bare,
-                                capture_output=True, text=True).stdout.strip()
-        if got.returncode != 0 or landed != head:
+        landed, err = _read_ref(["--git-dir=" + bare], "refs/heads/main")
+        if err:
+            errors.append(err)
+        if got.returncode != 0 or (not err and landed != head):
             errors.append("wc_push_from_shim could not push from a linked worktree: "
                           + (got.stdout + got.stderr)[-300:])
-        tracking = subprocess.run(["git", "rev-parse", "--verify", "-q",
-                                   "refs/remotes/origin/main"], cwd=linked,
-                                  capture_output=True, text=True).stdout.strip()
-        if tracking != head:
+        tracking, err = _read_ref(["-C", linked], "refs/remotes/origin/main")
+        if err:
+            errors.append(err)
+        elif tracking != head:
             errors.append("wc_push_from_shim left the checkout's refs/remotes/origin/<branch> "
                           "behind the push, as a plain `git push origin` would not")
     return errors
@@ -329,6 +354,39 @@ def naive_push(work, env, head, branch):
                    env=dict(git_env(), GIT_CONFIG_GLOBAL=os.devnull,
                             GIT_CONFIG_NOSYSTEM="1"),
                    capture_output=True, text=True)
+
+
+def explicit_bare_failures():
+    """The behaviour checks, run as the agent's session runs git: with
+    safe.bareRepository=explicit appended after any GIT_CONFIG_KEY_n the
+    caller set (a container's safe.directory). The push lands there, so the
+    checks must pass there (#1179, #1183)."""
+    raw = os.environ.get("GIT_CONFIG_COUNT", "0")
+    n = int(raw) if raw.isdigit() else 0
+    keys = ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_%d" % n, "GIT_CONFIG_VALUE_%d" % n)
+    saved = {k: os.environ.get(k) for k in keys}
+    os.environ.update({keys[0]: str(n + 1), keys[1]: "safe.bareRepository",
+                       keys[2]: "explicit"})
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            _git(["init", "--quiet", "--bare"], tmp)
+            probe = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=tmp, env=git_env(),
+                                   capture_output=True, text=True)
+        if probe.returncode == 0:
+            return ["this git does not refuse a bare repository found by discovery under "
+                    "safe.bareRepository=explicit, so the explicit-bare case tests nothing"]
+        failures = ["under safe.bareRepository=explicit: " + e
+                    for e in check_behaviour(hardened_push) + check_shim_guards()]
+        if not any("insteadOf" in e for e in check_behaviour(naive_push)):
+            failures.append("under safe.bareRepository=explicit: planted insteadOf not "
+                            "detected on a naive push")
+        return failures
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 def _load_workflows(root=ROOT):
@@ -385,6 +443,7 @@ def self_test():
         failures.append("planted hook not detected on a naive push")
     if not any("insteadOf" in e for e in naive):
         failures.append("planted insteadOf not detected on a naive push")
+    failures += explicit_bare_failures()
     # Mutations of the shipped files, each of which must fail.
     docs = _load_workflows()
     if static_errors(docs):

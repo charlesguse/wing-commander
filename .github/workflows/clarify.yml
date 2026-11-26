@@ -870,21 +870,23 @@ jobs:
       # Spec 114 (MF-46): the agent can write the pipeline checkout in the
       # workspace (`git log/diff --output=<path>`), and every step below
       # runs a composite from it -- the containment check, label first, the
-      # stranded-commit push. For a subfolder lifecycle it is deleted and
-      # checked out again at the job's pinned ref before any of them runs.
+      # stranded-commit push. It is deleted and checked out again at the
+      # job's pinned ref before any of them runs. No project guard: a root
+      # lifecycle runs the same composites, some of them handed the bot
+      # token or the App key, so the pair runs whenever the agent step ran.
       # always(), not !cancelled(): the always() verdict and metrics steps
       # below run pipeline code in a cancelled run too, and a checkout is a
       # read, never a remote rewrite. verify-subfolder-containment.py
       # (check_pipeline_recheckout) holds every subfolder-capable agent to
-      # this pair.
+      # this unguarded pair.
       - name: Remove the agent-writable pipeline checkout (post-agent)
         id: pipeline-rm
-        if: always() && steps.agent.outcome != 'skipped' && steps.project.outputs.project != ''
+        if: always() && steps.agent.outcome != 'skipped'
         run: rm -rf -- .wing-commander-pipeline
 
       - name: Re-checkout pipeline repository (post-agent)
         id: pipeline-recheckout
-        if: always() && steps.agent.outcome != 'skipped' && steps.project.outputs.project != ''
+        if: always() && steps.agent.outcome != 'skipped'
         uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
@@ -1300,7 +1302,7 @@ jobs:
       # FR-008 (specs/130-maintainer-only-comments): when the issue's author
       # is not a maintainer, the questions say up front that only a
       # maintainer's reply is folded in. The paragraph's single home is the
-      # composite (Gate 174).
+      # composite (Gate 179).
       - name: Add the maintainer-relay note for a requester who is not a maintainer
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.clarification.outputs.outcome == 'needs-clarification'
         uses: ./.wing-commander-pipeline/.github/actions/wing-commander-requester-relay-note
@@ -1489,8 +1491,11 @@ jobs:
     concurrency:
       group: wing-commander-${{ inputs.issue-number }}
       cancel-in-progress: false
+    # contents: read -- this job pushes nothing: its notice passes an empty
+    # spec-dir (no record to mark before the spec PR merges), and its only
+    # GITHUB_TOKEN use is the two checkouts (#889, least privilege).
     permissions:
-      contents: write
+      contents: read
       issues: write
       id-token: write
     steps:

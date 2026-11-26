@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 174 -- comment-triggered stages act only on maintainers
+"""Gate 179 -- comment-triggered stages act only on maintainers
 (specs/130-maintainer-only-comments, contracts/comment-author-rule.md).
 
 WHY THIS EXISTS
@@ -82,7 +82,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (  # noqa: E402
     ensure_jq, resolve_bash, run_step, use_utf8_stdout)
 
-GATE = "Gate 174"
+GATE = "Gate 179"
 WF = os.path.join(".github", "workflows")
 CLARIFY = os.path.join(WF, "clarify.yml")
 INTAKE = os.path.join(WF, "intake.yml")
@@ -453,7 +453,7 @@ STATIC_CHECKS = (check_a, check_b, check_c, check_d, check_e, check_f, check_g, 
 # --------------------------------------------------------------------------
 
 STUB_GH = r'''#!/usr/bin/env bash
-# Stub gh for Gate 174: `gh api <path> [--jq EXPR]` only.
+# Stub gh for Gate 179: `gh api <path> [--jq EXPR]` only.
 [ "$1" = "api" ] || { echo "stub gh: unexpected: $*" >&2; exit 2; }
 shift
 path=""; expr="."

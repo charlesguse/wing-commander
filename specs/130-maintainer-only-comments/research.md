@@ -77,7 +77,7 @@ Every decision below was settled from this repository's precedent or from the ow
 
 ## D7 — The regression gate (FR-010)
 
-**Decision**: Add a new gate, `verify-maintainer-only-comments.py`, registered in lint-workflows.yml with the next free gate number at build time (Gate 174). Its checks:
+**Decision**: Add a new gate, `verify-maintainer-only-comments.py`, registered in lint-workflows.yml with the next free gate number at build time (Gate 179, after main and open PRs took 172 and 174). Its checks:
 - (a) in every wrapper triggered by `issue_comment`, `pull_request_review` or `pull_request_review_comment`, no job `if:`, step `if:`, step `env:` value or `with:` value compares or passes an identity (`.user.id`, `issue-author-id`, `commenter-id ==`, actor or author ids);
 - (b) clarify.yml has the D1 check step before `lifecycle-gate`, both D1-gated steps carry its condition, and every later step skips for a refused comment (only the two argument-composing steps run ungated);
 - (c) the issue-context filters contain no identity clause;

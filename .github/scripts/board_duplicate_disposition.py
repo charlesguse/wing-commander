@@ -21,6 +21,12 @@ whichever step was left undone and never re-posts a duplicate comment,
 but whether a later SCHEDULED run makes that call depends on the call
 site and on which step failed (contracts/duplicate-disposition.md,
 failure semantics; #888).
+
+main() also lists the spec-request on the Roadmap's Proposed list first
+(board_roadmap.record_proposal(), #1209): best effort, outside the
+pre-checks above, and on every call -- it reads the tracking issues, the
+spec-request and the Roadmap, and writes the Roadmap only when the line
+is missing.
 """
 import argparse
 import json
@@ -36,6 +42,7 @@ import sys
 # directory is trusted (Gate 98), so adding it back is safe.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import board_roadmap  # noqa: E402  (#1209: the Roadmap's Proposed line)
 from board_eligibility import DISPOSITION_LABEL, DUPLICATE_STEP  # noqa: E402
 from board_item_marker import (  # noqa: E402
     current_line_id, is_loop_marker_author, last_marker_match, write_marker)
@@ -277,6 +284,17 @@ def main():
         sys.exit(1)
 
     line_id = current_line_id()
+    # #1209: list the proposal on the Roadmap first, so a disposition that
+    # fails below still leaves it listed. Best effort: record_proposal()
+    # never raises and its outcome never changes this script's exit status.
+    try:
+        board_roadmap.record_proposal(args.spec_request_issue, line_id=line_id,
+                                      originating=None if line_id else args.originating,
+                                      repository=repository, bot_login=bot_login)
+    except Exception as exc:  # noqa: BLE001 -- the routing never fails on the Roadmap
+        print("::warning::board_duplicate_disposition: the Roadmap was not updated for #{0}: "
+              "{1}".format(args.spec_request_issue, exc), file=sys.stderr)
+
     if line_id:
         # -- see board_item_marker.current_line_id(): never the issue path's
         # close/label of the originating issue for a line (FR-013, FR-017).

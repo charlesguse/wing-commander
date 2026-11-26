@@ -4,7 +4,7 @@
 # 3.0.0, Principle IV). Comment-triggered stages act only on a maintainer's
 # reply, so a requester who is not one is told up front to ask a maintainer
 # to relay their answers. A reply from a non-maintainer is never answered.
-# Gate 174 (verify-maintainer-only-comments.py) runs this step against a
+# Gate 179 (verify-maintainer-only-comments.py) runs this step against a
 # stub gh, and fails if the paragraph's text appears in any other file.
 #
 # Like every shared composite, this action is resolved from the pipeline

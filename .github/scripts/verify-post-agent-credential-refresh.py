@@ -88,7 +88,8 @@ drop-detection.
    with the agent-started guard on the very restart-command arm that says
    "its pushed commits are on the branch", and implement's agent-started
    never read from its non-pushing progress composer
-   (AGENT_STARTED_EXCLUDED_SIGNALS). The agent-started wiring is also
+   (AGENT_STARTED_EXCLUDED_SIGNALS), and read any-true rather than
+   most-recent-wins (AGENT_STARTED_ANY_TRUE). The agent-started wiring is also
    checked on every other job in those files whose reason step calls the
    composite (pr-conversation's stalled-mark).
 7. Every agent step in a `full_subject` job has its own refresh/agent-ran/
@@ -494,6 +495,29 @@ def _wall_clock_bound_ok(job, max_minutes=10):
     return True
 
 
+def _credential_free_ok(job):
+    """The job mints and holds no App credential at all (spec 127, FR-022):
+    `permissions` is exactly `contents: read`, no step mints an App token
+    (create-github-app-token, wing-commander-context, scoped-app-token) and
+    no step reads an App secret. With no credential minted before the agent
+    there is none to go stale after it, so the post-agent re-mint, refresh
+    and agent-ran signal this gate otherwise demands have nothing to
+    refresh."""
+    perms = (job or {}).get("permissions")
+    if perms != {"contents": "read"}:
+        return False
+    steps = list((job or {}).get("steps") or [])
+    if not any(_is_agent_step(s) for s in steps):
+        return False
+    for step in steps:
+        text = _step_text(step)
+        if ("create-github-app-token" in text or "wing-commander-context" in text
+                or "scoped-app-token" in text or "app-private-key" in text
+                or "app-id" in text):
+            return False
+    return True
+
+
 # path -> set of job names -- the checked-in floor a derived subject's
 # disappearance is compared against (research.md D3; contract Section 2).
 # Nine pre-existing entries (spec 052's FR-007 stages) plus seven this
@@ -522,6 +546,32 @@ SUBJECT_FLOOR = {
 # subject resolves to instead of full_subject, each with a mechanically
 # asserted condition (FR-007; contract "Entries this feature adds").
 EXEMPT_JOBS = {
+    (".github/workflows/shared-pr-reviewer.yml", "find"): ExemptionEntry(
+        reason=(
+            "credential-free agent job (permissions: contents: read, no App "
+            "token minted) -- nothing to re-mint or refresh after the agent "
+            "(spec 127, FR-022)"),
+        issue=(),
+        permanent=True,
+        permanent_reason=(
+            "The shared reviewer's agents hold no write credential by "
+            "design; a credential-free job has no stale credential."),
+        decided_by=(1142,),
+        condition=_credential_free_ok,
+    ),
+    (".github/workflows/shared-pr-reviewer.yml", "check"): ExemptionEntry(
+        reason=(
+            "credential-free agent job (permissions: contents: read, no App "
+            "token minted) -- nothing to re-mint or refresh after the agent "
+            "(spec 127, FR-022)"),
+        issue=(),
+        permanent=True,
+        permanent_reason=(
+            "The shared reviewer's agents hold no write credential by "
+            "design; a credential-free job has no stale credential."),
+        decided_by=(1142,),
+        condition=_credential_free_ok,
+    ),
     (".github/workflows/cleanup.yml", "teardown-done"): ExemptionEntry(
         reason=(
             "wall-clock bound (timeout-minutes: 10) instead of the full "
@@ -914,6 +964,21 @@ AGENT_STARTED_EXCLUDED_SIGNALS = {
     ".github/workflows/implement.yml": {"agent-ran-progress"},
 }
 
+# Jobs whose agent-started reads 'true' when ANY of its signal steps says
+# 'true', rather than most-recent-wins: implement's retry clears the cycle's
+# transcript first, so a retry that fails in its own setup reports 'false'
+# after a cycle agent that ran and pushed (code review of #1239;
+# verify-implement-retry-leg-guards.py evaluates the expression).
+AGENT_STARTED_ANY_TRUE = {".github/workflows/implement.yml"}
+
+
+def agent_started_expr(path, ids):
+    chain = " || ".join("steps.%s.outputs.started" % i for i in ids)
+    if path in AGENT_STARTED_ANY_TRUE and len(ids) > 1:
+        anyt = " || ".join("steps.%s.outputs.started == 'true'" % i for i in ids)
+        return "${{ (%s) && 'true' || %s }}" % (anyt, chain)
+    return "${{ %s }}" % chain
+
 
 def check_agent_started_wiring(path, job, wf, job_name="stalled"):
     """-> list[str]. #889/#972: the agent-started signal reaches the stall
@@ -940,9 +1005,9 @@ def check_agent_started_wiring(path, job, wf, job_name="stalled"):
     # Pass-2 review of PR #978: a bare "outputs.started" substring let a
     # mistyped step id, an unrelated step, or a dropped `||` arm through.
     # agent-started must read exactly agent-ran's own signal steps, in the
-    # same most-recent-wins order, minus the excluded ones -- and each of
-    # those ids must be a wing-commander-agent-ran-signal step of the entry
-    # job.
+    # same most-recent-wins order (any-true first for AGENT_STARTED_ANY_TRUE),
+    # minus the excluded ones -- and each of those ids must be a
+    # wing-commander-agent-ran-signal step of the entry job.
     signal_ids = {str((s or {}).get("id", "")) for s in
                   entry_job.get("steps") or []
                   if "wing-commander-agent-ran-signal" in
@@ -953,8 +1018,9 @@ def check_agent_started_wiring(path, job, wf, job_name="stalled"):
     want_ids = [i for i in ran_ids if i not in excluded]
     got_ids = re.findall(r"steps\.([A-Za-z0-9_-]+)\.outputs\.started",
                          published)
-    want_expr = "${{ %s }}" % " || ".join(
-        "steps.%s.outputs.started" % i for i in want_ids)
+    want_expr = agent_started_expr(path, want_ids)
+    if path in AGENT_STARTED_ANY_TRUE and len(want_ids) > 1:
+        want_ids = want_ids * 2
     if (not want_ids or got_ids != want_ids
             or published.strip() != want_expr
             or any(i not in signal_ids for i in got_ids)):

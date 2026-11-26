@@ -66,15 +66,30 @@ check "S9 feature never calls gh issue close itself" "$(grep -c 'issue close' "$
 
 echo
 echo "=== Scenario 13: comment-reply question-state guard ==="
-guard_issue() { # guard_issue <issue-body>
+# guard_issue <issue-body> [author] [labels-csv] [pinned] [is-pr]
+# Defaults model the App's own tracking issue on a checkout pinned at 0.15.0:
+# authored by wing-commander[bot] (the stub's App, BOT_SLUG below), labelled
+# auto-update:tracking. The pin is read from the step's working directory,
+# as the runner's bootstrap checkout would hold it; "-" writes no pin file.
+guard_issue() {
   new_step_env
   "$PY" -c "
 import json,os,sys
-json.dump({'issues':{'42':{'number':42,'state':'open','body':sys.argv[1],'labels':[],'comments':[]}}}, open(os.environ['GH_STATE'],'w'))" "$1"
-  GHA_SUBST=("steps.ctx.outputs.token=stub"); export GH_TOKEN=stub ISSUE_NUMBER=42
-  run_step 'auto-update-spec-kit__comment-reply__*awaits-a-decision*.sh' >/dev/null 2>&1
-  Q_PROCEED="$(out proceed)"; Q_CAND="$(out candidate)"; Q_SUM="$(summary)"
+body,author,labels,is_pr = sys.argv[1:5]
+json.dump({'issues':{'42':{'number':42,'state':'open','body':body,'author':author,
+  'labels':[l for l in labels.split(',') if l],'is_pr':is_pr=='true','comments':[]}}},
+  open(os.environ['GH_STATE'],'w'))" "$1" "${2-wing-commander[bot]}" "${3-auto-update:tracking}" "${5-false}"
+  mkdir -p "$WORK/ws/.specify"
+  if [ "${4-0.15.0}" != "-" ]; then
+    printf '{"speckit_version": "%s"}\n' "${4-0.15.0}" > "$WORK/ws/.specify/init-options.json"
+  fi
+  GHA_SUBST=("steps.ctx.outputs.token=stub" "steps.ctx.outputs.bot-slug=wing-commander")
+  export GH_TOKEN=stub ISSUE_NUMBER=42 BOT_SLUG=wing-commander TRACKING_LABEL=auto-update:tracking
+  (cd "$WORK/ws" && run_step 'auto-update-spec-kit__comment-reply__*awaits-a-decision*.sh') >/dev/null 2>&1
+  Q_PROCEED="$(out proceed)"; Q_CAND="$(out candidate)"; Q_REFUSED="$(out refused)"; Q_PIN="$(out pinned)"; Q_SUM="$(summary)"
 }
+AWAIT="watching
+<!-- wing-commander-auto-update-spec-kit: candidate=0.15.1 observed=1 awaiting-decision=true -->"
 
 guard_issue "Some unrelated issue a maintainer commented on."
 check "S13 unmarked issue -> no-op" "$Q_PROCEED" "false"
@@ -85,10 +100,47 @@ guard_issue "watching
 check "S13 marked but NOT awaiting a decision -> no-op" "$Q_PROCEED" "false"
 check_contains "S13 explains the no-op" "$Q_SUM" "not awaiting a maintainer decision"
 
-guard_issue "watching
-<!-- wing-commander-auto-update-spec-kit: candidate=0.15.1 observed=1 awaiting-decision=true -->"
-check "S13 marked AND awaiting -> proceeds" "$Q_PROCEED" "true"
+guard_issue "$AWAIT"
+check "S13 maintainer reply on the App's tracking issue, newer candidate -> proceeds" "$Q_PROCEED" "true"
 check "S13 candidate parsed" "$Q_CAND" "0.15.1"
+check "S13 a newer candidate is not refused" "$Q_REFUSED" ""
+
+echo "--- the issue must be the App's own auto-update:tracking issue (owner decision 2026-11-25) ---"
+guard_issue "$AWAIT" "someone-else" "auto-update:tracking"
+check "S13 marker+label on an issue a human opened -> not resumed" "$Q_PROCEED" "false"
+check "S13 a human-opened issue gets no refusal comment either" "$Q_REFUSED" ""
+check_contains "S13 explains why the issue is not the tracking issue" "$Q_SUM" "not this App's"
+
+guard_issue "$AWAIT" "other-app[bot]" "auto-update:tracking"
+check "S13 issue opened by a different App -> not resumed" "$Q_PROCEED" "false"
+
+guard_issue "$AWAIT" "wing-commander[bot]" ""
+check "S13 the App's issue without the tracking label -> not resumed" "$Q_PROCEED" "false"
+
+guard_issue "$AWAIT" "wing-commander[bot]" "auto-update:tracking" "0.15.0" true
+check "S13 a pull request is never the tracking issue" "$Q_PROCEED" "false"
+
+echo "--- the candidate must be newer than the pin (owner decision 2026-11-25) ---"
+guard_issue "$AWAIT" "wing-commander[bot]" "auto-update:tracking" "0.15.1"
+check "S13 candidate EQUAL to the pin -> not resumed" "$Q_PROCEED" "false"
+check "S13 candidate equal to the pin -> refused" "$Q_REFUSED" "true"
+check "S13 refusal carries the pin for its message" "$Q_PIN" "0.15.1"
+check_contains "S13 refusal explained" "$Q_SUM" "is not newer than the pinned version"
+
+guard_issue "$AWAIT" "wing-commander[bot]" "auto-update:tracking" "0.16.0"
+check "S13 DOWNGRADE candidate -> not resumed" "$Q_PROCEED" "false"
+check "S13 downgrade -> refused" "$Q_REFUSED" "true"
+check "S13 refusal carries the candidate for its message" "$Q_CAND" "0.15.1"
+
+# sort -V, not a string compare: 0.15.10 is newer than 0.15.9.
+guard_issue "watching
+<!-- wing-commander-auto-update-spec-kit: candidate=0.15.10 observed=1 awaiting-decision=true -->" \
+  "wing-commander[bot]" "auto-update:tracking" "0.15.9"
+check "S13 0.15.10 over a 0.15.9 pin is newer (version order, not string order)" "$Q_PROCEED" "true"
+
+guard_issue "$AWAIT" "wing-commander[bot]" "auto-update:tracking" "-"
+check "S13 unreadable pin -> not resumed" "$Q_PROCEED" "false"
+check "S13 unreadable pin -> refused, never guessed" "$Q_REFUSED" "true"
 
 echo
 echo "=== Scenario 13: reply interpretation read-back (deterministic, fail-safe) ==="

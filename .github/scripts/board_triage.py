@@ -246,7 +246,7 @@ def tracked_pin_files():
     `git ls-files`), sorted -- the bound check_action_bump()'s scope is
     drawn inside. [] when git fails."""
     proc = subprocess.run(
-        ["git", "ls-files", "--"] + list(PIN_FILE_PATHSPECS),
+        ["git", "-c", "core.quotePath=false", "ls-files", "--"] + list(PIN_FILE_PATHSPECS),
         capture_output=True, text=True)
     if proc.returncode != 0:
         return []

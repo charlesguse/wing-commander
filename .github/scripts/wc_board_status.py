@@ -277,12 +277,39 @@ def render(snap):
             ", ".join("#{0}".format(n) for n in loose)) if loose else ""))
     body = "\n".join(lines) + "\n"
     if snap.get("proof_list"):
-        body += "\n" + proof_list_block(snap["proof_list"], body)
+        body = append_section(body, proof_list_block(snap["proof_list"], body))
     if snap.get("merge_evidence"):
-        body += "\n" + merge_evidence_block(snap["merge_evidence"], body)
+        body = append_section(body, merge_evidence_block(snap["merge_evidence"], body))
     if snap.get("feature_health"):
-        body += "\n" + feature_health_block(snap["feature_health"], body)
+        body = append_section(body, feature_health_block(snap["feature_health"], body))
     return body
+
+
+def append_section(body, block):
+    """`body` with section `block` after it: the one place render joins a
+    section on, so the fit checks measure exactly this string. An empty block
+    (a section left out for size) adds nothing, not even the separator."""
+    return body + "\n" + block if block else body
+
+
+def section_fits(body, block):
+    """True when append_section(body, block) stays within MAX_BODY_UNITS."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import board_spec_request_body as bsrb
+    return bsrb.utf16_len(append_section(body, block)) <= bsrb.MAX_BODY_UNITS
+
+
+def _fitting_or_left_out(body, block, what):
+    """`block` when it fits after `body`, else "" with a log line: leaving the
+    section out beats pushing the whole body past the limit and failing the
+    publish."""
+    if section_fits(body, block):
+        return block
+    print("board-status: the {0} section was left out; the body has no room even for its notice".format(what),
+          file=sys.stderr)
+    return ""
 
 
 # --------------------------------------------------------------------------
@@ -323,10 +350,6 @@ FEATURE_HEALTH_NOTICES = {
 def feature_health_block(fhs, body):
     """The section for snapshot entry `fhs`, placed after `body`. The table is
     dropped (call-outs kept) when the whole section would not fit."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    if here not in sys.path:
-        sys.path.insert(0, here)
-    from board_spec_request_body import MAX_BODY_UNITS, utf16_len
     status = fhs.get("status", "unreadable")
     last_good = (fhs.get("last_good_at") or "never")[:10]
     if status in ("built", "stale"):
@@ -338,22 +361,17 @@ def feature_health_block(fhs, body):
         for candidate in (text, shorten_feature_health(text)):
             # The stale line goes inside the end marker so a consumer replacing
             # the marker-delimited block takes it along.
-            block = _with_stale(candidate, stale)
-            if utf16_len(body) + 1 + utf16_len(block) <= MAX_BODY_UNITS:
-                return block + "\n"
-        block = "{0}\nFeature health's section was too large for this issue's body. The last good build was {1}.\n{2}".format(
+            block = _with_stale(candidate, stale) + "\n"
+            if section_fits(body, block):
+                return block
+        block = "{0}\nFeature health's section was too large for this issue's body. The last good build was {1}.\n{2}\n".format(
             FEATURE_HEALTH_MARKER, last_good, FEATURE_HEALTH_MARKER_END)
-        # Not even the notice fits: leave the section out rather than push the
-        # whole body past the limit and fail the publish.
-        if utf16_len(body) + 1 + utf16_len(block) <= MAX_BODY_UNITS:
-            return block + "\n"
-        print("board-status: the feature-health section was left out; the body has no room even for its notice",
-              file=sys.stderr)
-        return ""
+        return _fitting_or_left_out(body, block, "feature-health")
     notice = FEATURE_HEALTH_NOTICES.get(status, FEATURE_HEALTH_NOTICES["unreadable"])
     if status != "never":
         notice += " The last good build was {0}.".format(last_good)
-    return "{0}\n{1}\n{2}\n".format(FEATURE_HEALTH_MARKER, notice, FEATURE_HEALTH_MARKER_END)
+    return _fitting_or_left_out(
+        body, "{0}\n{1}\n{2}\n".format(FEATURE_HEALTH_MARKER, notice, FEATURE_HEALTH_MARKER_END), "feature-health")
 
 
 def _with_stale(text, stale):
@@ -374,8 +392,13 @@ def shorten_feature_health(text):
         return text.rstrip("\n")
     head, _sep, tail = text.partition("<details>")
     end = tail.partition("</details>")[2]
-    return (head.rstrip("\n") + "\n\n_Table shortened: it did not fit this issue's body._\n"
-            + end.lstrip("\n")).rstrip("\n")
+    short = (head.rstrip("\n") + "\n\n_Table shortened: it did not fit this issue's body._\n"
+             + end.lstrip("\n")).rstrip("\n")
+    # An unterminated <details> takes the rest of the text with it, end marker
+    # included; put the marker back so the next build reads a closed section.
+    if FEATURE_HEALTH_MARKER_END in text and not short.endswith(FEATURE_HEALTH_MARKER_END):
+        short += "\n" + FEATURE_HEALTH_MARKER_END
+    return short
 
 
 def _pl_block(status, built, last_good, summary, content, tag="wc-proof-list"):
@@ -387,13 +410,11 @@ def _pl_block(status, built, last_good, summary, content, tag="wc-proof-list"):
 def _section_block(pl, body, label, notices, tag):
     """The section for snapshot entry `pl`, placed after `body`: the full form
     if the whole body fits MAX_BODY_UNITS, else names-only, else the failed
-    notice. Entries are never dropped for size (FR-020). The one renderer of
+    notice, else nothing (logged; as feature_health_block). Entries are never
+    dropped for size (FR-020). The one renderer of
     every built-by-another-workflow section (proof list, merge evidence)."""
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from board_spec_request_body import MAX_BODY_UNITS, utf16_len
     status = pl.get("status", "unreadable")
     last_good = pl.get("last_good_at") or "never"
-    used = utf16_len(body) + 1
     notice = None
     if status == "built":
         section = pl.get("section") or {}
@@ -401,7 +422,7 @@ def _section_block(pl, body, label, notices, tag):
         summary = "{0}: built {1} (window 30 days)".format(label, built[:10])
         for key in ("full", "names_only"):
             block = _pl_block("built", built, last_good, summary, section.get(key, ""), tag)
-            if used + utf16_len(block) <= MAX_BODY_UNITS:
+            if section_fits(body, block):
                 return block
         status, notice = "failed", "The {0} was too large for this issue's body.".format(label.lower())
     notice = notice or notices.get(status, notices["unreadable"])
@@ -409,8 +430,9 @@ def _section_block(pl, body, label, notices, tag):
         last_good, "the last good build was {0}".format(last_good))
     if last_good == "unknown":
         when = "the last good build's date is unknown"
-    return _pl_block(status, "none", last_good, "{0}: {1}".format(label, status),
-                     "{0} {1}.".format(notice, when[0].upper() + when[1:]), tag)
+    return _fitting_or_left_out(
+        body, _pl_block(status, "none", last_good, "{0}: {1}".format(label, status),
+                        "{0} {1}.".format(notice, when[0].upper() + when[1:]), tag), label.lower())
 
 
 def proof_list_block(pl, body):
@@ -648,7 +670,11 @@ def section_snapshot(repo, switches, workflow, artifact, switch_key, now, gh_obj
                 else:
                     with open(os.path.join(tmp, filename), encoding="utf-8") as fh:
                         section = json.load(fh)
-                    if section.get("schema") != 1 or not section.get("full") or not section.get("names_only"):
+                    # A non-string here would make render() raise and stop the
+                    # whole Board status rewrite, so it is unreadable instead.
+                    if section.get("schema") != 1 or not all(
+                            isinstance(section.get(key), str) and section.get(key)
+                            for key in ("full", "names_only", "built_at")):
                         raise ValueError("malformed section")
         except (OSError, ValueError, TypeError, AttributeError, subprocess.CalledProcessError):
             return {"status": "unreadable", "last_good_at": last_good}

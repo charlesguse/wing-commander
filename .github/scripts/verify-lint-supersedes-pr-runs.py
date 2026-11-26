@@ -393,6 +393,14 @@ def self_test():
     case("a job-level concurrency block fails",
          {"group": event_form, "cancel-in-progress": True},
          "has its own concurrency", jobs={"lint": {"concurrency": "x"}})
+    case("a shard job with its own concurrency fails in the sharded layout",
+         {"group": event_form, "cancel-in-progress": True},
+         "job 'lint-shard-3' has its own concurrency",
+         jobs={"lint-shard-1": {}, "lint-shard-3": {"concurrency": "x"},
+               "lint": {}})
+    case("a sharded layout with only workflow-level concurrency passes",
+         {"group": event_form, "cancel-in-progress": True}, None,
+         jobs={"lint-shard-1": {}, "lint-shard-2": {}, "lint": {}})
     case("a job-level block does not hide a broken group: both are "
          "reported in one run",
          {"group": "lint-workflows-${{ github.run_id }}",

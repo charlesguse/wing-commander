@@ -580,6 +580,26 @@ MUTATIONS = [
          "default-allowed-tools",
          _tool_step(wd)["with"]["default-allowed-tools"]
          + ",Bash(GH_TOKEN=x gh api:*)")),
+    ("shadow granted an open-ended launcher with arguments",
+     lambda wd, w: _tool_step(wd)["with"].__setitem__(
+         "default-allowed-tools",
+         _tool_step(wd)["with"]["default-allowed-tools"]
+         + ",Bash(timeout 5:*)")),
+    ("shadow granted an open-ended env with an assignment",
+     lambda wd, w: _tool_step(wd)["with"].__setitem__(
+         "default-allowed-tools",
+         _tool_step(wd)["with"]["default-allowed-tools"]
+         + ",Bash(env FOO=1:*)")),
+    ("shadow granted perl -ne code",
+     lambda wd, w: _tool_step(wd)["with"].__setitem__(
+         "default-allowed-tools",
+         _tool_step(wd)["with"]["default-allowed-tools"]
+         + ",Bash(perl -ne print:*)")),
+    ("shadow granted node --eval code",
+     lambda wd, w: _tool_step(wd)["with"].__setitem__(
+         "default-allowed-tools",
+         _tool_step(wd)["with"]["default-allowed-tools"]
+         + ",Bash(node --eval x)")),
     ("a shadow upload drops overwrite",
      lambda wd, w: _family(wd)[-1]["with"].pop("overwrite")),
     ("shadow granted a writing gh subcommand",

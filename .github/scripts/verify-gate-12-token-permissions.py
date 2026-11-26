@@ -415,6 +415,41 @@ def parse_app_permissions(path="docs/setup.md"):
     return perms
 
 
+# --- category E: scopes asked of the App at mint time -------------
+# actions/create-github-app-token's `permission-<name>: <level>` inputs
+# narrow the installation token to those scopes, and GitHub refuses the
+# whole mint (HTTP 422 "The permissions requested are not granted to
+# this installation") when one names a scope the installation lacks.
+# The shared reviewer's `permission-actions: read` did exactly that on
+# run 45614694181 and stopped every round before any `gh` call ran, so
+# category A's per-call check never saw it. Each requested scope is
+# checked against the same docs/setup.md grant the calls are; a level
+# that is not a literal read/write cannot be checked and fails too.
+MINT_PERMISSION_PREFIX = "permission-"
+
+
+def check_mint_permissions(where, with_, app_perms, failures):
+    for key, val in sorted((with_ or {}).items()):
+        if not str(key).startswith(MINT_PERMISSION_PREFIX):
+            continue
+        cat = str(key)[len(MINT_PERMISSION_PREFIX):]
+        level = str(val).strip().lower()
+        if level not in ("read", "write"):
+            failures.append(
+                f"{where}: the App-token mint asks for `{key}: {val}`, a level "
+                f"Gate 12 cannot check against docs/setup.md; write a literal "
+                f"read or write.")
+            continue
+        if not permission_satisfied(level, app_perms.get(cat)):
+            failures.append(
+                f"{where}: the App-token mint asks for `{key}: {level}`, but "
+                f"docs/setup.md grants the App {cat}: "
+                f"{app_perms.get(cat) or 'nothing'} (full grant: "
+                f"{sorted(app_perms.items())}). GitHub refuses the whole mint "
+                f"with HTTP 422; drop the scope, or read through the job's "
+                f"github.token with a job `permissions:` entry instead.")
+
+
 def check_call(where, label, required, tok_kind, tok_detail,
                app_perms, job_perms, failures, notes):
     if tok_kind == "app":
@@ -709,6 +744,10 @@ for f in sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workfl
                     (f, jname, sname, step.get("with") or {}, job_env,
                      job_perms, job_app_exprs))
 
+            if str(uses).split("@")[0] == APP_TOKEN_MINTER:
+                check_mint_permissions(f"{f} :: {jname} / {sname}",
+                                       step.get("with"), app_perms, failures)
+
             # --- category A: literal invocations in run: blocks -----------
             run = step.get("run")
             if run:
@@ -784,6 +823,9 @@ for af in action_files:
     for sidx, st in enumerate(comp_steps):
         st_name = st.get("name") or st.get("id") or "<unnamed step>"
         st_uses = str(st.get("uses") or "")
+        if st_uses.split("@")[0] == APP_TOKEN_MINTER:
+            check_mint_permissions(f"{afp} :: {st_name}", st.get("with"),
+                                   app_perms, failures)
         if COMPOSITE_USES_RE.match(st_uses):
             notes.append(f"{afp} :: {st_name} calls another local composite "
                          f"({st_uses}); Gate 12 resolves composite tokens one "
@@ -858,5 +900,6 @@ for fl in failures:
     print(f"::error::Gate 12: {fl}")
 print(f"Gate 12: checked every gh/API call site ({CALLS_LOCATED[0]} located) in "
       f"{len(action_files)} composite action(s) and every workflow for a "
-      f"permissioned token; {len(failures)} failure(s).")
+      f"permissioned token, and every App-token mint's requested scopes; "
+      f"{len(failures)} failure(s).")
 sys.exit(1 if failures else 0)

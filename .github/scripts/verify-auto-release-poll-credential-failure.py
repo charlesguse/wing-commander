@@ -76,6 +76,12 @@ every settle re-read but the last, which is rate-limited: having seen it
 unsettled, it must still end fail-incomplete, not the settle window's
 fail-infra.
 
+#889 (after #1224): the comment above `write_repeated_failure_verdict`
+names the file whose credential phrase list the arm reuses. That file must
+exist and hold the list, and the arm must still match every phrase in it;
+a check restores the old comment (naming the composite's action.yml) and
+must see it fail.
+
 A second mutation binds the step's GH_TOKEN back to `steps.token`, and each
 mutation lists the scenarios that must break under it (`must_break`), so
 "must fail both" is enforced rather than satisfied by any one failing
@@ -576,6 +582,74 @@ def mut_drop_close_settle(script, step_env):
     return script.replace(old, "false", 1), step_env
 
 
+# #1224 moved the credential phrase list wing-commander-lifecycle-gate
+# matches into .github/actions/_shared/lifecycle-issue-state.sh, and the
+# poll step's comment kept naming the composite's action.yml (#889). The
+# comment above write_repeated_failure_verdict must name the file that
+# holds the list, and the credential arm must still match every phrase it
+# lists.
+PHRASE_HOME_ANCHOR = "phrase list wing-commander-lifecycle-gate's own credential"
+PHRASE_HOME_PATH_RE = re.compile(r"\.github/[\w./-]+")
+PHRASE_GREP_RE = re.compile(r"grep -qiE '([^']*Bad credentials[^']*)'")
+
+
+def phrase_home_failures(script, root="."):
+    """-> [failure] for the comment that cites the shared phrase list."""
+    lines = script.splitlines()
+    at = next((i for i, l in enumerate(lines) if PHRASE_HOME_ANCHOR in l), None)
+    if at is None:
+        return [f"{WORKFLOW}: the poll step no longer says where its credential phrase list "
+                f"comes from ({PHRASE_HOME_ANCHOR!r}); if the comment moved, move this check."]
+    block = []
+    for l in lines[at:]:
+        if not l.lstrip().startswith("#"):
+            break
+        block.append(l.strip().lstrip("#").strip())
+    paths = PHRASE_HOME_PATH_RE.findall(" ".join(block))
+    if not paths:
+        return [f"{WORKFLOW}: the comment citing the credential phrase list names no "
+                f".github/ path on one line"]
+    failures = []
+    arm = PHRASE_GREP_RE.search(script)
+    arm_phrases = set(arm.group(1).split("|")) if arm else set()
+    for path in paths:
+        full = os.path.join(root, path)
+        if not os.path.isfile(full):
+            failures.append(f"{WORKFLOW}: the comment says the credential phrase list lives "
+                            f"in {path}, which does not exist")
+            continue
+        with open(full, encoding="utf-8") as fh:
+            home = PHRASE_GREP_RE.search(fh.read())
+        if not home:
+            failures.append(f"{WORKFLOW}: the comment says the credential phrase list lives "
+                            f"in {path}, which has no credential grep (\"Bad credentials\")")
+            continue
+        missing = [p for p in home.group(1).split("|") if p not in arm_phrases]
+        if missing:
+            failures.append(f"{WORKFLOW}: the poll step's credential arm no longer matches "
+                            f"{missing} from {path}'s phrase list")
+    return failures
+
+
+def phrase_home_self_test(script):
+    """The pre-#889 comment (a path split over two lines, naming a file
+    with no phrase list since #1224) must fail."""
+    stale = ("# check already matches (.github/actions/wing-commander-lifecycle-gate/action.yml) "
+             "rather than inventing a second one.")
+    lines = script.splitlines()
+    at = next((i for i, l in enumerate(lines) if PHRASE_HOME_ANCHOR in l), None)
+    if at is None:
+        return ["phrase-home self-test: anchor not found"]
+    end = next((i for i in range(at, len(lines)) if "second one" in lines[i]), None)
+    if end is None:
+        return ["phrase-home self-test: the comment's closing line ('second one') not found"]
+    mutated = "\n".join(lines[:at + 1] + [stale] + lines[end + 1:])
+    if not phrase_home_failures(mutated):
+        return ["phrase-home self-test: a comment naming wing-commander-lifecycle-gate/action.yml "
+                "(no phrase list there since #1224) was NOT flagged"]
+    return []
+
+
 # label, mutation, scenario names each of which must fail under it (empty:
 # any one failing assertion is enough). Every scenario that expects the
 # credential arm's verdict must break when that arm is dropped.
@@ -611,6 +685,7 @@ def main():
     failures = []
     try:
         failures = suite(script, step_env, tmproot)
+        failures += phrase_home_failures(script) + phrase_home_self_test(script)
         for f in failures:
             print(f"::error::{f}")
         for label, mutate, must_break in MUTATIONS:

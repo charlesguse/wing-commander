@@ -13,7 +13,7 @@ Checks:
              against a `gh` stub on PATH built with wc_shell_harness
   workflow   wing-commander-feature-health.yml is read-only, agent-free and
              hands its artifact to wc_board_status.py
-  sc001      the replay corpus, or the pending exemption
+  sc001      the captured 2026-10-14..2026-11-12 corpus against its hand-written key
 A self-check changes the code's input and confirms the fixtures notice.
 """
 import copy
@@ -24,6 +24,7 @@ import re
 import stat
 import sys
 import tempfile
+import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
@@ -41,10 +42,11 @@ CADENCES = ("schedule", "event")  # data-model.md "Workflow ref"
 EXEMPT_UNREGISTERED = {
     "housekeeping": Exemption(reason="a group row; its members are registered one by one", issue=(889,)),
 }
-EXEMPT_SC001_PENDING = {
-    "sc001": Exemption(reason="the corpus capture needs full history and an authenticated gh (T030)",
-                       issue=(889,)),
-}
+# Emptied by T030: the corpus and its key are captured (fixtures/feature-health/sc001).
+EXEMPT_SC001_PENDING = {}
+# SC-001's window, "2026-10-14 to 2026-11-12", with `now` on the last day.
+SC001_START = "2026-10-14T00:00:00Z"
+SC001_NOW_DAY = "2026-11-12"
 
 
 def load(*parts):
@@ -314,7 +316,7 @@ def check_unreadable(ux):
                     environ.pop(drop, None)
                 try:
                     text = fh.build("own/repo", now=now, environ=environ, registry=registry,
-                                    read_text=lambda name: 'cron: "17 6 * * *"')
+                                    read_text=lambda name: on_schedule('"17 6 * * *"'))
                     outcome = "ok"
                 except SystemExit as exc:
                     text, outcome = str(exc), "exit"
@@ -422,12 +424,172 @@ def check_sc001(directory, exempt):
         corpus = json.load(fp)
     with open(paths[1], encoding="utf-8") as fp:
         expected = json.load(fp)
+    return sc001_replay(corpus, expected), None
+
+
+def sc001_replay(corpus, expected, registry=None):
+    """Classify the corpus's readings, signals and switches at its own `now`
+    (no gh, no clock) with the registry as it is now, not the copy the corpus
+    recorded at capture, so a registry change that breaks SC-001 (a board
+    loop threshold of 27 days or more) fails here; compare each expected row.
+    A corpus outside SC-001's window, or a key with no rows, is itself a
+    problem."""
+    registry = fh.load_registry() if registry is None else registry
+    problems = []
+    window = corpus.get("window") or {}
+    if window.get("start") != SC001_START or not (corpus.get("now") or "").startswith(SC001_NOW_DAY)             or window.get("now") != corpus.get("now"):
+        problems.append("SC-001: the corpus window is {0}, not {1} to {2}".format(
+            window, SC001_START, SC001_NOW_DAY))
+    if not expected.get("rows"):
+        problems.append("SC-001: expected.json has no rows")
     now = fh.parse_time(corpus["now"])
-    rows = fh.classify_all(corpus["registry"], corpus["readings"], corpus.get("signals", {}), corpus["ctx"], now)
+    rows = fh.classify_all(registry, corpus["readings"], corpus.get("signals", {}), corpus["ctx"], now)
     got = {(r["feature"], r["stage"] or ""): r["state"] for r in rows}
-    want = {(e["feature"], e.get("stage") or ""): e["state"] for e in expected["rows"]}
-    return ["SC-001: {0} is {1}, expected {2}".format(k, got.get(k), v) for k, v in sorted(want.items())
-            if got.get(k) != v], None
+    want = {(e["feature"], e.get("stage") or ""): e["state"] for e in expected.get("rows") or []}
+    problems += ["SC-001: {0} is {1}, expected {2}".format(k, got.get(k), v) for k, v in sorted(want.items())
+                 if got.get(k) != v]
+    return problems
+
+
+def self_check_sc001(directory):
+    """The replay must fail its subject: an always-healthy classifier, a
+    flipped key row and a corpus from another window are each noticed."""
+    paths = [os.path.join(directory, n) for n in ("corpus.json", "expected.json")]
+    if not all(os.path.exists(p) for p in paths):
+        return []
+    with open(paths[0], encoding="utf-8") as fp:
+        corpus = json.load(fp)
+    with open(paths[1], encoding="utf-8") as fp:
+        expected = json.load(fp)
+    problems = []
+    saved = fh.classify_all
+    fh.classify_all = lambda registry, *_a: [{"feature": e["name"], "stage": None, "state": "healthy"}
+                                             for e in registry]
+    try:
+        if not sc001_replay(corpus, expected):
+            problems.append("self-check: the SC-001 replay did not notice an always-healthy classifier")
+    finally:
+        fh.classify_all = saved
+    for i, row in enumerate(expected["rows"]):
+        flipped = copy.deepcopy(expected)
+        flipped["rows"][i]["state"] = "unreadable" if row["state"] != "unreadable" else "healthy"
+        if not sc001_replay(corpus, flipped):
+            problems.append("self-check: the SC-001 replay did not notice {0} flipped to {1}".format(
+                row["feature"], flipped["rows"][i]["state"]))
+    moved = copy.deepcopy(corpus)
+    moved["window"]["start"] = "2026-10-12T00:00:00Z"
+    if not sc001_replay(moved, expected):
+        problems.append("self-check: the SC-001 replay did not notice a corpus from another window")
+    if not sc001_replay(corpus, {"rows": []}):
+        problems.append("self-check: the SC-001 replay did not notice an empty key")
+    # The registry once declared a 30-day board loop threshold, which SC-001's
+    # "shorter than 27 days" rules out; the replay must catch it coming back.
+    thirty = copy.deepcopy(fh.load_registry())
+    for e in thirty:
+        if e["name"] == "board loop":
+            e["quiet_days"] = 30
+    if not any("board loop" in p for p in sc001_replay(corpus, expected, thirty)):
+        problems.append("self-check: the SC-001 replay did not notice a 30-day board loop quiet threshold")
+    return problems
+
+
+def check_capture_bounds():
+    """T030: `until` caps every signal read for a past `now`, a current-state
+    kind refuses to answer for a past day, and the build path (until=None)
+    still keeps an occurrence after that day."""
+    problems = []
+    since, until = fh.parse_time("2026-10-14T00:00:00Z"), fh.parse_time("2026-11-12T23:59:59Z")
+    pulls = [{"merged_at": "2026-11-20T00:00:00Z", "updated_at": "2026-11-20T00:00:00Z", "head": {"ref": "fix/a"}},
+             {"merged_at": "2026-10-16T14:00:25Z", "updated_at": "2026-10-16T14:00:25Z", "head": {"ref": "fix/b"}}]
+    releases = [{"published_at": "2026-11-15T00:00:00Z"}, {"published_at": "2026-11-11T00:00:00Z"}]
+    calls = []
+    # Issue 2 closed by triage after `now` and updated last; issue 1 closed in
+    # the window and updated before that later close. The read must not stop
+    # at issue 1 because of a close it will drop.
+    close = fh.TRIAGE_CLOSE_COMMENT_PREFIX + fh.TRIAGE_CLOSE_GROUNDS[0] + ", see the run."
+    closes = {2: "2026-11-20T00:00:00Z", 1: "2026-11-01T00:00:00Z"}
+
+    def gh(path):
+        calls.append(path)
+        if path.startswith("search/issues?"):
+            return {"incomplete_results": False,
+                    "items": [{"number": 2, "updated_at": "2026-11-21T00:00:00Z"},
+                              {"number": 1, "updated_at": "2026-11-02T00:00:00Z"}]}
+        m = re.search(r"/issues/(\d+)/comments\?", path)
+        if m:
+            return [{"created_at": closes[int(m.group(1))], "body": close}]
+        if "/pulls?" in path:
+            return pulls if "page=1" in path else []
+        if "/releases" in path:
+            return releases
+        if "/commits?sha=metrics&until=2026-11-12T23:59:59Z" in path:
+            return [{"commit": {"committer": {"date": "2026-11-12T06:00:00Z"}}}]
+        if "/commits/" in path:
+            return {"commit": {"committer": {"date": "2026-11-23T06:00:00Z"}}}
+        return []
+    for signal, capped, live in (
+            ({"kind": "merged_pr", "head_prefixes": ["fix/"]}, "2026-10-16T14:00:25Z", "2026-11-20T00:00:00Z"),
+            ({"kind": "release"}, "2026-11-11T00:00:00Z", "2026-11-15T00:00:00Z"),
+            ({"kind": "branch_commit", "branch": "metrics"}, "2026-11-12T06:00:00Z", "2026-11-23T06:00:00Z"),
+            ({"kind": "triage_close"}, "2026-11-01T00:00:00Z", "2026-11-20T00:00:00Z")):
+        for bound, want in ((until, capped), (None, live)):
+            got = fh.read_signal(signal, "own/repo", since, gh, {}, until=bound)
+            if got != want:
+                problems.append("capture bound: {0} with until={1} gave {2}, expected {3}".format(
+                    signal["kind"], bound, got, want))
+    for kind in ("issue_updated", "issue_section"):
+        try:
+            fh.read_signal({"kind": kind, "title": "Board status", "marker": "x"}, "own/repo", since, gh, {},
+                           until=until)
+            problems.append("capture bound: {0} answered for a past day".format(kind))
+        except RuntimeError:
+            pass
+    # A run re-run after `now` reports its later attempt; the capture refuses.
+    now = until
+    kept = {"a.yml": {"runs": [{"id": 1, "event": "push", "started_at": "2026-11-12T08:00:00Z",
+                                "conclusion": "failure"}], "interval_hours": 24}}
+    fh._runs_as_of(kept, now)
+    if kept["a.yml"]["runs"] != [{"started_at": "2026-11-12T08:00:00Z", "conclusion": "failure"}]:
+        problems.append("capture bound: runs kept {0}, not started_at and conclusion only".format(
+            kept["a.yml"]["runs"]))
+    rerun = {"a.yml": {"runs": [{"id": 1, "event": "push", "started_at": "2026-11-15T08:00:00Z",
+                                 "conclusion": "success"}], "interval_hours": 24}}
+    try:
+        fh._runs_as_of(rerun, now)
+        problems.append("capture bound: a run attempt started after now was recorded")
+    except SystemExit:
+        pass
+    # A run started before `now` but finished after it was not completed at
+    # `now`, so a build then could not have seen it; the capture drops it.
+    inflight = {"a.yml": {"runs": [{"id": 1, "event": "push", "started_at": "2026-11-12T23:50:00Z",
+                                    "updated_at": "2026-11-13T00:10:00Z", "conclusion": "failure"}],
+                          "interval_hours": 24}}
+    fh._runs_as_of(inflight, now)
+    if inflight["a.yml"]["runs"]:
+        problems.append("capture bound: a run still in progress at now was recorded as {0}".format(
+            inflight["a.yml"]["runs"]))
+    # `is:closed` is today's state: under `until` the search must not ask for
+    # it, and an issue open today with a close in the window must raise.
+    queries = []
+
+    def reopened(path):
+        if path.startswith("search/issues?"):
+            queries.append(urllib.parse.unquote(path))
+            return {"incomplete_results": False,
+                    "items": [{"number": 3, "state": "open", "updated_at": "2026-11-21T00:00:00Z"}]}
+        return [{"created_at": "2026-11-01T00:00:00Z", "body": close}]
+    try:
+        got = fh.read_signal({"kind": "triage_close"}, "own/repo", since, reopened, {}, until=until)
+        problems.append("capture bound: a triage close on an issue reopened since gave {0}".format(got))
+    except RuntimeError:
+        pass
+    if any("is:closed" in q for q in queries):
+        problems.append("capture bound: the triage close search asked for today's is:closed under until")
+    queries.clear()
+    if fh.read_signal({"kind": "triage_close"}, "own/repo", since, reopened, {}) != "2026-11-01T00:00:00Z" \
+            or not all("is:closed" in q for q in queries):
+        problems.append("capture bound: the build's triage close search lost is:closed")
+    return problems
 
 
 def self_check(fx):
@@ -542,24 +704,29 @@ def check_switch_source(src):
     return problems
 
 
+def on_schedule(*crons):
+    """A minimal workflow whose on.schedule lists `crons` (as written, quoted or not)."""
+    return "on:\n  schedule:\n" + "".join("    - cron: {0}\n".format(c) for c in crons)
+
+
 def check_review_round_three():
     """Unquoted and ranged cron, bounded triage and comment reads."""
     problems = []
-    for text, want in (("    - cron: 0 */4 * * *\n", 4),
-                       ("    - cron: 17 6 * * *   # daily\n", 24),
-                       ('    - cron: "0 9-17 * * *"\n', 16),
-                       ('    - cron: "0 0-23/6 * * *"\n', 6),
-                       ('    - cron: "0 1,9-11 * * *"\n', 14),
-                       ('    - cron: "0 5-5/2 * * *"\n', 24),
-                       ('    - cron: "0 5/6 * * *"\n', 6)):
+    for text, want in ((on_schedule("0 */4 * * *"), 4),
+                       (on_schedule("17 6 * * *   # daily"), 24),
+                       (on_schedule('"0 9-17 * * *"'), 16),
+                       (on_schedule('"0 0-23/6 * * *"'), 6),
+                       (on_schedule('"0 1,9-11 * * *"'), 14),
+                       (on_schedule('"0 5-5/2 * * *"'), 24),
+                       (on_schedule('"0 5/6 * * *"'), 6)):
         try:
             got = fh.schedule_interval_hours(text)
         except ValueError as exc:
             got = "ValueError: {0}".format(exc)
         if got != want:
             problems.append("cron parsing: {0!r} gave {1}, expected {2}".format(text.strip(), got, want))
-    for bad in ('    - cron: "0 25 * * *"\n', '    - cron: "0 5-2 * * *"\n', '    - cron: "0 */0 * * *"\n',
-                '    - cron: "0 5-2/2 * * *"\n'):
+    for bad in (on_schedule('"0 25 * * *"'), on_schedule('"0 5-2 * * *"'), on_schedule('"0 */0 * * *"'),
+                on_schedule('"0 5-2/2 * * *"')):
         try:
             fh.schedule_interval_hours(bad)
             problems.append("cron parsing: {0!r} did not raise".format(bad.strip()))
@@ -570,7 +737,7 @@ def check_review_round_three():
     state, _d = fh.classify_workflow(
         {"file": "x.yml", "cadence": "schedule"}, {"name": "f"},
         {"runs": [{"started_at": "2026-11-20T10:00:00Z", "conclusion": "success"}],
-         "interval_hours": fh.schedule_interval_hours('    - cron: "0 9-17 * * *"\n')},
+         "interval_hours": fh.schedule_interval_hours(on_schedule('"0 9-17 * * *"'))},
         {}, now)
     if state != "healthy":
         problems.append("a 9-17 daily cron with a run 13.5 h ago classed {0!r}, expected healthy".format(state))
@@ -640,6 +807,91 @@ def check_review_round_three():
     return problems
 
 
+def check_schedule_and_comment_reads():
+    """The schedule read takes only on.schedule, the not-running threshold has
+    a floor and is never longer than the run read, and a long comment thread
+    on one triage-close candidate is paged rather than raised on."""
+    problems = []
+    # A `cron:` line in a run: block or heredoc is not a schedule.
+    wf = (on_schedule('"29 6 * * *"') + "jobs:\n  a:\n    steps:\n      - run: |\n"
+          "          cat > w.yml <<'EOF'\n          - cron: \"0 * * * *\"\n          EOF\n")
+    if fh.schedule_interval_hours(wf) != 24:
+        problems.append("cron parsing: a cron line inside a run: block set the interval to {0}h".format(
+            fh.schedule_interval_hours(wf)))
+    if fh.schedule_interval_hours("on: push\njobs:\n  a:\n    steps:\n      - run: |\n"
+                                  "          - cron: \"0 * * * *\"\n") is not None:
+        problems.append("cron parsing: a workflow with no on.schedule read a cron from a run: step")
+    # An hourly workflow is not "not running" after an ordinary schedule delay.
+    now = fh.parse_time("2026-11-20T12:00:00Z")
+    for hours_ago, want in ((3, "healthy"), (7, "not running")):
+        state, _d = fh.classify_workflow(
+            {"file": "x.yml", "cadence": "schedule"}, {"name": "f"},
+            {"runs": [{"started_at": fh.fmt_time(now - datetime.timedelta(hours=hours_ago)),
+                       "conclusion": "success"}], "interval_hours": 1}, {}, now)
+        if state != want:
+            problems.append("an hourly cron with a run {0} h ago classed {1!r}, expected {2}".format(
+                hours_ago, state, want))
+    # A monthly cron whose last run is older than the 31-day window but inside
+    # twice its interval: the run read must reach back to the threshold.
+    last = fh.fmt_time(now - datetime.timedelta(days=45))
+
+    def monthly(path):
+        m = re.search(r"created=([0-9TZ:-]+)\.\.", path)
+        if m:
+            runs = ([{"id": 1, "event": "schedule", "conclusion": "success", "run_started_at": last,
+                      "created_at": last}] if m.group(1) <= last else [])
+            return {"total_count": len(runs), "workflow_runs": runs}
+        return []
+    entry = [{"name": "f", "workflows": [{"file": "m.yml", "cadence": "schedule"}]}]
+    readings, signals, ctx = fh.collect(entry, "own/repo", now, gh=monthly, environ={},
+                                        read_text=lambda _n: on_schedule('"0 6 1 * *"'))
+    rows = fh.classify_all(entry, readings, signals, ctx, now)
+    if rows[0]["state"] != "healthy":
+        problems.append("a monthly cron that ran 45 days ago classed {0!r}, expected healthy".format(rows[0]["state"]))
+    # One triage-close candidate with a full page of other comments: the close
+    # on its second page is found, not a truncation error.
+    close = fh.TRIAGE_CLOSE_COMMENT_PREFIX + fh.TRIAGE_CLOSE_GROUNDS[0] + ", see the run."
+
+    def long_thread(path):
+        if path.startswith("search/issues"):
+            return {"incomplete_results": False, "items": [{"number": 7, "updated_at": "2026-11-19T00:00:00Z"}]}
+        if "/issues/7/comments" in path:
+            if path.endswith("&page=1"):
+                return [{"body": "chatter", "created_at": "2026-11-10T00:00:00Z"}] * 100
+            if path.endswith("&page=2"):
+                return [{"body": close, "created_at": "2026-11-18T00:00:00Z"}]
+        return []
+    try:
+        got = fh.read_signal({"kind": "triage_close"}, "own/repo", fh.parse_time("2026-10-20T00:00:00Z"),
+                             long_thread, {})
+    except RuntimeError as exc:
+        got = "RuntimeError: {0}".format(exc)
+    if got != "2026-11-18T00:00:00Z":
+        problems.append("triage_close on a candidate with 100+ comments: got {0}, expected "
+                        "2026-11-18T00:00:00Z".format(got))
+    # The same for issue_or_comment: a labeled issue with a full page of
+    # comments is paged, and the newest comment on its second page counts.
+
+    def long_labeled(path):
+        if "/issues?state=all" in path:
+            return [{"number": 8, "created_at": "2026-11-01T00:00:00Z"}]
+        if "/issues/8/comments" in path:
+            if path.endswith("&page=1"):
+                return [{"created_at": "2026-11-10T00:00:00Z"}] * 100
+            if path.endswith("&page=2"):
+                return [{"created_at": "2026-11-19T00:00:00Z"}]
+        return []
+    try:
+        got = fh.read_signal({"kind": "issue_or_comment", "label_name": "x"}, "own/repo",
+                             fh.parse_time("2026-10-20T00:00:00Z"), long_labeled, {})
+    except RuntimeError as exc:
+        got = "RuntimeError: {0}".format(exc)
+    if got != "2026-11-19T00:00:00Z":
+        problems.append("issue_or_comment on a labeled issue with 100+ comments: got {0}, expected "
+                        "2026-11-19T00:00:00Z".format(got))
+    return problems
+
+
 def check_review_round_two():
     """Cron parsing, truncated reads, shortened-section detection."""
     problems = []
@@ -650,7 +902,7 @@ def check_review_round_two():
     if fh.schedule_interval_hours('on:\n  schedule:\n    - cron: "0 1 * * *"\n') != 24:
         problems.append("cron parsing: a daily cron is not 24 hours")
     try:
-        fh.schedule_interval_hours('    - cron: "bad"\n')
+        fh.schedule_interval_hours(on_schedule('"bad"'))
         problems.append("cron parsing: an unparseable cron did not raise")
     except ValueError:
         pass
@@ -710,8 +962,10 @@ def main():
     problems += check_review_round_two()
     problems += check_review_round_three()
     problems += check_review_round_five(registry)
+    problems += check_schedule_and_comment_reads()
+    problems += check_capture_bounds()
     real, note = check_sc001(os.path.join(FIXTURES, "sc001"), EXEMPT_SC001_PENDING)
-    problems += real + self_check(fx)
+    problems += real + self_check(fx) + self_check_sc001(os.path.join(FIXTURES, "sc001"))
     if note:
         print("[ok] verify-feature-health: {0}".format(note))
     if problems:

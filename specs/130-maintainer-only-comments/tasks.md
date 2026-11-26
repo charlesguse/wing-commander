@@ -197,7 +197,7 @@ description: "Task list for spec 130: comment-triggered stages act only on maint
 
 - **review-step-gating:**
   - Gate 24: 0 failures.
-  - `stranded-steps.py`, compared with origin/main: the only new entry is the relay step. It is stranded only together with the callout it feeds, which has the same `if:` (Gate 174 (g)); that is clarify's hard-exit-in-place design.
+  - `stranded-steps.py`, compared with origin/main: the only new entry is the relay step. It is stranded only together with the callout it feeds, which has the same `if:` (Gate 179 (g)); that is clarify's hard-exit-in-place design.
   - A refused comment ends the clarify job successfully, so `stalled` does not fire.
   - Low note, kept by design: a failed comment read fails the job and `stalled` posts its notice, like any infrastructure failure.
 - **container-shell-safety:**
@@ -208,7 +208,7 @@ description: "Task list for spec 130: comment-triggered stages act only on maint
 
 | Gate | Result |
 |---|---|
-| Gate 174 | pass; self-test catches all 12 mutants |
+| Gate 179 | pass; self-test catches all 12 mutants |
 | Gate 66 (e2e decisions) | pass, plus self-test |
 | Gate 115 (poll credential) | pass, plus self-test |
 | Gate 91 (specs fallback) | pass |
@@ -223,6 +223,7 @@ Same failures as origin/main (Windows-only): Gate 96 (3 file-staging cases under
 
 - Rebased onto origin/main 08c9495e (was ec1fd4ac). One conflict: main's own Gate 172 (#1196, lint's concurrency gate) sits where this branch registered its gate; both blocks are kept.
 - Renumbered this spec's gate 172 -> 174 (PR #1184 claims 171, PR #1205 claims 173) and the spec 129 -> 130 (open spec PR #1199 holds `specs/129-parallel-pr-lint`). Only this branch's lines changed. The T017 numbers below were taken before the rebase and name the gate by its old number.
+- Renumbered this spec's gate 174 -> 179 at the merge of main (2026-11-26): main's Gate 174 is the sharded lint layout gate, and open PRs #1236 and #1271 claim 176 to 178. This file's other mentions of the gate now read 179.
 
 ### T017 gate comparison (2026-11-24)
 
@@ -232,5 +233,5 @@ Same failures as origin/main (Windows-only): Gate 96 (3 file-staging cases under
   - Gate 27 (`verify-stage-tool-lists.py` and its self-test): the specs/010 contract still listed clarify's `Bash(gh issue view:*)`. Fixed in the contract.
   - Gate 126 (`verify-gh-api-error-capture.py`): the new check step's `gh api` capture needed an explicit failure path. Fixed with `if ! info=...; then ... exit 1; fi`.
   - Gate 106 (`verify-gate-106.py` and its self-test): its preamble marker was the removed `author_id=""` line. It now names the next line, so the extracted preamble is unchanged except for the removed block.
-- **After the fixes:** all five pass, and Gate 174 passes with every mutant caught. No other gate fails only on this branch.
+- **After the fixes:** all five pass, and Gate 179 passes with every mutant caught. No other gate fails only on this branch.
 

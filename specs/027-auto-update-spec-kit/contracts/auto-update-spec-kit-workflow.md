@@ -174,15 +174,23 @@ this job — nothing to record.
 1. Verify the commenter:
    `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
    inputs.commenter-association)` (the exact condition
-   `wing-commander-2-clarify.yml` already uses; since
+   `wing-commander-2-clarify.yml` uses; since
    specs/130-maintainer-only-comments no user id is compared, and the
-   `commenter-id` and `issue-author-id` inputs are accepted and ignored). Fails → no-op, no
-   comment, no error surfaced (never react to an untrusted commenter,
-   constitution V).
-2. The issue must carry an `outcome: ambiguous-options` question
-   (recognized via the settle-tracking marker plus a "awaiting maintainer
-   decision" sub-marker set when `evaluate-path` posted the question) —
-   otherwise no-op.
+   `commenter-id` and `issue-author-id` inputs are accepted and ignored;
+   owner decision 2026-11-25, #890). Fails → no-op, no comment, no error
+   surfaced (never react to an untrusted commenter, constitution V). The
+   wrapper pre-filters the same way: only a maintainer's comment on a
+   Bot-authored issue carrying `auto-update:tracking` starts the stage.
+2. The issue must be the App's own tracking issue — authored by the App
+   (`<bot-slug>[bot]`) and carrying `auto-update:tracking`; a body marker
+   alone is not enough — and must carry an `outcome: ambiguous-options`
+   question (recognized via the settle-tracking marker plus a "awaiting
+   maintainer decision" sub-marker set when `evaluate-path` posted the
+   question). Otherwise no-op.
+2a. The marker's candidate must be newer than the version pinned in
+   `.specify/init-options.json` on the default branch. An equal or older
+   candidate, or one that cannot be compared, is refused: the job comments
+   the refusal on the issue and does not resume.
 3. `claude-haiku-4-5`, `--max-turns` bounded, read-only
    (`--allowedTools "Read"`), structured output mapping the comment body
    onto one of the previously posted options (or "unrecognized," in

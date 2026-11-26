@@ -156,7 +156,8 @@ def _checks_condition(rollup, rule):
     if not counted:
         return _cond("checks_green_with_gate_suite", "unmet", "no checks on the head")
     if not green:
-        why = _first_failing_entry(counted, board_readiness._entry_state) or "a check is not green"
+        why = (_first_failing_entry(board_readiness.latest_per_check(counted),
+                                    board_readiness._entry_state) or "a check is not green")
         return _cond("checks_green_with_gate_suite", "unmet", why)
     if not gate:
         return _cond("checks_green_with_gate_suite", "unmet", "the gate suite (lint) is not among the green checks")

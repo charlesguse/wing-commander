@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
 """Gate — board_readiness.py's evaluate_from_snapshot() resolves every
-FR-064 bullet-4 branch correctly, and board-loop.yml itself never calls a
-merge/approve API (specs/057-autonomous-board-loop,
-contracts/readiness-report.md).
+FR-064 bullet-4 branch correctly, and board-loop.yml never calls a merge
+API outside its `merge` job, nor an approve or auto-merge API anywhere
+(specs/057-autonomous-board-loop, contracts/readiness-report.md;
+specs/115-board-loop-self-merge).
 
 WHY THIS EXISTS
 ---------------
-FR-068 is a hard invariant: this loop never merges, approves, or enables
-auto-merge. The one thing standing between "ready" and a maintainer being
-told to merge stale evidence is this decision — a regression that reported
-ready against a check that ran on an earlier push, or against unresolved
-findings, would look identical to correct behavior on every fixture except
-the one it broke. This gate pins all six documented branches.
+FR-068 is a hard invariant for every board-loop job except `merge`: none
+of them merges, approves, or enables auto-merge. The `merge` job
+(specs/115-board-loop-self-merge) is verify-board-merge.py's to check;
+approvals and auto-merge stay forbidden there too. The one thing
+standing between "ready" and a merge of stale evidence is this
+decision — a regression that reported ready against a check that ran on
+an earlier push, or against unresolved findings, would look identical to
+correct behavior on every fixture except the one it broke. This gate pins
+every documented branch (EXPECTED_CASES).
 
 `check_no_merge_invariant()` (T066, SC-004) is the second, structural half
-of that same invariant: the six snapshot fixtures below prove the decision
-logic never *reports* ready on stale/absent/failing evidence, but nothing
-before T066 read board-loop.yml's own text to prove the workflow never
-*acts* on readiness with a merge, approval, or auto-merge call. Textual,
-line-based, in the shape verify-correlated-release-dispatch.py's Gate 59
-already uses for the same kind of raw-YAML invariant.
+of that same invariant: the snapshot fixtures below (EXPECTED_CASES)
+prove the decision logic never *reports* ready on stale/absent/failing
+evidence, but nothing before T066 read board-loop.yml's own text to
+prove no job but `merge` *acts* on readiness with a merge, approval, or
+auto-merge call. Textual, line-based, in the shape
+verify-correlated-release-dispatch.py's Gate 59 already uses for the same
+kind of raw-YAML invariant.
 
 Fixtures (FR-064 bullet 4), each a checked-in `gh pr view` JSON snapshot
 under .github/scripts/tests/board-readiness/<case>/. Fails loudly, not
@@ -28,6 +33,7 @@ vacuously, if any fixture file is missing.
     python3 .github/scripts/verify-board-readiness.py
     python3 .github/scripts/verify-board-readiness.py --self-test
 """
+import ast
 import glob
 import json
 import os
@@ -53,11 +59,52 @@ EXPECTED_CASES = {
     # Every check green but no lint-workflows entry: durable, since that
     # check may never run for a PR outside its paths (code review of #1010).
     "lint-missing-durable",
+    # specs/129-parallel-pr-lint: a run a newer push cancelled (units
+    # cancelled, the always() aggregate failed) is durable not-ready; and a
+    # failed shard under a skipped aggregate is not-ready too, through
+    # checks_green, even though gate_suite_green reads a SKIPPED `lint` as
+    # green.
+    "cancelled-run", "failed-unit-skipped-aggregate",
+    # Every unit green and no `lint` entry yet: GitHub has not queued the
+    # aggregate, which clears on its own (self-clearing) -- unless another
+    # condition is unmet too (durable, and named). Code review of #1233.
+    "aggregate-pending-self-clearing", "aggregate-pending-open-findings",
+    # The same shape, but the last unit concluded long before `now`: the
+    # hold is bounded, so the verdict is durable (code review of #1233).
+    "aggregate-pending-expired",
+    # Code review of #1233: a name variant (`lint-workflows`) is not the
+    # gate suite for any reader -- one matcher, is_gate_suite_workflow.
+    "lint-workflow-name-variant-durable",
+    # #889 (found by the code review of #1196): only each check's newest
+    # result counts, and a cancelled one is "not ready yet" (self-clearing),
+    # never a failure -- but it never hides a real failure either.
+    "cancelled-superseded-ready", "cancelled-newest-self-clearing",
+    "cancelled-queued-rerun-self-clearing", "cancelled-beside-failure-durable",
+    "failure-newer-than-success-durable",
+    # Code review of #1226, pass 1: gh writes a queued run's unset
+    # `startedAt` as Go's zero time, which must not read as the oldest
+    # result; and a check run with no workflow is never merged with
+    # another of the same name.
+    "queued-zero-time-rerun-self-clearing", "no-workflow-failure-durable",
+    # Code review of #1226, pass 3: a separate run of the same workflow on
+    # the head (a review and a review comment) never hides a failure, and
+    # a job cancelled before it started is set aside by its re-run.
+    "separate-runs-failure-durable", "cancelled-before-start-superseded-ready",
+    # Code review of #1226, pass 4: a run cancel-in-progress stopped on the
+    # head (a PR closed and reopened mid-run) is decided by the reopened
+    # run of the same job; a later skipped run decides nothing.
+    "cancelled-by-reopened-run-ready", "cancelled-then-skipped-run-self-clearing",
+    # Code review of #1226, pass 5: only the gate suite's workflow re-runs
+    # the same work in a later run; another workflow's later run (a third
+    # review after pr-conversation's group cancelled a pending one) never
+    # sets aside the cancelled run's dropped request.
+    "cancelled-pending-other-workflow-run-self-clearing",
 }
 
 BOARD_LOOP_FILE = ".github/workflows/board-loop.yml"
 
-# FR-068: none of these API shapes may appear anywhere in board-loop.yml.
+# FR-068: none of these API shapes may appear anywhere in board-loop.yml,
+# except the two in MERGE_JOB_ALLOWED_LABELS below inside its `merge` job.
 # Matched as regexes against the raw line text so a merge call split across
 # `gh pr merge "$PR" \` / `  --squash` is still caught on whichever line
 # carries the flag.
@@ -80,6 +127,20 @@ MERGE_JOB_ALLOWED_LABELS = ("a `gh pr merge` call", "a merge-strategy flag")
 _JOB_HEADER_RE = re.compile(r"  [A-Za-z0-9_-]+:")
 
 
+def _invariant_error(path, label):
+    """The ::error line for one forbidden shape. Only a merge call and its
+    strategy flag have the `merge` job carve-out; --auto and approvals are
+    forbidden in every job, `merge` included, so their message must not
+    point at a job boundary (code review of #1237)."""
+    if label in MERGE_JOB_ALLOWED_LABELS:
+        return ("::error::{0} contains {1} -- outside its `merge` job, "
+                "board-loop.yml must never merge a PR (FR-068; spec "
+                "115).".format(path, label))
+    return ("::error::{0} contains {1} -- no board-loop.yml job, the "
+            "`merge` job included, may approve, request changes on, or "
+            "enable auto-merge on any PR (FR-068).".format(path, label))
+
+
 def check_no_merge_invariant(lines, path=BOARD_LOOP_FILE):
     """FR-068/SC-004 (T066): fails if any forbidden merge/approve shape
     appears anywhere in `lines`, except a merge call and its strategy flag
@@ -96,11 +157,77 @@ def check_no_merge_invariant(lines, path=BOARD_LOOP_FILE):
             if pattern.search(line):
                 errors.append(
                     "{0}:{1}:{2}".format(path, i + 1, line))
-                errors.append(
-                    "::error::{0} contains {1} -- board-loop.yml must "
-                    "never merge, approve, or enable auto-merge on any PR "
-                    "(FR-068).".format(path, label))
+                errors.append(_invariant_error(path, label))
     return errors
+
+
+# Code review of #1233: "is this rollup entry the gate suite
+# (lint-workflows)" has one home, board_readiness.is_gate_suite_workflow;
+# every reader of the gate suite in a rollup calls it (CLAUDE.md "Shared
+# logic has exactly one home"). A loose copy read `lint-workflows` as green
+# in one reader and never-ran in another.
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+MATCHER_HOME = "board_readiness.py"
+MATCHER_FUNC = "is_gate_suite_workflow"
+MATCHER_READERS = ("board_readiness.py", "lifecycle_readiness.py",
+                   "lifecycle_merge_preconditions.py", "board_merge.py",
+                   "board_prove.py", "wc_merge_evidence.py")
+# A literal a second matcher would need: the workflow's name, a variant of
+# it, or the bare substring the pre-#1233 loose matcher tested.
+_MATCHER_LITERALS = ("workflow", "workflows", "lint · workflows",
+                     "lint-workflows", "lint workflows", "lint-workflows.yml")
+
+
+def _docstring_ids(tree):
+    ids = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and isinstance(
+                    getattr(body[0], "value", None), ast.Constant):
+                ids.add(id(body[0].value))
+    return ids
+
+
+def matcher_single_home_problems(sources):
+    """sources: {reader file name: its text}. Outside MATCHER_HOME's one
+    LINT_WORKFLOW_NAME assignment, no reader holds a gate-suite name
+    literal, and inside MATCHER_HOME only MATCHER_FUNC reads
+    LINT_WORKFLOW_NAME."""
+    problems = []
+    for name in sorted(sources):
+        tree = ast.parse(sources[name])
+        docstrings = _docstring_ids(tree)
+        allowed = set()
+        if name == MATCHER_HOME:
+            for node in tree.body:
+                if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                        and isinstance(node.targets[0], ast.Name)
+                        and node.targets[0].id == "LINT_WORKFLOW_NAME"):
+                    allowed.add(id(node.value))
+            for func in ast.walk(tree):
+                if isinstance(func, ast.FunctionDef) and func.name != MATCHER_FUNC:
+                    for node in ast.walk(func):
+                        if isinstance(node, ast.Name) and node.id == "LINT_WORKFLOW_NAME":
+                            problems.append("{0}: {1} reads LINT_WORKFLOW_NAME (line {2}); "
+                                            "only {3} may".format(name, func.name,
+                                                                  node.lineno, MATCHER_FUNC))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                    and id(node) not in docstrings and id(node) not in allowed
+                    and node.value.strip().lower() in _MATCHER_LITERALS):
+                problems.append("{0}: {1!r} (line {2}) is a second gate-suite matcher; "
+                                "call board_readiness.{3}".format(
+                                    name, node.value, node.lineno, MATCHER_FUNC))
+    return problems
+
+
+def _reader_sources():
+    sources = {}
+    for name in MATCHER_READERS:
+        with open(os.path.join(SCRIPTS_DIR, name), encoding="utf-8") as fh:
+            sources[name] = fh.read()
+    return sources
 
 
 def _load(path):
@@ -137,7 +264,8 @@ def run():
         spec = _load(case_path)
         got = evaluate_from_snapshot(
             spec["snapshot"], spec["open_in_scope_findings"],
-            spec["backstop_holds"], spec["kill_switch_paused"])
+            spec["backstop_holds"], spec["kill_switch_paused"],
+            now=spec.get("now"))
         expected = spec["expected"]
 
         ok = got["ready"] == expected["ready"]
@@ -168,6 +296,13 @@ def run():
         else:
             print("[ok] no-merge-invariant: {0} contains no merge/approve/"
                   "auto-merge call.".format(BOARD_LOOP_FILE))
+
+    matcher_problems = matcher_single_home_problems(_reader_sources())
+    for problem in matcher_problems:
+        failures += 1
+        print("::error::verify-board-readiness: {0}".format(problem))
+    if not matcher_problems:
+        print("[ok] every gate-suite reader calls board_readiness.{0}".format(MATCHER_FUNC))
 
     print("verify-board-readiness: {0} failure(s).".format(failures))
     return 1 if failures else 0
@@ -233,6 +368,50 @@ def self_test():
     check("--auto stays forbidden inside the merge job",
           len(check_no_merge_invariant([MERGE_JOB_HEADER, "        run: gh pr merge --auto"],
                                        path="fixture.yml")) == 2)
+    # The `merge` job may merge (spec 115), so the error must not claim the
+    # whole workflow never merges (code review of #1227).
+    readiness_errors = check_no_merge_invariant(["  readiness:", in_job[1]], path="fixture.yml")
+    readiness_annotations = [e for e in readiness_errors if e.startswith("::error::")]
+    check("the error names the `merge` job carve-out",
+          bool(readiness_annotations)
+          and all("outside its `merge` job" in e for e in readiness_annotations),
+          "got {0!r}".format(readiness_errors))
+    # --auto and approvals have no carve-out, so their error must not send
+    # the reader looking for a job boundary (code review of #1237).
+    for shape in ("gh pr merge --auto", "-f event=APPROVE"):
+        merge_job_errors = check_no_merge_invariant(
+            [MERGE_JOB_HEADER, "        run: " + shape], path="fixture.yml")
+        merge_job_annotations = [e for e in merge_job_errors if e.startswith("::error::")]
+        check("{0!r} inside the merge job is reported as forbidden in every job".format(shape),
+              bool(merge_job_annotations)
+              and all("outside its `merge` job" not in e
+                      and "the `merge` job included" in e for e in merge_job_annotations),
+              "got {0!r}".format(merge_job_errors))
+
+    # The gate-suite matcher's single home (code review of #1233): the real
+    # readers are clean; the pre-#1233 loose matcher, a reader with its own
+    # exact match, and a second function reading LINT_WORKFLOW_NAME are each
+    # caught.
+    sources = _reader_sources()
+    check("matcher-single-home-clean", matcher_single_home_problems(sources) == [],
+          repr(matcher_single_home_problems(sources)))
+    loose = dict(sources)
+    loose["lifecycle_readiness.py"] += (
+        '\n\ndef _loose(e):\n    return "workflow" in (e.get("workflowName") or "").lower()\n')
+    check("matcher-loose-copy-caught", len(matcher_single_home_problems(loose)) == 1,
+          repr(matcher_single_home_problems(loose)))
+    exact = dict(sources)
+    exact["board_merge.py"] += (
+        '\n\ndef _exact(e):\n    return e.get("workflowName") == "lint · workflows"\n')
+    check("matcher-exact-copy-caught", len(matcher_single_home_problems(exact)) == 1,
+          repr(matcher_single_home_problems(exact)))
+    second = dict(sources)
+    second[MATCHER_HOME] += (
+        "\n\ndef _is_lint_workflow_entry(entry):\n"
+        "    return entry.get('workflowName') == LINT_WORKFLOW_NAME\n")
+    check("matcher-second-function-in-home-caught",
+          len(matcher_single_home_problems(second)) == 1,
+          repr(matcher_single_home_problems(second)))
 
     print("{0} failure(s).".format(failures))
     return 1 if failures else 0

@@ -69,8 +69,10 @@ way shellcheck is pinned below rather than lint by luck of the image.
 SHELLCHECK AVAILABILITY
 -----------------------
 This gate never consults PATH: wc_actionlint.ensure_shellcheck()
-downloads the pinned release (koalaman/shellcheck v0.10.0, Windows zip
-or linux/darwin tar.xz) into the same temp cache Gate 46 uses for
+downloads the pinned release (koalaman/shellcheck, at the version
+.github/docker/e2e-reference-image/shellcheck.pin names -- the same pin
+the e2e reference image installs, #1204 -- Windows zip or linux/darwin
+tar.xz) into the same temp cache Gate 46 uses for
 actionlint, and runs that binary by path. Offline, the download fails
 loudly and so does the gate; it is not skippable by being unreachable.
 The self-test's positive fixture is what proves shellcheck is engaged

@@ -136,6 +136,20 @@ UNUSED_COMPOSITE = {
 }
 BIG_HEREDOC = ["cat <<'EOF'"] + ["a b c"] * 60000 + ["EOF", "gh issue view 5"]
 
+def mint_case(perm_lines):
+    """A workflow whose one step mints an App token asking for `perm_lines`."""
+    body = "".join(f"          {l}\n" for l in perm_lines)
+    return {
+        ".github/workflows/w.yml":
+            "name: w\non:\n  workflow_dispatch: {}\njobs:\n  work:\n"
+            "    runs-on: ubuntu-latest\n    steps:\n"
+            "      - name: mint\n        id: app\n"
+            "        uses: actions/create-github-app-token@v3\n        with:\n"
+            "          client-id: x\n          private-key: y\n" + body,
+        "docs/setup.md": DOCS_OK,
+    }
+
+
 # name, files, expect_fail, must_mention
 FIXTURES = [
     # --- US1: allowed forms are checked ---------------------------------
@@ -354,6 +368,26 @@ FIXTURES = [
      mkcase(ISSUES_READ, "", [DEFAULT_ENV],
             ['x=`gh api "repos/$REPO/issues/1/comments" -f body=\\`a;b\\` -X POST`']),
      True, (DISALLOWED, "(backtick)")),
+
+    # --- category E: scopes asked of the App at mint time (run 45614694181)
+    ("a mint asking the App for a scope docs/setup.md does not grant fails, "
+     "naming the scope",
+     mint_case(["permission-actions: read", "permission-contents: read"]),
+     True, ("permission-actions: read", "422", "w.yml :: work / mint")),
+
+    ("a mint asking for write where docs/setup.md grants only read fails",
+     {**mint_case(["permission-issues: write"]),
+      "docs/setup.md": DOCS_OK.replace("Issues: **Read and write**", "Issues: **Read-only**")},
+     True, ("permission-issues: write",)),
+
+    ("a mint whose level is an expression cannot be checked and fails",
+     mint_case(["permission-issues: ${{ inputs.level }}"]),
+     True, ("cannot check",)),
+
+    ("a mint asking only for granted scopes passes",
+     mint_case(["permission-contents: read", "permission-issues: write",
+                "permission-pull-requests: read"]),
+     False, ()),
 ]
 
 # ----------------------------------------------------------- locator cases
@@ -430,12 +464,27 @@ LOCATOR_CASES = [
     ("gh as a ${} default in command position", "${X:-gh} api x -X DELETE",
      [dis("dynamic-command")]),
     ("a quoted ${:-} default holding gh is no call", 'echo "${D:-gh gave nothing}"', []),
-    ("gh as a ${:+} alternate, one token", "${X:+gh} api x", [dis("param-expansion")]),
+    ("gh as a ${:+} alternate, one token", "${X:+gh} api x", [dis("dynamic-command")]),
+    # #889 (found by the code review of #1004): `bash ""` names an empty
+    # script path (bash exits 127), so the quoted heredoc is no shell's stdin.
+    ("an empty operand is a script path, so the shell reads no stdin",
+     "bash \"\" <<'E'\ngh api x -X DELETE\nE", [men("quoted-heredoc")]),
+    # #889 (found by the code review of #1004): `:+gh` and `:-gh` read alike,
+    # in a quoted argument (data: no token) and as a command word.
+    ("a quoted ${:+} or ${:-} holding gh is data either way",
+     'echo "${D:+gh}" "${D:-gh}" ${D:+gh}; echo "${D:+gh gave nothing}"', []),
+    ("a ${:+} or ${:-} command word holding gh is a call either way",
+     '"${D:+gh}" api x; "${D:-gh}" api x', [dis("dynamic-command")] * 2),
+    ("a gh a ${} value carries into a variable is no proof for a lone $CMD",
+     'C=${X:-gh}; $C api x -X DELETE\nC=${X:+"gh"}; "$C" api x',
+     [dis("dynamic-command"), men("quoted"), dis("dynamic-command")]),
+    ("a ${} gh after a quote the scanner cannot place is unprovable",
+     "echo ${X:-'gh api x'}", [dis("unparsed-expansion")]),
     ("gh as a ${} default behind a wrapper", "sudo ${X:-gh} api x",
      [dis("unquoted-wrapper")]),
     ("a ${} word holding gh anywhere is unprovable",
      "${X:-gh}/x api; ${GH:-${HOME}/bin/gh} api; sudo ${G:-${D}/gh} a; ${X:-gh}${Y:-} a",
-     [dis("dynamic-command"), dis("param-expansion"), dis("param-expansion"),
+     [dis("dynamic-command"), dis("dynamic-command"), dis("unquoted-wrapper"),
       dis("dynamic-command")]),
     ("a quoted gh behind a wrapper is a call", 'sudo "gh" api x',
      [dis("unquoted-wrapper")]),
@@ -706,6 +755,47 @@ LOCATOR_CASES = [
     ("pass 3: fish -C reads its heredoc after the string",
      "fish -C 'x' <<'E'\ngh api x -X DELETE\nE", [dis("unquoted-heredoc")]),
     ("pass 3: make -C is no fish -C", "make -C dir; echo 'gh x'", [men("quoted")]),
+    # A variable assigned a value that starts with gh, quoted or not, may run
+    # it as a command (owner decision on #890, 2026-11-25; left open by #1259).
+    ("gh-valued variable: a quoted gh run by a lone $CMD", "CMD='gh'; $CMD api x",
+     [men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: a bare gh run by ${CMD}", "CMD=gh; ${CMD} issue view 1",
+     [dis("dynamic-command")]),
+    ("gh-valued variable: a double-quoted gh run by ${CMD}",
+     'CMD="gh"; ${CMD} issue view 1', [men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: export, local and a value with arguments",
+     "export GH='gh'; $GH api x\nlocal C=\" gh api\" ; \"$C\" x; G=\"gh $R\"; $G",
+     [men("quoted"), dis("dynamic-command"), men("quoted"), dis("dynamic-command"),
+      men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: as a prefix to another command, run by \"$@\"",
+     "CMD='gh' make; \"$@\" api x", [men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: an array or a subscripted element",
+     "a=('gh' api x); \"${a[@]}\"\nb[$k]=\"gh\"; ${b[$k]} x",
+     [men("quoted"), dis("dynamic-command"), men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: set by printf -v", "printf -v CMD 'gh'; $CMD api x",
+     [men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: set by printf -v from an argument",
+     "printf -v C '%s' \"gh $R\"; $C x", [men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: set by a for loop", "for c in x 'gh'; do $c api x; done",
+     [men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: set by select", "select s in 'gh'; do $s x; done",
+     [men("quoted"), dis("dynamic-command")]),
+    ("printf without -v, or a loop over words that only mention gh, sets none",
+     "printf '%s' 'gh'; for c in 'the gh call' x; do \"$@\" y; done", [men("quoted")] * 2),
+    ("an array or element that mentions gh after its start is no gh-valued variable",
+     'a=("the gh call" x); b[$k]="x gh"; "$@" y', [men("quoted")] * 2),
+    ("a message that mentions gh after its start is no gh-valued variable",
+     'msg="the gh call failed"; "$@" x; $CMD y; source "$F"', [men("quoted")]),
+    ("an assignment-shaped argument or a gh-prefixed word is no gh-valued variable",
+     "echo CMD='gh'; X=ghost; Y=gh-x; $CMD y", [men("quoted")]),
+    ("gh-valued variable: a quoted path to gh", "CMD='/usr/bin/gh'; $CMD api x",
+     [men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: a path to gh under an expansion",
+     'GH="$RUNNER_TEMP/gh"; "$GH" api x', [men("quoted"), dis("dynamic-command")]),
+    ("gh-valued variable: positional parameters set by set --",
+     "set -- 'gh' api x; \"$@\"", [men("quoted"), dis("dynamic-command")]),
+    ("a path through a gh directory, or set -- with a message, sets none",
+     'u="https://x/gh/releases"; set -- "the gh call"; "$@" y', [men("quoted")]),
 ]
 
 
@@ -814,6 +904,34 @@ def run_locator_cases():
         path, methods = loc.api_parts(args)
         if (None if path is None else str(path), [str(m) for m in methods]) != want:
             bad.append((f"api_parts {args}", [f"got {(path, methods)}, want {want}"]))
+    bad += merge_key_problems()
+    return bad
+
+
+# A step that inherits its `run:` through a YAML merge key (#889, found by
+# the code review of #1004): yaml.safe_load folds it in, so the run: readers
+# must too, or Gate 28 never scans it and Gate 12 reports it at line 1.
+MERGE_KEY_WORKFLOW = _N.join((
+    "name: w", "on: workflow_dispatch", "x-steps:",
+    "  cancel: &cancel", "    name: cancel", "    run: gh run cancel 1",
+    "  both: &both", "    run: gh api -X DELETE x",
+    "jobs:", "  work:", "    runs-on: ubuntu-latest", "    steps:",
+    "      - <<: *cancel", "      - <<: [*both, *cancel]", ""))
+
+
+def merge_key_problems():
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "w.yml")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(MERGE_KEY_WORKFLOW)
+        blocks = [str(b) for b in loc.run_blocks(path)]
+        steps = {k: (str(v), v.line(1)) for k, v in loc.step_runs(path, True).items()}
+    want = {("work", 0): ("gh run cancel 1", 6), ("work", 1): ("gh api -X DELETE x", 8)}
+    bad = []
+    if blocks.count("gh run cancel 1") < 2 or "gh api -X DELETE x" not in blocks:
+        bad.append(("run_blocks: a step's merged run:", [f"got {blocks}"]))
+    if steps != want:
+        bad.append(("step_runs: a step's merged run:", [f"got {steps}", f"want {want}"]))
     return bad
 
 

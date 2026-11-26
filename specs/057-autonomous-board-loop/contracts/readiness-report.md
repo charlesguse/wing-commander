@@ -15,7 +15,15 @@ def evaluate(pr_number: int) -> ReadinessDecision:
    fresh `statusCheckRollup` belongs to `head_sha`; an empty rollup is
    `checks_green: false` (a docs-only PR with no triggered checks is never
    reported ready — Principle VIII, the `lint-workflows.yml` path-filter
-   edge case named in the spec).
+   edge case named in the spec). Only each check's newest result counts:
+   an earlier attempt of the same workflow run on the same head (one
+   that was re-run) is set aside (`board_readiness.latest_per_check()`,
+   #889); a separate run of the same workflow (another event, a reopened
+   PR) is its own check and never hides a failure. A cancelled job of
+   the gate suite's workflow (`lint-workflows`) alone is set aside by a
+   later, non-skipped run of the same job (a PR closed and reopened
+   mid-run); another workflow's later run answers a different event and
+   never sets a cancelled one aside.
 2. **Gate suite green on `head_sha`** (research.md D13): the
    `lint-workflows` entry within that same fresh rollup, not a second
    local re-run.
@@ -37,15 +45,19 @@ loop.
 ## On `ready: true`
 
 Post a readiness report on the PR naming `head_sha` and each condition's
-result; record the same on the issue; state that a human merge is awaited
-(FR-066, FR-068). Never merge, approve, or enable auto-merge (FR-068).
+result; record the same on the issue (FR-066). The readiness job itself
+never merges, approves, or enables auto-merge (FR-068); with
+`WING_COMMANDER_BOARD_AUTO_MERGE` on, `board-loop.yml`'s `merge` job may
+merge it next (specs/115-board-loop-self-merge), so the report makes no
+claim about who merges.
 
 The issue record carries a board item marker with step `awaiting-merge`
 (not `readiness`), keeping `pr` (#532). That step is the handover: the
-loop stops at "ready to merge", so the item releases the board rather than
-holding it until a human merges. `select` never treats an `awaiting-merge`
-item as in flight, and its oldest-first fallback passes the item over
-until the PR is positively known to be CLOSED or MERGED
+readiness job stops at ready, and the item releases the board rather
+than holding it until the PR merges (for who merges it, see the `merge`
+job's header comment in `board-loop.yml`). `select` never treats an
+`awaiting-merge` item as in flight, and its oldest-first fallback passes
+the item over until the PR is positively known to be CLOSED or MERGED
 (specs/061-marker-owned-in-flight/contracts/in-flight-detection.md). After
 that, resume sends the still-open issue to a fresh `triage`
 (specs/061-marker-owned-in-flight/contracts/resume-recovery.md). A human

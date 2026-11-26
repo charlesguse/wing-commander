@@ -109,7 +109,10 @@ runs:
         set -uo pipefail
         marker="<!-- wing-commander-${MARKER_KIND} iteration=${NEXT_ITER} -->"
         existing="$(gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json comments --jq '.comments[].body')" || exit 1
-        if printf '%s\n' "$existing" | grep -qF "$marker"; then
+        # A here-string, not `printf | grep -q`: under pipefail a writer
+        # SIGPIPE'd by grep's early exit on a long history reads as "no
+        # marker" and posts a duplicate.
+        if grep -qF "$marker" <<<"$existing"; then
           echo "stalled hand-off comment for iteration $NEXT_ITER already posted" >> "$GITHUB_STEP_SUMMARY"
           exit 0
         fi

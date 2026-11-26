@@ -276,6 +276,28 @@ def _job_runs_on_pull_request(job):
     return True
 
 
+# The aggregate PR check of lint-workflows.yml (specs/129-parallel-pr-lint,
+# contracts/lint-workflow-layout.md item 8): the one job named `lint`, which
+# `needs:` the shard units and runs no gate of its own. It is not a unit, so
+# it is exempt from the PR-time gate set by name. The `needs:` test keeps the
+# exemption from ever swallowing a single unsharded job that happens to be
+# called `lint`: that job IS the suite, and dropping it would empty the local
+# sweep without a word. A gate placed in the aggregate is still caught --
+# verify-lint-shard-layout.py (Gate 174) fails on any gate in its steps.
+AGGREGATE_JOB = "lint"
+
+
+def _is_aggregate(job_id, job):
+    return job_id == AGGREGATE_JOB and bool((job or {}).get("needs"))
+
+
+def _pr_time_jobs(wf):
+    """The PR-time units of a parsed workflow: (job id, job) for every job
+    that runs on pull_request, minus the `lint` aggregate."""
+    return [(k, j) for k, j in (wf.get("jobs") or {}).items()
+            if _job_runs_on_pull_request(j) and not _is_aggregate(k, j)]
+
+
 def _invocations_in_run(text, script):
     """Every argv the `run:` text uses to invoke `script`, args only.
 
@@ -341,9 +363,7 @@ def pr_time_invocations(root=".",
     scripts = set(gate_scripts(root))
     out = []
     seen = set()
-    for job in (wf.get("jobs") or {}).values():
-        if not _job_runs_on_pull_request(job):
-            continue
+    for _, job in _pr_time_jobs(wf):
         for step in (job or {}).get("steps") or []:
             run = (step or {}).get("run")
             if not run:
@@ -937,9 +957,7 @@ def pr_time_script_calls(root=".",
     except (yaml.YAMLError, OSError):
         return []
     out = []
-    for job in (wf.get("jobs") or {}).values():
-        if not _job_runs_on_pull_request(job):
-            continue
+    for _, job in _pr_time_jobs(wf):
         for step in (job or {}).get("steps") or []:
             run = str((step or {}).get("run") or "")
             if not run or LOOSE_PY_HEREDOC_RE.search(run):
@@ -978,9 +996,7 @@ def pr_time_inline_steps(root=".",
         return [], []
     runnable, unrunnable = [], []
     wf_shell = ((wf.get("defaults") or {}).get("run") or {}).get("shell")
-    for job in (wf.get("jobs") or {}).values():
-        if not _job_runs_on_pull_request(job):
-            continue
+    for _, job in _pr_time_jobs(wf):
         job_shell = (((job or {}).get("defaults") or {}).get("run")
                      or {}).get("shell") or wf_shell
         for step in (job or {}).get("steps") or []:

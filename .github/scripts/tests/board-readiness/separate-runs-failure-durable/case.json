@@ -1,0 +1,46 @@
+{
+  "snapshot": {
+    "headRefOid": "abab123",
+    "statusCheckRollup": [
+      {
+        "name": "lint",
+        "workflowName": "lint · workflows",
+        "detailsUrl": "https://github.com/o/r/actions/runs/100/job/1",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-25T09:00:00Z"
+      },
+      {
+        "name": "harness tests",
+        "workflowName": "lint · workflows",
+        "detailsUrl": "https://github.com/o/r/actions/runs/100/job/2",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-25T09:00:00Z"
+      },
+      {
+        "name": "resolve-model",
+        "workflowName": "Wing Commander · 9 pr conversation",
+        "detailsUrl": "https://github.com/o/r/actions/runs/200/job/10",
+        "status": "COMPLETED",
+        "conclusion": "FAILURE",
+        "startedAt": "2026-11-25T10:00:01Z"
+      },
+      {
+        "name": "resolve-model",
+        "workflowName": "Wing Commander · 9 pr conversation",
+        "detailsUrl": "https://github.com/o/r/actions/runs/201/job/11",
+        "status": "COMPLETED",
+        "conclusion": "SKIPPED",
+        "startedAt": "2026-11-25T10:00:05Z"
+      }
+    ]
+  },
+  "open_in_scope_findings": 0,
+  "backstop_holds": true,
+  "kill_switch_paused": false,
+  "expected": {
+    "ready": false,
+    "unmet_class": "durable"
+  }
+}

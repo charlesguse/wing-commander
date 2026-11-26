@@ -1468,9 +1468,10 @@ jobs:
               step = "prove"
           elif (marker_step in (AWAITING_MERGE_STEP, HANDED_OVER_STEP)
                 and (not pr_from_marker or pr_state == "OPEN")):
-              # #532: readiness already reported this PR ready and handed
-              # it to a human -- or, spec 115, GitHub refused the merge
-              # job's merge and handed-over records the same hand-off.
+              # #532: readiness already reported this PR ready and stopped
+              # there (the merge job, or a human with the switch off, takes
+              # it) -- or, spec 115, GitHub refused the merge job's merge
+              # and handed-over records the hand-off to a human.
               # select() never picks it while its PR may
               # still be open (board_eligibility._awaiting_merge_holds),
               # so this is reached only on a race (reopened between the
@@ -1489,7 +1490,8 @@ jobs:
                   pr_number = ""
                   pr_state = ""
               if marker_pr_field:
-                  note = "recorded pr {0} is awaiting a human merge ({1}) -- nothing to do this run".format(
+                  note = ("recorded pr {0} is awaiting merge ({1}; by the merge job, or by a human with "
+                          "WING_COMMANDER_BOARD_AUTO_MERGE off) -- nothing to do this run").format(
                       marker_pr_field, pr_state or "state unresolved")
               else:
                   note = "awaiting-merge marker records no pr -- nothing to do this run"
@@ -1842,9 +1844,10 @@ jobs:
 # Closing-step pattern (T014, FR-044): every job below ends by posting its
 # outcome on the originating issue -- the triage verdict and its evidence,
 # the route and its reason, the PR, each review round's outcome, the
-# readiness report or the unmet condition, the human merge, and the proof
-# run, per whichever step that job represents -- with the human-legible
-# comment body ending in the board_item_marker.py write_marker() HTML
+# readiness report or the unmet condition, the merge (the `merge` job's
+# announcement, or a human merge), and the proof run, per whichever step
+# that job represents -- with the human-legible comment body ending in the
+# board_item_marker.py write_marker() HTML
 # comment (contracts/board-item-marker.md); the marker is never the comment's
 # only content. Every durable action (a close, a label, a push, a PR) is
 # preceded by a re-check through wing-commander-board-stop-check (research.md
@@ -5729,12 +5732,12 @@ jobs:
                   decision["head_sha"] if decision["head_sha"] and decision["head_sha"] == backstop_head else ""))
           PYEOF
 
-      # FR-066/FR-068: names head_sha and every condition's result; states
-      # a human merge is awaited; never merges, approves, or enables
-      # auto-merge anywhere in this job's own API calls. The marker it
-      # writes records step awaiting-merge, not readiness (#532): the
-      # handover releases the board, so select() moves on to other issues
-      # instead of re-running readiness on this PR every run.
+      # FR-066/FR-068: names head_sha and every condition's result; never
+      # merges, approves, or enables auto-merge anywhere in this job's own
+      # API calls. The marker it writes records step awaiting-merge, not
+      # readiness (#532): the handover releases the board, so select()
+      # moves on to other issues instead of re-running readiness on this
+      # PR every run.
       # FR-011, contracts/directed-proof-run.md "Attribution": one
       # canonical attribution string (CLAUDE.md single-home), gated on
       # inputs.directed-stage != '', prepended rather than a separately-
@@ -5753,7 +5756,7 @@ jobs:
         run: |
           set -uo pipefail
           decision="$(cat "$RUNNER_TEMP/board-readiness-decision.json")"
-          body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\ndecision: %s\n\nAwaiting a human merge -- this loop never merges, approves, or enables auto-merge.' \
+          body="$(printf 'Readiness: all conditions hold on head_sha %s.\n\ndecision: %s' \
             "$(jq -r '.head_sha' "$RUNNER_TEMP/board-readiness-decision.json")" "$decision")"
           [ -n "$DIRECTED_ATTRIBUTION" ] && body="$(printf '%s\n\n%s' "$DIRECTED_ATTRIBUTION" "$body")"
           gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"
@@ -6097,13 +6100,13 @@ jobs:
 
   # specs/115-board-loop-self-merge (contracts/board-merge.md): the one place
   # this loop merges, and only while `vars.WING_COMMANDER_BOARD_AUTO_MERGE` is
-  # 'true' (unset, the job never exists and readiness's "Awaiting a human
-  # merge" report stands as before). Two classes may merge, both decided by
-  # board_merge.py from a snapshot of the exact head SHA fetched fresh below,
-  # never by this shell: the fix PR readiness just reported ready, and a
-  # Spec Kit upgrade PR the auto-update stage opened and verified. A refusal
-  # from GitHub (the App has no Workflows permission, so a workflow-touching
-  # PR ends here) is handed to a maintainer and nothing else is tried.
+  # 'true' (unset, the job never exists and a human merges the PR readiness
+  # reported ready). Two classes may merge, both decided by board_merge.py
+  # from a snapshot of the exact head SHA fetched fresh below, never by this
+  # shell: the fix PR readiness just reported ready, and a Spec Kit upgrade
+  # PR the auto-update stage opened and verified. A refusal from GitHub (the
+  # App has no Workflows permission, so a workflow-touching PR ends here) is
+  # handed to a maintainer and nothing else is tried.
   # `github.event_name != 'pull_request'` keeps this off the closed-PR
   # trigger, and directed proof runs never merge.
   merge:
@@ -6876,8 +6879,16 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.directed-pr }}
         run: |
           set -uo pipefail
-          gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json files \
-            --jq '[.files[].path]' > "$RUNNER_TEMP/board-prove-paths.json"
+          # #889: REST pulls/N/files, never gh pr view's files field, which
+          # carries no previous path -- a rename away from a path is a change
+          # to it (board_prove.pull_changed_paths()). One object per line.
+          # A failed or partial read stops the step: an empty list would
+          # read as "no changed paths" and close on the merge evidence.
+          if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+              --jq '.[] | {filename, previous_filename}' > "$RUNNER_TEMP/board-prove-files.jsonl"; then
+            echo "::error::could not read PR #$PR_NUMBER's files over REST; not deciding from a partial list"
+            exit 1
+          fi
 
           python3 - <<'PYEOF'
           import json
@@ -6886,14 +6897,14 @@ jobs:
 
           sys.path.insert(0, ".github/scripts")
           from board_prove import (
-              actions_only, aimable_jobs, directed_stage, redrive_target,
+              actions_only, aimable_jobs, directed_stage, pull_changed_paths, redrive_target,
               scan_dispatchable_and_uses_graph, scan_job_uses_graph,
           )
           from wc_step_output import write_outputs
 
           runner_temp = os.environ["RUNNER_TEMP"]
-          with open(os.path.join(runner_temp, "board-prove-paths.json"), encoding="utf-8") as fh:
-              changed_paths = json.load(fh)
+          with open(os.path.join(runner_temp, "board-prove-files.jsonl"), encoding="utf-8") as fh:
+              changed_paths = pull_changed_paths(json.loads(line) for line in fh if line.strip())
 
           # board_prove.scan_dispatchable_and_uses_graph is the single home
           # for this scan (never offer a target the composite could

@@ -2467,11 +2467,11 @@ jobs:
       # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
       # any step runs pipeline code -- see clarify.yml.
       - name: Remove the agent-writable pipeline checkout (post-agent)
-        if: always() && steps.agent.outcome != 'skipped' && steps.project.outputs.project != ''
+        if: always() && steps.agent.outcome != 'skipped'
         run: rm -rf -- .wing-commander-pipeline
 
       - name: Re-checkout pipeline repository (post-agent)
-        if: always() && steps.agent.outcome != 'skipped' && steps.project.outputs.project != ''
+        if: always() && steps.agent.outcome != 'skipped'
         uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
@@ -2859,7 +2859,7 @@ jobs:
       # wing-commander-outstanding-task-item composite.
       - name: Post outstanding task item on the lifecycle issue
         if: steps.phrase.outputs.phrase != ''
-        uses: ./.github/actions/wing-commander-outstanding-task-item
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-outstanding-task-item
         with:
           token: ${{ env.WC_BOT_TOKEN }}
           issue-number: ${{ needs.classify-and-announce.outputs.issue-number }}
