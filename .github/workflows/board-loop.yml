@@ -7235,6 +7235,7 @@ jobs:
         id: outcome
         if: always()
         env:
+          DECIDE_OUTCOME: ${{ steps.decide.outcome }}
           BUSY: ${{ steps.busy-check.outputs.busy }}
           REDRIVE_WORKFLOW: ${{ steps.decide.outputs.redrive-workflow }}
           DIRECTED_STAGE: ${{ steps.decide.outputs.directed-stage }}
@@ -7274,6 +7275,18 @@ jobs:
             else
               label="proof: $reason"
             fi
+          fi
+          # #889 (found by the code review of #1260): a `decide` that did not
+          # succeed leaves actions-only empty and skips the close step, so
+          # the chain above lands on "closed on merge evidence alone"; such a
+          # run never closed anything and reads as could-not-decide, keeping
+          # that arm's recovered suffix. (A paused stand-down needs a decide
+          # that succeeded: killswitch-recheck runs only after it.)
+          if [ "$DECIDE_OUTCOME" != "success" ]; then
+            case "$label" in
+              *"(recovered)"*) label="prove (recovered): could not decide" ;;
+              *) label="prove: could not decide" ;;
+            esac
           fi
           echo "label=$label" >> "$GITHUB_OUTPUT"
 
