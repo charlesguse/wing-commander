@@ -31,5 +31,5 @@
 
 ## Notes
 
-- All three clarifications were resolved by the owner's answers on #1189 (2026-11-25), recorded in the spec's Clarifications section: FR-009 structured failure-class field with a required silent-failure description (Q1: C), FR-010 severity field plus a separate security boolean (Q2: A), FR-012 a one-time sweep of the open #889 lines (Q3: B). Open question 2 (gate on dropped findings being named) was given a default in FR-011.
+- All three clarifications were resolved by the owner's answers on #1189 (2026-11-25), recorded in the spec's Clarifications section: FR-009 structured failure-class field with a required silent-failure description (Q1: C), FR-010 severity field plus a separate security boolean (Q2: A), FR-012 a one-time sweep of the open #889 lines (Q3: B). Open question 2 (gate on dropped findings being named) was confirmed by the owner at spec review on 2026-11-26: FR-011 is a PR-time gate, with the routing code rendering the list. The round-1 review decisions (2026-11-26) are recorded in the Clarifications section.
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
