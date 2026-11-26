@@ -917,6 +917,34 @@ def test_structural():
                         f"{dispatch_uses!r}) — the bump/dispatch primitive "
                         f"has exactly one home (CLAUDE.md); a reintroduced "
                         f"inline body here would duplicate it.")
+    # #889 (found by the code review of #1062): the job's bootstrap
+    # checkout persists no credential, and the composite fetches the spec
+    # branch's tip from origin, so on a private repository the fetch fails
+    # and the dispatch exits 1. A wing-commander-refresh-remote step must
+    # authenticate origin earlier in the job, under the dispatch's own gate
+    # (or none), so it has run whenever the dispatch does.
+    once_steps = [st or {} for st in ((jobs.get("dispatch-once") or {})
+                                      .get("steps") or [])]
+    dispatch_idx = next((i for i, st in enumerate(once_steps)
+                         if st.get("name") == DISPATCH_STEP), None)
+    refresh = [st for st in once_steps[:dispatch_idx or 0]
+               if "wing-commander-refresh-remote" in str(st.get("uses") or "")]
+    dispatch_if = " ".join(str(dispatch_step.get("if") or "").split())
+    if not any(" ".join(str(st.get("if") or "").split()) in ("", dispatch_if)
+               for st in refresh):
+        failures.append(f"structural: dispatch-once has no "
+                        f"wing-commander-refresh-remote step ahead of "
+                        f"{DISPATCH_STEP!r} gated like it (or ungated) -- "
+                        f"its checkout persists no credential, so "
+                        f"wing-commander-fold-dispatch's tip fetch fails on "
+                        f"a private repository.")
+    else:
+        token = str((refresh[0].get("with") or {}).get("token", ""))
+        if not token.strip():
+            failures.append("structural: dispatch-once's "
+                            "wing-commander-refresh-remote step passes no "
+                            "token.")
+
     dispatch_with = dispatch_step.get("with") or {}
     for key in ("base-sha", "spec-branch", "dispatch-token", "folded-json"):
         if not str(dispatch_with.get(key, "")):
