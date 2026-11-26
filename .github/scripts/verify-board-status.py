@@ -403,9 +403,9 @@ def proof_list_half():
             return {"workflow_runs": path_runs}
 
         def dl(repo, rid, tmp):
-            if download == "ok":
+            if download == "ok" or isinstance(download, dict):
                 with open(os.path.join(tmp, "proof-list-section.json"), "w", encoding="utf-8") as fh:
-                    json.dump(section, fh)
+                    json.dump(section if download == "ok" else download, fh)
             elif download == "bad":
                 with open(os.path.join(tmp, "proof-list-section.json"), "w", encoding="utf-8") as fh:
                     fh.write("{")
@@ -430,6 +430,12 @@ def proof_list_half():
           and run([dict(fresh, head_repository={"full_name": "x/y"})], {3: True})["status"] == "never")
     check("a missing artifact is unreadable", run([fresh], {3: True}, download="none")["status"] == "unreadable")
     check("a malformed artifact is unreadable", run([fresh], {3: True}, download="bad")["status"] == "unreadable")
+    # #889: a non-string form or build time would make render() raise and stop
+    # the whole Board status rewrite; the reader refuses it as unreadable.
+    for key, bad in (("full", 123), ("names_only", ["x"]), ("built_at", 5), ("built_at", None)):
+        typed = run([fresh], {3: True}, download=dict(section, **{key: bad}))
+        check("a section whose {0} is {1!r}, not a string, is unreadable".format(key, bad),
+              typed["status"] == "unreadable", typed)
     check("an unreadable history is unreadable with last good unknown",
           run([fresh], {3: True}, fail="workflows/") == {"status": "unreadable", "last_good_at": "unknown"})
 
@@ -589,12 +595,174 @@ def merge_evidence_half():
           and "wc-merge-evidence:begin" not in bs.render(SNAP))
 
 
+def feature_health_half():
+    """specs/126-feature-health: the section's writer statuses (contracts/
+    feature-health-report.md "Writer statuses") and the constants shared with
+    the feature-health workflow."""
+    import datetime
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with open(os.path.join(root, ".github", "workflows", bs.FEATURE_HEALTH_WORKFLOW), encoding="utf-8") as fh:
+        wf = fh.read()
+    check("the feature-health workflow's upload name is the writer's artifact constant",
+          "name: {0}\n".format(bs.FEATURE_HEALTH_ARTIFACT) in wf)
+    check("the feature-health workflow's build step is the writer's build-step constant",
+          "- name: {0}\n".format(bs.FEATURE_HEALTH_BUILD_STEP) in wf)
+    check("feature_health_paused is in SWITCH_ENV",
+          bs.SWITCH_ENV.get("feature_health_paused") == "FEATURE_HEALTH_PAUSED")
+    with open(os.path.join(root, ".github", "workflows", "board-status.yml"), encoding="utf-8") as fh:
+        bs_text = fh.read()
+    check("board-status.yml passes the feature-health switch",
+          "FEATURE_HEALTH_PAUSED: ${{ vars.WING_COMMANDER_FEATURE_HEALTH_PAUSED }}" in bs_text)
+
+    now = datetime.datetime(2026, 11, 20, 12, 0, 0)
+    content = bs.FEATURE_HEALTH_MARKER + "\n**Feature health** — built 2026-11-20 06:29Z · 1 features · 0 unreadable\n"
+
+    def run(path_runs, ok, switches=None, download="ok", fail=None):
+        def gh_obj(path):
+            if fail and fail in path:
+                raise subprocess.CalledProcessError(1, "gh", "", "boom")
+            if path == "repos/o/r":
+                return {"default_branch": "main"}
+            return {"workflow_runs": path_runs}
+
+        def dl(repo, rid, tmp):
+            if download in ("ok", "bad"):
+                with open(os.path.join(tmp, bs.FEATURE_HEALTH_ARTIFACT + ".md"), "w", encoding="utf-8") as fh:
+                    fh.write(content if download == "ok" else "garbage")
+        return bs.feature_health_snapshot("o/r", switches or {}, now, gh_obj, lambda rid: ok.get(rid, False), dl)
+
+    def mk(rid, when, conclusion="success"):
+        return {"id": rid, "run_started_at": when, "conclusion": conclusion, "event": "schedule",
+                "head_repository": {"full_name": "o/r"}}
+    fresh, old = mk(3, "2026-11-20T06:29:00Z"), mk(2, "2026-11-19T06:29:00Z")
+    got = run([fresh, old], {3: True})
+    check("a fresh feature-health build is built, with its content", got["status"] == "built" and got["section"] == content, got)
+    check("no feature-health run is never", run([], {})["status"] == "never")
+    check("a failed latest feature-health build is failed, last good known",
+          run([mk(4, "2026-11-20T06:29:00Z", "failure"), old], {2: True})
+          == {"status": "failed", "last_good_at": "2026-11-19T06:29:00Z"})
+    stale = run([mk(5, "2026-11-17T06:29:00Z")], {5: True})
+    check("a build older than 48 hours keeps its content and is stale", stale["status"] == "stale" and stale["section"] == content, stale)
+    check("a run that stood down on the switch is paused", run([fresh], {3: False})["status"] == "paused")
+    check("the switch set is paused whatever the history",
+          run([fresh], {3: True}, {"feature_health_paused": "true"})["status"] == "paused")
+    check("a missing artifact is unreadable", run([fresh], {3: True}, download="none")["status"] == "unreadable")
+    check("a malformed artifact is unreadable", run([fresh], {3: True}, download="bad")["status"] == "unreadable")
+    check("an unreadable history is unreadable with last good unknown",
+          run([fresh], {3: True}, fail="workflows/") == {"status": "unreadable", "last_good_at": "unknown"})
+
+    body = "board body\n"
+    built = bs.feature_health_block({"status": "built", "section": content}, body)
+    check("a built section is embedded as the artifact content", built.startswith(bs.FEATURE_HEALTH_MARKER) and "Feature health" in built, built)
+    st = bs.feature_health_block(dict(stale, built_at="2026-11-17T06:29:00Z"), body)
+    check("a stale section says so and gives its build date", "Stale" in st and "2026-11-17" in st, st)
+    table = content + "\n<details><summary>All features</summary>\n\n" + "| row |\n" * 20000 + "</details>\n"
+    short = bs.feature_health_block({"status": "built", "section": table}, body)
+    check("an over-size table is dropped and the call-outs stay", "Table shortened" in short and "| row |" not in short, short[:200])
+    no_table = bs.FEATURE_HEALTH_MARKER + "\n**Feature health** — built x\n" + bs.FEATURE_HEALTH_MARKER_END + "\n"
+    cut = bs.shorten_feature_health(no_table)
+    check("shortening a section with no table keeps its end marker and adds no shortened line",
+          cut.endswith(bs.FEATURE_HEALTH_MARKER_END) and "Table shortened" not in cut, cut)
+    from board_spec_request_body import MAX_BODY_UNITS, utf16_len
+    callouts = bs.FEATURE_HEALTH_MARKER + "\n" + "- `x` — failing\n" * 400 + bs.FEATURE_HEALTH_MARKER_END
+    roomy = "b" * (MAX_BODY_UNITS - 1000)
+    over = bs.feature_health_block({"status": "built", "section": callouts, "last_good_at": "2026-11-19"}, roomy)
+    check("a section whose call-outs do not fit falls back to the too-large notice",
+          "too large" in over and utf16_len(roomy) + 1 + utf16_len(over) <= MAX_BODY_UNITS, over[:200])
+    full = "b" * (MAX_BODY_UNITS - 20)
+    import contextlib
+    import io
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        none = bs.feature_health_block({"status": "built", "section": callouts, "last_good_at": "2026-11-19"}, full)
+    check("dropping the section when nothing fits is logged, not silent",
+          none == "" and "left out" in err.getvalue(), err.getvalue())
+    check("when not even the too-large notice fits, the body stays within the limit",
+          utf16_len(full) + 1 + utf16_len(none) <= MAX_BODY_UNITS, utf16_len(none))
+    for status, last, text in (("paused", "2026-11-19T06:29:00Z", "WING_COMMANDER_FEATURE_HEALTH_PAUSED"),
+                               ("failed", "2026-11-19T06:29:00Z", "latest build failed"),
+                               ("never", "never", "not yet built"),
+                               ("unreadable", "2026-11-19T06:29:00Z", "could not read")):
+        blk = bs.feature_health_block({"status": status, "last_good_at": last}, body)
+        check("the {0} notice says {1}".format(status, text), text in blk and "Feature health —" not in blk, blk)
+        if status != "never":
+            check("the {0} notice gives the last good build date".format(status), "2026-11-19" in blk, blk)
+    check("render places the feature-health section after the board",
+          bs.render(dict(SNAP, feature_health={"status": "never"})).startswith(bs.render(SNAP))
+          and bs.FEATURE_HEALTH_MARKER not in bs.render(SNAP))
+    # #889: an unterminated <details> must not take the end marker with it.
+    open_table = (bs.FEATURE_HEALTH_MARKER + "\n**Feature health** — built x\n\n<details><summary>All</summary>\n"
+                  + "| row |\n" * 3 + bs.FEATURE_HEALTH_MARKER_END + "\n")
+    cut = bs.shorten_feature_health(open_table)
+    check("shortening a section whose <details> never closes keeps its end marker",
+          cut.endswith(bs.FEATURE_HEALTH_MARKER_END) and "| row |" not in cut and "Table shortened" in cut, cut)
+
+
+def fit_half():
+    """#889: every section render appends keeps the whole body within
+    MAX_BODY_UNITS, at and around the boundary, whatever the section's status.
+    The limit is lowered for the sweep so a small board sits right at it."""
+    import contextlib
+    import io
+    import board_spec_request_body as bsrb
+    base = bs.render(SNAP)
+    pl_section = {"schema": 1, "built_at": "2026-11-20T06:19:00Z", "full": "F" * 400 + "\n",
+                  "names_only": "N" * 200 + "\n"}
+    me_section = dict(pl_section, full="M" * 400 + "\n", names_only="m" * 200 + "\n")
+    fh_section = (bs.FEATURE_HEALTH_MARKER + "\n**Feature health** — built x\n" + "- `x` — failing\n" * 10
+                  + "\n<details><summary>All</summary>\n\n" + "| row |\n" * 40 + "</details>\n"
+                  + bs.FEATURE_HEALTH_MARKER_END + "\n")
+    cases = []
+    for status in ("paused", "failed", "never", "unreadable"):
+        cases.append(("proof list " + status, {"proof_list": {"status": status, "last_good_at": "2026-11-19"}}))
+        cases.append(("merge evidence " + status, {"merge_evidence": {"status": status, "last_good_at": "2026-11-19"}}))
+        cases.append(("feature health " + status, {"feature_health": {"status": status, "last_good_at": "2026-11-19"}}))
+    cases.append(("proof list built", {"proof_list": {"status": "built", "last_good_at": "x", "section": pl_section}}))
+    cases.append(("merge evidence built", {"merge_evidence": {"status": "built", "last_good_at": "x", "section": me_section}}))
+    cases.append(("feature health built", {"feature_health": {"status": "built", "section": fh_section}}))
+    cases.append(("feature health stale", {"feature_health": {"status": "stale", "section": fh_section,
+                                                              "built_at": "2026-11-17T06:29:00Z"}}))
+    cases.append(("all three built", {"proof_list": {"status": "built", "last_good_at": "x", "section": pl_section},
+                                      "merge_evidence": {"status": "built", "last_good_at": "x", "section": me_section},
+                                      "feature_health": {"status": "built", "section": fh_section}}))
+    saved = bsrb.MAX_BODY_UNITS
+    try:
+        for name, extra in cases:
+            snap = dict(SNAP, **extra)
+            bsrb.MAX_BODY_UNITS = 10 ** 9
+            top = bsrb.utf16_len(bs.render(snap))
+            over, left_out, raised = [], 0, None
+            for limit in range(bsrb.utf16_len(base), top + 2):
+                bsrb.MAX_BODY_UNITS = limit
+                err = io.StringIO()
+                try:
+                    with contextlib.redirect_stderr(err):
+                        got = bs.render(snap)
+                except Exception as exc:  # noqa: BLE001 -- any raise stops the rewrite
+                    raised = "{0} at {1}: {2!r}".format(name, limit, exc)
+                    break
+                if bsrb.utf16_len(got) > limit:
+                    over.append(limit)
+                if "left out" in err.getvalue():
+                    left_out += 1
+            check("{0}: render stays within the body limit at every limit from the bare board up".format(name),
+                  not over and not raised, raised or over[:5])
+            check("{0}: a section with no room at all is left out and logged".format(name), left_out > 0, left_out)
+    finally:
+        bsrb.MAX_BODY_UNITS = saved
+    check("append_section adds nothing for a section that was left out",
+          bs.append_section("body\n", "") == "body\n" and bs.append_section("body\n", "x\n") == "body\n\nx\n")
+
+
 def main():
     render_half()
     runtime_half()
     switches_half()
     proof_list_half()
     merge_evidence_half()
+    feature_health_half()
+    fit_half()
     print("verify-board-status: {0} failure(s).".format(len(failures)))
     return 1 if failures else 0
 

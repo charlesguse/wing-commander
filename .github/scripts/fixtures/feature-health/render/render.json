@@ -1,0 +1,59 @@
+{
+  "cases": [
+    {
+      "label": "call-outs, order and date formats",
+      "features": [
+        {"name": "zeta", "runs": {"a.yml": [[2, "success"]]}},
+        {"name": "beta", "runs": {"a.yml": [[2, "failure"], [26, "success"]]}, "entry": {}},
+        {"name": "alpha", "runs": {"a.yml": [[2, "failure"], [26, "failure"]]}},
+        {"name": "gamma", "entry": {"signal": {"kind": "release", "label": "release"}}, "signal_days_ago": 20, "runs": {"a.yml": [[2, "success"]]}},
+        {"name": "delta", "runs": {"a.yml": [[100, "success"]]}},
+        {"name": "eps", "entry": {"kill_switch": "WING_COMMANDER_E_PAUSED"}, "ctx": {"switches": {"WING_COMMANDER_E_PAUSED": true}}, "runs": {"a.yml": [[2, "success"]]}},
+        {"name": "zed", "runs": {"a.yml": {"unreadable": "HTTP 500"}}}
+      ],
+      "contains": [
+        "**Feature health** — built 2026-11-22 12:00Z · 7 features · 1 unreadable",
+        "- `zed` — unreadable: zed-a.yml: HTTP 500",
+        "- `eps` — paused: WING_COMMANDER_E_PAUSED",
+        "- `alpha` — failing: last success never in window, last failure 2026-11-22",
+        "- `delta` — not running: no run since 2026-11-18",
+        "- `gamma` — quiet: no release since 2026-11-02 (threshold 14 days)",
+        "| gamma | quiet | 2026-11-22 | never in window | 2026-11-02 (threshold 14d) |",
+        "| zeta | healthy | 2026-11-22 | never in window | not measured |"
+      ],
+      "absent": ["Nothing needs a look.", "- `zeta`", "- `beta`"]
+    },
+    {
+      "label": "a signal failure shows in a not running call-out; a not configured feature is not called out (FR-009)",
+      "features": [
+        {"name": "late", "entry": {"signal": {"kind": "release"}}, "signal_days_ago": {"unreadable": "HTTP 502"}, "runs": {"a.yml": []}},
+        {"name": "unset", "entry": {"requires_var": "WING_COMMANDER_Y", "signal": {"kind": "release"}}, "ctx": {"vars_set": {"WING_COMMANDER_Y": false}}, "signal_days_ago": {"unreadable": "HTTP 502"}, "runs": {"a.yml": [[3, "skipped"]]}}
+      ],
+      "contains": [
+        "- `late` — not running: no run in the window (signal unreadable: HTTP 502)",
+        "| unset | not configured |"
+      ],
+      "absent": ["- `unset`"]
+    },
+    {
+      "label": "nothing needs a look",
+      "features": [{"name": "one", "runs": {"a.yml": [[2, "success"]]}}],
+      "contains": ["Nothing needs a look.", "<!-- wing-commander-feature-health -->"],
+      "absent": ["- `one`"]
+    },
+    {
+      "label": "stage rows sit beneath their feature and are indented",
+      "features": [{"name": "life", "entry": {"workflows": [{"file": "a.yml", "cadence": "schedule", "stage": "intake"}, {"file": "b.yml", "cadence": "schedule", "stage": "plan"}]}, "runs": {"a.yml": [[2, "success"]], "b.yml": [[2, "success"]]}},
+                   {"name": "other", "runs": {"a.yml": [[2, "success"]]}}],
+      "contains": ["| &nbsp;&nbsp;intake | healthy |", "| &nbsp;&nbsp;plan | healthy |"],
+      "ordered": ["| life | healthy |", "| &nbsp;&nbsp;intake | healthy |", "| &nbsp;&nbsp;plan | healthy |", "| other | healthy |"]
+    },
+    {
+      "label": "over-size: the table is dropped and the call-outs stay",
+      "shorten": true,
+      "features": [{"name": "bad", "runs": {"a.yml": [[2, "failure"]]}}],
+      "contains": ["- `bad` — failing", "Table shortened", "<!-- /wing-commander-feature-health -->"],
+      "absent": ["| Feature | State |", "<details>"]
+    }
+  ]
+}

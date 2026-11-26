@@ -7,7 +7,8 @@ rather than desk-read. Every invocation is appended to $GH_CALLS.
 
 State shape:
   {"issues": {"7": {"number":7,"state":"open","title":..,"body":..,
-                    "labels":[..],"comments":[{"id":..,"body":..,"user":..}]}},
+                    "labels":[..],"comments":[{"id":..,"body":..,"user":..}],
+                    "author": "<login>" (default the App), "is_pr": bool}},
    "prs": {"12": {"number":12,"title":..,"body":..,"url":..,"merged":bool}},
    "labels": [...],
    "releases_file": "/path/to/releases.json",
@@ -229,6 +230,27 @@ def main():
                         return 0
             sys.stderr.write("gh: comment not found\n")
             return 1
+        # REST issue read (repos/O/R/issues/N), in REST's own shape: the
+        # author is `user.login` in the App's `<slug>[bot]` form with a
+        # `user.type`, labels are objects, and a PR carries `pull_request`.
+        # An issue with no `author` was created by the pipeline itself
+        # (`issue create` below), so it defaults to the stub's App.
+        parts = path.strip("/").split("/")
+        if len(parts) == 5 and parts[0] == "repos" and parts[3] == "issues" and parts[4].isdigit():
+            iss = s["issues"].get(parts[4])
+            if not iss:
+                sys.stderr.write("gh: issue not found\n")
+                return 1
+            login = iss.get("author", "wing-commander[bot]")
+            data = {"number": iss.get("number"), "state": iss.get("state"),
+                    "title": iss.get("title", ""), "body": iss.get("body", ""),
+                    "user": {"login": login,
+                             "type": "Bot" if login.endswith("[bot]") else "User"},
+                    "labels": [{"name": l} for l in iss.get("labels", [])]}
+            if iss.get("is_pr"):
+                data["pull_request"] = {"url": "https://x/pull/%s" % parts[4]}
+            emit(data, argv)
+            return 0
         sys.stderr.write("gh stub: unhandled api path %s\n" % path)
         return 1
 

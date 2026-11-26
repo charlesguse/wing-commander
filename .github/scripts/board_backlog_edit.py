@@ -2,14 +2,15 @@
 """The single home for editing the Maintenance backlog issue body
 (specs/121-board-backlog-line-items, contracts/backlog-lines.md, FR-024).
 
-edit() fetches the body, applies a pure function, writes it, then re-fetches
-and checks the change survived; a concurrent writer that dropped it makes the
+edit() fetches the body, applies a pure function, re-fetches just before the write
+(a changed body restarts the attempt), writes it, then re-fetches and checks the change survived; a concurrent writer that dropped it makes the
 loop re-apply against the fresh body. On exhaustion the body is left as last
 fetched -- never a forced write.
 
     python .github/scripts/board_backlog_edit.py --issue N --op tick-fixed --line-id ID [--detail TEXT]
 """
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -33,6 +34,8 @@ def edit(issue, apply_fn, verify_fn, *, fetch, write, max_attempts=5):
             return STAND_DOWN
         if new_body == body:
             return APPLIED
+        if fetch(issue) != body:
+            continue  # a hand edit landed since our fetch; re-apply to it, never overwrite
         write(issue, new_body)
         if verify_fn(fetch(issue)):
             return APPLIED
@@ -90,24 +93,29 @@ def _gh(args, stdin=None):
     return proc.stdout
 
 
+def _issue_path(issue):
+    """The REST path of the issue. `gh issue view/edit/comment` go through
+    GraphQL, which cloud sessions are refused (`HTTP 403: GitHub GraphQL is
+    not available`), so every call here is `gh api` REST. `{owner}/{repo}`
+    is gh's own placeholder for the current checkout's repository."""
+    repo = os.environ.get("GITHUB_REPOSITORY") or "{owner}/{repo}"
+    return "repos/{0}/issues/{1}".format(repo, issue)
+
+
 def gh_fetch(issue):
-    repo = os.environ.get("GITHUB_REPOSITORY")
-    repo_args = ["-R", repo] if repo else []
-    out = _gh(["issue", "view", str(issue)] + repo_args + ["--json", "body", "--jq", ".body"])
+    out = _gh(["api", _issue_path(issue), "--jq", '.body // ""'])
     # --jq appends exactly one newline; strip only that one.
     return out[:-1] if out.endswith("\n") else out
 
 
 def gh_write(issue, body):
-    repo = os.environ.get("GITHUB_REPOSITORY")
-    repo_args = ["-R", repo] if repo else []
-    _gh(["issue", "edit", str(issue)] + repo_args + ["--body-file", "-"], stdin=body)
+    _gh(["api", "-X", "PATCH", _issue_path(issue), "--input", "-"],
+        stdin=json.dumps({"body": body}))
 
 
 def gh_comment(issue, body):
-    repo = os.environ.get("GITHUB_REPOSITORY")
-    repo_args = ["-R", repo] if repo else []
-    _gh(["issue", "comment", str(issue)] + repo_args + ["--body-file", "-"], stdin=body)
+    _gh(["api", "-X", "POST", _issue_path(issue) + "/comments", "--input", "-"],
+        stdin=json.dumps({"body": body}))
 
 
 def report_text(op, line_id, result):

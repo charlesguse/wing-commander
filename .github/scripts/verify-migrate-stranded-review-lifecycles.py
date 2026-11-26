@@ -54,6 +54,15 @@ def main():
     ):
         if needle not in wf:
             failures.append(f"migrate workflow: {why} (missing {needle!r})")
+    # #889: the marker test must not pipe gh into `grep -q` -- under
+    # pipefail, gh SIGPIPE'd by grep's early exit on a long comment history
+    # reads as "no marker" and the comment is posted again.
+    import re
+    code = "\n".join(l for l in wf.splitlines() if not l.lstrip().startswith("#"))
+    if re.search(r"\bgh\b[^\n]*\|\s*grep\s+-q", code):
+        failures.append("migrate workflow: the marker check pipes gh into grep -q (capture the bodies first)")
+    if "--jq '.comments[].body')\" || exit 1" not in wf:
+        failures.append("migrate workflow: a failed comments read must stop the decision, not read as no marker")
     if "iteration=recorded+1" in wf:
         failures.append("migrate workflow: literal recorded+1 iteration")
     if failures:

@@ -31,7 +31,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_lint_gate_source import LINT_WORKFLOW, extract_gate_step  # noqa: E402
+from wc_lint_gate_source import LINT_WORKFLOW, case_env, extract_gate_step  # noqa: E402
 
 STEP_PREFIX = "Gate 7"
 
@@ -130,6 +130,9 @@ CALLER_JOB = """\
   call-other:
     uses: ./.github/workflows/other.yml
 """
+
+# The registry, relative to a case's .github/workflows directory.
+REGISTRY = "../scripts/unpublished-callables.json"
 
 CASES = [
     # name, files, expect_fail, must_mention
@@ -249,6 +252,23 @@ CASES = [
      {"stage.yml": stage(job("verify-image-prerequisites", UNBOUND),
                          job("other", UNBOUND))},
      True, ("'other'", "no environment")),
+
+    # specs/127: a callable registered in unpublished-callables.json with a
+    # reason is internal, not a stage. The registry is read only through
+    # wc_published_stages.unpublished_callables(), which ignores an entry
+    # with an empty reason, so an exemption can never be silent.
+    ("registered unpublished callable: an unbound callable with a reason "
+     "is not a stage",
+     {"internal.yml": stage(job("only", UNBOUND)),
+      "stage.yml": stage(job("first", BOUND)),
+      REGISTRY: '{"internal.yml": "internal callable, reached only by a wrapper"}'},
+     False, ()),
+
+    ("an unpublished-callables entry with an empty reason exempts nothing",
+     {"internal.yml": stage(job("only", UNBOUND)),
+      "stage.yml": stage(job("first", BOUND)),
+      REGISTRY: '{"internal.yml": "  "}'},
+     True, ("'only'", "no environment")),
 ]
 
 
@@ -261,6 +281,64 @@ def norm(path):
     """
     p = path.strip().replace("\\", "/")
     return p[2:] if p.startswith("./") else p
+
+
+# The registry's one home (CLAUDE.md "Shared logic has exactly one home").
+REGISTRY_HOME = "wc_published_stages.py"
+# A string literal naming the registry file: what a second loader opens.
+REGISTRY_LITERAL = re.compile(r"unpublished-callables\.json[\"']")
+
+
+def registry_second_homes(texts):
+    """Paths in `texts` ({path: text}) that open unpublished-callables.json
+    themselves instead of calling wc_published_stages.unpublished_callables().
+
+    Gates 7, 22 and 23 each once carried a pasted copy of the loader, and
+    those copies skipped the empty-reason rule the module applies. Comment
+    lines are prose and do not count."""
+    found = []
+    for path, text in sorted(texts.items()):
+        if os.path.basename(path) in (REGISTRY_HOME, os.path.basename(__file__)):
+            continue
+        for line in text.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            if REGISTRY_LITERAL.search(line):
+                found.append(path)
+                break
+    return found
+
+
+def check_registry_single_home():
+    """No workflow, action or script but wc_published_stages.py reads the
+    unpublished-callables registry, and the check itself detects a pasted
+    loader (so a green result means something)."""
+    import glob
+    paths = (glob.glob(".github/workflows/*.y*ml")
+             + glob.glob(".github/actions/**/*.y*ml", recursive=True)
+             + glob.glob(".github/actions/**/*.sh", recursive=True)
+             + glob.glob(".github/scripts/**/*.py", recursive=True)
+             + glob.glob(".github/scripts/**/*.sh", recursive=True))
+    texts = {p.replace(os.sep, "/"): io.open(p, encoding="utf-8", errors="replace").read()
+             for p in paths}
+    problems = []
+    for path in registry_second_homes(texts):
+        problems.append(f"{path} reads unpublished-callables.json itself; call "
+                        f"wc_published_stages.unpublished_callables() instead")
+    pasted = ('          try:\n'
+              '              UNPUBLISHED = json.load(open(".github/scripts/'
+              'unpublished-callables.json"))\n'
+              '          except (OSError, ValueError):\n'
+              '              UNPUBLISHED = {}\n')
+    if registry_second_homes({".github/workflows/x.yml": pasted}) != [".github/workflows/x.yml"]:
+        problems.append("the single-home check does not detect a pasted registry loader")
+    if registry_second_homes({".github/workflows/x.yml":
+                              "  # registered in unpublished-callables.json (spec 127)\n"}):
+        problems.append("the single-home check flags a comment that only names the registry")
+    if problems:
+        return [("unpublished-callables registry has one home", problems, "")]
+    print("ok    the unpublished-callables registry has one reader (wc_published_stages.py)")
+    return []
 
 
 def check_derivations_agree(gate_path):
@@ -390,15 +468,19 @@ def main():
         record(name, problems, out)
     for name, problems, out in check_real_fleet(gate_path):
         record(name, problems, out)
+    for name, problems, out in check_registry_single_home():
+        record(name, problems, out)
     try:
         for name, files, expect_fail, must_mention in CASES:
             case_dir = tempfile.mkdtemp(prefix="case_", dir=root)
             wf_dir = os.path.join(case_dir, ".github", "workflows")
             os.makedirs(wf_dir)
             for fname, body in files.items():
-                io.open(os.path.join(wf_dir, fname), "w", encoding="utf-8").write(body)
+                target = os.path.normpath(os.path.join(wf_dir, fname))
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                io.open(target, "w", encoding="utf-8").write(body)
 
-            proc = subprocess.run([sys.executable, gate_path], cwd=case_dir,
+            proc = subprocess.run([sys.executable, gate_path], cwd=case_dir, env=case_env(),
                                   capture_output=True, text=True,
                                   encoding="utf-8", errors="replace")
             out = (proc.stdout or "") + (proc.stderr or "")
@@ -420,10 +502,11 @@ def main():
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
-    # +2: the shared-derivation and real-fleet checks are checks too, and
+    # +3: the shared-derivation, real-fleet and registry single-home checks
+    # are checks too, and
     # counting only the fixtures made a derivation failure read as "1 of 14
     # scenarios" when all 14 scenarios had just passed.
-    total = len(CASES) + 2
+    total = len(CASES) + 3
     print()
     if failures:
         print(f"::error file={LINT_WORKFLOW}::Gate 7 self-test: "

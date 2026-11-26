@@ -277,10 +277,39 @@ def render(snap):
             ", ".join("#{0}".format(n) for n in loose)) if loose else ""))
     body = "\n".join(lines) + "\n"
     if snap.get("proof_list"):
-        body += "\n" + proof_list_block(snap["proof_list"], body)
+        body = append_section(body, proof_list_block(snap["proof_list"], body))
     if snap.get("merge_evidence"):
-        body += "\n" + merge_evidence_block(snap["merge_evidence"], body)
+        body = append_section(body, merge_evidence_block(snap["merge_evidence"], body))
+    if snap.get("feature_health"):
+        body = append_section(body, feature_health_block(snap["feature_health"], body))
     return body
+
+
+def append_section(body, block):
+    """`body` with section `block` after it: the one place render joins a
+    section on, so the fit checks measure exactly this string. An empty block
+    (a section left out for size) adds nothing, not even the separator."""
+    return body + "\n" + block if block else body
+
+
+def section_fits(body, block):
+    """True when append_section(body, block) stays within MAX_BODY_UNITS."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import board_spec_request_body as bsrb
+    return bsrb.utf16_len(append_section(body, block)) <= bsrb.MAX_BODY_UNITS
+
+
+def _fitting_or_left_out(body, block, what):
+    """`block` when it fits after `body`, else "" with a log line: leaving the
+    section out beats pushing the whole body past the limit and failing the
+    publish."""
+    if section_fits(body, block):
+        return block
+    print("board-status: the {0} section was left out; the body has no room even for its notice".format(what),
+          file=sys.stderr)
+    return ""
 
 
 # --------------------------------------------------------------------------
@@ -301,6 +330,77 @@ PROOF_LIST_NOTICES = {
 }
 
 
+# The feature-health section (specs/126-feature-health, contracts/
+# feature-health-report.md). wing-commander-feature-health.yml builds the
+# content; this file is the only writer.
+FEATURE_HEALTH_WORKFLOW = "wing-commander-feature-health.yml"
+FEATURE_HEALTH_ARTIFACT = "feature-health-section"
+FEATURE_HEALTH_BUILD_STEP = "Build the feature health section"
+FEATURE_HEALTH_STALE_HOURS = 48
+FEATURE_HEALTH_MARKER = "<!-- wing-commander-feature-health -->"
+FEATURE_HEALTH_MARKER_END = "<!-- /wing-commander-feature-health -->"
+FEATURE_HEALTH_NOTICES = {
+    "paused": "Feature health is paused (`WING_COMMANDER_FEATURE_HEALTH_PAUSED`).",
+    "failed": "Feature health's latest build failed.",
+    "never": "Feature health is not yet built.",
+    "unreadable": "Feature health: could not read the latest build.",
+}
+
+
+def feature_health_block(fhs, body):
+    """The section for snapshot entry `fhs`, placed after `body`. The table is
+    dropped (call-outs kept) when the whole section would not fit."""
+    status = fhs.get("status", "unreadable")
+    last_good = (fhs.get("last_good_at") or "never")[:10]
+    if status in ("built", "stale"):
+        text = fhs["section"].rstrip("\n")
+        stale = ""
+        if status == "stale":
+            stale = "\n\n_Stale: this build is from {0}, more than {1} hours old._".format(
+                (fhs.get("built_at") or "an unknown date")[:10], FEATURE_HEALTH_STALE_HOURS)
+        for candidate in (text, shorten_feature_health(text)):
+            # The stale line goes inside the end marker so a consumer replacing
+            # the marker-delimited block takes it along.
+            block = _with_stale(candidate, stale) + "\n"
+            if section_fits(body, block):
+                return block
+        block = "{0}\nFeature health's section was too large for this issue's body. The last good build was {1}.\n{2}\n".format(
+            FEATURE_HEALTH_MARKER, last_good, FEATURE_HEALTH_MARKER_END)
+        return _fitting_or_left_out(body, block, "feature-health")
+    notice = FEATURE_HEALTH_NOTICES.get(status, FEATURE_HEALTH_NOTICES["unreadable"])
+    if status != "never":
+        notice += " The last good build was {0}.".format(last_good)
+    return _fitting_or_left_out(
+        body, "{0}\n{1}\n{2}\n".format(FEATURE_HEALTH_MARKER, notice, FEATURE_HEALTH_MARKER_END), "feature-health")
+
+
+def _with_stale(text, stale):
+    """`text` (a marker-delimited section) with `stale` placed before its end marker."""
+    text = text.rstrip("\n")
+    if not stale:
+        return text
+    if text.endswith(FEATURE_HEALTH_MARKER_END):
+        return text[:-len(FEATURE_HEALTH_MARKER_END)].rstrip("\n") + stale + "\n" + FEATURE_HEALTH_MARKER_END
+    return text + stale
+
+
+def shorten_feature_health(text):
+    """Drop the table, keep the call-outs (over-size body, research D8). The one
+    home; wc_feature_health.shorten_section is this function. Text with no
+    table is returned as it is, end marker included."""
+    if "<details>" not in text:
+        return text.rstrip("\n")
+    head, _sep, tail = text.partition("<details>")
+    end = tail.partition("</details>")[2]
+    short = (head.rstrip("\n") + "\n\n_Table shortened: it did not fit this issue's body._\n"
+             + end.lstrip("\n")).rstrip("\n")
+    # An unterminated <details> takes the rest of the text with it, end marker
+    # included; put the marker back so the next build reads a closed section.
+    if FEATURE_HEALTH_MARKER_END in text and not short.endswith(FEATURE_HEALTH_MARKER_END):
+        short += "\n" + FEATURE_HEALTH_MARKER_END
+    return short
+
+
 def _pl_block(status, built, last_good, summary, content, tag="wc-proof-list"):
     return ('<!-- {5}:begin status="{0}" built="{1}" last-good="{2}" -->\n'
             "<details><summary>{3}</summary>\n\n{4}\n</details>\n"
@@ -310,13 +410,11 @@ def _pl_block(status, built, last_good, summary, content, tag="wc-proof-list"):
 def _section_block(pl, body, label, notices, tag):
     """The section for snapshot entry `pl`, placed after `body`: the full form
     if the whole body fits MAX_BODY_UNITS, else names-only, else the failed
-    notice. Entries are never dropped for size (FR-020). The one renderer of
+    notice, else nothing (logged; as feature_health_block). Entries are never
+    dropped for size (FR-020). The one renderer of
     every built-by-another-workflow section (proof list, merge evidence)."""
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from board_spec_request_body import MAX_BODY_UNITS, utf16_len
     status = pl.get("status", "unreadable")
     last_good = pl.get("last_good_at") or "never"
-    used = utf16_len(body) + 1
     notice = None
     if status == "built":
         section = pl.get("section") or {}
@@ -324,7 +422,7 @@ def _section_block(pl, body, label, notices, tag):
         summary = "{0}: built {1} (window 30 days)".format(label, built[:10])
         for key in ("full", "names_only"):
             block = _pl_block("built", built, last_good, summary, section.get(key, ""), tag)
-            if used + utf16_len(block) <= MAX_BODY_UNITS:
+            if section_fits(body, block):
                 return block
         status, notice = "failed", "The {0} was too large for this issue's body.".format(label.lower())
     notice = notice or notices.get(status, notices["unreadable"])
@@ -332,8 +430,9 @@ def _section_block(pl, body, label, notices, tag):
         last_good, "the last good build was {0}".format(last_good))
     if last_good == "unknown":
         when = "the last good build's date is unknown"
-    return _pl_block(status, "none", last_good, "{0}: {1}".format(label, status),
-                     "{0} {1}.".format(notice, when[0].upper() + when[1:]), tag)
+    return _fitting_or_left_out(
+        body, _pl_block(status, "none", last_good, "{0}: {1}".format(label, status),
+                        "{0} {1}.".format(notice, when[0].upper() + when[1:]), tag), label.lower())
 
 
 def proof_list_block(pl, body):
@@ -451,7 +550,8 @@ def snapshot(repo, switches):
     return {"now": now, "issues": issues, "prs": prs, "maintenance": maintenance,
             "roadmap_number": roadmap, "release": release, "main_ci": main_ci,
             "switches": switches, "proof_list": proof_list_snapshot(repo, switches),
-            "merge_evidence": merge_evidence_snapshot(repo, switches)}
+            "merge_evidence": merge_evidence_snapshot(repo, switches),
+            "feature_health": feature_health_snapshot(repo, switches)}
 
 
 def _gh_obj(path):
@@ -503,10 +603,12 @@ def trusted_watcher_run(run, repo):
 
 
 def section_snapshot(repo, switches, workflow, artifact, switch_key, now, gh_obj, build_ok, download,
-                     titles=None, filename="proof-list-section.json"):
+                     titles=None, filename="proof-list-section.json", stale_hours=PROOF_LIST_STALE_HOURS,
+                     load=None, stale_keeps_section=False):
     """The section's status (research D17): paused, never, failed, built or
     unreadable, plus the last good build's time. The readers are parameters so
-    verify-board-status.py drives every branch."""
+    verify-board-status.py drives every branch. `load` (default: the JSON
+    section's reader) and `stale_keeps_section` serve feature health."""
     gh_obj = gh_obj or _gh_obj
     now = now or datetime.datetime.now(datetime.timezone.utc)
     paused = _switch_on(switches.get(switch_key))
@@ -555,7 +657,8 @@ def section_snapshot(repo, switches, workflow, artifact, switch_key, now, gh_obj
         if latest.get("conclusion") != "success":
             return {"status": "failed", "last_good_at": last_good}
         started = datetime.datetime.strptime((latest.get("run_started_at") or "")[:19], "%Y-%m-%dT%H:%M:%S")
-        if (now.replace(tzinfo=None) - started) > datetime.timedelta(hours=PROOF_LIST_STALE_HOURS):
+        stale = (now.replace(tzinfo=None) - started) > datetime.timedelta(hours=stale_hours)
+        if stale and not stale_keeps_section:
             return {"status": "failed", "last_good_at": last_good}
         if not good_ok.get(latest["id"]):
             return {"status": "paused", "last_good_at": last_good}
@@ -565,19 +668,46 @@ def section_snapshot(repo, switches, workflow, artifact, switch_key, now, gh_obj
                     download(repo, latest["id"], tmp)
                 else:
                     _download_section(repo, latest["id"], tmp, artifact)
-                with open(os.path.join(tmp, filename), encoding="utf-8") as fh:
-                    section = json.load(fh)
-            if section.get("schema") != 1 or not section.get("full") or not section.get("names_only"):
-                raise ValueError("malformed section")
+                if load:
+                    section = load(tmp)
+                else:
+                    with open(os.path.join(tmp, filename), encoding="utf-8") as fh:
+                        section = json.load(fh)
+                    # A non-string here would make render() raise and stop the
+                    # whole Board status rewrite, so it is unreadable instead.
+                    if section.get("schema") != 1 or not all(
+                            isinstance(section.get(key), str) and section.get(key)
+                            for key in ("full", "names_only", "built_at")):
+                        raise ValueError("malformed section")
         except (OSError, ValueError, TypeError, AttributeError, subprocess.CalledProcessError):
             return {"status": "unreadable", "last_good_at": last_good}
-        return {"status": "built", "last_good_at": last_good, "section": section}
+        snap = {"status": "stale" if stale else "built", "last_good_at": last_good, "section": section}
+        if stale_keeps_section:
+            snap["built_at"] = latest.get("run_started_at")
+        return snap
     except (subprocess.CalledProcessError, ValueError, KeyError, OSError, TypeError, AttributeError):
         return {"status": "paused" if paused else "unreadable", "last_good_at": last_good}
 
 
 def _download_section(repo, run_id, directory, artifact=PROOF_LIST_ARTIFACT):
     _gh(["run", "download", str(run_id), "-R", repo, "-n", artifact, "-D", directory])
+
+
+def feature_health_snapshot(repo, switches, now=None, gh_obj=None, build_ok=None, download=None):
+    """The feature-health section's status: built, paused, failed, never,
+    unreadable, or stale (older than 48h; the content is kept), plus the last
+    good build (contracts/feature-health-report.md "Writer statuses")."""
+    def load(directory):
+        with open(os.path.join(directory, FEATURE_HEALTH_ARTIFACT + ".md"), encoding="utf-8") as fh:
+            text = fh.read()
+        if FEATURE_HEALTH_MARKER not in text or "Feature health" not in text:
+            raise ValueError("malformed section")
+        return text
+    return section_snapshot(repo, switches, FEATURE_HEALTH_WORKFLOW, FEATURE_HEALTH_ARTIFACT,
+                            "feature_health_paused", now, gh_obj,
+                            build_ok or (lambda rid: _build_step_ok(repo, rid, FEATURE_HEALTH_BUILD_STEP)),
+                            download, stale_hours=FEATURE_HEALTH_STALE_HOURS, load=load,
+                            stale_keeps_section=True)
 
 
 def publish(repo, body):
@@ -609,6 +739,7 @@ SWITCH_ENV = {
     "board_can_push_workflows": "BOARD_CAN_PUSH_WORKFLOWS",
     "board_loop_paused": "BOARD_LOOP_PAUSED",
     "lifecycle_auto_merge": "LIFECYCLE_AUTO_MERGE",
+    "feature_health_paused": "FEATURE_HEALTH_PAUSED",
     "merge_evidence_paused": "MERGE_EVIDENCE_PAUSED",
     "proof_list_paused": "PROOF_LIST_PAUSED",
     "review_gate_paused": "LIFECYCLE_REVIEW_GATE_PAUSED",

@@ -13,7 +13,9 @@ kills a stage before preflight, before checkout, before any work.
 
 This script drives the SHIPPED `Check lifecycle issue state` step (via
 `find_step`, never a copy — gate 5 exists because a copy sat green for weeks
-while checking a filter that did not ship) against a stubbed `gh` on PATH,
+while checking a filter that did not ship), which runs the read's one home,
+`.github/actions/_shared/lifecycle-issue-state.sh`, from its own
+$GITHUB_ACTION_PATH (#1210), against a stubbed `gh` on PATH,
 proving: a transient failure is retried and eventually succeeds (FR-011); a
 permanent failure — issue not found, credential rejected — fails after
 exactly one attempt (FR-012); a failure the gate has never seen before still
@@ -23,6 +25,14 @@ mutations at the end reintroduce three ways this could regress and assert
 each independently fails the suite (FR-013), plus a reflexive check that
 Gate 25 itself is still wired into lint-workflows.yml (FR-014) — per #169's
 lesson, a harness that can only exercise the success path proves nothing.
+
+#1210 moved the read out of the step into the shared script so that
+wing-commander-board-stop-check can run it from its own directory instead of
+a nested `uses: ./.github/actions/wing-commander-lifecycle-gate`, which
+resolves against the caller's workspace. check_single_home() fails if either
+composite stops running the script, if a composite gains a nested
+workspace-relative `uses: ./.github/...` step again, or if the read's body is pasted
+back into any other file.
 
 Usage: python3 .github/scripts/verify-lifecycle-gate-retry.py [-v]
 Requires: bash, jq (same prerequisites every other shell-harness gate needs).
@@ -37,11 +47,27 @@ import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_repo_files import repo_files  # noqa: E402
 from wc_shell_harness import (ensure_jq, resolve_bash, run_step,
-                              use_utf8_stdout)
+                              step_shell, use_utf8_stdout)
 
 ACTION = ".github/actions/wing-commander-lifecycle-gate/action.yml"
 STEP_NAME = "Check lifecycle issue state"
+SCRIPT = ".github/actions/_shared/lifecycle-issue-state.sh"
+# Every composite step that performs the "is this issue open" read: each
+# must run SCRIPT from its own $GITHUB_ACTION_PATH, exactly this way (#1210).
+# The `gh issue view` argv stays in each step so Gate 12 can resolve its
+# token there (it refuses a gh call inside a _shared script).
+SCRIPT_INVOCATION = ('bash "$GITHUB_ACTION_PATH/../_shared/lifecycle-issue-state.sh" '
+                     'gh issue view "$ISSUE_NUMBER" --json state --jq .state')
+SCRIPT_CALLERS = (
+    (ACTION, STEP_NAME),
+    (".github/actions/wing-commander-board-stop-check/action.yml",
+     "Check whether the issue is already closed"),
+)
+# A line only the read's body carries: its presence anywhere but SCRIPT is a
+# pasted second copy.
+BODY_SIGNATURE = 'last_class_phrase="the failures could not be classified"'
 WORKFLOW = ".github/workflows/lint-workflows.yml"
 GATE_PREFIX = "Gate 25"
 
@@ -49,6 +75,7 @@ ISSUE_NUMBER = "184"
 TOKEN = "x"
 
 BASH = None
+SHIPPED_STEP_RUN = None
 
 
 def find_step(path, name):
@@ -116,7 +143,13 @@ def gh_stub_script(behaviors):
 
 
 def run_scenario(step_script, behaviors, root):
-    """Execute the shipped step's `run:` text against one stubbed `gh`.
+    """Execute the shared script (`step_script`, its text, possibly mutated)
+    through the shipped step's own `run:` line against one stubbed `gh`.
+
+    The script is written where the step's `$GITHUB_ACTION_PATH/../_shared/`
+    resolution expects it, inside this scenario's own workdir, and the
+    shipped step's `run:` text is what executes -- so a step that stopped
+    calling the script would fail every scenario.
 
     Returns (rc, output, outputs, call_count). `GH_CALL_COUNT` lives under
     this scenario's own workdir, unique per call so scenarios never share
@@ -128,6 +161,13 @@ def run_scenario(step_script, behaviors, root):
     call_count_file = os.path.join(workdir, "gh_call_count")
     os.makedirs(runner_temp, exist_ok=True)
     os.makedirs(bindir, exist_ok=True)
+    action_path = os.path.join(workdir, "actions", "wing-commander-lifecycle-gate")
+    shared_dir = os.path.join(workdir, "actions", "_shared")
+    os.makedirs(action_path)
+    os.makedirs(shared_dir)
+    with open(os.path.join(shared_dir, os.path.basename(SCRIPT)), "w",
+              encoding="utf-8", newline="\n") as fh:
+        fh.write(step_script)
     open(call_count_file, "w").close()
     with open(os.path.join(bindir, "gh"), "w", encoding="utf-8",
               newline="\n") as fh:
@@ -135,11 +175,12 @@ def run_scenario(step_script, behaviors, root):
     os.chmod(os.path.join(bindir, "gh"), 0o755)
 
     rc, out, outputs, _ = run_step(
-        BASH, step_script, workdir,
+        BASH, SHIPPED_STEP_RUN, workdir,
         {"GH_TOKEN": TOKEN, "ISSUE_NUMBER": ISSUE_NUMBER,
          "GH_CALL_COUNT": call_count_file,
+         "GITHUB_ACTION_PATH": action_path,
          "PATH": bindir + os.pathsep + os.environ["PATH"]},
-        runner_temp)
+        runner_temp, shell=step_shell(ACTION, STEP_NAME))
     with open(call_count_file, encoding="utf-8") as fh:
         raw = fh.read().strip()
     return rc, out, outputs, int(raw) if raw else 0
@@ -488,6 +529,199 @@ MUTATIONS = [
 ]
 
 
+def _composite_steps(path):
+    doc = yaml.safe_load(open(path, encoding="utf-8")) or {}
+    return [s or {} for s in ((doc.get("runs") or {}).get("steps") or [])]
+
+
+def _github_files(repo_root):
+    """The tracked files under repo_root/.github -- an untracked scratch copy
+    or editor backup is not a second home (wc_repo_files falls back to a
+    walk outside a git work tree, as for the self-test's fixtures)."""
+    return [os.path.join(repo_root, rel) for rel in repo_files(repo_root)
+            if rel.startswith(".github/")]
+
+
+def check_single_home(repo_root="."):
+    """#1210's checks, in this gate because the read is this gate's subject.
+
+    1. Each SCRIPT_CALLERS step runs SCRIPT_INVOCATION and nothing else, as
+       a `shell: bash` run: step (not a `uses:`), with GH_REPO set (#889).
+    2. No composite under .github/actions/ (at any depth, action.yml or
+       action.yaml) has a `uses: ./.github/...`
+       step: inside a composite that path resolves against the CALLER's
+       $GITHUB_WORKSPACE root, not the composite's own directory, so it
+       either does not exist or runs whatever copy the caller's own
+       checkout carries (#488, #1210). A composite runs a sibling's logic
+       through a script under _shared/ instead. (A `uses:` naming the
+       stage workflows' explicit pipeline checkout,
+       `./.wing-commander-pipeline/...`, is that convention's own
+       documented contract and is not this check's subject.)
+    3. BODY_SIGNATURE appears in SCRIPT and in no other tracked file under
+       .github/ -- a pasted copy of the read is a second home.
+    """
+    failures = []
+    for path, name in SCRIPT_CALLERS:
+        full = os.path.join(repo_root, path)
+        step = next((s for s in _composite_steps(full)
+                     if s.get("name") == name), None)
+        if step is None:
+            failures.append(f"{path}: no step named {name!r} -- it is a "
+                            f"SCRIPT_CALLERS entry; update this gate with it.")
+            continue
+        if "uses" in step:
+            failures.append(f"{path}: step {name!r} uses "
+                            f"{step['uses']!r}; it must run {SCRIPT} from its "
+                            f"own $GITHUB_ACTION_PATH instead (#1210).")
+        if (step.get("run") or "").strip() != SCRIPT_INVOCATION:
+            failures.append(f"{path}: step {name!r} must run exactly "
+                            f"{SCRIPT_INVOCATION!r} (got "
+                            f"{(step.get('run') or '').strip()!r}).")
+        if step.get("shell") != "bash":
+            failures.append(f"{path}: step {name!r} must declare shell: bash.")
+        # #889: `gh issue view` must not depend on the caller's workspace
+        # being a checkout of the repository to know which one to read.
+        if (step.get("env") or {}).get("GH_REPO") != "${{ github.repository }}":
+            failures.append(f"{path}: step {name!r} must set "
+                            f"GH_REPO: ${{{{ github.repository }}}}.")
+
+    actions_dir = os.path.join(repo_root, ".github", "actions")
+    actions = sorted(
+        os.path.join(dirpath, name)
+        for dirpath, _dirs, files in os.walk(actions_dir)
+        for name in files if name in ("action.yml", "action.yaml"))
+    for action in actions:
+        rel = os.path.relpath(action, repo_root).replace(os.sep, "/")
+        for step in _composite_steps(action):
+            uses = str(step.get("uses") or "")
+            if uses.startswith("./.github/"):
+                failures.append(
+                    f"{rel}: step "
+                    f"{step.get('name') or step.get('id')!r} uses {uses!r}. "
+                    f"Inside a composite a `./.github/` path resolves against the "
+                    f"caller's $GITHUB_WORKSPACE, not this composite's "
+                    f"directory (#1210, #488): run the logic through a "
+                    f"script under .github/actions/_shared/ instead.")
+
+    script_full = os.path.normpath(os.path.join(repo_root, SCRIPT))
+    this_file = os.path.normpath(os.path.abspath(__file__))
+    found_in_script = False
+    for full in _github_files(repo_root):
+        full = os.path.normpath(full)
+        if os.path.abspath(full) == this_file:
+            continue
+        try:
+            text = open(full, encoding="utf-8").read()
+        except (UnicodeDecodeError, OSError):
+            continue
+        if BODY_SIGNATURE not in text:
+            continue
+        if full == script_full:
+            found_in_script = True
+        else:
+            failures.append(
+                f"{os.path.relpath(full, repo_root)}: carries a copy of "
+                f"the lifecycle read ({BODY_SIGNATURE!r}); its one home "
+                f"is {SCRIPT} -- run that instead.")
+    if not found_in_script:
+        failures.append(f"{SCRIPT}: missing {BODY_SIGNATURE!r} -- update "
+                        f"BODY_SIGNATURE with the script.")
+    return failures
+
+
+def _single_home_fixture(root, name, mutate):
+    """A minimal tree check_single_home() passes on, then `mutate(tree)`."""
+    tree = os.path.join(root, "single-home-" + name)
+    caller_steps = {
+        path: [{"name": step_name, "shell": "bash",
+                "env": {"GH_REPO": "${{ github.repository }}"},
+                "run": SCRIPT_INVOCATION + "\n"}]
+        for path, step_name in SCRIPT_CALLERS}
+    mutate(tree, caller_steps)
+    for path, steps in caller_steps.items():
+        full = os.path.join(tree, path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as fh:
+            yaml.safe_dump({"runs": {"using": "composite", "steps": steps}}, fh)
+    script = os.path.join(tree, SCRIPT)
+    os.makedirs(os.path.dirname(script), exist_ok=True)
+    if not os.path.exists(script):
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write(BODY_SIGNATURE + "\n")
+    return tree
+
+
+def _write(tree, rel, text):
+    full = os.path.join(tree, rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
+def _fixture_nested_uses(tree, caller_steps):
+    caller_steps[".github/actions/x/action.yml"] = [
+        {"name": "nested", "uses": "./.github/actions/wing-commander-lifecycle-gate"}]
+
+
+def _fixture_nested_uses_under_shared(tree, caller_steps):
+    _write(tree, ".github/actions/_shared/x/action.yaml", yaml.safe_dump(
+        {"runs": {"using": "composite", "steps": [
+            {"name": "nested",
+             "uses": "./.github/actions/wing-commander-lifecycle-gate"}]}}))
+
+
+def _fixture_pasted_copy(tree, caller_steps):
+    _write(tree, ".github/actions/_shared/pasted.sh", BODY_SIGNATURE + "\n")
+
+
+def _fixture_caller_uses(tree, caller_steps):
+    path, name = SCRIPT_CALLERS[1]
+    caller_steps[path] = [{"name": name,
+                           "uses": "./.github/actions/wing-commander-lifecycle-gate"}]
+
+
+def _fixture_caller_no_gh_repo(tree, caller_steps):
+    for steps in caller_steps.values():
+        steps[0].pop("env", None)
+
+
+def _fixture_script_lost_body(tree, caller_steps):
+    _write(tree, SCRIPT, "#!/usr/bin/env bash\n")
+
+
+SINGLE_HOME_FIXTURES = [
+    ("a composite with a nested `uses: ./.github/actions/...` step",
+     _fixture_nested_uses, "resolves against the"),
+    ("a composite under _shared/<name>/action.yaml with a nested `uses:` step",
+     _fixture_nested_uses_under_shared, "_shared/x/action.yaml: step"),
+    ("a pasted copy of the read in another file", _fixture_pasted_copy,
+     "carries a copy of the lifecycle read"),
+    ("a SCRIPT_CALLERS step that `uses:` the lifecycle gate",
+     _fixture_caller_uses, "must run"),
+    ("a SCRIPT_CALLERS step with no GH_REPO",
+     _fixture_caller_no_gh_repo, "must set GH_REPO"),
+    ("the shared script no longer carries BODY_SIGNATURE",
+     _fixture_script_lost_body, "missing"),
+]
+
+
+def check_single_home_selftest(root):
+    """#169's lesson for check_single_home(): a clean fixture passes, and
+    each one-defect fixture fails with a message naming that defect."""
+    failures = []
+    clean = check_single_home(_single_home_fixture(root, "clean", lambda t, c: None))
+    if clean:
+        failures.append(f"single-home self-test: the clean fixture failed: {clean}")
+    for i, (label, mutate, needle) in enumerate(SINGLE_HOME_FIXTURES):
+        got = check_single_home(_single_home_fixture(root, str(i), mutate))
+        ok = any(needle in msg for msg in got)
+        print(f"[{'ok' if ok else 'FAIL'}] single-home self-test: {label} is caught")
+        if not ok:
+            failures.append(f"single-home self-test: {label} was not caught "
+                            f"(expected a failure naming {needle!r}, got {got!r})")
+    return failures
+
+
 def check_gate_wired():
     """FR-014's reflexive check: this script cannot see its own absence
     from a workflow it isn't in, so it reads lint-workflows.yml directly
@@ -516,7 +750,10 @@ def main():
     BASH = resolve_bash()
 
     verbose = "-v" in sys.argv or "--verbose" in sys.argv
-    steps = {STEP_NAME: find_step(ACTION, STEP_NAME)["run"]}
+    global SHIPPED_STEP_RUN
+    SHIPPED_STEP_RUN = find_step(ACTION, STEP_NAME)["run"]
+    with open(SCRIPT, encoding="utf-8") as fh:
+        steps = {STEP_NAME: fh.read()}
 
     failures = []
     root = tempfile.mkdtemp()
@@ -554,6 +791,12 @@ def main():
                       f"the mutation.")
                 failures.append(f"mutation survived: {label}")
 
+        single_home = check_single_home()
+        print(f"[{'FAIL' if single_home else 'ok'}] single home: both "
+              f"composites run {SCRIPT}, no composite has a nested `uses: ./.github/` "
+              f"step, and no other file carries a copy of the read")
+        failures.extend(single_home)
+        failures.extend(check_single_home_selftest(root))
         failures.extend(check_gate_wired())
     finally:
         shutil.rmtree(root, ignore_errors=True)

@@ -1,0 +1,10 @@
+{
+  "initial": "- [ ] a [wc:bl-1 in-progress]\n- [ ] b",
+  "hand_edit_after_first_fetch": "- [ ] b\n- [ ] a [wc:bl-1 in-progress]",
+  "op": "tick-fixed",
+  "line_id": "bl-1",
+  "detail": "PR #3",
+  "expect": "applied",
+  "expect_writes": 1,
+  "final_equals": "- [ ] b\n- [x] a [wc:bl-1 fixed PR #3]"
+}

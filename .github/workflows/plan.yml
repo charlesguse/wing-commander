@@ -990,11 +990,11 @@ jobs:
       # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
       # any step runs pipeline code -- see clarify.yml.
       - name: Remove the agent-writable pipeline checkout (post-agent, auto)
-        if: always() && steps.agent-auto.outcome != 'skipped' && steps.project.outputs.project != ''
+        if: always() && steps.agent-auto.outcome != 'skipped'
         run: rm -rf -- .wing-commander-pipeline
 
       - name: Re-checkout pipeline repository (post-agent, auto)
-        if: always() && steps.agent-auto.outcome != 'skipped' && steps.project.outputs.project != ''
+        if: always() && steps.agent-auto.outcome != 'skipped'
         uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
@@ -1265,11 +1265,11 @@ jobs:
       # Spec 114 (MF-46): replace the agent-writable pipeline checkout before
       # any step runs pipeline code -- see clarify.yml.
       - name: Remove the agent-writable pipeline checkout (post-agent, pr)
-        if: always() && steps.agent-pr.outcome != 'skipped' && steps.project.outputs.project != ''
+        if: always() && steps.agent-pr.outcome != 'skipped'
         run: rm -rf -- .wing-commander-pipeline
 
       - name: Re-checkout pipeline repository (post-agent, pr)
-        if: always() && steps.agent-pr.outcome != 'skipped' && steps.project.outputs.project != ''
+        if: always() && steps.agent-pr.outcome != 'skipped'
         uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}

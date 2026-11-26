@@ -1,0 +1,3 @@
+{
+  "shared-pr-reviewer.yml": "internal callable of the report-only shared reviewer (spec 127), reached only through wing-commander-shared-pr-reviewer.yml; not an adopter-facing stage"
+}

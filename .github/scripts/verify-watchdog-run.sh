@@ -108,8 +108,10 @@ diagnose_conclusion="$(jq -r '[.jobs[] | select(.name == "diagnose" or (.name | 
 # epoch: an ISO-8601 time in any shape the API emits - whole seconds and
 # Z as observed, or fractional seconds and a +/-HH:MM offset as the REST
 # docs show (step times) - since bare fromdateiso8601 accepts only the
-# first and, on anything else, errors the whole program. One home for the
-# failed-step pointer below and the diagnose duration ceiling.
+# first and, on anything else, errors the whole program. One home for every
+# timestamp jq reads here: the history durations (check 2), the diagnose
+# job's duration and shadow span (the diagnose ceiling) and the failed-step
+# pointer below; no bare fromdateiso8601 outside this definition.
 JQ_EPOCH='def epoch: sub("\\.[0-9]+"; "")
         | if test("[+-][0-9]{2}:[0-9]{2}$")
           then .[-6:] as $o | (.[:-6] + "Z" | fromdateiso8601)
@@ -145,9 +147,9 @@ fi
 # an instant death (agent crashed in seconds) and a multi-minute stall
 # (diagnose hung 44 minutes; watchdog.yml previously had no timeouts).
 hist="$(api "actions/workflows/$workflow_id/runs?status=success&per_page=21" \
-  | jq -r --arg id "$RUN_ID" \
-      '.workflow_runs[] | select((.id|tostring) != $id)
-       | ((.updated_at | fromdateiso8601) - (.run_started_at | fromdateiso8601))' \
+  | jq -r --arg id "$RUN_ID" "$JQ_EPOCH"'
+      .workflow_runs[] | select((.id|tostring) != $id)
+       | ((.updated_at | epoch) - (.run_started_at | epoch))' \
   | head -20)" || hist=""
 count="$(wc -l <<<"$hist" | tr -d ' ')"
 if [ -n "$hist" ] && [ "$count" -ge 3 ]; then
@@ -225,10 +227,10 @@ else
   # not a stalled acting diagnose and must not file anything (SC-003). A
   # step time JQ_EPOCH cannot read leaves no span and subtracts nothing,
   # so the acting bound is never lost to it.
-  d_secs="$(jq -r '
+  d_secs="$(jq -r "$JQ_EPOCH"'
     [.jobs[] | select(.name == "diagnose" or (.name | endswith("/ diagnose")))
     | select(.started_at != null and .completed_at != null)
-    | ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601))
+    | ((.completed_at | epoch) - (.started_at | epoch))
     ] | first // empty' <<<"$jobs_json")"
   if [ -n "$d_secs" ] && [ -n "$shadow_from_epoch" ]; then
     d_secs=$(( d_secs - (shadow_to_epoch - shadow_from_epoch) ))

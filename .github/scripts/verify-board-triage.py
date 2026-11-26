@@ -1527,6 +1527,14 @@ def run_find_cited_run_cases(verbose=True):
     return failures
 
 
+def _first_link_only(text, repository):
+    """find_cited_run without its First-seen preference: the first run link
+    of `repository`, matched by the one run-link pattern."""
+    m = re.search(board_triage.run_url_pattern(repository),
+                  board_triage._unquoted_unfenced(text))
+    return m.group(0) if m else None
+
+
 def _mutation_check_find_cited_run():
     failures = []
     mutations = (
@@ -1544,15 +1552,22 @@ def _mutation_check_find_cited_run():
             print("note: mutation caught ({0}).".format(label))
         else:
             failures.append("mutation {0!r} was NOT caught".format(label))
+    # The mutant below matches run links with the real matcher, so it
+    # differs from find_cited_run only in the First-seen preference: a
+    # pattern that tracked run_url_pattern() and one that drifted from it
+    # look alike until the drift is the thing caught.
+    original_pattern = board_triage.run_url_pattern
+    board_triage.run_url_pattern = lambda repository: r"https://example\.invalid/[0-9]+"
+    try:
+        followed = _first_link_only("see https://example.invalid/7", "o/r")
+    finally:
+        board_triage.run_url_pattern = original_pattern
+    if followed != "https://example.invalid/7":
+        failures.append("the 'First seen preference dropped' mutant does not match run "
+                        "links through board_triage.run_url_pattern()")
     # First-seen preference dropped: only the plain first-link search left.
     original = board_triage.find_cited_run
-
-    def first_link_only(text, repository):
-        m = re.search(r"https://github\.com/{0}/actions/runs/[0-9]+".format(
-            re.escape(repository)), board_triage._unquoted_unfenced(text))
-        return m.group(0) if m else None
-
-    board_triage.find_cited_run = first_link_only
+    board_triage.find_cited_run = _first_link_only
     try:
         caught = bool(run_find_cited_run_cases(verbose=False))
     finally:

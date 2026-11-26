@@ -6,7 +6,7 @@
 # .github/scripts/verify-e2e-provisioning-single-home.py fails if either
 # goes back to an inline sed.
 #
-# Two rewrites, both needed once the wrapper runs in another repository:
+# Three rewrites, all needed once the wrapper runs in another repository:
 #
 #   * `uses: ./.github/workflows/<name>` for the wrapper's STAGE and for
 #     metrics-persist.yml (its persist-metrics call) becomes
@@ -19,6 +19,11 @@
 #     every job that checks the pipeline out failed with "not our ref" and
 #     the lifecycle sat in stage:tasks until the poll budget ran out
 #     (#1083).
+#   * docs/adoption.md's own instruction: the literal `main` in a
+#     wrapper's gate (`== 'main'`, wing-commander-3-plan.yml) or trigger
+#     filter (`branches: [main]`, wing-commander-rebase.yml) becomes
+#     DEFAULT_BRANCH, the test repository's default branch. Its one home
+#     since #889; both callers used to paste their own seds.
 #
 # Fails (exit 1, reason on stderr, nothing on stdout) when the file still
 # calls its stage by local path after the rewrite, or still passes
@@ -26,14 +31,19 @@
 # either rewrite silently do nothing.
 #
 # Invoke with `bash .github/actions/_shared/pin-e2e-wrapper.sh FILE STAGE
-# PIPELINE_REPO USES_REF PIPELINE_COMMIT` -- never sourced.
+# PIPELINE_REPO USES_REF PIPELINE_COMMIT DEFAULT_BRANCH` -- never sourced.
 set -euo pipefail
 
-if [ "$#" -ne 5 ]; then
-  echo "pin-e2e-wrapper.sh: usage: FILE STAGE PIPELINE_REPO USES_REF PIPELINE_COMMIT" >&2
+if [ "$#" -ne 6 ]; then
+  echo "pin-e2e-wrapper.sh: usage: FILE STAGE PIPELINE_REPO USES_REF PIPELINE_COMMIT DEFAULT_BRANCH" >&2
   exit 2
 fi
-file=$1 stage=$2 pipeline_repo=$3 uses_ref=$4 pipeline_commit=$5
+file=$1 stage=$2 pipeline_repo=$3 uses_ref=$4 pipeline_commit=$5 default_branch=$6
+
+if [ -z "$default_branch" ]; then
+  echo "pin-e2e-wrapper.sh: DEFAULT_BRANCH must not be empty" >&2
+  exit 1
+fi
 
 if ! printf '%s' "$pipeline_commit" | grep -qE '^[0-9a-f]{40}$'; then
   echo "pin-e2e-wrapper.sh: PIPELINE_COMMIT must be a full 40-character commit SHA, got '$pipeline_commit'" >&2
@@ -50,10 +60,13 @@ repl_esc() { printf '%s' "$1" | sed 's/[\&#]/\\&/g'; }
 repo_r="$(repl_esc "$pipeline_repo")"
 ref_r="$(repl_esc "$uses_ref")"
 commit_r="$(repl_esc "$pipeline_commit")"
+branch_r="$(repl_esc "$default_branch")"
 pinned="$(sed -E \
   -e "s#uses: \./\.github/workflows/(${stage_re}|metrics-persist\.yml)\$#uses: ${repo_r}/.github/workflows/\1@${ref_r}#" \
   -e "s#uses: \./\.github/workflows/(${stage_re}|metrics-persist\.yml)([^A-Za-z0-9_.-])#uses: ${repo_r}/.github/workflows/\1@${ref_r}\2#" \
   -e "s#pipeline-ref: \\\$\{\{ *github\.sha *\}\}#pipeline-ref: ${commit_r}#" \
+  -e "s#== 'main'#== '${branch_r}'#" \
+  -e "s#branches: \[main\]#branches: [${branch_r}]#" \
   "$file")"
 
 # Here-strings, not `printf | grep -q`: under pipefail, grep -q exiting on

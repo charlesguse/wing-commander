@@ -70,10 +70,15 @@ the dispatch mechanism itself.
 5. `review` (repeats with `fix`'s follow-up commits until zero open
    findings or the round budget is spent) — contracts/review-and-findings.md.
 6. `readiness` — contracts/readiness-report.md. Never merges (FR-068).
+7. `merge` — specs/115-board-loop-self-merge/contracts/board-merge.md.
+   Exists only while `WING_COMMANDER_BOARD_AUTO_MERGE` is `true`; the one
+   job that merges (the fix PR readiness reported ready, or a verified
+   Spec Kit upgrade PR). Switch off, a human merges what readiness
+   reported ready.
 
 ## Job (resume path)
 
-7. `prove` — contracts/prove-step.md, entered only from the
+8. `prove` — contracts/prove-step.md, entered only from the
    `pull_request: closed` trigger when the PR merged (FR-041).
 
 ## Every job, uniformly
