@@ -343,6 +343,38 @@ def run():
         if len(failures) == before:
             print("[ok] case 6: fold-queue-token accepted -> "
                  "ticket-unused=false")
+
+        # Case 7 (#889, found by the code review of #1279): the tip's
+        # spec-meta.json records a crafted, non-integer iteration. Shell
+        # arithmetic would evaluate `ISSUE[$(cmd)0]` as code (ISSUE is set,
+        # so `set -u` does not stop it first, and it reads as 250); the
+        # step must refuse it -- non-zero exit, the command never run, no
+        # dispatch.
+        before = len(failures)
+        pwned = os.path.join(root, "pwned-case-7")
+        folds7 = [("leg-i", "crafted iteration")]
+        repo7, base7, tip7 = make_repo(
+            root, json.dumps(f"ISSUE[$(touch {pwned})0]"), folds7)
+        rc, out, outputs, calls = run_dispatch(
+            root, script, base7, repo7, IMPLEMENT_WORKFLOW,
+            folded_json=folded_json_for(folds7))
+        if rc == 0:
+            failures.append(f"case 7 (crafted iteration): step exited 0, "
+                            f"expected a refusal: {out}")
+        if os.path.exists(pwned):
+            failures.append("case 7: the crafted iteration's command "
+                            "substitution ran (shell arithmetic evaluated "
+                            "spec-meta.json's .iteration as code).")
+        if gh_call_count(calls, "workflow run") != 0:
+            failures.append("case 7: a gh workflow run call was made on a "
+                            "non-integer recorded iteration.")
+        if outputs.get("new-iteration"):
+            failures.append(f"case 7: new-iteration was published for a "
+                            f"non-integer recorded iteration: "
+                            f"{outputs.get('new-iteration')!r}")
+        if len(failures) == before:
+            print("[ok] case 7: crafted non-integer iteration -> refused, "
+                 "never evaluated, nothing dispatched")
     finally:
         import shutil
         shutil.rmtree(root, ignore_errors=True)

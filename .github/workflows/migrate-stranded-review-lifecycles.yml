@@ -127,6 +127,16 @@ jobs:
             echo "::warning::$SPEC_DIR is at stage $stage_now, not $want; not handing off"
             exit 0
           fi
+          # The iteration the resume line names is computed by shell
+          # arithmetic, which evaluates a crafted string (`a[$(cmd)]`) as
+          # code; anything but a plain non-negative integer stops the
+          # hand-off here, before any write.
+          recorded="$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")"
+          if ! [[ "$recorded" =~ ^[0-9]+$ ]]; then
+            echo "::error::$SPEC_DIR/spec-meta.json records a non-integer iteration; not handing off"
+            exit 1
+          fi
+          next_iter=$((recorded + 1))
           # Commit, push, label and comment in that order; each must succeed
           # before the next, and the marker comment is the last write.
           if [ "$VERDICT" = "decision=migrate" ]; then
@@ -137,6 +147,5 @@ jobs:
             git push origin "$BRANCH" || exit 1
           fi
           gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --add-label "stage:stalled" --remove-label "stage:review" || exit 1
-          next_iter="$(( $(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json") + 1 ))"
           body="<!-- wing-commander-migrate-stranded-review -->"$'\n'"wing-commander: this lifecycle reached review with $COUNT buildable task(s) unchecked, so it is handed off. Remaining buildable tasks:"$'\n\n'"$ITEMS"$'\n\n'"Maintainer-only tasks (not built by the pipeline):"$'\n\n'"$MAINT"$'\n\n'"Resume with an implement dispatch (spec_dir=$SPEC_DIR, issue=$ISSUE, iteration=$next_iter)."
           gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "$body"

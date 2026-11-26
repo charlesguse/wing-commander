@@ -132,6 +132,12 @@ runs:
         export -f wc_fold_queue_run_status
 
         recorded="$(jq -r '.iteration // 0' "$SPEC_DIR/spec-meta.json")"
+        # Refused before the arithmetic below: a non-integer iteration
+        # (`a[$(cmd)]`) would be evaluated there as code.
+        if ! [[ "$recorded" =~ ^[0-9]+$ ]]; then
+          echo "::error::wing-commander-fold-queue-claim-dispatch: $SPEC_DIR/spec-meta.json records a non-integer iteration -- refusing to claim the round's dispatch." >&2
+          exit 1
+        fi
         next=$(( recorded + 1 ))
 
         # T063 nit 4: bounds the requeue-reawait loop itself, distinct from

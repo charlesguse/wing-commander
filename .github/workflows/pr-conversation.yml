@@ -3470,6 +3470,16 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
+      # The bootstrap checkout above persists no credential, and
+      # wing-commander-fold-dispatch fetches the spec branch's tip from
+      # origin: on a private repository that fetch fails and the dispatch
+      # exits 1. Authenticate origin first, under the same gate.
+      - name: Authenticate the spec-branch remote
+        if: needs.fold-turn-dispatch.outputs.should-dispatch == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-refresh-remote
+        with:
+          token: ${{ env.WC_BOT_TOKEN }}
+
       # research.md D1/D3/D4 (contracts/run-scoped-fold-evidence.md): the
       # single dispatch point for the whole review, now gated on the
       # round's atomic claim above rather than on this run's own tip-moved

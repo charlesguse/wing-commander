@@ -256,6 +256,24 @@ else
   FAILURES=$((FAILURES + 1))
 fi
 rm -f "$out_file"
+
+# --- Scenario 6 (#889, found by the code review of #1279): spec-meta.json
+# records a crafted, non-integer iteration. `next=$(( recorded + 1 ))`
+# would evaluate `ROUND[$(cmd)0]` as code (ROUND is set, so `set -u` does
+# not stop it first); the claim must refuse it before any arithmetic or
+# ledger write -- non-zero exit, the command never run, no should-dispatch.
+pwned="$WORK/pwned-scenario-6"
+printf '{"iteration": "ROUND[$(touch %s)0]"}\n' "$pwned" > "$WORK/$SPEC_DIR_FIXTURE/spec-meta.json"
+out_file="$(run_claim "run-600-dispatch" 1 1 1 1 1 1)"
+rc=$?
+should_dispatch="$(grep '^should-dispatch=' "$out_file" | cut -d= -f2-)"
+if [ "$rc" -ne 0 ] && [ ! -e "$pwned" ] && [ -z "$should_dispatch" ]; then
+  echo "[ok] crafted non-integer iteration: refused before shell arithmetic evaluated it"
+else
+  echo "::error::[crafted iteration] expected a non-zero exit, no evaluated command and no should-dispatch, got rc=$rc evaluated=$([ -e "$pwned" ] && echo yes || echo no) should-dispatch=${should_dispatch:-<empty>}"
+  FAILURES=$((FAILURES + 1))
+fi
+rm -f "$out_file"
 # No queue cleanup needed -- this is the last scenario in the suite.
 
 echo "wing-commander-fold-queue-claim-dispatch tests: $FAILURES failure(s)."
