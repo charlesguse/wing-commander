@@ -48,7 +48,8 @@ REVIEW_PARTS = (
 IDENTIFIER_RE = re.compile(r"^(bl-[0-9a-f]{4,64}|#[0-9]{1,9})$")
 CLOSING_RE = re.compile(
     r"\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[\s:]*"
-    r"(?:[\w.-]+/[\w.-]+)?(?:#\d+|https?://\S+/(?:issues|pull)/\d+)",
+    r"(?:(?:the|this|that|issue|bug|pr|pull request|ticket)\b[\s:]*)*"
+    r"(?:[\w.-]+/[\w.-]+)?(?:#\d+|GH-\d+|https?://\S+/(?:issues|pull)/\d+)",
     re.IGNORECASE)
 
 
@@ -100,15 +101,16 @@ def gap_text(part, kind):
         label, reasons.get(kind, reasons["missing"]))
 
 
-def normalize_part(raw):
+def normalize_part(raw, part="options"):
     """(state, text, kind) for one raw input value. state is filled,
-    follow or gap; kind says why a gap is a gap."""
+    follow or gap; kind says why a gap is a gap. Only the options part
+    can be "follow": on any other part that state is a gap."""
     if raw is None:
         return "gap", "", "missing"
     if isinstance(raw, dict):
-        if raw.get("state") == "follow":
+        if raw.get("state") == "follow" and part == "options":
             return "follow", "", "follow"
-        return normalize_part(raw.get("text")) if "text" in raw else (
+        return normalize_part(raw.get("text"), part) if "text" in raw else (
             "gap", "", "missing")
     if not isinstance(raw, str):
         return "gap", "", "invalid"
@@ -130,7 +132,7 @@ def _assemble(title, part_set, parts, extra_overflow=None):
     lead = [title, ""]
     overflow = []
     for part, label in part_set:
-        state, text, kind = normalize_part(parts.get(part))
+        state, text, kind = normalize_part(parts.get(part), part)
         if state == "filled":
             lead.append(fenced_section("**{0}**".format(label), text,
                                        LEAD_PART_BUDGET))
@@ -203,9 +205,11 @@ def render_review(parts, identifier, findings):
         elif isinstance(finding, dict):
             items.append(json.dumps(finding, sort_keys=True))
     if items:
-        listed = "\n".join("- " + item for item in items)
+        listed = "{0} in-scope finding(s) open:\n".format(len(items)) + "\n".join(
+            "- " + item for item in items)
         existing = parts.get("open")
-        if isinstance(existing, str) and existing.strip():
+        if (isinstance(existing, str) and existing.strip()
+                and not re.match(r"\s*(nothing|none|no )", existing, re.I)):
             listed = existing.strip() + "\n" + listed
         parts["open"] = listed
     return _assemble(
@@ -215,13 +219,11 @@ def render_review(parts, identifier, findings):
 
 def render_incomplete_review(identifier):
     _check_identifier(identifier)
-    parts = {p: {"state": "gap", "text": ""} for p, _ in REVIEW_PARTS}
-    lines = ["Board loop review of `{0}`: review did not complete.".format(
+    lines =["Board loop review of `{0}`: review did not complete.".format(
         identifier), ""]
     for part, label in REVIEW_PARTS:
         lines.append("**{0}**\n\n_{1}_\n".format(
             label, gap_text(part, "incomplete")))
-    del parts
     return "\n".join(lines)
 
 
@@ -244,10 +246,12 @@ def render_summary(issue, pr, identifier, first_comment=""):
         else:
             out.append("**{0}**\n\n_{1}_".format(label, gap_text(key, kind)))
         out.append("")
-    pointer = "The full explanation is in the first comment on this PR"
     if isinstance(first_comment, str) and re.match(r"^https://\S+$",
                                                    first_comment):
-        pointer += ": " + first_comment
+        pointer = "The full explanation is in this comment on the PR: " + first_comment
+    else:
+        pointer = ("The board loop posts the full explanation as a comment "
+                   "on this PR; if the step failed, no such comment exists")
     out.append(pointer + ".")
     return _cap("\n".join(out))
 
@@ -336,7 +340,9 @@ def options_comment_owed(comments, bot_login):
     for comment in comments or []:
         if not isinstance(comment, dict):
             continue
-        login = comment.get("login") or (comment.get("user") or {}).get("login")
+        login = (comment.get("login")
+                 or (comment.get("user") or {}).get("login")
+                 or (comment.get("author") or {}).get("login"))
         if not bot_login or login != bot_login:
             continue
         first = (comment.get("body") or "").split("\n", 1)[0].strip()

@@ -146,7 +146,7 @@ MVP = Phases 1–3 (US1), since every later message depends on the explanation. 
 
 ## Review Gate Round 2 Findings
 
-- [ ] Review finding: options hold never fires via evaluate() (author.login vs login)
+- [x] Review finding: options hold never fires via evaluate() (author.login vs login)
 
   board_readiness.evaluate reads gh pr view comments where author is author.login, but options_comment_owed only reads login or user.login, so every comment is skipped and options state is always clear, failing open.
 
@@ -154,7 +154,7 @@ MVP = Phases 1–3 (US1), since every later message depends on the explanation. 
 
   Detail: Workflow inline path maps .user.login and works; evaluate(pr) entry point does not.
 
-- [ ] Review finding: Review comment can say 'Nothing open' above in-scope findings
+- [x] Review finding: Review comment can say 'Nothing open' above in-scope findings
 
   The code only fills the open part with the real finding count when the agent's open part is empty, so an agent-written 'Nothing open.' stands next to a non-empty findings list.
 
@@ -162,31 +162,31 @@ MVP = Phases 1–3 (US1), since every later message depends on the explanation. 
 
   Detail: Set or append the in-scope finding line whenever kept_count is non-zero.
 
-- [ ] Review finding: CLOSING_RE misses 'GH-N' and filler-word closing forms
+- [x] Review finding: CLOSING_RE misses 'GH-N' and filler-word closing forms
 
   The closing-keyword check does not match 'fixes GH-12' or 'closes the issue #12', so agent prose with a closing reference can reach the PR body and auto-close an issue on merge.
 
   - .github/scripts/wc_message_parts.py
 
-- [ ] Review finding: PR summary always points at a first comment that may not exist
+- [x] Review finding: PR summary always points at a first comment that may not exist
 
   The summary says the full explanation is in the first comment, but the explain step can skip or fail to post it with only a warning, or another comment can land first.
 
   - .github/scripts/wc_message_parts.py
 
-- [ ] Review finding: board_readiness main() defaults missing pr_comments to unreadable
+- [x] Review finding: board_readiness main() defaults missing pr_comments to unreadable
 
   main() treats a missing pr_comments key as COMMENTS_UNREADABLE, while evaluate_from_snapshot treats it as None (skip). Old-shape payloads become durably not-ready with a misleading reason.
 
   - .github/scripts/board_readiness.py
 
-- [ ] Review finding: normalize_part accepts state 'follow' for non-options parts
+- [x] Review finding: normalize_part accepts state 'follow' for non-options parts
 
   A 'follow' state on parts other than options renders 'options follow in a later comment' though no options comment is owed.
 
   - .github/scripts/wc_message_parts.py
 
-- [ ] Review finding: Dead parts dict in render_incomplete_review
+- [x] Review finding: Dead parts dict in render_incomplete_review
 
   render_incomplete_review builds a parts dict that is never used and then deletes it, which is leftover code.
 

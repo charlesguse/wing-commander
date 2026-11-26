@@ -441,7 +441,7 @@ def main():
     decision = evaluate_from_snapshot(
         payload["snapshot"], payload["open_in_scope_findings"],
         payload["backstop_holds"], payload["kill_switch_paused"],
-        pr_comments=payload.get("pr_comments", COMMENTS_UNREADABLE),
+        pr_comments=payload.get("pr_comments"),
         bot_login=payload.get("bot_login", ""))
     print(json.dumps(decision))
 
