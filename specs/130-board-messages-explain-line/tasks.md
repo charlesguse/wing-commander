@@ -73,3 +73,7 @@
 ## Strategy
 
 MVP = Phases 1–3 (US1), since every later message depends on the explanation. Then US2 (removes the misleading "No findings"), then US3.
+
+## Phase 8: Convergence
+
+- [ ] T023 Have the fix agent's result schema and prompt in `.github/workflows/board-loop.yml` supply the explanation parts (`code`, `issue`, `why_it_matters`, `options`, `what_this_pr_does`) so the "Explain the line on the PR (fix)" step fills them instead of leaving gaps, and post the later `options` comment when state is `follow`, per FR-001/FR-003 (partial)
