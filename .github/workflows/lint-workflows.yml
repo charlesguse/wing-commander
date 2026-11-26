@@ -4883,8 +4883,15 @@ jobs:
 
       # Gate 176 — `run-local-gates.py --changed [BASE]` (#1180) runs the
       # gates a change since BASE reaches and every gate when it cannot
-      # tell. Driven end to end over a synthetic repository; no live
-      # subject.
+      # tell, picking from the reads each gate was seen to make
+      # (.github/scripts/gate-reads.json, written by --record-reads) and
+      # from what its text names. The live check fails when that map
+      # lacks a gate or holds a stale entry; the self-test drives the
+      # runner end to end over a synthetic repository.
+      - name: Gate 176 — gate-reads.json has an entry for every gate, and none is stale
+        if: "!cancelled()"
+        run: python3 .github/scripts/verify-run-local-gates-changed.py
+
       - name: Gate 176 self-test — no change runs no gate, a gate, workflow, helper or harness change picks the gates that read it, and an unmapped path or a gate-list change runs every gate
         if: "!cancelled()"
         run: python3 .github/scripts/verify-run-local-gates-changed.py --self-test

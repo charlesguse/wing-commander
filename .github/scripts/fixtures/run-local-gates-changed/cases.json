@@ -1,6 +1,6 @@
 {
   "tree": {
-    ".github/workflows/lint-workflows.yml": "name: lint\non: [pull_request]\njobs:\n  lint-shard-1:\n    runs-on: ubuntu-latest\n    steps:\n      - run: python3 .github/scripts/verify-alpha.py\n      - run: python3 .github/scripts/verify-beta.py\n      - run: python3 .github/scripts/verify-beta.py --self-test\n      - run: python3 .github/scripts/verify-gamma.py\n      - run: bash .github/scripts/delta-tests/run-tests.sh\n      - run: python3 .github/scripts/verify-epsilon.py\n      - run: python3 .github/scripts/verify-zeta.py\n      - run: python3 .github/scripts/verify-eta.py\n      - run: python3 .github/scripts/verify-theta.py\n",
+    ".github/workflows/lint-workflows.yml": "name: lint\non: [pull_request]\njobs:\n  lint-shard-1:\n    runs-on: ubuntu-latest\n    steps:\n      - run: python3 .github/scripts/verify-alpha.py\n      - run: python3 .github/scripts/verify-beta.py\n      - run: python3 .github/scripts/verify-beta.py --self-test\n      - run: python3 .github/scripts/verify-gamma.py\n      - run: bash .github/scripts/delta-tests/run-tests.sh\n      - run: python3 .github/scripts/verify-epsilon.py\n      - run: python3 .github/scripts/verify-zeta.py\n      - run: python3 .github/scripts/verify-eta.py\n      - run: python3 .github/scripts/verify-theta.py\n      - run: python3 .github/scripts/verify-iota.py\n      - run: python3 .github/scripts/verify-kappa.py\n      - run: python3 .github/scripts/verify-lambda.py\n",
     ".github/workflows/alpha.yml": "name: alpha\non: [push]\njobs: {}\n",
     ".github/workflows/gamma.yml": "name: gamma\non: [push]\njobs: {}\n",
     ".github/scripts/verify-alpha.py": "\"\"\"Reads alpha.yml by an os.path.join.\"\"\"\nimport os\nROOT = \".\"\nopen(os.path.join(ROOT, \".github\", \"workflows\", \"alpha.yml\")).read()\nprint(\"ok\")\n",
@@ -18,7 +18,13 @@
     ".github/scripts/wc_eta_tool.py": "\"\"\"A tool only a workflow step names; no gate's code does.\"\"\"\n",
     ".github/scripts/verify-theta.py": "\"\"\"Runs the unittest files under theta-tests/, which import wc_theta_lib.\"\"\"\nimport os\nimport sys\nimport unittest\n\nHERE = os.path.dirname(os.path.abspath(__file__))\nTESTS = os.path.join(HERE, \"theta-tests\")\nsys.path.insert(0, HERE)\nresult = unittest.TextTestRunner().run(unittest.defaultTestLoader.discover(TESTS))\nsys.exit(0 if result.wasSuccessful() else 1)\n",
     ".github/scripts/theta-tests/test_theta.py": "import unittest\n\nimport wc_theta_lib\n\n\nclass Theta(unittest.TestCase):\n    def test_value(self):\n        self.assertEqual(wc_theta_lib.VALUE, 1)\n",
-    ".github/scripts/wc_theta_lib.py": "\"\"\"Imported only by theta-tests/test_theta.py.\"\"\"\nVALUE = 1\n"
+    ".github/scripts/wc_theta_lib.py": "\"\"\"Imported only by theta-tests/test_theta.py.\"\"\"\nVALUE = 1\n",
+    ".github/scripts/verify-iota.py": "\"\"\"Walks .github through a def that returns its own directory: no name is\nbound to __file__'s directory, so only a traced run shows the walk.\"\"\"\nimport os\n\n\ndef here():\n    return os.path.dirname(os.path.abspath(__file__))\n\n\ndef sweep():\n    top = os.path.dirname(here())\n    return [f for _r, _d, files in os.walk(top) for f in files]\n\n\nsweep()\nprint(\"ok\")\n",
+    ".github/scripts/verify-kappa.py": "\"\"\"Copies its own directory, named through `.parents[0]`, to run from the\ncopy: only a traced run shows the copytree.\"\"\"\nimport pathlib\nimport shutil\nimport tempfile\n\nSRC = pathlib.Path(__file__).resolve().parents[0]\ntmp = tempfile.mkdtemp()\nshutil.copytree(SRC, pathlib.Path(tmp) / \"copy\")\nshutil.rmtree(tmp)\nprint(\"ok\")\n",
+    ".github/scripts/wc_kappa_tool.py": "\"\"\"A tool only a copy of the scripts directory carries; no code names it.\"\"\"\n",
+    ".github/scripts/verify-lambda.py": "\"\"\"Runs the unittest files in a directory whose name it builds by\nconcatenation; they import wc_lambda_lib, which only a traced run shows.\"\"\"\nimport os\nimport sys\nimport unittest\n\nTESTS = os.path.join(os.path.dirname(os.path.abspath(__file__)),\n                     \"lambda\" + \"-tests\")\nsys.path.insert(0, os.path.dirname(TESTS))\nresult = unittest.TextTestRunner().run(\n    unittest.defaultTestLoader.discover(TESTS))\nsys.exit(0 if result.wasSuccessful() else 1)\n",
+    ".github/scripts/lambda-tests/test_lambda.py": "import unittest\n\nimport wc_lambda_lib\n\n\nclass Lambda(unittest.TestCase):\n    def test_value(self):\n        self.assertEqual(wc_lambda_lib.VALUE, 2)\n",
+    ".github/scripts/wc_lambda_lib.py": "\"\"\"Imported only by lambda-tests/test_lambda.py.\"\"\"\nVALUE = 2\n"
   },
   "all": [
     "verify-alpha.py",
@@ -29,7 +35,10 @@
     "verify-epsilon.py",
     "verify-zeta.py",
     "verify-eta.py",
-    "verify-theta.py"
+    "verify-theta.py",
+    "verify-iota.py",
+    "verify-kappa.py",
+    "verify-lambda.py"
   ],
   "cases": [
     {
@@ -51,11 +60,14 @@
       ],
       "expect": [
         "verify-gamma.py",
+        "delta-tests/run-tests.sh",
         "verify-epsilon.py",
+        "verify-zeta.py",
         "verify-eta.py",
-        "verify-zeta.py"
+        "verify-iota.py",
+        "verify-kappa.py"
       ],
-      "say": "4 of 9 gate(s) picked"
+      "say": "7 of 12 gate(s) picked"
     },
     {
       "name": "a workflow change picks every gate that reads that workflow, and not one whose docstring only names it",
@@ -69,10 +81,12 @@
         "verify-alpha.py",
         "verify-beta.py",
         "verify-beta.py --self-test",
+        "delta-tests/run-tests.sh",
         "verify-epsilon.py",
-        "verify-zeta.py"
+        "verify-zeta.py",
+        "verify-iota.py"
       ],
-      "say": "5 of 9 gate(s) picked"
+      "say": "7 of 12 gate(s) picked"
     },
     {
       "name": "a helper module change picks the gates that import it, and a gate that globs its own directory through __file__",
@@ -85,11 +99,14 @@
       "expect": [
         "verify-beta.py",
         "verify-beta.py --self-test",
+        "delta-tests/run-tests.sh",
         "verify-epsilon.py",
+        "verify-zeta.py",
         "verify-eta.py",
-        "verify-zeta.py"
+        "verify-iota.py",
+        "verify-kappa.py"
       ],
-      "say": "5 of 9 gate(s) picked"
+      "say": "8 of 12 gate(s) picked"
     },
     {
       "name": "a harness data file picks its harness, and a gate that globs the directory above it",
@@ -102,10 +119,12 @@
       "expect": [
         "delta-tests/run-tests.sh",
         "verify-epsilon.py",
+        "verify-zeta.py",
         "verify-eta.py",
-        "verify-zeta.py"
+        "verify-iota.py",
+        "verify-kappa.py"
       ],
-      "say": "4 of 9 gate(s) picked"
+      "say": "6 of 12 gate(s) picked"
     },
     {
       "name": "an untracked unmapped path falls back to everything",
@@ -124,7 +143,10 @@
         "verify-epsilon.py",
         "verify-zeta.py",
         "verify-eta.py",
-        "verify-theta.py"
+        "verify-theta.py",
+        "verify-iota.py",
+        "verify-kappa.py",
+        "verify-lambda.py"
       ],
       "say": "running every gate: notes/new.txt is read by no gate"
     },
@@ -145,7 +167,10 @@
         "verify-epsilon.py",
         "verify-zeta.py",
         "verify-eta.py",
-        "verify-theta.py"
+        "verify-theta.py",
+        "verify-iota.py",
+        "verify-kappa.py",
+        "verify-lambda.py"
       ],
       "say": "running every gate: docs/unused.md is read by no gate"
     },
@@ -166,7 +191,10 @@
         "verify-epsilon.py",
         "verify-zeta.py",
         "verify-eta.py",
-        "verify-theta.py"
+        "verify-theta.py",
+        "verify-iota.py",
+        "verify-kappa.py",
+        "verify-lambda.py"
       ],
       "say": "running every gate: .github/workflows/lint-workflows.yml defines the gate suite"
     },
@@ -189,7 +217,7 @@
         "verify-beta.py",
         "verify-beta.py --self-test"
       ],
-      "say": "5 of 9 gate(s) picked"
+      "say": "8 of 12 gate(s) picked"
     },
     {
       "name": "a gate that walks a directory a def derives from __file__ (its parent included) is picked by a change there",
@@ -201,10 +229,12 @@
       ],
       "expect": [
         "verify-gamma.py",
+        "delta-tests/run-tests.sh",
         "verify-epsilon.py",
-        "verify-zeta.py"
+        "verify-zeta.py",
+        "verify-iota.py"
       ],
-      "say": "3 of 9 gate(s) picked"
+      "say": "5 of 12 gate(s) picked"
     },
     {
       "name": "a gate that copies its own directory is picked by a change to a file there that no code names",
@@ -215,11 +245,14 @@
         "--changed"
       ],
       "expect": [
+        "delta-tests/run-tests.sh",
         "verify-epsilon.py",
+        "verify-zeta.py",
         "verify-eta.py",
-        "verify-zeta.py"
+        "verify-iota.py",
+        "verify-kappa.py"
       ],
-      "say": "3 of 9 gate(s) picked"
+      "say": "6 of 12 gate(s) picked"
     },
     {
       "name": "a gate that runs the code in a directory it names is picked by a change to a module that code imports",
@@ -230,12 +263,136 @@
         "--changed"
       ],
       "expect": [
+        "delta-tests/run-tests.sh",
         "verify-epsilon.py",
-        "verify-eta.py",
         "verify-zeta.py",
-        "verify-theta.py"
+        "verify-eta.py",
+        "verify-theta.py",
+        "verify-iota.py",
+        "verify-kappa.py"
       ],
-      "say": "4 of 9 gate(s) picked"
+      "say": "7 of 12 gate(s) picked"
+    },
+    {
+      "name": "a gate that walks a directory a def returns is picked through its traced reads alone",
+      "edit": [
+        ".github/workflows/gamma.yml"
+      ],
+      "args": [
+        "--changed"
+      ],
+      "expect": [
+        "verify-gamma.py",
+        "delta-tests/run-tests.sh",
+        "verify-epsilon.py",
+        "verify-zeta.py",
+        "verify-iota.py"
+      ],
+      "say": ".github/workflows/gamma.yml: listed '.github/' when traced"
+    },
+    {
+      "name": "a gate that copies a directory named through .parents[0] is picked through its traced reads alone",
+      "edit": [
+        ".github/scripts/wc_kappa_tool.py"
+      ],
+      "args": [
+        "--changed"
+      ],
+      "expect": [
+        "delta-tests/run-tests.sh",
+        "verify-epsilon.py",
+        "verify-zeta.py",
+        "verify-eta.py",
+        "verify-iota.py",
+        "verify-kappa.py"
+      ],
+      "say": ".github/scripts/wc_kappa_tool.py: listed '.github/scripts/' when traced"
+    },
+    {
+      "name": "a gate whose unittest discovery imports a module is picked by it through its traced reads alone",
+      "edit": [
+        ".github/scripts/wc_lambda_lib.py"
+      ],
+      "args": [
+        "--changed"
+      ],
+      "expect": [
+        "delta-tests/run-tests.sh",
+        "verify-epsilon.py",
+        "verify-zeta.py",
+        "verify-eta.py",
+        "verify-iota.py",
+        "verify-kappa.py",
+        "verify-lambda.py"
+      ],
+      "say": ".github/scripts/wc_lambda_lib.py: opened '.github/scripts/wc_lambda_lib.py' when traced"
+    },
+    {
+      "name": "a gate whose entry is stale is picked by any change",
+      "stale": [
+        ".github/scripts/verify-gamma.py"
+      ],
+      "edit": [
+        "docs/beta.md"
+      ],
+      "args": [
+        "--changed"
+      ],
+      "expect": [
+        "verify-beta.py",
+        "verify-beta.py --self-test",
+        "verify-gamma.py",
+        "delta-tests/run-tests.sh"
+      ],
+      "say": "its map entry is stale"
+    },
+    {
+      "name": "a gate the map lacks runs everything",
+      "drop": [
+        "verify-gamma.py"
+      ],
+      "edit": [
+        "docs/beta.md"
+      ],
+      "args": [
+        "--changed"
+      ],
+      "expect": [
+        "verify-alpha.py",
+        "verify-beta.py",
+        "verify-beta.py --self-test",
+        "verify-gamma.py",
+        "delta-tests/run-tests.sh",
+        "verify-epsilon.py",
+        "verify-zeta.py",
+        "verify-eta.py",
+        "verify-theta.py",
+        "verify-iota.py",
+        "verify-kappa.py",
+        "verify-lambda.py"
+      ],
+      "say": "have no entry in .github/scripts/gate-reads.json"
+    },
+    {
+      "name": "the live check passes on a fresh map",
+      "live": 0,
+      "say": "has a fresh entry for every gate"
+    },
+    {
+      "name": "the live check fails on a stale entry",
+      "stale": [
+        ".github/scripts/wc_fixture_lib.py"
+      ],
+      "live": 1,
+      "say": "verify-beta.py --self-test is stale"
+    },
+    {
+      "name": "the live check fails on a missing entry",
+      "drop": [
+        "verify-alpha.py"
+      ],
+      "live": 1,
+      "say": "no entry for verify-alpha.py"
     }
   ]
 }

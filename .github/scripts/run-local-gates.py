@@ -6,6 +6,7 @@
     python .github/scripts/run-local-gates.py --jobs 1          # serial
     python .github/scripts/run-local-gates.py --changed         # what a change reaches
     python .github/scripts/run-local-gates.py --changed HEAD~3  # ... since HEAD~3
+    python .github/scripts/run-local-gates.py --record-reads    # refresh the read map
 
 WHY THIS EXISTS
 ---------------
@@ -62,8 +63,18 @@ unambiguous spelling; after a bare `--changed`, the next token is BASE only
 when git resolves it to a commit, and is a filter otherwise. Filters still
 narrow the picked set, and `--jobs` applies as usual.
 
-What a gate reads is derived from its text, as the gate list is, never
-listed. A gate's own files are its script, or a `<dir>/run-tests.sh`
+A gate is picked by the union of two readings of what it reads. The
+first is what it was SEEN to read: .github/scripts/gate-reads.json, which
+`--record-reads` writes (RECORDING READS below). A changed file picks a
+gate whose entry records opening or stat'ing that file, or listing a
+directory above it. A gate whose entry is "always" (a shell gate, or one
+the trace could not vouch for) is picked by every change, and so is one
+whose entry is stale: the code it ran no longer has the digest it was
+recorded with. A gate the map has no entry for runs every gate.
+
+The second reading is derived from the gate's text, as the gate list is,
+never listed; it stays because it sees what a trace cannot (a shell
+child's reads, a read the recorded run did not reach). A gate's own files are its script, or a `<dir>/run-tests.sh`
 harness's whole directory. Its references are read from those files and,
 transitively, from code under .github/scripts/ and .github/actions/ that
 they pull in (a file named by path, a file name only one file carries, a
@@ -91,15 +102,34 @@ gate's code names. A gate that lists every tracked file
 (`git ls-files` with flags only), walks a root, or globs from `**` is
 picked by any change.
 
-It fails closed: a changed file no gate's inputs cover runs every gate,
-and so does a change to SUITE_INPUTS -- this runner, the registry and the
-helpers it loads gates through, and lint-workflows.yml, which the gate
-list and the inline gates come from. No change runs no gate, and says so.
-What it can miss is a read that no text shows (a path assembled from data
-another file holds, such as the documents Gate 47 opens because a workflow
-comment points at them, or a reference only a sys.path entry carries),
-which is why the full suite still runs before a push lands.
-verify-run-local-gates-changed.py (Gate 176) drives each rule end to end.
+It fails closed: a changed file neither reading covers for any gate runs
+every gate, and so does a change to SUITE_INPUTS -- this runner, the
+registry and the helpers it loads gates through and selects with, and
+lint-workflows.yml, which the gate list and the inline gates come from.
+No change runs no gate, and says so. What it can miss is a read neither
+reading shows: one whose path comes from data that changed since the map
+was recorded (Gate 47 opens the documents a workflow comment points at,
+so a new pointer is unseen until the map is refreshed), or one a non-
+Python child makes by itself, such as bash's own `cat`, that the text
+does not show either. That is why the full suite still runs before a
+push lands. verify-run-local-gates-changed.py (Gate 176) drives each rule
+end to end, and fails when the map lacks a gate or holds a stale entry.
+
+RECORDING READS (--record-reads)
+--------------------------------
+`--record-reads` runs the gates it would run anyway (all of them, or
+what `--changed` and filters pick) with every Python process traced, and
+writes each one's entry into .github/scripts/gate-reads.json, keeping the
+entries of gates it did not run. The tracer is wc_gate_trace.py: an audit
+hook (open, os.listdir, os.scandir, glob, exec, subprocess) plus a
+wrapped os.stat/os.lstat, loaded by a `.pth` line in a throwaway virtual
+environment whose interpreter the gates then run under, so a child
+started with `-I` or with a scrubbed env= is traced too. The map's
+format, and what makes an entry stale, are in wc_gate_reads.py. A gate
+gets an "always" entry when the trace cannot vouch for it: a shell gate
+(bash's own reads are not traced), a gate that failed while recorded, or
+one with a Python process that never exited cleanly. Refresh what a
+change makes stale with `--record-reads --changed`.
 
 WHAT IT DOES NOT RUN
 --------------------
@@ -215,6 +245,8 @@ import time
 import warnings
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import wc_gate_reads  # noqa: E402
+import wc_gate_trace  # noqa: E402  (inert here: no WC_TRACE_* is set)
 from wc_gate_registry import (gate_label, pr_time_inline_steps,  # noqa: E402
                               pr_time_invocations)
 from wc_repo_files import git_env, repo_files  # noqa: E402
@@ -290,7 +322,7 @@ def command_for(script, bash, args=()):
     than about the code.
     """
     if script.endswith(".py"):
-        return [sys.executable, script] + list(args)
+        return [_PYTHON[0], script] + list(args)
     if script in _INLINE_SCRIPTS:
         # CI runs a step with no shell: as `bash -e {0}` (errexit, no
         # pipefail -- wc_shell_harness.UNSPECIFIED_SHELL_HOSTED is that
@@ -306,6 +338,9 @@ def command_for(script, bash, args=()):
 
 # Paths _write_inline_gates wrote, so command_for gives them CI's -e.
 _INLINE_SCRIPTS = set()
+# The interpreter gates run under: this one, or --record-reads's traced
+# environment (see RECORDING READS in the module docstring).
+_PYTHON = [sys.executable]
 
 
 def _inline_gate_files(bash):
@@ -320,7 +355,7 @@ def _inline_gate_files(bash):
         return []
     root = tempfile.mkdtemp(prefix="wc-inline-gates-")
     shim = os.path.join(root, "python3")
-    exe = sys.executable.replace("\\", "/")
+    exe = _PYTHON[0].replace("\\", "/")
     with open(shim, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(f'#!/bin/sh\nexec "{exe}" "$@"\n')
     os.chmod(shim, 0o755)
@@ -339,19 +374,12 @@ def _write_inline_gates(runnable, root):
     _inline_gate_files so verify-gate-wiring.py's self-test can drive it
     without touching this process's PATH."""
     out = []
-    seen = set()
-    for name, run in runnable:
-        head = re.match(r"Gate \d+", name)
-        slug = (head.group(0).lower().replace(" ", "-") if head
-                else re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40])
-        # Two steps sharing a slug would write one file and run it twice,
-        # so the second step never ran locally: suffix the later ones.
-        base, n = slug, 1
-        while slug in seen:
-            n += 1
-            slug = f"{base}-{n}"
-        seen.add(slug)
-        path = os.path.join(root, f"inline-{slug}.sh")
+    # Two steps sharing a slug would write one file and run it twice, so
+    # the second step never ran locally: inline_gate_names suffixes the
+    # later ones.
+    names = wc_gate_reads.inline_gate_names([name for name, _ in runnable])
+    for (_name, run), file_name in zip(runnable, names):
+        path = os.path.join(root, file_name)
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(run if run.endswith("\n") else run + "\n")
         _INLINE_SCRIPTS.add(path)
@@ -411,6 +439,7 @@ SUITE_INPUTS = (
     ".github/scripts/wc_gate_registry.py",
     ".github/scripts/wc_shell_harness.py",
     ".github/scripts/wc_repo_files.py",
+    ".github/scripts/wc_gate_reads.py",
     ".github/workflows/lint-workflows.yml",
 )
 # A gate whose text carries one of these reads files no path in it names
@@ -930,13 +959,16 @@ def gate_inputs(root, gates, texts=None):
     return out
 
 
-def select_changed(changed, inputs):
+def select_changed(changed, inputs, read_map, keys, root="."):
     """-> (labels to run, {label: [reason]}, whole-suite reason or None).
 
     `changed` is the list of repo-relative paths; `inputs` is
-    gate_inputs()'s map, in run order. Fails closed: a SUITE_INPUTS file,
-    or a file no gate's own files, references or names cover, returns
-    every label with the reason.
+    gate_inputs()'s map, in run order; `read_map` is wc_gate_reads.load()
+    and `keys` maps each label to its key there. A gate is picked by the
+    union of the two readings: what its traced entry shows it read, and
+    what its text names. Fails closed: a SUITE_INPUTS file, a gate the map
+    lacks, or a file neither reading covers for any gate returns every
+    label with the reason.
     """
     labels = list(inputs)
     if not changed:
@@ -944,19 +976,40 @@ def select_changed(changed, inputs):
     for path in changed:
         if path in SUITE_INPUTS:
             return labels, {}, f"{path} defines the gate suite"
+    missing = [l for l in labels if keys[l] not in read_map]
+    if missing:
+        return labels, {}, (
+            f"{len(missing)} gate(s) have no entry in "
+            f"{wc_gate_reads.MAP_PATH}, {keys[missing[0]]} first; "
+            f"record them with --record-reads")
+    entries = {l: read_map[keys[l]] for l in labels}
     reasons = {}
     for path in changed:
         covered = False
         refs = _refs_for(path)
         for label in labels:
+            entry = entries[label]
+            traced = (None if not isinstance(entry, dict) or "always" in entry
+                      else wc_gate_reads.covers(entry, path))
             why = inputs[label].why(path, refs)
-            if why:
+            for rule in ([f"{path}: {traced}"] if traced else []) + (
+                    [f"{path}: {why} (its text)"] if why else []):
                 covered = True
-                reasons.setdefault(label, []).append(f"{path}: {why}")
+                reasons.setdefault(label, []).append(rule)
         if not covered:
             return labels, {}, (f"{path} is read by no gate this runner "
                                 f"can map, so nothing rules a gate out")
+    stale = set(wc_gate_reads.stale_keys(root, read_map, keys.values()))
     for label in labels:
+        entry = entries[label]
+        if not isinstance(entry, dict) or "always" in entry:
+            why = entry.get("always") if isinstance(entry, dict) else None
+            reasons.setdefault(label, []).append(
+                f"always runs: {why or 'its map entry is malformed'}")
+        elif keys[label] in stale:
+            reasons.setdefault(label, []).append(
+                "its map entry is stale: code it ran has changed since its "
+                "reads were recorded")
         if inputs[label].reads_any and label not in reasons:
             src, match = inputs[label].reads_any
             reasons[label] = [f"reads every file ({match!r} in {src})"]
@@ -1035,7 +1088,9 @@ def _apply_changed(base, gates, texts):
         print("--changed: no file changed, so no gate runs.")
         return []
     inputs = gate_inputs(".", gates, texts)
-    picked, reasons, whole = select_changed(changed, inputs)
+    keys = {gate_label(sc, ar): _map_key(sc, ar) for sc, ar in gates}
+    picked, reasons, whole = select_changed(changed, inputs,
+                                            wc_gate_reads.load(), keys)
     if whole:
         print(f"--changed: running every gate: {whole}.\n")
         return gates
@@ -1049,7 +1104,113 @@ def _apply_changed(base, gates, texts):
     return [(sc, ar) for sc, ar in gates if gate_label(sc, ar) in keep]
 
 
-def _run_one(script, args, bash, label):
+def _map_key(script, args):
+    """A gate's key in the read map: its label, or for an inline gate the
+    `inline-<slug>.sh` name (its label is a temporary path)."""
+    if script in _INLINE_SCRIPTS:
+        return os.path.basename(script)
+    return gate_label(script, args)
+
+
+# --- --record-reads ---------------------------------------------------------
+# See RECORDING READS in the module docstring.
+
+_PYTHON_PROG = re.compile(r"python[\d.]*(?:\.exe)?$")
+# Programs a traced gate may start without the map noting them: Python
+# (traced itself) and git (its ls-files/grep reads are recorded).
+_SEEN_INTO = re.compile(r"(?:python[\d.]*|git)(?:\.exe)?$")
+
+
+def _traced_python(tmp):
+    """(interpreter, its bin directory) of a throwaway virtual environment
+    under `tmp` that imports wc_gate_trace at every startup, `-I` or not:
+    a `.pth` line in its site-packages, which `-I` keeps (it drops
+    PYTHONPATH, which is why a sitecustomize there would not do)."""
+    venv = os.path.join(tmp, "venv")
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip",
+                    "--system-site-packages", venv],
+                   check=True, capture_output=True)
+    bindir = os.path.join(venv, "Scripts" if os.name == "nt" else "bin")
+    python = os.path.join(bindir,
+                          "python.exe" if os.name == "nt" else "python")
+    site = subprocess.run(
+        [python, "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+        check=True, capture_output=True, text=True).stdout.strip()
+    with open(wc_gate_trace.__file__, encoding="utf-8") as fh:
+        tracer = fh.read()
+    with open(os.path.join(site, "wc_gate_trace.py"), "w",
+              encoding="utf-8") as fh:
+        fh.write(tracer)
+    with open(os.path.join(site, "wc_gate_trace.pth"), "w",
+              encoding="utf-8") as fh:
+        fh.write("import wc_gate_trace\n")
+    return python, bindir
+
+
+def _trace_env(trace_dir, index, key):
+    """The environment one gate runs in while recorded, and its own
+    record directory."""
+    out = os.path.join(trace_dir, str(index))
+    os.makedirs(out, exist_ok=True)
+    return dict(os.environ, WC_TRACE_OUT=out, WC_TRACE_GATE=key,
+                WC_TRACE_ROOT=os.getcwd())
+
+
+def _entry_from_trace(script, rc, out):
+    """One gate's map entry from its record directory `out`."""
+    if not script.endswith(".py"):
+        return {"always": "a shell gate: bash's own reads are not traced"}
+    if rc != 0:
+        return {"always": f"it failed (exit {rc}) while its reads were "
+                          f"recorded, so they may be incomplete"}
+    records = []
+    for name in sorted(os.listdir(out)):
+        if name.endswith(".json"):
+            try:
+                with open(os.path.join(out, name), encoding="utf-8") as fh:
+                    records.append(json.load(fh))
+            except (OSError, ValueError):
+                records.append({"done": False})
+    if not records:
+        return {"always": "no traced process reported its reads"}
+    if not all(r.get("done") for r in records):
+        return {"always": "a traced process did not exit cleanly, so its "
+                          "reads are incomplete"}
+    reads, code, spawns = set(), set(), set()
+    for r in records:
+        reads.update(r.get("reads", ()))
+        code.update(r.get("code", ()))
+        spawns.update(r.get("spawns", ()))
+    reads |= code
+    dirs = {r for r in reads if r.endswith("/")}
+    if "./" in dirs:
+        kept = ["./"]
+    else:
+        # A path under a listed directory, or the directory's own name
+        # (a stat of it), adds nothing the listing does not cover.
+        kept = sorted(r for r in reads if r + "/" not in dirs and not any(
+            r != d and r.startswith(d) for d in dirs))
+    return {"children": sorted(p for p in spawns
+                               if p and not _SEEN_INTO.match(p)),
+            "code": sorted(code),
+            "digest": wc_gate_reads.digest(".", code),
+            "reads": kept}
+
+
+def _save_read_map(recorded, all_gates):
+    """Merge `recorded` ({key: entry}) into the map, dropping keys no
+    registry gate has, and write it."""
+    known = {_map_key(sc, ar) for sc, ar in all_gates}
+    entries = {k: v for k, v in wc_gate_reads.load().items() if k in known}
+    entries.update(recorded)
+    wc_gate_reads.save(entries)
+    always = sum(1 for v in recorded.values() if "always" in v)
+    print(f"--record-reads: wrote {len(recorded)} entr(y/ies) "
+          f"({always} always-run) to {wc_gate_reads.MAP_PATH}; it holds "
+          f"{len(entries)} of {len(known)} gate(s).")
+
+
+def _run_one(script, args, bash, label, env=None):
     """Invoke one gate and collect its result. Runs on a pool thread.
 
     Each call is its own OS process (subprocess.run), so nothing here
@@ -1058,7 +1219,7 @@ def _run_one(script, args, bash, label):
     established that.
     """
     start = time.time()
-    proc = subprocess.run(command_for(script, bash, args),
+    proc = subprocess.run(command_for(script, bash, args), env=env,
                           capture_output=True, text=True,
                           encoding="utf-8", errors="replace")
     elapsed = time.time() - start
@@ -1072,6 +1233,15 @@ def main(argv):
         sys.exit("run this from the repository root.")
     ensure_jq()
     bash = resolve_bash()
+
+    record = "--record-reads" in argv
+    argv = [a for a in argv if a != "--record-reads"]
+    trace_dir = None
+    if record:
+        trace_dir = tempfile.mkdtemp(prefix="wc-gate-reads-")
+        _PYTHON[0], bindir = _traced_python(trace_dir)
+        os.environ["PATH"] = os.pathsep.join(
+            [bindir, os.environ.get("PATH", "")])
 
     all_gates = pr_time_invocations() + _inline_gate_files(bash)
 
@@ -1101,6 +1271,11 @@ def main(argv):
 
     results = []
     wall_start = time.time()
+    envs = {}
+    if record:
+        for i, (script, args) in enumerate(gates):
+            envs[gate_label(script, args)] = _trace_env(
+                trace_dir, i, _map_key(script, args))
 
     if jobs == 1:
         # The original sequential loop, untouched, so `--jobs 1` is not a
@@ -1115,6 +1290,7 @@ def main(argv):
             print(f"--- {label} " + "-" * max(0, 60 - len(label)))
             start = time.time()
             proc = subprocess.run(command_for(script, bash, args),
+                                  env=envs.get(label),
                                   capture_output=True, text=True,
                                   encoding="utf-8", errors="replace")
             elapsed = time.time() - start
@@ -1148,7 +1324,8 @@ def main(argv):
             key=lambda sa: -timing_cache.get(gate_label(*sa), float("inf")))
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             futures = [pool.submit(_run_one, script, args, bash,
-                                   gate_label(script, args))
+                                   gate_label(script, args),
+                                   envs.get(gate_label(script, args)))
                        for script, args in gates]
             for fut in concurrent.futures.as_completed(futures):
                 label, rc, elapsed, out = fut.result()
@@ -1173,6 +1350,13 @@ def main(argv):
     # _save_timing_cache) — a maintainer offline or on a read-only temp dir
     # still gets a correct, merely unscheduled, run.
     _save_timing_cache({label: elapsed for label, _, elapsed in results})
+    if record:
+        rcs = {label: rc for label, rc, _ in results}
+        _save_read_map({
+            _map_key(sc, ar): _entry_from_trace(
+                sc, rcs[gate_label(sc, ar)],
+                envs[gate_label(sc, ar)]["WC_TRACE_OUT"])
+            for sc, ar in gates}, all_gates)
 
     width = max(len(r[0]) for r in results)
     print("=" * (width + 22))
