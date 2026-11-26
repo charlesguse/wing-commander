@@ -795,10 +795,34 @@ def fit_half():
           bs.append_section("body\n", "") == "body\n" and bs.append_section("body\n", "x\n") == "body\n\nx\n")
 
 
+def docs_half():
+    """#889: docs/setup.md says where Board status reports each switch. The
+    switches render() states are read from its own state() calls, so a
+    switch added to the status lines without a setup.md mention fails here:
+    the Board status row must name every one, and each switch's own row must
+    say the issue reports it."""
+    import inspect
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with open(os.path.join(root, "docs", "setup.md"), encoding="utf-8") as fh:
+        rows = {m.group(1): m.group(0) for m in
+                re.finditer(r"^\| `(WING_COMMANDER_[A-Z_]+)` \|.*$", fh.read(), re.M)}
+    keys = re.findall(r'\bstate\("([a-z_]+)"', inspect.getsource(bs.render))
+    check("render() states at least the board-loop and auto-release switches",
+          {"board_loop_paused", "board_auto_merge", "auto_release_paused"} <= set(keys), keys)
+    status_row = rows.get("WING_COMMANDER_BOARD_STATUS_PAUSED", "")
+    for key in keys:
+        var = "WING_COMMANDER_" + bs.SWITCH_ENV[key]
+        check("docs/setup.md's Board status row names {0}".format(var),
+              "`{0}`".format(var) in status_row, status_row[:120])
+        check("docs/setup.md's {0} row says Board status reports it".format(var),
+              'The "Board status" issue reports this switch' in rows.get(var, ""), rows.get(var, "")[-160:])
+
+
 def main():
     render_half()
     runtime_half()
     switches_half()
+    docs_half()
     proof_list_half()
     merge_evidence_half()
     feature_health_half()

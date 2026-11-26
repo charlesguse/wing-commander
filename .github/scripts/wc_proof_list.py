@@ -369,15 +369,53 @@ RETRY_AFTER_RE = re.compile(r"retry-after:?\s*(\d+)", re.I)
 SECTION_FILE = wc_board_status.PROOF_LIST_FILE
 FINALIZE_RE = re.compile(r"^Finalize:.*\(#(\d+)\)\s*$")
 SPEC_BRANCH_RE = re.compile(r"^spec/([^/]+)$")
+# The build fails with its own one-line reason before the job's
+# `timeout-minutes: 25` cancels it, which would leave no line at all. The
+# budget leaves two minutes for checkout and the guard; no single `git` or
+# `gh` call may wait longer than CALL_TIMEOUT, or past the budget.
+BUILD_BUDGET_SECONDS = 23 * 60
+CALL_TIMEOUT = 120
+_deadline = [None]  # monotonic seconds, set by start_budget()
+
+
+def start_budget(seconds=BUILD_BUDGET_SECONDS):
+    import time
+    _deadline[0] = None if seconds is None else time.monotonic() + seconds
+
+
+def call_timeout(argv):
+    """Seconds this call may wait: CALL_TIMEOUT, cut to what is left of the
+    build's budget. A build already past its budget fails here, naming the
+    call it was about to make."""
+    import time
+    if _deadline[0] is None:
+        return CALL_TIMEOUT
+    left = _deadline[0] - time.monotonic()
+    if left <= 0:
+        raise ReadError("the build ran past its {0}-minute budget before `{1}`".format(
+            BUILD_BUDGET_SECONDS // 60, " ".join(argv[:4])))
+    return min(CALL_TIMEOUT, left)
+
+
+def _subprocess(argv, **kwargs):
+    """subprocess.run under call_timeout(); a call that outlives it is a failed read."""
+    import subprocess
+    timeout = call_timeout(argv)
+    try:
+        return subprocess.run(argv, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired:
+        if timeout < CALL_TIMEOUT:
+            raise ReadError("the build ran past its {0}-minute budget during `{1}`".format(
+                BUILD_BUDGET_SECONDS // 60, " ".join(argv[:4])))
+        raise ReadError("`{0}` gave no answer within {1:.0f} s".format(" ".join(argv[:4]), timeout))
 
 
 def _run(argv, cwd=None, sleep=None):
-    import subprocess
     import time
     # Bytes, decoded here as strict UTF-8: with text=True a failed decode
     # leaves stdout None on Windows (the reader thread dies), which read as an
     # empty thread (FR-013).
-    proc = subprocess.run(argv, capture_output=True, cwd=cwd)
+    proc = _subprocess(argv, capture_output=True, cwd=cwd)
     try:
         out = proc.stdout.decode("utf-8", errors="strict").replace("\r\n", "\n")
     except UnicodeDecodeError as exc:
@@ -394,7 +432,8 @@ def _run(argv, cwd=None, sleep=None):
         match = RETRY_AFTER_RE.search(err)
         if sleep is not False:
             wait = min(int(match.group(1)), 60) if match else SECONDARY_DEFAULT_WAIT
-            (sleep or time.sleep)(wait)
+            # The wait counts against the budget too: wait no longer than it has left.
+            (sleep or time.sleep)(min(wait, max(call_timeout(argv) - 1, 0)))
             return _run(argv, cwd, sleep=False)
     raise ReadError("{0}: {1}".format(" ".join(argv[:4]), err or "exit {0}".format(proc.returncode)))
 
@@ -454,18 +493,16 @@ def first_parent_commits(since=None):
 
 
 def is_ancestor(ancestor, descendant):
-    import subprocess
-    proc = subprocess.run(["git", "merge-base", "--is-ancestor", ancestor, descendant],
-                          capture_output=True, text=True)
+    proc = _subprocess(["git", "merge-base", "--is-ancestor", ancestor, descendant],
+                       capture_output=True, text=True)
     if proc.returncode in (0, 1):
         return proc.returncode == 0
     raise ReadError("git merge-base failed: {0}".format(proc.stderr.strip()))
 
 
 def commit_present(sha):
-    import subprocess
-    return subprocess.run(["git", "cat-file", "-e", "{0}^{{commit}}".format(sha)],
-                          capture_output=True).returncode == 0
+    return _subprocess(["git", "cat-file", "-e", "{0}^{{commit}}".format(sha)],
+                       capture_output=True).returncode == 0
 
 
 def marker_step(body):
@@ -535,6 +572,17 @@ def comment_record(place, raw, kind):
             "account": user.get("login"), "account_type": user.get("type", "User"),
             "posted_at": posted,
             "body": raw.get("body") or "", "marker_step": marker_step(raw.get("body"))}
+
+
+def run_total(query):
+    """`total_count` of a run-list query, read as one run: the count is the
+    same at any page size, and a full first page of runs is ~1.5 MB and ~2 s
+    (2026-11-26), while the day-sliced lists ask for a count once per day per
+    workflow over 1,000 runs."""
+    probe = query.replace("per_page=100", "per_page=1", 1)
+    if probe == query:
+        raise ValueError("run_total: {0} has no per_page=100".format(query))
+    return int(api(probe + "&page=1").get("total_count", 0))
 
 
 class Collector:
@@ -708,8 +756,7 @@ class Collector:
         name = path.rsplit("/", 1)[-1]
         query = "{0}/workflows/{1}/runs?status=completed&per_page=100&{2}".format(base, name, created)
         try:
-            first = api(query + "&page=1")
-            total = int(first.get("total_count", 0))
+            total = run_total(query)
             if total <= RUN_CAP:
                 runs = api(query, paginate=True)
             else:
@@ -722,7 +769,7 @@ class Collector:
                         utc_text(day),
                         utc_text(nxt - datetime.timedelta(seconds=1)))
                     q = "{0}/workflows/{1}/runs?status=completed&per_page=100&{2}".format(base, name, span)
-                    if int(api(q + "&page=1").get("total_count", 0)) > RUN_CAP:
+                    if run_total(q) > RUN_CAP:
                         raise ReadError("{0}: more than {1} runs in one day".format(name, RUN_CAP))
                     runs += api(q, paginate=True)
                     day = nxt
@@ -731,7 +778,7 @@ class Collector:
             # runs and keep the ones of that path (a later-deleted workflow
             # is still credited, FR-013).
             fallback = "{0}/runs?status=completed&per_page=100&{1}".format(base, created)
-            if int(api(fallback + "&page=1").get("total_count", 0)) > RUN_CAP:
+            if run_total(fallback) > RUN_CAP:
                 raise ReadError("{0}: the repository has more than {1} runs in the window; "
                                 "a deleted workflow's runs cannot be read completely".format(name, RUN_CAP))
             runs = [r for r in api(fallback, True) if (r.get("path") or "") == path]
@@ -808,20 +855,27 @@ def collect(repository, built_at, window=window_for):
 
 
 # -- per-entry trees (US3) ---------------------------------------------------
+# What the reach scan reads of a merge's tree: `.github` less the
+# subdirectories of `.github/scripts`. The scan resolves imports only against
+# top-level helper scripts (board_prove.py); the subdirectories (tests,
+# fixtures) were ~15 MB of a 27 MB archive, extracted and deleted once per
+# merge in the window. An exclude that matches nothing is no error.
+TREE_PATHSPECS = (".github", ":(exclude,glob).github/scripts/*/**")
+
+
 def tree_reaching(sha, changed_paths):
     """[ReachingWorkflow] from the `.github` tree at `sha` (not today's): the
     shared reach computation plus the nightly end-to-end edges, merged here only
     (FR-005; the hand procedure never merges them)."""
     import contextlib
     import io
-    import subprocess
     import tarfile
     import tempfile
     from board_prove import (AUTO_RELEASE, WORKFLOWS_DIR, reach,
                              reaching_workflows as _reaching, nightly_e2e_edges,
                              runs_of_its_own as _own, scan_dispatchable_and_uses_graph)
     current = git("rev-parse", "HEAD").strip() == git("rev-parse", sha).strip()
-    archive = subprocess.run(["git", "archive", sha, ".github"], capture_output=True)
+    archive = _subprocess(["git", "archive", sha, "--"] + list(TREE_PATHSPECS), capture_output=True)
     if archive.returncode != 0:
         raise ReadError("git archive {0} failed: {1}".format(sha[:10], archive.stderr.decode(errors="replace")))
     with tempfile.TemporaryDirectory() as tmp:
@@ -936,6 +990,7 @@ def main(argv=None):
         if not args.repository:
             parser.error("--repository (or GITHUB_REPOSITORY) is required")
         if args.cmd == "build":
+            start_budget()
             now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
             doc = report_from_bundle(collect(args.repository, now))
         else:

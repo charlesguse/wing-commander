@@ -18,9 +18,18 @@ step, and the publish step reads its `ok` output:
     step, naming the credential;
   - a lease refusal ("stale info") stays the tolerated branch-moved
     warning whatever `ok` says: the branch really did move;
-  - so does any refusal with `ok == true`, or with `ok` empty because the
-    agent never ran (a clean rebase);
+  - any other refusal with `ok == true`, or with `ok` empty because the
+    agent never ran (a clean rebase), fails the step as "not a branch
+    race": a "[remote rejected]" refusal (branch protection, a hook, a
+    permission) meets every later run again, so skipping it as a moved
+    branch would hide it for good (#889, found by the code review of
+    #1087);
   - a push that succeeds is unaffected whatever `ok` says.
+
+sync-method merge pushes plainly, with no lease: a "[rejected]"
+non-fast-forward is its branch race (wc_sync_from_main.py push-race), and
+the warning names a plain push, never a force-with-lease one. Its
+"[remote rejected]" refusal fails like rebase mode's.
 
 This harness EXECUTES the shipped publish step (wc_shell_harness.run_step)
 inside a real clone of a real local bare remote. A race is the branch
@@ -74,8 +83,15 @@ def commit(cwd, name):
     return git(cwd, "rev-parse", "HEAD")
 
 
-def run(script, moved, credential_ok, declined=False):
-    """-> (rc, output, summary, origin tip, local rebased sha, mover's sha)."""
+HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wc_sync_from_main.py")
+
+
+def run(script, moved, credential_ok, declined=False, method=""):
+    """-> (rc, output, summary, origin tip, local rebased sha, mover's sha).
+
+    method "merge" runs the sync-method merge arm: the local commit is a
+    descendant of the remote head (a plain push fast-forwards), and the
+    step reads wc_sync_from_main.py from the pipeline checkout."""
     root = tempfile.mkdtemp(prefix="wc-rebase-publish-")
     try:
         origin = os.path.join(root, "origin.git")
@@ -91,6 +107,10 @@ def run(script, moved, credential_ok, declined=False):
         git(root, "clone", "-q", "file://" + origin, work)
         git(work, "checkout", "-q", BRANCH)
         rebased = commit(work, "rebased")
+        if method == "merge":
+            scripts = os.path.join(work, ".wing-commander-pipeline", ".github", "scripts")
+            os.makedirs(scripts)
+            shutil.copy(HELPER, scripts)
         mover_sha = ""
         if moved:
             mover = os.path.join(root, "mover")
@@ -107,7 +127,8 @@ def run(script, moved, credential_ok, declined=False):
         os.makedirs(runner_temp)
         env = {"SLUG": BRANCH.split("/", 1)[1], "ISSUE": "", "GH_TOKEN": "t",
                "SPEC_PREFIX": "spec/", "CREDENTIAL_OK": credential_ok,
-               "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+               "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+               "SYNC_METHOD": method}
         rc, out, _outputs, summary = run_step(BASH, script, work, env, runner_temp)
         tip = git(origin, "rev-parse", BRANCH)
         return rc, out, summary, tip, rebased, mover_sha
@@ -151,8 +172,38 @@ def suite(script, quiet=False):
        "rc={0}\n{1}".format(rc, out))
     rc, out, summary, tip, rebased, mover = run(script, moved=False, credential_ok="true",
                                                 declined=True)
-    ck("a non-lease refusal with a good credential is still tolerated",
-       rc == 0 and "branch moved since checkout" in out, "rc={0}\n{1}".format(rc, out))
+    ck("a non-lease refusal with a good credential fails as not a branch race (#889)",
+       rc != 0 and tip != rebased and "::error::" in out and "not a branch race" in summary
+       and "branch moved since checkout" not in out,
+       "rc={0}\n{1}".format(rc, out))
+    rc, out, summary, tip, rebased, mover = run(script, moved=False, credential_ok="",
+                                                declined=True)
+    ck("a non-lease refusal after a clean rebase fails the same way (#889)",
+       rc != 0 and tip != rebased and "::error::" in out and "branch moved since checkout" not in out,
+       "rc={0}\n{1}".format(rc, out))
+    # sync-method merge: a plain push, so no lease.
+    rc, out, summary, tip, rebased, _ = run(script, moved=False, credential_ok="true",
+                                            method="merge")
+    ck("merge mode: an unrefused plain push publishes the sync commit",
+       rc == 0 and tip == rebased and "pushed sync commit" in summary,
+       "rc={0} tip={1} rebased={2}\n{3}".format(rc, tip, rebased, out))
+    rc, out, summary, tip, rebased, mover = run(script, moved=True, credential_ok="true",
+                                                method="merge")
+    ck("merge mode: a non-fast-forward rejection is the tolerated race, named as a plain push (#889)",
+       rc == 0 and tip == mover and "branch moved since checkout" in out and "::error::" not in out
+       and "plain push rejected" in out and "force-with-lease" not in out,
+       "rc={0} tip={1}\n{2}".format(rc, tip, out))
+    rc, out, summary, tip, rebased, mover = run(script, moved=False, credential_ok="true",
+                                                declined=True, method="merge")
+    ck("merge mode: a [remote rejected] refusal with a good credential fails, not skipped (#889)",
+       rc != 0 and tip != rebased and "::error::" in out and "branch moved since checkout" not in out,
+       "rc={0}\n{1}".format(rc, out))
+    rc, out, summary, tip, rebased, mover = run(script, moved=False, credential_ok="false",
+                                                declined=True, method="merge")
+    ck("merge mode: a [remote rejected] refusal after a failed credential names the credential",
+       rc != 0 and "credential" in out and "not a branch race" in out
+       and "branch moved since checkout" not in out,
+       "rc={0}\n{1}".format(rc, out))
     return failed
 
 
@@ -163,7 +214,13 @@ MUTATIONS = (
     ("a lease refusal blamed on the credential",
      ' && ! grep -q \'(stale info)\' "$RUNNER_TEMP/push-err.txt"; then', '; then'),
     ("the credential arm left non-fatal",
-     '  } >> "$GITHUB_STEP_SUMMARY"\n  exit 1\nelse\n', '  } >> "$GITHUB_STEP_SUMMARY"\nelse\n'),
+     '  } >> "$GITHUB_STEP_SUMMARY"\n  exit 1\nelif grep', '  } >> "$GITHUB_STEP_SUMMARY"\nelif grep'),
+    ("every refusal skipped as the branch race (#889)",
+     "elif grep -q '(stale info)' \"$RUNNER_TEMP/push-err.txt\"; then", "elif true; then"),
+    ("the not-a-race arm left non-fatal",
+     '  } >> "$GITHUB_STEP_SUMMARY"\n  exit 1\nfi', '  } >> "$GITHUB_STEP_SUMMARY"\nfi'),
+    ("merge mode warned as a force-with-lease push",
+     'how="plain push rejected as not a fast-forward"', 'how="force-with-lease push rejected"'),
 )
 
 

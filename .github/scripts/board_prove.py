@@ -202,6 +202,25 @@ def _resolve_script_imports(text):
     return resolved
 
 
+# One parse per distinct workflow text per process: the proof list scans the
+# `.github` tree of every merge in its 30-day window, and a merge changes
+# one or two of ~50 workflow files, so the rest were re-parsed, unchanged,
+# once per merge (about 9 s of a 12 s tree with the pure-Python loader). The parse is a pure function of
+# the text; a text that does not parse is remembered as None. Callers treat
+# the returned document as read-only.
+_YAML_DOCS = {}
+
+
+def _yaml_doc(text):
+    """`yaml.safe_load(text) or {}`, memoised by text; None when it does not parse."""
+    if text not in _YAML_DOCS:
+        try:
+            _YAML_DOCS[text] = yaml.safe_load(text) or {}
+        except yaml.YAMLError:
+            _YAML_DOCS[text] = None
+    return _YAML_DOCS[text]
+
+
 def _script_import_graph():
     """research.md D5, T046: `{module_path: set(imported_module_paths)}`
     for every `.github/scripts/board_*.py` file's own top-level imports --
@@ -272,9 +291,8 @@ def scan_dispatchable_and_uses_graph(workflows_dir):
         path = "{0}/{1}".format(workflows_dir, name)
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
-        try:
-            doc = yaml.safe_load(text) or {}
-        except yaml.YAMLError:
+        doc = _yaml_doc(text)
+        if doc is None:
             continue
         # PyYAML resolves the bare key `on:` to the boolean True.
         triggers = doc.get("on", doc.get(True)) or {}
@@ -424,7 +442,11 @@ def _mentions(text, changed_path):
     """A literal mention is the whole path, never a prefix or suffix of a
     longer one (#889, the same rule WORKFLOW_REF_RE keeps since #1161):
     `foo.py` is not mentioned by `foo.py.bak`, `xfoo.py` or `foo.py/x`; a
-    sentence-ending `.` after it is still a mention."""
+    sentence-ending `.` after it is still a mention. A text without the
+    path as a substring cannot match, and most texts lack it: the substring
+    test first skips the regex for them (it was 1.2 s of a proof-list tree)."""
+    if changed_path not in text:
+        return False
     return re.search(r"(?<![\w-])" + re.escape(changed_path)
                      + r"(?![\w-]|[./][\w-])", text) is not None
 
@@ -452,13 +474,15 @@ def reaching_workflows(changed_paths, uses_graph):
 def workflow_triggers(path):
     """The `on:` map of the workflow at `path` ({name: config})."""
     with open(path, encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh) or {}
+        doc = _yaml_doc(fh.read())
+    if doc is None:
+        raise yaml.YAMLError("{0} does not parse".format(path))
     on = doc.get("on", doc.get(True)) or {}
     if isinstance(on, str):
         return {on: None}
     if isinstance(on, list):
         return {name: None for name in on}
-    return on
+    return dict(on) if isinstance(on, dict) else on
 
 
 def runs_of_its_own(path):

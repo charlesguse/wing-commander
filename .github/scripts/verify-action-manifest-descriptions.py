@@ -99,13 +99,13 @@ def self_test():
     for label, source, expect_failure in (
             ("clean manifest passes", CLEAN, False),
             ("the #261 shape is caught", TEMPLATED, True)):
-        root = tempfile.mkdtemp(prefix="wc-gate37-")
-        adir = os.path.join(root, ".github", "actions", "fixture")
-        os.makedirs(adir)
-        with io.open(os.path.join(adir, "action.yml"), "w",
-                     encoding="utf-8", newline="\n") as fh:
-            fh.write(source)
-        failures, seen = scan(root)
+        with tempfile.TemporaryDirectory(prefix="wc-gate37-") as root:
+            adir = os.path.join(root, ".github", "actions", "fixture")
+            os.makedirs(adir)
+            with io.open(os.path.join(adir, "action.yml"), "w",
+                         encoding="utf-8", newline="\n") as fh:
+                fh.write(source)
+            failures, seen = scan(root)
         if seen != 1:
             bad += 1
             print(f"[FAIL] {label}: scanned {seen} manifests, expected 1 - "

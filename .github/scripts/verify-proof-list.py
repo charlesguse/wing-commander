@@ -880,6 +880,169 @@ def check_trees():
     return problems
 
 
+def check_budget():
+    """The build fails with its own one line before the job's timeout cancels
+    it silently: every git/gh call waits at most CALL_TIMEOUT, never past the
+    build's budget, and a build past its budget fails at its next call."""
+    import time
+    problems = []
+    saved = pl.CALL_TIMEOUT
+    slow = [sys.executable, "-c", "import time; time.sleep(10)"]
+    try:
+        pl.CALL_TIMEOUT = 1
+        began = time.monotonic()
+        try:
+            pl._run(slow)
+            problems.append("budget: a call that never answers was waited for to the end")
+        except pl.ReadError as exc:
+            if "gave no answer within 1 s" not in str(exc):
+                problems.append("budget: a hung call failed with {0!r}".format(str(exc)[:160]))
+        if time.monotonic() - began > 5:
+            problems.append("budget: a hung call was not cut off at CALL_TIMEOUT")
+    finally:
+        pl.CALL_TIMEOUT = saved
+    try:
+        pl.start_budget(0)
+        for label, act in (("_run", lambda: pl._run(["git", "--version"])),
+                           ("is_ancestor", lambda: pl.is_ancestor("HEAD", "HEAD")),
+                           ("commit_present", lambda: pl.commit_present("HEAD")),
+                           ("tree_reaching", lambda: pl.tree_reaching("HEAD", []))):
+            try:
+                act()
+                problems.append("budget: {0} ran after the build's budget was spent".format(label))
+            except pl.ReadError as exc:
+                if "ran past its 23-minute budget" not in str(exc):
+                    problems.append("budget: {0} failed with {1!r}".format(label, str(exc)[:160]))
+        pl.start_budget(2)
+        began = time.monotonic()
+        try:
+            pl._run(slow)
+            problems.append("budget: a call outlived the build's budget")
+        except pl.ReadError as exc:
+            if "ran past its 23-minute budget during" not in str(exc):
+                problems.append("budget: a call cut short by the budget failed with {0!r}".format(str(exc)[:160]))
+        if time.monotonic() - began > 5:
+            problems.append("budget: a call was allowed CALL_TIMEOUT though the budget had less left")
+    finally:
+        pl.start_budget(None)
+    import contextlib
+    import io
+    saved_collect, saved_start = pl.collect, pl.start_budget
+    started = []
+    try:
+        pl.start_budget = lambda seconds=None: started.append(True)
+        pl.collect = lambda *a, **k: (_ for _ in ()).throw(pl.ReadError("stop"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            pl.main(["build", "--repository", "own/repo", "--out", os.devnull])
+        if not started:
+            problems.append("budget: `build` does not start the budget")
+    finally:
+        pl.collect, pl.start_budget = saved_collect, saved_start
+    return problems
+
+
+def check_tree_cost():
+    """A merge's tree is scanned once per merge in the window (87 at the
+    2026-11-26 timeouts), so its cost bounds the build: an unchanged
+    workflow text is parsed once per build, a path absent from a text never
+    reaches the mention regex, and the archive leaves out the tests and
+    fixtures the scan never reads."""
+    import board_prove as bp
+    problems = []
+    parses = []
+    real = bp.yaml.safe_load
+
+    def counting(text, *a, **k):
+        parses.append(1)
+        return real(text, *a, **k)
+    bp.yaml.safe_load = counting
+    previous = os.getcwd()
+    try:
+        os.chdir(os.path.join(HERE, "..", ".."))
+        first = bp.scan_dispatchable_and_uses_graph(bp.WORKFLOWS_DIR)
+        before = len(parses)
+        again = bp.scan_dispatchable_and_uses_graph(bp.WORKFLOWS_DIR)
+        bp.workflow_triggers(".github/workflows/wing-commander-proof-list.yml")
+        if len(parses) != before:
+            problems.append("tree cost: {0} unchanged workflow texts were parsed again".format(
+                len(parses) - before))
+        if first != again:
+            problems.append("tree cost: a second scan of the same tree differs from the first")
+    finally:
+        bp.yaml.safe_load = real
+        os.chdir(previous)
+
+    class Counting:
+        def __init__(self):
+            self.searches = 0
+
+        def __getattr__(self, name):
+            return getattr(real_re, name)
+
+        def search(self, *a, **k):
+            self.searches += 1
+            return real_re.search(*a, **k)
+    real_re, shim = bp.re, Counting()
+    bp.re = shim
+    try:
+        absent = bp._mentions("x" * 1000, ".github/scripts/foo.py")
+        present = bp._mentions("run: .github/scripts/foo.py\n", ".github/scripts/foo.py")
+        longer = bp._mentions("run: .github/scripts/foo.py.bak\n", ".github/scripts/foo.py")
+    finally:
+        bp.re = real_re
+    if absent or not present or longer:
+        problems.append("tree cost: _mentions answers changed ({0}, {1}, {2})".format(absent, present, longer))
+    if shim.searches != 2:
+        problems.append("tree cost: _mentions ran {0} regex searches for 3 texts, 1 lacking the path; "
+                        "expected 2".format(shim.searches))
+
+    import subprocess
+    import tarfile
+    import io
+    out = subprocess.run(["git", "archive", "HEAD", "--"] + list(pl.TREE_PATHSPECS), capture_output=True,
+                         cwd=os.path.join(HERE, "..", ".."))
+    if out.returncode != 0:
+        problems.append("tree cost: the scan's pathspecs do not archive: {0}".format(out.stderr[:200]))
+        return problems
+    with tarfile.open(fileobj=io.BytesIO(out.stdout)) as tar:
+        names = tar.getnames()
+    if any(n.startswith(".github/scripts/") and n.count("/") > 2 for n in names):
+        problems.append("tree cost: the archive carries .github/scripts subdirectories (tests, fixtures)")
+    for want in (".github/workflows/auto-release.yml", ".github/scripts/board_prove.py",
+                 ".github/actions/wing-commander-watch-guard/action.yml"):
+        if want not in names:
+            problems.append("tree cost: the archive lacks {0}, which the scan reads".format(want))
+    return problems
+
+
+def check_run_list_cost():
+    """A run list's count is read as a one-run page, never a full page that
+    the paged read then fetches again: six workflows pass the 1,000-run cap
+    and are read by day, one count per day each (2026-11-26)."""
+    problems = []
+
+    def api(path, paginate):
+        if paginate:
+            return []
+        # 1,500 runs over the window sends the read into day slices.
+        return {"total_count": 1500 if "created=%3E%3D" in path else 40, "workflow_runs": []}
+    with _FakeReads(api=api) as fake:
+        col = pl.Collector("own/repo", "2026-11-10T12:00:00Z")
+        col.workflow_runs(".github/workflows/wrap.yml")
+    counts = [c[1] for c in fake.calls if not c[2]]
+    paged = [c[1] for c in fake.calls if c[2]]
+    if not counts or not paged:
+        problems.append("run list cost: the sliced read made {0} counts and {1} paged reads".format(
+            len(counts), len(paged)))
+    wide = [q for q in counts if "per_page=1&" not in q or "per_page=100" in q]
+    if wide:
+        problems.append("run list cost: {0} of {1} counts read a full page, e.g. {2}".format(
+            len(wide), len(counts), wide[0]))
+    if any("per_page=100" not in q for q in paged):
+        problems.append("run list cost: a paged read is not at per_page=100")
+    return problems
+
+
 WRITE_CALLS = ("gh workflow run", "gh issue comment", "gh issue close", "gh issue edit", "gh pr comment",
                "gh label", "createWorkflowDispatch", "-X POST", "-X PATCH", "-X PUT", "-X DELETE",
                "--method POST", "--method PATCH", "claude-code-action", "create-github-app-token")
@@ -904,8 +1067,12 @@ def check_workflow_text(text):
     if len(jobs) != 1:
         problems.append("workflow: expected exactly one job")
     job = next(iter(jobs.values()), {})
-    if job.get("timeout-minutes") != 15:
-        problems.append("workflow: timeout-minutes is not 15")
+    if job.get("timeout-minutes") != 25:
+        problems.append("workflow: timeout-minutes is not 25")
+    elif pl.BUILD_BUDGET_SECONDS > (job["timeout-minutes"] - 1) * 60:
+        problems.append("workflow: the build's {0} s budget leaves under a minute of the {1}-minute "
+                        "timeout, so a cancel can still beat the build's own error line".format(
+                            pl.BUILD_BUDGET_SECONDS, job["timeout-minutes"]))
     steps = job.get("steps") or []
     names = [s.get("name") for s in steps]
     # #1173 round 5: checkout (pinned to the default branch), then the
@@ -1220,7 +1387,7 @@ def main():
         print("[ok] verify-proof-list: {0}".format(note))
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
                 + check_failed_reads() + check_main_errors() + check_section_file_home() + check_review_fixes(fx) + check_lifecycle_issue()
-                + check_entries() + check_closed_by_commit(fx) + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_workflow()
+                + check_entries() + check_closed_by_commit(fx) + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_budget() + check_tree_cost() + check_run_list_cost() + check_workflow()
                 + real + check_sc001_fixtures(fx) + fixtures_name_no_live_table(check_sc001_fixtures))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4

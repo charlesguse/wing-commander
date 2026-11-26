@@ -37,6 +37,13 @@ planted at its name allowed to block the reader), and that no other harness
 script carries a shell argv of its own (the mapping's single home is
 wc_shell_harness).
 
+It also holds the harness's temp-directory hygiene (#889: a day of local
+gate runs left ~555,000 entries in /tmp): scratch_dir() directories are
+gone once the process exits, even through sys.exit(1); the self-tests that
+leaked one directory per fixture leave TMPDIR empty; and the harnesses
+whose kept paths now come from scratch_dir() do not go back to a bare
+mkdtemp() for them.
+
 Usage: python3 .github/scripts/verify-shell-harness-parity.py
 Requires: bash. See wc_shell_harness.py for running this on Windows.
 """
@@ -471,6 +478,76 @@ def case_single_home():
                            f"{line.strip()}")
 
 
+def case_scratch_dirs_removed_at_exit():
+    """scratch_dir() hands out a live directory and removes it at exit,
+    including an exit through sys.exit(non-zero)."""
+    case = "scratch_dir() is removed at exit"
+    import subprocess
+    with tempfile.TemporaryDirectory() as tmp:
+        code = ("import os, sys; sys.path.insert(0, sys.argv[1]); "
+                "import wc_shell_harness as h; "
+                "a = h.scratch_dir('wc-a-'); b = h.scratch_dir(); "
+                "open(os.path.join(a, 'f'), 'w').close(); "
+                "print(os.path.isdir(a) and os.path.isdir(b)); sys.exit(3)")
+        proc = subprocess.run([sys.executable, "-c", code, HERE],
+                              env=dict(os.environ, TMPDIR=tmp),
+                              capture_output=True, text=True, timeout=60)
+        if proc.returncode != 3 or proc.stdout.strip() != "True":
+            fail(case, f"rc={proc.returncode} out={proc.stdout!r} "
+                       f"err={proc.stderr[-300:]!r}")
+        left = os.listdir(tmp)
+        if left:
+            fail(case, f"left behind in TMPDIR: {sorted(left)}")
+
+
+# Self-tests that once left a directory per fixture in /tmp (#889); each is
+# a fraction of a second, so it is run here under an empty TMPDIR.
+LEAK_FREE_SELF_TESTS = ("verify-action-manifest-descriptions.py",
+                        "verify-rate-limited-exemption.py")
+# Harnesses that keep a temp path past the case that made it, so take it
+# from scratch_dir(): {file: the prefixes it passes scratch_dir()}.
+SCRATCH_DIR_USERS = {
+    "verify-agent-verdict.py": ("wc-verdict-", "wc-verdict-rt-",
+                                "wc-verdict-inj-", "wc-verdict-ctr-"),
+    "verify-metrics-turn-accounting.py": ("wc-metrics-inj-",),
+    "verify-watchdog-resolved-stage-consumers.py": ("wc-gh-stub-",),
+    "verify-board-loop-readmission.py": ("wc-gh-stub-",),
+    "verify-post-review-comment-composite.py": (
+        "wc-post-review-comment-", "wc-post-review-comment-bin-",
+        "wc-post-review-comment-selftest-"),
+}
+
+
+def case_self_tests_leave_tmpdir_empty():
+    import subprocess
+    for script in LEAK_FREE_SELF_TESTS:
+        case = f"{script} --self-test leaves TMPDIR empty"
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = subprocess.run(
+                [sys.executable, os.path.join(HERE, script), "--self-test"],
+                cwd=ROOT, env=dict(os.environ, TMPDIR=tmp),
+                capture_output=True, text=True, timeout=300)
+            if proc.returncode != 0:
+                fail(case, f"self-test failed (rc={proc.returncode}): "
+                           f"{(proc.stdout + proc.stderr)[-300:]}")
+            left = os.listdir(tmp)
+            if left:
+                fail(case, f"left behind: {sorted(left)}")
+
+
+def case_kept_paths_use_scratch_dir():
+    for script, prefixes in SCRATCH_DIR_USERS.items():
+        with open(os.path.join(HERE, script), encoding="utf-8") as fh:
+            text = fh.read()
+        for prefix in prefixes:
+            case = f"{script} takes its {prefix} directories from scratch_dir()"
+            bare = re.search(r"mkdtemp\(\s*prefix\s*=\s*[\"']"
+                             + re.escape(prefix) + r"[\"']", text)
+            if bare or f'scratch_dir("{prefix}")' not in text:
+                fail(case, "a bare tempfile.mkdtemp() for it is never "
+                           "removed; use wc_shell_harness.scratch_dir()")
+
+
 def main():
     harness.use_utf8_stdout()
     bash = harness.resolve_bash()
@@ -491,10 +568,14 @@ def main():
     case_foreign_cache_ignored()
     case_cache_fifo_does_not_hang()
     case_single_home()
+    case_scratch_dirs_removed_at_exit()
+    case_self_tests_leave_tmpdir_empty()
+    case_kept_paths_use_scratch_dir()
     if failures:
         print(f"FAIL: {len(failures)} failure(s).")
         return 1
-    print("ok: run_step reproduces each step's production shell.")
+    print("ok: run_step reproduces each step's production shell, and "
+          "harness temp directories are removed.")
     return 0
 
 

@@ -1328,9 +1328,10 @@ jobs:
       # The single shared publish path for a clean rebase and a scope-verified
       # AI resolution. The lease compares against the branch tip recorded at
       # checkout, so a push rejected because the branch moved meanwhile is
-      # skipped silently, with no lifecycle comment. Any other refusal after
-      # a failed post-agent credential fails the step instead (#661). On
-      # success, drop any stale rebase:blocked label (auto-recovery).
+      # skipped silently, with no lifecycle comment. Any other refusal fails
+      # the step instead, naming the credential when the post-agent one
+      # failed (#661). On success, drop any stale rebase:blocked label
+      # (auto-recovery).
       #
       # `!cancelled()` rather than `always()`: the status function is here to
       # stop a scope-verified result being dropped by an unrelated earlier
@@ -1401,12 +1402,31 @@ jobs:
               sed 's/^/    /' "$RUNNER_TEMP/push-err.txt"
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
-          else
-            echo "::warning::${SPEC_PREFIX}$SLUG: force-with-lease push rejected (branch moved since checkout) — skipping this run, no comment."
+          elif grep -q '(stale info)' "$RUNNER_TEMP/push-err.txt"; then
+            # The branch race, the only refusal the next run clears by
+            # itself: git's lease rejection, or (sync-method merge) the
+            # "(stale info)" push_branch echoes for a "[rejected]" plain push.
+            if [ "${SYNC_METHOD:-}" = merge ]; then
+              how="plain push rejected as not a fast-forward"
+            else
+              how="force-with-lease push rejected"
+            fi
+            echo "::warning::${SPEC_PREFIX}$SLUG: ${how} (branch moved since checkout) — skipping this run, no comment."
             {
               echo "${SPEC_PREFIX}$SLUG: push rejected — the branch moved since checkout; skipping silently, the next run retries."
               sed 's/^/    /' "$RUNNER_TEMP/push-err.txt"
             } >> "$GITHUB_STEP_SUMMARY"
+          else
+            # Not the race: a "[remote rejected]" refusal (branch
+            # protection, a hook, a permission) or a push that never reached
+            # the server. Every later run would meet it again, so it fails
+            # loudly instead of being skipped as a moved branch.
+            echo "::error::${SPEC_PREFIX}$SLUG: push refused, not a branch race (no stale-info rejection): the server or the network refused it, and the next run would meet the same refusal; the result was not published."
+            {
+              echo "${SPEC_PREFIX}$SLUG: push refused, not a branch race; not skipped."
+              sed 's/^/    /' "$RUNNER_TEMP/push-err.txt"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
 
       # FR-004: names the specific post-agent step that failed, for

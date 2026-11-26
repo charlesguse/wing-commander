@@ -43,7 +43,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (  # noqa: E402
-    ensure_jq, find_step, resolve_bash, run_step, use_utf8_stdout)
+    ensure_jq, find_step, resolve_bash, run_step, scratch_dir, use_utf8_stdout)
 from wc_gha_expr import evaluate, truthy  # noqa: E402
 
 WATCHDOG = ".github/workflows/watchdog.yml"
@@ -79,7 +79,7 @@ failures = []
 
 
 def _make_gh_stub_bindir():
-    d = tempfile.mkdtemp(prefix="wc-gh-stub-")
+    d = scratch_dir("wc-gh-stub-")
     path = os.path.join(d, "gh")
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(GH_STUB)
