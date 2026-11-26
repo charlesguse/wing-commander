@@ -729,6 +729,13 @@ WIRING_CASES = [
      {"agent-startup-check.yml": stage(
          job("startup-agent", if_expr="!cancelled() && inputs.container-image != ''"))},
      True, ("'startup-agent'", "must directly depend")),
+
+    ("a start-up job with neither the image check in needs: nor a status "
+     "function is named as a start-up job, not as status-guarded",
+     {"agent-startup-check.yml": stage(
+         job("classify-startup", needs="startup-agent",
+             if_expr="inputs.container-image != ''"))},
+     True, ("'classify-startup'", "spec 112 start-up job", "must directly depend")),
 ]
 
 DRIFT_CASES = [

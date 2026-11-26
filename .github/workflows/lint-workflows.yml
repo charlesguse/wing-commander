@@ -2109,7 +2109,9 @@ jobs:
                       why = ("is an entry job (no other in-stage predecessor)" if is_entry
                             else "is guarded by a status-check function "
                                  "(always()/success()/failure()/cancelled()), which "
-                                 "defeats ordinary needs: skip-propagation")
+                                 "defeats ordinary needs: skip-propagation" if guarded
+                            else "is a spec 112 start-up job, which runs beside "
+                                 "the image check rather than behind it")
                       print(f"::error file={f}::job {jname!r} {why} and must directly "
                             f"depend on verify-image-prerequisites, but its needs: "
                             f"does not name it. A real image-check failure would "
