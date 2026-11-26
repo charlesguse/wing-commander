@@ -21,13 +21,12 @@ import os
 import re
 import stat
 import sys
-import tempfile
 
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (find_step, resolve_bash, run_step,  # noqa: E402
-                               use_utf8_stdout)
+                               scratch_dir, use_utf8_stdout)
 
 ACTION = ".github/actions/wing-commander-post-review-comment/action.yml"
 STEP_NAME = "Post the review on the PR"
@@ -56,8 +55,8 @@ def run_composite_step(root=".", attribution=""):
     step = find_step(os.path.join(root, ACTION), STEP_NAME)
     run = step.get("run") or ""
 
-    workdir = tempfile.mkdtemp(prefix="wc-post-review-comment-")
-    bindir = tempfile.mkdtemp(prefix="wc-post-review-comment-bin-")
+    workdir = scratch_dir("wc-post-review-comment-")
+    bindir = scratch_dir("wc-post-review-comment-bin-")
     _write_gh_stub(bindir)
     log_path = os.path.join(workdir, "gh-call.log")
 
@@ -185,7 +184,7 @@ def self_test():
             failures += 1
             print("FAIL {0} {1}".format(name, detail))
 
-    tmp = tempfile.mkdtemp(prefix="wc-post-review-comment-selftest-")
+    tmp = scratch_dir("wc-post-review-comment-selftest-")
 
     # Fixture: calls the composite, no inline call.
     clean_dir = os.path.join(tmp, "clean")

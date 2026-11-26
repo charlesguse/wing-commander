@@ -15,7 +15,8 @@ from the workflow, in merge mode against a fixture clone: a `decide` that
 fails or prints neither word must end at outcome=error with the branch
 untouched, never at an empty sync commit, and a real `merge` must
 still land its sync commit (FR-016). Each MUTATION disables one verify-scope guard in the helper
-source and asserts the suite then fails (FR-016). It also pins the wrapper
+source and asserts the suite then fails (FR-016), running only the git-fixture cases it names,
+so a lint run does not rebuild every fixture repository once per mutation. It also pins the wrapper
 wiring: the stage reads no `vars.*`; the wrapper feeds the switch.
 
 Usage: python3 .github/scripts/verify-sync-from-main.py
@@ -38,6 +39,8 @@ WRAPPER = ".github/workflows/wing-commander-rebase.yml"
 SWITCH = "sync-method: ${{ vars.WING_COMMANDER_SPEC_BRANCH_SYNC || 'rebase' }}"
 
 results = []
+# (case tag, ran) for every git-fixture case suite() reached, in order.
+CASES_RUN = []
 
 
 def check(name, ok, detail="", quiet=False):
@@ -118,10 +121,24 @@ def sync_commit(work):
     sh(work, "git", "commit", "-q", "--allow-empty", "-m", "sync: merge main into spec/x")
 
 
-def suite(src, quiet=False):
-    """Run every case against helper source `src`; return the failure names."""
+def suite(src, quiet=False, only=None):
+    """Run the cases against helper source `src`; return the failure names.
+
+    `only` names the git-fixture cases to run (every case when None); the
+    cheap cases with no fixture repository always run. A mutation runs only
+    the fixtures it targets (MUTATIONS), so the gate builds each fixture
+    repository once for the suite and once per mutation that needs it,
+    not fifteen times over (#889)."""
     start = len(results)
     q = quiet
+
+    def case(tag):
+        """Yield one fresh temp dir if case `tag` is selected, else nothing:
+        `for tmp in case(tag):` runs its body once or not at all."""
+        CASES_RUN.append((tag, only is None or tag in only))
+        if only is None or tag in only:
+            with tempfile.TemporaryDirectory() as tmp:
+                yield tmp
 
     # Every git-spawning call path carries the bare-repo allowance, appended to
     # (never replacing) config the environment already passes.
@@ -151,7 +168,7 @@ def suite(src, quiet=False):
         ok = r.returncode == rc and (rc == 1 or r.stdout.strip() == "HEAD:refs/heads/" + br)
         check("publish-refspec {0!r}".format(br), ok, r.stdout + r.stderr, q)
 
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("decide-current"):
         # decide: current, behind, same-tree.
         _, work = make_repo(tmp)
         main_sha = head(work, "origin/main")
@@ -163,7 +180,7 @@ def suite(src, quiet=False):
         r = helper(src, work, "decide", "--main", newer)
         check("decide: main moved again after a sync -> merge", r.stdout.strip() == "merge", r.stdout + r.stderr, q)
 
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("clean-merge"):
         origin, work = make_repo(tmp)
         old = head(work)
         main_sha = advance_main(work, "m.txt", "from main\n")
@@ -180,7 +197,7 @@ def suite(src, quiet=False):
         check("publish: plain push is a fast-forward", r.returncode == 0, r.stderr, q)
         check("publish: remote tip is the sync commit", head(origin, "refs/heads/spec/x") == head(work), "", q)
 
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("same-tree"):
         # same-tree: main gained a cherry-pick of branch work.
         _, work = make_repo(tmp)
         old = head(work)
@@ -197,7 +214,7 @@ def suite(src, quiet=False):
         parents = sh(work, "git", "rev-list", "--parents", "-n", "1", "HEAD").stdout.split()[1:]
         check("same-tree merge still creates the sync commit", parents == [old, main_sha], str(parents), q)
 
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("push-moved"):
         # remote head moved after checkout: plain push rejected, remote untouched.
         origin, work = make_repo(tmp)
         advance_main(work, "m.txt", "from main\n")
@@ -247,18 +264,18 @@ def suite(src, quiet=False):
             write(os.path.join(work, name), text)
         sh(work, "git", "add", "."), sh(work, "git", "commit", "-q", "-m", "sync: merge main into spec/x")
 
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("in-scope"):
         w, b, m, t, mf = conflict_case(tmp)
         resolve(w)
         r = verify(w, b, m, t, mf)
         check("verify-scope: in-scope resolution passes", r.returncode == 0, r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("outside-manifest"):
         w, b, m, t, mf = conflict_case(tmp)
         resolve(w, {"b.txt": "tampered\n"})
         r = verify(w, b, m, t, mf)
         check("verify-scope: path outside the manifest fails",
               r.returncode == 1 and "b.txt" in r.stderr, r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("manifest-widened"):
         # The manifest file is agent-writable: listing a non-conflicting path
         # there must not let the resolution change it.
         w, b, m, t, mf = conflict_case(tmp)
@@ -267,7 +284,7 @@ def suite(src, quiet=False):
         r = verify(w, b, m, t, mf)
         check("verify-scope: a manifest widened past git's conflict list still fails",
               r.returncode == 1 and "b.txt" in r.stderr, r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("binary"):
         # A conflicted binary file resolved cleanly passes, with no traceback.
         _, w = make_repo(tmp)
         with open(os.path.join(w, "img.bin"), "wb") as fh:
@@ -292,13 +309,13 @@ def suite(src, quiet=False):
         r = verify(w, b, m, t, mf)
         check("verify-scope: a resolved binary conflict passes, no traceback",
               r.returncode == 0 and "Traceback" not in r.stderr, r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("marker"):
         w, b, m, t, mf = conflict_case(tmp)
         resolve(w, a="one\n<<<<<<< HEAD\nBOTH\n=======\nx\n>>>>>>> main\nthree\n")
         r = verify(w, b, m, t, mf)
         check("verify-scope: leftover marker fails",
               r.returncode == 1 and "marker" in r.stderr, r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("extra-commit"):
         w, b, m, t, mf = conflict_case(tmp)
         resolve(w)
         write(os.path.join(w, "extra.txt"), "x\n")
@@ -306,38 +323,38 @@ def suite(src, quiet=False):
         r = verify(w, b, m, t, mf)
         check("verify-scope: extra commit (wrong parents) fails",
               r.returncode == 1 and "parents" in r.stderr, r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("unhealthy"):
         w, b, m, t, mf = conflict_case(tmp)
         resolve(w)
         r = verify(w, b, m, t, mf, verdict="exhausted")
         check("verify-scope: unhealthy verdict fails",
               r.returncode == 1 and "verdict" in r.stderr, r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("outside-project"):
         w, b, m, t, mf = conflict_case(tmp)
         resolve(w)
         r = verify(w, b, m, t, mf, project="proj")
         check("verify-scope: manifest entries outside the project are not admitted",
               r.returncode == 1 and "a.txt" in r.stderr, r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("setext"):
         w, b, m, t, mf = conflict_case(tmp)
         resolve(w, a="Title\n=======\nthree\n")
         r = verify(w, b, m, t, mf)
         check("verify-scope: a bare ======= line (setext underline) passes",
               r.returncode == 0, r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("empty-tree"):
         w, b, m, t, mf = conflict_case(tmp)
         resolve(w)
         r = verify(w, b, m, "", mf)
         check("verify-scope: an empty conflicted tree fails with a reason, no traceback",
               r.returncode == 1 and "conflicted tree" in r.stderr and "Traceback" not in r.stderr,
               r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("bad-oid"):
         w, b, m, t, mf = conflict_case(tmp)
         resolve(w)
         r = verify(w, b, m, "0" * 40, mf)
         check("verify-scope: a bad tree OID fails with a reason, no traceback",
               r.returncode == 1 and "Traceback" not in r.stderr, r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("quoted-marker"):
         # A conflicted name git C-quotes even with core.quotepath=off (it
         # holds a `"`): the marker scan must still read its blob.
         _, w = make_repo(tmp)
@@ -355,7 +372,7 @@ def suite(src, quiet=False):
         r = verify(w, b, m, t, mf)
         check("verify-scope: leftover marker in a C-quoted conflicted name fails",
               r.returncode == 1 and "marker" in r.stderr, r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("quoted-in-project"):
         # A C-quoted conflicted name inside a subfolder project is in scope:
         # the project test reads the real name, not the leading '"'.
         _, w = make_repo(tmp)
@@ -373,7 +390,7 @@ def suite(src, quiet=False):
         r = verify(w, b, m, t, mf, project="proj")
         check("verify-scope: a C-quoted conflicted name inside the project passes",
               r.returncode == 0, r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("rename"):
         # Rename detection pairs a deleted out-of-scope file with an allowed
         # path the conflicted tree lacks and prints only the allowed one.
         _, w = make_repo(tmp)
@@ -398,7 +415,7 @@ def suite(src, quiet=False):
         r = verify(w, b, m, t_no_a, mf)
         check("verify-scope: an out-of-scope deletion hidden by rename pairing fails",
               r.returncode == 1 and "b.txt" in r.stderr, r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("modify-delete"):
         # A subfolder lifecycle: a modify/delete conflict outside the project
         # folder leaves the modified file unmarked in both the conflicted tree
         # and the working tree, so `git add -A` keeps it and the tree compare
@@ -434,7 +451,7 @@ def suite(src, quiet=False):
         check("verify-scope: an unmarked out-of-project modify/delete conflict fails",
               r.returncode == 1 and "b.txt" in r.stderr and "outside the admitted scope" in r.stderr,
               r.stderr, q)
-    with tempfile.TemporaryDirectory() as tmp:
+    for tmp in case("file-dir"):
         # File/directory conflicts, labelled the way rebase.yml labels them
         # (`origin/main` and HEAD): the branch's file x meets main's x/y and
         # moves to x~HEAD; main's file y meets the branch's y/z and moves to
@@ -564,6 +581,34 @@ def attempt_fail_closed(stage):
                     r.returncode, got, head(work) != before, r.stderr[-400:]))
 
 
+# Each MUTATION disables one guard in the helper: (name, helper text, its
+# replacement, the git-fixture cases that must catch it). Only those cases
+# run under the mutation; the cheap fixture-free cases always run, so a
+# mutation they catch names no fixture case.
+MUTATIONS = (
+    ("verdict guard", 'if verdict != "healthy":', "if False:", ("unhealthy",)),
+    ("parents guard", "if parents != [before, main]:", "if False:", ("extra-commit",)),
+    ("manifest guard", "if p not in allowed:", "if False:", ("outside-manifest",)),
+    ("marker guard", "if blob.returncode == 0 and MARKER.search(blob.stdout):", "if False:",
+     ("marker", "quoted-marker")),
+    ("project narrowing", "if in_project(unquote(p), project) and p in conflicts}", "if p in conflicts}",
+     ("outside-project",)),
+    ("conflict bound", "if in_project(unquote(p), project) and p in conflicts}",
+     "if in_project(unquote(p), project)}", ("manifest-widened",)),
+    ("quoted-name project test", "in_project(unquote(p), project)", "in_project(p, project)",
+     ("quoted-in-project",)),
+    ("raw method value", 'if argv[:1] == ["validate-method"]:', "if False:", ()),
+    ("push-race classifier", "return 0 if RACE.search(stderr_text) else 1", "return 0", ()),
+    ("force refusal", 'branch.startswith("+") or ', "", ()),
+    ("quoted-name unquote", '"HEAD:" + unquote(p)', '"HEAD:" + p', ("quoted-marker",)),
+    ("unadmitted-conflict guard", "for p in sorted(conflicts - allowed):", "for p in ():",
+     ("modify-delete",)),
+    ("rename-blind diff", '"diff", "--no-renames", "--name-only"', '"diff", "--name-only"', ("rename",)),
+    ("file/directory relabel", "return {relabel(ln, before, main, main_label) for ln", "return {ln for ln",
+     ("file-dir",)),
+)
+
+
 def main():
     with open(HELPER, encoding="utf-8") as fh:
         source = fh.read()
@@ -648,32 +693,28 @@ def main():
     check("the merge push refusal is classified by the helper, not an inline pattern",
           "push-race" in publish and "rejected\\]" not in publish, "")
 
-    mutations = (
-        ("verdict guard", 'if verdict != "healthy":', "if False:"),
-        ("parents guard", "if parents != [before, main]:", "if False:"),
-        ("manifest guard", "if p not in allowed:", "if False:"),
-        ("marker guard", "if blob.returncode == 0 and MARKER.search(blob.stdout):", "if False:"),
-        ("project narrowing", "if in_project(unquote(p), project) and p in conflicts}", "if p in conflicts}"),
-        ("conflict bound", "if in_project(unquote(p), project) and p in conflicts}",
-         "if in_project(unquote(p), project)}"),
-        ("quoted-name project test", "in_project(unquote(p), project)", "in_project(p, project)"),
-        ("raw method value", 'if argv[:1] == ["validate-method"]:', "if False:"),
-        ("push-race classifier", "return 0 if RACE.search(stderr_text) else 1", "return 0"),
-        ("force refusal", 'branch.startswith("+") or ', ""),
-        ("quoted-name unquote", '"HEAD:" + unquote(p)', '"HEAD:" + p'),
-        ("unadmitted-conflict guard", "for p in sorted(conflicts - allowed):", "for p in ():"),
-        ("rename-blind diff", '"diff", "--no-renames", "--name-only"', '"diff", "--name-only"'),
-        ("file/directory relabel", "return {relabel(ln, before, main, main_label) for ln", "return {ln for ln"),
-    )
-    for name, old, new in mutations:
+    full_cases = [tag for tag, ran in CASES_RUN if ran]
+    check("the full suite runs every git-fixture case",
+          len(full_cases) == len(set(full_cases)) and set(full_cases) >= set().union(
+              *(tags for _, _, _, tags in MUTATIONS)),
+          "cases run: {0}".format(full_cases))
+    for name, old, new, tags in MUTATIONS:
         if old not in source:
             check("mutation target present: " + name, False, "text not found in the helper")
             continue
+        unknown = set(tags) - set(full_cases)
+        if unknown:
+            check("mutation names real cases: " + name, False, "no such case: " + ", ".join(sorted(unknown)))
+            continue
+        del CASES_RUN[:]
         with tempfile.TemporaryDirectory() as tmp:
             mutated = os.path.join(tmp, "wc_sync_from_main.py")
             write(mutated, source.replace(old, new))
-            check("mutation caught: " + name, bool(suite(mutated, quiet=True)),
+            check("mutation caught: " + name, bool(suite(mutated, quiet=True, only=tags)),
                   "the suite stayed green with this guard disabled")
+        ran = sorted(tag for tag, r in CASES_RUN if r)
+        check("mutation runs only its targeted fixtures: " + name, ran == sorted(tags),
+              "ran {0}, targets {1}".format(ran, sorted(tags)))
 
     failed = [n for n, ok, _ in results if not ok]
     if failed:

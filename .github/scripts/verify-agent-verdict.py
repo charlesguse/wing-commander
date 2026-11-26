@@ -29,13 +29,12 @@ import json
 import os
 import re
 import sys
-import tempfile
 
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (  # noqa: E402
-    ensure_jq, resolve_bash, run_step, use_utf8_stdout)
+    ensure_jq, resolve_bash, run_step, scratch_dir, use_utf8_stdout)
 
 ACTION = ".github/actions/wing-commander-agent-verdict/action.yml"
 STEP_NAME = "Classify agent run verdict"
@@ -117,7 +116,7 @@ BASH = None
 
 def run_case(name, records, intended_turns="40", raw=None, with_shared=True,
              run_label="", runner_temp=None, counter=None, keep=None):
-    tmp = tempfile.mkdtemp(prefix="wc-verdict-")
+    tmp = scratch_dir("wc-verdict-")
     global LAST_TMP
     LAST_TMP = tmp
     if raw is not None:
@@ -672,7 +671,7 @@ def case_non_object_elements_skipped_on_fallback_path():
     fallback path, where no normalised copy could be written and the reads
     see the raw file. Force that path (RUNNER_TEMP unwritable) and check
     both reads still skip a bare number or string."""
-    missing = os.path.join(tempfile.mkdtemp(prefix="wc-verdict-rt-"),
+    missing = os.path.join(scratch_dir("wc-verdict-rt-"),
                            "does-not-exist")
     for case, records, verdict, needle in (
             ("fallback path: non-object elements before the result record",
@@ -718,7 +717,7 @@ def case_num_turns_newline_cannot_inject_output():
     value carrying a newline must neither reassign the verdict inside the
     step nor run a command substitution."""
     case = "string num_turns carrying a newline cannot inject an output line"
-    marker = os.path.join(tempfile.mkdtemp(prefix="wc-verdict-inj-"), "ran")
+    marker = os.path.join(scratch_dir("wc-verdict-inj-"), "ran")
     outputs = expect(case, transcript(
         main=1, num_turns=f"1\nverdict=failed\nreported=$(touch {marker})"),
         "healthy")
@@ -773,7 +772,7 @@ def case_normaliser_failure_keeps_output_lines():
         + assistant("msg_main_1") \
         + result(is_error=True, subtype="error_during_execution",
                  num_turns=2)
-    missing = os.path.join(tempfile.mkdtemp(prefix="wc-verdict-rt-"),
+    missing = os.path.join(scratch_dir("wc-verdict-rt-"),
                            "does-not-exist")
     rc, output, outputs = run_case(case, None, raw=_ndjson(recs),
                                    runner_temp=missing)
@@ -841,7 +840,7 @@ def case_keep_normalised_transcript():
             fail(case, f"normalised copies left in RUNNER_TEMP: {left}")
 
     case = "keep-normalised-transcript=true with no copy written"
-    missing = os.path.join(tempfile.mkdtemp(prefix="wc-verdict-rt-"),
+    missing = os.path.join(scratch_dir("wc-verdict-rt-"),
                            "does-not-exist")
     rc, output, outputs = run_case(case, None, raw=_ndjson(recs),
                                    runner_temp=missing, keep="true")
@@ -907,7 +906,7 @@ def case_hostile_counter_output_is_filtered():
     per-document line) proves that filter on its own: no command runs, no
     variable outside the three is reassigned, and only valid lines bind."""
     case = "hostile counter output is filtered before the eval"
-    marker = os.path.join(tempfile.mkdtemp(prefix="wc-verdict-ctr-"), "ran")
+    marker = os.path.join(scratch_dir("wc-verdict-ctr-"), "ran")
     counter = (
         "printf '%s\\n' 'main_turns=5' '0' 'sub_turns=$(touch "
         + marker + ")' 'verdict=failed' 'reported=1; touch " + marker

@@ -260,9 +260,9 @@ def _stub_gh_dir(head_ref_oid):
     headRefOid` with a fixed SHA, so a heredoc case can drive
     head_moved_since_last_review()'s own live lookup branch (T030: this
     gate must not pass vacuously by never exercising that branch at all).
-    Left for the OS to reclaim, matching this repository's other
-    throwaway-stub-dir harnesses (wc_shell_harness._shim_jq_cr)."""
-    d = tempfile.mkdtemp(prefix="wc-gh-stub-")
+    Removed when this process exits (wc_shell_harness.scratch_dir): left
+    for the OS to reclaim, one per case filled /tmp on local runs (#889)."""
+    d = wc_shell_harness.scratch_dir("wc-gh-stub-")
     path = os.path.join(d, "gh")
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("#!/bin/sh\n")

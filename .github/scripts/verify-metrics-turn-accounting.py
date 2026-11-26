@@ -66,7 +66,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (  # noqa: E402
-    ensure_jq, resolve_bash, run_step, use_utf8_stdout)
+    ensure_jq, resolve_bash, run_step, scratch_dir, use_utf8_stdout)
 
 ACTION = ".github/actions/wing-commander-metrics-summary/action.yml"
 STEP_NAME = "Render agent run metrics summary"
@@ -412,7 +412,7 @@ def _ndjson(records):
 
 def _marker():
     """A path an injected `touch` would create, outside every case's tree."""
-    return os.path.join(tempfile.mkdtemp(prefix="wc-metrics-inj-"),
+    return os.path.join(scratch_dir("wc-metrics-inj-"),
                         "ran").replace("\\", "/")
 
 

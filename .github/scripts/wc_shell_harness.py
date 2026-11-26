@@ -52,7 +52,14 @@ makes these gates runnable on a maintainer's machine, which is the difference
 between a gate that gets exercised before it is pushed and one that does not.
 
 Set WC_BASH to override the bash choice.
+
+scratch_dir() is tempfile.mkdtemp() for a harness that cannot use a `with
+TemporaryDirectory()` block (it keeps a path for a later check): the
+directory is removed when the process exits. A bare mkdtemp() is never
+removed, and a day of local gate runs once left ~555,000 entries in /tmp
+(#889).
 """
+import atexit
 import functools
 import os
 import shutil
@@ -60,6 +67,25 @@ import stat
 import subprocess
 import sys
 import tempfile
+
+
+_SCRATCH_DIRS = []
+
+
+def remove_scratch_dirs():
+    """Remove every directory scratch_dir() made; run at exit."""
+    while _SCRATCH_DIRS:
+        shutil.rmtree(_SCRATCH_DIRS.pop(), ignore_errors=True)
+
+
+def scratch_dir(prefix="wc-scratch-"):
+    """A fresh tempfile.mkdtemp() directory, removed when this process
+    exits (see the module docstring)."""
+    path = tempfile.mkdtemp(prefix=prefix)
+    if not _SCRATCH_DIRS:
+        atexit.register(remove_scratch_dirs)
+    _SCRATCH_DIRS.append(path)
+    return path
 
 
 def use_utf8_stdout():

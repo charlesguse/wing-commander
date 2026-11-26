@@ -197,10 +197,10 @@ def self_test():
     failed = []
 
     def check(label, fname, body, expect_fail, name_fragment=None):
-        root = tempfile.mkdtemp(prefix="verify_gate51_")
-        with open(os.path.join(root, fname), "w", encoding="utf-8") as fh:
-            fh.write(body)
-        _checked, failures = scan(os.path.join(root, "*.yml"))
+        with tempfile.TemporaryDirectory(prefix="verify_gate51_") as root:
+            with open(os.path.join(root, fname), "w", encoding="utf-8") as fh:
+                fh.write(body)
+            _checked, failures = scan(os.path.join(root, "*.yml"))
         fired = len(failures) > 0
         if fired != expect_fail:
             failed.append(f"{label}: expected the gate to "
