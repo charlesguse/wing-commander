@@ -504,7 +504,11 @@ SPEC_PR_REVIEW_GIT_GRANTS = {
 FLEET_READ_ONLY_STEP_LABELS = {
     ".github/workflows/implement.yml": ("implement.post-progress-comment",),
     ".github/workflows/pr-conversation.yml": ("pr-conversation.classify",),
-    ".github/workflows/watchdog.yml": ("watchdog.diagnose",),
+    # The diagnose shadow (spec 110) is listed too, so a later grant of
+    # Write or Edit cannot quietly take it out of the check (#889, found by
+    # the code review of #991).
+    ".github/workflows/watchdog.yml": ("watchdog.diagnose",
+                                       "watchdog.diagnose-shadow"),
     LIFECYCLE_REVIEW_GATE: ("lifecycle-review-gate.reviewer",),
     SPEC_PR_REVIEW: ("spec-pr-review.reviewer",),
 }
@@ -3088,6 +3092,10 @@ FLEET_READ_ONLY_GIT_MUTATIONS = (
     (".github/workflows/watchdog.yml",
      "diagnose shadow stops denying pushd",
      DropDeny("Bash(pushd:*)", must=_SHADOW), None),
+    (".github/workflows/watchdog.yml",
+     "diagnose shadow is allowed Write (its label still holds it read-only)",
+     f'"Read,Grep,{_PUB_GRANT_LIT}"' + _DENY_HEAD + 'NotebookEdit',
+     f'"Read,Write,Grep,{_PUB_GRANT_LIT}"' + _DENY_HEAD + 'NotebookEdit'),
     (".github/workflows/auto-update-spec-kit.yml",
      "evaluate-path's inline --allowedTools regains raw git diff (#518 review)",
      f'--allowedTools "Read,Grep,{_PUB_GRANT_LIT}"',

@@ -364,10 +364,21 @@ def cut_rollup(rollup, merged_at):
     `rollup` holds every check run (all attempts) and every commit status
     ever set on the head, as _rest_rollup() reads them. A commit status
     (`context`) counts as its latest state set at or before the merge; a
-    check run as the latest attempt of its (workflow, name) started at or
-    before it, and one that had not finished by the merge counts as not
-    finished, whatever it concluded later. Entries started after the merge
-    are left out."""
+    check run as the latest attempt of its check started at or before it,
+    and one that had not finished by the merge counts as not finished,
+    whatever it concluded later. Entries started after the merge are left
+    out.
+
+    A check is board_readiness._check_key's, the rule live readiness keys
+    latest_per_check() by (#889, found by the code review of #1226): a
+    check run by its workflow run (the run id in its `detailsUrl`) and job
+    name, so a separate run of one workflow on the head -- a bot review's
+    skipped wing-commander-9-pr-conversation run after a human review's
+    failed one -- is a check of its own and never hides the other. As
+    there, an entry with no key (no workflow or no run id) or with no time
+    is never merged with another, and check-run attempts tied at the
+    newest start are all kept; a status tie keeps the first seen, since
+    GitHub lists statuses newest first."""
     left_out = 0
     latest = {}
     for index, entry in enumerate(rollup):
@@ -381,12 +392,16 @@ def cut_rollup(rollup, merged_at):
             continue
         if not status and _after(entry.get("completedAt"), merged_at):
             entry = dict(entry, status="IN_PROGRESS", conclusion="")
-        key = ("status", entry.get("context")) if status else ("check", entry.get("workflowName"), entry.get("name"))
-        # Ties keep the first seen: GitHub lists statuses newest first.
-        stamp = stamp or ""
+        key = board_readiness._check_key(entry)
+        if key is None or not stamp:
+            latest[("unmerged", index)] = (stamp or "", [(index, entry)])
+            continue
         if key not in latest or stamp > latest[key][0]:
-            latest[key] = (stamp, index, entry)
-    return [entry for _stamp, _index, entry in sorted(latest.values(), key=lambda t: t[1])], left_out
+            latest[key] = (stamp, [(index, entry)])
+        elif stamp == latest[key][0] and not status:
+            latest[key][1].append((index, entry))
+    kept = sorted((pair for _stamp, pairs in latest.values() for pair in pairs), key=lambda t: t[0])
+    return [entry for _index, entry in kept], left_out
 
 
 def cut_snapshot(snap, merged_at):
@@ -809,6 +824,7 @@ def _rest_rollup(repo, sha):
         rollup.append({"name": c.get("name"), "status": (c.get("status") or "").upper(),
                        "conclusion": (c.get("conclusion") or "").upper(),
                        "completedAt": c.get("completed_at"), "startedAt": c.get("started_at"),
+                       "detailsUrl": c.get("details_url") or "",
                        "workflowName": suites.get((c.get("check_suite") or {}).get("id"), "")})
     for line in _gh_ok(["api", "repos/{0}/commits/{1}/statuses?per_page=100".format(repo, sha), "--paginate",
                         "--jq", ".[] | tojson"]).splitlines():

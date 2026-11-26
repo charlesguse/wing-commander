@@ -51,7 +51,9 @@ either list of its own:
 Self-test (--self-test): (0) checks the Docker-missing decision, (s) runs
 static cases with no build -- each implement.yml drift the gate relies on,
 the stray opt-out scan, the preflight verdict parser, the shellcheck
-version parser and the pin's single-home scan -- then copies the
+version parser, the pin's single-home scan, and the git floor and glibc
+loader probes and scan()'s report of each against a docker stub that
+fails one probe at a time -- then copies the
 Dockerfile, required-tools.txt and implement.yml into an isolated temp tree
 and (a) builds the real, unmodified set and expects a clean pass, and (b)
 builds ONE drifted copy of the Dockerfile that drops jq together with
@@ -670,6 +672,76 @@ def _swap_to_apt_shellcheck(root):
     return True
 
 
+def _probe_self_test():
+    """-> problems: check_git_floor and check_glibc_loader, and scan()'s
+    report of each, against a docker stub, so neither probe can turn into
+    an always-None one unnoticed (#889). The image build in self_test()
+    only shows the real image passing both; this shows each can fail. The
+    stub answers each probe with the shipped fragment's own message
+    (FLOOR_MESSAGES / LOADER_MESSAGES, which Gate 148 holds to the
+    fragments) and fails if a probe stops running its fragment."""
+    with io.open(GIT_FLOOR_FRAGMENT, encoding="utf-8") as fh:
+        floor_fragment = fh.read().strip()
+    with io.open(LOADER_FRAGMENT, encoding="utf-8") as fh:
+        loader_fragment = fh.read().strip()
+    fail = {}  # fragment -> (returncode, stderr) for this case
+
+    def fake_run(argv, **_kw):
+        script = argv[-1] if argv[:2] == ["docker", "run"] else None
+        rc, err = fail.get(script, (0, ""))
+        if script not in (None, floor_fragment, loader_fragment):
+            rc, err = 0, ""
+        return subprocess.CompletedProcess(argv, rc, "", err)
+
+    floor_msg = "git 2.30 " + FLOOR_MESSAGES[0]
+    loader_msg = LOADER_MESSAGES[0] + " (/lib64/ld-linux-x86-64.so.2 for x86_64)"
+    problems = []
+    real_run = subprocess.run
+    patched = {"build_image": lambda root, tag: (True, ""),
+               "check_tools": lambda tag, tools: ([], ""),
+               "check_shellcheck_version": lambda root, tag: None,
+               "check_preflight": lambda tag, name, script: None,
+               "read_implement_subject": lambda root=".", wf=None: ({}, [], []),
+               "stray_optouts": lambda root=".": [],
+               "pin_single_home": lambda root=".": []}
+    saved = {k: globals()[k] for k in patched}
+    subprocess.run = fake_run
+    globals().update(patched)
+    try:
+        for label, case, check, want_kind, report in (
+                ("an image that passes both probes", {}, None, None, None),
+                ("an image whose git is below the floor",
+                 {floor_fragment: (1, floor_msg)}, check_git_floor, "floor",
+                 "fails the git floor"),
+                ("an image the git floor probe cannot run in",
+                 {floor_fragment: (125, "docker: no such image")}, check_git_floor,
+                 "docker", "could not run the git floor probe"),
+                ("an image with no glibc loader",
+                 {loader_fragment: (1, loader_msg)}, check_glibc_loader, "loader",
+                 "fails the glibc loader check"),
+                ("an image the glibc loader probe cannot run in",
+                 {loader_fragment: (125, "docker: no such image")},
+                 check_glibc_loader, "docker",
+                 "could not run the glibc loader probe")):
+            fail.clear()
+            fail.update(case)
+            if check is not None:
+                got = check(".", IMAGE_TAG + "-probe")
+                if not got or got[0] != want_kind:
+                    problems.append(f"{check.__name__} on {label} returned {got!r}, "
+                                    f"expected a {want_kind!r} result")
+            got = scan(".", tag=IMAGE_TAG + "-probe")
+            if report is None:
+                if got:
+                    problems.append(f"scan() on {label} reported {got}")
+            elif not any(report in g for g in got):
+                problems.append(f"scan() on {label} did not report {report!r}; got: {got}")
+    finally:
+        subprocess.run = real_run
+        globals().update(saved)
+    return problems
+
+
 def _pin_static_self_test():
     """-> problems: the shellcheck-version parser and the pin's single-home
     scan, each on a case it must judge one way or the other."""
@@ -860,6 +932,7 @@ def _static_self_test():
     """-> problems: each implement.yml drift read_implement_subject must report."""
     import yaml
     problems = _pin_static_self_test()
+    problems.extend(_probe_self_test())
     # The drifted build keeps a shellcheck (apt's), so it no longer shows the
     # prompted-command check naming shellcheck; check here that the prompt
     # still yields it, or the check could stop covering shellcheck unseen.

@@ -320,6 +320,7 @@ def check_review_round3_rollup():
         if "/check-runs" in url:
             return json.dumps({"name": "lint", "status": "completed", "conclusion": "success",
                                "started_at": "2026-11-10T09:00:00Z", "completed_at": "2026-11-10T09:30:00Z",
+                               "details_url": "https://github.com/o/r/actions/runs/42/job/9",
                                "check_suite": {"id": 7}}) + "\n"
         if "/statuses" in url and "--jq" in args and args[args.index("--jq") + 1].startswith(".[]"):
             return "\n".join(json.dumps({"context": "ci/x", "state": s, "created_at": t})
@@ -337,6 +338,12 @@ def check_review_round3_rollup():
         problems.append("rollup: commit statuses come from the combined status, not their history")
     if len([e for e in rollup if e.get("context") == "ci/x"]) != 2:
         problems.append("rollup: not every status in the history is kept for the cut")
+    # Live readiness keys a check run by the run id in its detailsUrl
+    # (board_readiness._check_key); the audit must read it too (#889, found
+    # by the code review of #1226).
+    if [me.board_readiness._check_key(e) for e in rollup if e.get("name") == "lint"] != [
+            ("check", "lint · workflows", "42", "lint")]:
+        problems.append("rollup: a check run's details_url is not carried, so it has no run id to be keyed by")
     cut, _left = me.cut_rollup(rollup, "2026-11-10T12:00:00Z")
     if [e.get("state") for e in cut if e.get("context") == "ci/x"] != ["SUCCESS"]:
         problems.append("cut: the status as of the merge is not the latest set at or before it")
