@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # reaching_workflows() is called per entry tree once `collect` lands (T018).
 from board_prove import actions_only, reaching_workflows  # noqa: E402,F401
 from board_triage import any_run_url_pattern  # noqa: E402
+import wc_board_status  # noqa: E402
 
 STATES = (1, 2, 3, 4, 5)
 WINDOW_DAYS = 30
@@ -364,8 +365,8 @@ RUN_CAP = 1000
 SECONDARY_RE = re.compile(r"secondary rate limit", re.I)
 SECONDARY_DEFAULT_WAIT = 30
 RETRY_AFTER_RE = re.compile(r"retry-after:?\s*(\d+)", re.I)
-SECTION_ARTIFACT = "proof-list-section"
-SECTION_FILE = "proof-list-section.json"
+# The section file's one home is the reader's constant (#889).
+SECTION_FILE = wc_board_status.PROOF_LIST_FILE
 FINALIZE_RE = re.compile(r"^Finalize:.*\(#(\d+)\)\s*$")
 SPEC_BRANCH_RE = re.compile(r"^spec/([^/]+)$")
 
@@ -913,7 +914,7 @@ def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
-    build = sub.add_parser("build", help="read, classify and write proof-list-section.json")
+    build = sub.add_parser("build", help="read, classify and write the section file ({0})".format(SECTION_FILE))
     build.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY"))
     build.add_argument("--out", default=SECTION_FILE)
     cap = sub.add_parser("capture", help="write the SC-001 corpus (maintainer only)")
@@ -925,6 +926,8 @@ def main(argv=None):
     rend.add_argument("--in", dest="src", default=SECTION_FILE)
     rend.add_argument("--form", choices=("full", "names_only"), default="full")
     args = parser.parse_args(argv)
+    import subprocess
+    import tarfile
     try:
         if args.cmd == "render":
             with open(args.src, encoding="utf-8") as fh:
@@ -941,8 +944,15 @@ def main(argv=None):
             json.dump(doc, fh, indent=2, sort_keys=True)
         print("wrote {0}".format(args.out))
         return 0
-    except (ReadError, ValueError) as exc:
-        print("::error::wc_proof_list: {0}".format(exc))
+    except (ReadError, ValueError, subprocess.CalledProcessError, OSError, tarfile.TarError) as exc:
+        # FR-013: a failed git, tar or file read ends the build with this one
+        # line, never a traceback (#889). OSError covers FileNotFoundError.
+        # A failed git call's own reason is in its captured stderr.
+        err = getattr(exc, "stderr", None)
+        if isinstance(err, bytes):
+            err = err.decode("utf-8", "replace")
+        why = " ".join(err.split()) if isinstance(err, str) else ""
+        print("::error::wc_proof_list: {0}{1}".format(exc, ": " + why if why else ""))
         return 1
 
 
