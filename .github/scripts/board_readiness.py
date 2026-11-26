@@ -22,7 +22,7 @@ import subprocess
 import sys
 
 CONDITIONS = ("checks_green", "gate_suite_green", "zero_open_findings",
-              "backstop_holds", "kill_switch_clear")
+              "backstop_holds", "kill_switch_clear", "options_clear")
 
 
 GREEN_STATES = ("SUCCESS", "NEUTRAL", "SKIPPED")
@@ -415,9 +415,12 @@ _OPTIONS_REASON = {
 }
 
 
-def evaluate(pr_number, open_in_scope_findings, backstop_holds, kill_switch_paused):
+def evaluate(pr_number, open_in_scope_findings, backstop_holds, kill_switch_paused,
+             bot_login):
     """Runtime entry point: `gh pr view <pr_number> --json
-    headRefOid,statusCheckRollup`, fresh at this exact moment (FR-036)."""
+    headRefOid,statusCheckRollup`, fresh at this exact moment (FR-036).
+    bot_login is the loop's login, passed by the caller (an unset value
+    would hold readiness as unreadable)."""
     proc = subprocess.run(
         ["gh", "pr", "view", str(pr_number), "--json", "headRefOid,statusCheckRollup"],
         capture_output=True, text=True, check=True)
@@ -435,7 +438,7 @@ def evaluate(pr_number, open_in_scope_findings, backstop_holds, kill_switch_paus
         pr_comments = COMMENTS_UNREADABLE
     return evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
                                   kill_switch_paused, pr_comments=pr_comments,
-                                  bot_login=os.environ.get("BOT_LOGIN", ""))
+                                  bot_login=bot_login)
 
 
 def main():

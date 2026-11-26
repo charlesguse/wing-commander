@@ -3826,6 +3826,12 @@ jobs:
           # closing-keyword refusal (agent prose such as "fixes #12"),
           # which drops the summary and warns: the pushed branch still
           # gets its PR, with the issue_pr() body that carries no keyword.
+          # The line path's own title/body is checked first and fatally; the
+          # summary is then checked with the body and dropped on a hit.
+          if [ -n "${BOARD_LINE_ID:-}" ]; then
+            hits="$(jq -n --arg t "$pr_title" --arg b "$pr_body" '{op: "check-closing-keywords", title: $t, body: $b, commits: []}' | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_backlog_lines.py")"
+            [ "$hits" = "[]" ] || { echo "::error::board-loop fix: the line PR's title or body carries a closing keyword ($hits) -- no PR is opened (specs/121 FR-017)."; exit 1; }
+          fi
           summary_id="${BOARD_LINE_ID:-#$ISSUE_NUMBER}"
           jq -n --argjson parts "$EXPLAIN_JSON" --arg title "$pr_title" '{parts: $parts, pr_title: $title}' > "$RUNNER_TEMP/board-explain-summary.json"
           summary_rc=0
@@ -3833,13 +3839,19 @@ jobs:
           if [ "$summary_rc" -eq 2 ]; then
             echo "::warning::board-loop fix: the PR body's summary carries a closing keyword -- the PR opens without the summary (specs/130 FR-004)."
           elif [ "$summary_rc" -eq 0 ]; then
-            pr_body="$(printf '%s\n\n%s' "$pr_body" "$summary")"
+            with_summary="$(printf '%s\n\n%s' "$pr_body" "$summary")"
+            if [ -n "${BOARD_LINE_ID:-}" ]; then
+              hits="$(jq -n --arg t "$pr_title" --arg b "$with_summary" '{op: "check-closing-keywords", title: $t, body: $b, commits: []}' | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_backlog_lines.py")" || hits="[unchecked]"
+              if [ "$hits" = "[]" ]; then
+                pr_body="$with_summary"
+              else
+                echo "::warning::board-loop fix: the PR body's summary trips the line closing-keyword check ($hits) -- the PR opens without it (specs/130 FR-004)."
+              fi
+            else
+              pr_body="$with_summary"
+            fi
           else
             echo "::warning::board-loop fix: the PR body's summary could not be rendered -- the PR opens without it (specs/130 FR-004)."
-          fi
-          if [ -n "${BOARD_LINE_ID:-}" ]; then
-            hits="$(jq -n --arg t "$pr_title" --arg b "$pr_body" '{op: "check-closing-keywords", title: $t, body: $b, commits: []}' | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/board_backlog_lines.py")"
-            [ "$hits" = "[]" ] || { echo "::error::board-loop fix: the line PR's title or body carries a closing keyword ($hits) -- no PR is opened (specs/121 FR-017)."; exit 1; }
           fi
           pr_url="$(gh pr create -R "$GITHUB_REPOSITORY" --title "$pr_title" --body "$pr_body" --head "$BRANCH" --base main --label board:owned)"
           pr_number="${pr_url##*/}"
@@ -3889,12 +3901,23 @@ jobs:
             echo "::warning::board-loop fix: the explanation was refused by wc_message_parts.py (specs/130 FR-003)."
             exit 0
           fi
-          if ! gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"; then
+          # Empty when Options did not say they follow: nothing is owed.
+          options="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_message_parts.py" render-options --in "$RUNNER_TEMP/board-explain-parts.json" --id "$explain_id")" || options=""
+          first_posted=0
+          for attempt in 1 2 3; do
+            if gh pr comment "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --body "$body"; then first_posted=1; break; fi
+            sleep $((attempt * 3))
+          done
+          if [ "$first_posted" -ne 1 ]; then
+            if [ -n "$options" ]; then
+              # No marker is on the PR, so readiness would read 'clear' with
+              # the options unexplained: fail the step instead.
+              echo "::error::board-loop fix: the explaining comment could not be posted on PR #$PR_NUMBER and its options are owed -- failing so readiness does not read clear without a marker (specs/130 FR-003)."
+              exit 1
+            fi
             echo "::warning::board-loop fix: the explaining comment could not be posted on PR #$PR_NUMBER (specs/130 FR-003)."
             exit 0
           fi
-          # Empty when Options did not say they follow: nothing is owed.
-          options="$(python3 -I "$RUNNER_TEMP/wc-pristine/scripts/wc_message_parts.py" render-options --in "$RUNNER_TEMP/board-explain-parts.json" --id "$explain_id")" || options=""
           if [ -n "$options" ]; then
             # Readiness holds while this comment is owed, so a transient
             # failure is retried; if all tries fail the warning names the
@@ -7008,8 +7031,8 @@ jobs:
           elif [ -n "${BOARD_LINE_ID:-}" ]; then
             # FR-011/FR-020: the merge ticks the line whoever merged it,
             # whatever the backlog-lines switch says.
-            tick="$(jq -n --argjson issue "$issue_number" --arg id "$BOARD_LINE_ID" --arg detail "by #$PR_NUMBER" --argjson pr "$PR_NUMBER" \
-              '{op: "tick-fixed", issue: $issue, line_id: $id, detail: $detail, pr: $pr}' \
+            tick="$(jq -n --argjson issue "$issue_number" --arg id "$BOARD_LINE_ID" --arg detail "by #$PR_NUMBER" \
+              '{op: "tick-fixed", issue: $issue, line_id: $id, detail: $detail}' \
               | python3 .github/scripts/board_backlog_lines.py)" || tick="failed"
             if [ "$tick" = '"applied"' ]; then
               echo "board-loop: backlog line $BOARD_LINE_ID on #$issue_number ticked -- fixed by #$PR_NUMBER (specs/121 FR-011)." >> "$GITHUB_STEP_SUMMARY"
