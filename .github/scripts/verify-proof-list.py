@@ -911,7 +911,7 @@ def check_budget():
                 act()
                 problems.append("budget: {0} ran after the build's budget was spent".format(label))
             except pl.ReadError as exc:
-                if "ran past its 13-minute budget" not in str(exc):
+                if "ran past its 23-minute budget" not in str(exc):
                     problems.append("budget: {0} failed with {1!r}".format(label, str(exc)[:160]))
         pl.start_budget(2)
         began = time.monotonic()
@@ -919,7 +919,7 @@ def check_budget():
             pl._run(slow)
             problems.append("budget: a call outlived the build's budget")
         except pl.ReadError as exc:
-            if "ran past its 13-minute budget during" not in str(exc):
+            if "ran past its 23-minute budget during" not in str(exc):
                 problems.append("budget: a call cut short by the budget failed with {0!r}".format(str(exc)[:160]))
         if time.monotonic() - began > 5:
             problems.append("budget: a call was allowed CALL_TIMEOUT though the budget had less left")
@@ -1067,8 +1067,8 @@ def check_workflow_text(text):
     if len(jobs) != 1:
         problems.append("workflow: expected exactly one job")
     job = next(iter(jobs.values()), {})
-    if job.get("timeout-minutes") != 15:
-        problems.append("workflow: timeout-minutes is not 15")
+    if job.get("timeout-minutes") != 25:
+        problems.append("workflow: timeout-minutes is not 25")
     elif pl.BUILD_BUDGET_SECONDS > (job["timeout-minutes"] - 1) * 60:
         problems.append("workflow: the build's {0} s budget leaves under a minute of the {1}-minute "
                         "timeout, so a cancel can still beat the build's own error line".format(

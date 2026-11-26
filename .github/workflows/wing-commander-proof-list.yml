@@ -31,7 +31,14 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 25, not plan.md's 15: that was sized for about 50 merges and a few
+    # thousand runs in the window; on 2026-11-26 it held 109 merges (87
+    # needing a run) and 15,601 runs of reaching workflows, and two builds
+    # were cancelled at 15. The cron fires late (06:31-06:44 seen), and
+    # 25 still ends before board-status.yml reads the section at 07:17.
+    # wc_proof_list.BUILD_BUDGET_SECONDS stays two minutes under this, so a
+    # slow build fails with its own line before the job is cancelled.
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v5

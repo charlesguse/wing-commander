@@ -370,10 +370,10 @@ SECTION_FILE = wc_board_status.PROOF_LIST_FILE
 FINALIZE_RE = re.compile(r"^Finalize:.*\(#(\d+)\)\s*$")
 SPEC_BRANCH_RE = re.compile(r"^spec/([^/]+)$")
 # The build fails with its own one-line reason before the job's
-# `timeout-minutes: 15` cancels it, which would leave no line at all. The
+# `timeout-minutes: 25` cancels it, which would leave no line at all. The
 # budget leaves two minutes for checkout and the guard; no single `git` or
 # `gh` call may wait longer than CALL_TIMEOUT, or past the budget.
-BUILD_BUDGET_SECONDS = 13 * 60
+BUILD_BUDGET_SECONDS = 23 * 60
 CALL_TIMEOUT = 120
 _deadline = [None]  # monotonic seconds, set by start_budget()
 
