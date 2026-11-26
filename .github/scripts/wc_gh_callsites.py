@@ -16,7 +16,9 @@ pipe fed to a shell); every `gh` in one is a disallowed call. A command word
 that is a variable or expansion is a disallowed call wherever the script
 holds a `gh` that is neither a located call nor a provable mention (a `gh`
 in a `${...}` value never is one), or assigns a variable a value that starts
-with `gh`, quoted or not (`CMD='gh'`). The
+with `gh`, quoted or not (`CMD='gh'`). A call of a function whose body
+runs its arguments (`retry() { "$@"; }`) is a disallowed call for each
+argument that is `gh`, quoted or not (`retry 'gh' api x`). The
 scanner is one left-to-right pass with no re-slicing (linear in the script)
 and never raises; once it meets a construct it cannot track exactly, every
 `gh` after it is a disallowed call.
@@ -67,6 +69,11 @@ URL = re.compile(r"(?<![\w+.-])[A-Za-z][\w+.-]*://[^\s;&|<>()`'\"\\$]*")
 HEREDOC = re.compile(r"<<(-?)[ \t]*((?:'[^']*'|\"[^\"]*\"|\\.|[^\s;&|<>()`'\"\\])*)")
 DELIM_PIECE = re.compile(r"'([^']*)'|\"([^\"]*)\"|\\(.)")
 FUNCTION_NAME = re.compile(r"[ \t]+[^\s;&|()<>]")    # `function NAME`, not `function)`
+FUNCTION_PARENS = re.compile(r"[ \t]*\([ \t]*\)")     # the `()` of `NAME()` or `function NAME()`
+# A word that is the function's own arguments, or one of them: `"$@"`,
+# `$@`, `"$1"`, `"${@}"`, `$*`, `"${@:2}"`.
+POSITIONAL = re.compile(r'"?\$(?:[@*1-9]|\{[@*1-9][^}]*\})"?')
+GH_WORD = re.compile(r"(?:\S*/)?gh")         # fullmatch: the word gh, or a path to it
 TIME_GAP = re.compile(r"(?:[ \t]|\\\n)*")
 # A value whose first word is gh, or a path to it (`$DIR/gh`, read in _Word.pat),
 # and the same in source (`=('gh'`, `=("$DIR/gh"`).
@@ -156,6 +163,15 @@ class _Scan:
         # An assignment whose value starts with gh (`CMD=gh`, `CMD='gh'`,
         # `export GH="gh api"`): a lone `$CMD` may run it (locate()).
         self.gh_valued = False
+        # Functions whose body runs their arguments (`retry() { "$@"; }`):
+        # a call `retry 'gh' api x` runs that gh (locate()). Each open body
+        # is [name, its `{` level (None: not a `{` body, open to the end),
+        # how it runs them]: "argv" when an argument runs as the command
+        # word itself, "string" when it may be split or read as a script
+        # (`$@`, `eval "$@"`, `sh -c "$1"`), so `"gh api x"` runs gh too.
+        self.fns, self.fn_open, self.fn_next, self.brace = {}, [], None, 0
+        self.fn_calls = []                    # (name, argument words) of each call by name
+        self.fn_edges = []                    # (caller, callee, mode): a body passing its arguments on
 
     # ---------------------------------------------------------------- tokens
     def _note(self, off, kind, **kw):
@@ -442,7 +458,7 @@ class _Scan:
     # ------------------------------------------------------------- commands
     def _cmds(self, i, ctx):
         t, n = self.t, self.n
-        words, drop, timed = [], False, None
+        words, drop, timed, naming = [], False, None, False
         while i < n:
             c, self.at = t[i], i
             if c in " \t" or (c == "\\" and t[i + 1:i + 2] == "\n"):
@@ -473,8 +489,15 @@ class _Scan:
                 self._end(words, ctx)                          # an arm ends: a pattern next
                 words, ctx.pattern = [], 1
                 i += 2 + (t[i:i + 3] == ";;&")
+            elif (c == "(" and len(words) == 1 and words[0].plain
+                  and FUNCTION_PARENS.match(t, i)):
+                self._end(words, ctx)                          # `NAME() BODY`: a definition
+                self.fn_next, words = words[0].lit, []
+                i = FUNCTION_PARENS.match(t, i).end()
             elif c in ";&|(":                                  # `((` may be arithmetic
                 j = c == "(" and not words and t.startswith("((", i) and self._arithmetic(i, 2)
+                if c == "(" and not words and self.fn_next is not None:
+                    self._fn_body(None)                        # `NAME() ( ... )`: open to the end
                 if not j:
                     self._end(words, ctx)
                     ctx.parens += c == "("
@@ -508,8 +531,22 @@ class _Scan:
                     i = self._data(i, ctx, True)
                     continue
                 if drop or (lead == "function" and FUNCTION_NAME.match(t, i)):
+                    if naming:                                 # `function NAME`: a definition
+                        self.fn_next, naming = w.lit or w.raw, False
+                        m = FUNCTION_PARENS.match(t, i)
+                        i = m.end() if m else i
+                    else:
+                        naming = not drop
                     drop = not drop                            # `function NAME`: drop NAME
                     continue
+                if lead == "{":
+                    self.brace += 1
+                if self.fn_next is not None and not words:
+                    self._fn_body(self.brace if lead == "{" else None)
+                if lead == "}":
+                    while self.fn_open and self.fn_open[-1][1] == self.brace:
+                        self._fn_close()
+                    self.brace = max(self.brace - 1, 0)
                 if lead in ("case", "esac"):
                     ctx.cases = max(0, ctx.cases + (1 if lead == "case" else -1))
                 if (lead and lead[0] == "-" and timed is not None   # `time -p gh`
@@ -524,6 +561,56 @@ class _Scan:
         if ctx.depth:
             self._unsure(ctx.start, "unterminated-substitution")
         return n
+
+    def _fn_body(self, level):
+        """The body of the function named last opens here, at `{` level
+        `level` (None: some other compound command; it stays open)."""
+        self.fn_open.append([self.fn_next, level, None])
+        self.fn_next = None
+
+    def _fn_close(self):
+        """The innermost open body closes. How it runs its arguments is
+        also its encloser's (fail closed: a nested definition may be called
+        with the encloser's arguments)."""
+        name, _, mode = self.fn_open.pop()
+        if mode:
+            self.fns[name] = _merge(self.fns.get(name), mode)
+            if self.fn_open:
+                self.fn_open[-1][2] = _merge(self.fn_open[-1][2], mode)
+
+    def _fn_args(self, words):
+        """Command `words` (from its command word on) inside a function
+        body: note whether it runs the function's arguments, or passes them
+        to a call by name; and note every call by name."""
+        head, args = words[0], words[1:]
+        if head.lit is not None and args:
+            self.fn_calls.append((head.lit, args))
+        if not self.fn_open:
+            return
+        base = _base(head.lit)
+        # A variable may hold the arguments (`local c=("$@"); "${c[@]}"`,
+        # `local c=$1; eval "$c"`): fail closed, any expansion counts as one.
+        pos = [w for w in words if POSITIONAL.fullmatch(w.raw) or w.lit is None]
+        if not pos:
+            return
+        stringy = (any(not w.raw.startswith('"') for w in pos)
+                   or any(_base(w.lit) in EVALUATORS or _base(w.lit) in SHELLS
+                          or _shell_string(w.lit) for w in words))
+        mode = "string" if stringy else "argv"
+        # A shell runs one only as its `-c` string; `bash script.sh "$1"`
+        # hands it to the script as data.
+        given = [j for j, w in enumerate(words) if _shell_string(w.lit, base in PWSH,
+                                                                  base == "fish")]
+        runs = (head.lit is None
+                or base in WRAPPERS
+                and not (base == "command" and any(w.lit in ("-v", "-V") for w in args))
+                or base in SHELLS and bool(given) and any(
+                    POSITIONAL.fullmatch(w.raw) or w.lit is None
+                    for w in words[given[0] + 1:]))
+        if runs:
+            self.fn_open[-1][2] = _merge(self.fn_open[-1][2], mode)
+        elif head.lit is not None:
+            self.fn_edges.append((self.fn_open[-1][0], head.lit, mode))
 
     def _data(self, i, ctx, test):
         """Index after the list of operand words at i that closes with `]]`
@@ -592,8 +679,11 @@ class _Scan:
                    and not words[k + 1].raw.startswith("-"))
         k += 2 * timeout
         if k >= len(words):
+            if timeout:                # `timeout "$@"`: the duration is an argument too
+                self._fn_args(words[k - 2:])
             return
         head, args = words[k], words[k + 1:]
+        self._fn_args(words[k:])
         if _reads_stdin(words[k:]):    # its script arrives on stdin, from anything before it
             self._condemn(self.fed, "shell-stdin")
             self.fed = self.at
@@ -642,6 +732,32 @@ class _Scan:
                 self._note_word(w, "dynamic-command" if dynamic else "unquoted-wrapper")
             elif w.lit is None:
                 self.bare.append(w.off)
+
+
+def _merge(a, b):
+    """The wider of two ways a body runs its arguments ("string" > "argv")."""
+    return "string" if "string" in (a, b) else a or b
+
+
+def _function_runners(sc):
+    """Every function whose body runs its arguments, or passes them to one
+    that does, and how. Each name widens at most twice: linear."""
+    runs = dict(sc.fns)
+    for name, _, mode in sc.fn_open:          # a body never closed: open to the end
+        if mode:
+            runs[name] = _merge(runs.get(name), mode)
+    callers = {}
+    for caller, callee, mode in sc.fn_edges:
+        callers.setdefault(callee, []).append((caller, mode))
+    work = list(runs)
+    while work:
+        callee = work.pop()
+        for caller, mode in callers.get(callee, ()):
+            new = _merge(runs.get(caller), _merge(runs[callee], mode))
+            if new != runs.get(caller):
+                runs[caller] = new
+                work.append(caller)
+    return runs
 
 
 def _gh_value(w):
@@ -770,6 +886,18 @@ def locate(script):
     def stray(off):
         tok = sc.by_off.get(off)
         return tok is None or off in sc.loose and tok.kind == "mention"
+    # A call of a function whose body runs its arguments runs each argument
+    # that is gh, quoted or not (`retry 'gh' api x`), or for a body that
+    # splits or evaluates them, each that starts with gh (`run "gh api x"`);
+    # one holding an expansion may be gh (`retry "$GH_BIN"`).
+    runs = _function_runners(sc)
+    for name, args in sc.fn_calls:
+        mode = runs.get(name)
+        for w in args if mode else ():
+            if (GH_VALUE.match(w.pat) if mode == "string" else GH_WORD.fullmatch(w.pat)):
+                sc._note_word(w, "dynamic-command")
+            elif EXP in w.pat:
+                sc.bare.append(w.off)
     # A variable assigned a value that starts with gh (`CMD='gh'`) is one too,
     # though the quoted gh in it is a mention.
     if (sc.gh_valued or any(stray(m.start()) for m in GH.finditer(sc.g))
