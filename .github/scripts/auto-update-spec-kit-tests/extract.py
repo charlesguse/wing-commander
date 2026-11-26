@@ -30,6 +30,9 @@ COMPOSITE_FILES = [
     ".github/actions/_shared/scoped-app-token/action.yml",
     ".github/actions/_shared/orphan-branch-reset/action.yml",
     ".github/actions/wing-commander-durable-failure-issue/action.yml",
+    # spec 130: t6 posts the ambiguous-options question through the shipped
+    # callout, then reads its label record back as comment-reply does.
+    ".github/actions/wing-commander-callout/action.yml",
 ]
 
 

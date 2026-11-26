@@ -112,7 +112,9 @@ convention every comment-triggered stage already uses for issue bodies.
   workflow ends (FR-018).
 - `outcome: ambiguous-options` → post the options + reasoning + sources
   as a question (`wing-commander-callout`, `kind: action`), workflow
-  ends, awaiting a comment reply (FR-012).
+  ends, awaiting a comment reply (FR-012). Since
+  specs/130-maintainer-only-comments the question's last line records its
+  option labels, as data the `comment-reply` read-back reads.
 - `outcome: clean-bump` → continue to `prepare`.
 
 ### `prepare` (`needs: evaluate-path` when `clean-bump`)
@@ -188,7 +190,7 @@ this job — nothing to record.
    no further action). Since specs/130-maintainer-only-comments the
    agent's context holds only the issue body, the pipeline's own comments
    and maintainers' comments, and a chosen option counts only when it is
-   one of the labels the pipeline posted.
+   one of the labels the newest question records.
 4. Recognized choice → comment the human's decision on the issue
    (FR-013's "the decision made" now includes whose call it was), then
    re-enter at `prepare` with that chosen path.

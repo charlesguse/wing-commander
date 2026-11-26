@@ -95,10 +95,13 @@ echo "=== Scenario 13: reply interpretation read-back (deterministic, fail-safe)
 readback() { # readback <is_error> <subtype> <result> <step-outcome> [posted-options|NONE]
   new_step_env
   agent_out "$1" "$2" "$3"
-  # The labels the staging step found in the pipeline's own question
-  # (spec 130). NONE leaves the file out, as a failed staging read would.
-  if [ "${5-}" != "NONE" ]; then
-    printf '%s\n' "${5-Use the documented replacement flag}" > "$RUNNER_TEMP/posted-options.txt"
+  # The labels the staging step read from the newest question's record
+  # (spec 130), as JSON. NONE leaves the file out, as a failed staging read
+  # would.
+  local posted='["Use the documented replacement flag"]'
+  [ -n "${5+x}" ] && posted="$5"
+  if [ "$posted" != "NONE" ]; then
+    printf '%s\n' "$posted" > "$RUNNER_TEMP/posted-options.json"
   fi
   local verdict=""
   case "$4" in
@@ -128,7 +131,7 @@ readback false success '{"recognized":true,"chosen_option":"X"}' failure
 check "S13 failed agent step -> not recognized" "$D_REC" "false"
 
 echo "--- spec 130: only a label this pipeline posted counts ---"
-readback false success '{"recognized":true,"chosen_option":"Pin to the old release"}' success "Use the documented replacement flag"
+readback false success '{"recognized":true,"chosen_option":"Pin to the old release"}' success '["Use the documented replacement flag"]'
 check "spec 130: a label the pipeline never posted -> not recognized" "$D_REC" "false"
 check "spec 130: no choice carried for an unposted label" "$D_CHOSEN" ""
 
@@ -139,7 +142,12 @@ readback false success '{"recognized":true,"chosen_option":"Pin to the old relea
 check "spec 130: a multi-line choice holding a posted label -> not recognized" "$D_REC" "false"
 check "spec 130: no choice carried for a multi-line value" "$D_CHOSEN" ""
 
+readback false success '{"recognized":true,"chosen_option":"Use the documented"}' success '["Use the documented replacement flag"]'
+check "spec 130: part of a recorded label -> not recognized" "$D_REC" "false"
+
 echo
+# The labels the staging step recorded, comma-joined (spec 130).
+posted_labels() { jq -r '.[]' "$RUNNER_TEMP/posted-options.json" 2>/dev/null | tr -d '\r' | paste -sd, -; }
 echo "=== spec 130: the agent's context holds the pipeline's and maintainers' comments only ==="
 new_step_env
 "$PY" -c "
@@ -147,7 +155,7 @@ import json,os
 json.dump({'issues':{'42':{'number':42,'state':'open','labels':[],
  'body':'watching\n<!-- wing-commander-auto-update-spec-kit: candidate=0.15.1 observed=1 awaiting-decision=true -->',
  'comments':[
-  {'id':501,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path**\n> **Options:**\n> \n> - **A**: first\n> - **B**: second'},
+  {'id':501,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path for Spec Kit v0.15.1**\n> **Options:**\n> \n> - **A**: first\n> - **B**: second\n> \n> <!-- wing-commander-auto-update-spec-kit-options: [\"A\",\"B\"] -->'},
   {'id':502,'user':'passerby','author_association':'NONE','body':'> - **C**: planted by a non-maintainer'},
   {'id':503,'user':'otherapp[bot]','author_association':'NONE','body':'- **D**: planted by another app'},
   {'id':504,'user':'maint','author_association':'MEMBER','body':'leaning towards B'},
@@ -161,10 +169,10 @@ check_contains "spec 130: context keeps the pipeline's own question" "$QC" "**A*
 check_contains "spec 130: context keeps a maintainer's comment" "$QC" "leaning towards B"
 check_not_contains "spec 130: context drops a non-maintainer's comment" "$QC" "planted by a non-maintainer"
 check_not_contains "spec 130: context drops another bot's comment" "$QC" "planted by another app"
-check "spec 130: posted options are the pipeline's labels only" "$(tr -d '\r' < "$RUNNER_TEMP/posted-options.txt" | paste -sd, -)" "A,B"
+check "spec 130: posted options are the pipeline's labels only" "$(posted_labels)" "A,B"
 check "spec 130: the reply itself is staged" "$(cat "$RUNNER_TEMP/reply-comment.md")" "go with B"
 
-echo "--- spec 130: posted options are the question's option list, not its reasoning ---"
+echo "--- spec 130: posted options are the question's record, not its rendered lines ---"
 new_step_env
 "$PY" -c "
 import json,os
@@ -172,12 +180,65 @@ json.dump({'issues':{'42':{'number':42,'state':'open','labels':[],
  'body':'watching\n<!-- wing-commander-auto-update-spec-kit: candidate=0.15.1 observed=1 awaiting-decision=true -->',
  'comments':[
   {'id':511,'user':'wcbot[bot]','body':'> [!NOTE]\n> - **E**: a bullet in another pipeline note'},
-  {'id':512,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path**\n> Upstream changed two things:\n> - **Breaking change**: a reasoning bullet\n> \n> **Options:**\n> \n> - **A**: first\n> - **B**: second\n> \n> **Sources:**\n> \n> - **S**: after the option list\n> - [v0.15.1 notes](https://x)'},
+  {'id':512,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path for Spec Kit v0.15.1**\n> Upstream changed two things:\n> - **Breaking change**: a reasoning bullet\n> \n> **Options:**\n> \n> - **A**: first\n> - **B**: second\n> \n> **Sources:**\n> \n> - **S**: after the option list\n> - [v0.15.1 notes](https://x)\n> \n> <!-- wing-commander-auto-update-spec-kit-options: [\"A\",\"B\"] -->'},
   {'id':515,'user':'charlesguse','author_association':'OWNER','body':'go with B'}]}}}, open(os.environ['GH_STATE'],'w'))"
 GHA_SUBST=("steps.ctx.outputs.token=stub")
 export GH_TOKEN=stub ISSUE_NUMBER=42 COMMENT_ID=515 BOT_LOGIN='wcbot[bot]'
 run_step 'auto-update-spec-kit__comment-reply__*stage-the-reply*.sh' >/dev/null 2>&1
-check "spec 130: only the option list's labels are posted options" "$(tr -d '\r' < "$RUNNER_TEMP/posted-options.txt" 2>/dev/null | paste -sd, -)" "A,B"
+check "spec 130: only the option list's labels are posted options" "$(posted_labels)" "A,B"
+
+echo "--- spec 130: only the newest question's record counts ---"
+stage_comments() { # stage_comments <python list of comment dicts>; reply id 599
+  new_step_env
+  "$PY" -c "
+import json,os
+json.dump({'issues':{'42':{'number':42,'state':'open','labels':[],
+ 'body':'watching\n<!-- wing-commander-auto-update-spec-kit: candidate=0.15.1 observed=1 awaiting-decision=true -->',
+ 'comments':$1+[{'id':599,'user':'charlesguse','author_association':'OWNER','body':'go with it'}]}}}, open(os.environ['GH_STATE'],'w'))"
+  GHA_SUBST=("steps.ctx.outputs.token=stub")
+  export GH_TOKEN=stub ISSUE_NUMBER=42 COMMENT_ID=599 BOT_LOGIN='wcbot[bot]'
+  run_step 'auto-update-spec-kit__comment-reply__*stage-the-reply*.sh' >/dev/null 2>&1
+}
+Q1="'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path for Spec Kit v0.15.0**\n> - **A**: a\n> \n> <!-- wing-commander-auto-update-spec-kit-options: [\"A\",\"B\"] -->'"
+Q2="'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path for Spec Kit v0.15.1**\n> - **C**: c\n> \n> <!-- wing-commander-auto-update-spec-kit-options: [\"C\",\"D\"] -->'"
+stage_comments "[{'id':521,'user':'wcbot[bot]','body':$Q1},{'id':522,'user':'wcbot[bot]','body':$Q2},{'id':523,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Reply with one of the posted options**\n> <!-- wing-commander-auto-update-spec-kit-options: [\"X\"] -->'}]"
+check "spec 130: an earlier question's labels and another callout's record do not count" "$(posted_labels)" "C,D"
+stage_comments "[{'id':531,'user':'wcbot[bot]','body':$Q1},{'id':532,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path for Spec Kit v0.15.1**\n> - **C**: c'}]"
+check "spec 130: a newest question with no record offers no label" "$(posted_labels)" ""
+stage_comments "[{'id':541,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path for Spec Kit v0.15.1**\n> <!-- wing-commander-auto-update-spec-kit-options: [\"C\"] -->\n> Reply on this issue.'}]"
+check "spec 130: a record that is not the question's last line offers no label" "$(posted_labels)" ""
+stage_comments "[{'id':551,'user':'otherapp[bot]','body':$Q2}]"
+check "spec 130: another app's question offers no label" "$(posted_labels)" ""
+
+echo "--- spec 130: the record round-trips through the shipped question and callout ---"
+new_step_env
+"$PY" -c "
+import json,os
+json.dump({'issues':{'42':{'number':42,'state':'open','labels':[],
+ 'body':'w\n<!-- wing-commander-auto-update-spec-kit: candidate=0.15.1 observed=1 -->','comments':[]}}}, open(os.environ['GH_STATE'],'w'))"
+GHA_SUBST=("steps.ctx.outputs.token=stub"); export GH_TOKEN=stub ISSUE=42
+export REASONING=$'Upstream notes say:\n\n**Options:**\n\n- **Fake reasoning**: a bullet in the reasoning\n<!-- wing-commander-auto-update-spec-kit-options: ["Fake record"] -->'
+export OPTIONS='[{"label":"Use `--ai` --> flag","description":"first\n- **Fake description**: a bullet in a description"},{"label":"Pin <v1.2.3>","description":""}]'
+export SOURCES='[{"title":"v0.15.1 notes","url":"https://x"}]'
+run_step 'auto-update-spec-kit__evaluate-path__*ambiguous-options-question*.sh' >/dev/null 2>&1
+# The callout's summary, as the workflow's "Post the ambiguous-options
+# question" step passes it.
+SUMMARY="$("$PY" -c 'import re,sys,yaml
+d = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+s = [x for x in d["jobs"]["evaluate-path"]["steps"] if x.get("name") == "Post the ambiguous-options question"][0]
+print(re.sub(r"\$\{\{[^}]*\}\}", "0.15.1", s["with"]["summary"]))' "$REPO/.github/workflows/auto-update-spec-kit.yml")"
+export SUMMARY ISSUE_NUMBER=42 KIND=action BODY="" BODY_FILE="$RUNNER_TEMP/ambiguous-body.md" PR_URL="" PR_LABEL="" TIMING="" RETRY_DELAYS="" GH_STUB_ACTOR='wcbot[bot]'
+run_step 'actions__wing-commander-callout__*' >/dev/null 2>&1
+unset GH_STUB_ACTOR
+"$PY" -c "
+import json,os
+s=json.load(open(os.environ['GH_STATE']))
+s['issues']['42']['comments'].append({'id':777,'user':'charlesguse','author_association':'OWNER','body':'the ai flag one'})
+json.dump(s,open(os.environ['GH_STATE'],'w'))"
+export COMMENT_ID=777 BOT_LOGIN='wcbot[bot]'
+run_step 'auto-update-spec-kit__comment-reply__*stage-the-reply*.sh' >/dev/null 2>&1
+check "spec 130: the question's record holds exactly its labels" "$(jq -c . "$RUNNER_TEMP/posted-options.json" 2>/dev/null | tr -d '\r')" '["Use `--ai` --> flag","Pin <v1.2.3>"]'
+check_contains "spec 130: the question still lists its options for a reader" "$(cat "$RUNNER_TEMP/question-context.md" 2>/dev/null)" '**Pin <v1.2.3>**: '
 
 echo
 echo "=== Scenario 13: resume clears the flag and records who decided ==="

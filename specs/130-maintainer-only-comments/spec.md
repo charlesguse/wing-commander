@@ -22,6 +22,7 @@
 ### Session 2026-11-25
 
 - Q: The Spec Kit updater's comment-reply agent reads the tracking issue's comments as context. Does the rule cover that context, or only who can start the run? → A: It covers the context: the stage is fixed to match the rule (FR-002, its last two bullets). Owner's answer in chat, chosen over narrowing the contract to admission alone.
+- Q: After review pass 5, how does the read-back know which option labels the pipeline posted? → A: The question records its own labels, and the read-back accepts only a label the newest question records (FR-002). Owner's answer in chat ("Record labels, one more pass"), chosen over dropping the label check from this feature.
 
 ## Context
 
@@ -82,7 +83,7 @@ A reply on the Spec Kit updater's tracking issue drives its comment-reply path o
 
 1. **Given** a non-maintainer commenter whose id equals the issue author's id, **When** they reply, **Then** the comment-reply job does not run.
 2. **Given** a caller that still passes `issue-author-id`, **When** the workflow is called, **Then** the call is accepted and the input has no effect.
-3. **Given** a maintainer's reply on a tracking issue that also carries comments from non-maintainers and from other bots, **When** the comment-reply agent interprets the reply, **Then** its context holds only the issue body, the pipeline's own comments and maintainers' comments, and a choice counts only when it is one of the option labels the pipeline posted.
+3. **Given** a maintainer's reply on a tracking issue that also carries comments from non-maintainers and from other bots, **When** the comment-reply agent interprets the reply, **Then** its context holds only the issue body, the pipeline's own comments and maintainers' comments, and a choice counts only when it is one of the option labels the pipeline's newest question records.
 
 ---
 
@@ -94,6 +95,7 @@ A reply on the Spec Kit updater's tracking issue drives its comment-reply path o
 - **An org member whose membership is private** may be reported with an association other than `MEMBER`. That member is treated as a non-maintainer. Making the membership public, or adding them as a collaborator, makes them qualify.
 - **An adopter's existing wrapper that still carries the exception.** The stage's own check refuses the comment (FR-006).
 - **The auto-release end-to-end test** posts its clarification answers with the maintainer token, so its verdict does not change.
+- **A Spec Kit updater question posted before the label record existed** records no labels, so every reply to it is unrecognized and asks for a clearer reply. Closing the tracking issue lets a later cycle open a new one and ask again.
 
 ## Requirements *(mandatory)*
 
@@ -104,7 +106,7 @@ A reply on the Spec Kit updater's tracking issue drives its comment-reply path o
   - The `issue-author-id` input MUST stay declared, so existing callers do not fail.
   - The input MUST be documented as ignored.
   - The comment-reply agent's context MUST hold only the issue body, the pipeline's own comments (its App's `<slug>[bot]` login) and comments whose association is `OWNER`, `MEMBER` or `COLLABORATOR` and whose author is not a bot.
-  - The read-back MUST accept a chosen option only when it is one of the option labels the pipeline posted; any other answer is unrecognized and asks for a clearer reply.
+  - The read-back MUST accept a chosen option only when it is one of the option labels that the pipeline's newest question on the issue records (the question carries its own record of its labels); any other answer is unrecognized and asks for a clearer reply.
 - **FR-003**: The shared comment trust filter MUST qualify a comment only when its author is not a bot and its association is `OWNER`, `MEMBER` or `COLLABORATOR`.
   - Every comment it does not qualify MUST be counted as excluded.
   - Its outputs and file formats are otherwise unchanged.
@@ -152,5 +154,5 @@ A reply on the Spec Kit updater's tracking issue drives its comment-reply path o
 
 - Constitution 3.0.0 (PR #1194) merges before this feature's pull request.
 - GitHub reports `author_association` for every comment in the event payload and in the comments API, and the stages already read it.
-- The Spec Kit updater's tracking issues are opened by the pipeline's bot, so FR-002 changes no outcome in practice.
+- The Spec Kit updater's tracking issues are opened by the pipeline's bot, so FR-002's admission bullets change no outcome in practice. Its last two bullets change what the reply agent reads and which answers count.
 - Requesters without maintainer access reach the owner through ordinary comments, which the owner relays.

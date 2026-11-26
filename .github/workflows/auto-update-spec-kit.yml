@@ -1428,6 +1428,12 @@ jobs:
           OPTIONS: ${{ steps.decide-outcome.outputs.options }}
         run: |
           set -uo pipefail
+          # Spec 130: the labels this question offers, recorded as JSON on the
+          # posted comment's last line; comment-reply's read-back accepts no
+          # other choice. Escaping "-", "<" and ">" keeps the record inside
+          # its HTML comment.
+          labels="$(printf '%s' "$OPTIONS" | jq -r '[.[]?.label | strings] | tojson | gsub("-"; "\\u002d") | gsub("<"; "\\u003c") | gsub(">"; "\\u003e")' 2>/dev/null)" || labels='[]'
+          [ -n "$labels" ] || labels='[]'
           {
             printf '%s\n' "$REASONING"
             echo ""
@@ -1440,6 +1446,8 @@ jobs:
             printf '%s' "$SOURCES" | jq -r '.[]? | "- [\(.title)](\(.url))"' 2>/dev/null || true
             echo ""
             echo "Reply on this issue naming the option you'd like to proceed with. No version is adopted until a maintainer answers."
+            echo ""
+            printf '<!-- wing-commander-auto-update-spec-kit-options: %s -->\n' "$labels"
           } > "$RUNNER_TEMP/ambiguous-body.md"
 
           # Append awaiting-decision=true to the settle-tracking marker so the
@@ -3596,8 +3604,9 @@ jobs:
       # prompt, matching wing-commander-2-clarify.yml's convention.
       # Spec 130: the context holds the issue body, this pipeline's own
       # comments (BOT_LOGIN: the posted question and its option labels) and
-      # maintainers' comments only; posted-options.txt lists the labels this
-      # pipeline posted, and "Read back interpretation" accepts no other.
+      # maintainers' comments only; posted-options.json holds the labels the
+      # newest question records, and "Read back interpretation" accepts no
+      # other.
       - name: Stage the reply and question context as data files
         id: stage
         shell: bash
@@ -3619,18 +3628,20 @@ jobs:
             gh issue view "$ISSUE_NUMBER" --json body --jq .body
             jq -r '.body' "$RUNNER_TEMP/context-comments.json"
           } > "$RUNNER_TEMP/question-context.md" 2>/dev/null || printf '' > "$RUNNER_TEMP/question-context.md"
-          # The labels of the options this pipeline posted ("- **<label>**: ...",
-          # quoted by the action callout), one per line: only the lines between
-          # a question's "**Options:**" and "**Sources:**", never a bullet in
-          # its reasoning or in another pipeline comment.
-          jq -r 'select(.user.login == env.BOT_LOGIN) | .body | split("\n")
-            | (map(test("^(> )?\\*\\*Options:\\*\\*\\s*$")) | index(true)) as $from
-            | select($from != null) | .[($from + 1):]
-            | (map(test("^(> )?\\*\\*Sources:\\*\\*\\s*$")) | index(true)) as $to
-            | (if $to == null then . else .[:$to] end)[]
-            | capture("^(> )?- \\*\\*(?<label>.+?)\\*\\*: ") | .label' \
-            "$RUNNER_TEMP/context-comments.json" > "$RUNNER_TEMP/posted-options.txt" 2>/dev/null \
-            || printf '' > "$RUNNER_TEMP/posted-options.txt"
+          # The labels the newest question offers, as a JSON array: the
+          # record on the last line of this pipeline's newest "Choose an
+          # upgrade path" callout (evaluate-path's "Compose ambiguous-options
+          # question" writes it). The rendered option list is never read: its
+          # reasoning and descriptions are agent-written. A question with no
+          # record offers no label.
+          jq -s --arg title '> **Action needed: Choose an upgrade path for Spec Kit v' '
+            [ ([ .[] | select(.user.login == env.BOT_LOGIN) | .body | split("\n")
+                 | select(length > 1 and (.[1] | startswith($title))) ] | last // [])
+              | map(select(test("\\S"))) | (last // "")
+              | capture("^> <!-- wing-commander-auto-update-spec-kit-options: (?<j>.*) -->\\s*$").j
+              | fromjson | .[]? | strings ]' \
+            "$RUNNER_TEMP/context-comments.json" > "$RUNNER_TEMP/posted-options.json" 2>/dev/null \
+            || printf '[]' > "$RUNNER_TEMP/posted-options.json"
 
       # T026: claude-haiku-5-5, bounded, read-only — map the reply onto one
       # of the previously posted options, or "unrecognized". The comment body
@@ -3745,13 +3756,14 @@ jobs:
               fi
             fi
           fi
-          # Spec 130: only a label this pipeline posted counts as a choice: the
-          # whole value, on one line, equal to one line of posted-options.txt
-          # (grep -F reads each line of a multi-line value as its own pattern).
+          # Spec 130: only a label the newest question records counts as a
+          # choice: the whole value, on one line, equal to one entry of
+          # posted-options.json.
           if [ "$recognized" = "true" ]; then
             case "$chosen" in
               *$'\n'*) recognized=false ;;
-              *) grep -qxF -- "$chosen" "$RUNNER_TEMP/posted-options.txt" 2>/dev/null || recognized=false ;;
+              *) jq -e --arg c "$chosen" 'type == "array" and any(.[]; . == $c)' \
+                   "$RUNNER_TEMP/posted-options.json" >/dev/null 2>&1 || recognized=false ;;
             esac
             [ "$recognized" = "true" ] || chosen=""
           fi

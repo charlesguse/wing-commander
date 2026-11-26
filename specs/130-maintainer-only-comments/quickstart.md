@@ -19,7 +19,7 @@ Expected:
   - The failed read fails the step.
 - **Relay composite (D3).** Run it with an issue whose author is `NONE`: the paragraph is appended exactly once. Run it with `OWNER`: the file is unchanged.
 - **Comment filter (D4).** Use comments from a maintainer, from a non-maintainer author and from a bot. Only the maintainer's comment is staged, and `excluded-human-count=1`.
-- **Spec Kit updater reply (FR-002).** `bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh t6_reply`: the agent's context keeps the issue body, the pipeline's own question and maintainers' comments, and drops a non-maintainer's and another bot's; only a label the pipeline posted is accepted.
+- **Spec Kit updater reply (FR-002).** `bash .github/scripts/auto-update-spec-kit-tests/run-tests.sh t6_reply`: the agent's context keeps the issue body, the pipeline's own question and maintainers' comments, and drops a non-maintainer's and another bot's; only a label the newest question records is accepted, and that record round-trips through the shipped question and callout.
 
 ## 3. Scratch-repository run (before the PR)
 
