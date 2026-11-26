@@ -1174,6 +1174,16 @@ fi
 if [ "$1 $2" = "issue comment" ]; then
   exit 0
 fi
+if [ "$1 $2" = "issue view" ]; then
+  # The state of the one issue a close names (issue-number), from
+  # $STUB_ISSUE_STATE; unset is an unreadable issue.
+  [ -n "${{STUB_ISSUE_STATE:-}}" ] || {{ echo "HTTP 404: Not Found" >&2; exit 1; }}
+  printf '%s\n' "$STUB_ISSUE_STATE"
+  exit 0
+fi
+if [ "$1 $2" = "issue close" ]; then
+  exit 0
+fi
 echo "unexpected gh invocation: $*" >&2
 exit 1
 """
@@ -1344,6 +1354,60 @@ def case_existing_no_marker_caller_is_byte_identical():
     with open(log, encoding="utf-8") as fh:
         calls = fh.read()
     check(case + ": lookup used --state open (unchanged)", "issue list" in calls, calls)
+
+
+def run_close(tmp, issue_number, issue_state, open_by_label="77"):
+    """Drives the composite's close with `issue-number` set. The label
+    lookup, if it ran, would find #open_by_label -- standing in for an issue
+    opened or reopened after the caller read its own (code review of #977)."""
+    bindir, log = make_gh_stub(tmp, open_by_label)
+    env = {
+        "GH_TOKEN": "stub", "OPERATION": "close", "LABEL": "auto-release:failed",
+        "LABEL_COLOR": "B60205", "LABEL_DESCRIPTION": "desc", "TITLE": "",
+        "BODY_FILE": "", "COMMENT_BODY_FILE": "", "MARKER": "",
+        "STATE_SCOPE": "open", "CLOSE_COMMENT": "closing note",
+        "CLOSE_ISSUE_NUMBER": issue_number, "FAIL_ON_API_ERROR": "true",
+        "GITHUB_REPOSITORY": "o/r", "GITHUB_ACTION_PATH": FAILURE_ISSUE_ACTION_DIR,
+        "PATH": bindir + os.pathsep + os.environ["PATH"],
+    }
+    if issue_state is not None:
+        env["STUB_ISSUE_STATE"] = issue_state
+    rc, output, outputs, summary = run_step(BASH, LOOKUP_SCRIPT, tmp, env, tmp,
+                                            path_prepend=bindir)
+    with open(log, encoding="utf-8") as fh:
+        calls = fh.read()
+    return rc, outputs, output, calls
+
+
+def case_close_with_issue_number_closes_only_that_issue():
+    case = "close with issue-number closes the caller's issue, never a label lookup's"
+    tmp = tempfile.mkdtemp(prefix="wc-sf-close-")
+    rc, outputs, out, calls = run_close(tmp, "41", "OPEN")
+    check(case + ": exit 0", rc == 0, out)
+    check(case + ": action-taken=closed on #41",
+          outputs.get("action-taken") == "closed" and outputs.get("issue-number") == "41", out)
+    check(case + ": closes #41", "issue close 41 " in calls, calls)
+    check(case + ": no label lookup, so #77 opened mid-run is never touched",
+          "issue list" not in calls and "77" not in calls, calls)
+
+    tmp = tempfile.mkdtemp(prefix="wc-sf-close-")
+    rc, outputs, out, calls = run_close(tmp, "41", "CLOSED")
+    check(case + ": an issue already closed mid-run closes nothing (action-taken=none)",
+          rc == 0 and outputs.get("action-taken") == "none"
+          and "issue close" not in calls and "issue list" not in calls, out + calls)
+
+    tmp = tempfile.mkdtemp(prefix="wc-sf-close-")
+    rc, outputs, out, calls = run_close(tmp, "41", None)
+    check(case + ": an unreadable issue closes nothing and says so",
+          rc == 0 and outputs.get("action-taken") == "none"
+          and "issue close" not in calls and "could not read the state of #41" in out,
+          out + calls)
+
+    tmp = tempfile.mkdtemp(prefix="wc-sf-close-")
+    rc, outputs, out, calls = run_close(tmp, "", None)
+    check(case + ": with no issue-number the label lookup still finds and closes (unchanged)",
+          rc == 0 and outputs.get("action-taken") == "closed"
+          and outputs.get("issue-number") == "77" and "issue close 77 " in calls, out + calls)
 
 
 def case_api_failure_preserves_finding_text_and_exits_zero():
@@ -1836,6 +1900,7 @@ CASES = [
     case_dedup_hit_closed_creates_and_links,
     case_no_dedup_match_creates,
     case_existing_no_marker_caller_is_byte_identical,
+    case_close_with_issue_number_closes_only_that_issue,
     case_api_failure_preserves_finding_text_and_exits_zero,
     case_label_description_fits_github_cap,
     case_stage_findings_opts_out_of_fail_on_api_error,
