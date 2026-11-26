@@ -2,7 +2,7 @@
   "issue": 1188,
   "spec_dir": "specs/132-workflow-trigger-security",
   "feature_num": "132",
-  "stage": "review",
+  "stage": "implement",
   "iteration": 6,
   "spec_branch": "spec/132-workflow-trigger-security",
   "truncated_count": 0,
