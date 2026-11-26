@@ -13,12 +13,12 @@ captured earlier, since a check that completed against an earlier push
 must never be read as covering a later one (FR-037).
 
 `evaluate_from_snapshot()` is the pure decision, fixturable without a live
-`gh` call; `evaluate()` is the runtime wrapper that fetches the snapshot.
+`gh` call; board-loop.yml's readiness job fetches the snapshot and calls it
+(there is no other runtime entry point; specs/130 MF007).
 """
 import json
 import os
 import re
-import subprocess
 import sys
 
 CONDITIONS = ("checks_green", "gate_suite_green", "zero_open_findings",
@@ -413,32 +413,6 @@ _OPTIONS_REASON = {
     "unreadable": ("the PR's comments could not be read to check whether "
                    "the options the first comment promised were posted"),
 }
-
-
-def evaluate(pr_number, open_in_scope_findings, backstop_holds, kill_switch_paused,
-             bot_login):
-    """Runtime entry point: `gh pr view <pr_number> --json
-    headRefOid,statusCheckRollup`, fresh at this exact moment (FR-036).
-    bot_login is the loop's login, passed by the caller (an unset value
-    would hold readiness as unreadable)."""
-    proc = subprocess.run(
-        ["gh", "pr", "view", str(pr_number), "--json", "headRefOid,statusCheckRollup"],
-        capture_output=True, text=True, check=True)
-    snapshot = json.loads(proc.stdout)
-    # specs/130 FR-003: the options check fails closed -- comments that
-    # cannot be read hold readiness rather than skip the check.
-    try:
-        comments_proc = subprocess.run(
-            ["gh", "pr", "view", str(pr_number), "--json", "comments"],
-            capture_output=True, text=True, check=True)
-        pr_comments = json.loads(comments_proc.stdout).get("comments")
-        if not isinstance(pr_comments, list):
-            pr_comments = COMMENTS_UNREADABLE
-    except (subprocess.CalledProcessError, ValueError, OSError):
-        pr_comments = COMMENTS_UNREADABLE
-    return evaluate_from_snapshot(snapshot, open_in_scope_findings, backstop_holds,
-                                  kill_switch_paused, pr_comments=pr_comments,
-                                  bot_login=bot_login)
 
 
 def main():

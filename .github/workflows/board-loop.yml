@@ -7031,8 +7031,9 @@ jobs:
           elif [ -n "${BOARD_LINE_ID:-}" ]; then
             # FR-011/FR-020: the merge ticks the line whoever merged it,
             # whatever the backlog-lines switch says.
-            tick="$(jq -n --argjson issue "$issue_number" --arg id "$BOARD_LINE_ID" --arg detail "by #$PR_NUMBER" \
-              '{op: "tick-fixed", issue: $issue, line_id: $id, detail: $detail}' \
+            tick="$(jq -n --argjson issue "$issue_number" --arg id "$BOARD_LINE_ID" --argjson pr "$PR_NUMBER" \
+              --arg url "https://github.com/$GITHUB_REPOSITORY/pull/$PR_NUMBER" \
+              '{op: "tick-fixed", issue: $issue, line_id: $id, pr: $pr, decided: "merged", url: $url}' \
               | python3 .github/scripts/board_backlog_lines.py)" || tick="failed"
             if [ "$tick" = '"applied"' ]; then
               echo "board-loop: backlog line $BOARD_LINE_ID on #$issue_number ticked -- fixed by #$PR_NUMBER (specs/121 FR-011)." >> "$GITHUB_STEP_SUMMARY"

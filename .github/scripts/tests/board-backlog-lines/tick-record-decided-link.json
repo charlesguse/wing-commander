@@ -1,0 +1,10 @@
+{
+  "name": "a merged line's tick carries by #PR plus a decided: ... (link) suffix (FR-017, research D6)",
+  "op": "tick_record",
+  "body": "- [ ] [wc:abc in-progress] Fix the thing\n",
+  "line_id": "abc",
+  "pr": 1300,
+  "decided": "merged",
+  "url": "https://github.com/o/r/pull/1300",
+  "expect": "by #1300 decided: merged (https://github.com/o/r/pull/1300)"
+}

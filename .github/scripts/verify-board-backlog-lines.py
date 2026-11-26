@@ -49,6 +49,16 @@ def run_case(case):
     if op == "select":
         actual = bbl.select_line(body)
         return None if _subset(case["expect"], actual) else "select: got {0!r}".format(actual)
+    if op == "tick_record":
+        # FR-017: the ticked line carries `by #PR decided: ... (link)`.
+        actual = bbl.tick_record(case["pr"], case.get("decided", "merged"), case.get("url", ""))
+        if actual != case["expect"]:
+            return "tick_record: got {0!r}".format(actual)
+        ticked = bbl.tick(case["body"], case["line_id"], "fixed", actual)
+        line = bbl.parse_lines(ticked)[0] if ticked else None
+        if line is None or line["detail"] != case["expect"]:
+            return "tick_record: ticked line detail {0!r}".format(line and line["detail"])
+        return None
     if op == "resolve":
         actual = list(bbl.resolve_backlog(case["issues"], case["bot"], case.get("maintainers", ())))
         return None if actual == case["expect"] else "resolve: got {0!r}".format(actual)
