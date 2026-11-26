@@ -789,10 +789,7 @@ or a second merge method).
 **Round budget**: `env.LIFECYCLE_REVIEW_ROUND_BUDGET` (a PR-reviewed
 constant, currently `5`). On exhaustion the run states the reason and the
 still-open findings on the lifecycle issue and does not select that pull
-request again until its diff against main changes: a rebase or a merge of
-main alone does not re-select it, the same rule a `not-converging` stop
-follows (below). Raising the budget past the exhausted round lifts the
-stop, and the next head move re-selects it.
+request again until a human intervenes.
 
 **Convergence and the `not-converging` stop**
 (`specs/116-review-convergence-analyze/`): a round is no longer read as
