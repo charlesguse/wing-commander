@@ -16,7 +16,10 @@ WHAT IT CHECKS (default run, on the tree)
 (a) Every wrapper triggered by issue_comment, pull_request_review or
     pull_request_review_comment: no job `if:`, step `if:`, step `env:`
     value or `with:` value compares or passes an identity (`.user.id`,
-    `issue-author-id`, `commenter-id ==`, actor/author ids).
+    `issue-author-id`, `commenter-id ==`, actor/author ids, the issue
+    author's id or login). A check on the issue author's kind
+    (`issue.user.type`, as the Spec Kit wrapper requires a Bot-authored
+    issue) narrows who can start a run and is not an identity.
 (b) clarify.yml's `clarify` job: the `comment-author` step exists, comes
     before `lifecycle-gate`, and both `lifecycle-gate` and "Note closed
     lifecycle and stop" carry its `maintainer == 'true'` condition. Every
@@ -95,7 +98,7 @@ COMMENT_TRIGGERS = {"issue_comment", "pull_request_review", "pull_request_review
 MAINTAINER_COND = "steps.comment-author.outputs.maintainer == 'true'"
 IF_IDENTITY = re.compile(
     r"\.user\.id\b|issue-author-id|commenter-id\s*==|==\s*inputs\.commenter-id|"
-    r"\bactor[._-]id\b|\bauthor[._-]id\b|issue\.user\b")
+    r"\bactor[._-]id\b|\bauthor[._-]id\b|issue\.user\.(?:id|login)\b")
 JQ_IDENTITY = re.compile(r"\.user\.id\b|\$aid\b|author_id")
 DOC_IDENTITY = re.compile(
     r"(?:user|actor|author)[._-]id\s*==|==\s*[\w.$-]*(?:user\.id|author[._-]id|\$aid)\b|"
@@ -633,6 +636,17 @@ def _clarify_wrapper_mutant(tree):
     return _yaml_edit(tree, p, edit)
 
 
+def _updater_wrapper_login_mutant(tree):
+    p = os.path.join(WF, "wing-commander-auto-update-spec-kit.yml")
+    def edit(doc):
+        for job in doc["jobs"].values():
+            if "uses" in job:
+                job["if"] = (str(job["if"]) + " || github.event.issue.user.login == "
+                             "github.event.comment.user.login")
+                return
+    return _yaml_edit(tree, p, edit)
+
+
 def _updater_wrapper_mutant(tree):
     p = os.path.join(WF, "wing-commander-auto-update-spec-kit.yml")
     def edit(doc):
@@ -862,6 +876,7 @@ def _lifecycle_contract_mutant(tree):
 MUTANTS = (
     ("(a) the clarify wrapper admits the issue's author", _clarify_wrapper_mutant),
     ("(a) the Spec Kit wrapper passes issue-author-id", _updater_wrapper_mutant),
+    ("(a) the Spec Kit wrapper admits the issue's author by login", _updater_wrapper_login_mutant),
     ("(b) lifecycle-gate loses the maintainer condition", _gate_cond_mutant),
     ("(b) the comment-author step runs after lifecycle-gate", _order_mutant),
     ("(b-harness) the comment-author step accepts NONE", _accept_none_mutant),
