@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 174: a dispatch input reaches a typed reusable-workflow input through fromJSON.
+"""Gate 175: a dispatch input reaches a typed reusable-workflow input through fromJSON.
 
 WHY THIS EXISTS
 ---------------
@@ -404,7 +404,7 @@ def self_test():
         print("SELF-TEST FAIL: " + f)
     if failures:
         return 1
-    print("Gate 174 self-test: {0} case(s) and {1} message check(s) behave as stated.".format(
+    print("Gate 175 self-test: {0} case(s) and {1} message check(s) behave as stated.".format(
         len(CASES), len(message_cases)))
     return 0
 
@@ -417,7 +417,7 @@ def main():
         print("::error::" + p)
     if found:
         return 1
-    print("Gate 174: every dispatch input passed to a typed reusable-workflow input goes through fromJSON.")
+    print("Gate 175: every dispatch input passed to a typed reusable-workflow input goes through fromJSON.")
     return 0
 
 

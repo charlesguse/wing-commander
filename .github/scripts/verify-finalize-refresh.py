@@ -66,6 +66,7 @@ BODY_STEP = "Assemble PR body"
 PR_STEP = "Open or update the final pull request"
 REREVIEW_STEP = "Request re-review from the answered reviewer(s)"
 METADATA_STEP = "Commit metadata (stage -> review)"
+FLIP_STEP = "Flip stage label"
 REPORT_MERGED_STEP = "Report the final pull request is already merged"
 REPORT_CLOSED_STEP = "Report the final pull request is closed"
 
@@ -126,6 +127,12 @@ def extract_between(text, start_marker, end_marker):
 GH_STUB = r"""#!/bin/sh
 echo "gh $*" >> "$GH_CALLS"
 case " $* " in
+  *" issue "*"edit "*"--add-label"*)
+    # GH_ISSUE_ADD_EXIT=1 fails the GraphQL add the way run 45649229707's
+    # did (#889). First: "stage:review " would match a "view " case.
+    [ "${GH_ISSUE_ADD_EXIT:-0}" = 0 ] || { echo "GraphQL: Something went wrong" >&2; exit "$GH_ISSUE_ADD_EXIT"; }
+    exit 0
+    ;;
   *" pr "*"view "*"--json body"*)
     # gh's --jq '.body // ""' already extracts the raw body text server-
     # side; the stub replicates that shape rather than wrapping in JSON.
@@ -164,6 +171,9 @@ case " $* " in
   *" issue "*"view "*)
     printf '{"labels": []}'
     exit 0
+    ;;
+  *" api "*)
+    exit "${GH_API_EXIT:-0}"
     ;;
   *" issue "*"comment "*)
     # The first GH_COMMENT_FAILS posts fail the way run 36264390069's did.
@@ -287,6 +297,11 @@ def new_stub_dir(work):
               newline="\n") as fh:
         fh.write(GH_STUB)
     os.chmod(os.path.join(bindir, "gh"), 0o755)
+    # The label flip's REST fallback pauses first; no scenario waits on it.
+    with open(os.path.join(bindir, "sleep"), "w", encoding="utf-8",
+              newline="\n") as fh:
+        fh.write("#!/bin/sh\nexit 0\n")
+    os.chmod(os.path.join(bindir, "sleep"), 0o755)
     calls = os.path.join(work, "gh_calls")
     open(calls, "w").close()
     return bindir, calls
@@ -300,7 +315,7 @@ def gh_call_count(calls_path, *substrings):
 
 def load_steps():
     names = (GUARD_STEP, DIFF_STEP, BODY_STEP, PR_STEP, REREVIEW_STEP,
-            METADATA_STEP)
+            METADATA_STEP, FLIP_STEP)
     steps = {name: find_step(STAGE, name)["run"] for name in names}
     steps[CALLOUT_STEP] = find_step(CALLOUT, CALLOUT_STEP)["run"]
     return steps
@@ -942,6 +957,58 @@ def scenario_callout_retry(steps, root):
     return failures
 
 
+def scenario_flip_label_transient(steps, root):
+    """#889 (finalize run 45649229707): a transient GraphQL error on the
+    stage:review add must not fail "Flip stage label" -- that skipped the
+    metadata commit after the final PR was already updated. The add falls
+    back to REST; when REST fails too the step warns and still succeeds.
+    """
+    failures = []
+    cases = (
+        # (GraphQL add exit, REST exit, want REST calls, want warning)
+        ("0", "0", 0, False),
+        ("1", "0", 1, False),
+        ("1", "1", 1, True),
+    )
+    for i, (gql, rest, want_rest, want_warn) in enumerate(cases):
+        work = os.path.join(root, f"flip-{i}")
+        runner_temp = os.path.join(work, "runner_temp")
+        os.makedirs(runner_temp, exist_ok=True)
+        bindir, calls = new_stub_dir(work)
+        env = base_env(work, bindir, calls, runner_temp, {
+            "PR": PR_NUMBER, "GH_ISSUE_ADD_EXIT": gql, "GH_API_EXIT": rest})
+        rc, out, _, _ = run_step(BASH, steps[FLIP_STEP], work, env,
+                                 runner_temp)
+        where = f"flip(GraphQL exit {gql}, REST exit {rest})"
+        if rc != 0:
+            failures.append(f"{where}: {FLIP_STEP!r} exited {rc}; a label "
+                            f"write must never fail the job: {out.strip()}")
+            continue
+        got = gh_call_count(calls, "api -X POST",
+                            f"repos/{REPO}/issues/{ISSUE}/labels",
+                            "labels[]=stage:review")
+        if got != want_rest:
+            failures.append(f"{where}: {got} REST label add(s), expected "
+                            f"{want_rest}.")
+        if want_warn != ("::warning::" in out):
+            failures.append(f"{where}: warning {'missing' if want_warn else 'unexpected'}: "
+                            f"{out.strip()}")
+        if gh_call_count(calls, "pr edit", "--add-label") != 1:
+            failures.append(f"{where}: the PR label mirror did not run "
+                            f"after the flip.")
+    return failures
+
+
+def _mut_flip_hard_fail(steps):
+    """#889 reverted: the GraphQL add fails the step, no REST fallback."""
+    text = steps[FLIP_STEP]
+    start = text.index('if ! gh issue edit "$ISSUE" --add-label "stage:review"; then')
+    end = text.index("fi\n", start) + len("fi\n")
+    steps[FLIP_STEP] = (text[:start]
+                        + 'gh issue edit "$ISSUE" --add-label "stage:review"\n'
+                        + text[end:])
+
+
 def _mut_drop_callout_retry(steps):
     steps[CALLOUT_STEP] = steps[CALLOUT_STEP].replace(
         "max_attempts=$(( ${#delays[@]} + 1 ))", "max_attempts=1")
@@ -959,6 +1026,7 @@ SCENARIOS = [
     scenario_re_review_request,
     scenario_metadata_commit_idempotent,
     scenario_callout_retry,
+    scenario_flip_label_transient,
 ]
 
 
@@ -1041,6 +1109,8 @@ MUTATIONS = [
     scenario_diff_propagation),
     ("callout retry removed", _mut_drop_callout_retry,
     scenario_callout_retry),
+    ("#889 reverted: the stage:review add fails the step",
+    _mut_flip_hard_fail, scenario_flip_label_transient),
 ]
 
 

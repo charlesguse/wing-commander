@@ -20,6 +20,11 @@ specs/129-parallel-pr-lint/contracts/lint-workflow-layout.md, items 1, 2, 3,
     (wc_gate_registry.AGGREGATE_JOB, T006) because it may carry no gate at
     all: a repository script or a python heredoc in its steps fails here,
     so a gate cannot hide in the one job that is not a unit.
+  * one number, one gate: no two gate scripts the workflow runs open their
+    docstring with the same "Gate N", and a step that runs a script which
+    declares "Gate N" is itself named "Gate N ..." (two gates merged on the
+    same day both took Gate 174, #889; the dispatch-input-types gate is
+    now Gate 175).
 
 Which jobs are PR-time is the registry's own reading
 (wc_gate_registry._job_runs_on_pull_request), so this gate and the local
@@ -29,11 +34,14 @@ Usage:
     python3 .github/scripts/verify-lint-shard-layout.py
     python3 .github/scripts/verify-lint-shard-layout.py --self-test
 """
+import ast
 import copy
 import os
 import re
+import shutil
 import sys
 import tempfile
+import warnings
 
 import yaml
 
@@ -47,6 +55,59 @@ NAME = "lint · workflows"
 _CALL = re.compile(r"\.github/scripts/(verify-[\w.-]+\.py)((?:[ \t]+--[\w-]+)*)")
 _PAIR = re.compile(r"^(Gate \S+) self-test\b")
 _OUTCOME = re.compile(r"steps\.([\w-]+)\.outcome\s*!=\s*'failure'")
+_CLAIM = re.compile(r"\s*Gate (\d+)\b")
+_STEP_GATE = re.compile(r"^Gate (\d+)\b")
+SCRIPTS = os.path.join(".github", "scripts")
+
+
+def gate_claims(doc, scripts_dir=SCRIPTS):
+    """{script: N} for every verify-*.py the workflow `doc` runs whose module
+    docstring opens with "Gate N". A script with no such opening claims no
+    number (many older gates name theirs only in the step)."""
+    out = {}
+    for job in (doc.get("jobs") or {}).values():
+        for s in (job or {}).get("steps") or []:
+            for script, _ in _CALL.findall(str((s or {}).get("run") or "")):
+                path = os.path.join(scripts_dir, script)
+                if script in out or not os.path.isfile(path):
+                    continue
+                with open(path, encoding="utf-8") as fh:
+                    src = fh.read()
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    try:
+                        ds = ast.get_docstring(ast.parse(src)) or ""
+                    except SyntaxError:
+                        continue
+                m = _CLAIM.match(ds)
+                if m:
+                    out[script] = m.group(1)
+    return out
+
+
+def _claim_failures(doc, claims):
+    """One number, one gate: no two scripts claim the same Gate N, and the
+    step that runs a claiming script is named for that number."""
+    fails, owners = [], {}
+    for script, n in sorted(claims.items()):
+        owners.setdefault(n, []).append(script)
+    for n, scripts in sorted(owners.items(), key=lambda x: int(x[0])):
+        if len(scripts) > 1:
+            fails.append("Gate {0} is claimed by both {1}; give all but one "
+                         "the next free gate number".format(
+                             n, " and ".join(scripts)))
+    for k, job in (doc.get("jobs") or {}).items():
+        for s in (job or {}).get("steps") or []:
+            name = str((s or {}).get("name") or "")
+            m = _STEP_GATE.match(name)
+            for script, _ in _CALL.findall(str((s or {}).get("run") or "")):
+                n = claims.get(script)
+                if n is not None and (not m or m.group(1) != n):
+                    fails.append("step {0!r} in '{1}' runs {2}, which "
+                                 "declares Gate {3}; name the step "
+                                 "'Gate {3} ...'".format(name or "?", k,
+                                                         script, n))
+    return fails
 
 
 def _runs_on_pr(job):
@@ -119,10 +180,12 @@ def derived_gate_set(path):
     return calls, {n for n, _ in runnable} | {n for n, _ in unrunnable}
 
 
-def check(doc, derived=None):
+def check(doc, derived=None, claims=None):
     """Contract failures for `doc`. `derived` is derived_gate_set() of the
-    same workflow; None skips item 8 (a caller with no file on disk)."""
-    fails = []
+    same workflow; None skips item 8 (a caller with no file on disk).
+    `claims` is gate_claims() of it; None skips the one-number-one-gate
+    rule for the same reason."""
+    fails = [] if claims is None else _claim_failures(doc, claims)
     if doc.get("name") != NAME:
         fails.append("workflow name is {0!r}, not {1!r}".format(
             doc.get("name"), NAME))
@@ -264,10 +327,10 @@ def _base():
 def self_test():
     results = []
 
-    def case(label, mutate, expect):
+    def case(label, mutate, expect, claims=None):
         doc = copy.deepcopy(_base())
         mutate(doc)
-        got = check(doc)
+        got = check(doc, claims=claims)
         ok = (not got) if expect is None else any(expect in g for g in got)
         results.append(ok)
         print("{0} {1}".format("ok  " if ok else "FAIL", label))
@@ -368,11 +431,63 @@ def self_test():
          lambda d: J(d, "lint")["steps"].append(
              {"name": "sneak", "run": "python3 - <<'PY'\nprint(1)\nPY"}),
          "may carry none")
+    claims = {"verify-a.py": "1", "verify-b.py": "2"}
+    case("gate scripts with distinct numbers, each in a step of its number, pass",
+         lambda d: None, None, claims=claims)
+    case("two gate scripts claiming one number fail (the two Gate 174s, #889)",
+         lambda d: J(d, "lint-shard-2")["steps"][0].update(
+             {"name": "Gate 1 — b"}),
+         "Gate 1 is claimed by both verify-a.py and verify-b.py",
+         claims={"verify-a.py": "1", "verify-b.py": "1"})
+    case("a step named for another number than its script declares fails",
+         lambda d: J(d, "lint-shard-2")["steps"][0].update(
+             {"name": "Gate 3 — b"}),
+         "declares Gate 2", claims=claims)
+    case("a self-test step named for another number fails",
+         lambda d: J(d, "lint-shard-1")["steps"][2].update(
+             {"name": "Gate 3 self-test — a"}),
+         "declares Gate 1", claims=claims)
+    results.extend(_claim_reader_cases())
     results.extend(_derivation_cases())
     bad = results.count(False)
     print("verify-lint-shard-layout self-test: {0}/{1} passed".format(
         len(results) - bad, len(results)))
     return 1 if bad else 0
+
+
+def _claim_reader_cases():
+    """gate_claims() over real files: a docstring that opens "Gate N" (after
+    a shebang) claims N, one that only mentions a gate later claims none, and
+    two files claiming one number fail check()."""
+    out = []
+    tmp = tempfile.mkdtemp()
+    try:
+        bodies = {
+            "verify-a.py": '#!/usr/bin/env python3\n"""Gate 1 - a."""\n',
+            "verify-b.py": '"""Gate 1: b, pasted with a\\w stray escape."""\n',
+            "verify-c.py": '"""c, which Gate 1 only mentions."""\n'}
+        for name, body in bodies.items():
+            with open(os.path.join(tmp, name), "w", encoding="utf-8") as fh:
+                fh.write(body)
+        doc = copy.deepcopy(_base())
+        doc["jobs"]["lint-shard-2"]["steps"][0]["name"] = "Gate 1 — b"
+        doc["jobs"]["lint-shard-2"]["steps"].append(
+            {"name": "C", "if": "${{ !cancelled() }}",
+             "run": "python3 .github/scripts/verify-c.py"})
+        got = gate_claims(doc, tmp)
+        for label, ok in (
+                ("the reader takes Gate N from each opening docstring",
+                 got == {"verify-a.py": "1", "verify-b.py": "1"}),
+                ("check() fails the duplicate the reader found",
+                 any("claimed by both" in f
+                     for f in check(doc, claims=got)))):
+            out.append(ok)
+            print("{0} {1}".format("ok  " if ok else "FAIL", label))
+            if not ok:
+                print("     got {0}".format(got))
+    finally:
+        shutil.rmtree(tmp)
+    return out
 
 
 def _derivation_cases():
@@ -432,7 +547,7 @@ def main(argv):
         return self_test()
     with open(WORKFLOW, encoding="utf-8") as fh:
         doc = yaml.safe_load(fh) or {}
-    fails = check(doc, derived_gate_set(WORKFLOW))
+    fails = check(doc, derived_gate_set(WORKFLOW), gate_claims(doc))
     for f in fails:
         print("::error file={0}::Gate 174: {1}".format(WORKFLOW, f))
     if fails:

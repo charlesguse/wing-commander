@@ -1442,8 +1442,11 @@ jobs:
     concurrency:
       group: wing-commander-${{ inputs.issue-number }}
       cancel-in-progress: false
+    # contents: read -- this job pushes nothing: its notice passes an empty
+    # spec-dir (no record to mark before the spec PR merges), and its only
+    # GITHUB_TOKEN use is the two checkouts (#889, least privilege).
     permissions:
-      contents: write
+      contents: read
       issues: write
       id-token: write
     steps:
