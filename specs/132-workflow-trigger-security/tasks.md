@@ -210,3 +210,14 @@ MVP = Phases 1–3 (zizmor gate plus the three injection fixes, green on main). 
   - .github/scripts/wc_action_pins.py
 
   Detail: Keep the waiver with a note, or fail with a clear error, when no unique successor is found.
+
+## Maintainer Feedback
+
+- [ ] MF1 verify-zizmor.py (~:407-420): count findings per (file, audit, location) key and fail when more than one finding matches a single waiver record (or key dangerous-triggers on the trigger name). Self-test: a second dangerous-triggers finding (e.g. pull_request_target added to wing-commander-2-clarify.yml) must fail. (FR-002, FR-010, data-model one-record-per-finding)
+- [ ] MF2a verify-zizmor.py (~:189): fail on any `# zizmor: ignore` comment in scanned files. Self-test: inline ignore[template-injection] on a new run: expression fails.
+- [ ] MF2b verify-zizmor.py check_config (~:270-302): fail on any `disable` other than self-repository. Self-test: `template-injection: {disable: true}` in .github/zizmor.yml fails.
+- [ ] MF2c verify-zizmor.py check_config: fail on any policy key outside actions/*, github/*, anthropics/* and *. Self-test: adding `docker/*: ref-pin` fails. (US2 acceptance 4, FR-009)
+- [ ] MF3 verify-zizmor.py (~:51, ~:56, ~:308): read the trusted list from its one home instead of the hard-coded TRUSTED_PATTERNS, and extend HOME_SCAN_GLOBS to cover .github/scripts/*.py gate scripts. Self-test: a second copy of the trusted list in a gate script fails. (FR-009a)
+- [ ] MF4 Renumber this PR's three gates (currently 176, 177, 178) past main's highest gate (176 from verify-skill-scripts.py, #1236) in docstrings, the lint-shard-8 step names and docs/reference.md; re-run the gate suite including Gate 174.
+- [ ] MF5 Correct wording: PR body must say an unlisted workflow_call is treated as a published stage, not repo-only; docs/reference.md must say Gate 177 judges step-level `uses:` only, not any action or workflow reference.
+- [ ] MF6 tasks.md T035: replace the update-action-pins.yml re-drive (never created; T020 used Dependabot) with SC-010's other route: record the first real Dependabot bump PR on the lifecycle issue, with `wc_action_pins.py --write` run on that branch.
