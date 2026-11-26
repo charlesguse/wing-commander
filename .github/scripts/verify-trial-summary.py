@@ -11,6 +11,10 @@ entry NOT being counted as a Haiku lifecycle. Also (review gate rounds 4-5):
   both scripts, so a restarted trial is summarised over the window its
   bound closes;
 * a comparator error is reported on its own line;
+* each bar (a), (b) and (c) is met exactly at its boundary and missed one
+  run past it, refused, exhausted and malformed runs each count toward (c)
+  and against (a), and MUTATIONS that move a comparison by one step must
+  fail the cases (#889);
 * wing-commander-trial-summary.yml and wing-commander-8-watchdog.yml read
   the metrics branch and path with the same defaults
   wing-commander-metrics-persist.yml writes them with, and the summary
@@ -57,6 +61,15 @@ def paired(run, label, model, cost, outcome=None):
     return rec
 
 
+def outcome(name, agree=True, shared=1, cagree=None):
+    """A shadow record with an explicit filing agreement and class counts,
+    for the bar-boundary cases below."""
+    return {"run_label": "diagnose-shadow", "model": "claude-haiku-5-5",
+            "trial": {"outcome": name, "filing_agree": agree,
+                      "class_shared": shared,
+                      "class_agree": shared if cagree is None else cagree}}
+
+
 def sonnet_with_helper():
     return {"stage": "implement", "model": "claude-sonnet-5-5",
             "spec": {"issue": 7}, "emitted_at": "2026-10-01T00:00:00Z",
@@ -94,6 +107,53 @@ CASES = {
                   "**Diagnose bar (50 compared runs): meets**", None),
     "bar-below-50": ([shadow("agreed")] * 49,
                      "**Diagnose bar (50 compared runs): sample too small**", None),
+    # Exact boundaries (#889, found by the code review of #1169): each bar
+    # met exactly meets, one run past it misses, so `>=` written as `>` (or
+    # `<=` as `<`) fails a case. (a) at 95/100; a disagreeing run carries no
+    # shared finding, so only (a) moves.
+    "a-exactly-95": ([outcome("agreed")] * 95
+                     + [outcome("disagreed", False, 0)] * 5,
+                     "**Diagnose bar (50 compared runs): meets**",
+                     "(a) Filing agreement: 95.0%"),
+    "a-below-95": ([outcome("agreed")] * 94
+                   + [outcome("disagreed", False, 0)] * 6,
+                   "**Diagnose bar (50 compared runs): misses**", None),
+    # (a) counts a refused run as not agreeing even when its record says
+    # filing_agree: counted as agreeing, 96/100 would meet.
+    "a-refused-not-agreeing": ([outcome("agreed")] * 94
+                               + [outcome("refused", True, 0)] * 2
+                               + [outcome("disagreed", False, 0)] * 4,
+                               "**Diagnose bar (50 compared runs): misses**",
+                               "(a) Filing agreement: 94.0%"),
+    # (c) at the bar of 50: one refused, exhausted or malformed run is 2%
+    # (meets), two are 4% (misses); and at 2/100, exactly 2% meets.
+    "c-one-of-50-refused": ([outcome("agreed")] * 49
+                            + [outcome("refused", False, 0)],
+                            "**Diagnose bar (50 compared runs): meets**",
+                            "refused=1, exhausted=0, malformed=0"),
+    "c-one-of-50-exhausted": ([outcome("agreed")] * 49
+                              + [outcome("exhausted", False, 0)],
+                              "**Diagnose bar (50 compared runs): meets**",
+                              "refused=0, exhausted=1, malformed=0"),
+    "c-one-of-50-malformed": ([outcome("agreed")] * 49
+                              + [outcome("malformed", False, 0)],
+                              "**Diagnose bar (50 compared runs): meets**",
+                              "refused=0, exhausted=0, malformed=1"),
+    "c-two-of-50": ([outcome("agreed")] * 48 + [outcome("refused", False, 0),
+                                                 outcome("malformed", False, 0)],
+                    "**Diagnose bar (50 compared runs): misses**",
+                    "Refused + exhausted + malformed: 2 (4.0% of compared"),
+    "c-exactly-2-of-100": ([outcome("agreed")] * 98
+                           + [outcome("exhausted", False, 0)] * 2,
+                           "**Diagnose bar (50 compared runs): meets**",
+                           "Refused + exhausted + malformed: 2 (2.0% of compared"),
+    # (b) at exactly 90% of shared findings meets; one below misses.
+    "b-exactly-90": ([outcome("agreed", True, 10, 9)] * 50,
+                     "**Diagnose bar (50 compared runs): meets**",
+                     "(450/500, bar 90%)"),
+    "b-below-90": ([outcome("agreed", True, 10, 9)] * 49
+                   + [outcome("agreed", True, 10, 8)],
+                   "**Diagnose bar (50 compared runs): misses**", None),
     "no-baseline-excluded": ([shadow("agreed")] * 49 + [shadow("no-baseline")] * 50,
                              "sample too small", "Compared runs (error and no-baseline excluded): 49"),
     "helper-not-counted": ([sonnet_with_helper()], None, "| none | | | | | |"),
@@ -260,23 +320,65 @@ def check_wrappers(failures):
                         "trial-summary.py --since")
 
 
+def run_cases(script, tmp):
+    """Run every CASES entry against `script`; return the failures."""
+    failures = []
+    for name, (records, verdict, extra) in sorted(CASES.items()):
+        path = Path(tmp) / f"{name}.jsonl"
+        path.write_text("\n".join(json.dumps(r) for r in records) + "\n",
+                        encoding="utf-8")
+        proc = subprocess.run([sys.executable, "-I", str(script),
+                               "--records", str(path)],
+                              capture_output=True, text=True, check=False)
+        for want in (verdict, extra):
+            if want and want not in proc.stdout:
+                failures.append(f"{name}: missing {want!r} (rc="
+                                f"{proc.returncode}) {proc.stderr[:200]}")
+    return failures
+
+
+# Each MUTATION moves one bar comparison by one step, or lets a failed run
+# count as agreeing; the cases above must then fail. A test that cannot
+# fail is not a test.
+MUTATIONS = (
+    ("(a) >= written as >", "filing / n >= 0.95", "filing / n > 0.95"),
+    ("(b) >= written as >", "cagree / shared >= 0.90", "cagree / shared > 0.90"),
+    ("(c) <= written as <", "failed / n <= 0.02", "failed / n < 0.02"),
+    ("(a) counts a failed run as agreeing",
+     'and r["trial"].get("outcome") not in FAILED)', ")"),
+    ("(c) drops one failed outcome",
+     'FAILED = {"refused", "exhausted", "malformed"}',
+     'FAILED = {"refused", "exhausted"}'),
+)
+
+
+def check_mutations(tmp, failures):
+    source = SCRIPT.read_text(encoding="utf-8")
+    root = Path(tmp) / "mut"
+    shared = root / "actions" / "_shared"
+    shared.mkdir(parents=True)
+    (shared / BOUND.name).write_text(BOUND.read_text(encoding="utf-8"),
+                                     encoding="utf-8")
+    (root / "scripts").mkdir()
+    mutated = root / "scripts" / SCRIPT.name
+    for name, old, new in MUTATIONS:
+        if source.count(old) != 1:
+            failures.append(f"mutation target missing or ambiguous: {name}")
+            continue
+        mutated.write_text(source.replace(old, new), encoding="utf-8")
+        if not run_cases(mutated, root):
+            failures.append(f"mutation not caught: {name} (the cases stayed "
+                            "green with it)")
+
+
 def main():
     failures = []
     check_wrappers(failures)
     check_single_home(failures)
     with tempfile.TemporaryDirectory() as tmp:
         check_window(tmp, failures)
-        for name, (records, verdict, extra) in sorted(CASES.items()):
-            path = Path(tmp) / f"{name}.jsonl"
-            path.write_text("\n".join(json.dumps(r) for r in records) + "\n",
-                            encoding="utf-8")
-            proc = subprocess.run([sys.executable, "-I", str(SCRIPT),
-                                   "--records", str(path)],
-                                  capture_output=True, text=True, check=False)
-            for want in (verdict, extra):
-                if want and want not in proc.stdout:
-                    failures.append(f"{name}: missing {want!r} (rc="
-                                    f"{proc.returncode}) {proc.stderr[:200]}")
+        failures += run_cases(SCRIPT, tmp)
+        check_mutations(tmp, failures)
         missing = subprocess.run([sys.executable, "-I", str(SCRIPT), "--records",
                                   str(Path(tmp) / "absent.jsonl")],
                                  capture_output=True, text=True, check=False)
@@ -286,7 +388,8 @@ def main():
         print(f, file=sys.stderr)
     if failures:
         return 1
-    print(f"trial-summary verdicts hold for all {len(CASES)} cases")
+    print(f"trial-summary verdicts hold for all {len(CASES)} cases and "
+          f"{len(MUTATIONS)} mutations")
     return 0
 
 
