@@ -3624,9 +3624,12 @@ jobs:
           gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" --paginate \
             --jq '.[] | select(.user.login == env.BOT_LOGIN or (.user.type != "Bot" and (.author_association | IN("OWNER", "MEMBER", "COLLABORATOR"))))' \
             > "$RUNNER_TEMP/context-comments.json" 2>/dev/null || printf '' > "$RUNNER_TEMP/context-comments.json"
+          # The question's label record (below) is data for the read-back, not
+          # for the agent, so its line is left out of the agent's context.
           {
             gh issue view "$ISSUE_NUMBER" --json body --jq .body
-            jq -r '.body' "$RUNNER_TEMP/context-comments.json"
+            jq -r '.body' "$RUNNER_TEMP/context-comments.json" \
+              | sed '/^> <!-- wing-commander-auto-update-spec-kit-options: /d'
           } > "$RUNNER_TEMP/question-context.md" 2>/dev/null || printf '' > "$RUNNER_TEMP/question-context.md"
           # The labels the newest question offers, as a JSON array: the
           # record on the last line of this pipeline's newest "Choose an

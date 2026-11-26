@@ -95,7 +95,7 @@ A reply on the Spec Kit updater's tracking issue drives its comment-reply path o
 - **An org member whose membership is private** may be reported with an association other than `MEMBER`. That member is treated as a non-maintainer. Making the membership public, or adding them as a collaborator, makes them qualify.
 - **An adopter's existing wrapper that still carries the exception.** The stage's own check refuses the comment (FR-006).
 - **The auto-release end-to-end test** posts its clarification answers with the maintainer token, so its verdict does not change.
-- **A Spec Kit updater question posted before the label record existed** records no labels, so every reply to it is unrecognized and asks for a clearer reply. Closing the tracking issue lets a later cycle open a new one and ask again.
+- **A Spec Kit updater question posted before the label record existed** records no labels, so every reply to it is unrecognized and asks for a clearer reply. Closing the tracking issue lets a later cycle open a new tracking issue and evaluate the candidate again.
 
 ## Requirements *(mandatory)*
 

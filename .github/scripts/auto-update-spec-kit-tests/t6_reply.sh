@@ -146,8 +146,10 @@ readback false success '{"recognized":true,"chosen_option":"Use the documented"}
 check "spec 130: part of a recorded label -> not recognized" "$D_REC" "false"
 
 echo
-# The labels the staging step recorded, comma-joined (spec 130).
+# The labels the staging step recorded (spec 130): comma-joined, and as
+# the JSON it wrote (empty when it wrote no file).
 posted_labels() { jq -r '.[]' "$RUNNER_TEMP/posted-options.json" 2>/dev/null | tr -d '\r' | paste -sd, -; }
+posted_json() { jq -c . "$RUNNER_TEMP/posted-options.json" 2>/dev/null | tr -d '\r'; }
 echo "=== spec 130: the agent's context holds the pipeline's and maintainers' comments only ==="
 new_step_env
 "$PY" -c "
@@ -204,11 +206,11 @@ Q2="'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path for Spec Kit v0.1
 stage_comments "[{'id':521,'user':'wcbot[bot]','body':$Q1},{'id':522,'user':'wcbot[bot]','body':$Q2},{'id':523,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Reply with one of the posted options**\n> <!-- wing-commander-auto-update-spec-kit-options: [\"X\"] -->'}]"
 check "spec 130: an earlier question's labels and another callout's record do not count" "$(posted_labels)" "C,D"
 stage_comments "[{'id':531,'user':'wcbot[bot]','body':$Q1},{'id':532,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path for Spec Kit v0.15.1**\n> - **C**: c'}]"
-check "spec 130: a newest question with no record offers no label" "$(posted_labels)" ""
+check "spec 130: a newest question with no record offers no label" "$(posted_json)" "[]"
 stage_comments "[{'id':541,'user':'wcbot[bot]','body':'> [!IMPORTANT]\n> **Action needed: Choose an upgrade path for Spec Kit v0.15.1**\n> <!-- wing-commander-auto-update-spec-kit-options: [\"C\"] -->\n> Reply on this issue.'}]"
-check "spec 130: a record that is not the question's last line offers no label" "$(posted_labels)" ""
+check "spec 130: a record that is not the question's last line offers no label" "$(posted_json)" "[]"
 stage_comments "[{'id':551,'user':'otherapp[bot]','body':$Q2}]"
-check "spec 130: another app's question offers no label" "$(posted_labels)" ""
+check "spec 130: another app's question offers no label" "$(posted_json)" "[]"
 
 echo "--- spec 130: the record round-trips through the shipped question and callout ---"
 new_step_env
@@ -237,8 +239,9 @@ s['issues']['42']['comments'].append({'id':777,'user':'charlesguse','author_asso
 json.dump(s,open(os.environ['GH_STATE'],'w'))"
 export COMMENT_ID=777 BOT_LOGIN='wcbot[bot]'
 run_step 'auto-update-spec-kit__comment-reply__*stage-the-reply*.sh' >/dev/null 2>&1
-check "spec 130: the question's record holds exactly its labels" "$(jq -c . "$RUNNER_TEMP/posted-options.json" 2>/dev/null | tr -d '\r')" '["Use `--ai` --> flag","Pin <v1.2.3>"]'
-check_contains "spec 130: the question still lists its options for a reader" "$(cat "$RUNNER_TEMP/question-context.md" 2>/dev/null)" '**Pin <v1.2.3>**: '
+check "spec 130: the question's record holds exactly its labels" "$(posted_json)" '["Use `--ai` --> flag","Pin <v1.2.3>"]'
+check_contains "spec 130: the agent's context still lists the options" "$(cat "$RUNNER_TEMP/question-context.md" 2>/dev/null)" '**Pin <v1.2.3>**: '
+check_not_contains "spec 130: the agent's context leaves out the label record" "$(cat "$RUNNER_TEMP/question-context.md" 2>/dev/null)" 'wing-commander-auto-update-spec-kit-options'
 
 echo
 echo "=== Scenario 13: resume clears the flag and records who decided ==="
