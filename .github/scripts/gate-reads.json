@@ -1,0 +1,5369 @@
+{
+ "auto-update-spec-kit-tests/run-tests.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "dispatch-and-wait-tests/run-tests.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "e2e-provisioning-tests/run-tests.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "inline-gate-15.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "inline-gate-16.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "inline-gate-2.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "inline-gate-22.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "inline-gate-23.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "inline-gate-3.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "inline-gate-5.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "inline-gate-6.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "inline-gate-7.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "inline-parse-yaml-and-bash-n-every-run-block.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "size-path-backstop-tests/run-tests.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "stage-findings-tests/run-tests.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "verify-act-dedup-guard.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-act-dedup-guard.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "e157ed9729a3faf24248577e2ff15602c91398661df3d301b46a4cbeee4cd46b",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-act-dedup-guard.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-action-manifest-descriptions.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-action-manifest-descriptions.py"
+  ],
+  "digest": "5316a17c084193f3a39f59ecae62148403753b3193ebb3e949eb2832804208d1",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-action-manifest-descriptions.py"
+  ]
+ },
+ "verify-action-manifest-descriptions.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-action-manifest-descriptions.py"
+  ],
+  "digest": "5316a17c084193f3a39f59ecae62148403753b3193ebb3e949eb2832804208d1",
+  "reads": [
+   ".github/scripts/verify-action-manifest-descriptions.py"
+  ]
+ },
+ "verify-action-runtime-pins.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-action-runtime-pins.py"
+  ],
+  "digest": "0122cb4a8f2bc8064b78bb47e7fd371392898659aa9a5fcc740af9816e40f5ac",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/action-runtime-pins.json",
+   ".github/scripts/action-runtime-waivers.json",
+   ".github/scripts/verify-action-runtime-pins.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-action-runtime-pins.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-action-runtime-pins.py"
+  ],
+  "digest": "0122cb4a8f2bc8064b78bb47e7fd371392898659aa9a5fcc740af9816e40f5ac",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-action-runtime-pins.py"
+  ]
+ },
+ "verify-actionlint.py": {
+  "children": [
+   "actionlint"
+  ],
+  "code": [
+   ".github/scripts/verify-actionlint.py",
+   ".github/scripts/wc_actionlint.py"
+  ],
+  "digest": "6f9f254a1b9c6759a7ca928476c3df4173e093271bb6f57418d1e79871b03285",
+  "reads": [
+   ".github/",
+   ".specify",
+   "docs"
+  ]
+ },
+ "verify-actionlint.py --self-test": {
+  "children": [
+   "actionlint"
+  ],
+  "code": [
+   ".github/scripts/verify-actionlint.py",
+   ".github/scripts/wc_actionlint.py"
+  ],
+  "digest": "6f9f254a1b9c6759a7ca928476c3df4173e093271bb6f57418d1e79871b03285",
+  "reads": [
+   ".github",
+   ".github/docker/e2e-reference-image/shellcheck.pin",
+   ".github/scripts/verify-actionlint.py",
+   ".github/scripts/wc_actionlint.py"
+  ]
+ },
+ "verify-actions-layer-invariants.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-actions-layer-invariants.py"
+  ],
+  "digest": "dd7488b1da980f6f1de764745fc8a4bd0fac4c2a4c741a8131379fb773c36618",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/actions-invariant-waivers.json",
+   ".github/scripts/verify-actions-layer-invariants.py"
+  ]
+ },
+ "verify-actions-layer-invariants.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-actions-layer-invariants.py"
+  ],
+  "digest": "dd7488b1da980f6f1de764745fc8a4bd0fac4c2a4c741a8131379fb773c36618",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-actions-layer-invariants.py"
+  ]
+ },
+ "verify-actions-no-gate-scripts.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-actions-no-gate-scripts.py",
+   ".github/scripts/wc_gate_registry.py"
+  ],
+  "digest": "f0b62b0080485c78bfb9286bf7250dd9e48ebae57c35f1728d788d6d93ef1afe",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-actions-no-gate-scripts.py",
+   ".github/scripts/wc_gate_registry.py"
+  ]
+ },
+ "verify-actions-no-gate-scripts.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-actions-no-gate-scripts.py",
+   ".github/scripts/wc_gate_registry.py"
+  ],
+  "digest": "f0b62b0080485c78bfb9286bf7250dd9e48ebae57c35f1728d788d6d93ef1afe",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-actions-no-gate-scripts.py",
+   ".github/scripts/wc_gate_registry.py"
+  ]
+ },
+ "verify-agent-git-deny.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-agent-git-deny.py"
+  ],
+  "digest": "5fd0a0ce8a78db40ff228009b358659c93aab24fe9a4a51c5d0fece59d248cf5",
+  "reads": [
+   ".github/scripts/verify-agent-git-deny.py",
+   ".github/workflows/board-loop.yml",
+   ".github/workflows/implement.yml",
+   ".github/workflows/pr-conversation.yml",
+   ".github/workflows/wing-commander-5-implement.yml"
+  ]
+ },
+ "verify-agent-git-deny.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-agent-git-deny.py"
+  ],
+  "digest": "5fd0a0ce8a78db40ff228009b358659c93aab24fe9a4a51c5d0fece59d248cf5",
+  "reads": [
+   ".github/scripts/fixtures/095-agent-git-deny/boundary-without-git.yml",
+   ".github/scripts/fixtures/095-agent-git-deny/good-boundary.yml",
+   ".github/scripts/fixtures/095-agent-git-deny/good-deny.yml",
+   ".github/scripts/fixtures/095-agent-git-deny/missing-deny.yml",
+   ".github/scripts/fixtures/095-agent-git-deny/published-with-boundary.yml",
+   ".github/scripts/fixtures/095-agent-git-deny/published-without-boundary.yml",
+   ".github/scripts/fixtures/095-agent-git-deny/second-literal-list.yml",
+   ".github/scripts/verify-agent-git-deny.py",
+   ".github/workflows/board-loop.yml",
+   ".github/workflows/implement.yml",
+   ".github/workflows/pr-conversation.yml",
+   ".github/workflows/wing-commander-5-implement.yml"
+  ]
+ },
+ "verify-agent-push-credential-helper.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-agent-push-credential-helper.py",
+   ".github/scripts/wc_push_grant.py",
+   ".github/scripts/wc_repo_files.py"
+  ],
+  "digest": "28934bcb69ccb40f1ea0537916d0934500e30175c4db350e4f2a535dd82b2e8f",
+  "reads": [
+   "./"
+  ]
+ },
+ "verify-agent-push-credential-helper.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-agent-push-credential-helper.py",
+   ".github/scripts/wc_push_grant.py",
+   ".github/scripts/wc_repo_files.py"
+  ],
+  "digest": "28934bcb69ccb40f1ea0537916d0934500e30175c4db350e4f2a535dd82b2e8f",
+  "reads": [
+   "./"
+  ]
+ },
+ "verify-agent-startup-classifier.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/classify-agent-startup.py",
+   ".github/scripts/verify-agent-startup-classifier.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "2fa73ed3b58959d311088c67e1394f9e0bd7e3d438b1a56acc4030df45de18c1",
+  "reads": [
+   ".github",
+   ".github/scripts/agent-startup-fixtures/",
+   ".github/scripts/classify-agent-startup.py",
+   ".github/scripts/gh-allows-escape-sequences.sh",
+   ".github/scripts/verify-agent-startup-classifier.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/agent-startup-check.yml",
+   ".github/workflows/private-image-dogfood.yml",
+   ".github/workflows/wing-commander-private-image-dogfood.yml"
+  ]
+ },
+ "verify-agent-startup-classifier.py --self-test": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/classify-agent-startup.py",
+   ".github/scripts/verify-agent-startup-classifier.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "2fa73ed3b58959d311088c67e1394f9e0bd7e3d438b1a56acc4030df45de18c1",
+  "reads": [
+   ".github",
+   ".github/scripts/agent-startup-fixtures/",
+   ".github/scripts/classify-agent-startup.py",
+   ".github/scripts/gh-allows-escape-sequences.sh",
+   ".github/scripts/verify-agent-startup-classifier.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/agent-startup-check.yml",
+   ".github/workflows/private-image-dogfood.yml",
+   ".github/workflows/wing-commander-private-image-dogfood.yml"
+  ]
+ },
+ "verify-agent-verdict.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-agent-verdict.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "72c7d483212e5ffc4b30ffa7a2e0e614eed28741846d2860c4bd19503b25fe3b",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-agent-verdict.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-auto-release-credential-step.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-auto-release-credential-step.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "f7b708bff0e8b305d8c62a306ec774263373b03ee4da7b35d1fb70a394690c75",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-auto-release-credential-step.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-auto-release-e2e-gate-decisions.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-auto-release-e2e-gate-decisions.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "1b3cd873deac3dce304ad825849bea307647d351dc38291692efcd55f558afcf",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-auto-release-e2e-gate-decisions.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-auto-release-e2e-gate-decisions.py --self-test": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-auto-release-e2e-gate-decisions.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "1b3cd873deac3dce304ad825849bea307647d351dc38291692efcd55f558afcf",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-auto-release-e2e-gate-decisions.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-auto-release-e2e-pin.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-auto-release-e2e-pin.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "04473cd749f08f47df79caecd60b5e8b637c0c5cfcef7099a58a86d2cb4881ff",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-auto-release-e2e-pin.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-auto-release-gate-waits-for-stage.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-auto-release-gate-waits-for-stage.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "1f7a14bfb964c8215fbc6ad4ad7c18a146960d83796048d9209f593c05818d47",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-auto-release-gate-waits-for-stage.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-auto-release-mode.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-auto-release-mode.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "060aa91ddd714c4f96461b9a36fb95f3674a0a2874dedaef6cfb3f3d1b48fad2",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-auto-release-mode.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-auto-release-poll-credential-failure.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-auto-release-poll-credential-failure.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "aeb1febdcf86ba59fc20f0d4d73a7aaf3e05a881b1bb2a112748cf9a81960434",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-auto-release-poll-credential-failure.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-auto-release-report.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-auto-release-report.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "63d588f62dc5f118b46eea71bb55c7d4bb54d4fdaaffee0a15d56c6e96826029",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-auto-release-report.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-auto-release-specs-fallback.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-auto-release-specs-fallback.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "ee4fdb1dd5529e0bd74ad690f379fc012ac2f51a1e3adccdc6dfa7a701fe1d9f",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-auto-release-specs-fallback.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-auto-release-switch.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-auto-release-switch.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "807fa80f9619204055d57fe57fe42710634676b3a6604b405526db050c2baa77",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-auto-release-switch.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-auto-release-tag-state-runtime.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-auto-release-tag-state-runtime.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "97589d06147069167469bfe6be32345831a83b871a283552297c369d08994bb5",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-auto-release-tag-state-runtime.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-board-backlog-edit.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_backlog_edit.py",
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/verify-board-backlog-edit.py"
+  ],
+  "digest": "e86d9b6a69f59b4ec1d03435b778ea3bf5bcb31d9dfc3e164b28435a3bfc2ab5",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/",
+   ".github/workflows/"
+  ]
+ },
+ "verify-board-backlog-edit.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_backlog_edit.py",
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/verify-board-backlog-edit.py"
+  ],
+  "digest": "e86d9b6a69f59b4ec1d03435b778ea3bf5bcb31d9dfc3e164b28435a3bfc2ab5",
+  "reads": [
+   ".github/scripts/board_backlog_edit.py",
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/tests/board-backlog-edit/concurrent-append.json",
+   ".github/scripts/verify-board-backlog-edit.py"
+  ]
+ },
+ "verify-board-backlog-lines.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_backlog_edit.py",
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/board_duplicate_disposition.py",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_merge.py",
+   ".github/scripts/board_prove.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/board_roadmap.py",
+   ".github/scripts/board_spec_request_body.py",
+   ".github/scripts/board_triage.py",
+   ".github/scripts/verify-board-backlog-lines.py"
+  ],
+  "digest": "2d50b95197755e7e9e43f6f4fb34bfce0a675e55835b6722048b201c06c0063e",
+  "reads": [
+   ".github/actions/wing-commander-issue-context/action.yml",
+   ".github/scripts/board_backlog_edit.py",
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/board_duplicate_disposition.py",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_merge.py",
+   ".github/scripts/board_prove.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/board_roadmap.py",
+   ".github/scripts/board_spec_request_body.py",
+   ".github/scripts/board_triage.py",
+   ".github/scripts/tests/board-backlog-lines/",
+   ".github/scripts/verify-board-backlog-lines.py",
+   ".github/workflows/board-loop.yml"
+  ]
+ },
+ "verify-board-backlog-lines.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_backlog_edit.py",
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/board_duplicate_disposition.py",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_merge.py",
+   ".github/scripts/board_prove.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/board_roadmap.py",
+   ".github/scripts/board_spec_request_body.py",
+   ".github/scripts/board_triage.py",
+   ".github/scripts/verify-board-backlog-lines.py"
+  ],
+  "digest": "2d50b95197755e7e9e43f6f4fb34bfce0a675e55835b6722048b201c06c0063e",
+  "reads": [
+   ".github/actions/wing-commander-issue-context/action.yml",
+   ".github/scripts/board_backlog_edit.py",
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/board_duplicate_disposition.py",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_merge.py",
+   ".github/scripts/board_prove.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/board_roadmap.py",
+   ".github/scripts/board_spec_request_body.py",
+   ".github/scripts/board_triage.py",
+   ".github/scripts/tests/board-backlog-lines/",
+   ".github/scripts/verify-board-backlog-lines.py",
+   ".github/workflows/board-loop.yml"
+  ]
+ },
+ "verify-board-closed-without-landing.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_closed_without_landing.py",
+   ".github/scripts/verify-board-closed-without-landing.py"
+  ],
+  "digest": "a8f89c32f3aa7cff5e3fe6b0cd2cc27debf9b043dc3ee6d45f5f291e4db17b9c",
+  "reads": [
+   ".github/scripts/board_closed_without_landing.py",
+   ".github/scripts/verify-board-closed-without-landing.py"
+  ]
+ },
+ "verify-board-closed-without-landing.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_closed_without_landing.py",
+   ".github/scripts/verify-board-closed-without-landing.py"
+  ],
+  "digest": "a8f89c32f3aa7cff5e3fe6b0cd2cc27debf9b043dc3ee6d45f5f291e4db17b9c",
+  "reads": [
+   ".github/scripts/board_closed_without_landing.py",
+   ".github/scripts/verify-board-closed-without-landing.py"
+  ]
+ },
+ "verify-board-duplicate-disposition.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_backlog_edit.py",
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/board_duplicate_disposition.py",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_roadmap.py",
+   ".github/scripts/verify-board-duplicate-disposition.py"
+  ],
+  "digest": "6de24310667bd6841966c6d15f30eda6c9b6c59a39bebfd5b4da31e3e9aed59a",
+  "reads": [
+   ".github/scripts/board_backlog_edit.py",
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/board_duplicate_disposition.py",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_roadmap.py",
+   ".github/scripts/tests/board-roadmap/roadmap-body-expected.md",
+   ".github/scripts/tests/board-roadmap/roadmap-body.md",
+   ".github/scripts/verify-board-duplicate-disposition.py"
+  ]
+ },
+ "verify-board-duplicate-disposition.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_backlog_edit.py",
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/board_duplicate_disposition.py",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_roadmap.py",
+   ".github/scripts/verify-board-duplicate-disposition.py"
+  ],
+  "digest": "6de24310667bd6841966c6d15f30eda6c9b6c59a39bebfd5b4da31e3e9aed59a",
+  "reads": [
+   ".github/scripts/board_backlog_edit.py",
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/board_duplicate_disposition.py",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_roadmap.py",
+   ".github/scripts/verify-board-duplicate-disposition.py"
+  ]
+ },
+ "verify-board-duplicate-marker-scans.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_closed_without_landing.py",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-board-duplicate-marker-scans.py"
+  ],
+  "digest": "8e808a2e15bf63227975e5052670d9af9b1837c98d7c0591551652f9dfcf61a4",
+  "reads": [
+   ".github/scripts/board_closed_without_landing.py",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-board-duplicate-marker-scans.py",
+   ".github/workflows/board-loop.yml"
+  ]
+ },
+ "verify-board-eligibility.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-board-eligibility.py"
+  ],
+  "digest": "9d1918ca4aff09e178f75b9b247c5e8cea016822f5fa4c7ef5cc81b9c4e1d7f6",
+  "reads": [
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/tests/board-eligibility/",
+   ".github/scripts/verify-board-eligibility.py"
+  ]
+ },
+ "verify-board-label-creation.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-board-label-creation.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "f9eecf64a66231b4c60c55fa3db55a71703485c0b7510683a152f4944daa4c9f",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-board-label-creation.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   ".wing-commander-pipeline/.github/actions/_shared/orphan-branch-reset/action.yaml",
+   ".wing-commander-pipeline/.github/actions/_shared/orphan-branch-reset/action.yml",
+   ".wing-commander-pipeline/.github/actions/_shared/scoped-app-token/action.yaml",
+   ".wing-commander-pipeline/.github/actions/_shared/scoped-app-token/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-agent-ran-signal/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-agent-verdict/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-agent-verdict/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-bedrock-credentials/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-branch-advance/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-branch-advance/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-callout/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-callout/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-chain-stop-notice/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-chain-stop-notice/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-clarification-marker/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-clarification-marker/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-commit-message-guidance/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-contained-gate-suite/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-contained-gate-suite/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-containment/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-containment/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-context/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-context/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-cost-report/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-cost-report/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-durable-failure-issue/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-durable-failure-issue/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-failed-post-agent-step/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-failed-post-agent-step/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fetch-job-logs/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fetch-job-logs/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fold-commit/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fold-commit/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fold-dispatch/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fold-dispatch/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fold-evidence/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fold-evidence/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fold-queue-admit/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fold-queue-admit/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fold-queue-claim-dispatch/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fold-queue-claim-dispatch/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fold-queue-ledger/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fold-queue-ledger/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-fold-queue-release/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-gate-verdict/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-gate-verdict/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-hardened-push/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-hardened-push/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-implement-outcome/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-implement-outcome/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-inspected-run-identity/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-inspected-run-identity/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-install-actionlint/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-install-actionlint/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-issue-context/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-issue-context/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-label-first/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-label-first/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-lifecycle-gate/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-lifecycle-gate/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-metrics-persist/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-metrics-persist/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-metrics-summary/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-metrics-summary/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-outstanding-task-item/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-outstanding-task-item/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-post-agent-credential-status/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-preflight/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-preflight/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-project/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-project/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-publish-stranded-commits/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-published-commits-line/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-published-commits-line/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-refresh-remote/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-refresh-remote/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-remaining-work/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-remaining-work/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-resolve-checkout-ref/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-resolve-checkout-ref/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-spec-meta/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-spec-meta/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-stage-findings/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-stage-findings/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-stall-reason/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-stall-reason/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-stalled-handoff/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-stalled-handoff/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-tasks-checkbox-count/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-tasks-checkbox-count/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-tool-args/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-tool-args/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-trial-record/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-trial-record/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-turn-ceiling/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-write-boundary-lookup/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-write-boundary-lookup/action.yml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-write-boundary/action.yaml",
+   ".wing-commander-pipeline/.github/actions/wing-commander-write-boundary/action.yml"
+  ]
+ },
+ "verify-board-label-creation.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-board-label-creation.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "f9eecf64a66231b4c60c55fa3db55a71703485c0b7510683a152f4944daa4c9f",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-board-label-creation.py",
+   ".github/scripts/wc_shell_harness.py"
+  ]
+ },
+ "verify-board-loop-composite-provenance.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-board-loop-composite-provenance.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "70680e768f3f2f7447f873f2211cb439576a9e7af3e4aae22ff7fe405c4e7fb9",
+  "reads": [
+   ".github/scripts/verify-board-loop-composite-provenance.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   ".gitignore"
+  ]
+ },
+ "verify-board-loop-composite-provenance.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-board-loop-composite-provenance.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "70680e768f3f2f7447f873f2211cb439576a9e7af3e4aae22ff7fe405c4e7fb9",
+  "reads": [
+   ".github/scripts/verify-board-loop-composite-provenance.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   ".gitignore"
+  ]
+ },
+ "verify-board-loop-helper-provenance.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-board-loop-helper-provenance.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "fcc9fafe635ae7eb9dce9704bfda44eee8e2ac1f9f97f5fafe597d79e3ea319b",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-board-loop-helper-provenance.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-board-loop-helper-provenance.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-board-loop-helper-provenance.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "fcc9fafe635ae7eb9dce9704bfda44eee8e2ac1f9f97f5fafe597d79e3ea319b",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-board-loop-helper-provenance.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-board-loop-readmission.py": {
+  "children": [
+   "bash",
+   "gh"
+  ],
+  "code": [
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-board-loop-readmission.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "4af408e21eb0bb9374858752ca795216908fee45b1186c5837b3267c317f8015",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/tests/board-loop-readmission/breach-marker-ignores-head-movement/head-moved/expected.json",
+   ".github/scripts/tests/board-loop-readmission/breach-marker-ignores-head-movement/head-moved/resume-env.json",
+   ".github/scripts/tests/board-loop-readmission/breach-marker-ignores-head-movement/head-unmoved/expected.json",
+   ".github/scripts/tests/board-loop-readmission/breach-marker-ignores-head-movement/head-unmoved/resume-env.json",
+   ".github/scripts/tests/board-loop-readmission/budget-spent-unmoved-resolves-review/comments.json",
+   ".github/scripts/tests/board-loop-readmission/budget-spent-unmoved-resolves-review/expected.json",
+   ".github/scripts/tests/board-loop-readmission/budget-spent-unmoved-resolves-review/pr-view.json",
+   ".github/scripts/tests/board-loop-readmission/converged-then-budget-spent-resolves-review/comments.json",
+   ".github/scripts/tests/board-loop-readmission/converged-then-budget-spent-resolves-review/expected.json",
+   ".github/scripts/tests/board-loop-readmission/converged-then-budget-spent-resolves-review/pr-view.json",
+   ".github/scripts/tests/board-loop-readmission/fresh-budget-after-readmission/comments.json",
+   ".github/scripts/tests/board-loop-readmission/fresh-budget-after-readmission/expected.json",
+   ".github/scripts/tests/board-loop-readmission/fresh-budget-after-readmission/re-stall-after-fresh-budget-spent/expected.json",
+   ".github/scripts/tests/board-loop-readmission/fresh-budget-after-readmission/re-stall-after-fresh-budget-spent/round-outcome-env.json",
+   ".github/scripts/tests/board-loop-readmission/fresh-budget-after-readmission/resume-env.json",
+   ".github/scripts/tests/board-loop-readmission/head-moved-resolves-review/comments.json",
+   ".github/scripts/tests/board-loop-readmission/head-moved-resolves-review/expected.json",
+   ".github/scripts/tests/board-loop-readmission/head-moved-resolves-review/pr-view.json",
+   ".github/scripts/tests/board-loop-readmission/head-unmoved-resolves-readiness-live/comments.json",
+   ".github/scripts/tests/board-loop-readmission/head-unmoved-resolves-readiness-live/expected.json",
+   ".github/scripts/tests/board-loop-readmission/head-unmoved-resolves-readiness-live/resume-env.json",
+   ".github/scripts/tests/board-loop-readmission/head-unmoved-resolves-readiness/comments.json",
+   ".github/scripts/tests/board-loop-readmission/head-unmoved-resolves-readiness/expected.json",
+   ".github/scripts/tests/board-loop-readmission/head-unmoved-resolves-readiness/pr-view.json",
+   ".github/scripts/tests/board-loop-readmission/no-open-pr-falls-to-triage/expected.json",
+   ".github/scripts/tests/board-loop-readmission/no-open-pr-falls-to-triage/resume-env.json",
+   ".github/scripts/tests/board-loop-readmission/no-reviewed-head-defaults-review/comments.json",
+   ".github/scripts/tests/board-loop-readmission/no-reviewed-head-defaults-review/expected.json",
+   ".github/scripts/tests/board-loop-readmission/no-reviewed-head-defaults-review/pr-view.json",
+   ".github/scripts/tests/board-loop-readmission/not-ready-handover-head-matches-converged-review/comments.json",
+   ".github/scripts/tests/board-loop-readmission/not-ready-handover-head-matches-converged-review/expected.json",
+   ".github/scripts/tests/board-loop-readmission/not-ready-handover-head-matches-converged-review/resume-env.json",
+   ".github/scripts/tests/board-loop-readmission/not-ready-handover-head-moved-since-converged-review/comments.json",
+   ".github/scripts/tests/board-loop-readmission/not-ready-handover-head-moved-since-converged-review/expected.json",
+   ".github/scripts/tests/board-loop-readmission/not-ready-handover-head-moved-since-converged-review/resume-env.json",
+   ".github/scripts/tests/board-loop-readmission/pr-lookup-fails-defaults-review/comments.json",
+   ".github/scripts/tests/board-loop-readmission/pr-lookup-fails-defaults-review/expected.json",
+   ".github/scripts/tests/board-loop-readmission/pr-lookup-fails-defaults-review/pr-view.json",
+   ".github/scripts/verify-board-loop-readmission.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-board-loop-readmission.py --self-test": {
+  "children": [
+   "bash",
+   "gh"
+  ],
+  "code": [
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-board-loop-readmission.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "4af408e21eb0bb9374858752ca795216908fee45b1186c5837b3267c317f8015",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/tests/board-loop-readmission/breach-marker-ignores-head-movement/head-moved/comments.json",
+   ".github/scripts/tests/board-loop-readmission/breach-marker-ignores-head-movement/head-moved/expected.json",
+   ".github/scripts/tests/board-loop-readmission/breach-marker-ignores-head-movement/head-moved/resume-env.json",
+   ".github/scripts/tests/board-loop-readmission/breach-marker-ignores-head-movement/head-unmoved/comments.json",
+   ".github/scripts/tests/board-loop-readmission/breach-marker-ignores-head-movement/head-unmoved/expected.json",
+   ".github/scripts/tests/board-loop-readmission/breach-marker-ignores-head-movement/head-unmoved/resume-env.json",
+   ".github/scripts/tests/board-loop-readmission/budget-spent-unmoved-resolves-review/comments.json",
+   ".github/scripts/tests/board-loop-readmission/budget-spent-unmoved-resolves-review/expected.json",
+   ".github/scripts/tests/board-loop-readmission/budget-spent-unmoved-resolves-review/pr-view.json",
+   ".github/scripts/tests/board-loop-readmission/converged-then-budget-spent-resolves-review/comments.json",
+   ".github/scripts/tests/board-loop-readmission/converged-then-budget-spent-resolves-review/expected.json",
+   ".github/scripts/tests/board-loop-readmission/converged-then-budget-spent-resolves-review/pr-view.json",
+   ".github/scripts/tests/board-loop-readmission/fresh-budget-after-readmission/comments.json",
+   ".github/scripts/tests/board-loop-readmission/fresh-budget-after-readmission/expected.json",
+   ".github/scripts/tests/board-loop-readmission/fresh-budget-after-readmission/re-stall-after-fresh-budget-spent/expected.json",
+   ".github/scripts/tests/board-loop-readmission/fresh-budget-after-readmission/re-stall-after-fresh-budget-spent/round-outcome-env.json",
+   ".github/scripts/tests/board-loop-readmission/fresh-budget-after-readmission/resume-env.json",
+   ".github/scripts/tests/board-loop-readmission/head-moved-resolves-review/comments.json",
+   ".github/scripts/tests/board-loop-readmission/head-moved-resolves-review/expected.json",
+   ".github/scripts/tests/board-loop-readmission/head-moved-resolves-review/pr-view.json",
+   ".github/scripts/tests/board-loop-readmission/head-unmoved-resolves-readiness-live/comments.json",
+   ".github/scripts/tests/board-loop-readmission/head-unmoved-resolves-readiness-live/expected.json",
+   ".github/scripts/tests/board-loop-readmission/head-unmoved-resolves-readiness-live/resume-env.json",
+   ".github/scripts/tests/board-loop-readmission/head-unmoved-resolves-readiness/comments.json",
+   ".github/scripts/tests/board-loop-readmission/head-unmoved-resolves-readiness/expected.json",
+   ".github/scripts/tests/board-loop-readmission/head-unmoved-resolves-readiness/pr-view.json",
+   ".github/scripts/tests/board-loop-readmission/no-open-pr-falls-to-triage/expected.json",
+   ".github/scripts/tests/board-loop-readmission/no-open-pr-falls-to-triage/resume-env.json",
+   ".github/scripts/tests/board-loop-readmission/no-reviewed-head-defaults-review/comments.json",
+   ".github/scripts/tests/board-loop-readmission/no-reviewed-head-defaults-review/expected.json",
+   ".github/scripts/tests/board-loop-readmission/no-reviewed-head-defaults-review/pr-view.json",
+   ".github/scripts/tests/board-loop-readmission/not-ready-handover-head-matches-converged-review/comments.json",
+   ".github/scripts/tests/board-loop-readmission/not-ready-handover-head-matches-converged-review/expected.json",
+   ".github/scripts/tests/board-loop-readmission/not-ready-handover-head-matches-converged-review/resume-env.json",
+   ".github/scripts/tests/board-loop-readmission/not-ready-handover-head-moved-since-converged-review/comments.json",
+   ".github/scripts/tests/board-loop-readmission/not-ready-handover-head-moved-since-converged-review/expected.json",
+   ".github/scripts/tests/board-loop-readmission/not-ready-handover-head-moved-since-converged-review/resume-env.json",
+   ".github/scripts/tests/board-loop-readmission/pr-lookup-fails-defaults-review/comments.json",
+   ".github/scripts/tests/board-loop-readmission/pr-lookup-fails-defaults-review/expected.json",
+   ".github/scripts/tests/board-loop-readmission/pr-lookup-fails-defaults-review/pr-view.json",
+   ".github/scripts/verify-board-loop-readmission.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-board-loop-resume-gating.py": {
+  "children": [
+   "bash",
+   "gh",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_route_backstop.py",
+   ".github/scripts/verify-board-loop-resume-gating.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "b3a2501439eea4c8bf548283eeee1b87634cbc4002e10b7e781fe8b61090bb28",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/",
+   ".github/workflows/"
+  ]
+ },
+ "verify-board-loop-resume-gating.py --self-test": {
+  "children": [
+   "bash",
+   "gh",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_route_backstop.py",
+   ".github/scripts/verify-board-loop-resume-gating.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "b3a2501439eea4c8bf548283eeee1b87634cbc4002e10b7e781fe8b61090bb28",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/",
+   ".github/workflows/"
+  ]
+ },
+ "verify-board-merge.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_merge.py",
+   ".github/scripts/board_prove.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/verify-board-merge.py"
+  ],
+  "digest": "d1a49aab0f483171272f4f0bd439f03d26f117bb274b0d26fcf3ae3f1b878abb",
+  "reads": [
+   ".github/scripts/",
+   ".github/workflows/",
+   "specs/057-autonomous-board-loop/contracts/board-loop-workflow.md",
+   "specs/057-autonomous-board-loop/contracts/readiness-report.md",
+   "specs/061-marker-owned-in-flight/contracts/in-flight-detection.md",
+   "specs/061-marker-owned-in-flight/contracts/resume-recovery.md",
+   "specs/062-lifecycle-review-gate/contracts/readiness-and-merge.md"
+  ]
+ },
+ "verify-board-prove-displacement.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_prove_displacement.py",
+   ".github/scripts/verify-board-prove-displacement.py"
+  ],
+  "digest": "129fbe4805acea3d0ea2803733164bfd0c0a259db1aca5b6d7c7fdfa1a8cbdb9",
+  "reads": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_prove_displacement.py",
+   ".github/scripts/verify-board-prove-displacement.py"
+  ]
+ },
+ "verify-board-prove-recovery.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_prove_displacement.py",
+   ".github/scripts/board_prove_recovery.py",
+   ".github/scripts/verify-board-prove-recovery.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "67b2d144713cbae6f1131725dfd1080711f7a1daebcd957eba4e7f0944d69bbf",
+  "reads": [
+   ".github/"
+  ]
+ },
+ "verify-board-prove.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_prove.py",
+   ".github/scripts/verify-board-prove.py",
+   ".github/scripts/wc_repo_files.py"
+  ],
+  "digest": "4af9867e7e494cf66ee60f684b563db394c8df368bf1984940dec781eb3bf4a9",
+  "reads": [
+   "./"
+  ]
+ },
+ "verify-board-readiness.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/verify-board-readiness.py"
+  ],
+  "digest": "64ee7bf9d12ff211efaf51c161eaba3e76d96216d3dfba880a8da398d7928f64",
+  "reads": [
+   ".github/scripts/board_merge.py",
+   ".github/scripts/board_prove.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/lifecycle_merge_preconditions.py",
+   ".github/scripts/lifecycle_readiness.py",
+   ".github/scripts/tests/board-readiness/",
+   ".github/scripts/verify-board-readiness.py",
+   ".github/scripts/wc_merge_evidence.py",
+   ".github/workflows/board-loop.yml"
+  ]
+ },
+ "verify-board-readiness.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/verify-board-readiness.py"
+  ],
+  "digest": "64ee7bf9d12ff211efaf51c161eaba3e76d96216d3dfba880a8da398d7928f64",
+  "reads": [
+   ".github/scripts/board_merge.py",
+   ".github/scripts/board_prove.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/lifecycle_merge_preconditions.py",
+   ".github/scripts/lifecycle_readiness.py",
+   ".github/scripts/verify-board-readiness.py",
+   ".github/scripts/wc_merge_evidence.py"
+  ]
+ },
+ "verify-board-review-finding-schema.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-board-review-finding-schema.py",
+   ".github/scripts/wc_schema_pattern.py"
+  ],
+  "digest": "b84badb4e65011515e58ac4a379a1568519948d311f80456b88373f1ad8ec078",
+  "reads": [
+   ".github/schemas/board-review-finding.schema.json",
+   ".github/scripts/tests/board-review-finding-schema/",
+   ".github/scripts/verify-board-review-finding-schema.py",
+   ".github/scripts/wc_schema_pattern.py"
+  ]
+ },
+ "verify-board-review-fixup-push.py": {
+  "children": [
+   "bash",
+   "gh"
+  ],
+  "code": [
+   ".github/scripts/verify-board-review-fixup-push.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "ad2f35f718bef2e7535814ee4d748f5338a7350a86b3f36dc90c80cf1ba37777",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/",
+   ".github/workflows/",
+   ".specify",
+   "docs"
+  ]
+ },
+ "verify-board-route-backstop.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_route_backstop.py",
+   ".github/scripts/board_workflow_scope_hold.py",
+   ".github/scripts/verify-board-route-backstop.py"
+  ],
+  "digest": "fec82e3ff36b554afe8012cce38003a7767bce392e89850639c6e5206dfa8d59",
+  "reads": [
+   ".github",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_route_backstop.py",
+   ".github/scripts/board_workflow_scope_hold.py",
+   ".github/scripts/tests/board-route-backstop/",
+   ".github/scripts/verify-board-route-backstop.py",
+   ".github/workflows/board-loop.yml",
+   "docs",
+   "specs/057-autonomous-board-loop/contracts/labels-and-cross-links.md"
+  ]
+ },
+ "verify-board-status.py": {
+  "children": [
+   "gh"
+  ],
+  "code": [
+   ".claude/skills/whats-on-me/scripts/board_now.py",
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_spec_request_body.py",
+   ".github/scripts/verify-board-status.py",
+   ".github/scripts/wc_board_status.py"
+  ],
+  "digest": "68e3e55d9b3adc099d696f07b1895d3f14b76f31037aa9967a6c54290db1e03f",
+  "reads": [
+   ".claude/skills/whats-on-me/scripts/board_now.py",
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_spec_request_body.py",
+   ".github/scripts/verify-board-status.py",
+   ".github/scripts/wc_board_status.py",
+   ".github/workflows/board-status.yml",
+   ".github/workflows/wing-commander-feature-health.yml",
+   ".github/workflows/wing-commander-merge-evidence.yml",
+   ".github/workflows/wing-commander-proof-list.yml"
+  ]
+ },
+ "verify-board-stop-check.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_stop_check.py",
+   ".github/scripts/verify-board-stop-check.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "ab767e135a1ef22e87fc0a61eb7c193255230ed4578202ba02e2d5d5e2116aba",
+  "reads": [
+   ".github",
+   ".github/actions/wing-commander-board-stop-check/action.yml",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_stop_check.py",
+   ".github/scripts/tests/board-stop-check/",
+   ".github/scripts/verify-board-stop-check.py",
+   ".github/scripts/wc_shell_harness.py"
+  ]
+ },
+ "verify-board-triage.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/board_triage.py",
+   ".github/scripts/verify-board-triage.py",
+   ".github/scripts/verify-issue-context-single-home.py",
+   ".github/scripts/verify-issue-context-trust-filter.py",
+   ".github/scripts/wc_gh_grant.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/scripts/wc_repo_files.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "abbaaaff11e41bfecb450abd3110eb443fbaf983a862b5bbda6148d7a2ecd9c1",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/board_triage.py",
+   ".github/scripts/tests/board-triage/",
+   ".github/scripts/verify-board-triage.py",
+   ".github/scripts/verify-issue-context-single-home.py",
+   ".github/scripts/verify-issue-context-trust-filter.py",
+   ".github/scripts/wc_gh_grant.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/scripts/wc_repo_files.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-branch-drift-sha-baseline.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-branch-drift-sha-baseline.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "458c968bed3445717e0f4d02fc8eff5de32e6b652e3f40cf11bba44f96651b07",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-branch-drift-sha-baseline.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-buildable-classification.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-buildable-classification.py"
+  ],
+  "digest": "8bbe7e003e573e7e1f010294fee585a8909373ad2d31f84d743db70d13b438d8",
+  "reads": [
+   ".github/actions/_shared/count-tasks-checkboxes.sh",
+   ".github/actions/_shared/decide-implement-outcome.sh",
+   ".github/actions/wing-commander-tasks-checkbox-count/action.yml",
+   ".github/scripts/fixtures/123-implement-task-completion/",
+   ".github/scripts/verify-buildable-classification.py",
+   ".github/scripts/verify-finalize-buildable-wait.py",
+   ".github/scripts/verify-migrate-stranded-review-lifecycles.py",
+   ".github/workflows/finalize.yml",
+   ".github/workflows/implement.yml",
+   ".github/workflows/lifecycle-review-gate.yml",
+   ".github/workflows/migrate-stranded-review-lifecycles.yml",
+   "specs"
+  ]
+ },
+ "verify-chain-stop-notice-body.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-chain-stop-notice-body.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "8241ae7548c0e6dec62ee8f88539b6a0e44946a41d66abe5f0e30bbb2e796466",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-chain-stop-notice-body.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-chain-stop-notice.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-chain-stop-notice.py",
+   ".github/scripts/wc_chain_stop_conditions.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "97f74f1e7501f31aa38ad6801b65dbfb4ab442dd378011cfbdad35c7e2f53277",
+  "reads": [
+   ".github/scripts/verify-chain-stop-notice.py",
+   ".github/scripts/wc_chain_stop_conditions.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows",
+   ".github/workflows/clarify.yml",
+   ".github/workflows/finalize.yml",
+   ".github/workflows/implement.yml",
+   ".github/workflows/intake.yml",
+   ".github/workflows/pr-conversation.yml",
+   ".github/workflows/tasks.yml"
+  ]
+ },
+ "verify-chain-stop-refusal-exclusion.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-chain-stop-refusal-exclusion.py",
+   ".github/scripts/wc_chain_stop_conditions.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "04be2ab7033dd84f572195e89de45abbdc9ddeb61453f1044c3a6f6c1147fcc0",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-chain-stop-refusal-exclusion.py",
+   ".github/scripts/wc_chain_stop_conditions.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-clarification-gating.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-clarification-gating.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "6e28f183cfe4525b517bd0ed32ff298d6286236b7aa8cab273cd55e74d951f4c",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-clarification-gating.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs",
+   "specs/032-structured-clarification-gate/contracts/clarification-schema.md"
+  ]
+ },
+ "verify-claude-code-action-inputs.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-claude-code-action-inputs.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "c07478f849500fd23212081d499a19669cb7755c42af9dfcddbd869809373c5c",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-claude-code-action-inputs.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-cleanup-lifecycle-guard.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-cleanup-lifecycle-guard.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "dcb66498b932b64d1c23f315d961749bc49c75a1c58221f5e60bd97e442c01aa",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-cleanup-lifecycle-guard.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-comment-canonical-pointers.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-comment-canonical-pointers.py"
+  ],
+  "digest": "cb12997a3807000b11589b35182a7ca3db439ed57ffd5f51f815463071385c19",
+  "reads": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_merge.py",
+   ".github/scripts/board_spec_request_body.py",
+   ".github/scripts/canonical-comment-blocks.json",
+   ".github/scripts/verify-claude-code-action-inputs.py",
+   ".github/scripts/verify-comment-canonical-pointers.py",
+   ".github/scripts/verify-implement-stall-notice-unchanged.py",
+   ".github/scripts/verify-post-agent-credential-refresh.py",
+   ".github/scripts/verify-single-home-idioms.py",
+   ".github/scripts/wc_lifecycle_review_marker.py",
+   ".github/workflows/",
+   "docs/adoption.md",
+   "docs/architecture.md",
+   "docs/setup.md",
+   "specs/010-reusable-pipeline/research.md",
+   "specs/031-stage-environment-binding/contracts/environment-binding.md",
+   "specs/037-agent-turn-budget-guard/data-model.md",
+   "specs/037-agent-turn-budget-guard/plan.md",
+   "specs/037-agent-turn-budget-guard/research.md",
+   "specs/038-runner-container-passthrough/research.md",
+   "specs/041-implement-stall-notice/research.md",
+   "specs/043-durable-metrics-record/data-model.md",
+   "specs/048-correlated-release-dispatch/contracts/release-handover-contract.md",
+   "specs/049-single-home-release-idioms/contracts/durable-failure-issue.md",
+   "specs/049-single-home-release-idioms/contracts/orphan-branch-reset.md",
+   "specs/049-single-home-release-idioms/contracts/scoped-app-token.md",
+   "specs/058-per-job-minute-floor/contracts/image-check-shape-delta.md",
+   "specs/060-self-redrive-concurrency/contracts/concurrency-groups.md"
+  ]
+ },
+ "verify-comment-canonical-pointers.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-comment-canonical-pointers.py"
+  ],
+  "digest": "cb12997a3807000b11589b35182a7ca3db439ed57ffd5f51f815463071385c19",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-comment-canonical-pointers.py"
+  ]
+ },
+ "verify-commit-message-scratch-path.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-commit-message-scratch-path.py",
+   ".github/scripts/wc_push_grant.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "a123cb2976f3ffca2c844097051ddf07d7215177c8259314317fd5810757627a",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/",
+   ".github/workflows/"
+  ]
+ },
+ "verify-commit-message-scratch-path.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-commit-message-scratch-path.py",
+   ".github/scripts/wc_push_grant.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "a123cb2976f3ffca2c844097051ddf07d7215177c8259314317fd5810757627a",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/",
+   ".github/workflows/"
+  ]
+ },
+ "verify-compare-diagnose-shadow.py": {
+  "children": [
+   "jq"
+  ],
+  "code": [
+   ".github/actions/_shared/compare-diagnose-shadow.py",
+   ".github/scripts/verify-compare-diagnose-shadow.py"
+  ],
+  "digest": "77d42b45ec510a45764cb361b3672283f00276bbfd7e635c6f9571927bab778c",
+  "reads": [
+   ".github",
+   ".github/actions/_shared/compare-diagnose-shadow.py",
+   ".github/actions/wing-commander-trial-record/action.yml",
+   ".github/scripts",
+   ".github/scripts/fixtures/compare-diagnose-shadow/cases.json",
+   ".github/scripts/fixtures/compare-diagnose-shadow/schema.json",
+   ".github/scripts/verify-compare-diagnose-shadow.py",
+   ".github/workflows/watchdog.yml"
+  ]
+ },
+ "verify-composite-run-provenance.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-composite-run-provenance.py"
+  ],
+  "digest": "6905d04de42039dc9db103816d7a92b72f9f77e45f7e3cdd8f9e9282efa94e49",
+  "reads": [
+   ".github/actions/_shared/resolve-pr-branch/action.yml",
+   ".github/actions/wing-commander-agent-ran-signal/action.yml",
+   ".github/actions/wing-commander-agent-verdict/action.yml",
+   ".github/actions/wing-commander-bedrock-credentials/action.yml",
+   ".github/actions/wing-commander-board-labels/action.yml",
+   ".github/actions/wing-commander-board-stop-check/action.yml",
+   ".github/actions/wing-commander-branch-advance/action.yml",
+   ".github/actions/wing-commander-callout/action.yml",
+   ".github/actions/wing-commander-chain-stop-notice/action.yml",
+   ".github/actions/wing-commander-clarification-marker/action.yml",
+   ".github/actions/wing-commander-commit-message-guidance/action.yml",
+   ".github/actions/wing-commander-contained-gate-suite/action.yml",
+   ".github/actions/wing-commander-containment/action.yml",
+   ".github/actions/wing-commander-context/action.yml",
+   ".github/actions/wing-commander-cost-report/action.yml",
+   ".github/actions/wing-commander-directed-proof-busy-check/action.yml",
+   ".github/actions/wing-commander-dispatch-and-wait/action.yml",
+   ".github/actions/wing-commander-durable-failure-issue/action.yml",
+   ".github/actions/wing-commander-failed-post-agent-step/action.yml",
+   ".github/actions/wing-commander-fold-commit/action.yml",
+   ".github/actions/wing-commander-fold-dispatch/action.yml",
+   ".github/actions/wing-commander-fold-evidence/action.yml",
+   ".github/actions/wing-commander-fold-queue-admit/action.yml",
+   ".github/actions/wing-commander-fold-queue-claim-dispatch/action.yml",
+   ".github/actions/wing-commander-fold-queue-ledger/action.yml",
+   ".github/actions/wing-commander-fold-queue-release/action.yml",
+   ".github/actions/wing-commander-gate-bundle/action.yml",
+   ".github/actions/wing-commander-gate-verdict/action.yml",
+   ".github/actions/wing-commander-hardened-push/action.yml",
+   ".github/actions/wing-commander-implement-outcome/action.yml",
+   ".github/actions/wing-commander-install-actionlint/action.yml",
+   ".github/actions/wing-commander-issue-context/action.yml",
+   ".github/actions/wing-commander-label-first/action.yml",
+   ".github/actions/wing-commander-lifecycle-gate/action.yml",
+   ".github/actions/wing-commander-metrics-summary/action.yml",
+   ".github/actions/wing-commander-outstanding-task-item/action.yml",
+   ".github/actions/wing-commander-post-agent-credential-status/action.yml",
+   ".github/actions/wing-commander-post-review-comment/action.yml",
+   ".github/actions/wing-commander-preflight/action.yml",
+   ".github/actions/wing-commander-project/action.yml",
+   ".github/actions/wing-commander-publish-stranded-commits/action.yml",
+   ".github/actions/wing-commander-published-commits-line/action.yml",
+   ".github/actions/wing-commander-refresh-remote/action.yml",
+   ".github/actions/wing-commander-remaining-work/action.yml",
+   ".github/actions/wing-commander-size-path-backstop/action.yml",
+   ".github/actions/wing-commander-spec-meta/action.yml",
+   ".github/actions/wing-commander-stage-findings/action.yml",
+   ".github/actions/wing-commander-stall-reason/action.yml",
+   ".github/actions/wing-commander-stalled-handoff/action.yml",
+   ".github/actions/wing-commander-tasks-checkbox-count/action.yml",
+   ".github/actions/wing-commander-tool-args/action.yml",
+   ".github/actions/wing-commander-turn-ceiling/action.yml",
+   ".github/actions/wing-commander-write-boundary-lookup/action.yml",
+   ".github/actions/wing-commander-write-boundary/action.yml",
+   ".github/scripts/verify-composite-run-provenance.py",
+   ".github/workflows/board-loop.yml",
+   ".github/workflows/clarify.yml",
+   ".github/workflows/finalize.yml",
+   ".github/workflows/implement.yml",
+   ".github/workflows/intake.yml",
+   ".github/workflows/plan.yml",
+   ".github/workflows/pr-conversation.yml",
+   ".github/workflows/tasks.yml"
+  ]
+ },
+ "verify-composite-run-provenance.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-composite-run-provenance.py"
+  ],
+  "digest": "6905d04de42039dc9db103816d7a92b72f9f77e45f7e3cdd8f9e9282efa94e49",
+  "reads": [
+   ".github",
+   ".github/scripts/fixtures/095-composite-run/action-path/actions/",
+   ".github/scripts/fixtures/095-composite-run/action-path/workflows/",
+   ".github/scripts/fixtures/095-composite-run/moved-out-of-view/actions/",
+   ".github/scripts/fixtures/095-composite-run/moved-out-of-view/workflows/",
+   ".github/scripts/fixtures/095-composite-run/undeterminable/actions/",
+   ".github/scripts/fixtures/095-composite-run/undeterminable/workflows/",
+   ".github/scripts/fixtures/095-composite-run/workspace-relative/actions/",
+   ".github/scripts/fixtures/095-composite-run/workspace-relative/workflows/",
+   ".github/scripts/verify-composite-run-provenance.py"
+  ]
+ },
+ "verify-concurrency-guarantee-statement.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-concurrency-guarantee-statement.py"
+  ],
+  "digest": "4fda2f86683572df47abe76c1f19473dff8ea638d6adba30c6ea0950b0890047",
+  "reads": [
+   ".github/scripts/verify-concurrency-guarantee-statement.py",
+   ".github/workflows/board-loop.yml",
+   "specs/057-autonomous-board-loop/contracts/board-loop-workflow.md",
+   "specs/060-self-redrive-concurrency/contracts/concurrency-groups.md"
+  ]
+ },
+ "verify-constitution-merge-class-parity.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-constitution-merge-class-parity.py"
+  ],
+  "digest": "f672053e7c90b781d72b82e7c8db85d64bad080cfcdc9503a211b2b7fba6efd9",
+  "reads": [
+   ".github/scripts/verify-constitution-merge-class-parity.py",
+   ".github/workflows/board-loop.yml",
+   ".github/workflows/lifecycle-review-gate.yml",
+   ".specify/memory/constitution.md"
+  ]
+ },
+ "verify-constitution-merge-class-parity.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-constitution-merge-class-parity.py"
+  ],
+  "digest": "f672053e7c90b781d72b82e7c8db85d64bad080cfcdc9503a211b2b7fba6efd9",
+  "reads": [
+   ".github/scripts/verify-constitution-merge-class-parity.py"
+  ]
+ },
+ "verify-convergence-single-home.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-convergence-single-home.py",
+   ".github/scripts/wc_convergence.py"
+  ],
+  "digest": "d4ffdfdbc26e5b102772a0e811a73ae6950679a34ad1974f9a84213de103e06e",
+  "reads": [
+   ".claude/skills/",
+   ".github/actions/",
+   ".github/scripts/verify-convergence-single-home-fixtures/",
+   ".github/scripts/verify-convergence-single-home.py",
+   ".github/scripts/wc_convergence.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-correlated-release-dispatch.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-correlated-release-dispatch.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "ba7709105f47b4e278a9fe88bcb31d49114247a5f4f1e7926ca7b7de1293bf83",
+  "reads": [
+   ".github/actions/wing-commander-dispatch-and-wait/action.yml",
+   ".github/scripts/verify-correlated-release-dispatch.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/auto-release.yml",
+   ".github/workflows/release.yml"
+  ]
+ },
+ "verify-correlated-release-dispatch.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-correlated-release-dispatch.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "ba7709105f47b4e278a9fe88bcb31d49114247a5f4f1e7926ca7b7de1293bf83",
+  "reads": [
+   ".github/scripts/verify-correlated-release-dispatch.py",
+   ".github/scripts/wc_shell_harness.py"
+  ]
+ },
+ "verify-cost-report-collector.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "verify-credential-relay-shell.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-credential-relay-shell.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "6e13ac69af4f6476a94565fa60ec5bee39fa9f678502548ceaf0749e54caf359",
+  "reads": [
+   ".github/actions/wing-commander-context/action.yml",
+   ".github/actions/wing-commander-refresh-remote/action.yml",
+   ".github/scripts/verify-credential-relay-shell.py",
+   ".github/scripts/wc_shell_harness.py"
+  ]
+ },
+ "verify-credential-relay-shell.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-credential-relay-shell.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "6e13ac69af4f6476a94565fa60ec5bee39fa9f678502548ceaf0749e54caf359",
+  "reads": [
+   ".github/actions/wing-commander-context/action.yml",
+   ".github/actions/wing-commander-refresh-remote/action.yml",
+   ".github/scripts/verify-credential-relay-shell.py",
+   ".github/scripts/wc_shell_harness.py"
+  ]
+ },
+ "verify-dedup-key-canonical-rule.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-dedup-key-canonical-rule.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "d80b9a5c2d3ba1f6216af158934f335dce07db6000652a59f7ac5437f19e6ce5",
+  "reads": [
+   ".github/actions/_shared/compute-finding-fingerprint.sh",
+   ".github/scripts/verify-dedup-key-canonical-rule.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/board-loop.yml",
+   "specs/056-stage-found-defect-filing/data-model.md"
+  ]
+ },
+ "verify-dedup-key-canonical-rule.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-dedup-key-canonical-rule.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "d80b9a5c2d3ba1f6216af158934f335dce07db6000652a59f7ac5437f19e6ce5",
+  "reads": [
+   ".github",
+   ".github/actions/_shared/compute-finding-fingerprint.sh",
+   ".github/scripts/verify-dedup-key-canonical-rule.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/board-loop.yml",
+   "specs",
+   "specs/056-stage-found-defect-filing/data-model.md"
+  ]
+ },
+ "verify-denied-tool-collector.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "verify-diagnose-shadow-acts-on-nothing.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-diagnose-shadow-acts-on-nothing.py",
+   ".github/scripts/wc_gh_grant.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "0c04bf8d6c829e9d06036870090f94b297008b7ca5aefaad8a964c9f162e5a5f",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-diagnose-shadow-acts-on-nothing.py",
+   ".github/scripts/wc_gh_grant.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-diagnose-shadow-acts-on-nothing.py --self-test": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-diagnose-shadow-acts-on-nothing.py",
+   ".github/scripts/wc_gh_grant.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "0c04bf8d6c829e9d06036870090f94b297008b7ca5aefaad8a964c9f162e5a5f",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-diagnose-shadow-acts-on-nothing.py",
+   ".github/scripts/wc_gh_grant.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-directed-proof-no-item-conflict.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_prove.py",
+   ".github/scripts/verify-directed-proof-no-item-conflict.py"
+  ],
+  "digest": "130eab984e38edf21928615868771165bba73318611d5af90198acb3ce3bb33f",
+  "reads": [
+   ".github/scripts/board_prove.py",
+   ".github/scripts/tests/board-eligibility/in-flight/directed-proof-in-flight",
+   ".github/scripts/verify-directed-proof-no-item-conflict.py"
+  ]
+ },
+ "verify-dispatch-input-types.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-dispatch-input-types.py",
+   ".github/scripts/wc_gha_expr.py"
+  ],
+  "digest": "8394b0c52264610480fbe5cbedf4955b5334706ba1ee9598fbe4b83d53c7f05b",
+  "reads": [
+   ".github/scripts/verify-dispatch-input-types.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-dispatch-input-types.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-dispatch-input-types.py",
+   ".github/scripts/wc_gha_expr.py"
+  ],
+  "digest": "8394b0c52264610480fbe5cbedf4955b5334706ba1ee9598fbe4b83d53c7f05b",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-dispatch-input-types.py",
+   ".github/scripts/wc_gha_expr.py"
+  ]
+ },
+ "verify-e2e-provisioning-single-home.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/board_prove.py",
+   ".github/scripts/verify-e2e-provisioning-single-home.py"
+  ],
+  "digest": "07b60b2b853adf2151e776794952b68447ac481328a7bd82ae1331498c05b1a1",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/",
+   ".github/workflows/"
+  ]
+ },
+ "verify-e2e-provisioning-single-home.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/board_prove.py",
+   ".github/scripts/verify-e2e-provisioning-single-home.py"
+  ],
+  "digest": "07b60b2b853adf2151e776794952b68447ac481328a7bd82ae1331498c05b1a1",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/",
+   ".github/workflows/",
+   ".specify",
+   "docs"
+  ]
+ },
+ "verify-feature-health.py": {
+  "children": [
+   "gh"
+  ],
+  "code": [
+   ".github/scripts/board_prove.py",
+   ".github/scripts/board_triage.py",
+   ".github/scripts/verify-feature-health.py",
+   ".github/scripts/wc_board_status.py",
+   ".github/scripts/wc_feature_health.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "f1324b08bb64f3e36b1307ef81c6eb832ae2abe214539395f7d2b1fad6395381",
+  "reads": [
+   ".github/scripts/board_prove.py",
+   ".github/scripts/board_triage.py",
+   ".github/scripts/feature-health-registry.json",
+   ".github/scripts/fixtures/feature-health/cases.json",
+   ".github/scripts/fixtures/feature-health/registry/mutations.json",
+   ".github/scripts/fixtures/feature-health/render/render.json",
+   ".github/scripts/fixtures/feature-health/sc001/corpus.json",
+   ".github/scripts/fixtures/feature-health/sc001/expected.json",
+   ".github/scripts/fixtures/feature-health/signals/signals.json",
+   ".github/scripts/fixtures/feature-health/unreadable/scenarios.json",
+   ".github/scripts/verify-feature-health.py",
+   ".github/scripts/wc_board_status.py",
+   ".github/scripts/wc_feature_health.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "docs/reference.md"
+  ]
+ },
+ "verify-fence-extract.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-fence-extract.py",
+   ".github/scripts/wc_fence_extract.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "22a6c9be27f0dc4608731680090dc7746f270232ed35ebf9bc6e124c61649867",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-fence-extract.py",
+   ".github/scripts/wc_fence_extract.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/board-loop.yml"
+  ]
+ },
+ "verify-final-pr-claims-collector.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "verify-finalize-buildable-wait.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-buildable-classification.py",
+   ".github/scripts/verify-finalize-buildable-wait.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "681a286b87413d9006fd483018847078a0b38428f0cff55f34fbd652c74d7d40",
+  "reads": [
+   ".github/actions/_shared/count-tasks-checkboxes.sh",
+   ".github/actions/wing-commander-stalled-handoff/action.yml",
+   ".github/scripts/fixtures/123-implement-task-completion/finalize-wait/",
+   ".github/scripts/fixtures/123-implement-task-completion/review-gate-skip/",
+   ".github/scripts/fixtures/123-implement-task-completion/watchdog-handoff/stalled-handoff.expected",
+   ".github/scripts/verify-buildable-classification.py",
+   ".github/scripts/verify-finalize-buildable-wait.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/finalize.yml",
+   ".github/workflows/implement.yml",
+   ".github/workflows/lifecycle-review-gate.yml",
+   ".github/workflows/watchdog.yml",
+   "specs"
+  ]
+ },
+ "verify-finalize-refresh.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-finalize-refresh.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "cc50d5d130f137651ed593637d8355e2c8769f551d5d70556116679cd28bbea0",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-finalize-refresh.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-fold-commit-composite.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-fold-commit-composite.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "17a1e5cbd280101e66fb2b939539d7474affcd473ff1513c8d543808cf3bf96c",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-fold-commit-composite.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-fold-commit-composite.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-fold-commit-composite.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "17a1e5cbd280101e66fb2b939539d7474affcd473ff1513c8d543808cf3bf96c",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-fold-commit-composite.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-fold-dispatch-composite.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-fold-dispatch-composite.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "35d3ace973c15e348390393bb1879b580f989380683529d25b99b0da175735d7",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-fold-dispatch-composite.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-fold-dispatch-composite.py --self-test": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-fold-dispatch-composite.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "35d3ace973c15e348390393bb1879b580f989380683529d25b99b0da175735d7",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-fold-dispatch-composite.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-fold-dispatch-once.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-fold-dispatch-once.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "e4760b9ff5d588f338379ae1ef5c21d8ae927c2b63e3d1420a5b5e3ddec0dac3",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-fold-dispatch-once.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-fold-queue-admission.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-fold-queue-admission.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "371fcaa7105e49c0bb0933c0ed528cf45942479fdcabd15f070ed46898f94458",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-fold-queue-admission.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-gate-106.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-gate-106.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "16e29934d2df20ae0497c976db0b3f87545ca1bd15420ede51e156dbe36de2c6",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/e2e-provisioning/checks.sh",
+   ".github/scripts/verify-gate-106.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-gate-106.py --self-test": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-gate-106.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "16e29934d2df20ae0497c976db0b3f87545ca1bd15420ede51e156dbe36de2c6",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/e2e-provisioning/checks.sh",
+   ".github/scripts/verify-gate-106.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-gate-12-token-permissions.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-12-token-permissions.py",
+   ".github/scripts/wc_gh_callsites.py"
+  ],
+  "digest": "cb14a2cbf2caf03b5b6b6ce075b51661f78d3b91bf305629bcffe41c1a54d90b",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-gate-12-token-permissions.py",
+   ".github/scripts/wc_gh_callsites.py",
+   ".github/workflows/",
+   "CONTRIBUTING.md",
+   "docs/setup.md"
+  ]
+ },
+ "verify-gate-12.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/gate-12-fuzz/gen.py",
+   ".github/scripts/verify-gate-12-token-permissions.py",
+   ".github/scripts/verify-gate-12.py",
+   ".github/scripts/wc_gh_callsites.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "fd1e069ddd1247b417856ef2d9848e6f0b9799f210337209326239dc16111716",
+  "reads": [
+   ".github",
+   ".github/scripts/gate-12-corpus.json",
+   ".github/scripts/gate-12-fuzz/",
+   ".github/scripts/verify-gate-12-token-permissions.py",
+   ".github/scripts/verify-gate-12.py",
+   ".github/scripts/wc_gh_callsites.py",
+   ".github/scripts/wc_shell_harness.py",
+   "docs"
+  ]
+ },
+ "verify-gate-15.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-15.py",
+   ".github/scripts/wc_lint_gate_source.py"
+  ],
+  "digest": "480d4bb8a925fdc268dc0f043749ed88f6597d77b095b994d446d22d26933e94",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-gate-15.py",
+   ".github/scripts/wc_lint_gate_source.py",
+   ".github/workflows/lint-workflows.yml"
+  ]
+ },
+ "verify-gate-16.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-16.py",
+   ".github/scripts/wc_lint_gate_source.py"
+  ],
+  "digest": "1ae04c1766fee530c8388bea6facc6cbc6f95f9b724ef39c23dca50df150de39",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-gate-16.py",
+   ".github/scripts/wc_lint_gate_source.py",
+   ".github/workflows/lint-workflows.yml"
+  ]
+ },
+ "verify-gate-18-scan.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-18-scan.py"
+  ],
+  "digest": "946baa9b671df567c4337435e119b33d75da7ec7d96cfa5ac6300e5868cc0c89",
+  "reads": [
+   "./"
+  ]
+ },
+ "verify-gate-18.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-18.py"
+  ],
+  "digest": "b3046b2a3dd8cdb6ab5b13248e082b288e051b93ce9d70aefa4a89189efa5263",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-gate-18-scan.py",
+   ".github/scripts/verify-gate-18.py",
+   ".github/workflows/lint-workflows.yml"
+  ]
+ },
+ "verify-gate-19.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-gate-19.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "10b2c08098d5259b2bd9ae1dbb7f03df6d527cdea2709a023ec05a1b5dcc5961",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-gate-19.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-gate-22.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-22.py",
+   ".github/scripts/wc_lint_gate_source.py",
+   ".github/scripts/wc_published_stages.py"
+  ],
+  "digest": "94f1404fb9f83f008f064e14e548137faf2972c8b0a268a0cc86f24dd3cc82f6",
+  "reads": [
+   ".github",
+   ".github/scripts/unpublished-callables.json",
+   ".github/scripts/verify-gate-22.py",
+   ".github/scripts/wc_lint_gate_source.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-gate-23-selftest.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-23-selftest.py",
+   ".github/scripts/verify-gate-23.py"
+  ],
+  "digest": "5c9e0d1651807eb77f49b675e9cd0d522d70b50d43703b0b2aeab8f75b753c9a",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-gate-23-selftest.py",
+   ".github/scripts/verify-gate-23.py"
+  ]
+ },
+ "verify-gate-23.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-23.py"
+  ],
+  "digest": "094ccdbd9faf0090d49e9eab2f21d7695c2747afff7c936c72c7b3fc094016b8",
+  "reads": [
+   ".github/scripts/verify-gate-23.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-gate-23.py --selftest": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-23.py",
+   ".github/scripts/wc_lint_gate_source.py",
+   ".github/scripts/wc_published_stages.py"
+  ],
+  "digest": "9db6c64f9978870d9cd54f0594ec915bf8b88dab3deefb1bb154ea63c81c57f2",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/required-tools.txt",
+   ".github/scripts/unpublished-callables.json",
+   ".github/scripts/verify-gate-23.py",
+   ".github/scripts/wc_lint_gate_source.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/workflows/",
+   "specs",
+   "specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md"
+  ]
+ },
+ "verify-gate-24-selftest.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-24-selftest.py",
+   ".github/scripts/verify-gate-24.py"
+  ],
+  "digest": "26d82724d438dc93971d12293f654cd3124cb07d0a661b31cfed1d7db0396264",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-gate-24-selftest.py",
+   ".github/scripts/verify-gate-24.py"
+  ]
+ },
+ "verify-gate-24.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-24.py"
+  ],
+  "digest": "0b5f10014e9b723a6e2be62a58f1035be7634781cb266283286a6348a63c7447",
+  "reads": [
+   ".github/scripts/verify-gate-24.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-gate-3.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-3.py",
+   ".github/scripts/wc_lint_gate_source.py"
+  ],
+  "digest": "50d0e44ca762c902a15d1bbad47acf863b42b67a61f7ea5ac0999cfc00498e95",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-gate-3.py",
+   ".github/scripts/wc_lint_gate_source.py",
+   ".github/workflows/lint-workflows.yml"
+  ]
+ },
+ "verify-gate-6.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-6.py",
+   ".github/scripts/wc_lint_gate_source.py"
+  ],
+  "digest": "7fb8819435db09d4ee47aa828554385e2da5cada00d8c88079e65fb4e202fcb2",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-gate-6.py",
+   ".github/scripts/wc_lint_gate_source.py",
+   ".github/workflows/lint-workflows.yml"
+  ]
+ },
+ "verify-gate-62.py": {
+  "children": [
+   "docker"
+  ],
+  "code": [
+   ".github/scripts/verify-gate-62.py",
+   ".github/scripts/wc_actionlint.py"
+  ],
+  "digest": "f9ba62c0f9d0d619db311a55c656e8b226e38b27bdcdc355032e2deaad4bac13",
+  "reads": [
+   ".github/actions/",
+   ".github/docker/",
+   ".github/scripts/",
+   ".github/workflows/"
+  ]
+ },
+ "verify-gate-62.py --self-test": {
+  "children": [
+   "docker",
+   "sh"
+  ],
+  "code": [
+   ".github/scripts/verify-gate-62.py",
+   ".github/scripts/wc_actionlint.py"
+  ],
+  "digest": "f9ba62c0f9d0d619db311a55c656e8b226e38b27bdcdc355032e2deaad4bac13",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/docker/",
+   ".github/scripts/",
+   ".github/workflows/"
+  ]
+ },
+ "verify-gate-7.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-7.py",
+   ".github/scripts/wc_lint_gate_source.py",
+   ".github/scripts/wc_published_stages.py"
+  ],
+  "digest": "d900309f31f09d8f77087f3a4c9ce60517fde2ba829500ec61b2efdadd954817",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/",
+   ".github/workflows/"
+  ]
+ },
+ "verify-gate-bundle-roundtrip.py": {
+  "always": "a traced process did not exit cleanly, so its reads are incomplete"
+ },
+ "verify-gate-bundle-roundtrip.py --self-test": {
+  "always": "a traced process did not exit cleanly, so its reads are incomplete"
+ },
+ "verify-gate-suite-credential-free.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-suite-credential-free.py",
+   ".github/scripts/wc_gate_suite_sites.py"
+  ],
+  "digest": "7858f263ddcd2403200c3fa5b2668fdc9ca26667c734744a62b0b9ec8d9f2af1",
+  "reads": [
+   ".github/scripts/verify-gate-suite-credential-free.py",
+   ".github/scripts/wc_gate_suite_sites.py",
+   ".github/workflows/board-loop.yml",
+   ".github/workflows/implement.yml",
+   ".github/workflows/pr-conversation.yml"
+  ]
+ },
+ "verify-gate-suite-credential-free.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-suite-credential-free.py",
+   ".github/scripts/wc_gate_suite_sites.py"
+  ],
+  "digest": "7858f263ddcd2403200c3fa5b2668fdc9ca26667c734744a62b0b9ec8d9f2af1",
+  "reads": [
+   ".github/scripts/fixtures/095-gate-suite/app-token.yml",
+   ".github/scripts/fixtures/095-gate-suite/good.yml",
+   ".github/scripts/fixtures/095-gate-suite/in-job.yml",
+   ".github/scripts/fixtures/095-gate-suite/no-verdict-reader.yml",
+   ".github/scripts/fixtures/095-gate-suite/permissions-write.yml",
+   ".github/scripts/fixtures/095-gate-suite/persisted-credentials.yml",
+   ".github/scripts/fixtures/095-gate-suite/secret-in-gate.yml",
+   ".github/scripts/fixtures/095-gate-suite/undeterminable.yml",
+   ".github/scripts/verify-gate-suite-credential-free.py",
+   ".github/scripts/wc_gate_suite_sites.py",
+   ".github/workflows/board-loop.yml",
+   ".github/workflows/implement.yml",
+   ".github/workflows/pr-conversation.yml"
+  ]
+ },
+ "verify-gate-verdict-fail-closed.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-gate-verdict-fail-closed.py",
+   ".github/scripts/wc_gate_verdict.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/scripts/wc_step_output.py"
+  ],
+  "digest": "657acc7679977e12fa391f76285e81bc7b0eb49c5720b49a4c5bb54151b89fba",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/fixtures/095-gate-verdict/does-not-exist.json",
+   ".github/scripts/fixtures/095-gate-verdict/expectations.json",
+   ".github/scripts/fixtures/095-gate-verdict/head-mismatch.json",
+   ".github/scripts/fixtures/095-gate-verdict/no-head.json",
+   ".github/scripts/fixtures/095-gate-verdict/outcome-skipped.json",
+   ".github/scripts/fixtures/095-gate-verdict/publisher-if-explicit-pass.txt",
+   ".github/scripts/fixtures/095-gate-verdict/publisher-if-skipped-green.txt",
+   ".github/scripts/fixtures/095-gate-verdict/trusted-mismatch.json",
+   ".github/scripts/fixtures/095-gate-verdict/unknown-key.json",
+   ".github/scripts/fixtures/095-gate-verdict/unparsable.json",
+   ".github/scripts/fixtures/095-gate-verdict/valid-fail.json",
+   ".github/scripts/fixtures/095-gate-verdict/valid-pass.json",
+   ".github/scripts/verify-gate-verdict-fail-closed.py",
+   ".github/scripts/wc_gate_verdict.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/scripts/wc_step_output.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-gate-verdict-fail-closed.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-gate-verdict-fail-closed.py",
+   ".github/scripts/wc_gate_verdict.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/scripts/wc_step_output.py"
+  ],
+  "digest": "657acc7679977e12fa391f76285e81bc7b0eb49c5720b49a4c5bb54151b89fba",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/fixtures/095-gate-verdict/",
+   ".github/scripts/verify-gate-verdict-fail-closed.py",
+   ".github/scripts/wc_gate_verdict.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/scripts/wc_step_output.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-gate-wiring.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gate-wiring.py",
+   ".github/scripts/wc_gate_registry.py"
+  ],
+  "digest": "63d1ff6be1649dd79cc812000b8a21bb4ed3377a47ce88864f9462a24e7d3697",
+  "reads": [
+   ".claude/skills/answer-from-precedent/SKILL.md",
+   ".claude/skills/foo/SKILL.md",
+   ".claude/skills/prove-after-merge/SKILL.md",
+   ".claude/skills/review-until-clean/SKILL.md",
+   ".claude/skills/spec-cross-reference/SKILL.md",
+   ".github/actions/",
+   ".github/prompts/shared-review-check.md",
+   ".github/prompts/shared-review-find.md",
+   ".github/scripts/",
+   ".github/workflows/",
+   ".specify/memory/constitution.md",
+   "a/b/c/z.md",
+   "a/b/x.md",
+   "a/docs/x.md",
+   "app/specs/001-demo/tasks.md",
+   "b/.github/workflows/README.md",
+   "docs/a.md",
+   "docs/adoption.md",
+   "docs/agent-friendly-workflows.md",
+   "docs/reference.md",
+   "docs/setup.md",
+   "docs/x.md",
+   "docs/y.md",
+   "ideas/alpha/.specify/memory/constitution.md",
+   "no-such-directory/comment.md",
+   "nope/tasks.md",
+   "notes/x.md",
+   "prove-after-merge/SKILL.md",
+   "specs/010-reusable-pipeline/contracts/stage-interfaces.md",
+   "specs/026-configurable-tool-lists/contracts/tool-composition-action.md",
+   "specs/032-structured-clarification-gate/contracts/clarification-schema.md",
+   "specs/038-runner-container-passthrough/contracts/runner-container-passthrough.md",
+   "specs/042-a/spec.md",
+   "specs/043-durable-metrics-record/contracts/metrics-record-schema.md",
+   "specs/043-durable-metrics-record/contracts/wrapper-contract.md",
+   "specs/055-unattended-e2e-gates/research.md",
+   "specs/055-unattended-e2e-gates/spec.md",
+   "specs/056-stage-found-defect-filing/data-model.md",
+   "specs/057-autonomous-board-loop/contracts/board-loop-workflow.md",
+   "specs/057-autonomous-board-loop/contracts/labels-and-cross-links.md",
+   "specs/057-autonomous-board-loop/contracts/readiness-report.md",
+   "specs/058-per-job-minute-floor/contracts/gate-coverage-058.md",
+   "specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md",
+   "specs/059-converged-means-tasks-done/contracts/convergence-signal.md",
+   "specs/060-self-redrive-concurrency/contracts/concurrency-groups.md",
+   "specs/061-marker-owned-in-flight/contracts/in-flight-detection.md",
+   "specs/061-marker-owned-in-flight/contracts/resume-recovery.md",
+   "specs/062-lifecycle-review-gate/contracts/readiness-and-merge.md",
+   "specs/097-recorded-stop-point/contracts/gate-135-stop-point-recording.md",
+   "specs/115-board-loop-self-merge/contracts/board-merge.md",
+   "specs/117-x/tasks.md",
+   "specs/122-x/spec.md",
+   "specs/999-example-feature/spec.md",
+   "specs/999-x/tasks.md",
+   "wc-metrics-persist/rollup-region.md"
+  ]
+ },
+ "verify-gate-wiring.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/run-local-gates.py",
+   ".github/scripts/verify-gate-wiring.py",
+   ".github/scripts/wc_gate_reads.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_repo_files.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "ddfe4045804b2a5deb028acb9f02338962e62d0f283aacd53ab17c2cae721b8b",
+  "reads": [
+   ".claude/skills/spec-cross-reference/SKILL.md",
+   ".github",
+   ".github/scripts/run-local-gates.py",
+   ".github/scripts/verify-gate-wiring.py",
+   ".github/scripts/wc_gate_reads.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_repo_files.py",
+   ".github/scripts/wc_shell_harness.py",
+   "specs/999-made-up/spec.md"
+  ]
+ },
+ "verify-gh-api-error-capture.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gh-api-error-capture.py",
+   ".github/scripts/wc_gh_capture.py"
+  ],
+  "digest": "99cfdbadb02a3a92f14490daae0f42537452cad2d7c5c734daf1ae7e83ca2500",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-gh-api-error-capture.py",
+   ".github/scripts/wc_gh_capture.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-gh-api-error-capture.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gh-api-error-capture.py",
+   ".github/scripts/wc_gh_capture.py"
+  ],
+  "digest": "99cfdbadb02a3a92f14490daae0f42537452cad2d7c5c734daf1ae7e83ca2500",
+  "reads": [
+   ".github/scripts/verify-gh-api-error-capture.py",
+   ".github/scripts/wc_gh_capture.py"
+  ]
+ },
+ "verify-gh-api-explicit-method.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gh-api-explicit-method.py",
+   ".github/scripts/wc_gh_callsites.py"
+  ],
+  "digest": "3e592f75de4c517dd977da59407114edd4a99ca8cb0ba34306d7d12c79f299ad",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/",
+   ".github/workflows/"
+  ]
+ },
+ "verify-gh-api-explicit-method.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-gh-api-explicit-method.py",
+   ".github/scripts/wc_gh_callsites.py"
+  ],
+  "digest": "3e592f75de4c517dd977da59407114edd4a99ca8cb0ba34306d7d12c79f299ad",
+  "reads": [
+   ".github/scripts/verify-gh-api-explicit-method.py",
+   ".github/scripts/wc_gh_callsites.py"
+  ]
+ },
+ "verify-gh-error-stub-conformance.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/board_stop_check.py",
+   ".github/scripts/lifecycle_merge_preconditions.py",
+   ".github/scripts/lifecycle_readiness.py",
+   ".github/scripts/verify-auto-release-credential-step.py",
+   ".github/scripts/verify-auto-release-e2e-gate-decisions.py",
+   ".github/scripts/verify-auto-release-gate-waits-for-stage.py",
+   ".github/scripts/verify-auto-release-report.py",
+   ".github/scripts/verify-auto-release-specs-fallback.py",
+   ".github/scripts/verify-auto-release-switch.py",
+   ".github/scripts/verify-board-loop-resume-gating.py",
+   ".github/scripts/verify-board-review-fixup-push.py",
+   ".github/scripts/verify-board-stop-check.py",
+   ".github/scripts/verify-gate-106.py",
+   ".github/scripts/verify-gate-19.py",
+   ".github/scripts/verify-gh-error-stub-conformance.py",
+   ".github/scripts/verify-implement-haiku-optin.py",
+   ".github/scripts/verify-issue-context-trust-filter.py",
+   ".github/scripts/verify-lifecycle-merge-preconditions.py",
+   ".github/scripts/verify-reviewer-fail-closed.py",
+   ".github/scripts/verify-watchdog-failure-accounting.py",
+   ".github/scripts/verify-watchdog-overlap-fanout.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_gh_capture.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_lifecycle_review_marker.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/scripts/wc_shell_pin.py"
+  ],
+  "digest": "c83ae503b6fd37a9c68b5b67f0465eda7ab0293092061ec2a52a62eba0a80867",
+  "reads": [
+   ".github",
+   ".github/actions/wing-commander-durable-failure-issue/action.yml",
+   ".github/actions/wing-commander-fetch-job-logs/action.yml",
+   ".github/actions/wing-commander-inspected-run-identity/action.yml",
+   ".github/actions/wing-commander-issue-context/action.yml",
+   ".github/scripts/",
+   ".github/workflows/auto-release-switch.yml",
+   ".github/workflows/auto-release.yml",
+   ".github/workflows/board-loop.yml",
+   ".github/workflows/lifecycle-review-gate.yml",
+   ".github/workflows/lint-workflows.yml",
+   ".github/workflows/watchdog.yml"
+  ]
+ },
+ "verify-gh-error-stub-conformance.py --self-test": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-auto-release-specs-fallback.py",
+   ".github/scripts/verify-gh-error-stub-conformance.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_gh_capture.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "1ca56d751571a35f11e9e5aeae36bf587d577dfa7277adafe5d1329c2fde59cf",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-auto-release-specs-fallback.py",
+   ".github/scripts/verify-gh-error-stub-conformance.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_gh_capture.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-haiku-tier-model-id.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-haiku-tier-model-id.py"
+  ],
+  "digest": "79169848a9aee5637172df3e5293d6fe1f756014cc26ee2d8e007eb58b58ca95",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts",
+   ".github/scripts/verify-haiku-tier-model-id.py",
+   ".github/workflows/",
+   ".specify/memory/constitution.md",
+   "docs/"
+  ]
+ },
+ "verify-haiku-tier-model-id.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-haiku-tier-model-id.py"
+  ],
+  "digest": "79169848a9aee5637172df3e5293d6fe1f756014cc26ee2d8e007eb58b58ca95",
+  "reads": [
+   ".github",
+   ".github/scripts",
+   ".github/scripts/fixtures/haiku-tier-model-id/clean",
+   ".github/scripts/fixtures/haiku-tier-model-id/clean/.github/actions/",
+   ".github/scripts/fixtures/haiku-tier-model-id/clean/.github/workflows/",
+   ".github/scripts/fixtures/haiku-tier-model-id/clean/.specify/memory/constitution.md",
+   ".github/scripts/fixtures/haiku-tier-model-id/clean/docs/",
+   ".github/scripts/fixtures/haiku-tier-model-id/constitution-hit",
+   ".github/scripts/fixtures/haiku-tier-model-id/constitution-hit/.github/actions/",
+   ".github/scripts/fixtures/haiku-tier-model-id/constitution-hit/.github/workflows/",
+   ".github/scripts/fixtures/haiku-tier-model-id/constitution-hit/.specify/memory/constitution.md",
+   ".github/scripts/fixtures/haiku-tier-model-id/constitution-hit/docs/",
+   ".github/scripts/fixtures/haiku-tier-model-id/docs-hit",
+   ".github/scripts/fixtures/haiku-tier-model-id/docs-hit/.github/actions/",
+   ".github/scripts/fixtures/haiku-tier-model-id/docs-hit/.github/workflows/",
+   ".github/scripts/fixtures/haiku-tier-model-id/docs-hit/.specify/memory/constitution.md",
+   ".github/scripts/fixtures/haiku-tier-model-id/docs-hit/docs/",
+   ".github/scripts/fixtures/haiku-tier-model-id/empty-root",
+   ".github/scripts/fixtures/haiku-tier-model-id/empty-root/.github/actions",
+   ".github/scripts/fixtures/haiku-tier-model-id/empty-root/.github/workflows",
+   ".github/scripts/fixtures/haiku-tier-model-id/empty-root/.specify/memory/constitution.md",
+   ".github/scripts/fixtures/haiku-tier-model-id/empty-root/docs",
+   ".github/scripts/fixtures/haiku-tier-model-id/workflow-hit",
+   ".github/scripts/fixtures/haiku-tier-model-id/workflow-hit/.github/actions/",
+   ".github/scripts/fixtures/haiku-tier-model-id/workflow-hit/.github/workflows/",
+   ".github/scripts/fixtures/haiku-tier-model-id/workflow-hit/.specify/memory/constitution.md",
+   ".github/scripts/fixtures/haiku-tier-model-id/workflow-hit/docs/",
+   ".github/scripts/verify-haiku-tier-model-id.py"
+  ]
+ },
+ "verify-hardened-push.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-hardened-push.py",
+   ".github/scripts/wc_repo_files.py"
+  ],
+  "digest": "9d8957dddd57d543a74ef86454f6f719c3e2c2224f3b61d51d83b37ebf328d3b",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-hardened-push.py",
+   ".github/scripts/wc_repo_files.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-hardened-push.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-hardened-push.py",
+   ".github/scripts/wc_repo_files.py"
+  ],
+  "digest": "9d8957dddd57d543a74ef86454f6f719c3e2c2224f3b61d51d83b37ebf328d3b",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/fixtures/095-hardened-push/composite-use.yml",
+   ".github/scripts/fixtures/095-hardened-push/hardened-composite.yml",
+   ".github/scripts/fixtures/095-hardened-push/hardened-in-another-step.yml",
+   ".github/scripts/fixtures/095-hardened-push/pasted-idiom.yml",
+   ".github/scripts/fixtures/095-hardened-push/raw-push.yml",
+   ".github/scripts/fixtures/095-hardened-push/unhardened-composite.yml",
+   ".github/scripts/verify-hardened-push.py",
+   ".github/scripts/wc_repo_files.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-image-git-floor.py": {
+  "children": [
+   "sh"
+  ],
+  "code": [
+   ".github/scripts/verify-image-git-floor.py"
+  ],
+  "digest": "2dc7d161d41d921559a2cc8c47ed29c1f62f40943f44d9ac3296f7a89e32f61b",
+  "reads": [
+   ".github/scripts/image-git-floor-fixtures/",
+   ".github/scripts/image-git-floor.sh",
+   ".github/scripts/image-glibc-loader-fixtures/expectations.json",
+   ".github/scripts/image-glibc-loader.sh",
+   ".github/scripts/verify-gate-62.py",
+   ".github/scripts/verify-image-git-floor.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-image-git-floor.py --self-test": {
+  "children": [
+   "sh"
+  ],
+  "code": [
+   ".github/scripts/verify-image-git-floor.py"
+  ],
+  "digest": "2dc7d161d41d921559a2cc8c47ed29c1f62f40943f44d9ac3296f7a89e32f61b",
+  "reads": [
+   ".github/scripts/image-git-floor-fixtures/",
+   ".github/scripts/image-git-floor.sh",
+   ".github/scripts/image-glibc-loader-fixtures/expectations.json",
+   ".github/scripts/image-glibc-loader.sh",
+   ".github/scripts/verify-gate-62.py",
+   ".github/scripts/verify-image-git-floor.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-implement-gate-suite-preflight.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-implement-gate-suite-preflight.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "2bb7321b2b4532d6b58df2bedaa0ada47e38ee1c4a30c6e4c15f9275dd81cd33",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-implement-gate-suite-preflight.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-implement-haiku-optin.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-implement-haiku-optin.py",
+   ".github/scripts/wc_shell_pin.py"
+  ],
+  "digest": "2d9c1627d0315804c49c1e738cc9b646c3209fa385474aa145b969ab95a4a85b",
+  "reads": [
+   ".github",
+   ".github/scripts",
+   ".github/scripts/verify-implement-haiku-optin.py",
+   ".github/scripts/wc_shell_pin.py",
+   ".github/workflows/board-loop.yml",
+   ".github/workflows/implement.yml",
+   ".github/workflows/pr-conversation.yml",
+   ".github/workflows/wing-commander-5-implement.yml",
+   ".github/workflows/wing-commander-9-pr-conversation.yml"
+  ]
+ },
+ "verify-implement-haiku-optin.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-implement-haiku-optin.py",
+   ".github/scripts/wc_shell_pin.py"
+  ],
+  "digest": "2d9c1627d0315804c49c1e738cc9b646c3209fa385474aa145b969ab95a4a85b",
+  "reads": [
+   ".github",
+   ".github/scripts",
+   ".github/scripts/verify-implement-haiku-optin.py",
+   ".github/scripts/wc_shell_pin.py"
+  ]
+ },
+ "verify-implement-retry-leg-guards.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-implement-retry-leg-guards.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "477f1e87baea4e8ef20cc02a4df21bb3c34a5bdeddc4a7f2b1c11c0804bfc753",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-implement-retry-leg-guards.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-implement-retry-leg-guards.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-implement-retry-leg-guards.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "477f1e87baea4e8ef20cc02a4df21bb3c34a5bdeddc4a7f2b1c11c0804bfc753",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-implement-retry-leg-guards.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-implement-stall-handoff.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-implement-stall-handoff.py"
+  ],
+  "digest": "afbba9f05af74d4a8c5eec82e622e9a169d52157fb44f93583401be50e206d53",
+  "reads": [
+   ".claude/",
+   ".github/actions/_shared/classify-out-of-boundary-tasks.sh",
+   ".github/actions/_shared/count-tasks-checkboxes.sh",
+   ".github/actions/_shared/decide-implement-outcome.sh",
+   ".github/actions/_shared/render-remaining-work.sh",
+   ".github/actions/_shared/validate-implement-blocker.sh",
+   ".github/actions/wing-commander-implement-outcome/action.yml",
+   ".github/actions/wing-commander-remaining-work/action.yml",
+   ".github/actions/wing-commander-tasks-checkbox-count/action.yml",
+   ".github/scripts/fixtures/117-implement-stall-handoff/",
+   ".github/scripts/verify-implement-stall-handoff.py",
+   ".github/workflows/",
+   "specs",
+   "specs/059-converged-means-tasks-done/contracts/convergence-signal.md"
+  ]
+ },
+ "verify-implement-stall-notice-unchanged.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-implement-stall-notice-unchanged.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "f976be00ac1279d967d07c8fd3df74535ecc140a68c943baad6b036f233dd106",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/fixtures/implement-stall-notice-baseline.json",
+   ".github/scripts/verify-implement-stall-notice-unchanged.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-implement-stall-notice-unchanged.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-implement-stall-notice-unchanged.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "f976be00ac1279d967d07c8fd3df74535ecc140a68c943baad6b036f233dd106",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/fixtures/implement-stall-notice-baseline.json",
+   ".github/scripts/verify-implement-stall-notice-unchanged.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-intake-routing.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-intake-routing.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_published_stages.py"
+  ],
+  "digest": "c3f7274b05f4fc3e9b9a8864281b1d6570bfe9499d2752e26bc60909e2d24a91",
+  "reads": [
+   ".claude",
+   ".github/actions/_shared/intake-pre-push.sh",
+   ".github/actions/_shared/project-name.sh",
+   ".github/actions/wing-commander-containment/action.yml",
+   ".github/actions/wing-commander-label-first/action.yml",
+   ".github/actions/wing-commander-project/action.yml",
+   ".github/actions/wing-commander-publish-stranded-commits/action.yml",
+   ".github/scripts/fixtures/project-intake-routing/cases.json",
+   ".github/scripts/fixtures/project-root-compat/cases.json",
+   ".github/scripts/fixtures/project-root-compat/interface.json",
+   ".github/scripts/unpublished-callables.json",
+   ".github/scripts/verify-intake-routing.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/workflows/",
+   ".specify",
+   "specs"
+  ]
+ },
+ "verify-issue-context-single-home.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-issue-context-single-home.py",
+   ".github/scripts/wc_gh_grant.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/scripts/wc_repo_files.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "993965605a010d0b789aab770b40017eacf2de3a3138ec250d830b5c806d934a",
+  "reads": [
+   "./"
+  ]
+ },
+ "verify-issue-context-single-home.py --self-test": {
+  "always": "a traced process did not exit cleanly, so its reads are incomplete"
+ },
+ "verify-issue-context-trust-filter.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-issue-context-trust-filter.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "06bdacb8709a6a2332635d30b934501b68f0cc3d80f3c083dde3e16ba9ff3b9a",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-issue-context-trust-filter.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-job-outputs-prose-free.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-job-outputs-prose-free.py",
+   ".github/scripts/wc_published_stages.py"
+  ],
+  "digest": "319ad6c8ebad32abc9e27fef69ccb0b510e10160e4c30821b3f2247fefd03fe0",
+  "reads": [
+   ".github/actions/wing-commander-agent-ran-signal/action.yml",
+   ".github/actions/wing-commander-agent-verdict/action.yml",
+   ".github/actions/wing-commander-bedrock-credentials/action.yml",
+   ".github/actions/wing-commander-branch-advance/action.yml",
+   ".github/actions/wing-commander-callout/action.yml",
+   ".github/actions/wing-commander-chain-stop-notice/action.yml",
+   ".github/actions/wing-commander-clarification-marker/action.yml",
+   ".github/actions/wing-commander-commit-message-guidance/action.yml",
+   ".github/actions/wing-commander-contained-gate-suite/action.yml",
+   ".github/actions/wing-commander-containment/action.yml",
+   ".github/actions/wing-commander-context/action.yml",
+   ".github/actions/wing-commander-cost-report/action.yml",
+   ".github/actions/wing-commander-durable-failure-issue/action.yml",
+   ".github/actions/wing-commander-failed-post-agent-step/action.yml",
+   ".github/actions/wing-commander-fetch-job-logs/action.yml",
+   ".github/actions/wing-commander-fold-commit/action.yml",
+   ".github/actions/wing-commander-fold-dispatch/action.yml",
+   ".github/actions/wing-commander-fold-evidence/action.yml",
+   ".github/actions/wing-commander-fold-queue-admit/action.yml",
+   ".github/actions/wing-commander-fold-queue-claim-dispatch/action.yml",
+   ".github/actions/wing-commander-fold-queue-ledger/action.yml",
+   ".github/actions/wing-commander-fold-queue-release/action.yml",
+   ".github/actions/wing-commander-gate-verdict/action.yml",
+   ".github/actions/wing-commander-hardened-push/action.yml",
+   ".github/actions/wing-commander-implement-outcome/action.yml",
+   ".github/actions/wing-commander-inspected-run-identity/action.yml",
+   ".github/actions/wing-commander-install-actionlint/action.yml",
+   ".github/actions/wing-commander-issue-context/action.yml",
+   ".github/actions/wing-commander-label-first/action.yml",
+   ".github/actions/wing-commander-lifecycle-gate/action.yml",
+   ".github/actions/wing-commander-metrics-persist/action.yml",
+   ".github/actions/wing-commander-metrics-summary/action.yml",
+   ".github/actions/wing-commander-outstanding-task-item/action.yml",
+   ".github/actions/wing-commander-post-agent-credential-status/action.yml",
+   ".github/actions/wing-commander-preflight/action.yml",
+   ".github/actions/wing-commander-project/action.yml",
+   ".github/actions/wing-commander-publish-stranded-commits/action.yml",
+   ".github/actions/wing-commander-published-commits-line/action.yml",
+   ".github/actions/wing-commander-refresh-remote/action.yml",
+   ".github/actions/wing-commander-remaining-work/action.yml",
+   ".github/actions/wing-commander-resolve-checkout-ref/action.yml",
+   ".github/actions/wing-commander-spec-meta/action.yml",
+   ".github/actions/wing-commander-stage-findings/action.yml",
+   ".github/actions/wing-commander-stall-reason/action.yml",
+   ".github/actions/wing-commander-stalled-handoff/action.yml",
+   ".github/actions/wing-commander-tasks-checkbox-count/action.yml",
+   ".github/actions/wing-commander-tool-args/action.yml",
+   ".github/actions/wing-commander-trial-record/action.yml",
+   ".github/actions/wing-commander-turn-ceiling/action.yml",
+   ".github/actions/wing-commander-write-boundary-lookup/action.yml",
+   ".github/actions/wing-commander-write-boundary/action.yml",
+   ".github/scripts/unpublished-callables.json",
+   ".github/scripts/verify-job-outputs-prose-free.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-job-outputs-prose-free.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-job-outputs-prose-free.py",
+   ".github/scripts/wc_published_stages.py"
+  ],
+  "digest": "319ad6c8ebad32abc9e27fef69ccb0b510e10160e4c30821b3f2247fefd03fe0",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-job-outputs-prose-free.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/workflows/pr-conversation.yml",
+   ".github/workflows/watchdog.yml"
+  ]
+ },
+ "verify-lifecycle-gate-retry.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-lifecycle-gate-retry.py",
+   ".github/scripts/wc_repo_files.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "494e66d645880cc81f8426c216a2a0b7d4725f8ec8e7c8e1eeb010bba11d564b",
+  "reads": [
+   "./"
+  ]
+ },
+ "verify-lifecycle-label-taxonomy.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-lifecycle-label-taxonomy.py"
+  ],
+  "digest": "89ff1a6b184da6d8c64f91bcf2e0085ca3ad6fb467c245e9e508f334601263c3",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/lifecycle-label-taxonomy-waivers.json",
+   ".github/scripts/verify-lifecycle-label-taxonomy.py",
+   ".github/workflows/",
+   "docs/setup.md"
+  ]
+ },
+ "verify-lifecycle-label-taxonomy.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-lifecycle-label-taxonomy.py"
+  ],
+  "digest": "89ff1a6b184da6d8c64f91bcf2e0085ca3ad6fb467c245e9e508f334601263c3",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-lifecycle-label-taxonomy.py",
+   "docs"
+  ]
+ },
+ "verify-lifecycle-merge-preconditions.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/lifecycle_merge_preconditions.py",
+   ".github/scripts/lifecycle_readiness.py",
+   ".github/scripts/verify-lifecycle-merge-preconditions.py",
+   ".github/scripts/wc_lifecycle_review_marker.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "1194f7ba5f8068f62c4e775b14453192a3d9b639ce8a1be13797d6096c6375cd",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/lifecycle_merge_preconditions.py",
+   ".github/scripts/lifecycle_readiness.py",
+   ".github/scripts/tests/lifecycle-merge-preconditions/",
+   ".github/scripts/verify-lifecycle-merge-preconditions.py",
+   ".github/scripts/wc_lifecycle_review_marker.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-lifecycle-merge-preconditions.py --self-test": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/lifecycle_merge_preconditions.py",
+   ".github/scripts/lifecycle_readiness.py",
+   ".github/scripts/verify-lifecycle-merge-preconditions.py",
+   ".github/scripts/wc_lifecycle_review_marker.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "1194f7ba5f8068f62c4e775b14453192a3d9b639ce8a1be13797d6096c6375cd",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/lifecycle_merge_preconditions.py",
+   ".github/scripts/lifecycle_readiness.py",
+   ".github/scripts/verify-lifecycle-merge-preconditions.py",
+   ".github/scripts/wc_lifecycle_review_marker.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-lifecycle-readiness.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/lifecycle_readiness.py",
+   ".github/scripts/verify-lifecycle-readiness.py",
+   ".github/scripts/wc_lifecycle_review_marker.py"
+  ],
+  "digest": "8bcdd75882d155189364cf17f659c6f8413b9102ca0462d6c64b9cf79c56c96b",
+  "reads": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/lifecycle_readiness.py",
+   ".github/scripts/tests/lifecycle-readiness/",
+   ".github/scripts/verify-lifecycle-readiness.py",
+   ".github/scripts/wc_lifecycle_review_marker.py",
+   ".github/workflows/lifecycle-review-gate.yml"
+  ]
+ },
+ "verify-lifecycle-readiness.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/lifecycle_readiness.py",
+   ".github/scripts/verify-lifecycle-readiness.py",
+   ".github/scripts/wc_lifecycle_review_marker.py"
+  ],
+  "digest": "8bcdd75882d155189364cf17f659c6f8413b9102ca0462d6c64b9cf79c56c96b",
+  "reads": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/lifecycle_readiness.py",
+   ".github/scripts/verify-lifecycle-readiness.py",
+   ".github/scripts/wc_lifecycle_review_marker.py",
+   ".github/workflows/lifecycle-review-gate.yml"
+  ]
+ },
+ "verify-lifecycle-review-gate-composite-provenance.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-lifecycle-review-gate-composite-provenance.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "656f8cca448a2f890c623cbbdffe1120c077ca10dbb6881781f71c155f35bb7c",
+  "reads": [
+   ".github/scripts/verify-lifecycle-review-gate-composite-provenance.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/lifecycle-review-gate.yml",
+   ".gitignore"
+  ]
+ },
+ "verify-lifecycle-review-gate-composite-provenance.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-lifecycle-review-gate-composite-provenance.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "656f8cca448a2f890c623cbbdffe1120c077ca10dbb6881781f71c155f35bb7c",
+  "reads": [
+   ".github/scripts/verify-lifecycle-review-gate-composite-provenance.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/lifecycle-review-gate.yml",
+   ".gitignore"
+  ]
+ },
+ "verify-lifecycle-review-gate-fold-wiring.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-lifecycle-review-gate-fold-wiring.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "4fc67937e8108f6d9bd9d00c9eafa75d2c3806e0ee10b5cc2859272d8827e1b5",
+  "reads": [
+   ".github/scripts/verify-lifecycle-review-gate-fold-wiring.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/lifecycle-review-gate.yml"
+  ]
+ },
+ "verify-lifecycle-review-gate-fold-wiring.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-lifecycle-review-gate-fold-wiring.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "4fc67937e8108f6d9bd9d00c9eafa75d2c3806e0ee10b5cc2859272d8827e1b5",
+  "reads": [
+   ".github/scripts/verify-lifecycle-review-gate-fold-wiring.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/lifecycle-review-gate.yml"
+  ]
+ },
+ "verify-lint-aggregate.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-lint-aggregate.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_gha_expr.py"
+  ],
+  "digest": "70d94f89bcad86b74acd5e70e48f348a459c48cfc5bee0290714e4f55d120371",
+  "reads": [
+   ".github/scripts/verify-lint-aggregate.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/workflows/lint-workflows.yml"
+  ]
+ },
+ "verify-lint-aggregate.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-lint-aggregate.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_gha_expr.py"
+  ],
+  "digest": "70d94f89bcad86b74acd5e70e48f348a459c48cfc5bee0290714e4f55d120371",
+  "reads": [
+   ".github/scripts/verify-lint-aggregate.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/workflows/lint-workflows.yml"
+  ]
+ },
+ "verify-lint-shard-layout.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-lint-shard-layout.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_gha_expr.py"
+  ],
+  "digest": "38bb1f07a12e510c5c6a29ea8f9a9504ade07a4a1a75e542b58f4cf57dff4373",
+  "reads": [
+   ".github/scripts/",
+   ".github/workflows/lint-workflows.yml"
+  ]
+ },
+ "verify-lint-shard-layout.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-lint-shard-layout.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_gha_expr.py"
+  ],
+  "digest": "38bb1f07a12e510c5c6a29ea8f9a9504ade07a4a1a75e542b58f4cf57dff4373",
+  "reads": [
+   ".github/scripts/"
+  ]
+ },
+ "verify-lint-supersedes-pr-runs.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-lint-supersedes-pr-runs.py",
+   ".github/scripts/wc_gha_expr.py"
+  ],
+  "digest": "7d83a24e2b6a86bbd3b6b22ae22c489e143d0f0e8c2a249bc747d3af48135cac",
+  "reads": [
+   ".github/scripts/verify-lint-supersedes-pr-runs.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-lint-supersedes-pr-runs.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-lint-supersedes-pr-runs.py",
+   ".github/scripts/wc_gha_expr.py"
+  ],
+  "digest": "7d83a24e2b6a86bbd3b6b22ae22c489e143d0f0e8c2a249bc747d3af48135cac",
+  "reads": [
+   ".github/scripts/verify-lint-supersedes-pr-runs.py",
+   ".github/scripts/wc_gha_expr.py"
+  ]
+ },
+ "verify-maintainer-credential-canonical-statement.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-comment-canonical-pointers.py",
+   ".github/scripts/verify-maintainer-credential-canonical-statement.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "5ebdf0292c3b4b1317c16d596e5f4c7f18af2053ca84733d3fe9a805ffee76b5",
+  "reads": [
+   ".github/scripts/verify-auto-release-credential-step.py",
+   ".github/scripts/verify-comment-canonical-pointers.py",
+   ".github/scripts/verify-maintainer-credential-canonical-statement.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/auto-release.yml",
+   "docs/setup.md",
+   "specs/055-unattended-e2e-gates/research.md",
+   "specs/055-unattended-e2e-gates/spec.md"
+  ]
+ },
+ "verify-maintainer-credential-canonical-statement.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-comment-canonical-pointers.py",
+   ".github/scripts/verify-maintainer-credential-canonical-statement.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "5ebdf0292c3b4b1317c16d596e5f4c7f18af2053ca84733d3fe9a805ffee76b5",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-comment-canonical-pointers.py",
+   ".github/scripts/verify-maintainer-credential-canonical-statement.py",
+   ".github/scripts/wc_shell_harness.py",
+   "docs",
+   "specs"
+  ]
+ },
+ "verify-merge-evidence.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_merge.py",
+   ".github/scripts/board_prove.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/board_triage.py",
+   ".github/scripts/lifecycle_merge_preconditions.py",
+   ".github/scripts/lifecycle_readiness.py",
+   ".github/scripts/verify-merge-evidence.py",
+   ".github/scripts/wc_board_status.py",
+   ".github/scripts/wc_lifecycle_review_marker.py",
+   ".github/scripts/wc_merge_evidence.py"
+  ],
+  "digest": "c25bf1ddb301d09cfb471cb627fa98e8a0bdf3719b4a48a585f5178be8772ce4",
+  "reads": [
+   ".github/actions/wing-commander-watch-guard/action.yml",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_merge.py",
+   ".github/scripts/board_prove.py",
+   ".github/scripts/board_readiness.py",
+   ".github/scripts/board_triage.py",
+   ".github/scripts/fixtures/merge-evidence/",
+   ".github/scripts/lifecycle_merge_preconditions.py",
+   ".github/scripts/lifecycle_readiness.py",
+   ".github/scripts/verify-merge-evidence.py",
+   ".github/scripts/wc_board_status.py",
+   ".github/scripts/wc_lifecycle_review_marker.py",
+   ".github/scripts/wc_merge_evidence.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-metrics-expired-artifact-outcome.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-metrics-expired-artifact-outcome.py",
+   ".github/scripts/wc_metrics_harness.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "29d9972be44c7868cbebfd1f32184a49841eb02f49950485fa635fb3a4596fe9",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-metrics-expired-artifact-outcome.py",
+   ".github/scripts/wc_metrics_harness.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-metrics-persist-no-writeback.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-metrics-persist-no-writeback.py"
+  ],
+  "digest": "6651d1aa4a41bbe47186e35578b924d61be9ead529af0deb35e4804e38477a68",
+  "reads": [
+   ".github/actions/wing-commander-metrics-persist/action.yml",
+   ".github/scripts/verify-metrics-persist-no-writeback.py",
+   ".github/workflows/metrics-persist.yml",
+   ".github/workflows/wing-commander-metrics-persist.yml"
+  ]
+ },
+ "verify-metrics-persist-no-writeback.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-metrics-persist-no-writeback.py"
+  ],
+  "digest": "6651d1aa4a41bbe47186e35578b924d61be9ead529af0deb35e4804e38477a68",
+  "reads": [
+   ".github/scripts/fixtures/metrics-persist-no-writeback/",
+   ".github/scripts/verify-metrics-persist-no-writeback.py"
+  ]
+ },
+ "verify-metrics-persist-retry.py --self-test": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-metrics-persist-retry.py",
+   ".github/scripts/wc_metrics_harness.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "1c7efa5e16d3363077b6e3fe18fcf45b143a28306b9c9b2d11af0b3e8d435dcf",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/",
+   ".github/workflows/"
+  ]
+ },
+ "verify-metrics-record-schema.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-metrics-record-schema.py"
+  ],
+  "digest": "a9ee7e25ad964fb51b3de6279b00bb5788deb3c872a42397ae955e90a78eecf6",
+  "reads": [
+   ".github/scripts/fixtures/metrics-record-schema/",
+   ".github/scripts/verify-metrics-record-schema.py",
+   "specs/043-durable-metrics-record/contracts/metrics-record-schema.md"
+  ]
+ },
+ "verify-metrics-record-schema.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-metrics-record-schema.py"
+  ],
+  "digest": "a9ee7e25ad964fb51b3de6279b00bb5788deb3c872a42397ae955e90a78eecf6",
+  "reads": [
+   ".github/scripts/fixtures/metrics-record-schema/",
+   ".github/scripts/verify-metrics-record-schema.py",
+   "specs/043-durable-metrics-record/contracts/metrics-record-schema.md"
+  ]
+ },
+ "verify-metrics-rollup-idempotent.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-metrics-rollup-idempotent.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "b1c6669ed5891f6fc7dcfc47abd36700fbb82f824886077705db552a103137a5",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-metrics-rollup-idempotent.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-metrics-schema-version-tolerance.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-metrics-schema-version-tolerance.py"
+  ],
+  "digest": "9d97cb5a583263f10f0cd1375d7de0921e176ff4d1b624226deed61245d39760",
+  "reads": [
+   ".github/scripts/verify-metrics-schema-version-tolerance.py"
+  ]
+ },
+ "verify-metrics-summary-record-emission.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-metrics-record-schema.py",
+   ".github/scripts/verify-metrics-summary-record-emission.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/scripts/wc_shell_pin.py"
+  ],
+  "digest": "354ab928a91f037c621cd7ef77352c0f59e8551d3e02b8a1706c8cb3fba37710",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-metrics-record-schema.py",
+   ".github/scripts/verify-metrics-summary-record-emission.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/scripts/wc_shell_pin.py",
+   ".github/workflows/",
+   "specs/043-durable-metrics-record/contracts/metrics-record-schema.md"
+  ]
+ },
+ "verify-metrics-sweep-high-water-mark.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-metrics-sweep-high-water-mark.py",
+   ".github/scripts/wc_metrics_harness.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "4d1db9080c6dabc5bec55984bfa9edc99180ea599fb71d608e104c4a556ddcb1",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-metrics-sweep-high-water-mark.py",
+   ".github/scripts/wc_metrics_harness.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-metrics-sweep-idempotence.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-metrics-sweep-idempotence.py",
+   ".github/scripts/wc_metrics_harness.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "0c2a936cad68ace4d0b2e14e21ed2c9dc1a873212b15c7248cd52d86b5c02048",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-metrics-sweep-idempotence.py",
+   ".github/scripts/wc_metrics_harness.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-metrics-turn-accounting.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-metrics-turn-accounting.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "9131bf8c7483eaea82e868528fc0deeea4608f68e2987ae3b298d4a9bbd38b3f",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-metrics-turn-accounting.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-metrics-wrapper-trigger-drops-watchdog.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-metrics-wrapper-trigger-drops-watchdog.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "2cb62be28b0857ad1c43adb6fa8b1a18f46b7d65d5f7e9b8e913fc0ee5ae3dc3",
+  "reads": [
+   ".github",
+   ".github/actions/_shared/orphan-branch-reset/action.yml",
+   ".github/actions/_shared/scoped-app-token/action.yml",
+   ".github/actions/wing-commander-agent-ran-signal/action.yml",
+   ".github/actions/wing-commander-agent-verdict/action.yml",
+   ".github/actions/wing-commander-bedrock-credentials/action.yml",
+   ".github/actions/wing-commander-board-stop-check/action.yml",
+   ".github/actions/wing-commander-branch-advance/action.yml",
+   ".github/actions/wing-commander-callout/action.yml",
+   ".github/actions/wing-commander-commit-message-guidance/action.yml",
+   ".github/actions/wing-commander-contained-gate-suite/action.yml",
+   ".github/actions/wing-commander-containment/action.yml",
+   ".github/actions/wing-commander-context/action.yml",
+   ".github/actions/wing-commander-directed-proof-busy-check/action.yml",
+   ".github/actions/wing-commander-dispatch-and-wait/action.yml",
+   ".github/actions/wing-commander-durable-failure-issue/action.yml",
+   ".github/actions/wing-commander-fetch-job-logs/action.yml",
+   ".github/actions/wing-commander-fold-queue-admit/action.yml",
+   ".github/actions/wing-commander-fold-queue-ledger/action.yml",
+   ".github/actions/wing-commander-gate-verdict/action.yml",
+   ".github/actions/wing-commander-hardened-push/action.yml",
+   ".github/actions/wing-commander-inspected-run-identity/action.yml",
+   ".github/actions/wing-commander-install-actionlint/action.yml",
+   ".github/actions/wing-commander-issue-context/action.yml",
+   ".github/actions/wing-commander-label-first/action.yml",
+   ".github/actions/wing-commander-lifecycle-gate/action.yml",
+   ".github/actions/wing-commander-metrics-summary/action.yml",
+   ".github/actions/wing-commander-outstanding-task-item/action.yml",
+   ".github/actions/wing-commander-post-agent-credential-status/action.yml",
+   ".github/actions/wing-commander-post-review-comment/action.yml",
+   ".github/actions/wing-commander-preflight/action.yml",
+   ".github/actions/wing-commander-project/action.yml",
+   ".github/actions/wing-commander-publish-stranded-commits/action.yml",
+   ".github/actions/wing-commander-refresh-remote/action.yml",
+   ".github/actions/wing-commander-spec-meta/action.yml",
+   ".github/actions/wing-commander-stage-findings/action.yml",
+   ".github/actions/wing-commander-tasks-checkbox-count/action.yml",
+   ".github/actions/wing-commander-tool-args/action.yml",
+   ".github/actions/wing-commander-trial-bound/action.yml",
+   ".github/actions/wing-commander-turn-ceiling/action.yml",
+   ".github/actions/wing-commander-watch-guard/action.yml",
+   ".github/actions/wing-commander-write-boundary-lookup/action.yml",
+   ".github/scripts/verify-metrics-wrapper-trigger-drops-watchdog.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "docs/adoption.md",
+   "specs/043-durable-metrics-record/contracts/wrapper-contract.md",
+   "specs/058-per-job-minute-floor/contracts/gate-coverage-058.md",
+   "specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md"
+  ]
+ },
+ "verify-migrate-stranded-review-lifecycles.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-buildable-classification.py",
+   ".github/scripts/verify-migrate-stranded-review-lifecycles.py"
+  ],
+  "digest": "59806de412a791f2c49dd56a4e38e3d16686a1252369b73f318101600fc5d341",
+  "reads": [
+   ".github/actions/_shared/count-tasks-checkboxes.sh",
+   ".github/actions/_shared/migrate-stranded-review-lifecycles.sh",
+   ".github/scripts/fixtures/123-implement-task-completion/migration/",
+   ".github/scripts/verify-buildable-classification.py",
+   ".github/scripts/verify-migrate-stranded-review-lifecycles.py",
+   ".github/workflows/migrate-stranded-review-lifecycles.yml",
+   "specs"
+  ]
+ },
+ "verify-narrative-drift-routing.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "verify-no-reference-name-stage-match.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-no-reference-name-stage-match.py",
+   ".github/scripts/wc_gate_registry.py"
+  ],
+  "digest": "841b45d1d539ec61a46767e3e1b2c05bbb887a5a666074daa8d481e263d56671",
+  "reads": [
+   ".github/actions/wing-commander-inspected-run-identity/action.yml",
+   ".github/scripts/verify-no-reference-name-stage-match.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-no-reference-name-stage-match.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-no-reference-name-stage-match.py",
+   ".github/scripts/wc_gate_registry.py"
+  ],
+  "digest": "841b45d1d539ec61a46767e3e1b2c05bbb887a5a666074daa8d481e263d56671",
+  "reads": [
+   ".github/scripts/verify-no-reference-name-stage-match.py",
+   ".github/scripts/wc_gate_registry.py"
+  ]
+ },
+ "verify-pipeline-checkout-containment.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-pipeline-checkout-containment.py"
+  ],
+  "digest": "a40cbfed8d18a1d4d30e91807f312ae80e48e1624413337bfd6faeb7f2426e13",
+  "reads": [
+   ".github/actions/wing-commander-tool-args/action.yml",
+   ".github/scripts/fixtures/project-checkout-containment/cases.json",
+   ".github/scripts/pipeline-checkout-guard.sh",
+   ".github/scripts/verify-pipeline-checkout-containment.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-pipeline-checkout-guard.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-pipeline-checkout-guard.py"
+  ],
+  "digest": "bd4e172c003a659fe3620adc26289219f8aef6708c59b388b30a181289bced10",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/pipeline-checkout-guard.sh",
+   ".github/scripts/verify-pipeline-checkout-guard.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-pipeline-checkout-guard.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-pipeline-checkout-guard.py"
+  ],
+  "digest": "bd4e172c003a659fe3620adc26289219f8aef6708c59b388b30a181289bced10",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/pipeline-checkout-guard.sh",
+   ".github/scripts/verify-pipeline-checkout-guard.py",
+   ".github/workflows/",
+   ".specify",
+   "docs"
+  ]
+ },
+ "verify-plan-tasks-cost-line.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-plan-tasks-cost-line.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "e1dc423a9bb49cf54f6cafe8f0a1101a4cb05890598cd8e9a11b542e2f8a06d7",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-plan-tasks-cost-line.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-plan-tasks-cost-line.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-plan-tasks-cost-line.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "e1dc423a9bb49cf54f6cafe8f0a1101a4cb05890598cd8e9a11b542e2f8a06d7",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-plan-tasks-cost-line.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-post-agent-credential-refresh.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-post-agent-credential-refresh.py"
+  ],
+  "digest": "5652b078b999f797952dae5188a4494f2e1128f93893fac2c79bf0ded05da732",
+  "reads": [
+   ".github/scripts/verify-post-agent-credential-refresh.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-post-agent-credential-refresh.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-post-agent-credential-refresh.py"
+  ],
+  "digest": "5652b078b999f797952dae5188a4494f2e1128f93893fac2c79bf0ded05da732",
+  "reads": [
+   ".github/scripts/verify-post-agent-credential-refresh.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-post-review-comment-composite.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-post-review-comment-composite.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "30a56d11532aca3b94eaf9800391f36d9138ca7653f29af3137f43208cc73db5",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-post-review-comment-composite.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-post-review-comment-composite.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-post-review-comment-composite.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "30a56d11532aca3b94eaf9800391f36d9138ca7653f29af3137f43208cc73db5",
+  "reads": [
+   ".github/scripts/verify-post-review-comment-composite.py",
+   ".github/scripts/wc_shell_harness.py"
+  ]
+ },
+ "verify-project-name-parser.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-project-name-parser.py"
+  ],
+  "digest": "79263094c3fc3d14186dc82300e7255ee559d2ff7c01a059f13209ead76324de",
+  "reads": [
+   ".github/actions/_shared/project-name.sh",
+   ".github/scripts/fixtures/project-name-parser/cases.json",
+   ".github/scripts/fixtures/project-root-compat/cases.json",
+   ".github/scripts/verify-project-name-parser.py"
+  ]
+ },
+ "verify-project-numbering.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-project-numbering.py"
+  ],
+  "digest": "f589f2a75bbbdb2b32e8f04ebea8139788189271de4b29af709d240dc580b593",
+  "reads": [
+   ".github/actions/_shared/project-name.sh",
+   ".github/scripts/fixtures/project-numbering/cases.json",
+   ".github/scripts/verify-project-numbering.py",
+   ".github/workflows/watchdog.yml",
+   "specs"
+  ]
+ },
+ "verify-project-path-grammar.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-project-path-grammar.py"
+  ],
+  "digest": "ec162e2af6be932c3ff61b71fa7a2d311a0d4fac0947ede6f6bbfc2dbf105c76",
+  "reads": [
+   ".claude",
+   ".github/actions/_shared/project-name.sh",
+   ".github/scripts/fixtures/project-path-grammar/cases.json",
+   ".github/scripts/verify-project-path-grammar.py",
+   ".specify",
+   "specs/"
+  ]
+ },
+ "verify-project-single-home.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-project-single-home.py",
+   ".github/scripts/wc_published_stages.py"
+  ],
+  "digest": "7144223f304cb31abe9241d5a31f4e1ebdc7e1e9747e947c44acb6a1cff48446",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/fixtures/project-single-home/",
+   ".github/scripts/unpublished-callables.json",
+   ".github/scripts/verify-project-single-home.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-proof-list.py": {
+  "children": [
+   "bash",
+   "gh"
+  ],
+  "code": [
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_prove.py",
+   ".github/scripts/board_route_backstop.py",
+   ".github/scripts/board_spec_request_body.py",
+   ".github/scripts/board_triage.py",
+   ".github/scripts/verify-proof-list.py",
+   ".github/scripts/wc_board_status.py",
+   ".github/scripts/wc_proof_list.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "7f8ee68592f775b67313db602506333b719b3d0d51fc9987cfa022cce44946e4",
+  "reads": [
+   ".github",
+   ".github/actions/wing-commander-watch-guard/action.yml",
+   ".github/scripts/board_backlog_lines.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_prove.py",
+   ".github/scripts/board_route_backstop.py",
+   ".github/scripts/board_spec_request_body.py",
+   ".github/scripts/board_triage.py",
+   ".github/scripts/fixtures/proof-list/sc001/corpus.json",
+   ".github/scripts/fixtures/proof-list/sc001/expected.json",
+   ".github/scripts/fixtures/proof-list/states.json",
+   ".github/scripts/verify-proof-list.py",
+   ".github/scripts/wc_board_status.py",
+   ".github/scripts/wc_proof_list.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/wing-commander-proof-list.yml",
+   "specs"
+  ]
+ },
+ "verify-prove-path-concurrency.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_prove.py",
+   ".github/scripts/verify-prove-path-concurrency.py",
+   ".github/scripts/wc_gha_expr.py"
+  ],
+  "digest": "d3720fe3236008fd06f039af312058fa9ce813ee4cbd6ccb571c1d071f1bb9f9",
+  "reads": [
+   ".github/scripts/board_prove.py",
+   ".github/scripts/verify-prove-path-concurrency.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/workflows/board-loop.yml"
+  ]
+ },
+ "verify-prove-path-concurrency.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_prove.py",
+   ".github/scripts/verify-prove-path-concurrency.py",
+   ".github/scripts/wc_gha_expr.py"
+  ],
+  "digest": "d3720fe3236008fd06f039af312058fa9ce813ee4cbd6ccb571c1d071f1bb9f9",
+  "reads": [
+   ".github/scripts/board_prove.py",
+   ".github/scripts/verify-prove-path-concurrency.py",
+   ".github/scripts/wc_gha_expr.py"
+  ]
+ },
+ "verify-rate-limited-exemption.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-rate-limited-exemption.py"
+  ],
+  "digest": "bdb7e52d0fb5ab1509b7d2c34acf271ce11d102217c3c9dc9423907b34de2fc7",
+  "reads": [
+   ".github/scripts/verify-rate-limited-exemption.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-rate-limited-exemption.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-rate-limited-exemption.py"
+  ],
+  "digest": "bdb7e52d0fb5ab1509b7d2c34acf271ce11d102217c3c9dc9423907b34de2fc7",
+  "reads": [
+   ".github/scripts/verify-rate-limited-exemption.py"
+  ]
+ },
+ "verify-rebase-discover-selection.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-rebase-discover-selection.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "48753b0cb905074000c1d78619c92e03a8737d28da38aae8f76c38545185bce7",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-rebase-discover-selection.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-rebase-publish-credential-refusal.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-rebase-publish-credential-refusal.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "45dbfa7914280878589c5c424f3c16dc4a4c7f7747b32f4485980d1362880190",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-rebase-publish-credential-refusal.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-reference-image-pin-sync.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-reference-image-pin-sync.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "47d42a41a7f79cea507af82e95f8754b4fe4a27bf9c7f69b6d9ba55e92123c09",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/tests/reference-image-pin-sync/docker-stub.sh",
+   ".github/scripts/tests/reference-image-pin-sync/gh-stub.sh",
+   ".github/scripts/verify-reference-image-pin-sync.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-relay-confirmation-phrase.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-relay-confirmation-phrase.py"
+  ],
+  "digest": "df3eaa4cbd006d4dae4d8631b626b5ed205150d39d0bd87907f24382063cce1d",
+  "reads": [
+   ".github/scripts/verify-relay-confirmation-phrase.py",
+   ".github/workflows/pr-conversation.yml"
+  ]
+ },
+ "verify-release-contract.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-release-contract.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "0523d48958db39680322ae8c641d1a2a689d7a5e269e148adfb347ca88bcd2cb",
+  "reads": [
+   ".github/scripts/unpublished-callables.json",
+   ".github/scripts/verify-release-contract.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-release-contract.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-release-contract.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "0523d48958db39680322ae8c641d1a2a689d7a5e269e148adfb347ca88bcd2cb",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-release-contract.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/scripts/wc_shell_harness.py"
+  ]
+ },
+ "verify-reviewer-fail-closed.py": {
+  "children": [
+   "bash",
+   "gh",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_spec_request_body.py",
+   ".github/scripts/verify-reviewer-fail-closed.py",
+   ".github/scripts/wc_convergence.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/scripts/wc_step_output.py"
+  ],
+  "digest": "bf9ce3df7c3dcd93b805fde2a1fb41a6ed21da3666531c3689466c254014957b",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/schemas/board-review-finding.schema.json",
+   ".github/scripts/",
+   ".github/workflows/",
+   ".specify",
+   "docs",
+   "specs"
+  ]
+ },
+ "verify-run-local-gates-changed.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-run-local-gates-changed.py",
+   ".github/scripts/wc_gate_reads.py",
+   ".github/scripts/wc_gate_registry.py"
+  ],
+  "digest": "5b4cad50c9e147261f6ee4abf598a4dc34d448f54503a2037d4774779ea04a9f",
+  "reads": [
+   ".claude/skills/whats-on-me/scripts/board_now.py",
+   ".github/actions/_shared/compare-diagnose-shadow.py",
+   ".github/actions/_shared/trial-bound.py",
+   ".github/scripts/",
+   ".github/workflows/lint-workflows.yml"
+  ]
+ },
+ "verify-run-local-gates-changed.py --self-test": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/run-local-gates.py",
+   ".github/scripts/verify-run-local-gates-changed.py",
+   ".github/scripts/wc_gate_reads.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_repo_files.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "b87376ce9c7dba6d40b08ed9f61e8ed465b113cee2679b4ee63efe0d712610fd",
+  "reads": [
+   ".github",
+   ".github/scripts/fixtures/run-local-gates-changed/cases.json",
+   ".github/scripts/run-local-gates.py",
+   ".github/scripts/verify-run-local-gates-changed.py",
+   ".github/scripts/wc_gate_reads.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_repo_files.py",
+   ".github/scripts/wc_shell_harness.py",
+   "docs"
+  ]
+ },
+ "verify-sentinel-collector.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-sentinel-collector.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "e543f4e7fb6b23dca01ac076af06a49d892ca9e8260113feb22e96618128cab8",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-sentinel-collector.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-session-record.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-session-record.py",
+   ".github/scripts/wc_session_record.py"
+  ],
+  "digest": "89d00fb6a978bbb40b9d55a3623ecab18802a42771ff1e92d856c6b14b0f8d04",
+  "reads": [
+   ".claude/skills/answer-from-precedent/SKILL.md",
+   ".claude/skills/prove-after-merge/SKILL.md",
+   ".claude/skills/review-until-clean/SKILL.md",
+   ".github/scripts/tests/session-record/",
+   ".github/scripts/verify-session-record.py",
+   ".github/scripts/wc_session_record.py",
+   "CLAUDE.md"
+  ]
+ },
+ "verify-session-record.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-session-record.py",
+   ".github/scripts/wc_session_record.py"
+  ],
+  "digest": "89d00fb6a978bbb40b9d55a3623ecab18802a42771ff1e92d856c6b14b0f8d04",
+  "reads": [
+   ".claude",
+   ".claude/skills/answer-from-precedent/SKILL.md",
+   ".claude/skills/prove-after-merge/SKILL.md",
+   ".claude/skills/review-until-clean/SKILL.md",
+   ".github/scripts/tests/session-record/",
+   ".github/scripts/verify-session-record.py",
+   ".github/scripts/wc_session_record.py",
+   "CLAUDE.md"
+  ]
+ },
+ "verify-shared-review-fixtures.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/shared_review_compare.py",
+   ".github/scripts/tests/test_shared_review_compare.py",
+   ".github/scripts/tests/test_wc_shared_review.py",
+   ".github/scripts/verify-shared-review-fixtures.py",
+   ".github/scripts/wc_convergence.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_session_record.py",
+   ".github/scripts/wc_shared_review.py"
+  ],
+  "digest": "96f795655e2090730d05be8e6e270901d18c8bac34748c1cddf121bfdf242efd",
+  "reads": [
+   ".github",
+   ".github/scripts",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/shared_review_compare.py",
+   ".github/scripts/tests/",
+   ".github/scripts/verify-shared-review-fixtures.py",
+   ".github/scripts/wc_convergence.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_session_record.py",
+   ".github/scripts/wc_shared_review.py",
+   ".github/workflows/shared-pr-reviewer.yml"
+  ]
+ },
+ "verify-shared-review-isolation.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-shared-review-isolation.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_shared_review.py"
+  ],
+  "digest": "2e0c6bbc888f05eb82d27c8ec1f98a242ab9f72fd44d3c729690b3a1afe8bb5e",
+  "reads": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-shared-review-isolation.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_shared_review.py",
+   ".github/workflows/lint-workflows.yml",
+   ".github/workflows/shared-pr-reviewer.yml"
+  ]
+ },
+ "verify-shared-review-isolation.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-shared-review-isolation.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_shared_review.py"
+  ],
+  "digest": "2e0c6bbc888f05eb82d27c8ec1f98a242ab9f72fd44d3c729690b3a1afe8bb5e",
+  "reads": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-shared-review-isolation.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_shared_review.py",
+   ".github/workflows/lint-workflows.yml",
+   ".github/workflows/shared-pr-reviewer.yml"
+  ]
+ },
+ "verify-shared-review-marker-disjoint.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-shared-review-marker-disjoint.py",
+   ".github/scripts/wc_convergence.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_shared_review.py"
+  ],
+  "digest": "b94bb739b93fe0b4eebbb1ae7427a8b627f70ffec9a40166fe918326165cfa30",
+  "reads": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-shared-review-marker-disjoint.py",
+   ".github/scripts/wc_convergence.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_shared_review.py"
+  ]
+ },
+ "verify-shared-review-wiring.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-shared-review-wiring.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_shared_review.py"
+  ],
+  "digest": "c1be691b20f866778430cbc07ffb64052ee20b2ce93456f4a8618f20147774a0",
+  "reads": [
+   ".claude/skills/",
+   ".github/prompts/shared-review-check.md",
+   ".github/prompts/shared-review-find.md",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-shared-review-wiring.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_shared_review.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-shared-review-wiring.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-shared-review-wiring.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_shared_review.py"
+  ],
+  "digest": "c1be691b20f866778430cbc07ffb64052ee20b2ce93456f4a8618f20147774a0",
+  "reads": [
+   ".claude/skills/",
+   ".github/prompts/shared-review-check.md",
+   ".github/prompts/shared-review-find.md",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-shared-review-wiring.py",
+   ".github/scripts/wc_review_finding_fingerprint.py",
+   ".github/scripts/wc_shared_review.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-shell-harness-parity.py": {
+  "children": [
+   "bash",
+   "sh"
+  ],
+  "code": [
+   ".github/scripts/verify-shell-harness-parity.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "c9cb02cf42d3f8fea0ec14fbd3b4d0f26d56f76c160b3480008ff00db87095a6",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/",
+   ".github/workflows/"
+  ]
+ },
+ "verify-single-home-idioms.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-single-home-idioms.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "4b9ccaf831f25373a9674ab9c5edcca541ed7f2ed4c4345ab9610f17f0e524b3",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/",
+   ".github/workflows/"
+  ]
+ },
+ "verify-single-home-idioms.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-single-home-idioms.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "a4d29284b3a028118baea396819fb97b1b144f31766b84c4d0ecaa76447bb7bd",
+  "reads": [
+   ".github",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/verify-single-home-idioms.py",
+   ".github/scripts/wc_gate_registry.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/scripts/wc_shell_harness.py"
+  ]
+ },
+ "verify-skill-board-loop-concurrency-claim.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-skill-board-loop-concurrency-claim.py"
+  ],
+  "digest": "7e36eb86eefe13c4c94b1bf22f2532cf480d58044729b509e838a73835febf87",
+  "reads": [
+   ".claude/skills/spec-cross-reference/SKILL.md",
+   ".github/scripts/skill-example-drift-waivers.json",
+   ".github/scripts/verify-skill-board-loop-concurrency-claim.py",
+   ".github/workflows/board-loop.yml",
+   "specs/060-self-redrive-concurrency/contracts/concurrency-groups.md"
+  ]
+ },
+ "verify-skill-board-loop-concurrency-claim.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-skill-board-loop-concurrency-claim.py"
+  ],
+  "digest": "7e36eb86eefe13c4c94b1bf22f2532cf480d58044729b509e838a73835febf87",
+  "reads": [
+   ".github/scripts/verify-skill-board-loop-concurrency-claim.py"
+  ]
+ },
+ "verify-snapshot-integrity-statement.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-snapshot-integrity-statement.py",
+   ".github/scripts/wc_gate_suite_sites.py"
+  ],
+  "digest": "7340d974cbaeaaa1b5c4728e6e707aef149dc3273a5833ccd056f4da47337a47",
+  "reads": [
+   ".github/scripts/verify-snapshot-integrity-statement.py",
+   ".github/scripts/wc_gate_suite_sites.py",
+   ".github/workflows/board-loop.yml",
+   ".github/workflows/implement.yml"
+  ]
+ },
+ "verify-snapshot-integrity-statement.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-snapshot-integrity-statement.py",
+   ".github/scripts/wc_gate_suite_sites.py"
+  ],
+  "digest": "7340d974cbaeaaa1b5c4728e6e707aef149dc3273a5833ccd056f4da47337a47",
+  "reads": [
+   ".github/scripts/fixtures/095-snapshot-statement/agent-code-pushes.yml",
+   ".github/scripts/fixtures/095-snapshot-statement/good.yml",
+   ".github/scripts/fixtures/095-snapshot-statement/missing-covered-steps.yml",
+   ".github/scripts/fixtures/095-snapshot-statement/missing-pointer.yml",
+   ".github/scripts/fixtures/095-snapshot-statement/missing-runner-assumption.yml",
+   ".github/scripts/verify-snapshot-integrity-statement.py",
+   ".github/scripts/wc_gate_suite_sites.py",
+   ".github/workflows/board-loop.yml",
+   ".github/workflows/implement.yml"
+  ]
+ },
+ "verify-spec-branch-push-concurrency.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-spec-branch-push-concurrency.py",
+   ".github/scripts/wc_push_grant.py"
+  ],
+  "digest": "8b9018bd53395dd5cb95a171b8b4fd6dfacf9ea1bd4205c13898c6751dc2b320",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/spec-branch-push-waivers.json",
+   ".github/scripts/verify-spec-branch-push-concurrency.py",
+   ".github/scripts/wc_push_grant.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-spec-branch-push-concurrency.py --self-test": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-spec-branch-push-concurrency.py",
+   ".github/scripts/wc_push_grant.py"
+  ],
+  "digest": "8b9018bd53395dd5cb95a171b8b4fd6dfacf9ea1bd4205c13898c6751dc2b320",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/spec-branch-push-waivers.json",
+   ".github/scripts/verify-spec-branch-push-concurrency.py",
+   ".github/scripts/wc_push_grant.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-spec-collision-collector.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "verify-spec-meta-self-identity.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-spec-meta-self-identity.py"
+  ],
+  "digest": "77e1d9f9a8765de2aa44956dae0655aeab164147a6c281f4c242cb0fc8ca75d1",
+  "reads": [
+   ".github/actions/_shared/project-name.sh",
+   ".github/actions/_shared/read-spec-meta.sh",
+   ".github/scripts/fixtures/project-graduation/cases.json",
+   ".github/scripts/fixtures/project-root-compat/cases.json",
+   ".github/scripts/verify-spec-meta-self-identity.py",
+   "specs"
+  ]
+ },
+ "verify-spec-meta-single-home.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-spec-meta-single-home.py"
+  ],
+  "digest": "a09eb5344c63807caa0e76b6362b799b6b514c71112f092af79fa74bfb16bcd7",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-spec-meta-single-home.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-spec-meta-single-home.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-spec-meta-single-home.py"
+  ],
+  "digest": "a09eb5344c63807caa0e76b6362b799b6b514c71112f092af79fa74bfb16bcd7",
+  "reads": [
+   ".github",
+   ".github/actions/",
+   ".github/scripts/verify-spec-meta-single-home.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-spec-pr-review-wiring.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-spec-pr-review-wiring.py"
+  ],
+  "digest": "8566d8e879d61b4b17a4e34ca74ca80eea5399cb6a0b5176fa7c52b423d3e5dc",
+  "reads": [
+   ".github/scripts/verify-spec-pr-review-wiring.py",
+   ".github/workflows/spec-pr-review.yml"
+  ]
+ },
+ "verify-spec-pr-review.py": {
+  "children": [
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/spec_pr_review.py",
+   ".github/scripts/spec_pr_review_actions.py",
+   ".github/scripts/verify-spec-pr-review.py",
+   ".github/scripts/wc_convergence.py"
+  ],
+  "digest": "2edeeb91b58249701167c9d536f402c58dfcc2f5f28beb7a64f4f25544bcac04",
+  "reads": [
+   ".github/scripts/spec-pr-review-fixtures/",
+   ".github/scripts/spec_pr_review.py",
+   ".github/scripts/spec_pr_review_actions.py",
+   ".github/scripts/verify-spec-pr-review.py",
+   ".github/scripts/wc_convergence.py",
+   ".github/workflows/intake.yml",
+   ".github/workflows/spec-pr-review.yml",
+   "specs"
+  ]
+ },
+ "verify-stage-finding-schema.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-stage-finding-schema.py",
+   ".github/scripts/wc_schema_pattern.py"
+  ],
+  "digest": "57dd95dfed5a1b7ed8e40cd5f3e488a8b7718d067f5ccb79d8b5bf50b6f40b84",
+  "reads": [
+   ".github/"
+  ]
+ },
+ "verify-stage-finding-schema.py .github/scripts/fixtures/stage-finding-schema/valid.json": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-stage-finding-schema.py",
+   ".github/scripts/wc_schema_pattern.py"
+  ],
+  "digest": "57dd95dfed5a1b7ed8e40cd5f3e488a8b7718d067f5ccb79d8b5bf50b6f40b84",
+  "reads": [
+   ".github/schemas/stage-finding.schema.json",
+   ".github/scripts/fixtures/stage-finding-schema/valid.json",
+   ".github/scripts/verify-stage-finding-schema.py",
+   ".github/scripts/wc_schema_pattern.py"
+  ]
+ },
+ "verify-stage-findings-wiring.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-stage-findings-wiring.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "fc6f5b4df84995cbf2808c98b958225578fddcc1c7ee37e1dccdba98ddd0eb5a",
+  "reads": [
+   ".github/schemas/stage-finding.schema.json",
+   ".github/scripts/verify-stage-findings-wiring.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/clarify.yml",
+   ".github/workflows/finalize.yml",
+   ".github/workflows/implement.yml",
+   ".github/workflows/intake.yml",
+   ".github/workflows/plan.yml",
+   ".github/workflows/tasks.yml",
+   ".github/workflows/wing-commander-1-intake.yml",
+   ".github/workflows/wing-commander-2-clarify.yml",
+   ".github/workflows/wing-commander-3-plan.yml",
+   ".github/workflows/wing-commander-4-tasks.yml",
+   ".github/workflows/wing-commander-5-implement.yml",
+   ".github/workflows/wing-commander-6-finalize.yml"
+  ]
+ },
+ "verify-stage-findings-wiring.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-stage-findings-wiring.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "fc6f5b4df84995cbf2808c98b958225578fddcc1c7ee37e1dccdba98ddd0eb5a",
+  "reads": [
+   ".github",
+   ".github/schemas/stage-finding.schema.json",
+   ".github/scripts/verify-stage-findings-wiring.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/clarify.yml",
+   ".github/workflows/finalize.yml",
+   ".github/workflows/implement.yml",
+   ".github/workflows/intake.yml",
+   ".github/workflows/plan.yml",
+   ".github/workflows/tasks.yml",
+   ".github/workflows/wing-commander-1-intake.yml",
+   ".github/workflows/wing-commander-2-clarify.yml",
+   ".github/workflows/wing-commander-3-plan.yml",
+   ".github/workflows/wing-commander-4-tasks.yml",
+   ".github/workflows/wing-commander-5-implement.yml",
+   ".github/workflows/wing-commander-6-finalize.yml"
+  ]
+ },
+ "verify-stage-invariants.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-stage-invariants.py",
+   ".github/scripts/wc_published_stages.py"
+  ],
+  "digest": "e9f9aac682a5f600a27b20e944645a4b09d4cb59106af6797441e5d577729fb2",
+  "reads": [
+   ".github/scripts/stage-invariant-waivers.json",
+   ".github/scripts/unpublished-callables.json",
+   ".github/scripts/verify-stage-invariants.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-stage-invariants.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-stage-invariants.py",
+   ".github/scripts/wc_published_stages.py"
+  ],
+  "digest": "e9f9aac682a5f600a27b20e944645a4b09d4cb59106af6797441e5d577729fb2",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-stage-invariants.py",
+   ".github/scripts/wc_published_stages.py"
+  ]
+ },
+ "verify-stage-shell-lint.py": {
+  "children": [
+   "shellcheck"
+  ],
+  "code": [
+   ".github/scripts/verify-stage-shell-lint.py",
+   ".github/scripts/wc_actionlint.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/scripts/wc_shell_pin.py"
+  ],
+  "digest": "d3bc44394f7495a9a0ddd76c271696ef2b9edf7ee660c752572b8e95aa749914",
+  "reads": [
+   ".github/actions/",
+   ".github/docker/e2e-reference-image/shellcheck.pin",
+   ".github/scripts/unpublished-callables.json",
+   ".github/scripts/verify-stage-shell-lint.py",
+   ".github/scripts/wc_actionlint.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/scripts/wc_shell_pin.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-stage-shell-lint.py --self-test": {
+  "children": [
+   "shellcheck"
+  ],
+  "code": [
+   ".github/scripts/verify-stage-shell-lint.py",
+   ".github/scripts/wc_actionlint.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/scripts/wc_shell_pin.py"
+  ],
+  "digest": "d3bc44394f7495a9a0ddd76c271696ef2b9edf7ee660c752572b8e95aa749914",
+  "reads": [
+   ".github",
+   ".github/docker/e2e-reference-image/shellcheck.pin",
+   ".github/scripts/verify-stage-shell-lint.py",
+   ".github/scripts/wc_actionlint.py",
+   ".github/scripts/wc_published_stages.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/scripts/wc_shell_pin.py",
+   ".github/workflows/implement.yml"
+  ]
+ },
+ "verify-stage-tool-lists.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-stage-tool-lists.py",
+   ".github/scripts/wc_repo_files.py"
+  ],
+  "digest": "4d15f70cd02de476acb0cbf65bf525dde338c9fb8787c7c9d6d35fd32febb320",
+  "reads": [
+   "./"
+  ]
+ },
+ "verify-stage-tool-lists.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-stage-tool-lists.py",
+   ".github/scripts/wc_repo_files.py"
+  ],
+  "digest": "4d15f70cd02de476acb0cbf65bf525dde338c9fb8787c7c9d6d35fd32febb320",
+  "reads": [
+   "./"
+  ]
+ },
+ "verify-stage-turn-budget-docs.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-stage-turn-budget-docs.py"
+  ],
+  "digest": "e5e250ab916dad6ebefd9d9bd37f21fc0b2ef689f594ecf9dab1617ea34682fc",
+  "reads": [
+   ".github/scripts/verify-stage-turn-budget-docs.py",
+   ".github/workflows/",
+   "docs/adoption.md"
+  ]
+ },
+ "verify-stage-turn-budget-docs.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-stage-turn-budget-docs.py"
+  ],
+  "digest": "e5e250ab916dad6ebefd9d9bd37f21fc0b2ef689f594ecf9dab1617ea34682fc",
+  "reads": [
+   ".github/scripts/fixtures/stage-turn-budget-docs/all-agree/adoption.md",
+   ".github/scripts/fixtures/stage-turn-budget-docs/all-agree/workflows/",
+   ".github/scripts/fixtures/stage-turn-budget-docs/docs-drifted/adoption.md",
+   ".github/scripts/fixtures/stage-turn-budget-docs/docs-drifted/workflows/",
+   ".github/scripts/fixtures/stage-turn-budget-docs/docs-missing-cell/adoption.md",
+   ".github/scripts/fixtures/stage-turn-budget-docs/docs-missing-cell/workflows/",
+   ".github/scripts/fixtures/stage-turn-budget-docs/no-subjects/workflows/",
+   ".github/scripts/fixtures/stage-turn-budget-docs/workflow-drifted/adoption.md",
+   ".github/scripts/fixtures/stage-turn-budget-docs/workflow-drifted/workflows/",
+   ".github/scripts/verify-stage-turn-budget-docs.py"
+  ]
+ },
+ "verify-stall-restart-runbook.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-stall-restart-runbook.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "28572a99907c1ee4f56caa3403872b913395565c482335690b2f40be8966f7de",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-stall-restart-runbook.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-stop-point-recording.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_stop_check.py",
+   ".github/scripts/verify-stop-point-recording.py"
+  ],
+  "digest": "d8704caf380b1a495d7ffae0a0609e9b846b734f1800087241fc5b53f1a6c670",
+  "reads": [
+   ".github/actions/wing-commander-board-stop-check/action.yml",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_stop_check.py",
+   ".github/scripts/tests/board-stop-check/",
+   ".github/scripts/verify-stop-point-recording.py",
+   ".github/workflows/board-loop.yml"
+  ]
+ },
+ "verify-stop-point-recording.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_stop_check.py",
+   ".github/scripts/verify-stop-point-recording.py"
+  ],
+  "digest": "d8704caf380b1a495d7ffae0a0609e9b846b734f1800087241fc5b53f1a6c670",
+  "reads": [
+   ".github/actions/wing-commander-board-stop-check/action.yml",
+   ".github/scripts/board_eligibility.py",
+   ".github/scripts/board_item_marker.py",
+   ".github/scripts/board_stop_check.py",
+   ".github/scripts/tests/board-stop-check/",
+   ".github/scripts/verify-stop-point-recording.py",
+   ".github/workflows/board-loop.yml",
+   "specs/097-recorded-stop-point/contracts/gate-135-stop-point-recording.md"
+  ]
+ },
+ "verify-stranded-commit-publish-shell.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-stranded-commit-publish-shell.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "af9ce0a302e56022923f9e8ab7b2841099d465c44c6ff51cfaec136ec61e4207",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-stranded-commit-publish-shell.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-stranded-commit-publish-shell.py --self-test": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-stranded-commit-publish-shell.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "af9ce0a302e56022923f9e8ab7b2841099d465c44c6ff51cfaec136ec61e4207",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-stranded-commit-publish-shell.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-subfolder-containment.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-subfolder-containment.py"
+  ],
+  "digest": "9efd8f99b14797c92fa4e27870709357bf620764fb263f4bcc00549a7464baf4",
+  "reads": [
+   ".github/actions/_shared/containment.sh",
+   ".github/actions/_shared/git-push-hardening.sh",
+   ".github/actions/_shared/project-name.sh",
+   ".github/actions/wing-commander-containment/action.yml",
+   ".github/actions/wing-commander-project/action.yml",
+   ".github/actions/wing-commander-publish-stranded-commits/action.yml",
+   ".github/actions/wing-commander-tool-args/action.yml",
+   ".github/scripts/fixtures/project-containment/cases.json",
+   ".github/scripts/pipeline-checkout-guard.sh",
+   ".github/scripts/verify-subfolder-containment.py",
+   ".github/workflows/",
+   "docs",
+   "specs"
+  ]
+ },
+ "verify-sync-from-main.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-sync-from-main.py",
+   ".github/scripts/wc_sync_from_main.py"
+  ],
+  "digest": "3ed17a707bfce5af2dae2ff71635b91b8fdd0870eea11ad551ecbf2883a37628",
+  "reads": [
+   "./"
+  ]
+ },
+ "verify-tasks-checkbox-convergence-signal.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-tasks-checkbox-convergence-signal.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "31a07994df136088a8ce8bead3d56990f5b42978f061309022eef617ff8143b4",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-tasks-checkbox-convergence-signal.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-tool-args-contract.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-tool-args-contract.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "cb81ef5d646c99bbccb3676b31186a4d9691acf9132e05184c269b981918d23c",
+  "reads": [
+   ".github/actions/wing-commander-tool-args/action.yml",
+   ".github/scripts/verify-tool-args-contract.py",
+   ".github/scripts/wc_shell_harness.py",
+   "specs/026-configurable-tool-lists/contracts/tool-composition-action.md"
+  ]
+ },
+ "verify-tooling-statement.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-tooling-statement.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "a5508989cd178ae59c4f9f2e7d856cdf5f7c240b155e9c0dafdbe18f0d86a240",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-tooling-statement.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-transcript-retention-declared.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-transcript-retention-declared.py"
+  ],
+  "digest": "f1039dea0e426e7ffb96e308e4a9214f20559d0c7c7afd7dac74a13fecfcabeb",
+  "reads": [
+   ".github/scripts/verify-transcript-retention-declared.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-transcript-retention-declared.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-transcript-retention-declared.py"
+  ],
+  "digest": "f1039dea0e426e7ffb96e308e4a9214f20559d0c7c7afd7dac74a13fecfcabeb",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-transcript-retention-declared.py"
+  ]
+ },
+ "verify-trial-bound.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/actions/_shared/trial-bound.py",
+   ".github/scripts/verify-trial-bound.py"
+  ],
+  "digest": "1b8c56140816ea59a1f034fb4e240a3708ce8804ffafc29266a7165ae2c331d1",
+  "reads": [
+   ".github",
+   ".github/actions/_shared/trial-bound.py",
+   ".github/actions/wing-commander-trial-bound/action.yml",
+   ".github/scripts",
+   ".github/scripts/fixtures/trial-bound/cases.json",
+   ".github/scripts/verify-trial-bound.py"
+  ]
+ },
+ "verify-trial-summary.py": {
+  "children": [],
+  "code": [
+   ".github/actions/_shared/trial-bound.py",
+   ".github/scripts/trial-summary.py",
+   ".github/scripts/verify-trial-summary.py"
+  ],
+  "digest": "6f73e6665cd8492d6f8f117a47feea8d1853136a46acd3035b6dcd72c2ad3995",
+  "reads": [
+   ".github",
+   ".github/actions/_shared/trial-bound.py",
+   ".github/scripts",
+   ".github/scripts/trial-summary.py",
+   ".github/scripts/verify-trial-summary.py",
+   ".github/workflows/wing-commander-8-watchdog.yml",
+   ".github/workflows/wing-commander-metrics-persist.yml",
+   ".github/workflows/wing-commander-trial-summary.yml"
+  ]
+ },
+ "verify-truncated-cycle-carry-forward.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-truncated-cycle-carry-forward.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "6c66abe8c0651c670649615ba551e3af40d2cb2cd2410639d0b810fc6e2528e2",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-truncated-cycle-carry-forward.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs"
+  ]
+ },
+ "verify-turn-budget-collector.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "verify-turn-budget-suppression.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "verify-versioning-refs.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-versioning-refs.py"
+  ],
+  "digest": "9ef42c194279ab065a6b8257c25ec81c677b46c7d67f539ce5583c628ff3fe1d",
+  "reads": [
+   ".github/scripts/verify-versioning-refs.py"
+  ]
+ },
+ "verify-waiver-citations.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-waiver-citations.py"
+  ],
+  "digest": "168e508665746726348d97651cda4a28e7b3943dbf69a70a4c80d29db6e6d41c",
+  "reads": [
+   ".github/scripts/"
+  ]
+ },
+ "verify-waiver-citations.py --self-test": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-waiver-citations.py"
+  ],
+  "digest": "168e508665746726348d97651cda4a28e7b3943dbf69a70a4c80d29db6e6d41c",
+  "reads": [
+   ".github",
+   ".github/scripts/verify-waiver-citations.py"
+  ]
+ },
+ "verify-watchdog-clean-path.py": {
+  "children": [
+   "bash"
+  ],
+  "code": [
+   ".github/scripts/verify-watchdog-clean-path.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "3bce9d336e9851f2a6e3caf71896306a43eff06f360bed9f67fe39bdf3f464e3",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-watchdog-clean-path.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-watchdog-failure-accounting.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-watchdog-failure-accounting.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "16354ba36022cd1b6df535a6c16aef5696edd9e61a4951772e3c2c6f63144511",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-watchdog-failure-accounting.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-watchdog-no-record-on-clean-path.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-watchdog-no-record-on-clean-path.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "5efec5caa35e5e268899f6337582cc3c86b9c184f1e1a725c399179e31694a7f",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-watchdog-no-record-on-clean-path.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-watchdog-overlap-fanout.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-watchdog-overlap-fanout.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "e1acb1d41c7c5b62ec649dd5b964a66ff03ebce53b604333c044bda84d5acd27",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-watchdog-overlap-fanout.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-watchdog-overlap-fanout.py --self-test": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-watchdog-overlap-fanout.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "e1acb1d41c7c5b62ec649dd5b964a66ff03ebce53b604333c044bda84d5acd27",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-watchdog-overlap-fanout.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-watchdog-resolved-stage-consumers.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-watchdog-resolved-stage-consumers.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "6eb3d7d0e59deeaf26caf0b969c1795a6df495f872717a8f8b240ea60c083ca2",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-watchdog-resolved-stage-consumers.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-watchdog-resolved-stage-consumers.py --self-test": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-watchdog-resolved-stage-consumers.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "6eb3d7d0e59deeaf26caf0b969c1795a6df495f872717a8f8b240ea60c083ca2",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-watchdog-resolved-stage-consumers.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-watchdog-run-failure-paths.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "verify-watchdog-self-skip-guard.py": {
+  "children": [],
+  "code": [
+   ".github/scripts/verify-watchdog-self-skip-guard.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "88ec66baa65cd7df03aec44ad3c9b313d82236eae36a3f34fcd577649f35a93a",
+  "reads": [
+   ".github/scripts/verify-watchdog-self-skip-guard.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/watchdog.yml",
+   ".github/workflows/wing-commander-8-watchdog.yml",
+   ".github/workflows/wing-commander-8b-watchdog-self.yml"
+  ]
+ },
+ "verify-watchdog-wrapper-resolve-fold.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-watchdog-wrapper-resolve-fold.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "defba5b51b4a4b65480aa4fdeaba2330cce731efafa52d5ab862d8f138b74071",
+  "reads": [
+   ".github/actions/",
+   ".github/scripts/verify-watchdog-wrapper-resolve-fold.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/"
+  ]
+ },
+ "verify-write-boundary.py": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-write-boundary.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "d30a84c455752248accd635911e815f0d648fdb8f3bc9ea449397014c4df07b1",
+  "reads": [
+   ".claude/",
+   ".github/actions/",
+   ".github/scripts/verify-write-boundary.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "ideas/alpha/ideas/alpha",
+   "specs/"
+  ]
+ },
+ "verify-write-boundary.py --self-test": {
+  "children": [
+   "bash",
+   "jq"
+  ],
+  "code": [
+   ".github/scripts/verify-write-boundary.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py"
+  ],
+  "digest": "d30a84c455752248accd635911e815f0d648fdb8f3bc9ea449397014c4df07b1",
+  "reads": [
+   ".claude/",
+   ".github/actions/",
+   ".github/scripts/verify-write-boundary.py",
+   ".github/scripts/wc_gha_expr.py",
+   ".github/scripts/wc_shell_harness.py",
+   ".github/workflows/",
+   "specs/"
+  ]
+ },
+ "wc_convergence_tests/run-tests.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "wing-commander-fold-queue-admit-tests/run-tests.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "wing-commander-fold-queue-claim-dispatch-tests/run-tests.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "wing-commander-fold-queue-ledger-tests/run-tests.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ },
+ "wing-commander-fold-queue-release-tests/run-tests.sh": {
+  "always": "a shell gate: bash's own reads are not traced"
+ }
+}
