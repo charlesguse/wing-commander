@@ -50,9 +50,10 @@ The illustrative expression above is refined at implementation time to the
 exact per-event-kind field access (only one of `review`/`comment` is
 populated per invocation — the `||` fallback pattern already used
 elsewhere in this repository's `if:` expressions for the same reason).
-**Deliberately, unlike `wing-commander-2-clarify.yml` and `wing-commander-1-intake.yml`'s
-comment-reading precedents, there is no `|| actor.id == issue.author.id`
-carve-out** — FR-019 states plainly that "a non-maintainer, including the
+**Deliberately, there is no carve-out for the issue's author** — the same
+rule as every comment-triggered stage, clarify and intake's comment
+filter included (constitution 3.0.0, Principle V;
+`specs/134-maintainer-only-comments`). FR-019 states plainly that "a non-maintainer, including the
 original requester of the lifecycle issue, cannot command the stage
 directly." A bot actor fails the gate and the job's `if:` prevents the run
 from starting at all — no reply is posted (FR-002, FR-021's second

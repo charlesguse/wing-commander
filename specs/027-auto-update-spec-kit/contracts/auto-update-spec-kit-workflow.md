@@ -38,8 +38,6 @@ jobs:
       issue-number: ${{ github.event.issue.number || '' }}
       comment-id: ${{ github.event.comment.id || '' }}
       commenter-association: ${{ github.event.comment.author_association || '' }}
-      commenter-id: ${{ github.event.comment.user.id || '' }}
-      issue-author-id: ${{ github.event.issue.user.id || '' }}
       stabilization-checks: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_STABILIZATION_CHECKS || '1' }}
       model: ${{ vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_MODEL || 'claude-sonnet-5' }}
     secrets:
@@ -114,7 +112,9 @@ convention every comment-triggered stage already uses for issue bodies.
   workflow ends (FR-018).
 - `outcome: ambiguous-options` → post the options + reasoning + sources
   as a question (`wing-commander-callout`, `kind: action`), workflow
-  ends, awaiting a comment reply (FR-012).
+  ends, awaiting a comment reply (FR-012). Since
+  specs/134-maintainer-only-comments the question's last line records its
+  option labels, as data the `comment-reply` read-back reads.
 - `outcome: clean-bump` → continue to `prepare`.
 
 ### `prepare` (`needs: evaluate-path` when `clean-bump`)
@@ -173,14 +173,14 @@ this job — nothing to record.
 
 1. Verify the commenter:
    `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
-   inputs.commenter-association)`. Unlike `wing-commander-2-clarify.yml`,
-   the issue's own author is not admitted: a resumed reply picks the
-   candidate a bump PR proposes (owner decision 2026-11-25, #890).
-   `commenter-id` and `issue-author-id` are still accepted and no longer
-   consulted. Fails → no-op, no comment, no error surfaced (never react to
-   an untrusted commenter, constitution V). The wrapper pre-filters the
-   same way: only a maintainer's comment on a Bot-authored issue carrying
-   `auto-update:tracking` starts the stage.
+   inputs.commenter-association)` (the exact condition
+   `wing-commander-2-clarify.yml` uses; since
+   specs/134-maintainer-only-comments no user id is compared, and the
+   `commenter-id` and `issue-author-id` inputs are accepted and ignored;
+   owner decision 2026-11-25, #890). Fails → no-op, no comment, no error
+   surfaced (never react to an untrusted commenter, constitution V). The
+   wrapper pre-filters the same way: only a maintainer's comment on a
+   Bot-authored issue carrying `auto-update:tracking` starts the stage.
 2. The issue must be the App's own tracking issue — authored by the App
    (`<bot-slug>[bot]`) and carrying `auto-update:tracking`; a body marker
    alone is not enough — and must carry an `outcome: ambiguous-options`
@@ -195,7 +195,10 @@ this job — nothing to record.
    (`--allowedTools "Read"`), structured output mapping the comment body
    onto one of the previously posted options (or "unrecognized," in
    which case the workflow comments asking for a clearer reply and takes
-   no further action).
+   no further action). Since specs/134-maintainer-only-comments the
+   agent's context holds only the issue body, the pipeline's own comments
+   and maintainers' comments, and a chosen option counts only when it is
+   one of the labels the newest question records.
 4. Recognized choice → comment the human's decision on the issue
    (FR-013's "the decision made" now includes whose call it was), then
    re-enter at `prepare` with that chosen path.

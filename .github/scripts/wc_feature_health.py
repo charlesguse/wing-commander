@@ -118,7 +118,15 @@ def classify_workflow(ref, entry, reading, ctx, now):
         detail["reason"] = "{0}: no cron found".format(ref["file"])
         return "unreadable", detail
     runs = sorted(reading.get("runs") or [], key=lambda r: r["started_at"], reverse=True)
-    qualifying = [r for r in runs if r.get("conclusion") not in NOT_QUALIFYING]
+    # collect() may read a scheduled workflow back past the window, to the
+    # not-running threshold (#1261); those earlier runs count only for the
+    # not-running test and last_run. Every other rule reads in-window runs,
+    # so a weekly or monthly cron whose only run predates the window is idle
+    # (FR-017), not healthy (#889).
+    window_start = reading.get("window_start")
+    in_window = ([r for r in runs if parse_time(r["started_at"]) >= parse_time(window_start)]
+                 if window_start else runs)
+    qualifying = [r for r in in_window if r.get("conclusion") not in NOT_QUALIFYING]
     detail["qualifying"] = len(qualifying)
     for r in qualifying:
         if r["conclusion"] == "success" and not detail["last_success"]:
@@ -128,7 +136,7 @@ def classify_workflow(ref, entry, reading, ctx, now):
     detail["last_run"] = runs[0]["started_at"] if runs else None
     if switch:
         return "paused", detail
-    if not have_var and runs and all(r.get("conclusion") == "skipped" for r in runs):
+    if not have_var and in_window and all(r.get("conclusion") == "skipped" for r in in_window):
         return "not configured", detail
     last = qualifying[:FAILING_WINDOW]
     if last and all(r["conclusion"] != "success" for r in last):
@@ -200,6 +208,13 @@ def classify_feature(entry, readings, signal_reading, ctx, now):
         row["signal_label"] = entry["signal"].get("label") or entry["signal"]["kind"]
         at = (signal_reading or {}).get("signal_at")
         row["last_signal"] = day(at) if "unreadable" not in (signal_reading or {"unreadable": 1}) else NOT_MEASURED
+    # A failing or not-running call-out quotes the dates of the workflows in
+    # that state, not a healthy sibling's (#889); the table keeps the
+    # feature-wide dates.
+    in_state = [d for _r, s, d in counted if s == state and s in ("failing", "not running")]
+    if in_state:
+        row["callout_dates"] = {k: max((d[k] for d in in_state if d[k]), default=None)
+                                for k in ("last_success", "last_failure", "last_run")}
     rows = [row]
     for ref, s, d in results:
         if ref.get("stage"):
@@ -228,9 +243,10 @@ def _callout(row):
 
 def _callout_line(row):
     name, state = row["feature"], row["state"]
+    dates = row.get("callout_dates") or row
     if state == "failing":
         return "- `{0}` — failing: last success {1}, last failure {2}".format(
-            name, day(row["last_success"]), day(row["last_failure"]))
+            name, day(dates["last_success"]), day(dates["last_failure"]))
     if state == "quiet":
         if row["last_signal"] in (NOT_MEASURED, NEVER, None):
             return "- `{0}` — quiet: no {1} in the last {2} days".format(
@@ -238,7 +254,7 @@ def _callout_line(row):
         return "- `{0}` — quiet: no {1} since {2} (threshold {3} days)".format(
             name, row["signal_label"], row["last_signal"], row["threshold_days"])
     if state == "not running":
-        last = day(row["last_run"])
+        last = day(dates["last_run"])
         if last == NEVER:
             return "- `{0}` — not running: no run in the window".format(name)
         return "- `{0}` — not running: no run since {1}".format(name, last)
@@ -576,6 +592,8 @@ def collect(registry, repo, now, gh=gh_json, environ=None, read_text=None, start
                     since = min(start, now - datetime.timedelta(hours=not_running_hours(interval)))
                 runs = fetch_runs(gh, repo, ref["file"], since, now, ref.get("events"))
                 readings[ref["file"]] = {"runs": runs, "interval_hours": interval}
+                if since < start:
+                    readings[ref["file"]]["window_start"] = fmt_time(start)
             except (RuntimeError, OSError, ValueError, KeyError, TypeError) as exc:
                 readings[ref["file"]] = {"unreadable": str(exc) or "read failed"}
         if entry.get("signal"):

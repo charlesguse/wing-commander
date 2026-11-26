@@ -709,7 +709,7 @@ def on_schedule(*crons):
     return "on:\n  schedule:\n" + "".join("    - cron: {0}\n".format(c) for c in crons)
 
 
-def check_review_round_three():
+def check_cron_forms_and_bounded_reads():
     """Unquoted and ranged cron, bounded triage and comment reads."""
     problems = []
     for text, want in ((on_schedule("0 */4 * * *"), 4),
@@ -832,22 +832,34 @@ def check_schedule_and_comment_reads():
             problems.append("an hourly cron with a run {0} h ago classed {1!r}, expected {2}".format(
                 hours_ago, state, want))
     # A monthly cron whose last run is older than the 31-day window but inside
-    # twice its interval: the run read must reach back to the threshold.
-    last = fh.fmt_time(now - datetime.timedelta(days=45))
+    # twice its interval: the run read must reach back to the threshold, so it
+    # is not "not running", and the run before the window counts for nothing
+    # else, so it is idle (FR-017, spec 126 scenario 6), not healthy and not
+    # failing (#889). Past the threshold it is "not running".
+    def monthly_at(days_ago, conclusion="success"):
+        last = fh.fmt_time(now - datetime.timedelta(days=days_ago))
 
-    def monthly(path):
-        m = re.search(r"created=([0-9TZ:-]+)\.\.", path)
-        if m:
-            runs = ([{"id": 1, "event": "schedule", "conclusion": "success", "run_started_at": last,
-                      "created_at": last}] if m.group(1) <= last else [])
-            return {"total_count": len(runs), "workflow_runs": runs}
-        return []
+        def monthly(path):
+            m = re.search(r"created=([0-9TZ:-]+)\.\.", path)
+            if m:
+                runs = ([{"id": 1, "event": "schedule", "conclusion": conclusion, "run_started_at": last,
+                          "created_at": last}] if m.group(1) <= last else [])
+                return {"total_count": len(runs), "workflow_runs": runs}
+            return []
+        return monthly
     entry = [{"name": "f", "workflows": [{"file": "m.yml", "cadence": "schedule"}]}]
-    readings, signals, ctx = fh.collect(entry, "own/repo", now, gh=monthly, environ={},
+    for days_ago, conclusion, want in ((45, "success", "idle"), (45, "failure", "idle"),
+                                       (70, "success", "not running")):
+        readings, signals, ctx = fh.collect(entry, "own/repo", now, gh=monthly_at(days_ago, conclusion),
+                                            environ={}, read_text=lambda _n: on_schedule('"0 6 1 * *"'))
+        rows = fh.classify_all(entry, readings, signals, ctx, now)
+        if rows[0]["state"] != want:
+            problems.append("a monthly cron whose only run ({0}) was {1} days ago classed {2!r}, expected "
+                            "{3}".format(conclusion, days_ago, rows[0]["state"], want))
+    readings, signals, ctx = fh.collect(entry, "own/repo", now, gh=monthly_at(45), environ={},
                                         read_text=lambda _n: on_schedule('"0 6 1 * *"'))
-    rows = fh.classify_all(entry, readings, signals, ctx, now)
-    if rows[0]["state"] != "healthy":
-        problems.append("a monthly cron that ran 45 days ago classed {0!r}, expected healthy".format(rows[0]["state"]))
+    if not fh.classify_all(entry, readings, signals, ctx, now)[0]["last_run"]:
+        problems.append("a monthly cron that ran 45 days ago lost its last run date")
     # One triage-close candidate with a full page of other comments: the close
     # on its second page is found, not a truncation error.
     close = fh.TRIAGE_CLOSE_COMMENT_PREFIX + fh.TRIAGE_CLOSE_GROUNDS[0] + ", see the run."
@@ -892,7 +904,31 @@ def check_schedule_and_comment_reads():
     return problems
 
 
-def check_review_round_two():
+def check_multi_workflow_callouts():
+    """A feature with several workflows: its failing or not-running call-out
+    quotes the dates of the workflow in that state, not a healthy sibling's
+    (#889)."""
+    problems = []
+    now = fh.parse_time("2026-11-20T12:00:00Z")
+    ago = lambda hours: fh.fmt_time(now - datetime.timedelta(hours=hours))  # noqa: E731
+    entry = {"name": "f", "workflows": [{"file": "a.yml", "cadence": "schedule"},
+                                        {"file": "b.yml", "cadence": "schedule"}]}
+    ok = {"runs": [{"started_at": ago(1), "conclusion": "success"},
+                   {"started_at": ago(2), "conclusion": "failure"}], "interval_hours": 1}
+    stopped = {"runs": [{"started_at": ago(30), "conclusion": "success"}], "interval_hours": 1}
+    failing = {"runs": [{"started_at": ago(h), "conclusion": "failure"} for h in (3, 4, 5)]
+               + [{"started_at": ago(50), "conclusion": "success"}], "interval_hours": 1}
+    for b, want in ((stopped, "- `f` — not running: no run since {0}".format(fh.day(ago(30)))),
+                    (failing, "- `f` — failing: last success {0}, last failure {1}".format(
+                        fh.day(ago(50)), fh.day(ago(3))))):
+        rows = fh.classify_feature(entry, {"a.yml": ok, "b.yml": b}, None, {}, now)
+        got = fh._callout(rows[0])
+        if got != want:
+            problems.append("multi-workflow call-out: got {0!r}, expected {1!r}".format(got, want))
+    return problems
+
+
+def check_cron_truncation_and_shortening():
     """Cron parsing, truncated reads, shortened-section detection."""
     problems = []
     wf = "on:\n  schedule:\n    - cron: '0 */6 * * *'\n    # - cron: \"0 1 * * *\"\n    - cron: \"0 3,15 * * *\"\n"
@@ -928,7 +964,7 @@ def check_review_round_two():
     return problems
 
 
-def check_review_round_five(registry):
+def check_section_built_own_marker(registry):
     """section_built with the registry's own marker: a title mentioning the
     workflow file must not stand in for the section's opener."""
     problems = []
@@ -945,6 +981,13 @@ def check_review_round_five(registry):
     return problems
 
 
+def check_check_names(source):
+    """This gate's checks are named for what they check, never for the review
+    round that added them (#889)."""
+    return ["check {0}() is named for a review round; name it by subject".format(m)
+            for m in re.findall(r"^def (check_\w*round\w*)\(", source, re.M)]
+
+
 def main():
     with open(os.path.join(REPO, "docs", "reference.md"), encoding="utf-8") as fp:
         ref_text = fp.read()
@@ -959,10 +1002,15 @@ def main():
     problems += check_unreadable(load("unreadable", "scenarios.json"))
     problems += check_workflow()
     problems += check_shared_sources()
-    problems += check_review_round_two()
-    problems += check_review_round_three()
-    problems += check_review_round_five(registry)
+    problems += check_cron_truncation_and_shortening()
+    problems += check_cron_forms_and_bounded_reads()
+    problems += check_section_built_own_marker(registry)
     problems += check_schedule_and_comment_reads()
+    problems += check_multi_workflow_callouts()
+    with open(os.path.abspath(__file__), encoding="utf-8") as fp:
+        problems += check_check_names(fp.read())
+    if check_check_names("def check_review_round_two():\n") == []:
+        problems.append("check_check_names self-test: a round-named check was not noticed")
     problems += check_capture_bounds()
     real, note = check_sc001(os.path.join(FIXTURES, "sc001"), EXEMPT_SC001_PENDING)
     problems += real + self_check(fx) + self_check_sc001(os.path.join(FIXTURES, "sc001"))

@@ -33,19 +33,24 @@ is written):
     wc_session_record.py decision --by owner --chosen TEXT --question TEXT [--about N]
     wc_session_record.py check FILE
 
-Every kind also takes --out FILE (written as UTF-8 bytes with LF line
-ends; without it the comment goes to stdout the same way) and --footer
-TEXT, the session's attribution line when its posting tool does not add
-one. proof and decision take --date YYYY-MM-DD (default: today, UTC), and
-proof takes --prose FILE for anything past the fixed parts.
+Every kind but check also takes --out FILE (written as UTF-8 bytes with
+LF line ends; without it the comment goes to stdout the same way) and
+--footer TEXT, the session's attribution line when its posting tool does
+not add one. proof and decision take --date YYYY-MM-DD (default: today,
+UTC), and proof takes --prose FILE for anything past the fixed parts.
+check takes only FILE (or - for stdin).
 
 A TEXT value that starts with `@` is read from that file. Pass a log line
 or any text with a backtick, a `$` or a quote that way, so the shell
 expands nothing in it.
 
 check prints the record a comment body holds as JSON. Exit 0: a well-formed
-record. Exit 1: it opens like a record and a part is missing or malformed.
-Exit 2: not a record.
+record. Exit 1: it opens like a record and a part is missing or malformed,
+or FILE cannot be read or is not UTF-8. Exit 2: not a record.
+
+review, proof and decision exit 0 with the comment written, or 1 with
+every problem named on stderr and nothing written (or when --out cannot be
+written); a usage error exits 2, as argparse does.
 """
 import argparse
 import datetime
@@ -148,11 +153,20 @@ def _sha(name, value, problems):
     return text
 
 
+DATE_RE = re.compile(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})$")
+
+
 def _date(value, problems):
+    # Parsed by hand, not round-tripped through strftime: "%Y" pads a year
+    # below 1000 on Windows and not on Linux, so the same date was accepted
+    # on one and refused on the other (#889). A year below 1000 is refused
+    # everywhere.
     text = (value or "").strip()
+    match = DATE_RE.match(text)
     try:
-        if datetime.datetime.strptime(text, "%Y-%m-%d").strftime("%Y-%m-%d") != text:
+        if not match or int(match.group(1)) < 1000:
             raise ValueError(text)
+        datetime.date(*(int(part) for part in match.groups()))
     except ValueError:
         problems.append("date: not YYYY-MM-DD")
     return text
@@ -269,8 +283,11 @@ def _decision(fields, problems):
         text = texts[key]
         if not text:
             problems.append("{0}: missing".format(key))
-        elif any(row.startswith(labels) or row.strip() == OWNER_NOTE for row in text.split("\n")):
-            problems.append("{0}: a line is one of the record's own lines".format(key))
+        else:
+            own = next((row for row in text.split("\n")
+                        if row.startswith(labels) or row.strip() == OWNER_NOTE), None)
+            if own is not None:
+                problems.append("{0}: a line is one of the record's own lines: {1!r}".format(key, own))
         rec[key] = text
     for other, parts in sorted(DECISION_PARTS.items()):
         if other != by:

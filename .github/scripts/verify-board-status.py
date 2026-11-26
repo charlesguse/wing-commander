@@ -268,6 +268,7 @@ def runtime_half():
     ], [
         gh_issue(741, ["spec-request", "stage:clarify", "spec:098-a"], login="the-author"),
         gh_issue(742, ["spec-request", "stage:clarify", "spec:098-b"], login="the-author"),
+        gh_issue(743, ["spec-request", "stage:clarify", "spec:098-c"], login="the-author"),
         gh_issue(821, ["spec:074-x"], pr=True),
     ])
 
@@ -277,9 +278,13 @@ def runtime_half():
     # 741: the bot asked last, then a passer-by commented -- still waiting.
     page("repos/o/r/issues/741/comments?per_page=100",
          [comment("User", "OWNER"), comment("Bot")], [comment("User", "NONE")])
-    # 742: the issue's own author answered after the bot.
+    # 742: the issue's own author, not a maintainer, commented after the bot
+    # -- clarify does not act on it (spec 134), so still waiting.
     page("repos/o/r/issues/742/comments?per_page=100",
          [comment("Bot")], [comment("User", "NONE", "the-author")])
+    # 743: a maintainer answered after the bot.
+    page("repos/o/r/issues/743/comments?per_page=100",
+         [comment("Bot")], [comment("User", "MEMBER", "a-maintainer")])
     page("repos/o/r/actions/workflows/lint-workflows.yml/runs?branch=main&per_page=20",
          {"workflow_runs": [
              {"event": "pull_request_target", "status": "completed", "conclusion": "failure",
@@ -316,11 +321,13 @@ def runtime_half():
               snap["maintenance"].get("current") == [
                   {"id": "bl-0a1b2c3d", "text": "d", "detail": "PR #7"}], snap["maintenance"])
         check("snapshot finds the roadmap", snap["roadmap_number"] == 890, snap["roadmap_number"])
-        clar = {i["number"]: i for i in snap["issues"] if i["number"] in (741, 742)}
+        clar = {i["number"]: i for i in snap["issues"] if i["number"] in (741, 742, 743)}
         check("a passer-by's comment after the bot's questions answers nothing",
               clar.get(741, {}).get("last_comment_by_bot") is True, clar.get(741))
-        check("the issue's own author answering after the bot is an answer",
-              clar.get(742, {}).get("last_comment_by_bot") is False, clar.get(742))
+        check("the issue's own author who is not a maintainer answers nothing (spec 134)",
+              clar.get(742, {}).get("last_comment_by_bot") is True, clar.get(742))
+        check("a maintainer answering after the bot is an answer",
+              clar.get(743, {}).get("last_comment_by_bot") is False, clar.get(743))
         check("main's CI is this repository's own run, never a fork PR's on a branch named main",
               (snap["main_ci"] or {}).get("conclusion") == "success"
               and snap["main_ci"]["sha"] == "abc1234", snap["main_ci"])
