@@ -511,6 +511,10 @@ SCRATCH_DIR_USERS = {
                                 "wc-verdict-inj-", "wc-verdict-ctr-"),
     "verify-metrics-turn-accounting.py": ("wc-metrics-inj-",),
     "verify-watchdog-resolved-stage-consumers.py": ("wc-gh-stub-",),
+    "verify-board-loop-readmission.py": ("wc-gh-stub-",),
+    "verify-post-review-comment-composite.py": (
+        "wc-post-review-comment-", "wc-post-review-comment-bin-",
+        "wc-post-review-comment-selftest-"),
 }
 
 
