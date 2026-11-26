@@ -49,7 +49,7 @@ Owner decisions at spec review (recorded on the Roadmap issue #890):
 
 The owner watches the Maintenance backlog. When the lifecycle review gate reviews a lifecycle PR, its in-scope findings are folded back into the pipeline as today, but of its out-of-scope findings only those that can fail silently are filed, through the gate's existing out-of-scope filing. Out-of-scope findings that can only fail loudly, or cannot change any output, are dropped and listed as dropped, with the reason, in that round's review report.
 
-**Why this priority**: Lifecycle PR reviews are the source of nearly all new backlog lines; this story alone addresses most of the growth.
+**Why this priority**: The lifecycle review gate is where stage agents sort PR review findings, so this story is the core of the rule for stage agents; review sessions, the larger source of backlog lines, are covered by the separate fix PR.
 
 **Independent Test**: Feed the gate's routing a review result holding one in-scope finding, one out-of-scope silent finding, one out-of-scope loud finding and one out-of-scope no-output finding. Only the in-scope finding is folded, only the silent finding is recorded (with its silent-failure description), and the other two appear in the round's report as dropped with their reasons.
 
