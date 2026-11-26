@@ -1014,6 +1014,34 @@ def check_tree_cost():
     return problems
 
 
+def check_run_list_cost():
+    """A run list's count is read as a one-run page, never a full page that
+    the paged read then fetches again: six workflows pass the 1,000-run cap
+    and are read by day, one count per day each (2026-11-26)."""
+    problems = []
+
+    def api(path, paginate):
+        if paginate:
+            return []
+        # 1,500 runs over the window sends the read into day slices.
+        return {"total_count": 1500 if "created=%3E%3D" in path else 40, "workflow_runs": []}
+    with _FakeReads(api=api) as fake:
+        col = pl.Collector("own/repo", "2026-11-10T12:00:00Z")
+        col.workflow_runs(".github/workflows/wrap.yml")
+    counts = [c[1] for c in fake.calls if not c[2]]
+    paged = [c[1] for c in fake.calls if c[2]]
+    if not counts or not paged:
+        problems.append("run list cost: the sliced read made {0} counts and {1} paged reads".format(
+            len(counts), len(paged)))
+    wide = [q for q in counts if "per_page=1&" not in q or "per_page=100" in q]
+    if wide:
+        problems.append("run list cost: {0} of {1} counts read a full page, e.g. {2}".format(
+            len(wide), len(counts), wide[0]))
+    if any("per_page=100" not in q for q in paged):
+        problems.append("run list cost: a paged read is not at per_page=100")
+    return problems
+
+
 WRITE_CALLS = ("gh workflow run", "gh issue comment", "gh issue close", "gh issue edit", "gh pr comment",
                "gh label", "createWorkflowDispatch", "-X POST", "-X PATCH", "-X PUT", "-X DELETE",
                "--method POST", "--method PATCH", "claude-code-action", "create-github-app-token")
@@ -1358,7 +1386,7 @@ def main():
         print("[ok] verify-proof-list: {0}".format(note))
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
                 + check_failed_reads() + check_main_errors() + check_section_file_home() + check_review_fixes(fx) + check_lifecycle_issue()
-                + check_entries() + check_closed_by_commit(fx) + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_budget() + check_tree_cost() + check_workflow()
+                + check_entries() + check_closed_by_commit(fx) + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_budget() + check_tree_cost() + check_run_list_cost() + check_workflow()
                 + real + check_sc001_fixtures(fx) + fixtures_name_no_live_table(check_sc001_fixtures))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4

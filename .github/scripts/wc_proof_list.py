@@ -571,6 +571,17 @@ def comment_record(place, raw, kind):
             "body": raw.get("body") or "", "marker_step": marker_step(raw.get("body"))}
 
 
+def run_total(query):
+    """`total_count` of a run-list query, read as one run: the count is the
+    same at any page size, and a full first page of runs is ~1.5 MB and ~2 s
+    (2026-11-26), while the day-sliced lists ask for a count once per day per
+    workflow over 1,000 runs."""
+    probe = query.replace("per_page=100", "per_page=1", 1)
+    if probe == query:
+        raise ValueError("run_total: {0} has no per_page=100".format(query))
+    return int(api(probe + "&page=1").get("total_count", 0))
+
+
 class Collector:
     """One build's reads, with per-build caches (commits' trees, issue threads,
     named runs, workflow run lists)."""
@@ -742,8 +753,7 @@ class Collector:
         name = path.rsplit("/", 1)[-1]
         query = "{0}/workflows/{1}/runs?status=completed&per_page=100&{2}".format(base, name, created)
         try:
-            first = api(query + "&page=1")
-            total = int(first.get("total_count", 0))
+            total = run_total(query)
             if total <= RUN_CAP:
                 runs = api(query, paginate=True)
             else:
@@ -756,7 +766,7 @@ class Collector:
                         utc_text(day),
                         utc_text(nxt - datetime.timedelta(seconds=1)))
                     q = "{0}/workflows/{1}/runs?status=completed&per_page=100&{2}".format(base, name, span)
-                    if int(api(q + "&page=1").get("total_count", 0)) > RUN_CAP:
+                    if run_total(q) > RUN_CAP:
                         raise ReadError("{0}: more than {1} runs in one day".format(name, RUN_CAP))
                     runs += api(q, paginate=True)
                     day = nxt
@@ -765,7 +775,7 @@ class Collector:
             # runs and keep the ones of that path (a later-deleted workflow
             # is still credited, FR-013).
             fallback = "{0}/runs?status=completed&per_page=100&{1}".format(base, created)
-            if int(api(fallback + "&page=1").get("total_count", 0)) > RUN_CAP:
+            if run_total(fallback) > RUN_CAP:
                 raise ReadError("{0}: the repository has more than {1} runs in the window; "
                                 "a deleted workflow's runs cannot be read completely".format(name, RUN_CAP))
             runs = [r for r in api(fallback, True) if (r.get("path") or "") == path]
