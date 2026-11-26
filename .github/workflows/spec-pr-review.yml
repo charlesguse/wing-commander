@@ -1069,6 +1069,7 @@ jobs:
       # reviewer ran (kill switch, label flip, an unreadable PR) has an
       # empty outcome and is not counted against the head's FR-028 cap.
       - name: Record the one-line outcome on the lifecycle issue
+        id: outcome-line
         if: "!cancelled() && steps.fresh.outcome != 'skipped'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
         with:
@@ -1084,24 +1085,31 @@ jobs:
       # FR-028: after the cap's worth of failed rounds on one head, the
       # review stops retrying it (select skips it as failed-cap) and hands
       # off to the owner, naming the failure. The cap is the decision
-      # module's failed-cap, counting this round's failure.
+      # module's failed-cap, counting this round's failure. The hand-off is
+      # posted once per head: only by the round that reaches the cap (a
+      # maintainer's dispatch of a capped head that fails again is already
+      # handed off), and only once this round's failed marker is on the
+      # issue, so the count the hand-off states is the one select reads.
       - name: Check the failed-attempt cap
         id: failcap
-        if: "!cancelled() && needs.review.outputs.outcome == 'failed'"
+        if: "!cancelled() && needs.review.outputs.outcome == 'failed' && steps.outcome-line.outcome == 'success'"
         env:
           PRIOR: ${{ needs.select.outputs.failed-attempts }}
         run: |
           set -uo pipefail
           case "${PRIOR:-0}" in ''|*[!0-9]*) prior=0 ;; *) prior="${PRIOR:-0}" ;; esac
-          if ! out="$(jq -n --argjson n "$((prior + 1))" '{failures: $n}' | python3 -I "$RUNNER_TEMP/wc-pristine/scripts/spec_pr_review.py" failed-cap)"; then
+          S="$RUNNER_TEMP/wc-pristine/scripts/spec_pr_review.py"
+          if ! out="$(jq -n --argjson n "$((prior + 1))" '{failures: $n}' | python3 -I "$S" failed-cap)" \
+             || ! before="$(jq -n --argjson n "$prior" '{failures: $n}' | python3 -I "$S" failed-cap)"; then
             echo "::error::spec-pr-review act: failed-cap could not read its input."
             exit 1
           fi
           echo "failures=$((prior + 1))" >> "$GITHUB_OUTPUT"
           echo "stop=$(printf '%s' "$out" | jq -r '.stop')" >> "$GITHUB_OUTPUT"
+          echo "reached=$(printf '%s' "$before" | jq -r 'if .stop then "false" else "true" end')" >> "$GITHUB_OUTPUT"
 
       - name: Post the failed-attempt hand-off
-        if: "!cancelled() && steps.failcap.outputs.stop == 'true'"
+        if: "!cancelled() && steps.failcap.outputs.stop == 'true' && steps.failcap.outputs.reached == 'true'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
         with:
           token: ${{ steps.ctx.outputs.token }}

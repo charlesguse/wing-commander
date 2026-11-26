@@ -24,7 +24,9 @@ Static structure only (yaml.safe_load plus text scans). Asserts:
   FR-028  the failed-attempt marker is written only for outcome `failed`
           (a re-check that stood down before any reviewer ran is not a
           failed attempt), and at the cap (spec_pr_review.py failed-cap,
-          fed select's failed-attempts) the act job posts a hand-off.
+          fed select's failed-attempts) the act job posts a hand-off, once
+          per head: only from the round that reaches the cap, and only after
+          that round's failed marker was recorded.
   FR-022  no workflow_call trigger (no input, secret or output surface).
   FR-023  the cost line comes from the metrics-summary composite; the
           formatter is not inlined.
@@ -136,13 +138,25 @@ def check(text):
         problems.append("FR-028: expected exactly one step writing the failed-attempt marker")
     elif "needs.review.outputs.outcome == 'failed'" not in str(failed_body[0]["with"]["body"]):
         problems.append("FR-028: the failed-attempt marker is not gated on outcome 'failed'")
-    cap = [s for s in act_steps if "spec_pr_review.py\" failed-cap" in (s.get("run") or "")]
+    cap = [s for s in act_steps if "spec_pr_review.py" in (s.get("run") or "")
+           and re.search(r'(spec_pr_review\.py|\$\w+)"\s+failed-cap\b', s.get("run") or "")]
     if len(cap) != 1 or "needs.select.outputs.failed-attempts" not in str(cap[0].get("env", {})) \
             or "failed-attempts" not in str(select.get("outputs", {})):
         problems.append("FR-028: the act job does not run failed-cap on select's failed-attempts")
-    elif not any("steps.%s.outputs.stop == 'true'" % cap[0].get("id") in str(s.get("if", ""))
-                 and "wing-commander-callout" in str(s.get("uses", "")) for s in act_steps):
-        problems.append("FR-028: no hand-off is posted at the failed-attempt cap")
+    else:
+        handoff = [s for s in act_steps if "steps.%s.outputs.stop == 'true'" % cap[0].get("id") in str(s.get("if", ""))
+                   and "wing-commander-callout" in str(s.get("uses", ""))]
+        if not handoff:
+            problems.append("FR-028: no hand-off is posted at the failed-attempt cap")
+        elif not all("steps.%s.outputs.reached == 'true'" % cap[0].get("id") in str(s.get("if", "")) for s in handoff):
+            problems.append("FR-028: the cap hand-off is not limited to the round that reaches the cap "
+                            "(a dispatched retry of a capped head would post it again)")
+        # The cap counts this round's failure, so it may act only once that
+        # failure's marker is on the issue; otherwise select re-picks the
+        # head and the next failure posts the hand-off a second time.
+        if len(failed_body) == 1 and (not failed_body[0].get("id") or
+                                      "steps.%s.outcome == 'success'" % failed_body[0]["id"] not in str(cap[0].get("if", ""))):
+            problems.append("FR-028: the failed-cap check does not wait for this round's failed marker to be recorded")
     if "claude-opus-5-5" not in text or "WING_COMMANDER_SPEC_REVIEW_MODEL" not in text:
         problems.append("FR-008: reviewer model is not the variable with its default")
     if "WING_COMMANDER_SPEC_REVIEW_EFFORT" not in text or ":-high" not in text:
@@ -173,8 +187,12 @@ def self_test(text):
         "a failed marker for a stood-down round": text.replace(
             "body: ${{ needs.review.outputs.outcome == 'failed' && format('<!-- spec-pr-review-failed",
             "body: ${{ needs.review.outputs.outcome != 'reviewed' && format('<!-- spec-pr-review-failed", 1),
-        "no failed-cap check": text.replace('spec_pr_review.py" failed-cap', 'spec_pr_review.py" verdict', 1),
+        "no failed-cap check": text.replace('"$S" failed-cap', '"$S" verdict'),
         "no hand-off at the cap": text.replace("steps.failcap.outputs.stop == 'true'", "false", 1),
+        "a cap hand-off on every failure past the cap": text.replace(
+            " && steps.failcap.outputs.reached == 'true'", "", 1),
+        "a cap check that ignores the failed marker's write": text.replace(
+            " && steps.outcome-line.outcome == 'success'", "", 1),
         "no act step recording the stop note": text.replace("<!-- spec-pr-review-stopped head={0}",
                                                             "<!-- spec-pr-review-x head={0}", 1),
     }
