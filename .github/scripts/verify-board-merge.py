@@ -1016,6 +1016,7 @@ def check_889_findings():
         fail("{0}: {1}".format(AUTO_UPDATE, problem))
     check_verification_run_read_warns()
     check_verification_run_keeps_ref()
+    check_merge_contract_names_stage_ref()
 
 
 def verified_head_upload_problems(stage):
@@ -1096,6 +1097,37 @@ def check_verification_run_keeps_ref():
         fail(problem)
     if not problems:
         ok("the verification run's stage call must resolve to refs/heads/main")
+
+
+def merge_contract_stage_ref_problems(text):
+    """#889 (found by the code review of #1284): the live contract says
+    what verification_run_confirms() checks, so the stage call's resolved
+    `ref` must appear in both places the contract names the run's facts:
+    step 4's snapshot (called workflows with their `ref`) and the
+    evaluate_bump bullet (the call's `ref` is refs/heads/<BASE_BRANCH>)."""
+    problems = []
+    want = "`refs/heads/{0}`".format(board_merge.BASE_BRANCH)
+    step4 = re.search(r"(?m)^4\. .*$", text)
+    if not step4 or "called workflows each with the `ref`" not in step4.group(0):
+        problems.append("step 4 does not say the snapshot keeps each called workflow's `ref`")
+    bullet = re.search(r"(?m)^- `evaluate_bump\(.*$", text)
+    if not bullet or "AUTO_UPDATE_STAGE_PATH" not in bullet.group(0) or want not in bullet.group(0):
+        problems.append("the evaluate_bump bullet does not require the stage call's `ref` to be {0}".format(want))
+    return problems
+
+
+def check_merge_contract_names_stage_ref():
+    with open(MERGE_CONTRACT, encoding="utf-8") as fh:
+        text = fh.read()
+    problems = merge_contract_stage_ref_problems(text)
+    for problem in problems:
+        fail("{0}: {1}".format(MERGE_CONTRACT, problem))
+    stale = text.replace(" each with the `ref` the call resolved to", "").replace(
+        " and that call's `ref` is `refs/heads/{0}`".format(board_merge.BASE_BRANCH), "")
+    if stale == text or len(merge_contract_stage_ref_problems(stale)) != 2:
+        fail("the contract stage-ref check does not refuse a contract without the ref requirement")
+    if not problems:
+        ok("{0} names the stage call's ref requirement".format(MERGE_CONTRACT))
 
 
 def check_auto_update():
