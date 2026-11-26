@@ -23,7 +23,12 @@ window").
    issue's own marker, `wc_lifecycle_review_marker.py` — nothing this gate
    does ever commits to the reviewed branch, so no peel is needed;
    T069/T075's commit-subject peel, `wc_review_gate_settled_head.py`, is
-   deleted), then picks the oldest whose checks and mergeability
+   deleted), drops a PR whose lifecycle issue is closed (#889; a failed
+   read of the issue's state drops nothing, `readiness` re-reads it), drops
+   a PR stopped as `not-converging` or `budget-exhausted` whose diff
+   against main still matches the stopped round's recorded fingerprint
+   (spec 116 FR-008, `wc_convergence.py rearmed`; see "Round budget"),
+   then picks the oldest whose checks and mergeability
    `lifecycle_readiness.py`'s `select_prefilter()` accepts (#889), or the
    oldest outright when none is ready, so `readiness` states its unmet
    condition. Outputs `pr-number`, `issue`, `spec-dir`,
@@ -100,14 +105,17 @@ window").
 
 ## Round budget
 
-`env.LIFECYCLE_REVIEW_ROUND_BUDGET: 5` (D12). `select`/`readiness` check
-`review_gate.round` against it before spending a review; on exhaustion
-the run posts the reason and the still-open findings to the lifecycle
-issue (US2 scenario 4, FR-022) and does not select this PR again until a
-human intervenes (mirroring `board:stalled`'s "removing the label is the
-sole re-eligibility condition" idiom, applied here as leaving the PR
-alone rather than a label, since a lifecycle PR has no `board:stalled`
-equivalent to apply).
+`env.LIFECYCLE_REVIEW_ROUND_BUDGET: 5` (D12). `disposition` checks the
+round (`review_gate.round` + 1) against it once the round's review has
+reported findings, before any fold or filing; on exhaustion the run posts the reason and the still-open findings to the lifecycle
+issue (US2 scenario 4, FR-022) and does not select this PR again until
+its diff against main changes (#889): a rebase or a merge of main that
+leaves the PR's own changes as they were does not re-select it, a push
+that changes them does. The comparison is with the exhausted round's own
+record, which its review posted at the marker's head; a record with no
+diff fingerprint falls back to the moved head. Once the budget is raised
+past the marker's round the PR is no longer stopped, and a moved head
+alone re-selects it.
 
 ## Edge cases this contract states explicitly
 
