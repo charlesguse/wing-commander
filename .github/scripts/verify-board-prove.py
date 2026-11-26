@@ -464,14 +464,18 @@ def outcome_step_label(workflow_text, decide_outcome, actions_only="", directed_
     step = next((st for st in steps if st.get("id") == "outcome"), None)
     if step is None:
         return None
+    # One table for both the inline `${{ }}` and the step's env, so the
+    # check holds whichever way the step reads an output (spec 132 moves
+    # this step's inline reads into env).
     values = {"steps.killswitch-recheck.outputs.paused": paused,
               "steps.decide.outputs.actions-only": actions_only,
+              "steps.decide.outcome": decide_outcome,
               "inputs.directed-recovery": directed_recovery}
     script = re.sub(r"\$\{\{\s*([^}]+?)\s*\}\}", lambda m: values.get(m.group(1), ""), step.get("run") or "")
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
     for name, expr in (step.get("env") or {}).items():
         m = re.fullmatch(r"\$\{\{\s*([^}]+?)\s*\}\}", str(expr).strip())
-        env[name] = ("" if not m else {"steps.decide.outcome": decide_outcome}.get(m.group(1), ""))
+        env[name] = ("" if not m else values.get(m.group(1), ""))
     with tempfile.TemporaryDirectory() as work:
         out = os.path.join(work, "out")
         open(out, "w").close()
@@ -493,9 +497,11 @@ def outcome_label_problems(workflow_text):
     for outcome in ("failure", "skipped"):
         for recovery in ("false", "true"):
             label = outcome_step_label(workflow_text, outcome, directed_recovery=recovery)
-            if not label or "closed on merge evidence" in label or "could not decide" not in label:
+            if (not label or "closed on merge evidence" in label or "could not decide" not in label
+                    or ("(recovered)" in label) != (recovery == "true")):
                 problems.append("prove outcome: a decide step with outcome {0!r} (directed-recovery {1}) "
-                                "is labelled {2!r}, not as could-not-decide".format(outcome, recovery, label))
+                                "is labelled {2!r}, not as could-not-decide with the run's recovered "
+                                "suffix".format(outcome, recovery, label))
     label = outcome_step_label(workflow_text, "success", actions_only="false")
     if label != "closed on merge evidence alone":
         problems.append("prove outcome: a successful decide with no Actions-only change is labelled "
