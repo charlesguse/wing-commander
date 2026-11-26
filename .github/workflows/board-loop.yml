@@ -7241,6 +7241,7 @@ jobs:
           CONCLUSION: ${{ steps.redrive.outputs.conclusion }}
           DISAMBIGUATED_REASON: ${{ steps.disambiguate.outputs.reason }}
           STOP_CAUSE_RUN_LABEL: ${{ steps.killswitch-recheck.outputs.stop-cause-run-label }}
+          DECIDE_OUTCOME: ${{ steps.decide.outcome }}
         run: |
           set -uo pipefail
           # specs/097-recorded-stop-point FR-014/FR-015: name the cause
@@ -7251,6 +7252,15 @@ jobs:
           # the one home for this suffix (maintainer review fold leg-2).
           if [ "${{ steps.killswitch-recheck.outputs.paused }}" = "true" ]; then
             label="prove: $STOP_CAUSE_RUN_LABEL"
+          # #889 (found by the code review of #1260): a `decide` that did not
+          # succeed leaves actions-only empty and skips the close step, so
+          # it must never read as "closed on merge evidence alone".
+          elif [ "$DECIDE_OUTCOME" != "success" ]; then
+            if [ "${{ inputs.directed-recovery }}" = "true" ]; then
+              label="prove (recovered): could not decide"
+            else
+              label="prove: could not decide"
+            fi
           elif [ "${{ steps.decide.outputs.actions-only }}" != "true" ]; then
             if [ "${{ inputs.directed-recovery }}" = "true" ]; then
               label="closed on merge evidence alone (recovered)"

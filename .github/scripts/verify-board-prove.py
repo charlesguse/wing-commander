@@ -10,6 +10,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 
@@ -453,6 +454,76 @@ def decide_step_fixture_cases():
     return problems
 
 
+def outcome_step_label(workflow_text, decide_outcome, actions_only="", directed_recovery="false", paused=""):
+    """#889 (found by the code review of #1260): run board-loop.yml's prove
+    `outcome` step's own script with the step outputs it reads filled in and
+    return the run_label it writes, or None when the step is missing or its
+    script fails."""
+    doc = yaml.safe_load(workflow_text) or {}
+    steps = (((doc.get("jobs") or {}).get("prove") or {}).get("steps")) or []
+    step = next((st for st in steps if st.get("id") == "outcome"), None)
+    if step is None:
+        return None
+    values = {"steps.killswitch-recheck.outputs.paused": paused,
+              "steps.decide.outputs.actions-only": actions_only,
+              "inputs.directed-recovery": directed_recovery}
+    script = re.sub(r"\$\{\{\s*([^}]+?)\s*\}\}", lambda m: values.get(m.group(1), ""), step.get("run") or "")
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    for name, expr in (step.get("env") or {}).items():
+        m = re.fullmatch(r"\$\{\{\s*([^}]+?)\s*\}\}", str(expr).strip())
+        env[name] = ("" if not m else {"steps.decide.outcome": decide_outcome}.get(m.group(1), ""))
+    with tempfile.TemporaryDirectory() as work:
+        out = os.path.join(work, "out")
+        open(out, "w").close()
+        env["GITHUB_OUTPUT"] = out
+        proc = subprocess.run(["bash", "-c", script], env=env, cwd=REPO_ROOT,
+                              capture_output=True, text=True, timeout=60)
+        if proc.returncode != 0:
+            return None
+        with open(out, encoding="utf-8") as fh:
+            labels = [line[len("label="):] for line in fh.read().splitlines() if line.startswith("label=")]
+    return labels[-1] if labels else None
+
+
+def outcome_label_problems(workflow_text):
+    """A failed or skipped `decide` skips the close step, so its run must
+    never be labelled closed on merge evidence; a decide that succeeded and
+    found no Actions-only change still is."""
+    problems = []
+    for outcome in ("failure", "skipped"):
+        for recovery in ("false", "true"):
+            label = outcome_step_label(workflow_text, outcome, directed_recovery=recovery)
+            if not label or "closed on merge evidence" in label or "could not decide" not in label:
+                problems.append("prove outcome: a decide step with outcome {0!r} (directed-recovery {1}) "
+                                "is labelled {2!r}, not as could-not-decide".format(outcome, recovery, label))
+    label = outcome_step_label(workflow_text, "success", actions_only="false")
+    if label != "closed on merge evidence alone":
+        problems.append("prove outcome: a successful decide with no Actions-only change is labelled "
+                        "{0!r}".format(label))
+    return problems
+
+
+def outcome_label_fixture_cases():
+    """The check fails on a step that reads only actions-only (the pre-fix
+    shape), and passes on the real board-loop.yml."""
+    with open(REPO_BOARD_LOOP, encoding="utf-8") as fh:
+        real = fh.read()
+    doc = yaml.safe_load(real)
+    for st in doc["jobs"]["prove"]["steps"]:
+        if st.get("id") == "outcome":
+            st["run"] = st["run"].replace('[ "$DECIDE_OUTCOME" != "success" ]', "false", 1)
+    regressed = yaml.safe_dump(doc, allow_unicode=True)
+    problems = []
+    for label, text, want in (("the real board-loop.yml", real, False),
+                              ("an outcome step that ignores decide's outcome", regressed, True)):
+        got = bool(outcome_label_problems(text))
+        if got != want:
+            problems.append("outcome-label fixture {0!r}: problems={1}, expected {2}".format(label, got, want))
+        else:
+            print("[ok] outcome-label fixture: {0}".format(label))
+    return problems
+
+
 def check_nightly_edges(root):
     """-> (problems, wrappers): nightly_e2e_edges() on `root`'s tree reads at
     least one wrapper and every wrapper it names exists. No fixed count: the
@@ -856,6 +927,14 @@ def run():
         print("::error::verify-board-prove: {0}".format(problem))
     with open(REPO_BOARD_LOOP, encoding="utf-8") as fh:
         for problem in decide_step_rename_problems(fh.read()):
+            failures += 1
+            print("::error::verify-board-prove: {0}".format(problem))
+
+    for problem in outcome_label_fixture_cases():
+        failures += 1
+        print("::error::verify-board-prove: {0}".format(problem))
+    with open(REPO_BOARD_LOOP, encoding="utf-8") as fh:
+        for problem in outcome_label_problems(fh.read()):
             failures += 1
             print("::error::verify-board-prove: {0}".format(problem))
 
