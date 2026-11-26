@@ -22,6 +22,13 @@ branch: the empty-project case that must stay byte-identical); a hit beyond
 that count fails. Reject fixtures under fixtures/project-single-home/ each
 carry one pattern and must be caught; accept.txt must stay clean.
 
+The inline-project-split allowances are also run (#889, folded from
+#1036): every allowed hit must sit in a step INLINE_SPLIT_SITES lists, and
+each listed step is executed as shipped on a root, a one-segment and a
+nested project name (an implement branch with -iterN too), its outputs
+compared with `project-name.sh names`. SPLIT_PARITY_MUTATIONS are
+hand-edits the comparison must catch.
+
 project-name.sh is the home of the rules and is not scanned. Every other
 published stage workflow (on.workflow_call), every composite under
 .github/actions/ and every shared script under .github/actions/_shared/ is
@@ -92,7 +99,9 @@ ALLOWED = {
 # gate-suite job, where wing-commander-project's token-bearing callout may
 # not run. Each validates the name's shape first, and the job that acts on
 # the value re-reads it through wing-commander-project, which refuses any
-# name the inline split would read differently.
+# name the inline split would read differently. check_split_parity()
+# runs each of them against the parser, so an allowance is never just
+# trusted.
 INLINE_SPLIT_ALLOWED = {
     ".github/workflows/plan.yml": 2,              # resolve-spec
     ".github/workflows/tasks.yml": 6,             # resolve-spec x3
@@ -102,6 +111,29 @@ INLINE_SPLIT_ALLOWED = {
 }
 for _rel, _n in INLINE_SPLIT_ALLOWED.items():
     ALLOWED.setdefault(_rel, {})["inline-project-split"] = _n
+
+# Where each INLINE_SPLIT_ALLOWED hit lives: (file, job, step id). The
+# split-parity check (#889, folded from #1036) runs every one of these
+# steps as shipped, on the fixture names below, and fails when a step
+# reads a name differently from `_shared/project-name.sh names`. Every
+# allowed hit must sit in a listed step, so a new inline split cannot
+# reach the allowance without a parity run behind it.
+INLINE_SPLIT_SITES = (
+    (".github/workflows/plan.yml", "resolve-spec", "spec"),
+    (".github/workflows/tasks.yml", "resolve-spec", "spec"),
+    (".github/workflows/tasks.yml", "stalled", "identity"),
+    (".github/workflows/tasks.yml", "stalled-approved", "identity"),
+    (".github/workflows/cleanup.yml", "select", "pick"),
+    (".github/workflows/pr-conversation.yml", "resolve-identity", "identity"),
+    (".github/workflows/implement.yml", "gate-suite-implement-cycle", "head"),
+)
+# Root, one project segment and a nested project; implement branches also
+# carry -iterN.
+SPLIT_FIXTURE_NAMES = ("001-root-feature", "web/012-add-thing", "apps/web/013-deep-nest")
+SPLIT_PREFIXES = {
+    "SPEC_DRAFT_PREFIX": "spec-draft/", "SPEC_PREFIX": "spec/",
+    "PLAN_PREFIX": "plan/", "TASKS_PREFIX": "tasks/", "IMPL_PREFIX": "impl/",
+}
 
 
 def scan(text):
@@ -126,6 +158,196 @@ def scope():
         files |= {os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(actions, pattern))}
     files.discard(HOME)
     return sorted(f.replace(os.sep, "/") for f in files)
+
+
+def _split_hits(text):
+    return scan(text)["inline-project-split"]
+
+
+def _load_steps(texts):
+    """{(file, job, step id): step} for INLINE_SPLIT_SITES, from `texts`
+    ({file: workflow text}); a missing site is reported, not raised."""
+    import yaml
+
+    steps, errors = {}, []
+    docs = {}
+    for rel, job, sid in INLINE_SPLIT_SITES:
+        if rel not in docs:
+            docs[rel] = yaml.safe_load(texts[rel])
+        found = [st for st in (docs[rel].get("jobs", {}).get(job, {}).get("steps") or [])
+                 if st.get("id") == sid]
+        if len(found) != 1:
+            errors.append(f"{rel}: split-parity site {job}/{sid} not found (update INLINE_SPLIT_SITES)")
+        else:
+            steps[(rel, job, sid)] = found[0]
+    return steps, errors
+
+
+def _parser(kind, name):
+    import subprocess
+
+    out = subprocess.run(
+        ["bash", os.path.join(ROOT, HOME), "names", kind, name],
+        capture_output=True, text=True, env={**os.environ, **SPLIT_PREFIXES})
+    if out.returncode != 0:
+        raise RuntimeError(f"project-name.sh names {kind} {name}: {out.stderr.strip()}")
+    return dict(line.split("=", 1) for line in out.stdout.splitlines() if "=" in line)
+
+
+def _run_step(step, env, tmp):
+    """Run a step's `run:` as the runner would (its shell), with `env` and
+    a `gh` stub; return its GITHUB_OUTPUT as a dict, or (None, reason)."""
+    import subprocess
+
+    bindir = os.path.join(tmp, "bin")
+    os.makedirs(bindir, exist_ok=True)
+    stub = os.path.join(bindir, "gh")
+    with open(stub, "w", encoding="utf-8") as fh:
+        fh.write(
+            "#!/usr/bin/env bash\n"
+            "case \"$*\" in\n"
+            "  *defaultBranchRef*) echo main ;;\n"
+            "  *baseRefName*) echo \"$STUB_BASE_REF\" ;;\n"
+            "  *headRefName*) echo \"$STUB_HEAD_REF\" ;;\n"
+            "  *) echo \"gh stub: unexpected call: $*\" >&2; exit 1 ;;\n"
+            "esac\n")
+    os.chmod(stub, 0o755)
+    script = os.path.join(tmp, "step.sh")
+    with open(script, "w", encoding="utf-8") as fh:
+        fh.write(step["run"])
+    output = os.path.join(tmp, "output")
+    open(output, "w").close()
+    full_env = {
+        "PATH": bindir + os.pathsep + os.environ.get("PATH", ""),
+        "HOME": tmp, "GITHUB_OUTPUT": output,
+        "GITHUB_STEP_SUMMARY": os.path.join(tmp, "summary"),
+        "GITHUB_REPOSITORY": "owner/repo", **env,
+    }
+    flags = ["--noprofile", "--norc", "-eo", "pipefail"] if step.get("shell") == "bash" else ["-e"]
+    res = subprocess.run(["bash", *flags, script], capture_output=True, text=True,
+                         env=full_env, cwd=tmp)
+    if res.returncode != 0:
+        return None, f"exited {res.returncode}: {(res.stdout + res.stderr).strip()[:300]}"
+    with open(output, encoding="utf-8") as fh:
+        return dict(line.split("=", 1) for line in fh.read().splitlines() if "=" in line), None
+
+
+def _site_cases(rel, job, sid, name):
+    """[(label, env, {output key: expected value})] for one site and one
+    fixture name, every expectation taken from project-name.sh."""
+    p = _parser("slug", name)
+    want = {"project": p["project"], "spec-dir": p["spec_dir"]}
+    if rel.endswith("plan.yml"):
+        return [
+            ("slug input", {"INPUT_SLUG": name, "HEAD_REF": "", **SPLIT_PREFIXES},
+             {"slug": name, **want}),
+            ("head ref", {"INPUT_SLUG": "", "HEAD_REF": "spec-draft/" + name, **SPLIT_PREFIXES},
+             {"slug": name, **want}),
+        ]
+    if rel.endswith("tasks.yml"):
+        keys = {"slug": name, "spec-dir": p["spec_dir"]}
+        if job == "resolve-spec":
+            keys["project"] = p["project"]
+        cases = [("slug input", {"MODE": "draft", "INPUT_SLUG": name, "HEAD_REF": "", **SPLIT_PREFIXES}, keys)]
+        for mode, prefix in (("approved", "tasks/"), ("draft", "plan/")):
+            cases.append((f"{mode} head ref",
+                          {"MODE": mode, "INPUT_SLUG": "", "HEAD_REF": prefix + name, **SPLIT_PREFIXES},
+                          keys))
+        return cases
+    if rel.endswith("cleanup.yml"):
+        cases = []
+        for var, prefix in SPLIT_PREFIXES.items():
+            ref = prefix + name + ("-iter4" if var == "IMPL_PREFIX" else "")
+            b = _parser("branch", ref)
+            cases.append((f"head ref {ref}",
+                          {"HEAD_REF": ref, "BASE_REF": "main", "MERGED": "true", "DB": "main",
+                           **SPLIT_PREFIXES},
+                          {"spec-dir": b["spec_dir"]}))
+        return cases
+    if rel.endswith("pr-conversation.yml"):
+        return [("spec branch", {"DEFAULT_BRANCH_INPUT": "main", "GH_TOKEN": "unused", "PR_NUMBER": "7",
+                                 "STUB_BASE_REF": "main", "STUB_HEAD_REF": "spec/" + name,
+                                 **SPLIT_PREFIXES},
+                 {"qualifies": "true", "slug": name, **want})]
+    if rel.endswith("implement.yml"):
+        # The ref the step builds must parse back to the spec dir it was given.
+        return [("spec dir", {"SPEC_DIR_INPUT": p["spec_dir"], "SPEC_PREFIX": "spec/"},
+                 {"ref": "spec/" + p["qualified"]})]
+    raise RuntimeError(f"no split-parity cases for {rel}")
+
+
+def check_split_parity(texts, only=None):
+    """Errors for INLINE_SPLIT_SITES over `texts` ({file: workflow text}):
+    every allowed inline split sits in a listed step, and each listed step
+    reads every fixture name the way project-name.sh does. `only` limits
+    the step runs to one file (the mutation self-check)."""
+    import shutil
+    import tempfile
+
+    errors = []
+    steps, errors_load = _load_steps(texts)
+    errors += errors_load
+    for rel, allowed in INLINE_SPLIT_ALLOWED.items():
+        in_sites = sum(_split_hits(st.get("run", "")) for (r, _j, _s), st in steps.items() if r == rel)
+        total = _split_hits(texts[rel])
+        if total != in_sites:
+            errors.append(f"{rel}: {total - in_sites} inline-project-split hit(s) outside the "
+                          "INLINE_SPLIT_SITES steps -- list the step so its split is run against the parser")
+        if in_sites != allowed:
+            errors.append(f"{rel}: the INLINE_SPLIT_SITES steps hold {in_sites} inline split(s), "
+                          f"INLINE_SPLIT_ALLOWED says {allowed}")
+    for (rel, job, sid), step in steps.items():
+        if only is not None and rel != only:
+            continue
+        for name in SPLIT_FIXTURE_NAMES:
+            for label, env, want in _site_cases(rel, job, sid, name):
+                tmp = tempfile.mkdtemp(prefix="wc-split-parity-")
+                try:
+                    got, why = _run_step(step, env, tmp)
+                finally:
+                    shutil.rmtree(tmp, ignore_errors=True)
+                where = f"{rel} {job}/{sid} ({name}, {label})"
+                if got is None:
+                    errors.append(f"{where}: {why}")
+                    continue
+                for key, value in want.items():
+                    if got.get(key) != value:
+                        errors.append(f"{where}: {key}={got.get(key)!r}, project-name.sh reads {value!r}")
+    return errors
+
+
+# Mutations the split-parity check must catch, each one a plausible
+# hand-edit of a listed step: (file, old, new, what it breaks).
+SPLIT_PARITY_MUTATIONS = (
+    (".github/workflows/plan.yml", 'project="${slug%/*}"', 'project="${slug%%/*}"',
+     "a nested project cut at its first segment"),
+    (".github/workflows/tasks.yml", 'specs/${slug##*/}', 'specs/${slug#*/}',
+     "a spec dir that keeps the project's inner segments"),
+    (".github/workflows/cleanup.yml", 'slug="${slug%-iter*}"', ':',
+     "an implement branch's -iterN kept in the spec dir"),
+    (".github/workflows/implement.yml", '${SPEC_DIR_INPUT#"${project_part}specs/"}',
+     '${SPEC_DIR_INPUT##*/}', "a ref that drops the project"),
+)
+
+
+def check_split_parity_catches_mutations(texts):
+    errors = []
+    for rel, old, new, what in SPLIT_PARITY_MUTATIONS:
+        if old not in texts[rel]:
+            errors.append(f"split-parity mutation for {rel} no longer applies ({old!r}); update it")
+            continue
+        mutated = dict(texts)
+        mutated[rel] = texts[rel].replace(old, new, 1)
+        if not check_split_parity(mutated, only=rel):
+            errors.append(f"split-parity check missed {what} in {rel}")
+    # A split added to a step the site list does not name is refused too.
+    rel = ".github/workflows/plan.yml"
+    extra = dict(texts)
+    extra[rel] = texts[rel].replace(
+        "    steps:\n", "    steps:\n      - run: echo \"${slug##*/}\"\n", 1)
+    if not any("outside the INLINE_SPLIT_SITES" in e for e in check_split_parity(extra, only=rel)):
+        errors.append("split-parity check missed an inline split outside the listed steps")
+    return errors
 
 
 def main():
@@ -160,6 +382,12 @@ def main():
     for name in PATTERNS:
         if name not in caught:
             errors.append(f"pattern {name} has no reject fixture that catches it")
+    split_texts = {}
+    for rel in INLINE_SPLIT_ALLOWED:
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
+            split_texts[rel] = fh.read()
+    errors += check_split_parity(split_texts)
+    errors += check_split_parity_catches_mutations(split_texts)
     if errors:
         print("verify-project-single-home: FAIL")
         for e in errors:

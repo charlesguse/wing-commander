@@ -3692,7 +3692,10 @@ jobs:
       # extracted from the shipped action.yml (not a hand-copied duplicate)
       # against fixtures parameterized by threshold, so a future caller's
       # own numbers are exercised the same way pr-conversation.yml's 3/40
-      # and board-loop.yml's own thresholds already are.
+      # and board-loop.yml's own thresholds already are. Since #734/#850
+      # it also runs pr-conversation.yml's "Compute confirmation
+      # requirements" step, the formula's other caller, extracted the same
+      # way.
       - name: Gate 83 — the size-path-backstop composite measures files/lines correctly at any threshold
         if: "!cancelled()"
         run: bash .github/scripts/size-path-backstop-tests/run-tests.sh

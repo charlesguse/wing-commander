@@ -275,12 +275,14 @@ DECLARED_HOMES = {
     # re-pasted into a stage workflow directly -- FR-032.
     "stage-findings": ".github/actions/wing-commander-stage-findings/action.yml",
     # specs/057-autonomous-board-loop, research.md D5 (T027): the
-    # small-change file/line-count formula. pr-conversation.yml's own call
-    # site is NOT yet repointed at this composite (T021, still open -- see
-    # the waiver below and issue #408) -- board-loop.yml is, and this check
-    # exists so a THIRD site cannot paste the formula a second, independent
-    # time while T021 is outstanding.
-    "size-path-backstop": ".github/actions/wing-commander-size-path-backstop/action.yml",
+    # small-change file/line-count formula. Its home is a script, not the
+    # wing-commander-size-path-backstop composite, since #734/#850 repointed
+    # pr-conversation.yml: that step measures every small-unrelated-change
+    # leg inside one step, where no composite can run per leg, so the
+    # composite (board-loop.yml's route job) and pr-conversation.yml both
+    # run the script, and a copy anywhere under .github/workflows or
+    # .github/actions -- the composite included -- fails.
+    "size-path-backstop": ".github/scripts/size-path-measure.sh",
     # specs/057-autonomous-board-loop, research.md D14 (T056): the
     # dispatch-then-correlate-by-attempt-token-then-wait-to-terminal idiom.
     # auto-release.yml's own dispatch-release job is NOT yet repointed at
@@ -1964,9 +1966,9 @@ def _clean_tree(root):
           "        ok, reason = validate_finding(item)\n"
           "        PYEOF\n")
     _write(root, DECLARED_HOMES["size-path-backstop"],
-          "runs:\n  using: composite\n  steps:\n"
-          "    - shell: bash\n      run: |\n"
-          "        select(test(\"^[+-]\") and (test(\"^(\\\\+\\\\+\\\\+|---)\") | not))\n")
+          "#!/usr/bin/env bash\n"
+          "jq '[.[] | select(test(\"^[+-]\") and "
+          "(test(\"^(\\\\+\\\\+\\\\+|---)\") | not))] | length'\n")
     _write(root, DECLARED_HOMES["dispatch-and-wait"],
           "runs:\n  using: composite\n  steps:\n"
           "    - shell: bash\n      run: |\n"
@@ -2886,6 +2888,15 @@ def run_selftest():
         "on: push\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n"
         "      - shell: bash\n        run: |\n"
         "          jq '[.[] | select(test(\"^[+-]\") and "
+        "(test(\"^(\\\\+\\\\+\\\\+|---)\") | not))] | length'\n")
+    # #734/#850: the composite is a caller of the script now, not the
+    # formula's home; a copy pasted back into it fails like any other.
+    selftest_third_paste_fails(
+        "size-path-backstop",
+        ".github/actions/wing-commander-size-path-backstop/action.yml",
+        "runs:\n  using: composite\n  steps:\n"
+        "    - shell: bash\n      run: |\n"
+        "        jq '[.[] | select(test(\"^[+-]\") and "
         "(test(\"^(\\\\+\\\\+\\\\+|---)\") | not))] | length'\n")
     selftest_third_paste_fails(
         "dispatch-and-wait", ".github/workflows/third-dispatch-and-wait.yml",

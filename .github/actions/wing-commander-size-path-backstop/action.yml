@@ -1,21 +1,15 @@
-# Single home for the "is this drafted change under the small-change size
-# threshold" formula (specs/057-autonomous-board-loop research.md D5):
-# extracted from pr-conversation.yml's classify-and-announce job (the
-# small-unrelated-change re-route check) so a second caller with its own,
-# larger threshold (board-loop.yml) reuses the identical file-count/
-# changed-line-count formula rather than a second, independently-drifting
-# inline jq copy (CLAUDE.md "Shared logic has exactly one home").
+# The small-change size backstop as a composite (specs/057-autonomous-board-loop
+# research.md D5): reports whether a drafted change is over the caller's
+# file-count/changed-line-count threshold. board-loop.yml's route job calls
+# it with its own, larger threshold.
 #
-# pr-conversation.yml's own call site is NOT yet repointed at this
-# composite (specs/057-autonomous-board-loop tasks.md T021) -- its check is
-# embedded inside a per-classification-leg jq `map()` pipeline with no
-# existing behavioral test harness to prove a refactor byte-identical, and
-# repointing it blind, under this cycle's own turn budget, was judged too
-# large a regression risk for a live, production routing decision. See the
-# waiver recorded in single-home-waivers.json and the note left on issue
-# #408. Every OTHER caller (board-loop.yml) reaches the check only through
-# this composite, and Gate 60 (verify-single-home-idioms.py) fails on any
-# THIRD, unknown site that pastes the formula again.
+# The formula itself has one home, .github/scripts/size-path-measure.sh
+# (CLAUDE.md "Shared logic has exactly one home"): this composite and
+# pr-conversation.yml's "Compute confirmation requirements" step, which
+# measures each small-unrelated-change leg inside one step and so cannot
+# call a composite per leg (#734/#850), both run it. Gate 60
+# (verify-single-home-idioms.py) fails on a copy of the formula anywhere
+# else, and Gate 83 (size-path-backstop-tests) runs both callers' shell.
 name: wing-commander-size-path-backstop
 description: >
   Given drafted-content.file-changes (the [{"path", "diff"}, ...] shape
@@ -32,14 +26,14 @@ inputs:
     required: true
   max-files:
     description: >
-      Files threshold. pr-conversation.yml's own call site omits this,
-      keeping its existing behavior (3) byte-identical.
+      Files threshold. The default is pr-conversation.yml's own small-change
+      threshold (3).
     required: false
     default: '3'
   max-lines:
     description: >
-      Changed-lines threshold. pr-conversation.yml's own call site omits
-      this, keeping its existing behavior (40) byte-identical.
+      Changed-lines threshold. The default is pr-conversation.yml's own
+      small-change threshold (40).
     required: false
     default: '40'
 
@@ -69,11 +63,8 @@ runs:
       run: |
         set -uo pipefail
 
-        files="$(printf '%s' "$FILE_CHANGES" | jq 'length')"
-        lines="$(printf '%s' "$FILE_CHANGES" | jq '
-          [.[] | (.diff // "") | split("\n")[]
-            | select(test("^[+-]") and (test("^(\\+\\+\\+|---)") | not))
-          ] | length')"
+        read -r files lines < <(printf '%s' "$FILE_CHANGES" \
+          | bash "$GITHUB_ACTION_PATH/../../scripts/size-path-measure.sh")
 
         over=false
         if [ "$files" -gt "$MAX_FILES" ] || [ "$lines" -gt "$MAX_LINES" ]; then
