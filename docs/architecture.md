@@ -1506,10 +1506,12 @@ scans every open PR's body for the version-bump marker (never the revert
 marker) to decide whether this candidate is already proposed, extracting
 which candidate a match proposes from its head branch name rather than its
 title or body text. `comment-reply` additionally gates the
-commenter (`OWNER`/`MEMBER`/`COLLABORATOR` or the issue author — the same
-actor gate `wing-commander-2-clarify.yml` uses) and interprets the reply with
-a read-only `claude-haiku-5-5` step before re-entering `prepare` → `verify` →
-`act`.
+commenter to a maintainer (`OWNER`/`MEMBER`/`COLLABORATOR`; unlike
+`wing-commander-2-clarify.yml`, never the issue's own author), accepts a
+reply only on the App's own `auto-update:tracking` issue (authored by the
+App, carrying the label), refuses with a comment a candidate not newer than
+the pinned version, and interprets the reply with a read-only
+`claude-haiku-5-5` step before re-entering `prepare` → `verify` → `act`.
 
 **Outcome recording** — the split mirrors this repo's existing convention: a
 successful adoption closes its lifecycle issue **only** via the version-bump

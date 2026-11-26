@@ -344,7 +344,11 @@ def main():
         ("OWNER", "1", "1", True, "OWNER"),
         ("MEMBER", "9", "1", True, "MEMBER"),
         ("COLLABORATOR", "9", "1", True, "COLLABORATOR"),
-        ("NONE", "7", "7", True, "non-maintainer but IS the issue author"),
+        # Owner decision 2026-11-25 (#890): the issue's own author is no
+        # longer admitted -- a resume picks the candidate a bump PR proposes.
+        ("NONE", "7", "7", False, "non-maintainer who IS the issue author"),
+        ("CONTRIBUTOR", "7", "7", False, "CONTRIBUTOR who IS the issue author"),
+        ("", "7", "7", False, "empty association, matching ids"),
         ("NONE", "9", "1", False, "drive-by NONE"),
         ("CONTRIBUTOR", "9", "1", False, "CONTRIBUTOR"),
         ("FIRST_TIME_CONTRIBUTOR", "9", "1", False, "FIRST_TIME_CONTRIBUTOR"),
@@ -537,42 +541,43 @@ def main():
             print("    FAIL PAUSED=%r runs=%s expected %s" % (val, got, want))
 
     # ---- wrapper issue_comment pre-filter --------------------------------
-    # Only a non-bot comment on a non-PR issue that is the settle-tracking
-    # issue -- carrying its label, or the body marker the stage itself
-    # recognises it by -- starts the stage; every other trigger passes
-    # untouched. Before this filter every comment in the repository started
-    # the stage and paid verify-image-prerequisites' minute to find nothing
-    # to do. The marker case exists because settle warns an older tracking
-    # issue can sit beyond its migration scan window and never be labelled.
+    # Only a maintainer's (OWNER/MEMBER/COLLABORATOR) non-bot comment on a
+    # non-PR, Bot-authored issue carrying the tracking label starts the
+    # stage; every other trigger passes untouched. Before this filter every
+    # comment in the repository started the stage and paid
+    # verify-image-prerequisites' minute to find nothing to do. A body
+    # marker alone no longer admits a comment (owner decision 2026-11-25,
+    # #890): anyone can open an issue carrying one.
     print("\n--- wrapper issue_comment pre-filter ---")
     LABELLED = ["auto-update:tracking", "enhancement"]
     PLAIN = "Settle tracking for the next Spec Kit candidate."
     MARKED = PLAIN + "\n<!-- wing-commander-auto-update-spec-kit: candidate=1.0.8 observed=1 -->"
+
+    def comment(assoc="OWNER", commenter="User", author="Bot", labels=LABELLED,
+                body=PLAIN, pr=""):
+        return {"github.event_name": "issue_comment", "github.event.issue.pull_request": pr,
+                "github.event.comment.user.type": commenter,
+                "github.event.comment.author_association": assoc,
+                "github.event.issue.user.type": author,
+                "github.event.issue.labels.*.name": labels, "github.event.issue.body": body}
+
     cases = [
-        ("human on labelled issue",
-         {"github.event_name": "issue_comment", "github.event.issue.pull_request": "",
-          "github.event.comment.user.type": "User", "github.event.issue.labels.*.name": LABELLED,
-          "github.event.issue.body": PLAIN}, True),
-        ("bot on labelled issue",
-         {"github.event_name": "issue_comment", "github.event.issue.pull_request": "",
-          "github.event.comment.user.type": "Bot", "github.event.issue.labels.*.name": LABELLED,
-          "github.event.issue.body": PLAIN}, False),
-        ("human on unlabelled issue",
-         {"github.event_name": "issue_comment", "github.event.issue.pull_request": "",
-          "github.event.comment.user.type": "User", "github.event.issue.labels.*.name": ["spec:foo"],
-          "github.event.issue.body": PLAIN}, False),
-        ("human on unlabelled issue whose body carries the marker",
-         {"github.event_name": "issue_comment", "github.event.issue.pull_request": "",
-          "github.event.comment.user.type": "User", "github.event.issue.labels.*.name": ["spec:foo"],
-          "github.event.issue.body": MARKED}, True),
+        ("OWNER on the App's labelled issue", comment(), True),
+        ("MEMBER on the App's labelled issue", comment(assoc="MEMBER"), True),
+        ("COLLABORATOR on the App's labelled issue", comment(assoc="COLLABORATOR"), True),
+        ("NONE on the App's labelled issue", comment(assoc="NONE"), False),
+        ("CONTRIBUTOR on the App's labelled issue", comment(assoc="CONTRIBUTOR"), False),
+        ("FIRST_TIMER on the App's labelled issue", comment(assoc="FIRST_TIME_CONTRIBUTOR"), False),
+        ("maintainer on a human-authored labelled issue", comment(author="User", body=MARKED), False),
+        ("bot on labelled issue", comment(commenter="Bot"), False),
+        ("human on unlabelled issue", comment(labels=["spec:foo"]), False),
+        ("maintainer on unlabelled issue carrying the marker",
+         comment(labels=["spec:foo"], body=MARKED), False),
+        ("NONE on a human-opened issue carrying the marker",
+         comment(assoc="NONE", author="User", labels=["spec:foo"], body=MARKED), False),
         ("bot on marker-bearing unlabelled issue",
-         {"github.event_name": "issue_comment", "github.event.issue.pull_request": "",
-          "github.event.comment.user.type": "Bot", "github.event.issue.labels.*.name": ["spec:foo"],
-          "github.event.issue.body": MARKED}, False),
-        ("human on a PR",
-         {"github.event_name": "issue_comment", "github.event.issue.pull_request": "https://x/pull/1",
-          "github.event.comment.user.type": "User", "github.event.issue.labels.*.name": LABELLED,
-          "github.event.issue.body": PLAIN}, False),
+         comment(commenter="Bot", labels=["spec:foo"], body=MARKED), False),
+        ("human on a PR", comment(pr="https://x/pull/1"), False),
         ("pull_request (merge) passes untouched",
          {"github.event_name": "pull_request"}, True),
         ("workflow_dispatch passes untouched",
@@ -588,6 +593,44 @@ def main():
             FAIL += 1
             FAILED.append("pre-filter: %s" % label)
             print("    FAIL %-40s runs=%s expected %s" % (label, got, want))
+
+    # ---- the tracking label has one value in both stage reads -----------
+    # comment-reply's guard declares its own TRACKING_LABEL env beside
+    # settle's (the label's one home); the two must never drift.
+    print("\n--- tracking label: comment-reply guard matches settle ---")
+    stage_doc = yaml.safe_load(open(STAGE, encoding="utf-8"))
+
+    def step_env(job, step_id, key):
+        for st in stage_doc["jobs"][job]["steps"]:
+            if st.get("id") == step_id:
+                return (st.get("env") or {}).get(key)
+        return None
+
+    settle_label = step_env("settle", "state", "TRACKING_LABEL")
+    guard_label = step_env("comment-reply", "guard", "TRACKING_LABEL")
+    if settle_label and settle_label == guard_label:
+        PASS += 1
+        print("    ok   both read %r" % settle_label)
+    else:
+        FAIL += 1
+        FAILED.append("tracking label drift")
+        print("    FAIL settle=%r comment-reply guard=%r" % (settle_label, guard_label))
+
+    # ---- the candidate refusal tells the maintainer how to unstick it ----
+    # A refused issue still carries awaiting-decision=true, which settle
+    # leaves untouched on every later run, so nothing clears it but a human
+    # closing it. The refusal must say so rather than promise the next run.
+    print("\n--- comment-reply refusal: tells the maintainer to close the issue ---")
+    refuse = [st for st in stage_doc["jobs"]["comment-reply"]["steps"]
+              if (st.get("if") or "").strip() == "steps.guard.outputs.refused == 'true'"]
+    refuse_body = ((refuse[0].get("with") or {}).get("body") or "") if len(refuse) == 1 else ""
+    if "close it" in refuse_body and "opens a fresh tracking issue" in refuse_body:
+        PASS += 1
+        print("    ok   the refusal says to close the issue")
+    else:
+        FAIL += 1
+        FAILED.append("refusal does not say to close the stranded issue")
+        print("    FAIL refusal body: %r" % refuse_body)
 
     print("\n==================== T7 job gating ====================")
     print("passed: %d   failed: %d" % (PASS, FAIL))
