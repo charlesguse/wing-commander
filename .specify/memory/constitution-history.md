@@ -9,19 +9,22 @@ header), not to `constitution.md` -- see CLAUDE.md.
 Sync Impact Report — 2026-11-23
 Version change: 2.8.0 → 3.0.0 (MAJOR: Principle V's comment-trigger rule is redefined. It read "a maintainer (OWNER/MEMBER/COLLABORATOR) or the original issue author" and now reads maintainers only. A requester who is not a maintainer can no longer answer clarification questions directly. That is backward incompatible for any adopter whose requesters lack write access, so it is a breaking principle change under the Governance semver rule.)
 Modified principles:
-  IV. Automation-First: the requester's list keeps "answer clarification questions" and adds that a requester who is not a maintainer answers through one, because comment-triggered stages act only on maintainers (Principle V).
-  V. Security — Untrusted Content Is Never Instructions: "Comment-triggered stages verify the commenter is a maintainer (OWNER/MEMBER/COLLABORATOR), and never react to bots; an issue's author who is not a maintainer gets no exception." The "or the original issue author" clause is removed. Pipeline entry (a maintainer-applied label) and Principle X's board-loop entry, which already require a maintainer, are unchanged.
+  III. Simple, GitHub-Native Interaction: "comment to clarify" gains the qualifier "(comment-triggered stages act only on maintainers — Principle V)". The rest of III is unchanged.
+  IV. Automation-First: the requester's list keeps "answer clarification questions" and adds "(a requester who is not a maintainer answers through a maintainer, because comment-triggered stages act only on maintainers — Principle V)".
+  V. Security — Untrusted Content Is Never Instructions: "Comment-triggered stages verify the commenter is a maintainer (OWNER/MEMBER/COLLABORATOR), and never react to bots; an issue's author who is not a maintainer gets no exception, and the comments a stage reads as an issue's context are filtered the same way." The "or the original issue author" clause is removed, and the last clause extends the same rule to the comments a stage reads as context rather than as a trigger. Pipeline entry (a maintainer-applied label) and Principle X's board-loop entry, which already require a maintainer, are unchanged.
+Modified sections: none
 Added sections: none
 Removed sections: none
 Templates requiring updates:
   ✅ .specify/templates/plan-template.md — no change needed (Constitution Check is generic)
   ✅ .specify/templates/spec-template.md — no change needed (no principle references)
   ✅ .specify/templates/tasks-template.md — no change needed (no principle references)
-  ⚠ The clarify wrapper's actor gate, the shared comment trust filter, the Spec Kit updater's comment gate, the auto-release e2e clarify check, docs/adoption.md, docs/architecture.md and the live contracts that describe the issue-author exception change in the follow-up change that implements this amendment. This amendment carries only `.specify/memory/` edits.
+  ⚠ The implementing change, which ships right after this amendment, applies the maintainer-only rule where the code and docs do not yet: (1) the clarify wrapper's actor gate starts a clarify run only on a maintainer's comment; (2) the shared comment filter (`wing-commander-issue-context`) keeps only maintainers' comments, never bots', in the issue context intake and the board loop read; (3) the auto-release e2e clarify check expects only a maintainer's reply to start clarify; (4) docs/adoption.md, docs/architecture.md and the live contracts state the maintainer-only rule. This amendment carries only `.specify/memory/` edits.
+  ✅ The Spec Kit updater's comment gate (`auto-update-spec-kit.yml` and its wrapper) resumes only on a maintainer's reply — done by #1267, merged 2026-11-26.
   ✅ .specify/extensions.yml — absent, so no before/after_constitution hooks apply
-Motivation: owner decision, 2026-11-23: only maintainers steer comment-triggered stages. In this repository the issue-author exception had never been used by a requester without maintainer access, and the owner can relay a requester's answers when needed.
-Worked example: once the implementing change lands, a clarification reply on a lifecycle issue from its author who is not OWNER, MEMBER or COLLABORATOR starts no clarify run. This amendment merges first.
-Follow-up TODOs: none
+Motivation: owner decision, 2026-11-23, confirmed 2026-11-26: only maintainers steer comment-triggered stages, with no exception for the issue's author, and the shared comment filter drops a non-maintainer's comments from the issue context as well. In this repository the issue-author exception had never been used by a requester without maintainer access, and the owner can relay a requester's answers when needed.
+Worked example: once the implementing change lands, a clarification reply on a lifecycle issue from its author who is not OWNER, MEMBER or COLLABORATOR starts no clarify run, and intake and the board loop do not see that reply in the issue context they read. This amendment merges first.
+Follow-up TODOs: the four items of the implementing change listed under "Templates requiring updates" — the clarify wrapper's actor gate, the shared comment filter's issue context for intake and the board loop, the auto-release e2e clarify check, and docs/adoption.md, docs/architecture.md and the live contracts.
 -->
 
 <!--
