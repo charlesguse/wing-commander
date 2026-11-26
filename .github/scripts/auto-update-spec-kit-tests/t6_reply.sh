@@ -194,6 +194,15 @@ readback false success '{"recognized":true,"chosen_option":"Pin to the old relea
 check "spec 130: a multi-line choice holding a posted label -> not recognized" "$D_REC" "false"
 check "spec 130: no choice carried for a multi-line value" "$D_CHOSEN" ""
 
+# The exact match alone would accept this one: the record holds the same
+# two-line label the agent returns. Only a one-line value counts. The
+# record is built from the value as this jq reads it (a Windows jq ends its
+# lines in CRLF), so the exact match would pass here as it would on Linux.
+two_line="$(printf '%s' '{"c":"Pin to the old release\nUse the documented replacement flag"}' | jq -r .c)"
+readback false success '{"recognized":true,"chosen_option":"Pin to the old release\nUse the documented replacement flag"}' success "$(jq -cn --arg c "$two_line" '[$c]')"
+check "spec 130: a recorded label holding a newline -> not recognized" "$D_REC" "false"
+check "spec 130: no choice carried for a recorded multi-line label" "$D_CHOSEN" ""
+
 readback false success '{"recognized":true,"chosen_option":"Use the documented"}' success '["Use the documented replacement flag"]'
 check "spec 130: part of a recorded label -> not recognized" "$D_REC" "false"
 

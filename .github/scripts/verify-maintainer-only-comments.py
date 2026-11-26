@@ -16,10 +16,10 @@ WHAT IT CHECKS (default run, on the tree)
 (a) Every wrapper triggered by issue_comment, pull_request_review or
     pull_request_review_comment: no job `if:`, step `if:`, step `env:`
     value or `with:` value compares or passes an identity (`.user.id`,
-    `issue-author-id`, `commenter-id ==`, actor/author ids, the issue
-    author's id or login). A check on the issue author's kind
+    `issue-author-id`, `commenter-id ==`, actor/author ids, any read of
+    the issue's author). The one exception is the issue author's kind
     (`issue.user.type`, as the Spec Kit wrapper requires a Bot-authored
-    issue) narrows who can start a run and is not an identity.
+    issue): it narrows who can start a run and is not an identity.
 (b) clarify.yml's `clarify` job: the `comment-author` step exists, comes
     before `lifecycle-gate`, and both `lifecycle-gate` and "Note closed
     lifecycle and stop" carry its `maintainer == 'true'` condition. Every
@@ -61,6 +61,8 @@ WHAT IT CHECKS (default run, on the tree)
     pr-conversation with clarify or intake as if they had an exception
     ("unlike clarify/intake"), or writes an identity comparison
     (`actor.id ==`) in a comment.
+(m) contracts/comment-author-rule.md's "Where it is enforced" table has a
+    row naming every comment-triggered wrapper in .github/workflows.
 Plus two harnesses that run the shipped shell against a stub `gh`:
 - the `comment-author` step: OWNER, MEMBER and COLLABORATOR give
   maintainer=true; NONE, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR and a Bot
@@ -98,7 +100,7 @@ COMMENT_TRIGGERS = {"issue_comment", "pull_request_review", "pull_request_review
 MAINTAINER_COND = "steps.comment-author.outputs.maintainer == 'true'"
 IF_IDENTITY = re.compile(
     r"\.user\.id\b|issue-author-id|commenter-id\s*==|==\s*inputs\.commenter-id|"
-    r"\bactor[._-]id\b|\bauthor[._-]id\b|issue\.user\.(?:id|login)\b")
+    r"\bactor[._-]id\b|\bauthor[._-]id\b|issue\.user\b(?!\.type\b)")
 JQ_IDENTITY = re.compile(r"\.user\.id\b|\$aid\b|author_id")
 DOC_IDENTITY = re.compile(
     r"(?:user|actor|author)[._-]id\s*==|==\s*[\w.$-]*(?:user\.id|author[._-]id|\$aid)\b|"
@@ -447,8 +449,32 @@ def check_k(tree):
     return []
 
 
+RULE_CONTRACT = os.path.normpath("specs/130-maintainer-only-comments/contracts/comment-author-rule.md")
+RULE_TABLE_HEADING = "## Where it is enforced"
+
+
+def check_m(tree):
+    """The rule contract's enforcement table has a row for every
+    comment-triggered wrapper in the tree."""
+    text = tree[RULE_CONTRACT]
+    if RULE_TABLE_HEADING not in text:
+        return [f"(m) {RULE_CONTRACT}: no {RULE_TABLE_HEADING!r} section"]
+    table = text.split(RULE_TABLE_HEADING, 1)[1].split("\n## ", 1)[0]
+    failures = []
+    for path, wf in sorted(tree.items()):
+        if not (path.startswith(WF + os.sep) and path.endswith(".yml")):
+            continue
+        if not (triggers(load_yaml(wf) or {}) & COMMENT_TRIGGERS):
+            continue
+        name = os.path.basename(path)
+        if f"`{name}`" not in table:
+            failures.append(f"(m) {RULE_CONTRACT}: the enforcement table has no row for "
+                            f"the comment-triggered wrapper {name}")
+    return failures
+
+
 STATIC_CHECKS = (check_a, check_b, check_c, check_d, check_e, check_f, check_g, check_h,
-                 check_i, check_j, check_k, check_l)
+                 check_i, check_j, check_k, check_l, check_m)
 
 
 # --------------------------------------------------------------------------
@@ -643,6 +669,28 @@ def _updater_wrapper_login_mutant(tree):
             if "uses" in job:
                 job["if"] = (str(job["if"]) + " || github.event.issue.user.login == "
                              "github.event.comment.user.login")
+                return
+    return _yaml_edit(tree, p, edit)
+
+
+def _updater_wrapper_node_id_mutant(tree):
+    p = os.path.join(WF, "wing-commander-auto-update-spec-kit.yml")
+    def edit(doc):
+        for job in doc["jobs"].values():
+            if "uses" in job:
+                job["if"] = (str(job["if"]) + " || github.event.issue.user.node_id == "
+                             "github.event.comment.user.node_id")
+                return
+    return _yaml_edit(tree, p, edit)
+
+
+def _updater_wrapper_whole_author_mutant(tree):
+    p = os.path.join(WF, "wing-commander-auto-update-spec-kit.yml")
+    def edit(doc):
+        for job in doc["jobs"].values():
+            if "uses" in job:
+                job["if"] = (str(job["if"]) + " || toJSON(github.event.issue.user) == "
+                             "toJSON(github.event.comment.user)")
                 return
     return _yaml_edit(tree, p, edit)
 
@@ -873,10 +921,18 @@ def _lifecycle_contract_mutant(tree):
                 "non-bot commenter is maintainer-or-author")
 
 
+def _contract_row_mutant(tree):
+    return _sub(tree, RULE_CONTRACT, "| `wing-commander-auto-update-spec-kit.yml` | wrapper `if:` |",
+                "| the Spec Kit wrapper | wrapper `if:` |")
+
+
 MUTANTS = (
     ("(a) the clarify wrapper admits the issue's author", _clarify_wrapper_mutant),
+    ("(m) the rule contract has no row for the Spec Kit wrapper", _contract_row_mutant),
     ("(a) the Spec Kit wrapper passes issue-author-id", _updater_wrapper_mutant),
     ("(a) the Spec Kit wrapper admits the issue's author by login", _updater_wrapper_login_mutant),
+    ("(a) the Spec Kit wrapper admits the issue's author by node_id", _updater_wrapper_node_id_mutant),
+    ("(a) the Spec Kit wrapper admits the issue's author as a whole object", _updater_wrapper_whole_author_mutant),
     ("(b) lifecycle-gate loses the maintainer condition", _gate_cond_mutant),
     ("(b) the comment-author step runs after lifecycle-gate", _order_mutant),
     ("(b-harness) the comment-author step accepts NONE", _accept_none_mutant),
