@@ -2094,6 +2094,15 @@ jobs:
               errtext="could not parse the test repository's run list: $(tail -c 300 "$RUNNER_TEMP/auto-release-cee-runs-parse-err.txt" 2>/dev/null)"
               write_execution_fail "unreadable" "$errtext"
             fi
+            # GitHub returns at most 1,000 runs for a `created`-filtered
+            # listing, however many pages are asked for, so a list that
+            # reached the cap may be missing stage runs: unreadable
+            # evidence, never a pass on the runs that fit (the truncation
+            # #1054 fixed in the metrics sweep; found by the code review of
+            # #1081).
+            if [ "$(printf '%s' "$runs_json" | jq 'length')" -ge 1000 ]; then
+              write_execution_fail "unreadable" "the test repository's run list since ${KICKOFF_TIME} reached GitHub's 1,000-result cap for a created-filtered listing, so stage runs past it could not be read"
+            fi
             stage_run_ids="$(printf '%s' "$runs_json" | jq -r '
               .[]
               | select(.path | test("^\\.github/workflows/wing-commander-"))
@@ -2886,6 +2895,11 @@ jobs:
         with:
           token: ${{ github.token }}
           operation: close
+          # The issue detect read, never a fresh label lookup: the close
+          # decision was computed from that issue's record, and one closed
+          # and another opened or reopened mid-run must not close in its
+          # place (found by the code review of #977).
+          issue-number: ${{ needs.detect.outputs.failure-issue }}
           label: auto-release:failed
           label-color: B60205
           label-description: "wing-commander auto-release: a scheduled verification/release attempt failed"

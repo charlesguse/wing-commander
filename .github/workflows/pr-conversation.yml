@@ -1284,7 +1284,19 @@ jobs:
           # Trim first, THEN drop empties, so "a, b," handles the trailing
           # comma and the spaces in one pass.
           cats_json=$(jq -n -c --arg s "$CONFIRM_CATEGORIES" '$s | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')
-          result=$(printf '%s' "$raw" | jq -c --argjson cats "$cats_json" --arg env "$CONFIRM_ENVIRONMENT" --argjson perms "$perm_prs" '
+          # #734/#850: each small-unrelated-change leg is measured by the
+          # formula's one home, .github/scripts/size-path-measure.sh (the
+          # wing-commander-size-path-backstop composite runs it too), keyed
+          # by the leg's original index; the backstop below reads $sizes.
+          # A composite cannot run once per leg inside this one step.
+          sizes='{}'
+          for i in $(printf '%s' "$raw" | jq -r 'to_entries[] | select(.value.category == "small-unrelated-change") | .key'); do
+            measured=$(printf '%s' "$raw" | jq -c --argjson i "$i" '(.[$i]["drafted-content"] // {})["file-changes"] // []' \
+              | bash .wing-commander-pipeline/.github/scripts/size-path-measure.sh)
+            read -r m_files m_lines <<< "$measured"
+            sizes=$(jq -n -c --argjson s "$sizes" --arg i "$i" --argjson f "$m_files" --argjson l "$m_lines" '$s + {($i): {files: $f, lines: $l}}')
+          done
+          result=$(printf '%s' "$raw" | jq -c --argjson cats "$cats_json" --arg env "$CONFIRM_ENVIRONMENT" --argjson perms "$perm_prs" --argjson sizes "$sizes" '
             def coerce_str: if . == null then "" elif (type == "string") then . else tostring end;
             # T057, moved here by T080: match the agent-drafted capability as
             # a LITERAL case-insensitive substring, never as a regex.
@@ -1310,9 +1322,9 @@ jobs:
                   if ($orig.category == "small-unrelated-change") then
                     ($orig["drafted-content"] // {}) as $dc
                     | (($dc["file-changes"] // [])) as $fc
-                    | ($fc | length) as $files
-                    | ([$fc[] | (.diff // "") | split("\n")[]
-                        | select(test("^[+-]") and (test("^(\\+\\+\\+|---)") | not))] | length) as $lines
+                    | $sizes[$orig.id | ltrimstr("leg-")] as $m
+                    | $m.files as $files
+                    | $m.lines as $lines
                     | if ($files > 3) or ($lines > 40) then
                         ($dc["pr-title"] | coerce_str) as $title0
                         | ($dc["pr-body"] | coerce_str) as $body0

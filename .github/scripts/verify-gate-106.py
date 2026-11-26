@@ -711,6 +711,25 @@ EXECUTION_SCENARIOS = [
         failing_check="container-mode evidence unreadable",
         observed_contains="(status unknown, conclusion action_required)",
     ),
+    # #889 (code review of #1081): a `created`-filtered run list stops at
+    # GitHub's 1,000-result cap, so one that reached it may hide stage
+    # runs -- unreadable, never a pass on the runs that fit.
+    dict(
+        name="#889 a run list at GitHub's 1,000-result cap: unreadable, not a pass on what fit",
+        env=dict(GH_STUB_RUNS_REST=runs_page(
+            (111, WRAPPER_PATH),
+            *[(2000 + i, ".github/workflows/unrelated.yml") for i in range(999)])),
+        reached_pass=False,
+        failing_check="container-mode evidence unreadable",
+        observed_contains="1,000-result cap",
+    ),
+    dict(
+        name="#889 a run list one short of the cap is read as complete: reaches pass",
+        env=dict(GH_STUB_RUNS_REST=runs_page(
+            (111, WRAPPER_PATH),
+            *[(2000 + i, ".github/workflows/unrelated.yml") for i in range(998)])),
+        reached_pass=True,
+    ),
     # #960 review: a wrapper run the stage:done label or the final merge
     # fired seconds before this read can still be queued with no job
     # scheduled yet -- it ran nothing anywhere, so it is skipped, not judged
