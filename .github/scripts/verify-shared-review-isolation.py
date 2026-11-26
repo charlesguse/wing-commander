@@ -16,13 +16,21 @@ SC-008 (a)-(d), FR-012, FR-022, FR-027).
       and the default branch's run-local-gates.py;
   (d) neither agent job holds a write token, a web tool or a Bash tool.
 
-The dynamic proof of (a) and (b) needs a Linux runner with passwordless
-sudo (the code-run sandbox, wc_shared_review.UidSandbox). Under GitHub
-Actions it is required; elsewhere, where the sandbox cannot be set up, it
-is reported as not proven here and the static checks still run.
+The dynamic proof of (a) and (b) needs a Linux runner with a non-root user
+and passwordless sudo (the code-run sandbox, wc_shared_review.UidSandbox).
+It is required only where the caller opts in with
+WING_COMMANDER_REQUIRE_ISOLATION_PROOF=true, which lint-workflows.yml's
+isolation step sets (#1235). Everywhere else -- a local sweep, or the
+implement stage's root container, which is also GitHub Actions -- a proof
+that cannot run is skipped with a note naming why, and every other check
+still runs. Where the opt-in is set, a proof that cannot run fails. Every
+run also checks that lint-workflows.yml's isolation step still sets the
+opt-in, so dropping it fails here instead of quietly skipping the proof.
 
-`--self-test` proves the static checks fail on a mutated workflow and that
-the proof is required under Actions.
+`--self-test` proves the static checks fail on a mutated workflow, that
+the proof is required exactly where the opt-in is set, that a missing
+proof fails under the opt-in, that a root container without it skips
+with the note, and that lint-workflows.yml losing the opt-in is caught.
 """
 import copy
 import json
@@ -42,6 +50,7 @@ sys.path.insert(0, HERE)
 import wc_shared_review  # noqa: E402
 
 WORKFLOW = os.path.join(HERE, "..", "workflows", "shared-pr-reviewer.yml")
+LINT_WORKFLOW = os.path.join(HERE, "..", "workflows", "lint-workflows.yml")
 HOSTILE = os.path.join(HERE, "tests", "fixtures", "shared-review-hostile")
 PROBE = "verify-probe-check.py"
 WEB_TOOLS = ("WebSearch", "WebFetch")
@@ -387,9 +396,44 @@ def static_problems(wf):
     return problems
 
 
+OPT_IN = "WING_COMMANDER_REQUIRE_ISOLATION_PROOF"
+
+
 def proof_required(environ):
-    """The dynamic proof may be skipped only off Actions."""
-    return environ.get("GITHUB_ACTIONS") == "true"
+    """The dynamic proof is required only where the caller opts in (#1235)."""
+    return environ.get(OPT_IN) == "true"
+
+
+def opt_in_problems(lint_wf):
+    """The lint runner is where the proof is required, and only its step's
+    env: says so; GITHUB_ACTIONS no longer does (#1235). A dropped opt-in
+    would turn the lint run's proof into a skip note with nothing failing,
+    so every step that runs this gate without --self-test must set it."""
+    steps = []
+    for job in ((lint_wf or {}).get("jobs") or {}).values():
+        for step in (job or {}).get("steps") or []:
+            run = str((step or {}).get("run") or "")
+            if "verify-shared-review-isolation.py" in run and "--self-test" not in run:
+                env = {}
+                for block in ((lint_wf or {}).get("env"), (job or {}).get("env"), step.get("env")):
+                    # GitHub passes an unquoted YAML true as the string "true".
+                    env.update({str(k): "true" if v is True else str(v)
+                                for k, v in (block or {}).items()})
+                steps.append((str(step.get("name") or "(unnamed step)"), env))
+    if not steps:
+        return ["lint-workflows.yml no longer runs verify-shared-review-isolation.py"]
+    return ["lint-workflows.yml step '{0}' does not set {1}: \"true\", so the lint run "
+            "would skip the SC-008 (a)/(b) proof".format(name, OPT_IN)
+            for name, env in steps if not proof_required(env)]
+
+
+def unproven_outcome(environ, reason):
+    """(problems, notes) for an SC-008 (a)/(b) proof that cannot run here."""
+    if proof_required(environ):
+        return (["the code-run sandbox cannot be set up on this runner ({0}), "
+                 "so SC-008 (a)/(b) is unproven".format(reason)], [])
+    return ([], ["note: SC-008 (a)/(b) not proven here: {0}; {1} is not set, so the "
+                 "proof is skipped (it is required on the lint runner)".format(reason, OPT_IN)])
 
 
 def sandbox_unavailable_reason():
@@ -517,6 +561,8 @@ def dynamic_problems(wf):
 def main():
     wf = yaml.safe_load(open(WORKFLOW, encoding="utf-8")) or {}
     problems = static_problems(wf)
+    lint_wf = yaml.safe_load(open(LINT_WORKFLOW, encoding="utf-8")) or {}
+    problems += opt_in_problems(lint_wf)
     if "--self-test" in sys.argv:
         bad = 0
         mutations = {
@@ -571,8 +617,34 @@ def main():
             if not static_problems(clone):
                 print("::error::self-test: mutation not caught: " + label)
                 bad += 1
-        if not proof_required({"GITHUB_ACTIONS": "true"}) or proof_required({}):
-            print("::error::self-test: the isolation proof is not required exactly under Actions")
+        if (not proof_required({OPT_IN: "true"}) or proof_required({})
+                or proof_required({"GITHUB_ACTIONS": "true"})):
+            print("::error::self-test: the isolation proof is not required exactly under " + OPT_IN)
+            bad += 1
+        if opt_in_problems(lint_wf):
+            print("::error::self-test: the real lint-workflows.yml fails the opt-in check")
+            bad += 1
+        for label, drop in (("step", lambda s: s.pop("env", None)),
+                            ("value", lambda s: s["env"].update({OPT_IN: "false"}))):
+            clone = copy.deepcopy(lint_wf)
+            for job in (clone.get("jobs") or {}).values():
+                for step in (job or {}).get("steps") or []:
+                    run = str((step or {}).get("run") or "")
+                    if "verify-shared-review-isolation.py" in run and "--self-test" not in run:
+                        drop(step)
+            if not opt_in_problems(clone):
+                print("::error::self-test: lint-workflows.yml losing the " + OPT_IN
+                      + " opt-in (" + label + ") is not caught")
+                bad += 1
+        root = "needs a non-root POSIX runner user"
+        got, notes = unproven_outcome({OPT_IN: "true", "GITHUB_ACTIONS": "true"}, root)
+        if not got or notes:
+            print("::error::self-test: a missing proof passes where " + OPT_IN + " is set")
+            bad += 1
+        got, notes = unproven_outcome({"GITHUB_ACTIONS": "true"}, root)
+        if got or not any(root in n and OPT_IN in n for n in notes):
+            print("::error::self-test: a root container without " + OPT_IN
+                  + " does not skip the proof with a note naming why")
             bad += 1
         return 1 if bad else (1 if problems else 0)
     if os.path.exists("/proc/self/environ") and hasattr(os, "symlink"):
@@ -580,18 +652,18 @@ def main():
     elif proof_required(os.environ):
         problems.append("the symlink proof (A1) needs Linux /proc, so it is unproven")
     else:
-        print("note: the symlink proof (A1) needs Linux /proc; it is proven on the lint runner")
+        print("note: the symlink proof (A1) needs Linux /proc; {0} is not set, so it is "
+              "skipped (it is required on the lint runner)".format(OPT_IN))
     reason = sandbox_unavailable_reason()
     if reason is None:
         problems += dynamic_problems(wf)
         problems += git_root_proof_problems()
         problems += without_fix_proof_problems()
-    elif proof_required(os.environ):
-        problems.append("the code-run sandbox cannot be set up on this runner ({0}), "
-                        "so SC-008 (a)/(b) is unproven".format(reason))
     else:
-        print("note: SC-008 (a)/(b) not proven here: {0}; it is proven on the lint "
-              "runner".format(reason))
+        got, notes = unproven_outcome(os.environ, reason)
+        problems += got
+        for note in notes:
+            print(note)
     for p in problems:
         print("::error::verify-shared-review-isolation: " + p)
     if not problems:

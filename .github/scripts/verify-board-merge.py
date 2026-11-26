@@ -388,8 +388,71 @@ def find_merge_calls(code):
     return re.findall(r"gh\s+pr\s+merge\b" + line_re + r"(?:\\\n" + line_re + r")*", code)
 
 
+_RUN_KEY_RE = re.compile(r"^(\s*(?:-\s+)?)run:(?:\s+(.*))?$")
+
+
 def _run_blocks_text(lines):
-    return "\n".join(line for line in lines if not line.lstrip().startswith("#"))
+    """The non-comment lines of every `run:` body in `lines` -- a workflow,
+    a job or a step -- and nothing else: an `env:`, `if:` or `with:` value
+    is not code the job runs, so a rule about what the job runs must not
+    fire on it (#889, code review of #1059). A block scalar (`run: |`)
+    runs to the first non-blank line indented no deeper than its key; an
+    inline value (`run: cmd`) is that one line."""
+    out = []
+    lines = list(lines)
+    i = 0
+    while i < len(lines):
+        match = _RUN_KEY_RE.match(lines[i])
+        i += 1
+        if not match:
+            continue
+        value = (match.group(2) or "").strip()
+        if value and value[0] not in "|>":
+            out.append(value)
+            continue
+        key_col = len(match.group(1))
+        while i < len(lines):
+            line = lines[i]
+            if line.strip() and len(line) - len(line.lstrip()) <= key_col:
+                break
+            if not line.lstrip().startswith("#"):
+                out.append(line)
+            i += 1
+    return "\n".join(out)
+
+
+def check_run_blocks_text_self_test():
+    """_run_blocks_text() reads `run:` bodies only: a forbidden flag or a
+    refusal phrase in an `env:`, `if:` or `with:` value, or in a comment, is
+    not in its text, and a block or inline `run:` is."""
+    workflow = (
+        "jobs:\n"
+        "  merge:\n"
+        "    if: \"!contains(github.event.head_commit.message, '--admin')\"\n"
+        "    steps:\n"
+        "      - name: Merge\n"
+        "        env:\n"
+        "          NOTE: not mergeable\n"
+        "        with:\n"
+        "          args: --auto\n"
+        "        run: |\n"
+        "          # --admin in a comment\n"
+        "          gh pr merge \"$PR\" --squash\n"
+        "\n"
+        "          echo done\n"
+        "        shell: bash\n"
+        "      - run: echo inline\n"
+        "      - name: After\n"
+        "        if: always()\n")
+    code = _run_blocks_text(workflow.splitlines())
+    leaked = [word for word in ("--admin", "not mergeable", "--auto", "shell:", "always()")
+              if word in code]
+    missing = [word for word in ("gh pr merge", "echo done", "echo inline") if word not in code]
+    if leaked or missing:
+        fail("self-test: _run_blocks_text() read {0} outside a `run:` body and missed {1} "
+             "inside one".format(leaked, missing))
+    else:
+        ok("self-test: _run_blocks_text() reads `run:` bodies only, block and inline")
 
 
 _SELF_TEST_WORKFLOW = """jobs:
@@ -991,7 +1054,7 @@ def check_889_findings():
     for pasted_read in ('gh pr view "$n" -R "$GITHUB_REPOSITORY" --json "$fields" > x.json',
                         'gh pr view "$n" -R "$GITHUB_REPOSITORY" --json "$snapshot_fields" > x.json',
                         'gh pr view "$n" -R "$GITHUB_REPOSITORY" --json number,files,commits,comments > x.json'):
-        if not snapshot_fetch_problems(merge_job + ["          " + pasted_read]):
+        if not snapshot_fetch_problems(merge_job + ["      - run: |", "          " + pasted_read]):
             fail("snapshot fetch self-test: a pasted `{0}` read is not caught".format(pasted_read))
         else:
             ok("snapshot fetch self-test: a pasted `{0}` read is caught".format(pasted_read))
@@ -1188,6 +1251,7 @@ def main():
     check_bump_pick_and_dedup()
     check_round2_findings()
     check_quoted_verification_record()
+    check_run_blocks_text_self_test()
     check_structural_self_test()
     check_gh_blocked_reasons()
     check_readiness_stale_claims_self_test()

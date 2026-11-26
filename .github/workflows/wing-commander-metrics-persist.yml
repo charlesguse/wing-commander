@@ -33,7 +33,9 @@ on:
       # already collects (FR-030(a) keeps this trigger to the promptly-read
       # stages). Gate 79 fails if a workflow that uploads a record is
       # missing from the sweep's sweep-workflow-paths, or from this list
-      # unless it is one of these two sweep-only owners.
+      # unless it is one of these three sweep-only owners.
+      # "lifecycle-review-gate" is ABSENT for the same reason (#889): it
+      # uploads a metrics-record artifact per review round and runs hourly.
       # "Wing Commander · 8 watchdog" is deliberately ABSENT
       # (specs/058-per-job-minute-floor FR-030(b)). After FR-031 a healthy
       # inspection runs no agent and so emits no record at all, and this
@@ -158,7 +160,7 @@ jobs:
       # repository can carry a record (constitution VI/VII) -- the nine
       # completion-trigger workflows above plus the watchdog, whose healthy
       # (agent-free) inspections this sweep exists to pick up (FR-030(b)),
-      # and board-loop, which is sweep-only (#889).
+      # and board-loop and lifecycle-review-gate, which are sweep-only (#889).
       sweep-workflow-paths: >-
         [".github/workflows/wing-commander-1-intake.yml",
          ".github/workflows/wing-commander-2-clarify.yml",
@@ -170,7 +172,8 @@ jobs:
          ".github/workflows/wing-commander-rebase.yml",
          ".github/workflows/wing-commander-9-pr-conversation.yml",
          ".github/workflows/wing-commander-8-watchdog.yml",
-         ".github/workflows/board-loop.yml"]
+         ".github/workflows/board-loop.yml",
+         ".github/workflows/lifecycle-review-gate.yml"]
       destination-branch: ${{ vars.WING_COMMANDER_METRICS_BRANCH || 'metrics' }}
       destination-path: ${{ vars.WING_COMMANDER_METRICS_PATH || 'records.jsonl' }}
       runner: ${{ vars.WING_COMMANDER_RUNNER || 'ubuntu-latest' }}
