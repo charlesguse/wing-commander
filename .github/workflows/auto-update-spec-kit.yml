@@ -3580,9 +3580,12 @@ jobs:
           set -uo pipefail
           # REST, not `gh issue view`: its `user.login` is the App's
           # `<slug>[bot]` form, which wing-commander-context's bot-slug
-          # output documents. `|| true`: an unreadable issue is "not the
+          # output documents. A failed read is reset to empty (gh api prints
+          # the error body on stdout): an unreadable issue is "not the
           # tracking issue", a no-op, never a failed job.
-          issue_json="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" 2>/dev/null || true)"
+          if ! issue_json="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" 2>/dev/null)"; then
+            issue_json=""
+          fi
           tracking="$(printf '%s' "$issue_json" | jq -r --arg bot "${BOT_SLUG}[bot]" --arg l "$TRACKING_LABEL" \
             'if (.pull_request == null) and (.user.login == $bot) and ([.labels[]?.name] | index($l) != null)
              then "true" else "false" end' 2>/dev/null || true)"
