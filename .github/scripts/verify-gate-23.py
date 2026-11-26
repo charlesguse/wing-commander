@@ -398,7 +398,7 @@ import tempfile
 # imported) — the same trick check_derivations_agree below already relies on
 # to reach wc_published_stages.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_lint_gate_source import LINT_WORKFLOW, extract_gate_step  # noqa: E402
+from wc_lint_gate_source import LINT_WORKFLOW, case_env, extract_gate_step  # noqa: E402
 
 STEP_PREFIX = "Gate 23 — every published stage"
 
@@ -1007,7 +1007,7 @@ def main():
                     "name: fancy\nruns:\n  using: composite\n  steps:\n"
                     "    - run: somefancytool4 --check\n      shell: bash\n")
 
-            proc = subprocess.run([sys.executable, gate_path], cwd=case_dir,
+            proc = subprocess.run([sys.executable, gate_path], cwd=case_dir, env=case_env(),
                                   capture_output=True, text=True,
                                   encoding="utf-8", errors="replace")
             out = (proc.stdout or "") + (proc.stderr or "")

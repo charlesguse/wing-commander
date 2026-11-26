@@ -1,0 +1,254 @@
+# Tasks: Faster PR Lint — Parallelise the Gate Suite in CI
+
+**Input**: `specs/129-parallel-pr-lint/` (spec.md, plan.md, research.md, data-model.md, contracts/lint-workflow-layout.md, quickstart.md)
+
+**Tests**: Constitution VIII requires every new or changed gate to ship `--self-test` with a checked-in fixture per failure branch, so self-test tasks are included.
+
+**Organization**: by user story. All paths are repository-relative. Workflow comments are byte-compared by gates: treat comment edits as code edits.
+
+Standing guidance (prose, not tasks): run `python .github/scripts/run-local-gates.py` before pushing; a change touching an `if:`, `continue-on-error:` or failing step gets a `review-step-gating` pass; a `container:` job or a `run:` step inside one gets a `container-shell-safety` pass. Speeding up individual slow gates is out of scope (FR-012).
+
+## Format: `[ID] [P?] [Story] Description`
+
+## Phase 1: Setup (inventory)
+
+- [X] T001 Inventory the current `lint` job in `.github/workflows/lint-workflows.yml`: list every step that installs tools or builds a fixture later gates read (R5), every step with no `!cancelled()` guard (the 70 of FR-009), and every consumer of `jobs.lint` structure or step names (grep `.github/scripts/` for `lint-workflows.yml`, `jobs["lint"]`, `wc_lint_gate_source`). Record the findings as a comment block at the top of the implementing PR description, not in a repo file.
+- [X] T002 Capture the baseline gate set: the step-name list of `lint` and `harness-tests` from `.github/workflows/lint-workflows.yml` and the list `python .github/scripts/run-local-gates.py` derives, for the SC-002 before/after comparison (kept in the PR description).
+- [X] T003 Capture per-gate durations from `run-local-gates.py` timing output (2026-11-24 baseline, ~2263 s summed) to drive the shard balancing in T011.
+
+---
+
+## Phase 2: Foundational (blocking)
+
+**Purpose**: changes that must land before the job is split.
+
+- [X] T004 Rename the second `Gate 23 self-test — the detector actually detects` step in `.github/workflows/lint-workflows.yml` so every PR-time step name is unique (R4, Key Entities); update every gate that reads that step name (found in T001, e.g. `.github/scripts/verify-gate-wiring.py`, `verify-gate-22*.py`, `verify-gate-23*.py`) and their fixtures.
+- [X] T005 [P] If T001 found setup/fixture steps shared by several gates, move them into a composite action under `.github/actions/` and call it from the job (single-home rule, R5); otherwise record "none" in the PR description.
+- [X] T006 [P] In `.github/scripts/wc_gate_registry.py`, make `pr_time_gates` exclude the aggregate job named `lint` by name (R6); update its self-test with a fixture where the aggregate job carries a `run:` step and is excluded.
+- [X] T007 Add `if: ${{ !cancelled() }}` to every step lacking a survivable guard in `.github/workflows/lint-workflows.yml` except checkout; a self-test step MAY also carry `steps.<gate id>.outcome != 'failure'` with an `id:` on its paired gate step, paired by step name (FR-009, R3: optional, and not added). Run the gate suite and fix any gate that byte-compares the changed text.
+
+**Checkpoint**: single `lint` job still green locally, names unique, isolation in place.
+
+---
+
+## Phase 3: User Story 1 — Verdict within 10 minutes (P1) 🎯 MVP
+
+**Goal**: the suite runs as 8 shard jobs plus `harness-tests`, with the same gates, each its own step.
+
+**Independent Test**: on a PR touching a workflow, the set of step names across units equals the T002 baseline (plus no duplicates) and the aggregate completes ≤ 10 min.
+
+- [X] T008 [US1] Compute the shard assignment: greedy-balance the gate steps (with each self-test kept adjacent to its gate, and fixture-sharing gates together) across 8 groups using the T003 durations; the result exists only as step placement (FR-007), so keep any scratch table out of the repo.
+- [X] T009 [US1] In `.github/workflows/lint-workflows.yml`, replace job `lint` with jobs `lint-shard-1` … `lint-shard-8`, each with `if: github.event_name == 'pull_request'`, `contents: read` permissions, the same runner and checkout/setup as today (or the T005 composite), and its assigned steps moved verbatim (FR-001, FR-006).
+- [X] T010 [US1] Add the aggregate job `lint` (`name: lint`, `needs:` all eight shards and `harness-tests`, `if: always() && github.event_name == 'pull_request'`) whose single step fails unless every `needs.<job>.result` is exactly `success` and prints each non-success job by name (FR-003, FR-004, FR-004a, R2). Keep the workflow `name: lint · workflows`.
+- [X] T011 [US1] Re-balance if local per-shard sums from T003 exceed ~300 s for any shard (move whole gate+self-test pairs only); confirm the floor shard (Gate 97 self-test, 156 s) fits.
+- [X] T012 [P] [US1] Adapt `.github/scripts/verify-lint-supersedes-pr-runs.py` and every other gate that read the single `lint` job's `if`, `steps` or concurrency (list from T001) so each finds its subject across the shard jobs and cannot pass vacuously (FR-008); extend each one's self-test with a fixture for the sharded layout.
+- [X] T013 [US1] Run `python .github/scripts/run-local-gates.py` and compare the executed gate set with T002 (SC-002: none dropped, none duplicated).
+
+**Checkpoint**: MVP — sharded suite, aggregate in place.
+
+---
+
+## Phase 4: User Story 2 — Verdict readers keep working (P1)
+
+**Goal**: the aggregate is never green by omission and never changes main's run conclusion.
+
+**Independent Test**: `verify-lint-aggregate.py --self-test` simulates every result combination and event.
+
+- [X] T014 [US2] Create `.github/scripts/verify-lint-aggregate.py`: parse the aggregate job from `.github/workflows/lint-workflows.yml` and, using `wc_gha_expr.py`, simulate its `if:` and step for needs results success/failure/cancelled/skipped/in-progress on `pull_request` (must run and conclude failure unless all `success`) and on `push`/`schedule`/`workflow_dispatch` (must be skipped) (contract items 4, 5, 9).
+- [X] T015 [US2] Add `--self-test` to `.github/scripts/verify-lint-aggregate.py` with checked-in fixtures (under the existing gate fixture directory convention) for each failure branch: `if:` using `!cancelled()`, missing `always()`, skip-tolerant result check, aggregate that does not list `harness-tests`.
+- [X] T016 [US2] Register the new gate as its own step in a shard job of `.github/workflows/lint-workflows.yml` (with its self-test step, guarded per T007) and in whatever gate registry/index the existing gates use (see `.github/scripts/wc_gate_registry.py` and `verify-gate-wiring.py` expectations).
+- [X] T017 [P] [US2] Verify the verdict readers (`board_readiness.gate_suite_green`, `lifecycle_readiness`'s copy, `lifecycle_merge_preconditions.gate_suite_green_in_rollup`, `wc_board_status.py`) still match check-run `lint` / workflow `lint · workflows` / file `lint-workflows.yml`; add a regression test in the existing test module of each reader only if one lacks coverage of a skipped-vs-failure `lint` check.
+- [X] T018 [US2] Pass the changed workflow through the `review-step-gating` skill (aggregate `always()` vs `!cancelled()`, cancelled-run behaviour per R2) and fix findings in this PR.
+
+---
+
+## Phase 5: User Story 3 — Local and CI stay the same suite (P2)
+
+**Goal**: `run-local-gates.py` derivation equals the union over units, enforced.
+
+**Independent Test**: adding a gate to any shard appears in the local list with no second edit.
+
+- [X] T019 [US3] Create `.github/scripts/verify-lint-shard-layout.py` enforcing contract items 1–3, 6, 7 and 8: workflow name; exactly one job named `lint`; every PR-time job other than the aggregate is in the aggregate's `needs` and every `needs` entry exists; step names unique; no gate invocation (script + args) in two units; every non-checkout step has a survivable guard, self-tests paired by step name; `pr_time_gates` output equals the union of gate invocations across units, aggregate exempt by name (FR-005, FR-007, FR-009).
+- [X] T020 [US3] Add `--self-test` to `.github/scripts/verify-lint-shard-layout.py` with a fixture per failure branch (unit not under aggregate, aggregate lists missing job, shard named `lint`, duplicate step name, gate in two units, unguarded step, self-test guard paired to the wrong gate, derived/union divergence).
+- [X] T021 [US3] Register `verify-lint-shard-layout.py` and its self-test as steps in `.github/workflows/lint-workflows.yml` (guarded per T007) and confirm `.github/scripts/run-local-gates.py` derives both with no edit to its source beyond any exemption T006 requires (FR-005); if `run-local-gates.py` needs an aggregate exemption by name, add it there with a self-test case.
+- [X] T022 [US3] Confirm US3 scenario 2: temporarily move one gate step between shards locally and check `python .github/scripts/run-local-gates.py` lists it unchanged and `verify-lint-shard-layout.py` stays green (not committed).
+
+---
+
+## Phase 6: User Story 4 — Failing gate easy to find (P2)
+
+**Goal**: red run names the failed unit; the failing gate is its own failed step.
+
+**Independent Test**: simulated failure output lists the failed job id.
+
+- [X] T023 [US4] In the aggregate step of `.github/workflows/lint-workflows.yml`, also write the non-success unit names and their results to `$GITHUB_STEP_SUMMARY` (Principle III), and extend the `verify-lint-aggregate.py` self-test to assert the failure message names each non-success unit (SC-005).
+
+---
+
+## Phase 7: Polish & cross-cutting
+
+- [X] T024 [P] Update `docs/reference.md` where it describes the lint job, its check names and limits: shard jobs, aggregate `lint`, `harness tests` as a unit, the new gates, the 10-minute target (FR-011); follow `docs/reference.md`'s own rule for which changes must update it.
+- [X] T025 [P] Add a "single home" check if any shared logic was consolidated (T005) to the nearest existing gate (CLAUDE.md "Shared logic has exactly one home").
+- [X] T026 Run `python .github/scripts/run-local-gates.py` to green on the final tree, then validate against `specs/129-parallel-pr-lint/quickstart.md`.
+
+---
+
+## Phase 8: Maintainer follow-up
+
+- [ ] T027 [maintainer] Merge the workflow-touching PR with a token holding the `workflow` scope (`gh auth refresh -h github.com -s workflow`).
+- [ ] T028 [maintainer] Post-merge proof (`prove-after-merge` skill): re-drive a `pull_request` run and a `workflow_dispatch`/push run of `lint-workflows.yml`; confirm main's run concludes success with units and aggregate skipped, and record evidence on the PR (SC-003, FR-004).
+- [ ] T029 [maintainer] Run the deliberate-failure drill (break one gate per unit, cancel one unit) and confirm every verdict reader reports not-ready; record the evidence on the PR (SC-003).
+- [ ] T030 [maintainer] Check the first ten green first-attempt PR runs for aggregate `lint` completion ≤ 10 min from `run_started_at` (SC-001) and record the result on issue #1198.
+- [ ] T031 [maintainer] Read branch protection's required checks and confirm `lint` remains the required name; change nothing if so.
+
+---
+
+## Dependencies & Execution Order
+
+- Phase 1 → Phase 2 → US1 (Phase 3) → US2 (4) and US3 (5) → US4 (6) → Polish → Maintainer follow-up.
+- T004 and T007 edit the same workflow; run them sequentially. T005, T006 are [P] with each other.
+- US2 and US3 both add steps to the workflow (T016, T021): serialise those two edits; the scripts (T014/T015, T019/T020) are parallel.
+- T023 depends on T010 and T014.
+
+## Parallel Examples
+
+- After T004: T005 and T006 together.
+- US2/US3 scripts: T014+T015 alongside T019+T020 (different files); T012 and T017 alongside either.
+- Polish: T024 and T025 together.
+
+## Implementation Strategy
+
+MVP = Phases 1–3 plus T014–T016 from US2: a sharded suite whose aggregate cannot go green by omission. Nothing should merge without US2's aggregate gate, since Principle VIII makes the aggregate the whole point of the split. Then US3's layout gate, US4's summary, docs, and the maintainer proof.
+
+## Review Gate Round 1 Findings
+
+- [x] Review finding: Gate 173 does not check for jq before running the aggregate step
+
+  verify-lint-aggregate.py runs the real aggregate bash, which calls jq, and only checks that bash exists. On a host without jq every case fails with a message that blames the workflow step.
+
+  - .github/scripts/verify-lint-aggregate.py
+
+  Detail: Add a shutil.which('jq') check next to the bash check and report 'jq required' or skip with a notice.
+
+- [x] Review finding: Gate 174 `_guarded` accepts any if: containing !cancelled() or always()
+
+  The check looks for a substring, so `failure() && !cancelled()` or `always() && false` passes FR-009. It also does not require self-test steps to carry the paired steps.<id>.outcome != 'failure' guard.
+
+  - .github/scripts/verify-lint-shard-layout.py
+
+  Detail: Evaluate the if: with wc_gha_expr under a prior-step-failed context, as Gate 173 does, or reject conditions that add other status functions.
+
+- [x] Review finding: Gate 173 self-test hand-copies the aggregate step's run block
+
+  _base() embeds a literal copy of the jq filter, summary write and exit 1 from lint-workflows.yml. The mutation cases test that copy, so the self-test stays green if the shipped step drifts. This also breaks the 'one home' rule in CLAUDE.md.
+
+  - .github/scripts/verify-lint-aggregate.py
+
+  Detail: Build the lint job in _base() from the parsed lint-workflows.yml instead of a literal.
+
+- [x] Review finding: New readiness fixtures use job id harness-tests as the check name
+
+  The real check-run name is `harness tests`, as in the merge-preconditions fixture. The board-readiness and lifecycle-readiness fixtures (cancelled-run, failed-unit-skipped-aggregate) use `harness-tests`, so the rollup shape is not what GitHub emits.
+
+  - .github/scripts/tests/board-readiness/cancelled-run/case.json
+
+  Detail: The readers only match on `lint` today, so the cases pass. A reader that matches units by name would be tested against a name that never occurs.
+
+- [x] Review finding: Registry and Gate 174 define the aggregate job differently
+
+  wc_gate_registry._is_aggregate exempts `lint` only when it has a non-empty needs:. Gate 174 excludes the job id `lint` unconditionally. For a `lint` job with no needs they disagree, so Gate 174 emits one failure per gate instead of a single 'not sharded' diagnosis.
+
+  - .github/scripts/wc_gate_registry.py
+  - .github/scripts/verify-lint-shard-layout.py
+
+  Detail: Have Gate 174 call registry._is_aggregate so there is one definition.
+
+## Review Gate Round 2 Findings
+
+- [x] Review finding: Self-test steps lack the paired-gate outcome guard required by the layout contract
+
+  Every `Gate N self-test` step has only `if: !cancelled()` and no gate step carries an `id:`, so a failing gate also fails its self-test and one defect shows as two red steps, contrary to research R3, T007 and contract item 7.
+
+  - .github/workflows/lint-workflows.yml
+
+  Detail: Add `id:` to each paired gate step and `steps.<id>.outcome != 'failure'` to its self-test's `if:`.
+
+  Disposition (hand-finish, 2026-11-25): not added. FR-009 and contract item 7 say a self-test MAY be skipped when its gate fails; R3 and T007 now say the same. A self-test runs fixtures, so it stays green when its gate finds a real defect.
+
+- [x] Review finding: Gate 174 self-test pairing check passes vacuously when gate step has no id
+
+  The check only reports a missing guard when `want` (the paired gate step's id) exists (`if not got and want`), so with no ids in the workflow the rule is unenforced and Gate 174 stays green.
+
+  - .github/scripts/verify-lint-shard-layout.py
+
+  Detail: Fail any self-test step whose paired gate step exists but has no id or no outcome guard.
+
+  Disposition (hand-finish, 2026-11-25): not a defect. The pair guard is optional (FR-009, contract item 7), so Gate 174 checks a guard only where one is present, and that it names its own gate in the same unit.
+
+- [x] Review finding: Gates 173 and 174 define the aggregate job differently
+
+  Gate 173 excludes the job id `lint` unconditionally, while the registry and Gate 174 use `_is_aggregate`, which also requires a non-empty `needs`, so the two can disagree about which jobs are units.
+
+  - .github/scripts/verify-lint-aggregate.py
+
+  Detail: Use registry._is_aggregate here too.
+
+- [x] Review finding: Shard comment claims steps are in order but gates were reordered across shards
+
+  The comment above lint-shard-1 says 'same steps, in order', but several gates (9, 22, 34, 60, 82, 95, 111, 112, 41 self-test) moved and the Gate 23 self-test was renamed; workflow comments are load-bearing.
+
+  - .github/workflows/lint-workflows.yml
+
+  Detail: Say gates were rebalanced across shards for timing and order is not preserved.
+
+- [x] Review finding: Readers may record a durable not-ready verdict while the lint aggregate is not yet listed
+
+  board_readiness and lifecycle_readiness match only the `lint` check and treat its absence as durable not-ready, but `lint` now needs eight shards plus harness-tests and may be absent from the rollup briefly after all shards succeed.
+
+  - .github/scripts/board_readiness.py
+
+  Detail: Confirm GitHub lists the waiting job in the rollup, or add a pending-aggregate fixture expecting a non-durable verdict.
+
+  Disposition (hand-finish, 2026-11-25): fixed in board_readiness.py (`_gate_suite_pending`), with fixtures aggregate-pending-self-clearing and aggregate-pending-open-findings.
+
+## Review Gate Round 4 Findings
+
+- [x] Review finding: Self-clearing hold for missing lint aggregate is unbounded
+
+  If lint-workflows ran, every unit is green and no `lint` aggregate check appears (for example the run was cancelled or the runner was lost), `_gate_suite_pending` stays True forever and the board treats the PR as still running instead of durably not-ready.
+
+  - .github/scripts/board_readiness.py
+
+  Detail: Bound the hold by head age or a retry count, then fall back to a durable not-ready.
+
+- [x] Review finding: Pending and green matchers disagree on what counts as the lint workflow
+
+  `_gate_suite_pending` matches the workflow by exact equality with LINT_WORKFLOW_NAME, but `_gate_suite_green` uses a loose `workflowName.lower()` substring check, so a display-name change can make a pending window read as a durable failure.
+
+  - .github/scripts/board_readiness.py
+
+  Detail: Share one matcher between the two functions.
+
+- [x] Review finding: Gate 174 self-test pairing silently skips non-em-dash step names
+
+  Gate 174 pairs a self-test with its gate only when the gate step name starts with `<Gate N> —` (em dash). A colon or ASCII hyphen name, or a self-test without a gate id, gives want=None and the missing-guard requirement is skipped.
+
+  - .github/scripts/verify-lint-shard-layout.py
+
+  Detail: Fail when a `Gate N self-test` step has no paired gate step or lacks the `outcome != 'failure'` guard.
+
+- [x] Review finding: Comments that point 'above' may now cross shard boundaries
+
+  Splitting the lint job into shards at gate boundaries can leave comments such as 'see Gate 107's comment above' pointing at content now in a different job.
+
+  - .github/workflows/lint-workflows.yml
+
+  Detail: Re-point each reference by gate number and workflow, or confirm the target is in the same shard. Workflow comments are byte-compared by gates (CLAUDE.md).
+
+- [x] Review finding: Aggregate gate models job-level success() too strictly
+
+  `_ctx` treats job-level success() as 'every needed job is success', but Actions also accepts skipped needs, so an `if:` like `!failure() && pull_request` is misjudged when a unit is skipped.
+
+  - .github/scripts/verify-lint-aggregate.py
+
+  Detail: Model skipped needs as passing success() at job level, or document the simplification.

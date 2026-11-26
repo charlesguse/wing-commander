@@ -1,0 +1,50 @@
+{
+  "snapshot": {
+    "headRefOid": "adad902",
+    "statusCheckRollup": [
+      {
+        "name": "lint",
+        "workflowName": "lint · workflows",
+        "detailsUrl": "https://github.com/o/r/actions/runs/200/job/1",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-25T10:00:00Z"
+      },
+      {
+        "name": "pr-conversation / classify-and-announce",
+        "workflowName": "Wing Commander · 9 pr conversation",
+        "detailsUrl": "https://github.com/o/r/actions/runs/201/job/11",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-25T10:00:10Z",
+        "completedAt": "2026-11-25T10:03:00Z"
+      },
+      {
+        "name": "pr-conversation / classify-and-announce",
+        "workflowName": "Wing Commander · 9 pr conversation",
+        "detailsUrl": "https://github.com/o/r/actions/runs/202/job/21",
+        "status": "COMPLETED",
+        "conclusion": "CANCELLED",
+        "startedAt": "0001-01-01T00:00:00Z",
+        "completedAt": "2026-11-25T10:00:20Z"
+      },
+      {
+        "name": "pr-conversation / classify-and-announce",
+        "workflowName": "Wing Commander · 9 pr conversation",
+        "detailsUrl": "https://github.com/o/r/actions/runs/203/job/31",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-25T10:03:05Z",
+        "completedAt": "2026-11-25T10:05:00Z"
+      }
+    ]
+  },
+  "open_in_scope_findings": 0,
+  "backstop_holds": true,
+  "kill_switch_paused": false,
+  "expected": {
+    "ready": false,
+    "unmet_class": "self-clearing",
+    "reason_contains": "a check was cancelled on head_sha adad902"
+  }
+}

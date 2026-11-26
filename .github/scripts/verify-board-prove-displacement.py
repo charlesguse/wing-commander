@@ -115,6 +115,24 @@ def run():
         else:
             print("[ok] {0}: find_undetected_merges() == {1!r}".format(name, got))
 
+    # A tick firing before the merge's own pull_request run exists: a merge
+    # inside the grace window is deferred; the same merge past it is flagged.
+    from datetime import datetime, timezone
+    fresh = [{"issue": 7, "pr": 701, "merged_at": "2026-01-01T00:00:00Z"}]
+    for name, secs, expected in (
+            ("merge inside the grace window deferred", 30, []),
+            ("merge past the grace window flagged", 600,
+             [{"issue": 7, "merged_pr": 701, "recorded_reason": "prove run displaced"}])):
+        now = datetime.fromtimestamp(
+            datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() + secs, timezone.utc)
+        got = find_undetected_merges(fresh, {7: []}, BOT_LOGIN, (), now=now)
+        if got != expected:
+            failures += 1
+            print("::error::verify-board-prove-displacement: {0}: expected "
+                  "{1!r}, got {2!r}.".format(name, expected, got))
+        else:
+            print("[ok] {0}: find_undetected_merges() == {1!r}".format(name, got))
+
     print("verify-board-prove-displacement: {0} failure(s).".format(failures))
     return 1 if failures else 0
 

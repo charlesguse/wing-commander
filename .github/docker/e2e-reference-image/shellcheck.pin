@@ -1,0 +1,23 @@
+# The one home of the shellcheck pin (#1204). Two readers, no copies:
+#   - Gate 48 (.github/scripts/wc_actionlint.py, ensure_shellcheck) downloads
+#     this version for the host it runs on and checks the archive's sha256;
+#   - the e2e reference image (Dockerfile, same directory) COPYs this file and
+#     installs the same version, sha256-checked, for the image's architecture,
+#     so the implement agent's own shellcheck agrees with the gate's.
+# It lives in the image's build context because docker build can read nothing
+# outside it. A bump changes this file only: the version and every hash
+# together. Gate 62 fails if the built image's shellcheck reports any other
+# version, or if a version or hash from here is written anywhere else.
+#
+# Where the hashes came from: shellcheck publishes no checksum file, so each
+# 0.10.0 asset was downloaded once from the release page on 2026-09-12 and
+# hashed (sha256); a mismatch on a later download means the asset changed
+# after that date. Keys are <os>.<arch> as wc_actionlint.host() spells them.
+# shellcheck ships one Windows archive (x86-64); wc_actionlint uses it on
+# arm64 too.
+version=0.10.0
+sha256.linux.amd64=6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
+sha256.linux.arm64=324a7e89de8fa2aed0d0c28f3dab59cf84c6d74264022c00c22af665ed1a09bb
+sha256.darwin.amd64=ef27684f23279d112d8ad84e0823642e43f838993bbb8c0963db9b58a90464c2
+sha256.darwin.arm64=bbd2f14826328eee7679da7221f2bc3afb011f6a928b848c80c321f6046ddf81
+sha256.windows.amd64=eb6cd53a54ea97a56540e9d296ce7e2fa68715aa507ff23574646c1e12b2e143

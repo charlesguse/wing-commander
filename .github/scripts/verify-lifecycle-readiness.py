@@ -22,6 +22,7 @@ not vacuously, if any fixture file is missing.
     python3 .github/scripts/verify-lifecycle-readiness.py
     python3 .github/scripts/verify-lifecycle-readiness.py --self-test
 """
+import ast
 import glob
 import json
 import os
@@ -55,10 +56,108 @@ def context_pin_problems(workflow_text):
             for c in found if c != OWN_STATUS_CONTEXT]
 
 
+# Code review of #1233: the workflow reads lifecycle_readiness's and
+# lifecycle_merge_preconditions' `pending`, so a lint aggregate that has
+# not reported yet is never posted as a stand-down.
+_STAND_DOWN_IF = "steps.decide.outputs.ready == 'false'"
+_PENDING_GUARD = "steps.decide.outputs.pending != 'true'"
+_PENDING_READS = (
+    ("select's prefilter reads `.pending`", "jq -r '.pending')\""),
+    ("readiness exposes `pending`", 'echo "pending=$pending" >> "$GITHUB_OUTPUT"'),
+    ("the merge announcement reads the preconditions' `pending`",
+     "PENDING: ${{ steps.preconditions.outputs.pending }}"),
+)
+
+
+def pending_wiring_problems(workflow_text):
+    """Every step that posts readiness's not-ready verdict skips a pending
+    one, and each caller reads `pending` at all."""
+    problems = ["a step gated on `{0}` lacks `{1}`: a pending lint aggregate "
+                "would be posted as a stand-down".format(_STAND_DOWN_IF, _PENDING_GUARD)
+                for line in workflow_text.splitlines()
+                if line.strip().startswith("if:") and _STAND_DOWN_IF in line
+                and _PENDING_GUARD not in line]
+    if not any(_STAND_DOWN_IF in line for line in workflow_text.splitlines()):
+        problems.append("no step is gated on `{0}`".format(_STAND_DOWN_IF))
+    problems += ["lifecycle-review-gate.yml: {0} is missing".format(what)
+                 for what, text in _PENDING_READS if text not in workflow_text]
+    return problems
+
+
+LIFECYCLE_READINESS = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "lifecycle_readiness.py")
+# The checks rules have one home, board_readiness.py (#889); a pasted copy
+# brings these literals back (CLAUDE.md "Shared logic has exactly one home").
+# Read from the module's syntax tree, so quote style or an `in` instead of
+# `==` cannot hide one (code review of #1226, pass 3).
+COPIED_RULE_LITERALS = ("SUCCESS", "NEUTRAL", "SKIPPED", "lint")
+# Each wrapper's body is its docstring and one `return board_readiness.<fn>(...)`.
+DELEGATES = {"_checks_green": "checks_green", "_gate_suite_green": "gate_suite_green",
+             "_gate_suite_pending": "gate_suite_pending"}
+
+
+def _docstring_nodes(tree):
+    nodes = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and isinstance(
+                    getattr(body[0], "value", None), ast.Constant) and isinstance(
+                    body[0].value.value, str):
+                nodes.add(id(body[0].value))
+    return nodes
+
+
+def _delegates_only(func, target):
+    body = list(func.body)
+    if body and isinstance(body[0], ast.Expr) and isinstance(
+            getattr(body[0], "value", None), ast.Constant):
+        body = body[1:]
+    if len(body) != 1 or not isinstance(body[0], ast.Return):
+        return False
+    call = body[0].value
+    return (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+            and call.func.attr == target and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "board_readiness")
+
+
+def single_home_problems(source):
+    """lifecycle_readiness.py calls board_readiness.py's checks rules
+    rather than re-typing them (code review of #1226, passes 1 and 3)."""
+    tree = ast.parse(source)
+    docstrings = _docstring_nodes(tree)
+    problems = ["lifecycle_readiness.py contains {0!r} (line {1}), a copy of a "
+                "board_readiness.py checks rule".format(node.value, node.lineno)
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                and id(node) not in docstrings and node.value in COPIED_RULE_LITERALS]
+    funcs = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    for name, target in sorted(DELEGATES.items()):
+        if name not in funcs or not _delegates_only(funcs[name], target):
+            problems.append("lifecycle_readiness.py's {0} is not just `return "
+                            "board_readiness.{1}(...)`".format(name, target))
+    return problems
+
+
 EXPECTED_CASES = {
     "stale-check-summary", "no-checks", "not-mergeable",
     "already-reviewed-at-this-sha", "kill-switch-set", "all-clear",
     "own-status-error-ignored", "own-status-only",
+    # specs/129-parallel-pr-lint: a cancelled run, and a failed shard under
+    # a skipped aggregate, are both not-ready (see verify-board-readiness.py).
+    "cancelled-run", "failed-unit-skipped-aggregate",
+    # #889 (found by the code review of #1196): only each check's newest
+    # result counts, for select_prefilter as for the full decision.
+    "cancelled-superseded-ready", "cancelled-newest-not-ready",
+    "cancelled-by-reopened-run-ready",
+    # Code review of #1233: every unit green and no `lint` entry yet is
+    # pending (self-clearing) only when it is the sole unmet condition and
+    # inside board_readiness's hold bound.
+    "aggregate-pending", "aggregate-pending-not-mergeable",
+    "aggregate-pending-expired",
+    # Code review of #1233: one matcher (board_readiness.is_gate_suite_workflow)
+    # decides which entry is the gate suite; a name variant is not it.
+    "lint-workflow-name-variant",
 }
 
 
@@ -96,11 +195,12 @@ def run():
         spec = _load(case_path)
         got = evaluate_from_snapshot(
             spec["snapshot"], spec.get("review_gate"),
-            spec["kill_switch_paused"])
+            spec["kill_switch_paused"], spec.get("now"))
         expected = spec["expected"]
 
         ok = (got["ready"] == expected["ready"]
-              and got.get("unmet_reason") == expected.get("unmet_reason"))
+              and got.get("unmet_reason") == expected.get("unmet_reason")
+              and got.get("pending") == expected.get("pending", False))
         if not ok:
             failures += 1
             print("::error::verify-lifecycle-readiness: {0}: expected "
@@ -115,10 +215,13 @@ def run():
     for case in sorted(EXPECTED_CASES):
         spec = _load(os.path.join(FIXTURES_DIR, case, "case.json"))
         full = evaluate_from_snapshot(spec["snapshot"], spec.get("review_gate"),
-                                      spec["kill_switch_paused"])
+                                      spec["kill_switch_paused"], spec.get("now"))
         want = full["unmet_reason"] if full["unmet_reason"] in SELECT_CONDITIONS else None
-        got = select_prefilter(spec["snapshot"])
-        if got != {"ready": want is None, "unmet_reason": want}:
+        # Every fixture's not-ready conditions beyond SELECT_CONDITIONS
+        # hold, so select's `pending` agrees with the full decision's.
+        got = select_prefilter(spec["snapshot"], spec.get("now"))
+        if got != {"ready": want is None, "unmet_reason": want,
+                   "pending": full["pending"]}:
             failures += 1
             print("::error::verify-lifecycle-readiness: {0}: select_prefilter "
                   "returned {1!r}, expected unmet_reason {2!r}.".format(case, got, want))
@@ -126,13 +229,25 @@ def run():
             print("[ok] {0}: select_prefilter unmet_reason={1!r}".format(case, want))
 
     with open(WORKFLOW, encoding="utf-8") as fh:
-        problems = context_pin_problems(fh.read())
+        workflow_text = fh.read()
+    for problem in pending_wiring_problems(workflow_text):
+        failures += 1
+        print("::error::verify-lifecycle-readiness: {0}".format(problem))
+    problems = context_pin_problems(workflow_text)
     for problem in problems:
         failures += 1
         print("::error::verify-lifecycle-readiness: {0}".format(problem))
     if not problems:
         print("[ok] every status write uses context {0!r}".format(
             OWN_STATUS_CONTEXT))
+
+    with open(LIFECYCLE_READINESS, encoding="utf-8") as fh:
+        problems = single_home_problems(fh.read())
+    for problem in problems:
+        failures += 1
+        print("::error::verify-lifecycle-readiness: {0}".format(problem))
+    if not problems:
+        print("[ok] lifecycle_readiness.py calls board_readiness.py's checks rules")
 
     print("verify-lifecycle-readiness: {0} failure(s).".format(failures))
     return 1 if failures else 0
@@ -189,6 +304,43 @@ def self_test():
           len(context_pin_problems(good + good.replace(
               OWN_STATUS_CONTEXT, "lifecycle-review")))== 1)
     check("context-pin-no-write-caught", len(context_pin_problems("")) == 1)
+
+    # The pending wiring: the real workflow is clean, and a post step that
+    # lost its pending guard, or a caller that stopped reading `pending`,
+    # is caught (code review of #1233).
+    with open(WORKFLOW, encoding="utf-8") as fh:
+        wf = fh.read()
+    check("pending-wiring-clean", pending_wiring_problems(wf) == [],
+          repr(pending_wiring_problems(wf)))
+    check("pending-wiring-unguarded-post-caught",
+          len(pending_wiring_problems(wf.replace(" && " + _PENDING_GUARD, ""))) >= 2,
+          repr(pending_wiring_problems(wf.replace(" && " + _PENDING_GUARD, ""))))
+    for what, text in _PENDING_READS:
+        check("pending-wiring-caught: " + what,
+              len(pending_wiring_problems(wf.replace(text, ""))) >= 1)
+
+    # The single-home check: the real module is clean, and the copy this
+    # module carried before #889 is caught.
+    with open(LIFECYCLE_READINESS, encoding="utf-8") as fh:
+        real = fh.read()
+    check("single-home-clean", single_home_problems(real) == [],
+          repr(single_home_problems(real)))
+    pasted = real.replace(
+        "board_readiness.checks_green(", "_old_checks_green(").replace(
+        "return board_readiness.gate_suite_green(rollup)",
+        'return any(e.get("name") == "lint" and (e.get("conclusion") or "").upper() '
+        'in ("SUCCESS", "NEUTRAL", "SKIPPED") for e in rollup)')
+    check("single-home-copy-caught", len(single_home_problems(pasted)) >= 4,
+          repr(single_home_problems(pasted)))
+    # A copy in single quotes, beside the delegating calls, is caught too.
+    beside = real.replace(
+        "    return board_readiness.gate_suite_green(rollup)",
+        "    for e in rollup:\n"
+        "        if e.get('name') in ('lint',) and e.get('conclusion') in ('SUCCESS',):\n"
+        "            return True\n"
+        "    return board_readiness.gate_suite_green(rollup)")
+    check("single-home-single-quoted-copy-caught", len(single_home_problems(beside)) >= 3,
+          repr(single_home_problems(beside)))
 
     print("{0} failure(s).".format(failures))
     return 1 if failures else 0

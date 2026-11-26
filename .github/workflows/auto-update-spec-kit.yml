@@ -1653,6 +1653,17 @@ jobs:
           # auto-update:failed and comments the failure on it, pointing the
           # maintainer at this step's own `::error::` line, exactly as it does
           # for the two failures above.
+          #
+          # The CLI's own version stamps (.specify/integration.json, each
+          # manifest's `version` and `installed_at`) DO count, deliberately.
+          # Upstream's `integration upgrade` writes them only after every
+          # file is installed (a failed install is journaled back and exits
+          # non-zero, failing the step above), so a diff of stamps alone with
+          # exit 0 means the candidate's artifacts are byte-identical to the
+          # pin's: a CLI-only release, which is a clean bump. v1.2.3 (#1089)
+          # and v1.3.2 (#1124) were both exactly that. Excluding the stamps
+          # (proposed by the code review of #983) refuses every such release,
+          # and the still-settled tracking issue re-runs and re-fails it daily.
           speckit_changed="$(git status --porcelain -- \
             '.specify' ':(glob).claude/skills/speckit-*/**' \
             ':(exclude).specify/init-options.json')"
@@ -2567,12 +2578,18 @@ jobs:
           fi
 
           # T007: setup-tasks.sh --json — no silent-empty path of its own; a
-          # missing tasks-template.md makes it exit non-zero directly, which
-          # the non-zero-exit branch above already fails on.
+          # missing tasks-template.md makes it exit non-zero directly, so the
+          # refusal lands in this non-zero-exit branch. Still a missing
+          # artifact, so it carries the FR-008 hint as setup-plan.sh's
+          # refusal above does; the absent template is what tells it apart
+          # from an ordinary crash, which does not (FR-009).
           if [ "$pass" = "true" ]; then
             st_out="$(cd "$WORKTREE" && SPECIFY_FEATURE_DIRECTORY="$FEATURE_DIR" bash .specify/scripts/bash/setup-tasks.sh --json 2>&1)" || {
               pass=false
               detail="setup-tasks.sh --json exited non-zero: $(printf '%s' "$st_out" | tail -c 500)"
+              if [ ! -s "$WORKTREE/.specify/templates/tasks-template.md" ]; then
+                detail="$detail -- the candidate ships no tasks-template.md. $reorg_hint"
+              fi
             }
           fi
           if [ "$pass" = "true" ]; then
@@ -3463,13 +3480,19 @@ jobs:
 
   # trigger == comment-reply entry point: resumes an ambiguous-options
   # question from a verified maintainer's reply.
-  # T024 (US4, constitution V): commenter verification is the same
-  # trigger-side actor gate wing-commander-2-clarify.yml uses — a maintainer
-  # (OWNER/MEMBER/COLLABORATOR) or the lifecycle issue's own author. Any
-  # other commenter fails this job-level `if:`, so the job is skipped
-  # entirely: no comment, no error surfaced, silently ignored (never react
-  # to an untrusted commenter). evaluate-path's `needs.comment-reply` gate
-  # then sees a skipped (non-success) result and does not re-enter.
+  # T024 (US4, constitution V): commenter verification is a maintainer
+  # (OWNER/MEMBER/COLLABORATOR) only. Unlike wing-commander-2-clarify.yml,
+  # the issue's own author is NOT admitted: a resumed reply re-enters
+  # prepare/verify/act for the candidate in the issue's marker, so whoever
+  # can resume can pick the upstream tag a bump PR proposes (owner
+  # decision 2026-11-25, #890). The commenter-id and issue-author-id inputs
+  # are still accepted and no longer consulted. Any other commenter fails
+  # this job-level `if:`, so the job is skipped entirely: no comment, no
+  # error surfaced, silently ignored (never react to an untrusted
+  # commenter). evaluate-path's `needs.comment-reply` gate then sees a
+  # skipped (non-success) result and does not re-enter. The guard step
+  # below adds the other half: the issue must be the App's own tracking
+  # issue, and its candidate must be newer than the pin.
   comment-reply:
     # if: tolerates a skipped image check without widening to run merely
     # because the workflow was not cancelled (#224) -- see clarify.yml.
@@ -3478,7 +3501,7 @@ jobs:
       !cancelled() &&
       needs.verify-image-prerequisites.result != 'failure' &&
       inputs.trigger == 'comment-reply' &&
-      (contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), inputs.commenter-association) || inputs.commenter-id == inputs.issue-author-id)
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), inputs.commenter-association)
     runs-on: ${{ startsWith(inputs.runner, '[') && fromJSON(inputs.runner) || inputs.runner }}
     container:
       image: ${{ inputs.container-image }}
@@ -3546,21 +3569,49 @@ jobs:
           app-id: ${{ secrets.speckit-app-id }}
           private-key: ${{ secrets.speckit-app-private-key }}
 
-      # Self-recognition guard (T005) + question-state guard (T025): the
-      # issue must carry the settle-tracking marker (never assume any other
-      # commented-on issue belongs to this feature) AND that marker must
-      # carry the awaiting-decision=true sub-marker set by evaluate-path's
-      # ambiguous-options branch (T023) — a reply on an issue that isn't
-      # actually holding an open question is a no-op.
+      # Tracking-issue guard + self-recognition guard (T005) +
+      # question-state guard (T025) + candidate guard. The issue must be
+      # the App's own tracking issue: authored by this App and carrying
+      # TRACKING_LABEL. The body marker alone is not enough, because anyone
+      # can open an issue and paste a marker naming any candidate (owner
+      # decision 2026-11-25, #890). It must carry the settle-tracking marker
+      # (never assume any other commented-on issue belongs to this feature)
+      # AND that marker must carry the awaiting-decision=true sub-marker set
+      # by evaluate-path's ambiguous-options branch (T023) — a reply on an
+      # issue that isn't actually holding an open question is a no-op.
+      # Finally the marker's candidate must be newer than the version pinned
+      # in this checkout (the comparison detect makes). One that is not is
+      # refused with a comment on the issue (refused=true), never resumed:
+      # a resume must never propose a downgrade or a same-version bump.
       - name: Verify this issue carries the marker and awaits a decision
         id: guard
         shell: bash
         env:
           GH_TOKEN: ${{ steps.ctx.outputs.token }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
+          BOT_SLUG: ${{ steps.ctx.outputs.bot-slug }}
+          # Must equal settle's TRACKING_LABEL, the label's one home in this
+          # file; t7_gating.py fails if the two differ.
+          TRACKING_LABEL: auto-update:tracking
         run: |
           set -uo pipefail
-          body="$(gh issue view "$ISSUE_NUMBER" --json body --jq .body 2>/dev/null || true)"
+          # REST, not `gh issue view`: its `user.login` is the App's
+          # `<slug>[bot]` form, which wing-commander-context's bot-slug
+          # output documents. A failed read is reset to empty (gh api prints
+          # the error body on stdout): an unreadable issue is "not the
+          # tracking issue", a no-op, never a failed job.
+          if ! issue_json="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}" 2>/dev/null)"; then
+            issue_json=""
+          fi
+          tracking="$(printf '%s' "$issue_json" | jq -r --arg bot "${BOT_SLUG}[bot]" --arg l "$TRACKING_LABEL" \
+            'if (.pull_request == null) and (.user.login == $bot) and ([.labels[]?.name] | index($l) != null)
+             then "true" else "false" end' 2>/dev/null || true)"
+          if [ -z "$BOT_SLUG" ] || [ "$tracking" != "true" ]; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "Issue #$ISSUE_NUMBER is not this App's \`$TRACKING_LABEL\` tracking issue (it must be authored by ${BOT_SLUG:-the App}[bot] and carry the label) — reply ignored, no-op." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          body="$(printf '%s' "$issue_json" | jq -r '.body // ""' 2>/dev/null || true)"
           # `grep -o` exits 1 when there is no match, `pipefail` makes that the
           # pipeline's status, and this step runs under the runner's `bash -e`
           # — so without `|| true` the no-match case aborts the step here. That
@@ -3584,10 +3635,44 @@ jobs:
             exit 0
           fi
           candidate="$(printf '%s' "$marker_line" | sed -n 's/.*candidate=\([0-9.]*\).*/\1/p')"
+          # The pin as the default branch carries it: this job's bootstrap
+          # checkout is the default branch's head on an issue_comment event,
+          # the same ref evaluate-path's entry step reads it from. An
+          # unreadable pin or candidate is refused, never resumed.
+          pinned="$(jq -r '.speckit_version // empty' .specify/init-options.json 2>/dev/null || true)"
+          newer=false
+          if [ -n "$candidate" ] && [ -n "$pinned" ] && [ "$candidate" != "$pinned" ]; then
+            higher="$(printf '%s\n%s\n' "$pinned" "$candidate" | sort -V | tail -1)"
+            [ "$higher" = "$candidate" ] && newer=true
+          fi
+          if [ "$newer" != "true" ]; then
+            {
+              echo "proceed=false"
+              echo "refused=true"
+              echo "candidate=$candidate"
+              echo "pinned=$pinned"
+            } >> "$GITHUB_OUTPUT"
+            echo "::warning::wing-commander auto-update-spec-kit comment-reply: refused to resume #$ISSUE_NUMBER — candidate '${candidate:-unknown}' is not newer than the pinned '${pinned:-unknown}'."
+            echo "Issue #$ISSUE_NUMBER: refused — candidate '${candidate:-unknown}' is not newer than the pinned version '${pinned:-unknown}'. Nothing resumed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           {
             echo "proceed=true"
             echo "candidate=$candidate"
           } >> "$GITHUB_OUTPUT"
+
+      # The guard's candidate refusal, said where the maintainer replied.
+      # refused is only ever set after the commenter and tracking-issue
+      # checks passed, so an untrusted commenter still gets no reaction.
+      - name: Refuse a candidate not newer than the pin
+        if: steps.guard.outputs.refused == 'true'
+        uses: ./.wing-commander-pipeline/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ inputs.issue-number }}
+          kind: info
+          summary: "Not resuming — candidate v${{ steps.guard.outputs.candidate }} is not newer than the pinned v${{ steps.guard.outputs.pinned }}"
+          body: "The updater only proposes an upgrade. This issue's candidate is the same as, or older than, the Spec Kit version pinned on the default branch (or one of the two could not be read), so the reply was not acted on and no PR will be opened. While this issue stays open awaiting a decision, the updater leaves it untouched and watches no newer release, so close it: the next scheduled run then opens a fresh tracking issue if upstream has a release newer than the pin."
 
       # T026: the triggering comment body and the posted question (issue body
       # + comments, which include the option labels) are UNTRUSTED — fetched

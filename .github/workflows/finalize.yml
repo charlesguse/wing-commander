@@ -351,7 +351,9 @@ jobs:
       pr-number: ${{ steps.verify-pr.outputs.pr-number }}
       # internal job-to-job wiring only, never a workflow_call output (research.md D3) -- see
       # specs/041-implement-stall-notice/research.md D3.
-      refusal-reason: ${{ steps.preflight.outputs.reason || steps.spec.outputs.reason || steps.meta.outputs.reason || steps.buildable-wait.outputs.reason }}
+      # The buildable refusal counts only once its hand-off wrote: a failed
+      # hand-off posted nothing, so the stalled job must still report it.
+      refusal-reason: ${{ steps.preflight.outputs.reason || steps.spec.outputs.reason || steps.meta.outputs.reason || (steps.buildable-handoff.outcome == 'success' && steps.buildable-wait.outputs.reason) || '' }}
       agent-ran: ${{ steps.agent-ran.outputs.ran }}
       agent-conclusion: ${{ steps.agent-ran.outputs.conclusion }}
       agent-started: ${{ steps.agent-ran.outputs.started }}
@@ -913,12 +915,12 @@ jobs:
       # any step runs pipeline code -- see clarify.yml.
       - name: Remove the agent-writable pipeline checkout (post-agent)
         id: pipeline-rm
-        if: always() && steps.summarize.outcome != 'skipped' && steps.project.outputs.project != ''
+        if: always() && steps.summarize.outcome != 'skipped'
         run: rm -rf -- .wing-commander-pipeline
 
       - name: Re-checkout pipeline repository (post-agent)
         id: pipeline-recheckout
-        if: always() && steps.summarize.outcome != 'skipped' && steps.project.outputs.project != ''
+        if: always() && steps.summarize.outcome != 'skipped'
         uses: actions/checkout@v5
         with:
           repository: ${{ inputs.pipeline-repo }}
@@ -1468,7 +1470,11 @@ jobs:
       # whole tail of this job once a final PR exists, so a re-dispatch never
       # gets a second chance at these labels. A label not written here is
       # never written. For the same reason neither the read nor the write
-      # below may fail the job: the stage's real work is already done.
+      # below may fail the job: the stage's real work is already done. A
+      # transient GraphQL error on the add once failed this step and skipped
+      # the metadata commit below (run 45649229707, #889), so the add falls
+      # back to the REST endpoint after a pause, and a write that still
+      # fails is a warning on the run, not a red job.
       - name: Flip stage label
         id: flip-label
         if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.skip != 'true' && env.WC_BUILDABLE_REFUSED != 'true'
@@ -1477,8 +1483,12 @@ jobs:
           ISSUE: ${{ inputs.issue-number }}
           PR: ${{ steps.verify-pr.outputs.pr-number }}
         run: |
-          gh label create "stage:review" --color FBCA04 --description "Final PR awaiting review" --force
-          gh issue edit "$ISSUE" --add-label "stage:review"
+          gh label create "stage:review" --color FBCA04 --description "Final PR awaiting review" --force || true
+          if ! gh issue edit "$ISSUE" --add-label "stage:review"; then
+            sleep 5
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$ISSUE/labels" -f "labels[]=stage:review" >/dev/null \
+              || echo "::warning::wing-commander finalize: could not add stage:review to #$ISSUE (GraphQL and REST both failed); add it by hand."
+          fi
           # Every other stage:* goes, not stage:implement alone — a finalize
           # hand-dispatched after a stalled implement finds stage:stalled on
           # the issue, which the mirror below would otherwise copy onto the
@@ -1509,7 +1519,7 @@ jobs:
       - name: Request re-review from the answered reviewer(s)
         id: re-review
         shell: bash
-        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.pr-state == 'open'
+        if: steps.lifecycle-gate.outputs.is-open == 'true' && steps.diff.outputs.pr-state == 'open' && env.WC_BUILDABLE_REFUSED != 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}

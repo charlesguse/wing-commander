@@ -94,7 +94,7 @@ import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from wc_published_stages import published_stages  # noqa: E402
+from wc_published_stages import REGISTRY_PATH, published_stages, unpublished_callables  # noqa: E402
 
 WORKFLOWS_DIR = ".github/workflows"
 WAIVERS_PATH = ".github/scripts/stage-invariant-waivers.json"
@@ -352,10 +352,16 @@ def load_workflows(root="."):
     return loaded
 
 
-def stage_workflows(loaded):
+def stage_workflows(loaded, root="."):
     """Relative paths of every workflow whose only trigger is workflow_call."""
+    # Registered unpublished callables (spec 127, unpublished-callables.json)
+    # are internal, not stages: wc_published_stages.py leaves them out, so
+    # this reader must too or the two would "disagree" about them. Read from
+    # the same root the workflows were loaded from.
+    skip = unpublished_callables(root)
     return sorted(path for path, _, parsed in loaded
                   if parsed is not None
+                  and os.path.basename(path) not in skip
                   and set(trigger_names(parsed)) == {"workflow_call"})
 
 
@@ -507,7 +513,7 @@ def evaluate(root="."):
                 "form it uses - in which case stages written that way have "
                 "silently left the scan.".format(path))
 
-    stages = stage_workflows(loaded)
+    stages = stage_workflows(loaded, root)
 
     # Second reader: the derivation release.yml's Gate 1a already uses. It
     # answers "is this published", this file answers "is workflow_call its
@@ -822,6 +828,14 @@ FIXTURES = [
      "bad.yml:7: `secrets: inherit`"),
     ("a wrapper may read github.event and vars",
      {"clean.yml": CLEAN, "wing-commander-1.yml": WRAPPER}, None, None),
+    # Round 6: the unpublished-callables registry is read from the root
+    # being checked, as the workflows are; read from the current directory
+    # instead, this root's internal callable reads as a stage the published
+    # reader leaves out, and the two readers "disagree".
+    ("an unpublished callable registered under the checked root is not a stage",
+     {"clean.yml": CLEAN, "internal-callable.yml": CLEAN,
+      REGISTRY_PATH: '{"internal-callable.yml": "self-test fixture: an internal callable"}'},
+     None, None),
     # #245 blind spot 2: this fixture used to be GREEN - a stage gaining a
     # second trigger silently left the scan, vars.SOMETHING and all.
     ("a workflow_call workflow with a second trigger is a named failure",
@@ -902,12 +916,14 @@ def _build(root, files, waivers):
     workflows = os.path.join(root, ".github", "workflows")
     os.makedirs(workflows)
     for name, source in files.items():
-        with open(os.path.join(workflows, name), "w", encoding="utf-8",
-                  newline="\n") as handle:
+        # A name with a directory is a path from the root (a registry file).
+        path = os.path.join(root, name) if "/" in name else os.path.join(workflows, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(source)
     if waivers is not None:
         scripts = os.path.join(root, ".github", "scripts")
-        os.makedirs(scripts)
+        os.makedirs(scripts, exist_ok=True)
         with open(os.path.join(scripts, "stage-invariant-waivers.json"), "w",
                   encoding="utf-8", newline="\n") as handle:
             json.dump({"waivers": waivers}, handle, indent=2)

@@ -215,19 +215,29 @@ def resolve_backlog(open_issues, bot_login, maintainer_logins=()):
     """FR-002: exactly one open `disposition:tracking` issue titled
     "Maintenance backlog…", authored by a maintainer or the App. Returns
     (issue_number, None) or (None, reason)."""
+    return resolve_tracking(open_issues, bot_login, "Maintenance backlog", maintainer_logins,
+                            noun="backlog")
+
+
+def resolve_tracking(open_issues, bot_login, title_prefix, maintainer_logins=(), noun=None):
+    """The one home of locating a `disposition:tracking` issue by its title
+    prefix: exactly one open such issue whose title starts with
+    `title_prefix`, authored by a maintainer or the App. Returns
+    (issue_number, None) or (None, reason). The Roadmap's "Proposed" list
+    (board_roadmap.py, #1209) is found the same way as the backlog."""
     allowed = set(maintainer_logins) | {bot_login}
     hits = []
     for issue in open_issues:
         labels = [l if isinstance(l, str) else l.get("name") for l in issue.get("labels", [])]
         if str(issue.get("state", "open")).lower() != "open" or "disposition:tracking" not in labels:
             continue
-        if not str(issue.get("title", "")).startswith("Maintenance backlog"):
+        if not str(issue.get("title", "")).startswith(title_prefix):
             continue
         hits.append(issue)
     if not hits:
-        return None, "no open Maintenance backlog issue"
+        return None, "no open {0} issue".format(title_prefix)
     if len(hits) > 1:
-        return None, "ambiguous: {0} Maintenance backlog candidates".format(len(hits))
+        return None, "ambiguous: {0} {1} candidates".format(len(hits), title_prefix)
     author = hits[0].get("author")
     if isinstance(author, dict):
         author = author.get("login")
@@ -235,7 +245,8 @@ def resolve_backlog(open_issues, bot_login, maintainer_logins=()):
     if assoc in ("OWNER", "MEMBER"):
         return hits[0]["number"], None
     if author not in allowed:
-        return None, "backlog issue author {0!r} is not a maintainer or the App".format(author)
+        return None, "{0} issue author {1!r} is not a maintainer or the App".format(
+            noun or title_prefix, author)
     return hits[0]["number"], None
 
 

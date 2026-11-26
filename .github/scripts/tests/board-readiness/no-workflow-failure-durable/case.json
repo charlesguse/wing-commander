@@ -1,0 +1,35 @@
+{
+  "snapshot": {
+    "headRefOid": "efef999",
+    "statusCheckRollup": [
+      {
+        "name": "lint",
+        "workflowName": "lint · workflows",
+        "detailsUrl": "https://github.com/o/r/actions/runs/100/job/1",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-25T02:00:00Z"
+      },
+      {
+        "name": "build",
+        "status": "COMPLETED",
+        "conclusion": "FAILURE",
+        "startedAt": "2026-11-25T02:00:00Z"
+      },
+      {
+        "name": "build",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-11-25T02:05:00Z"
+      }
+    ]
+  },
+  "open_in_scope_findings": 0,
+  "backstop_holds": true,
+  "kill_switch_paused": false,
+  "expected": {
+    "ready": false,
+    "reason_contains": "stale or failing",
+    "unmet_class": "durable"
+  }
+}

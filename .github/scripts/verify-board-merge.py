@@ -12,6 +12,11 @@ evaluator cannot look identical to a working one. The workflow half is
 structural: the `merge` job may call `gh pr merge` only pinned to the head SHA
 it evaluated, never with `--admin`, `--auto`, an approval, or a second merge
 method, only behind both switches, and without dispatching proof runs itself.
+Because that job merges, the documents unscoped_merge_claim_docs() lists may
+not bring back the retired whole-loop "never merges" sentences
+(UNSCOPED_MERGE_CLAIMS), the live contracts HANDOVER_CLAIM_DOCS lists may not
+say readiness hands every ready PR to a human (HANDOVER_CLAIMS), and the
+board-loop workflow contract's job list names the `merge` job.
 
 Fixtures live in .github/scripts/fixtures/board-merge/, named
 `<class>-<condition>[-variant].json` (a case where that condition is the
@@ -104,6 +109,24 @@ TRANSIENT_STDERRS = (
     # Pass 2 of review-until-clean on PR #1059: the API's own refusal while
     # mergeability is unknown (gh's pre-check saw no blocked state).
     "GraphQL: Pull Request is not mergeable (mergePullRequest)",
+    # #889 (found by the code review of #1059): a rate limit, a rejected
+    # token and a DNS or network failure are not GitHub refusing the PR,
+    # so none may write the permanent handed-over record.
+    "GraphQL: API rate limit exceeded for installation ID 12345. (mergePullRequest)",
+    "HTTP 403: You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+    "HTTP 429: Too Many Requests (https://api.github.com/graphql)",
+    "HTTP 401: Bad credentials (https://api.github.com/graphql)",
+    "error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com",
+    'Post "https://api.github.com/graphql": dial tcp: lookup api.github.com on 127.0.0.53:53: no such host',
+    'Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: connect: connection refused',
+    'Post "https://api.github.com/graphql": net/http: TLS handshake timeout',
+    'Post "https://api.github.com/graphql": unexpected EOF',
+)
+# A 403 that is no rate limit is a missing permission: GitHub refused this
+# token, and a retry with the same grant cannot clear it.
+NON_TRANSIENT_STDERRS = (
+    "GraphQL: Resource not accessible by integration (mergePullRequest)",
+    "HTTP 403: Resource not accessible by integration (https://api.github.com/graphql)",
 )
 
 
@@ -114,7 +137,14 @@ def check_transient_refusals():
     for err, got in bad:
         fail("transient stderr {0!r} classified as {1!r}, which is handed over".format(err, got))
     if not bad:
-        ok("head-moved, base-moved and 5xx merge failures are retried, not handed over")
+        ok("head-moved, base-moved, 5xx, rate-limit, auth and network merge failures are retried, "
+           "not handed over")
+    wrongly = [err for err in NON_TRANSIENT_STDERRS
+               if board_merge.classify_refusal(err) in getattr(board_merge, "RETRYABLE_REFUSAL_CLASSES", ())]
+    for err in wrongly:
+        fail("a missing permission {0!r} is classified retryable".format(err))
+    if not wrongly:
+        ok("a 403 that is no rate limit (missing permission) is not retried")
 
 
 # gh's own refusal before it calls the API (pkg/cmd/pr/merge blockedReason):
@@ -403,6 +433,230 @@ def check_structural_self_test():
            "a gh | grep -q pipe and a missing retry")
 
 
+STALE_READINESS_CLAIMS = ("Awaiting a human merge", "this loop never merges, approves, or enables auto-merge")
+
+
+def readiness_stale_claims(text):
+    """Each STALE_READINESS_CLAIMS phrase found in a non-comment line of the
+    readiness job (case-insensitive)."""
+    job = job_block(text.splitlines(), "readiness") or []
+    code = _run_blocks_text(job).lower()
+    return [claim for claim in STALE_READINESS_CLAIMS if claim.lower() in code]
+
+
+def check_readiness_stale_claims_self_test():
+    old = ("  readiness:\n    steps:\n      - run: |\n          body=\"$(printf 'decision: %s\\n\\n"
+           "Awaiting a human merge -- this loop never merges, approves, or enables auto-merge.' x)\"\n"
+           "  merge:\n")
+    if readiness_stale_claims(old) != list(STALE_READINESS_CLAIMS):
+        fail("self-test: the old readiness sentence is not caught: {0}".format(readiness_stale_claims(old)))
+    elif readiness_stale_claims(old.replace("          body", "          # body")):
+        fail("self-test: a commented-out readiness line is flagged")
+    else:
+        ok("self-test: the old readiness sentence is caught, a comment is not")
+
+
+# The prose half of the same claim (#889, found by the code review of #1227):
+# the `merge` job can merge, so these retired sentences, each of which said
+# the whole loop never merges, must not come back. Exact sentences, a
+# regression guard, not a paraphrase detector. Matched after comment markers,
+# quotes and line breaks are folded away, so a phrase wrapped across comment
+# or docstring lines is still found.
+UNSCOPED_MERGE_CLAIMS = (
+    "this loop never merges, approves, or enables auto-merge",
+    "the loop may report a pr ready, but it may never merge",
+    "the loop stops at ready to merge",
+    # select's resume note and the closing-step header comment (#889, found
+    # by the code review of #1237): with the switch on, the merge job may
+    # merge an awaiting-merge PR and posts its own announcement.
+    "is awaiting a human merge",
+    "the unmet condition, the human merge",
+)
+# Every board_*.py module (glob, so a new one is read without an edit here)
+# and board-loop.yml itself, besides the documents named below: a fixed list
+# of four missed board_eligibility.py's AWAITING_MERGE_STEP comment (found by
+# the code review of #1237).
+UNSCOPED_MERGE_CLAIM_DOCS = (
+    ".github/scripts/verify-board-readiness.py",
+    ".github/workflows/board-loop.yml",
+    ".github/workflows/lint-workflows.yml",
+    "specs/057-autonomous-board-loop/contracts/readiness-report.md",
+)
+UNSCOPED_MERGE_CLAIM_GLOB = ".github/scripts/board_*.py"
+
+
+def unscoped_merge_claim_docs():
+    modules = sorted(glob.glob(UNSCOPED_MERGE_CLAIM_GLOB))
+    return list(UNSCOPED_MERGE_CLAIM_DOCS) + modules
+
+
+def _fold_prose(text):
+    """Lowercased text with `#` comment markers, quote characters and every
+    run of whitespace folded to one space."""
+    text = re.sub(r"(?m)^\s*#+", " ", text.lower())
+    text = re.sub(r"[\"'`“”]", "", text)
+    return re.sub(r"\s+", " ", text)
+
+
+def unscoped_merge_claims(text):
+    folded = _fold_prose(text)
+    return [claim for claim in UNSCOPED_MERGE_CLAIMS if claim in folded]
+
+
+def check_unscoped_merge_claims_self_test():
+    wrapped = ("      # re-derived head-SHA evidence, and this loop never merges, approves,\n"
+               "      # or enables auto-merge -- these six fixtures\n")
+    contract = 'the\nloop stops at "ready to merge", so the item releases the board\n'
+    docstring = "The loop may report a PR ready, but it may never merge, approve, or enable\n"
+    scoped = ("The readiness job itself never merges, approves, or enables auto-merge;\n"
+              "# no board-loop job but `merge` merges, approves, or enables auto-merge\n")
+    select_note = ('                  note = "recorded pr {0} is awaiting a human merge ({1}) -- nothing to do '
+                   'this run".format(\n')
+    closing = ("# readiness report or the unmet condition, the human merge, and the proof\n"
+               "# run, per whichever step that job represents\n")
+    if unscoped_merge_claims(select_note) != [UNSCOPED_MERGE_CLAIMS[3]]:
+        fail("self-test: select's old 'awaiting a human merge' resume note is not caught")
+    elif unscoped_merge_claims(closing) != [UNSCOPED_MERGE_CLAIMS[4]]:
+        fail("self-test: the old closing-step comment's 'the human merge' is not caught")
+    elif unscoped_merge_claims(wrapped) != [UNSCOPED_MERGE_CLAIMS[0]]:
+        fail("self-test: a wrapped 'this loop never merges' comment is not caught")
+    elif unscoped_merge_claims(docstring) != [UNSCOPED_MERGE_CLAIMS[1]]:
+        fail("self-test: the old board_readiness docstring claim is not caught")
+    elif unscoped_merge_claims(contract) != [UNSCOPED_MERGE_CLAIMS[2]]:
+        fail("self-test: the old contract's 'stops at \"ready to merge\"' is not caught")
+    elif unscoped_merge_claims(scoped):
+        fail("self-test: a claim scoped to the readiness job is flagged")
+    else:
+        ok("self-test: unscoped 'never merges' prose is caught, a scoped claim is not")
+
+
+def check_unscoped_merge_claims():
+    docs = unscoped_merge_claim_docs()
+    for module in (".github/scripts/board_readiness.py", ".github/scripts/board_eligibility.py"):
+        if module not in docs:
+            fail("{0} matched no {1}; the unscoped-claim scan has lost its board modules".format(
+                module, UNSCOPED_MERGE_CLAIM_GLOB))
+    for path in docs:
+        if not os.path.isfile(path):
+            fail("{0} does not exist; run from the repository root".format(path))
+            continue
+        with open(path, encoding="utf-8") as fh:
+            found = unscoped_merge_claims(fh.read())
+        if found:
+            fail("{0} says the whole board loop never merges, though its `merge` job does with "
+                 "WING_COMMANDER_BOARD_AUTO_MERGE on; scope it to the readiness job: {1}".format(path, found))
+        else:
+            ok("{0} makes no unscoped 'never merges' claim".format(path))
+
+
+# The live contracts' half of the same scoping (#889, found by the code review
+# of #1237): with WING_COMMANDER_BOARD_AUTO_MERGE on, the `merge` job may merge
+# what readiness reported ready, so no live contract may say readiness hands
+# every such PR to a human, that the whole board loop never merges, or that
+# the no-merge invariant forbids merge calls in all of board-loop.yml. Exact
+# retired sentences, folded as UNSCOPED_MERGE_CLAIMS are.
+HANDOVER_CLAIMS = (
+    "handed the pr to a human",
+    "handed it to a human",
+    "the board loop never checks this because it never merges",
+    "scans board-loop.yml for merge calls that must not exist",
+)
+HANDOVER_CLAIM_DOCS = (
+    ".github/scripts/verify-constitution-merge-class-parity.py",
+    "specs/057-autonomous-board-loop/contracts/readiness-report.md",
+    "specs/061-marker-owned-in-flight/contracts/in-flight-detection.md",
+    "specs/061-marker-owned-in-flight/contracts/resume-recovery.md",
+    "specs/062-lifecycle-review-gate/contracts/readiness-and-merge.md",
+)
+BOARD_LOOP_CONTRACT = "specs/057-autonomous-board-loop/contracts/board-loop-workflow.md"
+MERGE_CONTRACT = "specs/115-board-loop-self-merge/contracts/board-merge.md"
+
+
+def handover_claims(text):
+    folded = _fold_prose(text)
+    return [claim for claim in HANDOVER_CLAIMS if claim in folded]
+
+
+def _jobs_section(text):
+    """The board-loop workflow contract's "## Jobs ..." sections, joined."""
+    parts = re.split(r"(?m)^## ", text)
+    return "\n".join(part for part in parts if part.startswith("Job"))
+
+
+def lists_merge_job(contract_text):
+    """True when a numbered entry in the contract's job list names the
+    `merge` job and points at its own contract."""
+    return re.search(r"(?m)^\d+\. `merge` \S+ " + re.escape(MERGE_CONTRACT),
+                     _jobs_section(contract_text)) is not None
+
+
+def check_handover_claims_self_test():
+    in_flight = ("    `awaiting-merge` (#532) never qualifies either, whatever its PR's\n"
+                 "    state: readiness already handed the PR to a human, and no job\n")
+    resume = "   ready and handed it to a human), and its pr either resolves OPEN or\n"
+    mergeable = ("   `mergeable` field is `MERGEABLE` (not `UNKNOWN`/`CONFLICTING`); the\n"
+                 "   board loop never checks this because it never merges, so no existing\n")
+    docstring = ("verify-board-readiness.py's `check_no_merge_invariant`, which scans\n"
+                 "board-loop.yml for merge calls that must not exist. Here the merge call is\n")
+    scoped = ("    state: the readiness job stopped at ready, and the `merge` job\n"
+              "   board loop's readiness job never checks this because it never merges\n"
+              "board-loop.yml outside its `merge` job (spec 115) for merge calls that must\n")
+    stale_jobs = ("## Jobs (schedule/dispatch path)\n\n"
+                  "6. `readiness` — contracts/readiness-report.md. Never merges (FR-068).\n\n"
+                  "## Job (resume path)\n\n7. `prove` — contracts/prove-step.md\n")
+    listed_jobs = stale_jobs.replace(
+        "\n\n## Job (resume path)",
+        "\n7. `merge` — {0}.\n\n## Job (resume path)".format(MERGE_CONTRACT))
+    elsewhere = stale_jobs + "\n## Notes\n\n7. `merge` — {0}.\n".format(MERGE_CONTRACT)
+    if handover_claims(in_flight) != [HANDOVER_CLAIMS[0]]:
+        fail("self-test: in-flight-detection.md's 'handed the PR to a human' is not caught")
+    elif handover_claims(resume) != [HANDOVER_CLAIMS[1]]:
+        fail("self-test: resume-recovery.md's 'handed it to a human' is not caught")
+    elif handover_claims(mergeable) != [HANDOVER_CLAIMS[2]]:
+        fail("self-test: readiness-and-merge.md's 'board loop never checks this' is not caught")
+    elif handover_claims(docstring) != [HANDOVER_CLAIMS[3]]:
+        fail("self-test: the parity gate's whole-file no-merge description is not caught")
+    elif handover_claims(scoped):
+        fail("self-test: a claim scoped to the readiness job or outside `merge` is flagged")
+    elif lists_merge_job(stale_jobs):
+        fail("self-test: a job list with no `merge` entry passes")
+    elif not lists_merge_job(listed_jobs):
+        fail("self-test: a job list naming `merge` and its contract is not recognised")
+    elif lists_merge_job(elsewhere):
+        fail("self-test: a `merge` entry outside the Jobs sections passes")
+    else:
+        ok("self-test: 'handed to a human' contract prose is caught, and the job list must name `merge`")
+
+
+def check_handover_claims():
+    for path in HANDOVER_CLAIM_DOCS + tuple(unscoped_merge_claim_docs()):
+        if not os.path.isfile(path):
+            fail("{0} does not exist; run from the repository root".format(path))
+            continue
+        with open(path, encoding="utf-8") as fh:
+            found = handover_claims(fh.read())
+        if found:
+            fail("{0} says readiness hands the PR to a human or the board loop never merges, "
+                 "though the `merge` job may merge it with WING_COMMANDER_BOARD_AUTO_MERGE on; "
+                 "say the readiness job stops at ready and the `merge` job or a human takes it: "
+                 "{1}".format(path, found))
+        else:
+            ok("{0} makes no 'handed to a human' claim".format(path))
+    if not os.path.isfile(BOARD_LOOP) or not os.path.isfile(BOARD_LOOP_CONTRACT):
+        fail("{0} or {1} does not exist; run from the repository root".format(
+            BOARD_LOOP, BOARD_LOOP_CONTRACT))
+        return
+    with open(BOARD_LOOP, encoding="utf-8") as fh:
+        has_merge_job = re.search(r"(?m)^  merge:\s*$", fh.read()) is not None
+    with open(BOARD_LOOP_CONTRACT, encoding="utf-8") as fh:
+        listed = lists_merge_job(fh.read())
+    if has_merge_job and not listed:
+        fail("{0} has a `merge` job but {1}'s job list has no `merge` entry pointing at {2}".format(
+            BOARD_LOOP, BOARD_LOOP_CONTRACT, MERGE_CONTRACT))
+    else:
+        ok("{0}'s job list names the `merge` job".format(BOARD_LOOP_CONTRACT))
+
+
 def check_board_loop():
     if not os.path.isfile(BOARD_LOOP):
         fail("{0} does not exist; run from the repository root".format(BOARD_LOOP))
@@ -456,10 +710,15 @@ def check_board_loop():
     else:
         ok("merge job: pinned --squash merge, no --admin/--auto/approve, both switches in its `if:`")
 
-    if "Awaiting a human merge" not in text:
-        fail("the switch-off readiness text 'Awaiting a human merge' is gone (SC-006)")
+    # Owner, 2026-11-25: the readiness report said "Awaiting a human merge --
+    # this loop never merges, approves, or enables auto-merge." while the
+    # merge job below merged fix-class PRs with the switch on. Neither half
+    # of that sentence may come back.
+    stale = readiness_stale_claims(text)
+    if stale:
+        fail("board-loop.yml's readiness report carries a stale merge claim again: {0}".format(stale))
     else:
-        ok("switch-off readiness text unchanged")
+        ok("readiness report makes no 'awaiting a human merge' / 'never merges' claim")
 
     issue_post = merge_code.find("gh issue comment \"$ISSUE_NUMBER\"")
     pr_post = merge_code.find("gh pr comment \"$PR_NUMBER\"")
@@ -607,9 +866,18 @@ def check_pass2_findings():
     if merged_by_us is None:
         fail("board_merge.py has no merged_by_us(): who merged the PR is decided in workflow shell")
     else:
-        cases = (({"mergedBy": {"login": "app/wing-commander"}, "headRefOid": "aaa1"}, "aaa1", True),
-                 ({"mergedBy": {"login": "Wing-Commander[bot]"}, "headRefOid": "aaa1"}, "aaa1", True),
-                 ({"mergedBy": {"login": "app/wing-commander"}, "headRefOid": "bbb2"}, "aaa1", False),
+        # gh renders a bot merger as {"is_bot": true, "login": "app/<slug>"}
+        # (mergedBy{login,...on User{id,name}}, the same shape as author).
+        # A user whose login equals the App slug is not the App (#889,
+        # found by the code review of #1084).
+        cases = (({"mergedBy": {"login": "app/wing-commander", "is_bot": True}, "headRefOid": "aaa1"}, "aaa1", True),
+                 ({"mergedBy": {"login": "Wing-Commander[bot]", "is_bot": True}, "headRefOid": "aaa1"},
+                  "aaa1", True),
+                 ({"mergedBy": {"login": "wing-commander", "is_bot": False, "id": "U_1"}, "headRefOid": "aaa1"},
+                  "aaa1", False),
+                 ({"mergedBy": {"login": "wing-commander"}, "headRefOid": "aaa1"}, "aaa1", False),
+                 ({"mergedBy": {"login": "app/wing-commander", "is_bot": True}, "headRefOid": "bbb2"},
+                  "aaa1", False),
                  ({"mergedBy": {"login": "someone"}, "headRefOid": "aaa1"}, "aaa1", False),
                  ({"mergedBy": None, "headRefOid": "aaa1"}, "aaa1", False),
                  ({"mergedBy": {"login": "app/wing-commander"}, "headRefOid": ""}, "", False))
@@ -828,14 +1096,17 @@ def check_merged_proof_disposition():
         ok("a merged bump's announcement says no proof re-drive follows")
     fix = dict(decision, **{"class": "fix"})
     for files, want in (([{"path": ".github/workflows/x.yml"}], "a proof re-drive follows the merge"),
-                        ([{"path": "docs/x.md"}], "no proof re-drive is needed")):
+                        ([{"path": "docs/x.md"}], "no proof re-drive is needed"),
+                        # #889: a rename away from a workflow is an Actions change.
+                        ([{"path": "docs/x.yml", "previousPath": ".github/workflows/x.yml"}],
+                         "a proof re-drive follows the merge")):
         line = next((l for l in board_merge.render_announcement(fix, "merged", dict(snap, files=files),
                                                                  merge_sha="mmm0").splitlines()
                      if l.startswith("Proof: ")), "")
         if want not in line:
-            fail("a merged fix PR touching {0} is announced {1!r}, want {2!r}".format(files[0]["path"], line, want))
+            fail("a merged fix PR touching {0} is announced {1!r}, want {2!r}".format(files[0], line, want))
         else:
-            ok("a merged fix PR touching {0} keeps the actions_only() disposition".format(files[0]["path"]))
+            ok("a merged fix PR touching {0} keeps the actions_only() disposition".format(files[0]))
 
 
 def main():
@@ -850,6 +1121,11 @@ def main():
     check_quoted_verification_record()
     check_structural_self_test()
     check_gh_blocked_reasons()
+    check_readiness_stale_claims_self_test()
+    check_unscoped_merge_claims_self_test()
+    check_unscoped_merge_claims()
+    check_handover_claims_self_test()
+    check_handover_claims()
     check_board_loop()
     check_readiness_head_binding()
     check_review_head_binding()

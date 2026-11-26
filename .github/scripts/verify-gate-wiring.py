@@ -90,6 +90,9 @@ COMPOSITE_ACTIONS_GLOB = os.path.join(".github", "actions", "*", "action.yml")
 SUBJECT_PATH_RE = re.compile(
     r"^(?:specs/[^\s*?\[\]]+/contracts/[^\s*?\[\]]+"
     r"|docs/[^\s*?\[\]]+\.md"
+    # Agent prompts a gate reads (verify-shared-review-wiring.py checks the
+    # shared reviewer's find and check prompts name no in-workspace tree).
+    r"|\.github/prompts/[^\s*?\[\]]+\.md"
     r"|\.specify/memory/[^\s*?\[\]]+\.md)$")
 
 # Two more shapes a gate reads as its subject, which _folded_join first
@@ -703,6 +706,44 @@ def _fixture_uncovered_script_call():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def _fixture_aggregate_job_exempt():
+    """specs/129-parallel-pr-lint T006: the `lint` aggregate (the job named
+    `lint` that `needs:` the units) is not a unit, so a gate in its steps is
+    absent from every PR-time reader; a single unsharded `lint` job with no
+    `needs:` is the suite itself and stays in."""
+    root = tempfile.mkdtemp(prefix="wc-gate-wiring-")
+    try:
+        for name in ("verify-a.py", "verify-b.py"):
+            _write(root, ".github/scripts/" + name, "print('ok')\n")
+        sharded = ("on: pull_request\njobs:\n"
+                   "  lint-shard-1:\n    runs-on: ubuntu-latest\n"
+                   "    steps:\n"
+                   "      - name: unit gate\n"
+                   "        run: python3 .github/scripts/verify-a.py\n"
+                   "  lint:\n    needs: [lint-shard-1]\n"
+                   "    runs-on: ubuntu-latest\n"
+                   "    steps:\n"
+                   "      - name: aggregate step\n"
+                   "        run: |\n"
+                   "          python3 .github/scripts/verify-b.py\n"
+                   "          python3 - <<'PYEOF'\n"
+                   "          print('x')\n"
+                   "          PYEOF\n")
+        _write(root, ".github/workflows/lint-workflows.yml", sharded)
+        got = (sorted(s for s, _ in pr_time_invocations(root)),
+               sorted(c[0] for c in pr_time_script_calls(root)),
+               [n for n, _ in pr_time_inline_steps(root)[0]])
+        want = ([".github/scripts/verify-a.py"], ["unit gate"], [])
+        _write(root, ".github/workflows/lint-workflows.yml",
+               sharded.replace("    needs: [lint-shard-1]\n", ""))
+        single = sorted(s for s, _ in pr_time_invocations(root))
+        ok = got == want and single == [".github/scripts/verify-a.py",
+                                        ".github/scripts/verify-b.py"]
+        return ok, f"sharded {got!r}, unsharded {single!r}"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def _fixture_uncovered_script_shapes():
     """Code review of #939: a script is seen through an interpreter, by
     direct exec, across a `\\` continuation, behind an interpreter flag
@@ -1204,6 +1245,9 @@ def _fixture_actions_self_checkout_dedup():
 FIXTURES = [
     ("a PR-time step running a script the local runner does not derive is "
      "reported (#825)", _fixture_uncovered_script_call),
+    ("the `lint` aggregate's steps are no PR-time gate, and a lone "
+     "`lint` job with no needs: still is (spec 129 T006)",
+     _fixture_aggregate_job_exempt),
     ("a script is seen however a step runs it, and an unresolvable script "
      "path fails (code review of #939)", _fixture_uncovered_script_shapes),
     ("a script path a step only mentions is not a call, and one reached "

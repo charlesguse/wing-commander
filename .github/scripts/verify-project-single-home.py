@@ -79,7 +79,9 @@ ALLOWED = {
     ".github/workflows/rebase.yml": {"root-spec-dir": 1},
     # Upgrades the adopter's root Spec Kit install, which is not a lifecycle
     # and has no project; a subfolder project's own upgrade is out of scope.
-    ".github/workflows/auto-update-spec-kit.yml": {"root-specify": 12, "root-skill-path": 1},
+    # The 13th root-specify hit is comment-reply's guard reading that same
+    # root pin to refuse a candidate not newer than it (#1267).
+    ".github/workflows/auto-update-spec-kit.yml": {"root-specify": 13, "root-skill-path": 1},
     # The kv helper's one home.
     ".github/actions/_shared/kv.sh": {"inline-kv-helper": 1},
 }

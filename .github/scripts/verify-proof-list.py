@@ -766,6 +766,30 @@ def check_trees():
                 problems.append("trees: the nightly end-to-end run does not reach a stage workflow: {0}".format(via))
             if pl.tree_reaching(sha, [".github/workflows/nothing.yml"]):
                 problems.append("trees: a path no workflow reaches was listed")
+            # #889: an unparseable stage array is fatal only on the current
+            # tree; a historical tree carrying one gets no nightly edges.
+            ar = os.path.join(wf, "auto-release.yml")
+            with open(ar, "w", encoding="utf-8") as fh:
+                fh.write("on: {workflow_dispatch: {}}\njobs: {}\n")
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-qm", "break")
+            broken = pl._run(["git", "rev-parse", "HEAD"], cwd=repo).strip()
+            try:
+                pl.tree_reaching(broken, [".github/workflows/implement.yml"])
+                problems.append("trees: an unparseable stage array on the current tree did not fail")
+            except ValueError:
+                pass
+            with open(ar, "w", encoding="utf-8") as fh:
+                fh.write(AUTO_RELEASE_TEXT)
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-qm", "restore")
+            try:
+                old = {w["path"]: w["reached_via"]
+                       for w in pl.tree_reaching(broken, [".github/workflows/implement.yml"])}
+                if old.get(".github/workflows/auto-release.yml") == "nightly-e2e":
+                    problems.append("trees: a historical tree with no parseable stage array gained a nightly edge")
+            except ValueError as exc:
+                problems.append("trees: a historical tree's unparseable stage array failed the build: {0}".format(exc))
         finally:
             os.chdir(previous)
     return problems

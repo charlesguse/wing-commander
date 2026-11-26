@@ -15,14 +15,17 @@ def evaluate(pr_number: int) -> LifecycleReadinessDecision:
 1. **Checks green on the fresh `head_sha`** — every entry in the fresh
    `statusCheckRollup` belongs to `head_sha`; an empty rollup is
    `checks_green: false` (a head with no checks is not green —
-   constitution VIII).
+   constitution VIII). Only each check's newest result counts: the rule is
+   `board_readiness.py`'s own, called rather than copied (#889).
 2. **Gate suite green on `head_sha`** — the `lint-workflows` entry within
    that same fresh rollup, not a second local re-run (matching
    `board_readiness.py`'s own precedent exactly).
 3. **Mergeable** (new relative to `board_readiness.py` — D5): GitHub's
    `mergeable` field is `MERGEABLE` (not `UNKNOWN`/`CONFLICTING`); the
-   board loop never checks this because it never merges, so no existing
-   code answers this question for a lifecycle PR yet.
+   board loop's readiness job never checks this because it never merges
+   (only board-loop.yml's `merge` job does, for fix and bump PRs, with
+   `WING_COMMANDER_BOARD_AUTO_MERGE` on -- spec 115), so no existing code
+   answers this question for a lifecycle PR yet.
 4. **Not yet reviewed at this head SHA** (new relative to
    `board_readiness.py` — D5): `review_gate.head_sha != head_sha`
    (FR-004/FR-005 — a pass never carries over to a head it was not derived

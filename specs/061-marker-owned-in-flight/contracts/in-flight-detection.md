@@ -39,8 +39,9 @@ def in_flight_candidate(
     on pull_request: closed) -- prioritizing a stuck prove marker would
     starve every other candidate forever for no possible benefit.
     `awaiting-merge` (#532) never qualifies either, whatever its PR's
-    state: readiness already handed the PR to a human, and no job
-    consumes that step. A `readiness` marker for which
+    state: the readiness job stopped at ready, and the `merge` job
+    (WING_COMMANDER_BOARD_AUTO_MERGE on, spec 115) or a human (switch
+    off) takes the PR from there; no job consumes that step. A `readiness` marker for which
     `_not_ready_holds()` is True is also excluded (specs/093-not-ready-board-release
     FR-014; contracts/not-ready-hold.md is the canonical statement, not
     restated here).

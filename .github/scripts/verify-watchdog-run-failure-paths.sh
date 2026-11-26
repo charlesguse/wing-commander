@@ -744,6 +744,48 @@ JSON
   mv "$work/diagnose.log.bak_sh" "$work/fixtures/diagnose.log"
   mv "$work/run.json.bak_sh" "$work/fixtures/run.json"
   mv "$work/jobs.json.bak_sh" "$work/fixtures/jobs.json"
+
+  # s31 (#889): the history runs' times in the shape the REST docs show
+  # (fractional seconds, a -07:00 offset). Bare fromdateiso8601 errors the
+  # whole history program, so the duration band was silently skipped; read
+  # through JQ_EPOCH, the band is computed and a 1-hour run breaches its
+  # ceiling.
+  cp "$work/fixtures/run.json" "$work/run.json.bak_ts2"
+  cp "$work/fixtures/history.json" "$work/history.json.bak_ts2"
+  cat > "$work/fixtures/run.json" <<'JSON'
+{"id": 9001, "conclusion": "success", "workflow_id": 777,
+ "run_started_at": "2026-08-25T01:00:00Z", "updated_at": "2026-08-25T02:00:00Z",
+ "display_title": "inspect Wing Commander · 1 intake run 8999 (failure)",
+ "html_url": "https://example.invalid/o/r/actions/runs/9001"}
+JSON
+  sed -i -E 's/"2026-08-(2[1-4])T01:([0-9]{2}):([0-9]{2})Z"/"2026-08-\1T03:\2:\3.250+02:00"/g' \
+    "$work/fixtures/history.json"
+  run_scenario "$script" '' false
+  if [ "$rc" = "1" ] && grep -q "duration band from 4 runs: median=120s" <<<"$out" \
+     && grep -qE "over the [0-9]+s ceiling" <<<"$out"; then
+    ok "$tag s31: offset/fractional history times still yield the duration band"
+  else
+    fail "$tag s31: expected the band from 4 runs and a ceiling breach, got rc=$rc: $(tail -3 <<<"$out")"
+  fi
+  mv "$work/run.json.bak_ts2" "$work/fixtures/run.json"
+  mv "$work/history.json.bak_ts2" "$work/fixtures/history.json"
+
+  # s32 (#889): a 400s diagnose job with no shadow step whose own
+  # started_at/completed_at carry fractional seconds and an offset is
+  # still a stalled diagnose; bare fromdateiso8601 left d_secs empty and
+  # the 300s ceiling silently unchecked.
+  cp "$work/fixtures/jobs.json" "$work/jobs.json.bak_ts3"
+  jq '.jobs |= map(if .name == "watchdog / diagnose"
+        then .started_at = "2026-08-24T18:00:40.500-07:00"
+           | .completed_at = "2026-08-24T18:07:20.900-07:00" else . end)' \
+    "$work/jobs.json.bak_ts3" > "$work/fixtures/jobs.json"
+  run_scenario "$script" '' false
+  if [ "$rc" = "1" ] && grep -q "the diagnose job ran 400s" <<<"$out"; then
+    ok "$tag s32: offset/fractional diagnose job times still meet the 300s ceiling"
+  else
+    fail "$tag s32: expected exit 1 naming the 400s stall, got rc=$rc: $(tail -3 <<<"$out")"
+  fi
+  mv "$work/jobs.json.bak_ts3" "$work/fixtures/jobs.json"
 }
 
 # ── The real script must pass every scenario ───────────────────────────────
@@ -862,12 +904,13 @@ sed 's/ or "")\.splitlines() \\$/ or "") \\/' \
 run_mutation "$mut" "m11" "s22" "a marker matched inside quoted log text is caught"
 
 # m12: the step times are read with bare fromdateiso8601 again, which
-# rejects an offset, so the failed-step pointer silently vanishes, and the
-# diagnose shadow's step durations and log cut (spec 110) are lost. s23,
-# s24 and s26 must catch it.
+# rejects an offset, so the failed-step pointer silently vanishes, the
+# diagnose shadow's step durations and log cut (spec 110) are lost, and the
+# history band and the diagnose ceiling (#889) are skipped. s23, s24, s26,
+# s31 and s32 must catch it.
 sed 's/        | if test("\[+-\]\[0-9\]{2}:\[0-9\]{2}\$")$/        | if false/' \
   "$SCRIPT" > "$mut"
-run_mutation "$mut" "m12" "s23 s24 s26" "an offset step time losing the failed-step pointer, the shadow's duration or the shadow's log cut is caught"
+run_mutation "$mut" "m12" "s23 s24 s26 s31 s32" "an offset time losing the failed-step pointer, the shadow's duration or log cut, the history band or the diagnose ceiling is caught"
 
 # m13 (spec 110): the diagnose duration ceiling counts the diagnose
 # shadow's span again, so a slow shadow files a stalled-diagnose defect
@@ -909,5 +952,29 @@ sed 's/    else \[(map(.\[0\]) | min), (map(.\[1\]) | max)\]$/    else [(map(.[0
   "$SCRIPT" > "$mut"
 run_mutation "$mut" "m18" "s30" "a span that drops the gaps between the shadow's steps is caught"
 
-echo "Gate 36: 30 scenario(s) x 18 runs + 17 mutation(s); $bad failure(s)."
+# m19 (#889): the history durations are read with bare fromdateiso8601
+# again, so offset or fractional run times skip the duration band. s31
+# must catch it.
+sed 's/       | ((.updated_at | epoch) - (.run_started_at | epoch))'"'"' \\$/       | ((.updated_at | fromdateiso8601) - (.run_started_at | fromdateiso8601))'"'"' \\/' \
+  "$SCRIPT" > "$mut"
+run_mutation "$mut" "m19" "s31" "a bare fromdateiso8601 skipping the history band is caught"
+
+# m20 (#889): the diagnose job's duration is read with bare
+# fromdateiso8601 again, so offset or fractional job times skip the 300s
+# ceiling. s32 must catch it.
+sed 's/    | ((.completed_at | epoch) - (.started_at | epoch))$/    | ((.completed_at | fromdateiso8601) - (.started_at | fromdateiso8601))/' \
+  "$SCRIPT" > "$mut"
+run_mutation "$mut" "m20" "s32" "a bare fromdateiso8601 skipping the diagnose ceiling is caught"
+
+# Single home (#889): JQ_EPOCH is the only place the script may call
+# fromdateiso8601; a new bare call reintroduces the silent skip above.
+bare="$(grep -n 'fromdateiso8601' "$SCRIPT" | grep -v '^[0-9]*:#' \
+  | grep -vE '^[0-9]+:( +then \.\[-6:\] as \$o \| \(\.\[:-6\] \+ "Z" \| fromdateiso8601\)| +else fromdateiso8601 end;'"'"')$')"
+if [ -z "$bare" ]; then
+  ok "single home: fromdateiso8601 appears only inside JQ_EPOCH"
+else
+  fail "single home: bare fromdateiso8601 outside JQ_EPOCH; use epoch: $bare"
+fi
+
+echo "Gate 36: 32 scenario(s) x 20 runs + 19 mutation(s) + 1 single-home check; $bad failure(s)."
 exit $([ "$bad" -eq 0 ] && echo 0 || echo 1)

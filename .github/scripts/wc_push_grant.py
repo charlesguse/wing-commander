@@ -15,10 +15,16 @@ the no-upstream push sentence (#1167). Gate 121 also fails if another
 copy of this predicate reappears under .github/scripts/ (CLAUDE.md,
 "Shared logic has exactly one home"): a second copy added for #1167
 matched a bare `Bash(git push` substring and read a deny list as a grant.
+Gate 80 (verify-spec-branch-push-concurrency.py) imports PUSH_GRANT_RE,
+and Gate 121 fails on another module that spells the grant regex.
 """
 import re
 
-PUSH_GRANT_RE = re.compile(r"(?:^|,)\s*Bash\(git push:\*\)\s*(?:,|$)")
+# The grant regex's own escaped spelling of the entry; Gate 121's check
+# also fails on a module outside this one that spells it (a pasted copy
+# of PUSH_GRANT_RE, as Gate 80 held until #889).
+PUSH_GRANT_TOKEN = r"Bash\(git push:\*\)"
+PUSH_GRANT_RE = re.compile(r"(?:^|,)\s*" + PUSH_GRANT_TOKEN + r"\s*(?:,|$)")
 ALLOWED_TOOLS_REF_RE = re.compile(r"steps\.([\w-]+)\.outputs\.allowed-tools")
 INLINE_ALLOWED_TOOLS_RE = re.compile(r"--allowedTools\s+\"([^\"]*)\"")
 

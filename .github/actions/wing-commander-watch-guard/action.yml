@@ -1,7 +1,7 @@
 name: wing-commander-watch-guard
 description: >
   The two opening steps of a read-only watcher job (wing-commander-merge-evidence.yml,
-  both jobs, and wing-commander-proof-list.yml): refuse a run whose ref is
+  both jobs, wing-commander-proof-list.yml and wing-commander-feature-health.yml): refuse a run whose ref is
   not the default branch (every run, or only a dispatch), then read
   the job's pause switch with wc_board_status._switch_on, the one home of
   that test, and say whether the job stands down. It reads nothing from

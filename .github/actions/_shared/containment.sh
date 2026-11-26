@@ -38,9 +38,10 @@
 #     the enforcing check is the composite's post-agent check mode (see
 #     contracts/containment-and-trusted-checkout.md).
 #
-# Every git call runs under the hardened environment of
-# git-push-hardening.sh (sourced from beside this file when present: hooks,
-# fsmonitor and global config off) and with replace objects ignored
+# Every git call (the trusted-base and pre-push modes) runs under the
+# hardened environment of git-push-hardening.sh (sourced from beside this
+# file when present: hooks, fsmonitor and global config off) and with
+# replace objects ignored
 # (GIT_NO_REPLACE_OBJECTS), so a planted refs/replace/* cannot swap the
 # content git reports. P must be non-empty: a root lifecycle has no
 # containment to check and its callers skip this script entirely.
@@ -48,11 +49,16 @@ set -uo pipefail
 
 export GIT_NO_REPLACE_OBJECTS=1
 here="$(cd "$(dirname "$0")" && pwd)"
-if [ -f "$here/git-push-hardening.sh" ]; then
+# harden: only the modes that run git (trusted-base, pre-push) call it; the
+# text-only outside/inside modes never do. wc_harden_git_env mktemps an
+# empty GIT_CONFIG_GLOBAL, which the EXIT trap removes.
+harden() {
+  [ -f "$here/git-push-hardening.sh" ] || return 0
   # shellcheck source=/dev/null
   . "$here/git-push-hardening.sh"
   wc_harden_git_env
-fi
+  trap 'rm -f "${GIT_CONFIG_GLOBAL:-}"' EXIT
+}
 
 outside() {
   local project="$1" delim=$'\n' quote="" path
@@ -117,9 +123,11 @@ case "$mode" in
     done
     ;;
   trusted-base)
+    harden
     trusted_base "${3:-}" || exit 1
     ;;
   pre-push)
+    harden
     tip="${3:-}"
     if [ -z "$tip" ]; then
       tip="$(trusted_base "")" || exit 1

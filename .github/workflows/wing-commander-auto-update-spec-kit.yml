@@ -29,22 +29,27 @@ jobs:
     # included -- used to start this stage, whose verify-image-prerequisites
     # job then ran for a billed minute before comment-reply's own `if:` (or
     # its marker check) found nothing to do. The resume path only ever
-    # concerns a human reply on the settle-tracking issue, which the stage
-    # creates and re-labels with `auto-update:tracking` (TRACKING_LABEL in
-    # auto-update-spec-kit.yml is that literal's one home; this clause
-    # follows it). The stage's own self-recognition is the body marker, not
-    # the label: its settle job warns that an older tracking issue can sit
-    # beyond the migration scan window and never be re-labelled, so a body
-    # carrying the marker prefix is accepted too -- otherwise a maintainer's
-    # reply on such an issue would be dropped with no run to inspect.
+    # concerns a maintainer's reply on the settle-tracking issue, which the
+    # stage's App creates and re-labels with `auto-update:tracking`
+    # (TRACKING_LABEL in auto-update-spec-kit.yml is that literal's one
+    # home; this clause follows it). So only a comment from an OWNER,
+    # MEMBER or COLLABORATOR on a Bot-authored issue carrying that label
+    # starts the stage. A body marker alone no longer does: anyone can open
+    # an issue carrying one, and a resumed reply picks the candidate a bump
+    # PR proposes (owner decision 2026-11-25, #890). An older tracking issue
+    # that settle never re-labelled therefore gets no resume until it is
+    # labelled. This is a pre-filter only: the stage repeats the commenter
+    # check in comment-reply's `if:` and checks the issue is authored by
+    # its own App, which this wrapper cannot name.
     # Schedule, dispatch, and pull_request pass untouched.
     if: >-
       vars.WING_COMMANDER_AUTO_UPDATE_SPEC_KIT_PAUSED != 'true' &&
       (github.event_name != 'issue_comment' ||
         (!github.event.issue.pull_request &&
          github.event.comment.user.type != 'Bot' &&
-         (contains(github.event.issue.labels.*.name, 'auto-update:tracking') ||
-          contains(github.event.issue.body, '<!-- wing-commander-auto-update-spec-kit:'))))
+         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+         github.event.issue.user.type == 'Bot' &&
+         contains(github.event.issue.labels.*.name, 'auto-update:tracking')))
     permissions:
       contents: write
       issues: write

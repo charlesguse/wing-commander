@@ -3,8 +3,8 @@
     "headRefOid": "eeee555",
     "statusCheckRollup": [
       {
-        "name": "harness-tests",
-        "workflowName": "lint · workflows",
+        "name": "build",
+        "workflowName": "ci",
         "status": "COMPLETED",
         "conclusion": "SUCCESS"
       }

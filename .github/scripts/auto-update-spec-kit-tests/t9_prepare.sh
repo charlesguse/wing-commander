@@ -87,6 +87,15 @@ if [ "${UVX_NOOP:-0}" != 0 ]; then
   exit 0
 fi
 printf '{\n  "version": "%s",\n  "installed_integrations": ["claude"]\n}\n' "$CANDIDATE" > .specify/integration.json
+if [ "${UVX_STAMPS_ONLY:-0}" != 0 ]; then
+  # A CLI-only release (v1.2.3 #1089, v1.3.2 #1124): the candidate installs
+  # byte-identical artifacts, so only integration.json and the manifest's
+  # `version`/`installed_at` stamps move. The `files` map is the fixture's.
+  jq -c --arg v "$CANDIDATE" '.version = $v | .installed_at = "2026-11-25T00:00:00+00:00"' \
+    .specify/integrations/claude.manifest.json > .specify/integrations/claude.manifest.json.tmp
+  mv .specify/integrations/claude.manifest.json.tmp .specify/integrations/claude.manifest.json
+  exit 0
+fi
 printf '{"version": "%s", "files": {}}\n' "$CANDIDATE" > .specify/integrations/claude.manifest.json
 echo "echo common at $CANDIDATE" > .specify/scripts/bash/common.sh
 echo "# plan skill at $CANDIDATE" > .claude/skills/speckit-plan/SKILL.md
@@ -275,6 +284,30 @@ check "S5d no bundle for verify/act to consume" "$([ -e "$RUNNER_TEMP/prepare.bu
 check "S5d the step reports through the job result, not a channel of its own" \
   "$(wc -l < "$GH_CALLS" | tr -d ' ')" "0"
 unset UVX_NOOP
+cd - >/dev/null
+
+echo
+echo "=== Scenario 5e: a CLI-only release moves only the CLI's version stamps (#1265 review) ==="
+# Upstream writes integration.json and the manifest only after every file is
+# installed, so stamps alone with exit 0 mean the candidate's artifacts equal
+# the pin's. That is a clean bump (#1089, #1124 were adopted this way), not
+# the #191 no-op, and must not be refused: the settled tracking issue would
+# re-run and re-fail it every day.
+R6="$(build)"; new_step_env; cd "$R6"
+GHA_SUBST=("steps.ctx.outputs.bot-slug=wing-commander")
+BIN="$(mk_uvx)"; OLDPATH="$PATH"; PATH="$BIN:$PATH"
+export UVX_ARGV="$WORK/uvx-argv.log"; : > "$UVX_ARGV"
+export UVX_STAMPS_ONLY=1 DB=main CANDIDATE=0.16.4 BOT_SLUG=wing-commander
+run_step "$STEP" >"$WORK/prep6.log" 2>&1
+RC6=$?
+PATH="$OLDPATH"; unset UVX_STAMPS_ONLY
+sed 's/^/      /' "$WORK/prep6.log" | head -4
+check "S5e a stamps-only (CLI-only) upgrade passes" "$RC6" "0"
+check "S5e the bump is committed" \
+  "$(git rev-list --count "refs/remotes/origin/main..auto-update-spec-kit/v0.16.4")" "1"
+check "S5e the commit is the stamps plus the two pin files" \
+  "$(git diff --name-only "refs/remotes/origin/main" "auto-update-spec-kit/v0.16.4" | sort | tr '\n' ' ')" \
+  ".github/actions/wing-commander-preflight/action.yml .specify/init-options.json .specify/integration.json .specify/integrations/claude.manifest.json "
 cd - >/dev/null
 
 echo
