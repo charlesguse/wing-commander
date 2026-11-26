@@ -164,7 +164,8 @@ comment-canonical-pointer and wiring gates).
 Extended by #889: every workflow that uploads a `metrics-record*`
 artifact (directly, through a local composite, or through a reusable
 workflow it calls) is named in both `workflow_run.workflows` (the
-watchdog and `board-loop` excepted, which are sweep-only and must stay
+watchdog, `board-loop` and `lifecycle-review-gate` excepted, which are
+sweep-only and must stay
 off it) and the `sweep` job's
 `sweep-workflow-paths`; the discovery is pinned by a fixture tree, and
 the 043 wrapper contract's published trigger list must match the

@@ -11,7 +11,9 @@ Drives `review-gate-skip/` fixtures through lifecycle-review-gate.yml's own
 skip block, extracted verbatim from the workflow and run in bash against a
 throwaway repo whose `refs/remotes/origin/spec/999-x` holds the fixture's
 tasks.md (none when the fixture has no `.tasks.md`: an unreadable count
-must not skip the PR). `<name>.expected` pins `skip=true|false`.
+must not skip the PR). `<name>.expected` pins `skip=true|false`, and
+`summary-has=<text>` pins a line the block must write to the step summary
+(an unreadable count is logged, never skipped silently: #889).
 """
 import importlib.util
 import os
@@ -76,8 +78,7 @@ def check_review_gate_skip(failures):
               "\necho selected\ndone\n")
     for name in names:
         expected = {}
-        env = dict(os.environ, head_ref="spec/999-x", slug="999-x", number="1",
-                   GITHUB_STEP_SUMMARY=os.devnull)
+        env = dict(os.environ, head_ref="spec/999-x", slug="999-x", number="1")
         env.pop("GATE_SUITE_READY", None)
         for line in open(os.path.join(d, name + ".expected")).read().splitlines():
             if line.startswith("env:") and "=" in line:
@@ -88,6 +89,8 @@ def check_review_gate_skip(failures):
                 expected[k] = v
         tasks = os.path.join(d, name + ".tasks.md")
         with tempfile.TemporaryDirectory() as tmp:
+            summary = os.path.join(tmp, ".step-summary")
+            env["GITHUB_STEP_SUMMARY"] = summary
             os.symlink(ROOT, os.path.join(tmp, ".wc-pristine-repo"))
             vbc.git(tmp, "init", "-q")
             if os.path.exists(tasks):
@@ -103,10 +106,14 @@ def check_review_gate_skip(failures):
             vbc.git(tmp, "update-ref", "refs/remotes/origin/spec/999-x", "HEAD")
             proc = subprocess.run(["bash", "-c", script], cwd=tmp, env=env,
                                   capture_output=True, text=True)
+            summary_text = open(summary).read() if os.path.exists(summary) else ""
         if proc.returncode != 0:
             failures.append(f"review-gate-skip/{name}: skip block exited {proc.returncode}: {proc.stderr.strip()}")
             continue
         got = {"skip": "false" if "selected" in proc.stdout.split() else "true"}
+        if "summary-has" in expected:
+            want = expected["summary-has"]
+            got["summary-has"] = want if want in summary_text else summary_text
         for k, v in expected.items():
             if got.get(k) != v:
                 failures.append(f"review-gate-skip/{name}: {k} expected {v!r}, got {got.get(k)!r}")

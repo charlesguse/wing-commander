@@ -93,6 +93,7 @@ on:
       # adopter forking that wrapper reads. Editing the document alone is
       # the one change that can make it disagree with the file it describes.
       - "specs/058-per-job-minute-floor/contracts/metrics-persist-sweep-delta.md"
+      - "specs/058-per-job-minute-floor/contracts/gate-coverage-058.md"
       # Gate 79 also compares the 043 wrapper contract's published trigger
       # list against the shipped wrapper's (#889).
       - "specs/043-durable-metrics-record/contracts/wrapper-contract.md"
@@ -3540,7 +3541,8 @@ jobs:
       # cannot reach the sweep. And (#889) every workflow that uploads a
       # metrics-record artifact, directly, through a composite, or through
       # a reusable workflow it calls, is in the sweep's workflow paths and,
-      # unless sweep-only (watchdog, board-loop), the completion trigger --
+      # unless sweep-only (watchdog, board-loop, lifecycle-review-gate),
+      # the completion trigger --
       # board-loop.yml was in neither, so its records expired unpersisted.
       - name: Gate 79 — the metrics wrapper drops the watchdog trigger and its sweep cron stands alone
         if: "!cancelled()"
