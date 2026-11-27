@@ -1889,6 +1889,14 @@ def _fetch_cases():
          dict(pr_marker, STUB_PULLS="404"), None, "", pr_states({})),
         ("select: marker PR found -> state recorded (stub sanity)", "select", "select",
          dict(pr_marker, STUB_PULLS="ok"), None, "", pr_states({"42": "OPEN"})),
+        # #1211: a merged PR that is not the loop's own is recorded apart
+        # from a merged board:owned one, so select never holds it forever.
+        ("select: marker PR merged, not board:owned -> MERGED_UNOWNED", "select", "select",
+         dict(pr_marker, STUB_PULLS="ok", STUB_PR="{tmp}/pr-merged-unowned.json"), None, "",
+         pr_states({"42": "MERGED_UNOWNED"})),
+        ("select: marker PR merged, board:owned -> MERGED", "select", "select",
+         dict(pr_marker, STUB_PULLS="ok", STUB_PR="{tmp}/pr-merged-owned.json"), None, "",
+         pr_states({"42": "MERGED"})),
         ("select: marker PR lookup fails (HTTP 500)", "select", "select",
          dict(pr_marker, STUB_PULLS="500"), None, "", lookup_failed("issue-number")),
         ("resume: marker PR 404, branch absent (ls-remote 2), no fallback -> triage", "select",
@@ -1983,6 +1991,11 @@ def fetch_behaviour_findings(doc):
             json.dump({"number": 42, "state": "open", "merged": False,
                        "labels": [{"name": "board:owned"}],
                        "head": {"repo": {"full_name": _STUB_REPO}}}, fh)
+        for name, labels in (("pr-merged-unowned.json", []),
+                             ("pr-merged-owned.json", [{"name": "board:owned"}])):
+            with open(os.path.join(tmp, name), "w", encoding="utf-8") as fh:
+                json.dump({"number": 42, "state": "closed", "merged": True, "labels": labels,
+                           "head": {"repo": {"full_name": _STUB_REPO}}}, fh)
         with open(os.path.join(tmp, "owned-prs.jsonl"), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(json.dumps({"number": 50, "body": "Fixes #7"}) + "\n")
         with open(os.path.join(tmp, "owned-prs-board-item.jsonl"), "w", encoding="utf-8", newline="\n") as fh:
@@ -2398,6 +2411,8 @@ def _mutations(text):
         "elif foreign_pr and pr_state == \"OPEN\":", "elif False:")
     sub("select lookup does not mark an open, unowned PR",
         'pr_state="OPEN_UNOWNED"', 'pr_state="OPEN"')
+    sub("select lookup does not mark a merged, unowned PR (#1211)",
+        'pr_state="MERGED_UNOWNED"', 'pr_state="MERGED"')
     sub("select lookup does not apply BOARD_PR_OWNED_JQ",
         '"$(jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ" "$RUNNER_TEMP/board-lookup-pr.json")"',
         '"true"')
