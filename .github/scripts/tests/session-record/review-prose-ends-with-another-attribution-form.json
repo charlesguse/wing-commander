@@ -1,0 +1,20 @@
+{
+  "what": "a last line that is the phrase in neither real attribution form (other marks, another link) is the prose's own, not a footer (#889)",
+  "build": "review",
+  "fields": {
+    "pass": 2,
+    "verdict": "clean",
+    "started": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "pushed": "nothing",
+    "prose": "No real in-scope findings.\n**Generated with [Claude Code](https://example.com)**"
+  },
+  "expect_body": [
+    "<!-- review-until-clean pass 2 -->",
+    "**Review pass 2:** CLEAN",
+    "**Started from:** `1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a`",
+    "**Pushed:** nothing",
+    "",
+    "No real in-scope findings.",
+    "**Generated with [Claude Code](https://example.com)**"
+  ]
+}
