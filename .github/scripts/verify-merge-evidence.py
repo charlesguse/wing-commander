@@ -38,7 +38,7 @@ REUSED_RULE_NAMES = ("_checks_green", "_gate_suite_green", "checks_green", "gate
                      "eligible_fix_class", "last_converged_review_head", "verification_passed_at_head",
                      # wc_shared_review's: the round record's parse, its run's
                      # read and its confirmation have one home there.
-                     "parse_records", "confirm_record", "latest_round_for_commit", "fetch_run_facts",
+                     "parse_records", "confirm_record", "latest_round_for_commit", "rounds_for_commit", "fetch_run_facts",
                      "confirmed_from_github")
 # Terminal-state literals the "checks green" rules own.
 # '"lifecycle-review-gate"' is lifecycle_readiness.OWN_STATUS_CONTEXT's
@@ -117,6 +117,8 @@ def shared_review_run(run_id, record_head, override):
     case's `override` keys replaced."""
     run = {"id": int(run_id), "path": wc_shared_review.WRAPPER_PATH, "head_branch": "main", "repository": "o/r",
            "status": "completed", "conclusion": "success", "head_sha": SHARED_REVIEWER_COMMIT,
+           # After the fixtures' default comment times, before their merges.
+           "updated_at": "2026-11-10T09:50:00Z",
            "referenced_workflows": ["o/r/{0}@refs/heads/main".format(wc_shared_review.WORKFLOW_PATH)],
            "artifacts": [wc_shared_review.ARTIFACT_PREFIX + record_head]}
     run.update(override or {})
@@ -1396,7 +1398,7 @@ def check_runtime_shared_review_reads(base_doc):
     saved = wc_shared_review._gh_api
     try:
         wc_shared_review._gh_api = fake_gh
-        snap, not_read = {"comments": comments}, []
+        snap, not_read = {"comments": comments, "headRefOid": "a" * 40}, []
         me._read_shared_review_runs("o/r", snap, base_doc["bot_login"], None, not_read)
         runs = snap.get("shared_review_runs") or {}
         if set(runs) != {"101", "102"} or runs.get("102") is not None or (runs.get("101") or {}).get("repository") != "o/r":
@@ -1404,10 +1406,17 @@ def check_runtime_shared_review_reads(base_doc):
         if not_read:
             problems.append("runtime: a found run and a missing run were named as not read: {0}".format(not_read))
         wc_shared_review._gh_api = lambda args, token=None: None
-        snap, not_read = {"comments": comments}, []
+        snap, not_read = {"comments": comments, "headRefOid": "a" * 40}, []
         me._read_shared_review_runs("o/r", snap, base_doc["bot_login"], None, not_read)
         if snap.get("shared_review_runs") is not None or not not_read:
             problems.append("runtime: a failed run read was not named as not read")
+        # Only the head's records can decide, so a failed read of a run an
+        # older head's record names leaves the verdict whole (#1346 pass 1).
+        snap, not_read = {"comments": comments, "headRefOid": "b" * 40}, []
+        me._read_shared_review_runs("o/r", snap, base_doc["bot_login"], None, not_read)
+        if not_read or snap.get("shared_review_runs") != {}:
+            problems.append("runtime: a failed read of a run another head's record names made the verdict "
+                            "not-read: {0}".format(not_read))
     finally:
         wc_shared_review._gh_api = saved
 

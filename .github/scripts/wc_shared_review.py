@@ -178,9 +178,18 @@ def confirm_record(record, run, default_branch, repository=None):
 
 
 def latest_round_for_commit(confirmed, head_sha):
-    """The highest-round confirmed record naming `head_sha`, or None."""
-    at = [r for r in confirmed if r.get("head_sha") == head_sha]
-    return max(at, key=lambda r: r["round"]) if at else None
+    """The highest-round record naming `head_sha`, or None. `confirmed` is
+    oldest first (parse_records), and of two records with the same round
+    the newer wins: a re-run of a reviewer run keeps its run id, so while
+    it runs the first attempt's record is unconfirmed and the re-run posts
+    that round number again (#1346 pass 1)."""
+    at = rounds_for_commit(confirmed, head_sha)
+    return max(reversed(at), key=lambda r: r["round"]) if at else None
+
+
+def rounds_for_commit(records, head_sha):
+    """The records naming `head_sha`, in their given order."""
+    return [r for r in records if r.get("head_sha") == head_sha]
 
 
 # ------------------------------------------------------- findings/verdict ---

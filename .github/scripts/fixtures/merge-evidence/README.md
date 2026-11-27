@@ -8,7 +8,8 @@ Synthetic cases for `verify-merge-evidence.py` (specs/125-merge-evidence-audit).
 `created_at`)
 posted as the shared reviewer posts them. It may also add
 `shared_review_runs`, mapping each run id to overrides of a run that
-confirms its record, or to null for a run that does not exist. A run id the
+confirms its record (completed, `updated_at`, at 2026-11-10T09:50:00Z), or
+to null for a run that does not exist. A run id the
 map leaves out was not read.
 
 `sc003/` holds the SC-003 replay (tasks.md T029), never written by the

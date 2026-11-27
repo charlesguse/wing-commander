@@ -329,6 +329,12 @@ def _review_round_conditions(snap, bot_login, base_branch=None):
         return [_cond(name, "not-read", "run {0}, which the newest shared-reviewer round at this head names, "
                                         "was not read".format(run_id))]
     branch = base_branch or board_merge.BASE_BRANCH
+    as_of = snap.get("as_of")
+    if as_of and runs[run_id] is not None and _after(runs[run_id].get("updated_at"), as_of):
+        # FR-012: a run that completed (or was re-run) after the merge is
+        # evidence dated after it, so it is left out.
+        return [_cond(name, "unmet", "run {0}, which the newest shared-reviewer round at this head names, "
+                                     "completed after the merge".format(run_id))]
     if runs[run_id] is None or not wc_shared_review.confirm_record(record, runs[run_id], branch):
         return [_cond(name, "unmet", "the newest shared-reviewer round at this head (round {0}) is not "
                                      "confirmed by the run it names".format(record.get("round")))]
@@ -582,6 +588,9 @@ def cut_snapshot(snap, merged_at):
         full = snap.get("comments") or []
         if isinstance(snap["counts"].get("comments"), int) and len(full) >= snap["counts"]["comments"]:
             cut["counts"] = dict(snap["counts"], comments=len(cut["comments"]))
+    # The shared reviewer's runs are read after the merge: the as-of time
+    # lets _review_round_conditions leave out a run that completed after it.
+    cut["as_of"] = merged_at
     cut["left_out"] = left_out
     return cut
 
@@ -848,7 +857,12 @@ def _read_shared_review_runs(repo, snap, bot_login, actions_token, not_read):
     """For a session fix PR: the facts of every run its shared-reviewer
     records name (wc_shared_review.fetch_run_facts, the read's one home).
     A failed read leaves `shared_review_runs` None and names it."""
-    run_ids = sorted({str(r.get("run_id")) for r in wc_shared_review.parse_records(snap.get("comments"), bot_login)
+    # Only the records at the head can decide (_review_round_conditions), so
+    # a failed read of an older head's run never makes this verdict not-read.
+    # Every record at the head, not only the newest: the audit cuts the
+    # comments after this read, so an earlier round can be the one judged.
+    records = wc_shared_review.parse_records(snap.get("comments"), bot_login)
+    run_ids = sorted({str(r.get("run_id")) for r in wc_shared_review.rounds_for_commit(records, snap.get("headRefOid"))
                       if str(r.get("run_id") or "").isdigit()})
     runs = {}
     try:

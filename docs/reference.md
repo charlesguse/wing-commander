@@ -256,8 +256,9 @@ about these merges, and changes none of them: for each pull request into
 the verdict as of the merge, marked recorded or reconstructed. A bump PR
 needs its confirmed verification record, a board loop fix PR the App's
 converged review verdict at the head, a final PR the review gate's clean
-round at the head; a spec PR or a maintainer PR needs a round record that
-does not exist yet, so it reads unmet. A pass report or decision record posted
+round at the head, a maintainer PR the shared reviewer's newest round at
+the head, clean and confirmed by its run; a spec PR has no round record
+counted, so it reads unmet. A pass report or decision record posted
 under a maintainer's account is listed, never counted. Every kind also needs
 green checks with the gate suite among them, so a pull request with no checks
 reads unmet.
