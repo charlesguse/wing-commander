@@ -47,8 +47,10 @@ the App token, gives one a GH_TOKEN of the App token, drops the
 github_token of one read-only step, points a step at a non-tool-args step,
 gives a step a literal list without the denies, drops each deny from each
 LITERAL_DENY_STEPS step, removes each deny from the composite and its
-append line, and holds a synthetic exemption that is stale or names a
-renamed step. Each must fail; the real files must pass.
+append line, and holds a synthetic exemption that is stale (the step
+lists both denies, or takes them from tool-args) or names a renamed step.
+Each must fail; the real files must pass, and so must a synthetic
+exemption on a step that lists neither deny.
 
 Usage:
     python3 .github/scripts/verify-agent-credential-scrub.py
@@ -400,6 +402,28 @@ def self_test(docs, action_text, bash):
                             Exemption(reason="t", issue=(889,))}
         expect("an exemption whose step was renamed", check_docs(docs),
                f"names step {name + ' (renamed)'!r}, which is no")
+
+        # An exempt step that lists neither deny is accepted.
+        d = copy.deepcopy(docs)
+        step = _find(d, base, job, name)
+        for deny in PROC_DENIES:
+            step["with"]["claude_args"] = step["with"]["claude_args"].replace(
+                "," + deny, "", 1)
+        EXEMPT_PROC_DENY = {(base, name): Exemption(reason="t", issue=(889,))}
+        held = [p for p in check_docs(d) if f"step {name!r}" in p]
+        if held:
+            failures.append(f"an exempt step without the denies: rejected; "
+                            f"got {held!r}")
+        else:
+            print("note: (expected) an exempt step without the denies: "
+                  "accepted")
+
+        # An exemption on a step that now uses the tool-args composite.
+        ta_base, _, ta_step = _first_tool_args_agent(docs)
+        EXEMPT_PROC_DENY = {(ta_base, _name(ta_step)):
+                            Exemption(reason="t", issue=(889,))}
+        expect("an exemption for a step that uses tool-args",
+               check_docs(docs), "now takes its denies from the tool-args")
     finally:
         EXEMPT_PROC_DENY = saved
 
