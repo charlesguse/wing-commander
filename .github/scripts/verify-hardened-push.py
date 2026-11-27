@@ -48,6 +48,7 @@ import tempfile
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from wc_regex_probe import finishes  # noqa: E402
 from wc_repo_files import git_env  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -66,8 +67,11 @@ COVERED_JOBS = {
 
 # git's own options may come first, some with a separate argument
 # (`git -C "$dir" push`, `git -c k=v push`, `git --git-dir "$d" push`).
+# A separate argument never starts with `-` here (`-C -x` reads as two
+# options), so a run of options has one parse: with both readings open, a
+# long run backtracks exponentially before failing. The self-test times one.
 RAW_PUSH_RE = re.compile(
-    r"(?<![\w-])git\s+(?:(?:-C|-c|--git-dir|--work-tree|--namespace)\s+\S+\s+|-\S+\s+)*push\b")
+    r"(?<![\w-])git\s+(?:(?:-C|-c|--git-dir|--work-tree|--namespace)\s+[^-\s]\S*\s+|-\S+\s+)*push\b")
 # The hardening's own spellings -- not every core.hooksPath (pr-conversation
 # points it at its run-attribution hook on purpose).
 IDIOM_RE = re.compile(r"GIT_CONFIG_NOSYSTEM|core\.hooksPath[\s=\"']+/dev/null"
@@ -457,6 +461,15 @@ def self_test():
         failures.append("a covered publish-stranded call without push-token not detected")
     if not RAW_PUSH_RE.search('git -C "$WORKDIR" push origin HEAD'):
         failures.append("`git -C <dir> push` not recognised as a push")
+    for cmd in ("git push", "git -c k=v push", 'git --git-dir "$d" push', "git --git-dir=x push",
+                "git -C dir -c k=v push", "git -C -x push", "git -q push", "git -C push"):
+        if not RAW_PUSH_RE.search(cmd):
+            failures.append("`{0}` not recognised as a push".format(cmd))
+    for cmd in ("git pushd", "git log", "xgit push"):
+        if RAW_PUSH_RE.search(cmd):
+            failures.append("`{0}` misread as a push".format(cmd))
+    if not finishes(RAW_PUSH_RE, "git " + "-C -! " * 40):
+        failures.append("RAW_PUSH_RE takes unbounded time on a long run of git options")
     # T031: a raw push put back at each real covered site is caught there.
     for name, jobs in COVERED_JOBS.items():
         for job_id in jobs:
