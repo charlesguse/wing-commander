@@ -48,7 +48,8 @@ WHAT IT CHECKS (watchdog.yml unless named)
    shadow reads the same staged job logs the Diagnose step does); the
    disallowed list names Write and Edit.
 6. No family step reads the App token (`steps.ctx.outputs.token`,
-   `env.WC_BOT_TOKEN`), any `vars.*`, or a secret other than the two
+   `env.WC_BOT_TOKEN`; the agent step's empty `WC_BOT_TOKEN: ''`
+   override, #1310, hides it and is not a read), any `vars.*`, or a secret other than the two
    Claude credentials; no non-family step and no `diagnose` job output
    reads a family step's id.
 7. wing-commander-8-watchdog.yml passes `diagnose-shadow-enabled` as
@@ -306,7 +307,13 @@ def check(watchdog, wrapper):
 
     # 6. Credentials, ambient state, and nothing reads the shadow.
     for s in family:
-        blob = text_of(s)
+        # #1310: the agent step's `WC_BOT_TOKEN: ''` hides the job's App
+        # token from it, so that one empty override is not a read of it.
+        scrubbed = dict(s)
+        if (s.get("env") or {}).get("WC_BOT_TOKEN", None) == "":
+            scrubbed["env"] = {k: v for k, v in s["env"].items()
+                               if k != "WC_BOT_TOKEN"}
+        blob = text_of(scrubbed)
         name = s.get("name")
         if "steps.ctx.outputs.token" in blob or "WC_BOT_TOKEN" in blob:
             fail(f"shadow step {name!r} reads the App token")

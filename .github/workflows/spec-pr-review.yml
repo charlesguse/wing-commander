@@ -464,12 +464,16 @@ jobs:
           echo "model=${MODEL_VAR:-claude-opus-5-5}" >> "$GITHUB_OUTPUT"
           echo "effort=${EFFORT_VAR:-high}" >> "$GITHUB_OUTPUT"
 
+      # Runs with the read-only github.token, so the job's write-capable
+      # WC_BOT_TOKEN is set empty for this step alone (#1310) -- see
+      # lifecycle-review-gate.yml's Reviewer.
       - name: Reviewer
         id: reviewer
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
           CLAUDE_CODE_EFFORT_LEVEL: ${{ steps.model.outputs.effort }}
+          WC_BOT_TOKEN: ''
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

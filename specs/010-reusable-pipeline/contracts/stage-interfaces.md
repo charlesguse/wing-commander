@@ -334,6 +334,10 @@ inert even if an `extra-allowed-tools`/override re-adds them) — **except**
 `watchdog.diagnose`, whose shipped disallowed literal omits those three (it is
 already read-only via its allowed list; see footnote).
 
+The tool-args composite also appends `Read(//proc/**)` and `Bash(*proc/*)` to
+every step's disallowed list after any override (#1310; tool-composition-action.md,
+Behavior step 5). The table below shows each step's literal, without them.
+
 | Stage | Internal step (`step-label`) | Default allowed | Default disallowed |
 |---|---|---|---|
 | intake | `intake` | `Skill,Read,Write,Edit,Glob,Grep,Bash(git status:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git switch:*),Bash(git push:*),Bash(git branch:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git ls-tree:*),Bash(echo:*),Bash(ls:*),Bash(mkdir:*),Bash(cat:*),Bash(grep:*),Bash(head:*),Bash(tail:*),Bash(sort:*),Bash(uniq:*),Bash(wc:*),Bash(cut:*),Bash(printenv SPECIFY_FEATURE_DIRECTORY),Bash(gh issue view:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh label create:*)` | `WebFetch,ScheduleWakeup,Monitor,SendMessage` |

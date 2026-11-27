@@ -3346,8 +3346,12 @@ jobs:
         # 146 asserts the sum.
         timeout-minutes: 5
         uses: anthropics/claude-code-action@v1
+        # Runs with the read-only github.token, so the job's write-capable
+        # WC_BOT_TOKEN is set empty for this step alone (#1310) -- see
+        # lifecycle-review-gate.yml's Reviewer.
         env:
           GH_TOKEN: ${{ github.token }}
+          WC_BOT_TOKEN: ''
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1'
         with:
           claude_code_oauth_token: ${{ secrets.claude-code-oauth-token }}
