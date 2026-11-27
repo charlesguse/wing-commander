@@ -623,6 +623,10 @@ def check_closed_by_commit(fx):
         problems.append("closing_targets: {0}, expected [3, 4]".format(pl.closing_targets(
             "Resolves: GH-3, closes https://github.com/Own/Repo/issues/4 and "
             "https://github.com/other/repo/issues/5", "own/repo")))
+    # #1314: the decoding is closing_keyword_refs(); an owner spelled like
+    # `gh-` or `http` is another repository's slug, not a GH-N or a URL.
+    if pl.closing_targets("Fixes gh-tools/x#6, fixes httpx/y#7, fixes #8", "own/repo") != [8]:
+        problems.append("closing_targets: another repository's gh-/http-prefixed slug is not dropped")
     return problems
 
 

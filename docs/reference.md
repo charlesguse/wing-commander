@@ -220,6 +220,14 @@ failure for the watchdog to find), `migrate-stranded-review-lifecycles.yml`,
 `auto-update-spec-kit-scratch-preflight.yml` (readiness check for a test
 repository) and `auto-release-switch.yml`.
 
+A pull-request check with no schedule: `pr-closing-keyword-guard.yml` runs on
+every pull request (opened, edited, reopened and each push; no `paths:`
+filter) and fails it when its title, body or a commit message uses a closing
+keyword (close, fix or resolve, any form) on an open `disposition:tracking`
+issue, read live from the label. Gate 182 runs its self-test. Read-only, no
+agent, no App token, a 5-minute timeout; a newer event on the same pull
+request cancels the run still going. It is not a required check.
+
 ## Merge classes
 
 Who may merge what. The bot is the pipeline's GitHub App.
