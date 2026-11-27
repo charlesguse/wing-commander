@@ -1308,6 +1308,256 @@ def check_forbidden_homes():
     return problems
 
 
+# -- review coverage (#889, found by the code review of #1154) ----------------
+# Each check below drives one branch of wc_proof_list.py that no case reached;
+# each fails when that branch is removed or its boundary moved.
+def check_rebase_merge():
+    """Collector.entries: a rebase merge leaves only its last commit as the
+    PR's merge_commit_sha, so an earlier commit takes the one merged PR the
+    commit lists; two merged PRs, or none merged, leave it a direct push."""
+    problems = []
+    with _InRepo() as repo:
+        _commit(repo.root, {"a.txt": "a\n"}, "2026-10-01T00:00:00 +0000")
+        sha = _commit(repo.root, {"docs/a.md": "a\n"}, "2026-11-01T00:00:00 +0000")
+        merged = {"number": 77, "merge_commit_sha": "f" * 40, "merged_at": "2026-11-01T00:05:00Z"}
+        cases = [
+            ("the one merged PR of a rebase-merged commit", [merged, {"number": 78, "merged_at": None}], 77),
+            ("two merged PRs listing the commit", [merged, dict(merged, number=79)], None),
+            ("no merged PR listing the commit", [dict(merged, merged_at=None)], None),
+            ("the PR whose merge commit it is wins", [merged, dict(merged, number=80, merge_commit_sha=sha)], 80),
+        ]
+        view = {"title": "x", "headRefName": "fix/x", "body": "", "closingIssuesReferences": []}
+        for label, pulls, want in cases:
+            def api(path, paginate, pulls=pulls):
+                if path.endswith("/commits/{0}/pulls".format(sha)):
+                    return pulls
+                raise AssertionError("unexpected read " + path)
+            with _FakeReads(api=api, gh=lambda args: json.dumps(view), tree=lambda s, c: []):
+                try:
+                    entries = pl.Collector("own/repo", "2026-11-10T12:00:00Z").entries()
+                except (pl.ReadError, AssertionError) as exc:
+                    problems.append("rebase merge: {0}: the read failed: {1}".format(label, exc))
+                    continue
+            got = entries[0]["pr"] if len(entries) == 1 else entries
+            if got != want:
+                problems.append("rebase merge: {0}: PR {1!r}, expected {2!r}".format(label, got, want))
+    return problems
+
+
+def check_run_ancestry_skip():
+    """Collector.run_record: a run that started at or before a merge cannot
+    contain it, so no ancestry check is made and the run does not count;
+    a run started after it is checked."""
+    problems = []
+    entry = {"sha": "e1", "merged_at": "2026-11-01T00:00:00Z"}
+    saved = (pl.is_ancestor, pl.commit_present)
+    for started, want_calls in (("2026-10-31T23:59:59Z", 0), ("2026-11-01T00:00:00Z", 0),
+                                ("2026-11-01T00:00:01Z", 1)):
+        calls = []
+        pl.is_ancestor = lambda a, d, calls=calls: calls.append((a, d)) or True
+        pl.commit_present = lambda sha: True
+        try:
+            rec = pl.Collector("own/repo", "2026-11-10T12:00:00Z").run_record(
+                {"id": 1, "head_sha": "h1", "path": "p", "run_started_at": started}, [entry])
+        finally:
+            pl.is_ancestor, pl.commit_present = saved
+        if len(calls) != want_calls or (rec["contains"] == ["e1"]) != bool(want_calls):
+            problems.append("run ancestry: a run started {0} for a merge at {1} made {2} ancestry "
+                            "check(s) and contains {3}; expected {4}".format(
+                                started, entry["merged_at"], len(calls), rec["contains"], want_calls))
+    return problems
+
+
+def check_capture_clip():
+    """capture(): the corpus keeps what was known at `as_of` -- a merge, a
+    comment, a run or a named run at or before it, or with no time -- and
+    drops what came after."""
+    problems = []
+    as_of = "2026-11-16T12:00:00Z"
+    at, after = as_of, "2026-11-16T12:00:01Z"
+    bundle = {"repository": "own/repo", "built_at": "2026-11-17T00:00:00Z",
+              "entries": [{"sha": "k1", "merged_at": at}, {"sha": "d1", "merged_at": after}, {"sha": "k2"}],
+              "named_runs": {"own/repo/1": {"run_started_at": at}, "own/repo/2": {"run_started_at": after}},
+              "comments": {"k1": [{"comment_id": 1, "posted_at": at, "body": "x"},
+                                  {"comment_id": 2, "posted_at": after, "body": "x"}]},
+              "runs": {"w.yml": [{"run_id": 1, "run_started_at": at}, {"run_id": 2, "run_started_at": after}]}}
+    cap = pl.capture(bundle, as_of)
+    got = ([e["sha"] for e in cap["entries"]], sorted(cap["named_runs"]),
+           [c["comment_id"] for c in cap["comments"]["k1"]], [r["run_id"] for r in cap["runs"]["w.yml"]])
+    want = (["k1", "k2"], ["own/repo/1"], [1], [1])
+    if got != want:
+        problems.append("capture: kept {0} (entries, named runs, comments, runs), expected {1}".format(got, want))
+    return problems
+
+
+def check_git_failed_reads():
+    """FR-013: a shallow checkout, a `git archive` that fails, a
+    `git merge-base` that fails and a lifecycle spec-meta.json that does not
+    read each fail the build with their own ReadError, never an empty list."""
+    import subprocess
+    import tempfile
+    problems = []
+    with _InRepo() as repo:
+        _commit(repo.root, {"a.txt": "a\n"}, "2026-10-01T00:00:00 +0000")
+        sha = _commit(repo.root, {"b.txt": "b\n", "specs/124-own/spec-meta.json": "not json\n",
+                                  "specs/125-null/spec-meta.json": '{"issue": null}\n'},
+                      "2026-11-01T00:00:00 +0000")
+        missing = "0123456789" * 4
+        col = pl.Collector("own/repo", "2026-11-10T12:00:00Z")
+        cases = [
+            ("a git archive of a missing commit", lambda: pl.tree_reaching(missing, ["b.txt"]), "git archive"),
+            ("a merge-base of a missing commit", lambda: pl.is_ancestor(missing, sha), "git merge-base failed"),
+            ("a spec-meta.json that is not JSON",
+             lambda: col.lifecycle_issue(sha, "Finalize: own (#5)", "spec/124-own"), "unreadable at"),
+            ("a spec-meta.json with no issue",
+             lambda: col.lifecycle_issue(sha, "Finalize: own (#5)", "spec/125-null"), "unreadable at"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            shallow = os.path.join(tmp, "shallow")
+            subprocess.run(["git", "clone", "-q", "--depth", "1", "file://" + repo.root.replace(os.sep, "/"),
+                            shallow], check=True, capture_output=True)
+            previous = os.getcwd()
+
+            def in_shallow():
+                os.chdir(shallow)
+                try:
+                    return pl.first_parent_commits()
+                finally:
+                    os.chdir(previous)
+            cases.append(("a shallow checkout", in_shallow, "the checkout is shallow"))
+            for label, act, text in cases:
+                try:
+                    got = act()
+                    problems.append("git reads: {0} gave {1!r}, expected a failed read".format(label, got))
+                except Exception as exc:  # noqa: BLE001 - the type and message are the test
+                    if not isinstance(exc, pl.ReadError) or text not in str(exc):
+                        problems.append("git reads: {0} failed with {1}: {2!r}, not a failed read "
+                                        "saying {3!r}".format(label, type(exc).__name__, str(exc)[:160], text))
+    return problems
+
+
+def check_reusable_only_filter():
+    """tree_reaching (research D4): a workflow_call-only workflow is dropped
+    when an in-repository caller that reaches the same path is listed, and
+    kept, marked as having no runs of its own, when none is."""
+    problems = []
+    with _InRepo() as repo:
+        sha = _commit(repo.root, {
+            ".github/workflows/caller.yml": ("on: {push: {}}\njobs:\n  j:\n"
+                                             "    uses: ./.github/workflows/called.yml\n"),
+            ".github/workflows/called.yml": "on: {workflow_call: {}}\njobs: {}\n",
+            ".github/workflows/orphan.yml": "on: {workflow_call: {}}\njobs: {}\n"},
+            "2026-11-01T00:00:00 +0000")
+        try:
+            called = {w["path"]: w for w in pl.tree_reaching(sha, [".github/workflows/called.yml"])}
+            orphan = {w["path"]: w for w in pl.tree_reaching(sha, [".github/workflows/orphan.yml"])}
+        except (pl.ReadError, ValueError) as exc:
+            return ["reusable-only: the tree read failed: {0}".format(exc)]
+    if sorted(called) != [".github/workflows/caller.yml"]:
+        problems.append("reusable-only: a called workflow with a listed caller gave {0}, expected the "
+                        "caller only".format(sorted(called)))
+    got = orphan.get(".github/workflows/orphan.yml") or {}
+    if sorted(orphan) != [".github/workflows/orphan.yml"] or got.get("runs_of_its_own") is not False:
+        problems.append("reusable-only: a workflow_call-only workflow with no caller gave {0}, expected it "
+                        "kept with no runs of its own".format(orphan))
+    return problems
+
+
+def check_window_edges(fx):
+    """research D10 and FR-012 at their boundaries: a merge exactly at the
+    window start is aged out, not in the window; one exactly AGED_OUT_HOURS
+    before it is neither; one at the end is in. A comment posted, a named
+    run started or an unresolvable run started exactly at the merge does
+    not count and is not set apart."""
+    problems = []
+    start, end, repo = fx["window"]["start"], fx["window"]["end"], fx["repository"]
+    day = pl.parse_time(start) - pl.datetime.timedelta(hours=pl.AGED_OUT_HOURS)
+    edges = [("s_at_start", start), ("s_day_before", pl.utc_text(day)),
+             ("s_in_day", pl.utc_text(day + pl.datetime.timedelta(seconds=1))), ("s_at_end", end)]
+    entries = [make_entry(fx["base_entry"], {"sha": sha, "pr": 60 + i, "merged_at": when, "named_issues": []})
+               for i, (sha, when) in enumerate(edges)]
+    states, aged = pl.classify_all(entries, {}, {}, {}, repo, start, end)
+    if sorted(states) != ["s_at_end"] or aged != 2:
+        problems.append("window edges: in the window {0}, aged out {1}; expected only the merge at the end, "
+                        "and the merges at the start and one second into the aged-out day".format(sorted(states), aged))
+    entry = make_entry(fx["base_entry"])
+    merged = entry["merged_at"]
+    at_merge = dict(fx["base_comment"], posted_at=merged)
+    if pl.classify(entry, {}, [at_merge], {"own/repo/500": dict(fx["base_named"])}, set(), repo) == pl.STATE_ON_RECORD:
+        problems.append("window edges: a comment posted exactly at the merge counted")
+    named = {"own/repo/500": dict(fx["base_named"], run_started_at=merged)}
+    if pl.classify(entry, {}, [dict(fx["base_comment"])], named, set(), repo) == pl.STATE_ON_RECORD:
+        problems.append("window edges: a named run started exactly at the merge counted")
+    runs = {".github/workflows/wrap.yml": [dict(fx["base_run"], run_started_at=merged, resolvable=False,
+                                                contains=[])]}
+    if pl.set_apart([entry], runs, {}, {}, repo, start, end) != 0:
+        problems.append("window edges: an unresolvable run started exactly at the merge was set apart")
+    return problems
+
+
+def check_report_edges(fx):
+    """FR-020: the earliest and latest links are the first and last run by
+    start time, whatever order the runs were read in; the size limit is
+    applied to the names-only form, so a report whose full form is over it
+    still builds when the names-only form fits."""
+    from board_spec_request_body import utf16_len
+    problems = []
+    entry = make_entry(fx["base_entry"])
+    url = "https://github.com/own/repo/actions/runs/{0}".format
+    order = [("2026-11-05T00:00:00Z", 2), ("2026-11-02T00:00:00Z", 1), ("2026-11-09T00:00:00Z", 3),
+             ("2026-11-04T00:00:00Z", 4)]
+    runs = {".github/workflows/wrap.yml": [dict(fx["base_run"], run_id=n, run_started_at=when, html_url=url(n),
+                                                event="push", conclusion="success") for when, n in order]}
+    args = ([entry], runs, {}, {}, fx["repository"], "2026-11-10T12:00:00Z", "h")
+    huge = 10 ** 6
+    doc = pl.assemble_report(*args, huge, utf16_len)
+    if "[first]({0}), [last]({1})".format(url(1), url(3)) not in doc["full"]:
+        problems.append("report: the earliest and latest links are not runs 1 and 3: {0!r}".format(
+            [line for line in doc["full"].splitlines() if "first" in line]))
+    fits = utf16_len(doc["names_only"])
+    if utf16_len(doc["full"]) <= fits:
+        return problems + ["report fixture: the full form is not longer than the names-only form"]
+    try:
+        pl.assemble_report(*args, fits, utf16_len)
+    except ValueError as exc:
+        problems.append("report: a names-only form that fits failed the build: {0}".format(exc))
+    try:
+        pl.assemble_report(*args, fits - 1, utf16_len)
+        problems.append("report: a names-only form one unit over the limit did not fail the build")
+    except ValueError:
+        pass
+    return problems
+
+
+def check_closed_by_commit_edges():
+    """Collector.closed_by_commit: an issue the message names but another
+    commit closed is not this merge's, and a number that is no issue (404)
+    is no candidate, not a failed read."""
+    problems = []
+    with _InRepo() as repo:
+        _commit(repo.root, {"a.txt": "a\n"}, "2026-10-01T00:00:00 +0000")
+        sha = _commit(repo.root, {"b.txt": "b\n"}, "2026-11-01T00:00:00 +0000",
+                      message="Fix #21, closes #22 and fixes #23\n")
+        events = {"21": [{"event": "closed", "commit_id": "f" * 40}],
+                  "23": [{"event": "closed", "commit_id": sha}]}
+
+        def api(path, paginate):
+            for number, rows in events.items():
+                if "/issues/{0}/events".format(number) in path:
+                    return rows
+            if "/issues/22/events" in path:
+                raise pl.NotFound("gh api {0}: (HTTP 404)".format(path))
+            raise AssertionError("unexpected read " + path)
+        with _FakeReads(api=api):
+            try:
+                got = pl.Collector("own/repo", "2026-11-10T12:00:00Z").closed_by_commit(sha, {})
+            except (pl.ReadError, AssertionError) as exc:
+                return ["closed by commit: a 404 or another commit's close failed the read: {0}".format(exc)]
+    if got != [23]:
+        problems.append("closed by commit: {0}, expected [23] (#21 closed by another commit, #22 a 404)".format(got))
+    return problems
+
+
 WRITE_CALLS = ("gh workflow run", "gh issue comment", "gh issue close", "gh issue edit", "gh pr comment",
                "gh label", "createWorkflowDispatch", "-X POST", "-X PATCH", "-X PUT", "-X DELETE",
                "--method POST", "--method PATCH", "claude-code-action", "create-github-app-token")
@@ -1602,6 +1852,14 @@ def check_sc001_fixtures(fx):
             dict(diff), dict(diff, reason="FR-005")]), shape),
         ("a listed difference expecting state 2", moved, dict(good, expected_differences=[
             dict(diff, expected_state=2)]), shape),
+        # SC001_HALF_STATES each way: a listed half expects only 4 or 5, a
+        # proofs half only 2 (#889).
+        ("a listed difference expecting state 3", moved, dict(good, expected_differences=[
+            dict(diff, expected_state=3)]), shape),
+        ("a listed difference expecting state 1", moved, dict(good, expected_differences=[
+            dict(diff, expected_state=1)]), shape),
+        ("a proofs difference expecting state 4", dict(corpus, comments={}), dict(good, expected_differences=[
+            dict(diff, pr=1, sha="p1", half="proofs", expected_state=4, actual_state=4)]), shape),
     ]
     for label, case_corpus, expected, own in shaped:
         if not sc001_replay(case_corpus, expected, **own):
@@ -1653,6 +1911,9 @@ def main():
     problems = (check(fx) + check_report(fx) + check_set_apart_report(fx)
                 + check_failed_reads() + check_main_errors() + check_section_file_home() + check_review_fixes(fx) + check_lifecycle_issue()
                 + check_entries() + check_closed_by_commit(fx) + check_loud_reads() + check_read_cost(fx) + check_classifier_corrections(fx) + check_utc() + check_trees() + check_budget() + check_tree_snapshot() + check_tree_cost() + check_run_list_cost() + check_deleted_workflow_runs() + check_progress() + check_forbidden_homes() + check_workflow()
+                + check_rebase_merge() + check_run_ancestry_skip() + check_capture_clip() + check_git_failed_reads()
+                + check_reusable_only_filter() + check_window_edges(fx) + check_report_edges(fx)
+                + check_closed_by_commit_edges()
                 + real + check_sc001_fixtures(fx) + fixtures_name_no_live_table(check_sc001_fixtures))
     # Self-check: a classifier that ignores the merge time must be caught.
     original = pl.comment_steps_1_to_4
