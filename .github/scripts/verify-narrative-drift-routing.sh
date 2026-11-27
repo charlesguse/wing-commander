@@ -79,9 +79,12 @@ fi
 # ── The class vocabulary fails closed (#889, found by the code review of
 #    #1181): EXECUTE the shipped `Resolve finding-class vocabulary` step
 #    with a `gh` that fails and with one that finds no label. Both must
-#    compile `class` into an enum that holds every class the eligibility
-#    step and the evidence-validity gate name, never into free text, where
-#    a synonym of an issue-exempt class would be filed as a defect.
+#    compile `class` into an enum of exactly the classes the eligibility
+#    step and the evidence-validity gate name, plus `__new__`, never into
+#    free text, where a synonym of an issue-exempt class would be filed as
+#    a defect. A third run finds only an unrelated label (the registry a
+#    fresh repo has after its first `Register new finding class`): the
+#    enum must still offer exactly the eligibility step's exempt classes.
 python3 - "$work" <<'PY'
 import json
 import os
@@ -122,7 +125,10 @@ if not {"narrative-drift", "denied-tool"} <= exempt:
              f"eligibility step's exempt arms (got {sorted(exempt)})")
 
 failures = []
-for case, gh_body in (("query-fails", "exit 1"), ("no-labels", "echo '[]'")):
+for case, gh_body, want in (("query-fails", "exit 1", named),
+                            ("no-labels", "echo '[]'", named),
+                            ("partial-registry", "echo '[\"unrelated-class\"]'",
+                             exempt | {"unrelated-class"})):
     d = os.path.join(work, "vocab-" + case)
     bindir = os.path.join(d, "bin")
     os.makedirs(bindir)
@@ -141,12 +147,13 @@ for case, gh_body in (("query-fails", "exit 1"), ("no-labels", "echo '[]'")):
         failures.append(f"{case}: rc={rc}, no parseable schema output: {out}")
         continue
     enum = set(cls.get("enum") or [])
-    missing = sorted(named - enum)
-    if rc != 0 or not enum or "__new__" not in enum or missing:
-        failures.append(f"{case}: rc={rc}, class schema {json.dumps(cls)} "
-                        f"lacks a fixed enum with __new__ and {missing}")
+    want = want | {"__new__"}
+    if rc != 0 or enum != want:
+        failures.append(f"{case}: rc={rc}, class schema {json.dumps(cls)} is not "
+                        f"a fixed enum of exactly {sorted(want)} (missing "
+                        f"{sorted(want - enum)}, extra {sorted(enum - want)})")
     else:
-        print(f"::notice::verify-narrative-drift-routing: {case}: class falls back to the built-in enum")
+        print(f"::notice::verify-narrative-drift-routing: {case}: class is the expected fixed enum")
 
 if failures:
     for f in failures:
@@ -154,7 +161,7 @@ if failures:
     sys.exit(1)
 PY
 if [ "$?" -ne 0 ]; then
-  reason "the shipped 'Resolve finding-class vocabulary' step does not fail closed to an enum holding every class the eligibility and evidence-validity steps name — see ::error:: above"
+  reason "the shipped 'Resolve finding-class vocabulary' step does not fail closed to an enum of exactly the classes the eligibility and evidence-validity steps name, or drops an issue-exempt class from a partial registry — see ::error:: above"
 fi
 
 # ── Confirm the live wiring: Ensure pipeline-defect issue gates on
