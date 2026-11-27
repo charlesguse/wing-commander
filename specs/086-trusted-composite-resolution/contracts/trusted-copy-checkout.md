@@ -6,6 +6,13 @@ one or more local composite actions: `select`, `triage`, `route`, `fix`,
 composite reference today and gains no step (research.md D3); if it ever
 gains one, this same contract applies to it with no amendment.
 
+Exception: a job that can run on a `pull_request` event (today
+`prove-gate` and `prove`) names `ref: ${{ github.event.repository.default_branch }}`
+in place of `${{ github.sha }}` below, in this step, in its provenance
+line and in its workspace checkout. On that event github.sha is the PR's
+merge commit, which for a PR closed without merging is its own unreviewed
+tree. Gate 104's rule (h) holds it; see board-loop.yml's header.
+
 ## Step shape
 
 ```yaml

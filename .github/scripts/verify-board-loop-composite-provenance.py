@@ -31,7 +31,9 @@ feature closes):
       copy (composites)` step, at a step index lower than every such
       reference, every `wing-commander-context` call, and every
       `anthropics/claude-code-action@` step in that same job;
-  (c) that step's `with.ref` is exactly `${{ github.sha }}`;
+  (c) that step's `with.ref` is exactly `${{ github.sha }}` in every job
+      that cannot run on a pull_request event (rule (h) sets the ref in
+      every job that can);
   (d) that step carries no `continue-on-error: true`, and its own `if:`
       (if it has one at all) is not a condition that could skip it while a
       dependent reference still runs;
@@ -48,6 +50,35 @@ feature closes):
 A job with no composite reference at all (today: only `resolve-model`)
 trivially satisfies (a)-(d) and (f); rule (e) is a file-level fact
 independent of any one job.
+
+Rule (h) covers this file's `pull_request: closed` trigger. On a
+pull_request event github.sha is the PR's merge commit, and a checkout with
+no ref gets that same commit. For a PR closed without merging, that is the
+PR's own unreviewed tree, and the job would run its composites with the
+App's private key and import its .github/scripts with the bot token.
+  (h) in every job that can run on a pull_request event, every checkout --
+      the trusted copy and the workspace root alike -- names this
+      repository (no `repository:`, or `${{ github.repository }}`) and
+      `ref: ${{ github.event.repository.default_branch }}`. No other
+      `repository:` is allowed there: a literal owner/name can spell this
+      repository (actions/checkout then takes github.sha), and a branch
+      name resolves in whatever repository an expression names. Any
+      trigger other than schedule, workflow_dispatch and pull_request
+      holds every job: github.sha is the PR's merge commit on the
+      pull_request_review triggers, and the caller's on workflow_call, and
+      the evaluator below reads only pull_request.
+Which jobs can run on that event is worked out from the file, never
+listed. Each job's `if:` is evaluated as it would read on a pull_request
+event: no inputs, `github.event_name` known, every job that cannot run
+there skipped with empty outputs, and everything else unknown, with the
+implicit `success()` a job gets when its `if:` names no status function.
+A job is held to rule (h) unless its condition is certainly false, and an
+`if:` the evaluator cannot parse counts as one that can run (fail closed),
+as does one GitHub reads as a template rather than one expression: a `${{`
+anywhere but as a single wrap of the whole `if:`, whitespace other than
+space, tab, CR or LF at either end, or a wrap holding only a string
+literal, whose text GitHub then reads as the condition.
+Today that is prove-gate and prove.
 
 Rule (g) carries the same uses:-block concern to every OTHER workflow in
 .github/workflows/, since a relative `uses: ./.github/actions/<name>`
@@ -69,7 +100,8 @@ Gate 98's own `run:`-block checks (helper-script/schema provenance, the
 gate never inspects a `run:` block, and has no gate-suite exemption to
 state (it never runs the item's own tree).
 
---self-test applies one mutation per rule above, plus a mutation
+--self-test checks rule (h)'s evaluator on fixed conditions, then applies
+one mutation per rule above, plus a mutation
 reintroducing a raw reference in `select` -- a job outside Gate 98's own
 JOBS tuple -- proving rule (a) admits no per-job carve-out, and asserts
 each is caught and attributable to its own rule, plus a baseline assertion
@@ -106,6 +138,346 @@ TRUSTED_ROOT_REFS = (
     "${{ github.event.repository.default_branch }}",
 )
 TRUSTED_ROOT_REPOS = (None, "${{ github.repository }}")
+# Rule (h): the ref every checkout of this repository names in a job that
+# can run on a pull_request event.
+PR_SAFE_REF = "${{ github.event.repository.default_branch }}"
+PR_EVENT = "pull_request"
+# The triggers rule (h) reads job by job. Any other trigger holds every job.
+PR_READ_EVENTS = {"schedule", "workflow_dispatch", PR_EVENT}
+
+
+# --- rule (h): which jobs can run on a pull_request event -------------------
+#
+# A three-valued reading of a job's `if:` as it would evaluate on a
+# pull_request event. A value is ("known", v) for one the expression
+# certainly has there (a string, a bool, or None for null), TRUTHY or FALSY
+# for one whose truth is certain but whose value is not, or UNKNOWN. Only a
+# condition that is certainly false keeps a job out of rule (h). Every rule
+# below follows GitHub's documented expression semantics: `!` binds tighter
+# than `==`, `||` and `&&` return an operand rather than a bool, function
+# names ignore case, `needs` holds only a job's direct needs, and a
+# comparison of unlike types coerces both sides to numbers (null and '' to
+# 0). Where a reading is not certain it is UNKNOWN, never a guess: a string
+# with a non-ASCII character compares as UNKNOWN, since GitHub ignores case
+# by ordinal upper-casing, which Python's lower() does not match there; and
+# a path through an object filter (`.*`) is UNKNOWN, since it yields an
+# array, which is truthy even when empty.
+
+UNKNOWN = ("unknown", None)
+TRUTHY = ("truthy", None)
+FALSY = ("falsy", None)
+STATUS_FN_RE = re.compile(r"\b(?:success|always|cancelled|failure)\s*\(", re.I)
+_TOKEN_RE = re.compile(
+    r"\s*(?:(\|\||&&|==|!=|<=|>=|<|>|!|\(|\)|,)"
+    r"|'((?:[^']|'')*)'"
+    r"|(-?\d+(?:\.\d+)?)"
+    r"|([A-Za-z_][A-Za-z0-9_-]*(?:\.(?:[A-Za-z_][A-Za-z0-9_-]*|\*))*))")
+
+
+class _Unparsable(Exception):
+    pass
+
+
+def _tokens(text):
+    out, pos, text = [], 0, text.strip()
+    while pos < len(text):
+        m = _TOKEN_RE.match(text, pos)
+        if not m or m.end() == pos:
+            raise _Unparsable(text[pos:])
+        op, string, number, ident = m.groups()
+        if op is not None:
+            out.append(("op", op))
+        elif string is not None:
+            out.append(("str", string.replace("''", "'")))
+        elif number is not None:
+            out.append(("num", number))
+        else:
+            out.append(("id", ident))
+        pos = m.end()
+    return out
+
+
+def _known(x):
+    return ("known", x)
+
+
+def _truth(v):
+    """True, False, or None (unknown) for an abstract value."""
+    if v[0] != "known":
+        return {"truthy": True, "falsy": False}.get(v[0])
+    x = v[1]
+    return x != "" if isinstance(x, str) else bool(x)
+
+
+def _loose_eq(a, b):
+    """GitHub's `==` on two known values: True, False, or None (unknown)."""
+    if any(isinstance(x, str) and not x.isascii() for x in (a, b)):
+        return None
+    if isinstance(a, str) and isinstance(b, str):
+        return a.lower() == b.lower()
+    if isinstance(a, bool) and isinstance(b, bool):
+        return a == b
+    if a is None and b is None:
+        return True
+    if b is None:
+        a, b = b, a
+    if a is None and isinstance(b, bool):
+        return b is False
+    if a is None and isinstance(b, str):
+        # null coerces to 0; a string to the number it spells, else NaN.
+        if b == "":
+            return True
+        if b.strip() and not re.search(r"\d", b):
+            return False
+    return None
+
+
+class _PrEval(object):
+    """One `if:` read on a pull_request event. `skipped` holds the jobs that
+    certainly do not run there; `needs` is this job's own needs."""
+
+    def __init__(self, text, skipped, needs):
+        self.toks = _tokens(text)
+        self.i = 0
+        self.skipped = skipped
+        self.needs = needs
+
+    def peek(self):
+        return self.toks[self.i] if self.i < len(self.toks) else (None, None)
+
+    def take(self, want=None):
+        tok = self.peek()
+        if tok[0] is None or (want is not None and tok != want):
+            raise _Unparsable(str(tok))
+        self.i += 1
+        return tok
+
+    def run(self):
+        v = self.or_()
+        if self.i != len(self.toks):
+            raise _Unparsable("trailing " + str(self.peek()))
+        return v
+
+    def or_(self):
+        # `a || b` is a when a is truthy, else b.
+        v = self.and_()
+        while self.peek() == ("op", "||"):
+            self.take()
+            b = self.and_()
+            a = _truth(v)
+            if a is False:
+                v = b
+            elif a is None:
+                v = TRUTHY if _truth(b) is True else UNKNOWN
+        return v
+
+    def and_(self):
+        # `a && b` is a when a is falsy, else b.
+        v = self.cmp()
+        while self.peek() == ("op", "&&"):
+            self.take()
+            b = self.cmp()
+            a = _truth(v)
+            if a is True:
+                v = b
+            elif a is None:
+                v = FALSY if _truth(b) is False else UNKNOWN
+        return v
+
+    def cmp(self):
+        left = self.unary()
+        tok = self.peek()
+        if tok[0] != "op" or tok[1] not in ("==", "!=", "<", ">", "<=", ">="):
+            return left
+        self.take()
+        right = self.unary()
+        if tok[1] not in ("==", "!=") or left[0] != "known" or right[0] != "known":
+            return UNKNOWN
+        same = _loose_eq(left[1], right[1])
+        if same is None:
+            return UNKNOWN
+        return _known(same if tok[1] == "==" else not same)
+
+    def unary(self):
+        # `!` binds tighter than `==`: `!a == b` is `(!a) == b`.
+        if self.peek() == ("op", "!"):
+            self.take()
+            t = _truth(self.unary())
+            return UNKNOWN if t is None else _known(not t)
+        return self.primary()
+
+    def primary(self):
+        kind, val = self.take()
+        if (kind, val) == ("op", "("):
+            v = self.or_()
+            self.take(("op", ")"))
+            return v
+        if kind == "str":
+            return _known(val)
+        if kind == "num":
+            return UNKNOWN
+        if kind != "id":
+            raise _Unparsable(str((kind, val)))
+        if self.peek() != ("op", "("):
+            return self.ident(val)
+        self.take()
+        if self.peek() != ("op", ")"):
+            self.or_()
+            while self.peek() == ("op", ","):
+                self.take()
+                self.or_()
+        self.take(("op", ")"))
+        name = val.lower()
+        if name == "always":
+            return _known(True)
+        if name == "success" and any(n in self.skipped for n in self.needs):
+            return _known(False)
+        return UNKNOWN
+
+    def ident(self, name):
+        low = name.lower()
+        if low in ("true", "false"):
+            return _known(low == "true")
+        if low == "null":
+            return _known(None)
+        parts = name.split(".")
+        if "*" in parts:
+            # An object filter yields an array even over null or an empty
+            # object (inputs.*, a skipped need's outputs.*), and an array
+            # is truthy and equal to no string: never a known null.
+            return UNKNOWN
+        if low == "github.event_name":
+            return _known(PR_EVENT)
+        if low.startswith("inputs."):
+            # A pull_request event has no inputs; a missing one is null.
+            return _known(None)
+        # Only a direct need that is certainly skipped has a known result
+        # and empty outputs; `needs` holds nothing else.
+        if parts[0] == "needs" and len(parts) >= 3 and parts[1] in self.needs \
+                and parts[1] in self.skipped:
+            if parts[2] == "result" and len(parts) == 3:
+                return _known("skipped")
+            if parts[2] == "outputs" and len(parts) == 4:
+                return _known(None)
+        return UNKNOWN
+
+
+def pr_condition(job_if, skipped, needs):
+    """True when the job certainly does not run on a pull_request event;
+    False when it can, or its condition could not be read."""
+    text = "" if job_if is None else str(job_if).strip(" \t\r\n")
+    if text != text.strip():
+        # Other whitespace at an edge: GitHub trims some (U+00A0) but not
+        # all that Python does (U+001F), and an untrimmed character beside
+        # a `${{ }}` makes the `if:` a template, a non-empty string.
+        return False
+    wrapped = text.startswith("${{") and text.endswith("}}")
+    if wrapped:
+        text = text[3:-2].strip()
+    # GitHub reads an `if:` with `${{` anywhere else (inside a string
+    # literal, say) as a template: the whole value becomes a string, truthy
+    # when not empty. And a wrap holding only a string literal is read as
+    # that string's text, so `${{ '' }}` is an empty `if:`, the default
+    # success(). Neither is one expression: both can run (fail closed).
+    if "${{" in text:
+        return False
+    try:
+        if wrapped and [k for k, _ in _tokens(text)] == ["str"]:
+            return False
+    except _Unparsable:
+        return False
+    if not text:
+        text = "success()"
+    elif not STATUS_FN_RE.search(text):
+        text = "success() && (" + text + ")"
+    try:
+        return _truth(_PrEval(text, skipped, needs).run()) is False
+    except _Unparsable:
+        return False
+
+
+def _needs(job):
+    n = (job or {}).get("needs") or []
+    return [n] if isinstance(n, str) else [str(x) for x in n]
+
+
+def pr_reachable_jobs(doc):
+    """The jobs of a workflow that can run on a pull_request event."""
+    on = (doc or {}).get("on", (doc or {}).get(True))
+    events = set(on) if isinstance(on, (dict, list)) else ({on} if on else set())
+    jobs = (doc or {}).get("jobs") or {}
+    if events - PR_READ_EVENTS:
+        # A trigger the evaluator does not read: github.sha can be a PR's
+        # merge commit there too (pull_request_review, or workflow_call
+        # from a caller on pull_request), so every job counts (fail closed).
+        return set(jobs)
+    if PR_EVENT not in events:
+        return set()
+    skipped, done = set(), set()
+    progressed = True
+    while progressed:
+        progressed = False
+        for job_id, job in jobs.items():
+            if job_id in done or any(n in jobs and n not in done for n in _needs(job)):
+                continue
+            if pr_condition((job or {}).get("if"), skipped, _needs(job)):
+                skipped.add(job_id)
+            done.add(job_id)
+            progressed = True
+    # A job left undone sits on a needs cycle: it counts as able to run.
+    return set(jobs) - skipped
+
+
+def _is_checkout(step):
+    """True for an actions/checkout step in any letter case: GitHub resolves
+    an action's owner and name case-insensitively, so `Actions/Checkout@v5`
+    is the same action (found by #1307's validator, F1)."""
+    return str((step or {}).get("uses", "")).lower().startswith("actions/checkout@")
+
+
+def _with_folded(step):
+    """The step's with: keys folded to lower case, as the runner reads an
+    action's inputs, and the keys that collide once folded."""
+    folded, clashes = {}, []
+    for key, value in ((step or {}).get("with") or {}).items():
+        low = str(key).lower()
+        if low in folded:
+            clashes.append(low)
+        folded[low] = value
+    return folded, clashes
+
+
+def rule_h_problems(job_id, job):
+    """(h) every checkout in a job that can run on a pull_request event
+    names this repository and the default branch."""
+    problems = []
+    for i, step in enumerate((job or {}).get("steps") or []):
+        step = step or {}
+        if not _is_checkout(step):
+            continue
+        w, clashes = _with_folded(step)
+        if clashes:
+            problems.append(
+                "{0}: can run on a pull_request event, but step {1} ({2!r}) gives with: key(s) "
+                "{3} more than once in different letter cases; the runner reads inputs "
+                "case-insensitively, so which one applies is not fixed -- rule (h)".format(
+                    job_id, i, step.get("name"), sorted(set(clashes))))
+        repo = w.get("repository")
+        # No other repository: a literal owner/name can spell this one
+        # (actions/checkout then takes github.sha), and the default
+        # branch's name resolves in whatever repository an expression names.
+        if repo not in TRUSTED_ROOT_REPOS:
+            problems.append(
+                "{0}: can run on a pull_request event, but step {1} ({2!r}) checks out "
+                "repository {3!r}; every checkout there names this repository (no "
+                "repository:, or {4!r}) -- rule (h)".format(
+                    job_id, i, step.get("name"), repo, TRUSTED_ROOT_REPOS[1]))
+        if w.get("ref") != PR_SAFE_REF:
+            problems.append(
+                "{0}: can run on a pull_request event, where github.sha is the PR's merge "
+                "commit, but step {1} ({2!r}) checks out ref {3!r}, not {4!r} -- "
+                "rule (h)".format(job_id, i, step.get("name"), w.get("ref"), PR_SAFE_REF))
+    return problems
 
 
 def rule_a_problems(text):
@@ -136,15 +508,15 @@ def _dependent_indices(steps):
 def _checkout_indices(steps):
     return [i for i, s in enumerate(steps)
             if (s or {}).get("name") == CHECKOUT_NAME
-            and str((s or {}).get("uses", "")).startswith("actions/checkout@")]
+            and _is_checkout(s)]
 
 
 def _write_protect_indices(steps):
     return [i for i, s in enumerate(steps) if (s or {}).get("name") == WRITE_PROTECT_NAME]
 
 
-def job_problems(job_id, job):
-    problems = []
+def job_problems(job_id, job, pr_reachable=False):
+    problems = rule_h_problems(job_id, job) if pr_reachable else []
     steps = (job or {}).get("steps") or []
     dependents = _dependent_indices(steps)
     if not dependents:
@@ -165,10 +537,11 @@ def job_problems(job_id, job):
                 "({3!r}) -- rule (b)".format(
                     job_id, checkout, d, (steps[d] or {}).get("name", d)))
     step = steps[checkout] or {}
-    ref = ((step.get("with") or {})).get("ref")
-    if ref != EXPECTED_REF:
-        problems.append("{0}: trusted-copy checkout ref is {1!r}, not {2!r} -- rule (c)".format(
-            job_id, ref, EXPECTED_REF))
+    folded, clashes = _with_folded(step)
+    ref = folded.get("ref")
+    if not pr_reachable and (ref != EXPECTED_REF or clashes):
+        problems.append("{0}: trusted-copy checkout ref is {1!r}{3}, not {2!r} -- rule (c)".format(
+            job_id, ref, EXPECTED_REF, " (with: keys collide once folded)" if clashes else ""))
     if step.get("continue-on-error") is True:
         problems.append(
             "{0}: trusted-copy checkout carries continue-on-error: true -- rule (d)".format(
@@ -215,8 +588,9 @@ def gitignore_problems(text):
 def check(text, gitignore_text):
     problems = rule_a_problems(text)
     doc = yaml.safe_load(text)
+    reachable = pr_reachable_jobs(doc)
     for job_id, job in (doc.get("jobs") or {}).items():
-        problems += job_problems(job_id, job)
+        problems += job_problems(job_id, job, job_id in reachable)
     problems += gitignore_problems(gitignore_text)
     return problems
 
@@ -227,8 +601,9 @@ def check_doc(doc, gitignore_text):
     it (a plain `uses: <value>` mapping always dumps as one line)."""
     dumped = yaml.dump(doc, default_flow_style=False, sort_keys=False)
     problems = rule_a_problems(dumped)
+    reachable = pr_reachable_jobs(doc)
     for job_id, job in (doc.get("jobs") or {}).items():
-        problems += job_problems(job_id, job)
+        problems += job_problems(job_id, job, job_id in reachable)
     problems += gitignore_problems(gitignore_text)
     return problems
 
@@ -253,14 +628,14 @@ def _untrusted_root_checkout(step):
     """The checkout's description when it writes something other than the
     run's own commit into the workspace root; None otherwise."""
     step = step or {}
-    if not str(step.get("uses", "")).startswith("actions/checkout@"):
+    if not _is_checkout(step):
         return None
-    w = step.get("with") or {}
+    w, clashes = _with_folded(step)
     path = str(w.get("path") or "").strip()
-    if path not in ("", ".", "./"):
+    if path not in ("", ".", "./") and not clashes:
         return None
     ref, repo = w.get("ref"), w.get("repository")
-    if repo in TRUSTED_ROOT_REPOS and (ref is None or ref in TRUSTED_ROOT_REFS):
+    if not clashes and repo in TRUSTED_ROOT_REPOS and (ref is None or ref in TRUSTED_ROOT_REFS):
         return None
     return "{0!r} (repository={1!r}, ref={2!r})".format(step.get("name"), repo, ref)
 
@@ -397,6 +772,169 @@ def mut_gate_job_raw_reference(doc):
     return doc
 
 
+def _checkout_named(steps, name):
+    for s in steps:
+        if (s or {}).get("name") == name and _is_checkout(s):
+            return s
+    sys.exit("::error::Gate 104 self-test: no {0!r} checkout found; update the self-test "
+             "alongside the workflow.".format(name))
+
+
+def mut_prove_gate_side_ref_sha(doc):
+    """prove-gate's trusted copy goes back to github.sha: on an unmerged
+    close, the PR's own composites run with the App's private key."""
+    _checkout_named(_job_steps(doc, "prove-gate"), CHECKOUT_NAME)["with"]["ref"] = EXPECTED_REF
+    return doc
+
+
+def mut_prove_root_ref_dropped(doc):
+    """prove's workspace checkout loses its ref, so the .github/scripts it
+    imports would be the PR's merge commit again."""
+    del _checkout_named(_job_steps(doc, "prove"), "Checkout")["with"]["ref"]
+    return doc
+
+
+def mut_prove_gate_root_checkout_capitalised(doc):
+    """prove-gate's workspace checkout is spelled with capitals and loses its
+    ref: GitHub runs the same action, at github.sha (#1307 validator F1)."""
+    step = _checkout_named(_job_steps(doc, "prove-gate"), "Checkout")
+    step["uses"] = step["uses"].replace("actions/checkout@", "Actions/Checkout@")
+    del step["with"]["ref"]
+    return doc
+
+
+def mut_prove_root_ref_twice_in_cases(doc):
+    """prove's workspace checkout keeps its ref and adds REF: github.sha; the
+    runner folds input names, so the default-branch ref may not apply."""
+    _checkout_named(_job_steps(doc, "prove"), "Checkout")["with"]["REF"] = EXPECTED_REF
+    return doc
+
+
+def mut_select_runs_on_pull_request(doc):
+    """select's pull_request exclusion is dropped, so a job still at
+    github.sha can run on the closed trigger. No job list has to change for
+    rule (h) to see it."""
+    job = doc["jobs"]["select"]
+    job["if"] = str(job["if"]).replace("github.event_name != 'pull_request' && ", "")
+    if "pull_request" in job["if"]:
+        sys.exit("::error::Gate 104 self-test: select's if: no longer has the expected "
+                 "pull_request exclusion; update the self-test alongside the workflow.")
+    return doc
+
+
+def mut_prove_gate_side_repo_spelled_out(doc):
+    """prove-gate's trusted copy spells this repository out as an expression
+    and goes back to github.sha: rule (c) no longer holds a job that can run
+    on a pull_request event, so rule (h) must."""
+    w = _checkout_named(_job_steps(doc, "prove-gate"), CHECKOUT_NAME)["with"]
+    w["repository"] = "${{ github.event.repository.full_name }}"
+    w["ref"] = EXPECTED_REF
+    return doc
+
+
+def mut_review_trigger_added(doc):
+    """A pull_request_review trigger is added: github.sha is the PR's merge
+    commit there too, so every job is held to rule (h)."""
+    on = doc["on"] if "on" in doc else doc[True]
+    on["pull_request_review"] = {"types": ["submitted"]}
+    return doc
+
+
+def mut_prove_root_repo_literal(doc):
+    """prove's workspace checkout names a repository as a literal owner/name
+    and drops its ref: a literal can spell this repository, and with no ref
+    actions/checkout then takes the PR's merge commit."""
+    w = _checkout_named(_job_steps(doc, "prove"), "Checkout")["with"]
+    w["repository"] = "example-owner/wing-commander"
+    del w["ref"]
+    return doc
+
+
+def mut_prove_gate_side_other_repo(doc):
+    """prove-gate's trusted copy names another repository by expression,
+    keeping the default-branch ref: the branch name resolves there."""
+    w = _checkout_named(_job_steps(doc, "prove-gate"), CHECKOUT_NAME)["with"]
+    w["repository"] = "${{ vars.WC_OTHER_REPOSITORY }}"
+    return doc
+
+
+def mut_workflow_call_trigger_added(doc):
+    """A workflow_call trigger is added: a caller on pull_request hands its
+    merge commit down as github.sha, so every job is held to rule (h)."""
+    on = doc["on"] if "on" in doc else doc[True]
+    on["workflow_call"] = {}
+    return doc
+
+
+# Rule (h)'s evaluator on fixed conditions: (if:, jobs certainly skipped on
+# a pull_request event, this job's needs, True when it is certainly skipped).
+PR_CONDITION_CASES = [
+    ("github.event_name != 'pull_request' && inputs.directed-stage == ''", set(), [], True),
+    ("github.event_name == 'pull_request' || inputs.x == 'prove'", set(), [], False),
+    (None, set(), [], False),
+    (None, {"a"}, ["a"], True),
+    ("needs.a.outputs.ok == 'true'", {"a"}, ["a"], True),
+    ("needs.a.outputs.ok == 'true'", set(), ["a"], False),
+    ("!cancelled() && needs.a.result != 'failure' && "
+     "(needs.a.outputs.n != '' || inputs.n != '')", {"a"}, ["a"], True),
+    ("!cancelled() && needs.a.result != 'failure'", {"a"}, ["a"], False),
+    ("always()", {"a"}, ["a"], False),
+    ("vars.PAUSED != 'true'", set(), [], False),
+    ("contains(github.event.pull_request.labels.*.name, 'x')", set(), [], False),
+    ("${{ github.event_name == 'schedule' }}", set(), [], True),
+    ("github.event_name == 'pull_request' &&& x", set(), [], False),
+    # A missing input, a skipped need's output and null are null, not '':
+    # null == '0' coerces both sides to 0.
+    ("inputs.n == '0'", set(), [], False),
+    ("!cancelled() && needs.a.outputs.n == '0'", {"a"}, ["a"], False),
+    ("null == ' '", set(), [], False),
+    # `!` binds tighter than `!=`: (!'pull_request') != 'schedule' is true.
+    ("!github.event_name != 'schedule'", set(), [], False),
+    # needs.c names no direct need, so it is null, not a skipped result.
+    ("needs.c.result != 'skipped'", {"c"}, [], False),
+    # Function names ignore case: Always() is a status function, so no
+    # implicit success() applies.
+    ("Always()", {"a"}, ["a"], False),
+    # `||` returns an operand: (null || 'a') == true is 'a' == true, false.
+    ("!((inputs.x || 'a') == true)", set(), [], False),
+    # `&&` returns an operand too: (true && 'a') == true is 'a' == true.
+    ("!((true && 'a') == true)", set(), [], False),
+    # needs.a.result.x reads a property of a string: null, not 'skipped'.
+    ("always() && !needs.a.result.x", {"a"}, ["a"], False),
+    # needs.a.outputs is an object, never equal to ''.
+    ("always() && needs.a.outputs != ''", {"a"}, ["a"], False),
+    # A non-ASCII string compares as unknown: GitHub's ordinal ignore-case
+    # does not fold U+212A (KELVIN SIGN) to 'k', as Python's lower() does.
+    ("always() && needs.a.result != 's\u212aipped'", {"a"}, ["a"], False),
+    # An object filter is an array, truthy even when empty: a skipped
+    # need's outputs.* and inputs.* are not null.
+    ("always() && needs.a.outputs.*", {"a"}, ["a"], False),
+    ("always() && needs.a.outputs.* != ''", {"a"}, ["a"], False),
+    ("inputs.*", set(), [], False),
+    # A `${{` inside a string literal makes the whole `if:` a template
+    # (a non-empty string), and a wrap holding only a string literal is
+    # read as that text: `${{ '' }}` is the default success().
+    ("inputs.x == '${{ inputs.x }}'", set(), [], False),
+    ("github.event_name != 'pull_request' && '${{ false }}'", set(), [], False),
+    ("${{ '' }}", set(), [], False),
+    # GitHub does not trim U+001F, so it stays beside the wrap: a template.
+    ("\x1f${{ false }}", set(), [], False),
+    ("${{ false }}\n", set(), [], True),
+]
+
+
+def pr_condition_case_failures():
+    out = []
+    for job_if, skipped, needs, want in PR_CONDITION_CASES:
+        got = pr_condition(job_if, skipped, needs)
+        if got != want:
+            out.append("rule (h)'s evaluator read if: {0!r} (skipped={1}, needs={2}) as {3}, "
+                       "expected {4}".format(job_if, sorted(skipped), needs,
+                                             "skipped" if got else "able to run",
+                                             "skipped" if want else "able to run"))
+    return out
+
+
 def mut_gitignore_removed(text):
     return "".join(line for line in text.splitlines(keepends=True)
                    if SIDECAR_PATH not in line)
@@ -424,9 +962,27 @@ def mut_untrusted_root_ref(docs):
     """shared-pr-reviewer.yml's find job checks the PR head out at the root
     instead of the default-branch commit its composites come from."""
     step = _other_step(docs, "shared-pr-reviewer.yml", "find",
-                       lambda s: str(s.get("uses", "")).startswith("actions/checkout@"))
+                       lambda s: _is_checkout(s))
     step["with"]["ref"] = "${{ needs.prepare.outputs.head-sha }}"
     return docs
+
+
+def mut_untrusted_root_ref_capitalised(docs):
+    """The same change as mut_untrusted_root_ref, with the input spelled
+    `Ref:`: the runner folds input names, so it is the same checkout
+    (found by #1307's validator re-check)."""
+    step = _other_step(docs, "shared-pr-reviewer.yml", "find", _is_checkout)
+    step["with"].pop("ref", None)
+    step["with"]["Ref"] = "${{ needs.prepare.outputs.head-sha }}"
+    return docs
+
+
+def mut_ref_changed_capitalised(doc):
+    """fix's trusted-copy checkout keeps ref: github.sha and adds Ref: main;
+    the runner folds input names, so main may be what it checks out."""
+    steps = _job_steps(doc, "fix")
+    steps[_checkout_index(steps)]["with"]["Ref"] = "main"
+    return doc
 
 
 def mut_side_checkout_moved_to_root(docs):
@@ -470,6 +1026,30 @@ MUTATIONS = [
     ("the watchdog's metrics-branch checkout moves to the root before the trial-bound "
      "composite",
      "others", mut_side_checkout_moved_to_root, "rule (g)"),
+    ("prove-gate's trusted copy goes back to github.sha",
+     "doc", mut_prove_gate_side_ref_sha, "rule (h)"),
+    ("prove's workspace checkout loses its default-branch ref",
+     "doc", mut_prove_root_ref_dropped, "rule (h)"),
+    ("select can run on the pull_request trigger with its checkouts still at github.sha",
+     "doc", mut_select_runs_on_pull_request, "rule (h)"),
+    ("prove-gate's trusted copy names this repository as an expression, at github.sha",
+     "doc", mut_prove_gate_side_repo_spelled_out, "rule (h)"),
+    ("a pull_request_review trigger is added with every other job still at github.sha",
+     "doc", mut_review_trigger_added, "rule (h)"),
+    ("prove's workspace checkout names a literal owner/name with no ref",
+     "doc", mut_prove_root_repo_literal, "rule (h)"),
+    ("prove-gate's trusted copy names another repository by expression, at the default branch",
+     "doc", mut_prove_gate_side_other_repo, "rule (h)"),
+    ("a workflow_call trigger is added with every other job still at github.sha",
+     "doc", mut_workflow_call_trigger_added, "rule (h)"),
+    ("prove-gate's workspace checkout is spelled Actions/Checkout and loses its ref",
+     "doc", mut_prove_gate_root_checkout_capitalised, "rule (h)"),
+    ("prove's workspace checkout adds REF: github.sha beside its default-branch ref",
+     "doc", mut_prove_root_ref_twice_in_cases, "rule (h)"),
+    ("shared-pr-reviewer.yml's find job checks the PR head out at the root, the input spelled Ref:",
+     "others", mut_untrusted_root_ref_capitalised, "rule (g)"),
+    ("fix's trusted-copy checkout adds Ref: main beside its github.sha ref",
+     "doc", mut_ref_changed_capitalised, "rule (c)"),
 ]
 
 
@@ -486,6 +1066,7 @@ def main():
         base = check(text, gitignore_text) + others
         if base:
             failures += ["the shipped workflow already fails: {0}".format(p) for p in base]
+        failures += pr_condition_case_failures()
         for label, kind, mutate, expect in MUTATIONS:
             if kind == "others":
                 caught = check_others(mutate(load_other_workflows()))
@@ -510,8 +1091,9 @@ def main():
     if failures:
         return 1
     if self_test:
-        print("Gate 104 self-test: {0} mutation(s), each caught and attributed to its own "
-              "rule.".format(len(MUTATIONS)))
+        print("Gate 104 self-test: rule (h)'s evaluator read {0} fixed condition(s) as "
+              "expected; {1} mutation(s), each caught and attributed to its own "
+              "rule.".format(len(PR_CONDITION_CASES), len(MUTATIONS)))
     else:
         print("Gate 104: every uses: ./.github/actions/ reference in board-loop.yml "
               "resolves from the trusted copy, never the workspace; no other workflow "

@@ -51,10 +51,11 @@ the same arguments locally as it does in CI").
 |---|---|---|
 | (a) | No line anywhere in the file matches `uses: ./.github/actions/` (the raw, workspace-relative form) | FR-001 |
 | (b) | Every job containing a `uses: ./.wc-pristine-repo/.github/actions/...` reference contains the canonical `Checkout board-loop's own trusted copy (composites)` step, at a step index lower than every such reference, every `wing-commander-context` call, and every `anthropics/claude-code-action@` step in that same job | FR-002, FR-011 |
-| (c) | That step's `with.ref` is exactly `${{ github.sha }}` | FR-003 |
+| (c) | That step's `with.ref` is exactly `${{ github.sha }}`, in every job that cannot run on a `pull_request` event (rule (h) sets the ref in every job that can) | FR-003 |
 | (d) | That step carries no `continue-on-error: true` | FR-006 |
 | (e) | `.gitignore` contains an entry matching `.wc-pristine-repo` (or a parent-directory ignore covering it) | FR-007 |
 | (f) | Every job that carries the trusted-copy checkout also carries the canonical `Write-protect board-loop's own trusted copy (composites)` step, after the checkout and before every dependent reference in that job | FR-002, FR-006, FR-007 (#640 maintainer review) |
+| (h) | In every job that can run on a `pull_request` event, worked out from each job's `if:` (today `prove-gate` and `prove`), every checkout -- the trusted copy and the workspace root -- names this repository (no `repository:`, or `${{ github.repository }}`) and `ref: ${{ github.event.repository.default_branch }}`: on that event `github.sha` is the PR's merge commit, its own unreviewed tree when the PR closes without merging. Any trigger other than `schedule`, `workflow_dispatch` and `pull_request` holds every job. The gate's own docstring states the full rule | #1307 |
 
 Rule (a) is file-wide and unconditional — it is not scoped to `fix`,
 `review`, and `readiness` the way Gate 98's `run:`-block check is
