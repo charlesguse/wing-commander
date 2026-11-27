@@ -1173,6 +1173,37 @@ jobs:
           fi
           jq -c --argjson new "$entry" '. + $new' "$RUNNER_TEMP/signals.json" > "$RUNNER_TEMP/signals.json.tmp" && mv "$RUNNER_TEMP/signals.json.tmp" "$RUNNER_TEMP/signals.json"
 
+      # #889 (session decision on #1336, option b): a plan or tasks run in
+      # `pr` review mode (WING_COMMANDER_PLAN_REVIEW / _TASKS_REVIEW) records
+      # its stage on its own plan/ or tasks/ branch, and the spec branch the
+      # collector below reads catches up only when that PR merges. While one
+      # is open the spec branch's stage is not the run's to answer for, so
+      # this step finds it and `collect-spec-meta` skips with a note. It
+      # exits non-zero only when a read fails; the collector reads that
+      # outcome and records itself untrusted rather than guess.
+      - name: "Read open plan or tasks stage PR"
+        id: stage-pr
+        shell: bash
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.ctx.outputs.token }}
+          PLAN_BRANCH: ${{ steps.spec-slug.outputs.plan-branch }}
+          TASKS_BRANCH: ${{ steps.spec-slug.outputs.tasks-branch }}
+        run: |
+          set -uo pipefail
+          for branch in "$PLAN_BRANCH" "$TASKS_BRANCH"; do
+            [ -n "$branch" ] || continue
+            if ! pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --limit 1 --jq '.[0].number // empty' 2>"$RUNNER_TEMP/stage-pr-err.txt")"; then
+              echo "::warning::stage-pr: could not list open PRs from '$branch': $(head -c 300 "$RUNNER_TEMP/stage-pr-err.txt")"
+              exit 1
+            fi
+            if [ -n "$pr" ]; then
+              echo "number=$pr" >> "$GITHUB_OUTPUT"
+              echo "branch=$branch" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
       # FR-006: spec-meta.json's recorded stage vs. the stage the
       # just-completed workflow should have advanced it to. Only meaningful
       # for the five stages that own a specific stage-field transition;
@@ -1189,6 +1220,9 @@ jobs:
           META_STAGE: ${{ steps.spec-slug.outputs.meta-stage }}
           SLUG: ${{ steps.spec-slug.outputs.slug }}
           STALLED_LABEL: ${{ steps.spec-slug.outputs.stalled-label }}
+          STAGE_PR: ${{ steps.stage-pr.outputs.number }}
+          STAGE_PR_BRANCH: ${{ steps.stage-pr.outputs.branch }}
+          STAGE_PR_OUTCOME: ${{ steps.stage-pr.outcome }}
         run: |
           set -uo pipefail
           # specs/123-implement-task-completion FR-015: a stalled hand-off
@@ -1199,8 +1233,9 @@ jobs:
             exit 0
           fi
           # This collector performs no gh/git read of its own — it only
-          # compares already-resolved step outputs — so it is always
-          # trustworthy for this run (FR-010; never invent a read here).
+          # compares already-resolved step outputs — so it records "ok" here
+          # (FR-010; never invent a read here). The one read it depends on,
+          # `stage-pr` above, reports its failure below as "failed".
           jq -c --arg c "collect-spec-meta" --arg o "ok" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
           # Same reasoning as branch-drift above. "expected" below is derived
           # from the run's resolved stage (#750) — it asserts that a plan
@@ -1262,6 +1297,15 @@ jobs:
           if [ "$actual_rank" -gt "$expected_rank" ]; then
             echo "spec-meta: recorded stage '$META_STAGE' is later in the lifecycle than '$expected' — the pipeline already advanced past this run (#686). No mismatch." >> "$GITHUB_STEP_SUMMARY"
             exit 0
+          fi
+          # The stage-pr step's header says why an open stage PR skips this.
+          if [ -n "${STAGE_PR:-}" ]; then
+            echo "spec-meta: stage PR #$STAGE_PR from '${STAGE_PR_BRANCH:-}' is open, so the spec branch's recorded stage '$META_STAGE' has not caught up with it yet (pr review mode). Skipping the stage check while it is open." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "${STAGE_PR_OUTCOME:-}" = "failure" ]; then
+            jq -c --arg c "collect-spec-meta" --arg o "failed" '. + [{"collector":$c,"outcome":$o}]' "$RUNNER_TEMP/collector-outcomes.json" > "$RUNNER_TEMP/collector-outcomes.json.tmp" && mv "$RUNNER_TEMP/collector-outcomes.json.tmp" "$RUNNER_TEMP/collector-outcomes.json"
+            echo "spec-meta: the open plan/tasks PR read failed, so a mismatch below may be an open stage PR in pr review mode; this collector is recorded untrusted." >> "$GITHUB_STEP_SUMMARY"
           fi
           entry=$(jq -n --arg expected "$expected" --arg actual "$META_STAGE" \
             '[{source:"spec-meta","class-hint":"stage-mismatch",facts:{"expected-stage":$expected,"actual-stage":$actual}}]')
@@ -2699,7 +2743,7 @@ jobs:
           # to free text, because a free-text class can miss the eligibility
           # step's exact match and file a signal class (denied-tool,
           # narrative-drift) as a defect.
-          builtin_classes='["cost-line-malformed","cost-line-missing","denied-tool","lost-progress","missing-spec-artifact","missing-spec-metadata","narrative-drift","spec-number-collision","stage-mismatch","token-budget-warning","trusted-file-tampered","turn-budget-trend"]'
+          builtin_classes='["cost-line-malformed","cost-line-missing","denied-tool","lost-progress","missing-spec-metadata","narrative-drift","spec-number-collision","stage-mismatch","token-budget-warning","trusted-file-tampered","turn-budget-trend"]'
           # Exactly the eligibility step's issue-exempt arm, offered on
           # every run: a registry holding only other labels (a fresh repo
           # after its first `Register new finding class`) would otherwise
@@ -3923,7 +3967,6 @@ jobs:
               denied-tool)           keys='["stage","tool"]' ;;
               lost-progress)         keys='["branch"]' ;;
               stage-mismatch)        keys='["expected","actual"]' ;;
-              missing-spec-artifact) keys='["branch"]' ;;
               missing-spec-metadata) keys='["branch"]' ;;
               token-budget-warning)  keys='["job"]' ;;
               turn-budget-trend)     keys='["stage","expected","actual"]' ;;
