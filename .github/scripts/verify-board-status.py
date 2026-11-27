@@ -824,6 +824,14 @@ READER_EXCEPTIONS = {
         "line": "'{class: $class, switch_on: ($switch_on == \"true\"),",
     },
 }
+# Shell pause re-checks that still compare the exact text "true", tracked
+# on #889 ("One rule for all switches"): (workflow file, switch). Not run by
+# one_rule_problems(); docs_half() requires docs/reference.md to name them.
+PENDING_SHELL_READERS = (
+    ("spec-pr-review.yml", "WING_COMMANDER_SPEC_REVIEW_PAUSED"),
+    ("lifecycle-review-gate.yml", "WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED"),
+    ("watchdog.yml", "WING_COMMANDER_WATCHDOG_PAUSED"),
+)
 # Where each switch Board status reports is read, as the literal statement
 # in its file. Every statement must have one of SITE_SHAPES' shapes (or be
 # an exception's line), so a switch cannot pick up a reader of its own that
@@ -1112,6 +1120,19 @@ def docs_half():
         var = "`WING_COMMANDER_{0}`".format(bs.SWITCH_ENV[key])
         check("docs/reference.md's board-status.yml row names {0}".format(var), var in ref_row, ref_row[:160])
         check("docs/reference.md's Known limits line names {0}".format(var), var in limit, limit[:200])
+
+    # Code review of #1318: the Kill switches section names every reader that
+    # does not follow the one switch rule yet -- the registered exception and
+    # the shell pause re-checks the #889 line "One rule for all switches"
+    # tracks -- rather than claiming a single one. Drop an entry here with
+    # its fix.
+    kill = reference.split("## Kill switches", 1)[-1].split("\n## ", 1)[0]
+    kill_flat = " ".join(kill.split())
+    pending = [(ex["path"].rsplit("/", 1)[-1], "WING_COMMANDER_BOARD_AUTO_MERGE")
+               for ex in READER_EXCEPTIONS.values()] + list(PENDING_SHELL_READERS)
+    for path, var in pending:
+        check("docs/reference.md's Kill switches section names {0}'s reader of {1}".format(path, var),
+              "`{0}`".format(path) in kill_flat and "`{0}`".format(var) in kill_flat, kill_flat[:400])
 
 
 def main():

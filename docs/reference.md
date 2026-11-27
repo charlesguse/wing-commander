@@ -271,14 +271,20 @@ and spend, credentials, App permissions and repository variables.
 Each is a repository variable; unset means running. A pause takes effect no
 later than the next run.
 
-Every switch, pause or permission, follows one rule (owner decision,
+Every switch, pause or permission, is read by one rule (owner decision,
 2026-11-27): it is on when its value is `true` compared case-insensitively,
 with nothing trimmed. That is GitHub's own `vars.X == 'true'` comparison, so
 `True` and `TRUE` are on, while `true ` (with a space), `yes` and `1` are off.
-`verify-board-status.py` runs each reader of a switch the "Board status" issue
-reports against this rule. One reader does not follow it yet:
-`board-loop.yml`'s merge decision reads `WING_COMMANDER_BOARD_AUTO_MERGE` as
-the exact text `true` until it is fixed (tracked on the Maintenance backlog).
+`verify-board-status.py` runs the readers of the switches the "Board status"
+issue reports against this rule. Four readers do not follow it yet, and still
+read only the exact text `true` until each is fixed (tracked on the
+Maintenance backlog): `board-loop.yml`'s merge decision
+(`WING_COMMANDER_BOARD_AUTO_MERGE`), and the shell pause checks in
+`spec-pr-review.yml` (`WING_COMMANDER_SPEC_REVIEW_PAUSED`),
+`lifecycle-review-gate.yml`'s live re-checks
+(`WING_COMMANDER_LIFECYCLE_REVIEW_GATE_PAUSED`, behind the jobs' own `if:`,
+which does follow the rule) and `watchdog.yml`
+(`WING_COMMANDER_WATCHDOG_PAUSED`).
 
 | Switch | Stops |
 |---|---|
