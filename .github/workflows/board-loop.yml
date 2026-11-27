@@ -5057,6 +5057,17 @@ jobs:
         with:
           intended-turns: 40
 
+      # The reviewer's transcript is still at the default path, and an
+      # agent step that ends before its first transcript write is
+      # 'failure', not 'skipped': review-fixup's verdict and its uploaded
+      # metrics record would read the reviewer's run as review-fixup's.
+      # Deleting it first leaves the file review-fixup's or absent, and
+      # every consumer degrades cleanly when it is absent -- see
+      # implement.yml.
+      - name: Clear the reviewer's transcript (review-fixup)
+        if: steps.round.outputs.outcome == 'continue' && steps.killswitch-recheck.outputs.paused != 'true'
+        run: rm -f "$RUNNER_TEMP/claude-execution-output.json"
+
       # T042: reuses the fixer's own tool/prompt shape (research.md D23:
       # write granted, push withheld -- the gate suite below must be green
       # before the follow-up commit is pushed, same as the first fix).

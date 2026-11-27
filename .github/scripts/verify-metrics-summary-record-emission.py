@@ -1020,6 +1020,102 @@ def case_board_loop_writer_records_are_uploaded():
     note("the board loop uploads its fixer and review-fixup records")
 
 
+# An agent step that ends before its first transcript write is 'failure',
+# not 'skipped', so a reader of the default transcript path after it reads
+# whatever an earlier agent step in the same job left there. An uploaded
+# per-agent record is persisted, so in a job where another agent step ran
+# first, the file must be cleared before the record's own agent runs,
+# under that agent's own guard (implement.yml's progress composer does
+# this): the record then measures its own agent or reads as unavailable.
+DEFAULT_TRANSCRIPT = "${{ runner.temp }}/claude-execution-output.json"
+DEFAULT_RECORD = "${{ runner.temp }}/wing-commander-metrics-record.json"
+AGENT_ACTION = "anthropics/claude-code-action"
+
+
+def _norm_if(value):
+    return " ".join(str(value or "").split())
+
+
+def stale_transcript_reads(doc):
+    """-> (flagged, checked): flagged lists (job, run-label) for each
+    uploaded per-agent record reading the default transcript path whose own
+    agent step follows another agent step in its job with no step between
+    them that removes the file under the record's agent's own `if:`;
+    checked counts the records that needed such a step."""
+    flagged, checked = [], 0
+    for job_key, job in ((doc or {}).get("jobs") or {}).items():
+        steps = (job or {}).get("steps") or []
+        agents = [i for i, st in enumerate(steps)
+                  if str(st.get("uses", "")).startswith(AGENT_ACTION)]
+        for m, st in enumerate(steps):
+            if "wing-commander-metrics-summary" not in str(st.get("uses", "")):
+                continue
+            w = st.get("with") or {}
+            if str(w.get("transcript-path", DEFAULT_TRANSCRIPT)).strip() \
+                    != DEFAULT_TRANSCRIPT:
+                continue
+            path = str(w.get("record-path", DEFAULT_RECORD)).strip()
+            uploaded = any(
+                str(u.get("uses", "")).startswith("actions/upload-artifact")
+                and str((u.get("with") or {}).get("path", "")).strip() == path
+                and str((u.get("with") or {}).get("name", "")).startswith(
+                    "metrics-record")
+                for u in steps[m + 1:])
+            before = [a for a in agents if a < m]
+            if not uploaded or len(before) < 2:
+                continue
+            own, prev = before[-1], before[-2]
+            checked += 1
+            guard = _norm_if(steps[own].get("if"))
+            cleared = any(
+                "claude-execution-output.json" in str(s.get("run", ""))
+                and re.search(r"\b(rm|mv)\b", str(s.get("run", "")))
+                and _norm_if(s.get("if")) == guard
+                for s in steps[prev + 1:own])
+            if not cleared:
+                flagged.append((job_key, str(w.get("run-label", ""))))
+    return flagged, checked
+
+
+def case_uploaded_agent_records_read_only_their_own_transcript():
+    case = "an uploaded agent record reads only its own agent's transcript"
+    # The detector must flag the shape it exists for, or a green pass over
+    # the workflows below means nothing.
+    synthetic = {"jobs": {"j": {"steps": [
+        {"uses": AGENT_ACTION + "@v1", "if": "a"},
+        {"uses": AGENT_ACTION + "@v1", "if": "b"},
+        {"uses": "./x/wing-commander-metrics-summary",
+         "with": {"run-label": "second", "record-path": "r.json"}},
+        {"uses": "actions/upload-artifact@v6",
+         "with": {"name": "metrics-record-second", "path": "r.json"}}]}}}
+    if stale_transcript_reads(synthetic) != ([("j", "second")], 1):
+        fail(case, "the detector no longer flags a second agent's uploaded "
+                   "record with no step clearing the first agent's "
+                   "transcript")
+    # The board loop only: plan.yml and tasks.yml run their two agent steps
+    # in exclusive modes, and watchdog.yml's shadow clears the file under
+    # its preparation step's own guard, which a comparison of if: text
+    # cannot decide.
+    doc = _workflow_docs(case).get(BOARD_LOOP)
+    if not doc:
+        fail(case, f"{BOARD_LOOP} is missing or unparseable")
+        return
+    flagged, checked = stale_transcript_reads(doc)
+    for job_key, label in flagged:
+        fail(case, f"{BOARD_LOOP}: job {job_key!r}, record {label!r}: an "
+                   f"earlier agent step's transcript is still at "
+                   f"{DEFAULT_TRANSCRIPT} when this record's agent runs; a "
+                   f"step between the two agents must remove it under the "
+                   f"agent's own if:, or an agent that ends before writing "
+                   f"its own is measured as the earlier one")
+    if checked == 0:
+        fail(case, "no uploaded agent record follows a second agent step "
+                   "in its job; the board loop's review-fixup record does, "
+                   "so the scan has stopped finding it")
+    note(f"{checked} uploaded board-loop agent record(s) after a second "
+         f"agent step read only their own agent's transcript")
+
+
 def case_cost_line_formatter_has_exactly_one_home():
     """The 12-site paste this gate's docstring describes must not creep
     back: a workflow or composite action needing the cost line consumes
@@ -1540,6 +1636,7 @@ CASES = [
     case_permission_denials_empty_list_is_zero,
     case_permission_denials_missing_list_is_unavailable,
     case_board_loop_writer_records_are_uploaded,
+    case_uploaded_agent_records_read_only_their_own_transcript,
     case_cost_line_formatter_has_exactly_one_home,
     case_cost_report_has_exactly_one_home,
     case_container_pipefail_steps_pin_shell_bash,
