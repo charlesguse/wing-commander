@@ -478,12 +478,253 @@ def run_board_pr_owned_jq_single_home():
     return failures
 
 
+OWN_STEP_NAME = "Check the closed pull request is this loop's own, before any App token"
+OWN_STEP_ENV = {"EVENT_NAME": "${{ github.event_name }}",
+                "PR_NUMBER": "${{ github.event.pull_request.number }}"}
+
+
+def _prove_gate_steps(doc=None):
+    if doc is None:
+        with open(REPO_BOARD_LOOP, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+    return ((doc.get("jobs") or {}).get("prove-gate") or {}).get("steps") or []
+
+
+def mint_order_problems(steps):
+    """prove-gate mints the App token only after its ownership check: the
+    ownership step comes before the wing-commander-context step, holds no
+    secret, and both the context step and the decision step run only when
+    it read `owned == 'true'` (owner decision, 2026-11-27)."""
+    problems = []
+    names = [(s or {}).get("name") for s in steps]
+    mints = [i for i, s in enumerate(steps)
+             if str((s or {}).get("uses", "")).endswith("/wing-commander-context")]
+    ctx = mints[0] if mints else None
+    own = names.index(OWN_STEP_NAME) if OWN_STEP_NAME in names else None
+    if own is None or ctx is None:
+        return ["prove-gate has no {0!r} step or no wing-commander-context step".format(OWN_STEP_NAME)]
+    # Code review of #1345: only one step may mint -- a second, ungated
+    # wing-commander-context step would put the App token on the runner
+    # for every closed pull request, and the rules below read only one.
+    if len(mints) != 1:
+        problems.append("prove-gate has {0} wing-commander-context steps -- exactly one, run only "
+                        "after the ownership check, may mint the App token".format(len(mints)))
+    # Code review of #1345: the run below supplies the step's env itself,
+    # so the step's own env: is pinned here -- an EVENT_NAME read off the
+    # wrong field reads owned=false on every directed prove dispatch (or
+    # owned=true on every closed PR), and an extra key could shadow
+    # BOARD_PR_OWNED_JQ, all with the run still green.
+    if ((steps[own] or {}).get("env") or {}) != OWN_STEP_ENV:
+        problems.append("prove-gate's ownership check's env: is not exactly {0!r}".format(OWN_STEP_ENV))
+    if own > ctx:
+        problems.append("prove-gate's ownership check comes after the App token is minted")
+    if "secrets." in json.dumps(steps[own]):
+        problems.append("prove-gate's ownership check reads a secret")
+    # Code review of #1345: a skipped or failure-tolerant ownership step
+    # leaves `owned` empty, so the mint and the decision skip on every
+    # closed PR and the run ends green with prove never entered.
+    if "if" in (steps[own] or {}) or "continue-on-error" in (steps[own] or {}):
+        problems.append("prove-gate's ownership check has an if: or a continue-on-error: -- it must always run")
+    want = "steps.own.outputs.owned == 'true'"
+    for label, idx in (("the App token mint", ctx), ("the prove decision", names.index(GATE_STEP_NAME)
+                                                       if GATE_STEP_NAME in names else None)):
+        if idx is None or (steps[idx] or {}).get("if") != want:
+            problems.append("prove-gate: {0} does not run only when {1}".format(label, want))
+    return problems
+
+
+def run_prove_gate_mints_after_ownership():
+    """The shipped ownership step, run on a pull_request payload: a PR this
+    loop owns reads owned=true; any other closed PR reads owned=false and
+    says no token was minted. The order rule above is shown to fail on a
+    mutated job."""
+    failures = 0
+    for p in mint_order_problems(_prove_gate_steps()):
+        failures += 1
+        print("::error::verify-board-prove-recovery: " + p)
+    step = find_step(REPO_BOARD_LOOP, OWN_STEP_NAME)
+
+    def closed(pr):
+        return ("pull_request", {"pull_request": dict(pr, number=9)}, "9")
+
+    # Code review of #1345: a directed prove dispatch has no .pull_request
+    # in its payload, so the step must pass it through on the event name
+    # alone -- read through BOARD_PR_OWNED_JQ it would be owned=false, and
+    # every directed prove would skip the mint and the decision, green.
+    cases = (("an owned PR", closed({"labels": [{"name": "board:owned"}], "head": {"repo": {"full_name": REPO}}}), "true"),
+             ("a PR with no board:owned label", closed({"labels": [], "head": {"repo": {"full_name": REPO}}}), "false"),
+             ("a labelled PR from another repository",
+              closed({"labels": [{"name": "board:owned"}], "head": {"repo": {"full_name": "someone-else/fork"}}}), "false"),
+             ("a labelled PR whose head repository was deleted",
+              closed({"labels": [{"name": "board:owned"}], "head": {"repo": None}}), "false"),
+             ("a directed prove dispatch",
+              ("workflow_dispatch", {"inputs": {"directed-stage": "prove", "directed-pr": "9"}}, ""), "true"),
+             # Validation of #1345: only workflow_dispatch passes through, so
+             # widening the job's if: to another event cannot mint unchecked.
+             ("a scheduled run", ("schedule", {"schedule": "17 * * * *"}, ""), "false"))
+    for label, (event_name, payload, pr_number), want in cases:
+        with tempfile.TemporaryDirectory() as work:
+            event = os.path.join(work, "event.json")
+            with open(event, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh)
+            runner_temp = os.path.join(work, "runner_temp")
+            os.makedirs(runner_temp, exist_ok=True)
+            rc, out, outputs, summary = run_step(
+                BASH, step["run"], work,
+                {"EVENT_NAME": event_name, "PR_NUMBER": pr_number, "GITHUB_REPOSITORY": REPO,
+                 "GITHUB_EVENT_PATH": event, "BOARD_PR_OWNED_JQ": BOARD_PR_OWNED_JQ},
+                runner_temp)
+        if rc != 0 or outputs.get("owned") != want:
+            failures += 1
+            print("::error::verify-board-prove-recovery: the ownership step on {0} read "
+                  "owned={1!r} (rc {2}), expected {3}: {4}".format(label, outputs.get("owned"), rc, want, out))
+        elif want == "false" and "no App token was minted" not in (summary or ""):
+            failures += 1
+            print("::error::verify-board-prove-recovery: the ownership step on {0} does not say "
+                  "no App token was minted".format(label))
+        else:
+            print("[ok] prove-gate's ownership step reads owned={0} for {1}".format(want, label))
+    # Shown to fail: each mutation of the shipped job is noticed.
+    with open(REPO_BOARD_LOOP, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    steps = _prove_gate_steps(doc)
+    names = [(s or {}).get("name") for s in steps]
+    ctx = next(i for i, s in enumerate(steps) if str((s or {}).get("uses", "")).endswith("/wing-commander-context"))
+
+    def moved_after(st):
+        st = list(st)
+        own = st.pop(names.index(OWN_STEP_NAME))
+        st.insert(ctx, own)
+        return st
+
+    def mint_ungated(st):
+        st = [dict(x) for x in st]
+        st[ctx].pop("if", None)
+        return st
+
+    def decision_ungated(st):
+        st = [dict(x) for x in st]
+        st[names.index(GATE_STEP_NAME)].pop("if", None)
+        return st
+
+    def own_reads_secret(st):
+        st = [dict(x) for x in st]
+        own = names.index(OWN_STEP_NAME)
+        st[own]["env"] = dict(st[own].get("env") or {}, K="${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}")
+        return st
+
+    def own_given(key, value):
+        def mutate(st):
+            st = [dict(x) for x in st]
+            st[names.index(OWN_STEP_NAME)][key] = value
+            return st
+        return mutate
+
+    def own_env(key, value):
+        def mutate(st):
+            st = [dict(x) for x in st]
+            env = dict(st[names.index(OWN_STEP_NAME)].get("env") or {})
+            if value is None:
+                env.pop(key, None)
+            else:
+                env[key] = value
+            st[names.index(OWN_STEP_NAME)]["env"] = env
+            return st
+        return mutate
+
+    def second_mint(at):
+        def mutate(st):
+            st = [dict(x) for x in st]
+            extra = {k: v for k, v in st[ctx].items() if k not in ("if", "id")}
+            st.insert(at(st), dict(extra, id="ctx2"))
+            return st
+        return mutate
+
+    for label, mutate in (("the ownership check moved after the mint", moved_after),
+                          ("the mint's if: dropped", mint_ungated),
+                          ("the decision's if: dropped", decision_ungated),
+                          ("the ownership check given a secret", own_reads_secret),
+                          ("the ownership check given an if:",
+                           own_given("if", "github.event_name == 'pull_request'")),
+                          ("the ownership check given continue-on-error",
+                           own_given("continue-on-error", True)),
+                          ("the ownership check's EVENT_NAME pinned to pull_request",
+                           own_env("EVENT_NAME", "pull_request")),
+                          ("the ownership check's EVENT_NAME read off github.event.action",
+                           own_env("EVENT_NAME", "${{ github.event.action }}")),
+                          ("the ownership check's PR_NUMBER dropped", own_env("PR_NUMBER", None)),
+                          ("the ownership check shadowing BOARD_PR_OWNED_JQ",
+                           own_env("BOARD_PR_OWNED_JQ", "true")),
+                          ("a second, ungated mint after the decision",
+                           second_mint(lambda st: names.index(GATE_STEP_NAME) + 1)),
+                          ("a second, ungated mint between the ownership check and the mint",
+                           second_mint(lambda st: ctx))):
+        if not mint_order_problems(mutate(steps)):
+            failures += 1
+            print("::error::verify-board-prove-recovery: self-check: {0} was not noticed".format(label))
+    return failures
+
+
+METRICS_STEP_NAME = "Agent run metrics summary (prove-gate)"
+
+
+def run_prove_gate_run_label():
+    """The metrics record's run-label, evaluated as GitHub would on each way
+    prove-gate can end. Code review of #1345: a failed App-token mint skips
+    the decision step, so a label read only off the ownership and decision
+    steps recorded that red run as 'prove not entered'."""
+    import wc_gha_expr as gx
+    failures = 0
+    step = next((s for s in _prove_gate_steps() if (s or {}).get("name") == METRICS_STEP_NAME), None)
+    label_expr = ((step or {}).get("with") or {}).get("run-label")
+    if not label_expr:
+        print("::error::verify-board-prove-recovery: prove-gate has no {0!r} step with a run-label".format(
+            METRICS_STEP_NAME))
+        return 1
+    skipped = {"outcome": "skipped"}
+    cases = (("the ownership check failed", {"own": {"outcome": "failure"}, "ctx": skipped, "gate": skipped},
+              "prove-gate failed"),
+             ("a PR this loop does not own", {"own": {"outcome": "success", "owned": "false"}, "ctx": skipped,
+                                              "gate": skipped}, "prove not entered"),
+             ("the App token mint failed", {"own": {"outcome": "success", "owned": "true"},
+                                            "ctx": {"outcome": "failure"}, "gate": skipped}, "prove-gate failed"),
+             ("the decision failed", {"own": {"outcome": "success", "owned": "true"}, "ctx": {"outcome": "success"},
+                                      "gate": {"outcome": "failure"}}, "prove-gate failed"),
+             ("an eligible PR", {"own": {"outcome": "success", "owned": "true"}, "ctx": {"outcome": "success"},
+                                 "gate": {"outcome": "success", "eligible": "true"}}, "eligible for prove"),
+             ("an owned PR not entered", {"own": {"outcome": "success", "owned": "true"},
+                                          "ctx": {"outcome": "success"},
+                                          "gate": {"outcome": "success", "eligible": "false"}}, "prove not entered"))
+    for label, state, want in cases:
+        ctx = {}
+        for sid, st in state.items():
+            ctx["steps.{0}.outcome".format(sid)] = st["outcome"]
+            for k, v in st.items():
+                if k != "outcome":
+                    ctx["steps.{0}.outputs.{1}".format(sid, k)] = v
+        try:
+            got = gx.evaluate_value(label_expr, ctx, known=("steps.",))
+        except ValueError as exc:
+            failures += 1
+            print("::error::verify-board-prove-recovery: prove-gate's run-label cannot be evaluated: {0}".format(exc))
+            break
+        if got != want:
+            failures += 1
+            print("::error::verify-board-prove-recovery: prove-gate's run-label reads {0!r} when {1}, "
+                  "expected {2!r}".format(got, label, want))
+        else:
+            print("[ok] prove-gate's run-label reads {0!r} when {1}".format(want, label))
+    return failures
+
+
 def run():
     failures = (run_is_recoverable() + run_find_recoverable_items() + run_marker_round_trip()
                 + run_directed_recovery_input_spelling()
                 + run_displacement_writer_passes_outcome_reason()
                 + run_directed_dispatch_reaches_prove_gate()
-                + run_board_pr_owned_jq_single_home())
+                + run_board_pr_owned_jq_single_home()
+                + run_prove_gate_mints_after_ownership()
+                + run_prove_gate_run_label())
     print("verify-board-prove-recovery: {0} failure(s).".format(failures))
     return 1 if failures else 0
 

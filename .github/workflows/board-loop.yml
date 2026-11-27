@@ -6668,8 +6668,35 @@ jobs:
       - name: Write-protect board-loop's own trusted copy (composites)
         run: chmod -R a-w .wc-pristine-repo
 
+      # The App token is minted only for a closed pull request this loop
+      # owns (owner decision, 2026-11-27): the ownership test is
+      # BOARD_PR_OWNED_JQ, read off the event's own payload before any
+      # secret is used, so closing any other pull request holds no App
+      # token at all. A directed dispatch is a maintainer's own run and
+      # re-derives ownership from a fresh read in the decision step below,
+      # so only workflow_dispatch passes through; any other event reads
+      # ownership off its payload and fails closed (validation of #1345).
+      - name: Check the closed pull request is this loop's own, before any App token
+        id: own
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "owned=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          owned="$(jq '.pull_request' "$GITHUB_EVENT_PATH" | jq -r --arg repo "$GITHUB_REPOSITORY" "$BOARD_PR_OWNED_JQ")"
+          if [ "$owned" != "true" ]; then
+            echo "PR #$PR_NUMBER is not board:owned with its head in this repository -- not a board item; no App token was minted and prove is not entered." >> "$GITHUB_STEP_SUMMARY"
+            owned=false
+          fi
+          echo "owned=$owned" >> "$GITHUB_OUTPUT"
+
       - name: Wing Commander context
         id: ctx
+        if: steps.own.outputs.owned == 'true'
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-context
         with:
           app-id: ${{ secrets.WING_COMMANDER_APP_ID }}
@@ -6685,6 +6712,7 @@ jobs:
       # drive this loop's prove step.
       - name: Resolve the originating issue and decide whether prove is entered
         id: gate
+        if: steps.own.outputs.owned == 'true'
         env:
           GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
@@ -6827,7 +6855,7 @@ jobs:
           transcript-path: ${{ runner.temp }}/wing-commander-no-transcript.json
           model: ''
           stage: board-loop
-          run-label: ${{ steps.gate.outcome == 'failure' && 'prove-gate failed' || steps.gate.outputs.eligible == 'true' && 'eligible for prove' || 'prove not entered' }}
+          run-label: ${{ (steps.own.outcome == 'failure' || steps.ctx.outcome == 'failure' || steps.gate.outcome == 'failure') && 'prove-gate failed' || steps.gate.outputs.eligible == 'true' && 'eligible for prove' || 'prove not entered' }}
           record-path: ${{ runner.temp }}/wing-commander-metrics-record-prove-gate.json
           spec-identity-is-own: 'false'
 
