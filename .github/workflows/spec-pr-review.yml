@@ -45,6 +45,7 @@ jobs:
       head-sha: ${{ steps.select.outputs.head-sha }}
       head-ref: ${{ steps.select.outputs.head-ref }}
       dispatch: ${{ steps.select.outputs.dispatch }}
+      failed-attempts: ${{ steps.select.outputs.failed-attempts }}
     steps:
       # Full history: the stop-note re-arm (wc_convergence.py rearmed)
       # diffs the stopped head against main, and a shallow clone has
@@ -277,6 +278,7 @@ jobs:
               echo "head-sha="
               echo "head-ref="
               echo "dispatch="
+              echo "failed-attempts="
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -290,6 +292,9 @@ jobs:
             echo "head-sha=$(printf '%s' "$result" | jq -r '.selected.head_sha')"
             echo "head-ref=$head_ref"
             echo "dispatch=$([ "$dispatch" = 'null' ] && echo false || echo true)"
+            # FR-028: the failed rounds already recorded on this head, which
+            # the act job adds this round's failure to before the cap check.
+            echo "failed-attempts=$(jq -r --argjson p "$sel" '[.[] | select(.pr == $p) | .failed_attempts[.head_sha] // 0][0] // 0' "$snaps")"
           } >> "$GITHUB_OUTPUT"
 
   review:
@@ -301,11 +306,15 @@ jobs:
       pull-requests: read
       issues: read
     outputs:
-      outcome: ${{ steps.verdict.outputs.outcome }}
+      # A round whose review never reached the PR is a failed round, never
+      # reviewed: it gets the failed-attempt marker, so it counts toward
+      # FR-028's cap instead of being retried every hour. An empty outcome
+      # means the re-check stood down before any reviewer ran.
+      outcome: ${{ steps.verdict.outputs.outcome == 'reviewed' && steps.post-review.outcome != 'success' && 'failed' || steps.verdict.outputs.outcome }}
       verdict: ${{ steps.verdict.outputs.verdict }}
       round: ${{ steps.eligible.outputs.round }}
       stale: ${{ steps.stale.outputs.stale }}
-      stop-reason: ${{ steps.stop.outputs.reason }}
+      stop-reason: ${{ steps.post-review.outcome == 'success' && steps.stop.outputs.reason || '' }}
       cost-line: ${{ steps.metrics-summary-review.outputs.cost-line }}
     steps:
       # FR-021 / edge cases: only a same-repo spec-draft/ head is checked out,
@@ -718,6 +727,27 @@ jobs:
           fi
           echo "reason=$reason" >> "$GITHUB_OUTPUT"
 
+      # FR-005: a head that moved while the round ran is reviewed as the SHA
+      # actually reviewed, and the review says the result is stale. Detected
+      # before the body is composed, so the notice sits above the round
+      # record, which FR-011 requires to be appended last.
+      - name: Detect a head that moved during the round
+        id: stale
+        if: "!cancelled() && steps.verdict.outputs.outcome == 'reviewed'"
+        env:
+          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
+          PR_NUMBER: ${{ needs.select.outputs.pr-number }}
+          HEAD_SHA: ${{ needs.select.outputs.head-sha }}
+        run: |
+          set -uo pipefail
+          now="$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')" || now=""
+          if [ -n "$now" ] && [ "$now" != "$HEAD_SHA" ]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "now=$now" >> "$GITHUB_OUTPUT"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Compose the review body
         id: compose-review
         if: "!cancelled() && steps.verdict.outputs.outcome == 'reviewed'"
@@ -727,6 +757,7 @@ jobs:
           ISSUE: ${{ needs.select.outputs.issue }}
           VERDICT: ${{ steps.verdict.outputs.verdict }}
           COST_LINE: ${{ steps.metrics-summary-review.outputs.cost-line }}
+          STALE_NOW: ${{ steps.stale.outputs.stale == 'true' && steps.stale.outputs.now || '' }}
         run: |
           set -uo pipefail
           python3 -I - <<'PYEOF'
@@ -756,6 +787,9 @@ jobs:
           cost = os.environ.get("COST_LINE") or ""
           if cost:
               lines += ["", cost]
+          if os.environ.get("STALE_NOW"):
+              lines += ["", "**Stale:** the PR head moved to {0} while this round ran; this result is for {1}.".format(
+                  os.environ["STALE_NOW"], head)]
           tail = ["", round_record_marker(int(rnd), head, round_findings(findings, os.environ["ISSUE"]),
                                           recorded_diff_lines("origin/main", head, "."),
                                           diff_fingerprint("origin/main", head, "."))]
@@ -772,26 +806,8 @@ jobs:
               fh.write("\n".join(lines) + "\n")
           PYEOF
 
-      # FR-005: a head that moved while the round ran is reviewed as the SHA
-      # actually reviewed, and the review says the result is stale.
-      - name: Detect a head that moved during the round
-        id: stale
-        if: "!cancelled() && steps.verdict.outputs.outcome == 'reviewed'"
-        env:
-          GH_TOKEN: ${{ env.WC_BOT_TOKEN }}
-          PR_NUMBER: ${{ needs.select.outputs.pr-number }}
-          HEAD_SHA: ${{ needs.select.outputs.head-sha }}
-        run: |
-          set -uo pipefail
-          now="$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')" || now=""
-          if [ -n "$now" ] && [ "$now" != "$HEAD_SHA" ]; then
-            echo "stale=true" >> "$GITHUB_OUTPUT"
-            printf '\n**Stale:** the PR head moved to %s while this round ran; this result is for %s.\n' "$now" "$HEAD_SHA" >> "$RUNNER_TEMP/spec-review-body.md"
-          else
-            echo "stale=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Post the review on the PR
+        id: post-review
         if: "!cancelled() && steps.verdict.outputs.outcome == 'reviewed'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-post-review-comment
         with:
@@ -1052,7 +1068,12 @@ jobs:
           summary: "spec-pr-review will not review PR #${{ needs.select.outputs.pr-number }} again until its diff against main changes."
           body: ${{ format('<!-- spec-pr-review-stopped head={0} round={1} reason={2} -->', needs.select.outputs.head-sha, needs.review.outputs.round, needs.review.outputs.stop-reason) }}
 
+      # The failed-attempt marker is written only for a round that failed
+      # (outcome `failed`). A round whose re-check stood down before any
+      # reviewer ran (kill switch, label flip, an unreadable PR) has an
+      # empty outcome and is not counted against the head's FR-028 cap.
       - name: Record the one-line outcome on the lifecycle issue
+        id: outcome-line
         if: "!cancelled() && steps.fresh.outcome != 'skipped'"
         uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
         with:
@@ -1061,9 +1082,45 @@ jobs:
           kind: info
           summary: >-
             spec-pr-review on PR #${{ needs.select.outputs.pr-number }}:
-            ${{ needs.review.outputs.outcome == 'reviewed' && steps.plan.outputs.issue-line || 'the round failed; it is not recorded as reviewed.' }}
+            ${{ needs.review.outputs.outcome == 'reviewed' && steps.plan.outputs.issue-line || needs.review.outputs.outcome == 'failed' && 'the round failed; it is not recorded as reviewed.' || 'the round stood down before any reviewer ran; nothing is recorded.' }}
             ${{ needs.review.outputs.stop-reason != '' && format('Stopped: {0}; the PR is with the owner.', needs.review.outputs.stop-reason) || '' }}
-          body: ${{ needs.review.outputs.outcome != 'reviewed' && format('<!-- spec-pr-review-failed head={0} -->', needs.select.outputs.head-sha) || '' }}
+          body: ${{ needs.review.outputs.outcome == 'failed' && format('<!-- spec-pr-review-failed head={0} -->', needs.select.outputs.head-sha) || '' }}
+
+      # FR-028: after the cap's worth of failed rounds on one head, the
+      # review stops retrying it (select skips it as failed-cap) and hands
+      # off to the owner, naming the failure. The cap is the decision
+      # module's failed-cap, counting this round's failure. The hand-off is
+      # posted once per head: only by the round that reaches the cap (a
+      # maintainer's dispatch of a capped head that fails again is already
+      # handed off), and only once this round's failed marker is on the
+      # issue, so the count the hand-off states is the one select reads.
+      - name: Check the failed-attempt cap
+        id: failcap
+        if: "!cancelled() && needs.review.outputs.outcome == 'failed' && steps.outcome-line.outcome == 'success'"
+        env:
+          PRIOR: ${{ needs.select.outputs.failed-attempts }}
+        run: |
+          set -uo pipefail
+          case "${PRIOR:-0}" in ''|*[!0-9]*) prior=0 ;; *) prior="${PRIOR:-0}" ;; esac
+          S="$RUNNER_TEMP/wc-pristine/scripts/spec_pr_review.py"
+          if ! out="$(jq -n --argjson n "$((prior + 1))" '{failures: $n}' | python3 -I "$S" failed-cap)" \
+             || ! before="$(jq -n --argjson n "$prior" '{failures: $n}' | python3 -I "$S" failed-cap)"; then
+            echo "::error::spec-pr-review act: failed-cap could not read its input."
+            exit 1
+          fi
+          echo "failures=$((prior + 1))" >> "$GITHUB_OUTPUT"
+          echo "stop=$(printf '%s' "$out" | jq -r '.stop')" >> "$GITHUB_OUTPUT"
+          echo "reached=$(printf '%s' "$before" | jq -r 'if .stop then "false" else "true" end')" >> "$GITHUB_OUTPUT"
+
+      - name: Post the failed-attempt hand-off
+        if: "!cancelled() && steps.failcap.outputs.stop == 'true' && steps.failcap.outputs.reached == 'true'"
+        uses: ./.wc-pristine-repo/.github/actions/wing-commander-callout
+        with:
+          token: ${{ steps.ctx.outputs.token }}
+          issue-number: ${{ needs.select.outputs.issue }}
+          kind: info
+          summary: "spec-pr-review failed ${{ steps.failcap.outputs.failures }} times on PR #${{ needs.select.outputs.pr-number }} at ${{ needs.select.outputs.head-sha }} and will not retry this head: the PR is with the owner."
+          body: "The latest failure is in run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. A new head or a maintainer's dispatch resumes the review."
 
       # FR-016: success only for "ready for the owner"; failure for "not
       # ready" and for every failed, stopped or stale outcome. Its own context,
