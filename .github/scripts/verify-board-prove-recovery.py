@@ -504,6 +504,11 @@ def mint_order_problems(steps):
         problems.append("prove-gate's ownership check comes after the App token is minted")
     if "secrets." in json.dumps(steps[own]):
         problems.append("prove-gate's ownership check reads a secret")
+    # Code review of #1345: a skipped or failure-tolerant ownership step
+    # leaves `owned` empty, so the mint and the decision skip on every
+    # closed PR and the run ends green with prove never entered.
+    if "if" in (steps[own] or {}) or "continue-on-error" in (steps[own] or {}):
+        problems.append("prove-gate's ownership check has an if: or a continue-on-error: -- it must always run")
     want = "steps.own.outputs.owned == 'true'"
     for label, idx in (("the App token mint", ctx), ("the prove decision", names.index(GATE_STEP_NAME)
                                                        if GATE_STEP_NAME in names else None)):
@@ -589,10 +594,21 @@ def run_prove_gate_mints_after_ownership():
         st[own]["env"] = dict(st[own].get("env") or {}, K="${{ secrets.WING_COMMANDER_APP_PRIVATE_KEY }}")
         return st
 
+    def own_given(key, value):
+        def mutate(st):
+            st = [dict(x) for x in st]
+            st[names.index(OWN_STEP_NAME)][key] = value
+            return st
+        return mutate
+
     for label, mutate in (("the ownership check moved after the mint", moved_after),
                           ("the mint's if: dropped", mint_ungated),
                           ("the decision's if: dropped", decision_ungated),
-                          ("the ownership check given a secret", own_reads_secret)):
+                          ("the ownership check given a secret", own_reads_secret),
+                          ("the ownership check given an if:",
+                           own_given("if", "github.event_name == 'pull_request'")),
+                          ("the ownership check given continue-on-error",
+                           own_given("continue-on-error", True))):
         if not mint_order_problems(mutate(steps)):
             failures += 1
             print("::error::verify-board-prove-recovery: self-check: {0} was not noticed".format(label))
