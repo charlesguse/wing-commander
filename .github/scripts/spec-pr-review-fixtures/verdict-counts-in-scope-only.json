@@ -1,0 +1,1 @@
+{"input": [{"title": "a", "in_scope": true}, {"title": "b", "in_scope": false}, {"title": "c", "in_scope": true}], "expect": {"verdict": "not ready", "in_scope_count": 2}}

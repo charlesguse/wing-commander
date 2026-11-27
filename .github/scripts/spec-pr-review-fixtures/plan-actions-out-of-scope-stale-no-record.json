@@ -1,0 +1,1 @@
+{"input": {"findings": [{"class": "owner-decision", "in_scope": false}], "push_results": {}, "freshness": {"stale": true}}, "expect": {"record_out_of_scope": false, "issue_line": "Result is stale or the PR is closed; no writes."}}
