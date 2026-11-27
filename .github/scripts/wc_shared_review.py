@@ -178,9 +178,18 @@ def confirm_record(record, run, default_branch, repository=None):
 
 
 def latest_round_for_commit(confirmed, head_sha):
-    """The highest-round confirmed record naming `head_sha`, or None."""
-    at = [r for r in confirmed if r.get("head_sha") == head_sha]
-    return max(at, key=lambda r: r["round"]) if at else None
+    """The highest-round record naming `head_sha`, or None. `confirmed` is
+    oldest first (parse_records), and of two records with the same round
+    the newer wins: a re-run of a reviewer run keeps its run id, so while
+    it runs the first attempt's record is unconfirmed and the re-run posts
+    that round number again (#1346 pass 1)."""
+    at = rounds_for_commit(confirmed, head_sha)
+    return max(reversed(at), key=lambda r: r["round"]) if at else None
+
+
+def rounds_for_commit(records, head_sha):
+    """The records naming `head_sha`, in their given order."""
+    return [r for r in records if r.get("head_sha") == head_sha]
 
 
 # ------------------------------------------------------- findings/verdict ---
@@ -1124,20 +1133,31 @@ def confirmed_from_github(pr, bot_login, default_branch, repository, gh, gh_runs
         run_id = str(record.get("run_id") or "")
         if not run_id.isdigit():
             continue
-        try:
-            run = gh_runs(["repos/{0}/actions/runs/{1}".format(repository, run_id)])
-        except GhNotFound:
-            continue  # a real 404: the run does not exist, so unconfirmed
-        arts = gh_runs(["repos/{0}/actions/runs/{1}/artifacts".format(repository, run_id)])
-        if not isinstance(run, dict) or arts is None:
-            raise GhReadError("run or artifacts read failed for run " + run_id)
-        run = dict(run)
-        run["repository"] = (run.get("repository") or {}).get("full_name") or repository
-        run["artifacts"] = [a.get("name") for a in (arts or {}).get("artifacts", [])]
-        run["referenced_workflows"] = [w.get("path") for w in run.get("referenced_workflows") or []]
-        if confirm_record(record, run, default_branch, repository):
+        run = fetch_run_facts(repository, run_id, gh_runs)
+        if run is not None and confirm_record(record, run, default_branch, repository):
             confirmed.append(record)
     return confirmed
+
+
+def fetch_run_facts(repository, run_id, gh_runs):
+    """The Actions API's facts for run `run_id`, shaped as confirm_record()
+    reads them; None when the run does not exist (a real 404, so the record
+    it backs is unconfirmed). Raises GhReadError when the run or its
+    artifacts cannot be read, so no caller counts a failed read as a
+    missing run. The one home of this read: wc_merge_evidence.py calls it
+    too."""
+    try:
+        run = gh_runs(["repos/{0}/actions/runs/{1}".format(repository, run_id)])
+    except GhNotFound:
+        return None
+    arts = gh_runs(["repos/{0}/actions/runs/{1}/artifacts".format(repository, run_id)])
+    if not isinstance(run, dict) or arts is None:
+        raise GhReadError("run or artifacts read failed for run " + run_id)
+    run = dict(run)
+    run["repository"] = (run.get("repository") or {}).get("full_name") or repository
+    run["artifacts"] = [a.get("name") for a in (arts or {}).get("artifacts", [])]
+    run["referenced_workflows"] = [w.get("path") for w in run.get("referenced_workflows") or []]
+    return run
 
 
 class GhReadError(RuntimeError):

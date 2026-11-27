@@ -39,6 +39,7 @@ import wc_board_status  # noqa: E402
 import lifecycle_merge_preconditions as lmp  # noqa: E402
 import lifecycle_readiness  # noqa: E402
 import wc_lifecycle_review_marker  # noqa: E402
+import wc_shared_review  # noqa: E402
 from board_item_marker import last_converged_review_head  # noqa: E402
 from board_triage import any_run_url_pattern  # noqa: E402
 
@@ -63,7 +64,12 @@ DECISION_RECORD_PREFIX = "**Session decision ("
 RULE_ALL = "all-statuses"
 RULE_NO_GATE = "without-gate-status"
 UNREAD_STATE = "whether the pull request is still open (its state could not be read)"
-NO_ROUND_RECORD_REASON = "no counted round record exists for this kind (#1142 not built)"
+NO_ROUND_RECORD_REASON = "no round record is counted for spec PRs: the shared reviewer reviews fix PRs only"
+# Reported beside the verdict, never one of its conditions: it does not
+# change first_unmet or the result (the first slice's rule that CI counts
+# only for a pull request that changed nothing under .github/).
+CI_DEFINITION_CONDITION = "ci_definition_from_default_branch"
+_ISO_UTC_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
 _PASS_REPORT_RE = re.compile(r"(?i)\b(review|validat\w*|verif\w*) (pass|report|verdict)\b|\bclean pass\b")
 # A pass report also names itself in its title: the heading, or the leading
 # bold span, that opens the comment after any HTML markers says review, pass,
@@ -295,6 +301,64 @@ def _final_conditions(snap, bot_login):
     return out
 
 
+def _review_round_conditions(snap, bot_login, base_branch=None):
+    """A session fix PR (kind `maintainer`): the newest shared-reviewer round
+    record at the exact head must be clean and confirmed by the run it
+    names. An older clean round never stands in for a newer one that is
+    unconfirmed (its run may still be going) or not clean. The record
+    format, its parse and the confirmation are wc_shared_review's (called,
+    never re-typed). `shared_review_runs` maps each run id a record names to
+    the run's facts, or to None when the run does not exist; a run id
+    missing from it was not read."""
+    name = "review_round_record"
+    if snap.get("comments") is None:
+        return [_cond(name, "not-read", "the pull request's comments were not read")]
+    records = wc_shared_review.parse_records(snap.get("comments"), bot_login)
+    if not records:
+        return [_cond(name, "unmet", "no shared-reviewer round record on the pull request")]
+    head = snap.get("headRefOid")
+    record = wc_shared_review.latest_round_for_commit(records, head) if head else None
+    if record is None:
+        return [_cond(name, "unmet", "the newest shared-reviewer round names another commit ({0})".format(
+            str(records[-1].get("head_sha"))[:12]))]
+    run_id = str(record.get("run_id") or "")
+    if not run_id.isdigit():
+        return [_cond(name, "unmet", "the newest shared-reviewer round at this head names no run")]
+    runs = snap.get("shared_review_runs")
+    if runs is None or run_id not in runs:
+        return [_cond(name, "not-read", "run {0}, which the newest shared-reviewer round at this head names, "
+                                        "was not read".format(run_id))]
+    branch = base_branch or board_merge.BASE_BRANCH
+    as_of = snap.get("as_of")
+    if as_of and runs[run_id] is not None and _after(runs[run_id].get("updated_at"), as_of):
+        # FR-012: a run that completed (or was re-run) after the merge is
+        # evidence dated after it, so it is left out.
+        return [_cond(name, "unmet", "run {0}, which the newest shared-reviewer round at this head names, "
+                                     "completed after the merge".format(run_id))]
+    if runs[run_id] is None or not wc_shared_review.confirm_record(record, runs[run_id], branch):
+        return [_cond(name, "unmet", "the newest shared-reviewer round at this head (round {0}) is not "
+                                     "confirmed by the run it names".format(record.get("round")))]
+    if record.get("verdict") != "clean":
+        return [_cond(name, "unmet", "the shared reviewer's round {0} at this head reads {1}".format(
+            record.get("round"), record.get("verdict")))]
+    return [_cond(name, "met")]
+
+
+def _ci_definition_condition(snap):
+    """Reported only: whether the pull request's CI ran a workflow
+    definition the pull request itself could have written."""
+    files = snap.get("files")
+    if files is None:
+        return _cond(CI_DEFINITION_CONDITION, "not-read", "the pull request's files were not read")
+    touched = sorted({p for f in files for p in ((f or {}).get("path"), (f or {}).get("previousPath"))
+                      if isinstance(p, str) and p.startswith(".github/")})
+    if touched:
+        return _cond(CI_DEFINITION_CONDITION, "unmet",
+                     "it changes {0} path(s) under .github/ (first: {1}), so its CI ran a definition it "
+                     "could have written".format(len(touched), touched[0]))
+    return _cond(CI_DEFINITION_CONDITION, "met")
+
+
 # The kinds whose conditions read records the pipeline App writes.
 APP_EVIDENCE_KINDS = ("bump", "board-fix", "final")
 
@@ -336,19 +400,94 @@ def evaluate(snap, bot_login, now, final_prefix="spec/", spec_prefix="spec-draft
         conditions += _board_fix_conditions(snap, bot_login)
     elif kind == "final":
         conditions += _final_conditions(snap, bot_login)
+    elif kind == "maintainer":
+        conditions += _review_round_conditions(snap, bot_login, base_branch)
     else:
         conditions.append(_cond("review_round_record", "unmet", NO_ROUND_RECORD_REASON))
+    reported_conditions = [_ci_definition_condition(snap)]
     if not complete:
         # FR-005: nothing that depended on a part not read may report met.
         why = "snapshot incomplete: " + "; ".join(not_read)
         conditions = [conditions[0]] + [_cond(c["name"], "not-read", why) if c["result"] == "met" else c
                                         for c in conditions[1:]]
+        reported_conditions = [_cond(c["name"], "not-read", why) if c["result"] == "met" else c
+                               for c in reported_conditions]
     reported = (reported_records(snap.get("comments"), bot_login, snap.get("pr_url"))
                 + reported_records(snap.get("issue_comments"), bot_login))
     return {"pr": snap.get("number"), "head": snap.get("headRefOid"), "kind": kind, "kind_facts": facts,
             "rule_applied": rule, "complete": complete, "not_read": not_read,
             "conditions": conditions, "first_unmet": first_unmet(conditions),
-            "reported": reported, "computed_at": now}
+            "reported": reported, "reported_conditions": reported_conditions, "computed_at": now}
+
+
+class RecordError(ValueError):
+    """A VerdictRecord that breaks data-model.md's shape: it is never
+    written to the ledger or the audit (the run fails loudly instead)."""
+
+
+_RECORD_FIELDS = (("pr", int), ("head", str), ("kind", str), ("kind_facts", dict), ("rule_applied", str),
+                  ("complete", bool), ("not_read", list), ("conditions", list), ("reported", list),
+                  ("reported_conditions", list), ("computed_at", str))
+
+
+def _condition_problems(where, cond):
+    if not isinstance(cond, dict) or set(cond) != {"name", "result", "reason"}:
+        return ["{0}: a condition is not exactly {{name, result, reason}}".format(where)]
+    out = []
+    if not isinstance(cond["name"], str) or not cond["name"]:
+        out.append("{0}: a condition has no name".format(where))
+    if cond["result"] not in RESULTS:
+        out.append("{0}: condition {1!r} has result {2!r}".format(where, cond.get("name"), cond["result"]))
+    if not isinstance(cond["reason"], str) or bool(cond["reason"]) == (cond["result"] == "met"):
+        out.append("{0}: condition {1!r} needs a reason exactly when it is not met".format(where, cond.get("name")))
+    return out
+
+
+def validate_record(record):
+    """The gate decision as a type (the first slice's payload types): raise
+    RecordError naming every way `record` breaks the VerdictRecord shape,
+    else return it unchanged."""
+    if not isinstance(record, dict):
+        raise RecordError("a verdict record is not an object")
+    problems = []
+    for key, typ in _RECORD_FIELDS:
+        value = record.get(key)
+        if key not in record or not isinstance(value, typ) or (typ is int and isinstance(value, bool)):
+            problems.append("{0} is missing or not {1}".format(key, typ.__name__))
+    if "first_unmet" not in record or not (record["first_unmet"] is None or isinstance(record["first_unmet"], str)):
+        problems.append("first_unmet is missing or neither null nor a name")
+    if problems:
+        raise RecordError("; ".join(problems))
+    if not record["head"]:
+        problems.append("head is empty")
+    if record["kind"] not in KINDS:
+        problems.append("kind {0!r} is not one of {1}".format(record["kind"], ", ".join(KINDS)))
+    if record["rule_applied"] not in (RULE_ALL, RULE_NO_GATE):
+        problems.append("rule_applied {0!r} is not a known rule".format(record["rule_applied"]))
+    if not _ISO_UTC_RE.match(record["computed_at"]):
+        problems.append("computed_at {0!r} is not a UTC time".format(record["computed_at"]))
+    conditions = record["conditions"]
+    if not conditions or not isinstance(conditions[0], dict) or conditions[0].get("name") != "checks_green_with_gate_suite":
+        problems.append("conditions do not open with checks_green_with_gate_suite")
+    for where, conds in (("conditions", conditions), ("reported_conditions", record["reported_conditions"])):
+        names = []
+        for cond in conds:
+            problems += _condition_problems(where, cond)
+            names.append(cond.get("name") if isinstance(cond, dict) else None)
+        if len(set(names)) != len(names):
+            problems.append("{0}: a condition name repeats".format(where))
+    if not problems and record["first_unmet"] != first_unmet(conditions):
+        problems.append("first_unmet {0!r} is not the first condition that is not met".format(record["first_unmet"]))
+    if record["complete"] == bool(record["not_read"]):
+        problems.append("complete must be true exactly when nothing is listed as not read")
+    if not record["complete"] and not problems and any(c["result"] == "met" for c in conditions[1:]):
+        problems.append("an incomplete record reports a condition past the checks met (FR-005)")
+    for entry in record["reported"]:
+        if not isinstance(entry, dict) or entry.get("kind") not in ("pass-report", "decision-record", "other"):
+            problems.append("a reported record has no known kind")
+    if problems:
+        raise RecordError("; ".join(problems))
+    return record
 
 
 def first_unmet(conditions):
@@ -449,6 +588,9 @@ def cut_snapshot(snap, merged_at):
         full = snap.get("comments") or []
         if isinstance(snap["counts"].get("comments"), int) and len(full) >= snap["counts"]["comments"]:
             cut["counts"] = dict(snap["counts"], comments=len(cut["comments"]))
+    # The shared reviewer's runs are read after the merge: the as-of time
+    # lets _review_round_conditions leave out a run that completed after it.
+    cut["as_of"] = merged_at
     cut["left_out"] = left_out
     return cut
 
@@ -711,8 +853,39 @@ def _assign_once(snap, bot_login, final_prefix, spec_prefix, base_branch):
     return kind
 
 
+def _read_shared_review_runs(repo, snap, bot_login, actions_token, not_read, as_of=None):
+    """For a session fix PR: the facts of the one run that can decide its
+    verdict, the run the newest shared-reviewer round at its head names
+    (wc_shared_review.fetch_run_facts, the read's one home). A failed read
+    leaves `shared_review_runs` None and names it. `as_of`, for a merged PR,
+    is its merge time: a record posted after it is cut before the verdict
+    (cut_snapshot), so it is left out here by the same test."""
+    # The record chosen here is the one _review_round_conditions judges
+    # (the same comments, the same latest_round_for_commit), so a failed
+    # read of a run no deciding record names never makes the verdict
+    # not-read (#1346 passes 1 and 3).
+    comments = snap.get("comments")
+    if as_of and comments is not None:
+        comments = [c for c in comments if not _after((c or {}).get("created_at"), as_of)]
+    records = wc_shared_review.parse_records(comments, bot_login)
+    head = snap.get("headRefOid")
+    newest = wc_shared_review.latest_round_for_commit(records, head) if head else None
+    run_ids = [str(newest["run_id"])] if newest is not None and str(newest.get("run_id") or "").isdigit() else []
+    runs = {}
+    try:
+        for run_id in run_ids:
+            runs[run_id] = wc_shared_review.fetch_run_facts(
+                repo, run_id, lambda args: wc_shared_review._gh_api(args, actions_token))
+    except wc_shared_review.GhReadError as exc:
+        snap["shared_review_runs"] = None
+        not_read.append("the shared reviewer's runs: {0}".format(exc))
+        return snap
+    snap["shared_review_runs"] = runs
+    return snap
+
+
 def _extend_with_evidence(repo, snap, bot_login, not_read, base_branch=None, final_prefix="spec/",
-                          spec_prefix="spec-draft/"):
+                          spec_prefix="spec-draft/", actions_token=None):
     """Reviews, labels and the kind's evidence issue; each part that cannot be
     read is named, never defaulted."""
     pull = json.loads(_gh_ok(["pr", "view", str(snap["number"]), "-R", repo, "--json",
@@ -720,6 +893,8 @@ def _extend_with_evidence(repo, snap, bot_login, not_read, base_branch=None, fin
     snap["reviews"] = pull.get("reviews") or []
     snap["cross_repository"] = bool(pull.get("isCrossRepository"))
     kind = _assign_once(snap, bot_login, final_prefix, spec_prefix, base_branch)
+    if kind == "maintainer":
+        _read_shared_review_runs(repo, snap, bot_login, actions_token, not_read)
     issue = linked_issue(kind, snap, repo)
     snap["issue_comments"] = None
     snap["labels"] = None
@@ -748,7 +923,8 @@ def collect(repo, bot_login, actions_token=None, default_branch="main", final_pr
             snap["number"] = pr["number"]
             snap["pr_url"] = pr_url(repo, pr["number"])
             snap["not_read"] = not_read
-            _extend_with_evidence(repo, snap, bot_login, not_read, default_branch, final_prefix, spec_prefix)
+            _extend_with_evidence(repo, snap, bot_login, not_read, default_branch, final_prefix, spec_prefix,
+                                  actions_token)
             # When this PR's snapshot was read, taken after the read: the
             # record's time (#1173 round 5, finding 6).
             snap["read_at"] = _now()
@@ -794,8 +970,10 @@ def run_verdicts(repo, bot_login, default_branch, out_path, final_prefix, spec_p
         # Each record carries the time its own snapshot was read, never the
         # run's start, so a PR merged mid-run is never "recorded" from
         # evidence read after its merge.
-        replace_record(ledger, evaluate(snap, bot_login, snap.get("read_at") or _now(), final_prefix, spec_prefix,
-                                        default_branch))
+        # A record that breaks the VerdictRecord shape fails the run before
+        # it reaches the ledger (RecordError).
+        replace_record(ledger, validate_record(evaluate(snap, bot_login, snap.get("read_at") or _now(), final_prefix,
+                                                        spec_prefix, default_branch)))
     states = {}
     for pr in sorted({r["pr"] for r in ledger["records"].values()} - open_prs):
         try:
@@ -879,6 +1057,8 @@ def _merged_snapshot(repo, pull, bot_login, actions_token, final_prefix="spec/",
         if record is not None:
             snap["verificationRun"] = board_merge.fetch_verification_run(repo, record, actions_token)
     kind = _assign_once(snap, bot_login, final_prefix, spec_prefix, base_branch)
+    if kind == "maintainer":
+        _read_shared_review_runs(repo, snap, bot_login, actions_token, not_read, as_of=pull.get("merged_at"))
     issue = linked_issue(kind, snap, repo)
     snap["issue_comments"] = snap["labels"] = snap["label_events"] = None
     if issue is not None:
@@ -946,7 +1126,8 @@ def run_audit(repo, bot_login, default_branch, out_path, final_prefix, spec_pref
         merged.append(info)
         snap = cut_snapshot(_merged_snapshot(repo, pull, bot_login, token, final_prefix, spec_prefix, default_branch),
                             pull["merged_at"])
-        entries.append(build_audit_entry(info, evaluate(snap, bot_login, now, final_prefix, spec_prefix, default_branch), ledger))
+        verdict = validate_record(evaluate(snap, bot_login, now, final_prefix, spec_prefix, default_branch))
+        entries.append(build_audit_entry(info, verdict, ledger))
     entries.sort(key=lambda e: e["merged_at"], reverse=True)
     log = _run(["git", "log", "--first-parent", "--since", window["start"],
                                                 "--format=%H%x09%an%x09%cn%x09%cI", "origin/" + default_branch])

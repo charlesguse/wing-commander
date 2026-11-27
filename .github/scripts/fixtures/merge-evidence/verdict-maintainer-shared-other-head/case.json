@@ -1,0 +1,22 @@
+{
+ "base": "maintainer",
+ "patch": {
+  "shared_review": [
+   {
+    "round": 1,
+    "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "verdict": "clean",
+    "run_id": "101"
+   }
+  ],
+  "shared_review_runs": {
+   "101": {}
+  }
+ },
+ "expect": {
+  "kind": "maintainer",
+  "first_unmet": "review_round_record",
+  "complete": true,
+  "reason_contains": "another commit"
+ }
+}

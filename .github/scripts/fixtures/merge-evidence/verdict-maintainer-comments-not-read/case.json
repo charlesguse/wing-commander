@@ -1,0 +1,13 @@
+{
+ "base": "maintainer",
+ "patch": {
+  "comments": null
+ },
+ "expect": {
+  "kind": "maintainer",
+  "first_unmet": "review_round_record",
+  "result_of": {
+   "review_round_record": "not-read"
+  }
+ }
+}

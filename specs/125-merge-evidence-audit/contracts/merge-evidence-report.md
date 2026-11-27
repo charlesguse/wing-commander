@@ -20,6 +20,9 @@ The reader MUST compare `<head>` with the PR's current `headRefOid`. No record f
 - Exactly one record per `(pr, head)`; a later run replaces it.
 - A record never counts evidence naming another commit (FR-010), never counts a maintainer-account record (FR-009), and never reports `met` for a condition that depended on a part not read (FR-005).
 - No record, artifact or section is a check run or commit status, and no merge job reads any of them (FR-017, FR-019).
+- Every record a run writes passes `wc_merge_evidence.validate_record()` (data-model.md's VerdictRecord as a type). A record that does not fails the run before it reaches the ledger or the audit.
+- A `maintainer` record's `review_round_record` is met only by the shared reviewer's newest round at the exact head with verdict `clean`, posted by the App and confirmed by the run it names (`wc_shared_review.confirm_record()`).
+- `reported_conditions` holds conditions reported beside the verdict that never change `first_unmet` or the result. Today it holds one, `ci_definition_from_default_branch`, which is unmet when the PR changes any path under `.github/`.
 
 ## 3. Audit section in "Board status"
 

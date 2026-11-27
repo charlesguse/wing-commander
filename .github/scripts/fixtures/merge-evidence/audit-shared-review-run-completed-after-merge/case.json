@@ -1,0 +1,27 @@
+{
+ "base": "maintainer",
+ "patch": {
+  "shared_review": [
+   {
+    "round": 1,
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "verdict": "clean",
+    "run_id": "101"
+   }
+  ],
+  "shared_review_runs": {
+   "101": {
+    "updated_at": "2026-11-10T10:30:05Z"
+   }
+  }
+ },
+ "merge": {
+  "merged_commit": "dddddddddddddddddddddddddddddddddddddddd",
+  "merged_at": "2026-11-10T10:30:00Z",
+  "merged_by": "owner"
+ },
+ "expect": {
+  "mark": "reconstructed",
+  "first_unmet": "review_round_record"
+ }
+}

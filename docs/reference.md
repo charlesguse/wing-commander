@@ -256,8 +256,9 @@ about these merges, and changes none of them: for each pull request into
 the verdict as of the merge, marked recorded or reconstructed. A bump PR
 needs its confirmed verification record, a board loop fix PR the App's
 converged review verdict at the head, a final PR the review gate's clean
-round at the head; a spec PR or a maintainer PR needs a round record that
-does not exist yet, so it reads unmet. A pass report or decision record posted
+round at the head, a maintainer PR the shared reviewer's newest round at
+the head, clean and confirmed by its run; a spec PR has no round record
+counted, so it reads unmet. A pass report or decision record posted
 under a maintainer's account is listed, never counted. Every kind also needs
 green checks with the gate suite among them, so a pull request with no checks
 reads unmet.
@@ -399,8 +400,12 @@ tables above. No kill switch is set except spec PR review's.
   session's merge of its own fix PR is still checked by nothing before it
   happens. It cannot tell a session's merge from the owner's (both merge under
   the owner's account), a pull request merged within an hour of opening has
-  only a reconstructed verdict, spec PRs read unmet while they have no checks,
-  and maintainer PRs read unmet until a reviewer's round record exists (#1142).
+  only a reconstructed verdict, and spec PRs read unmet while they have no
+  checks. A maintainer PR (a session's fix PR) reads met only on the shared
+  reviewer's newest round at its exact head, clean, with the run it names
+  confirming it. Beside the verdict, each record reports whether the PR
+  changed anything under `.github/`, in which case its CI ran a definition
+  it could have written. That report blocks nothing.
   Its 30-day watching period ends on the date its section's header names.
 - The proof list's scan under-reads: a literal mention counts only for
   `.github/` paths in non-comment text, script imports are followed only

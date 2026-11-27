@@ -587,6 +587,36 @@ class ReviewRound2Fixes(unittest.TestCase):
                                       "--default-branch", "main", "--repository", "o/r"]), 1)
 
 
+class FetchRunFacts(unittest.TestCase):
+    """fetch_run_facts is the run read's one home (wc_merge_evidence.py
+    calls it too): shaped for confirm_record, None only for a real 404."""
+
+    def test_shapes_the_run_for_confirm_record(self):
+        def runs(args):
+            if args[0].endswith("/artifacts"):
+                return {"artifacts": [{"name": "shared-review-" + "a" * 40}]}
+            return {"id": 7, "repository": {"full_name": "o/r"},
+                    "referenced_workflows": [{"path": "o/r/.github/workflows/shared-pr-reviewer.yml@x"}]}
+        run = sr.fetch_run_facts("o/r", "7", runs)
+        self.assertEqual(run["repository"], "o/r")
+        self.assertEqual(run["artifacts"], ["shared-review-" + "a" * 40])
+        self.assertEqual(run["referenced_workflows"], ["o/r/.github/workflows/shared-pr-reviewer.yml@x"])
+
+    def test_a_missing_run_is_none(self):
+        def runs(args):
+            raise sr.GhNotFound(args[0])
+        self.assertIsNone(sr.fetch_run_facts("o/r", "7", runs))
+
+    def test_a_failed_read_raises_not_none(self):
+        for failing in ("run", "artifacts"):
+            def runs(args, failing=failing):
+                is_arts = args[0].endswith("/artifacts")
+                if (failing == "artifacts") == is_arts:
+                    return None
+                return {"artifacts": []} if is_arts else {"id": 7}
+            with self.assertRaises(sr.GhReadError):
+                sr.fetch_run_facts("o/r", "7", runs)
+
 class ReviewRound3Fixes(unittest.TestCase):
     """Gate round 3 findings on #1184, built by hand."""
 
