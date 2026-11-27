@@ -2738,17 +2738,15 @@ jobs:
           # The classes this workflow names itself: exactly the arms of
           # `Determine issue-filing eligibility` and of `Evidence validity
           # gate`'s key list (verify-narrative-drift-routing.sh fails if
-          # the two drift apart). The vocabulary when the label query fails
-          # or no label exists yet: it fails closed to a fixed enum, never
-          # to free text, because a free-text class can miss the eligibility
-          # step's exact match and file a signal class (denied-tool,
-          # narrative-drift) as a defect.
+          # the two drift apart). Unioned into the enum on every run, not
+          # only when the label query fails or finds nothing: a registry
+          # holding only some labels (a fresh repo after its first
+          # `Register new finding class`) would otherwise leave the rest to
+          # "__new__", whose proposed synonym misses the eligibility step's
+          # exact match (a signal class filed as a defect), the evidence
+          # gate's key list, and the closed-issue suppression that reads
+          # `🐕 · turn-budget-trend`. The enum is never free text.
           builtin_classes='["cost-line-malformed","cost-line-missing","denied-tool","lost-progress","missing-spec-metadata","narrative-drift","spec-number-collision","stage-mismatch","token-budget-warning","trusted-file-tampered","turn-budget-trend"]'
-          # Exactly the eligibility step's issue-exempt arm, offered on
-          # every run: a registry holding only other labels (a fresh repo
-          # after its first `Register new finding class`) would otherwise
-          # leave these to "__new__", whose proposed synonym is filed.
-          exempt_classes='["denied-tool","narrative-drift","trusted-file-tampered"]'
           classes="$(gh label list --repo "$GITHUB_REPOSITORY" --limit 200 --json name \
             --jq '[.[].name | select(startswith($ENV.LABEL_PREFIX)) | sub("^" + $ENV.LABEL_PREFIX; "")
                    | ascii_downcase | gsub("[^a-z0-9-]"; "")] | map(select(length > 0)) | unique' \
@@ -2757,10 +2755,10 @@ jobs:
             # No registry yet (fresh consumer repo), or the label query failed.
             # "__new__" still lets the agent propose a class the built-in list
             # lacks, and `Register new finding class` labels it for next run.
-            echo "::warning::no '${LABEL_PREFIX}<type>' labels found — falling back to the built-in finding classes for this run."
-            classes="$builtin_classes"
+            echo "::warning::no '${LABEL_PREFIX}<type>' labels found — offering only the built-in finding classes for this run."
+            classes='[]'
           fi
-          classes="$(printf '%s' "$classes" | jq -c --argjson x "$exempt_classes" '. + $x | unique')"
+          classes="$(printf '%s' "$classes" | jq -c --argjson x "$builtin_classes" '. + $x | unique')"
           class_schema="$(printf '%s' "$classes" | jq -c '. + ["__new__"] | {type:"string", enum:.}')"
           # signalId is enum-constrained to the ids actually present in THIS
           # run's signals, so citing evidence is selection from a fixed list
