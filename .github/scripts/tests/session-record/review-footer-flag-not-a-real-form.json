@@ -1,0 +1,15 @@
+{
+  "what": "--footer takes one of the two real attribution forms only: the bare phrase is refused (#889)",
+  "build": "review",
+  "fields": {
+    "pass": 2,
+    "verdict": "clean",
+    "started": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "pushed": "nothing",
+    "prose": "x",
+    "footer": "Generated with [Claude Code]"
+  },
+  "expect_refused": [
+    "footer"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "what": "a one-line undo that is only the attribution line holds no undo: the line is the comment's footer, so the writer names the undo as missing (#889)",
+  "build": "decision",
+  "fields": {
+    "date": "2026-11-14",
+    "chosen": "kept the gate",
+    "options": "keep it; drop it",
+    "evidence": "it caught two defects",
+    "undo": "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+  },
+  "expect_refused": [
+    "undo"
+  ]
+}
