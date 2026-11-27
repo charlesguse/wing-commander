@@ -858,6 +858,26 @@ def kill_switch_vars(reference):
     return set(re.findall(r"^\| `(WING_COMMANDER_[A-Z0-9_]+)` \|", kill, re.M))
 
 
+NUMBER_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
+
+
+def pending_docs_problems(kill_flat, pending):
+    """docs/reference.md's "N readers do not follow it yet" sentence states
+    how many readers are pending and names only their workflow files."""
+    m = re.search(r"(\w+) readers? do(?:es)? not follow it yet(.*?)\| Switch \|", kill_flat)
+    if not m:
+        return ["docs/reference.md's Kill switches section has no \"do not follow it yet\" list"]
+    problems = []
+    want = NUMBER_WORDS[len(pending)] if len(pending) < len(NUMBER_WORDS) else str(len(pending))
+    if m.group(1).lower() != want:
+        problems.append("the list says {0!r} readers; {1} are pending".format(m.group(1), len(pending)))
+    named = set(re.findall(r"`([\w.-]+\.yml)`", m.group(2)))
+    extra = sorted(named - {path for path, _var in pending})
+    if extra:
+        problems.append("the list names {0}, which no longer has a pending reader".format(extra))
+    return problems
+
+
 def relay_problems(root, switch_vars, pending, conforming):
     """Every raw relay of a switch in .github/workflows goes to a reader the
     one-rule check runs, or is a registered pending reader; every pending
@@ -1303,6 +1323,12 @@ def docs_half():
     for path, var in pending:
         check("docs/reference.md's Kill switches section names {0}'s reader of {1}".format(path, var),
               "`{0}`".format(path) in kill_flat and "`{0}`".format(var) in kill_flat, kill_flat[:400])
+    # Code review of #1329: and names no other, so a reader brought under
+    # the rule leaves that list with its PENDING_SHELL_READERS entry.
+    problems = pending_docs_problems(kill_flat, pending)
+    check("docs/reference.md's not-yet list names only the readers still pending", not problems, problems)
+    check("a reader the not-yet list still names after its fix fails",
+          pending_docs_problems(kill_flat, pending[:-1]))
 
 
 def main():
