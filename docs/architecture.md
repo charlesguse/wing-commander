@@ -1012,6 +1012,11 @@ billed jobs, `collect` and the always-on `report-unhandled-failure`.
     conclusion is `skipped` or `cancelled`. It executed nothing, so it owes
     no commits and no stage transition. A `plan` run correctly skipped for a
     stalled spec was reported as a stage-mismatch defect — issue #125.
+  - `spec-meta` also emits nothing while an open `plan/` or `tasks/` PR
+    exists for the spec. A stage in `pr` review mode records its stage on
+    that PR's branch, and the spec branch it reads catches up only when the
+    PR merges (#889). A failed read of the open PRs keeps the signal and
+    marks the collector untrusted.
   - `branch-drift` additionally emits nothing when the run's head branch is
     not the branch that stage pushes to. `plan` and `tasks` are
     `pull_request`-triggered, so they report the *draft* branch as head while

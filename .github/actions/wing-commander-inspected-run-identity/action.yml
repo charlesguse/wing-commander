@@ -163,6 +163,12 @@ outputs:
   stalled-label:
     description: "`true` when the lifecycle issue already carries stage:stalled; otherwise `false`."
     value: ${{ steps.resolve.outputs.stalled-label }}
+  plan-branch:
+    description: The slug's plan branch (`plan-prefix` + slug), or empty when no slug resolved.
+    value: ${{ steps.resolve.outputs.plan-branch }}
+  tasks-branch:
+    description: The slug's tasks branch (`tasks-prefix` + slug), or empty when no slug resolved.
+    value: ${{ steps.resolve.outputs.tasks-branch }}
   record-stage:
     description: >
       The `stage` literal from the inspected run's own metrics record
@@ -325,6 +331,8 @@ runs:
           echo "lifecycle-issue=$issue"
           echo "meta-stage=$meta_stage"
           echo "stalled-label=$stalled_label"
+          echo "plan-branch=${slug:+$PLAN_PREFIX$slug}"
+          echo "tasks-branch=${slug:+$TASKS_PREFIX$slug}"
         } >> "$GITHUB_OUTPUT"
 
     # #266 -- see the header. Reuses the record the slug fallback above

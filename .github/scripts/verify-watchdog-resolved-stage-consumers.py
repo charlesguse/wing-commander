@@ -26,6 +26,10 @@ Nothing before this gate executed the SHIPPED bash to prove:
      (record wins over name; the name fallback only when the record truly
      has nothing; an unrecognised name with no record leaves both empty).
 
+  4. #889: an open plan/ or tasks/ stage PR (pr review mode) skips the
+     spec-meta stage check with a note, and the built-in finding-class
+     vocabulary carries no retired synonym of missing-spec-metadata.
+
 This runs the REAL `run:` blocks extracted from watchdog.yml and the
 composite action (wc_shell_harness.find_step/run_step) — no copied logic
 to drift out of sync, matching this repository's existing execution-based
@@ -37,9 +41,12 @@ Requires: bash, jq.
 """
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
+
+import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (  # noqa: E402
@@ -486,6 +493,185 @@ def case_fr014_name_warning():
              "artifact-found, and names the run's own display name")
 
 
+# ---------------------------------------------------------------------------
+# Part D -- #889 (session decision on #1336, option b): a plan or tasks run
+# in `pr` review mode records its stage on its own plan/ or tasks/ branch,
+# so while that PR is open the spec branch still reads the earlier stage.
+# The shipped `stage-pr` step finds the open PR (gh stubbed) and the shipped
+# collect-spec-meta skips with a note while one is open; a failed read
+# keeps the signal but records the collector untrusted.
+# ---------------------------------------------------------------------------
+STAGE_PR_STEP = "Read open plan or tasks stage PR"
+SPEC_META_STEP = "Collect: spec-meta state vs. expected stage"
+STAGE_PR_GH = """#!/bin/sh
+[ -n "${GH_FAIL:-}" ] && { echo "gh: HTTP 502" >&2; exit 1; }
+head=""
+while [ $# -gt 0 ]; do
+  [ "$1" = "--head" ] && head="$2"
+  shift
+done
+[ "$head" = "${OPEN_HEAD:-}" ] && echo 42
+exit 0
+"""
+
+
+def _stage_pr_run(open_head="", gh_fail=False, slug="999-fixture"):
+    runner_temp = _init_runner_temp()
+    try:
+        bindir = os.path.join(runner_temp, "bin")
+        os.makedirs(bindir)
+        with open(os.path.join(bindir, "gh"), "w", encoding="utf-8",
+                  newline="\n") as fh:
+            fh.write(STAGE_PR_GH)
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        env = {"PATH": bindir + os.pathsep + os.environ["PATH"],
+               "GH_TOKEN": "x", "GITHUB_REPOSITORY": GITHUB_REPOSITORY,
+               "PLAN_BRANCH": slug and "plan/" + slug,
+               "TASKS_BRANCH": slug and "tasks/" + slug,
+               "OPEN_HEAD": open_head, "GH_FAIL": "1" if gh_fail else ""}
+        script = find_step(WATCHDOG, STAGE_PR_STEP)["run"]
+        workdir = tempfile.mkdtemp(dir=runner_temp)
+        rc, out, outputs, _summary = run_step(BASH, script, workdir, env,
+                                              runner_temp)
+        return rc, out, outputs
+    finally:
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+def _spec_meta_run(extra):
+    runner_temp = _init_runner_temp()
+    try:
+        env = {"RESOLVED_STAGE": "plan", "RESOLVED_STAGE_SOURCE": "record",
+               "RUN_CONCLUSION": "success", "META_STAGE": "spec",
+               "SLUG": "999-fixture", "STALLED_LABEL": "false",
+               "STAGE_PR": "", "STAGE_PR_BRANCH": "", "STAGE_PR_OUTCOME": "success"}
+        env.update(extra)
+        script = find_step(WATCHDOG, SPEC_META_STEP)["run"]
+        workdir = tempfile.mkdtemp(dir=runner_temp)
+        rc, out, _outputs, summary = run_step(BASH, script, workdir, env,
+                                              runner_temp)
+        with open(os.path.join(runner_temp, "signals.json"),
+                  encoding="utf-8") as fh:
+            signals = json.load(fh)
+        return rc, out, signals, _read_outcomes(runner_temp), summary
+    finally:
+        shutil.rmtree(runner_temp, ignore_errors=True)
+
+
+def case_open_stage_pr_skips_spec_meta():
+    case = "#889: an open plan/tasks stage PR skips collect-spec-meta"
+    for label, kw, want_rc, want in (
+            ("open plan PR", {"open_head": "plan/999-fixture"}, 0,
+             {"number": "42", "branch": "plan/999-fixture"}),
+            ("open tasks PR", {"open_head": "tasks/999-fixture"}, 0,
+             {"number": "42", "branch": "tasks/999-fixture"}),
+            ("no open stage PR", {"open_head": "spec/999-fixture"}, 0, {}),
+            ("no slug", {"open_head": "plan/", "slug": ""}, 0, {}),
+            ("read fails", {"gh_fail": True}, 1, {})):
+        rc, out, outputs = _stage_pr_run(**kw)
+        got = {k: outputs[k] for k in ("number", "branch") if k in outputs}
+        if rc != want_rc or got != want:
+            fail(case, f"stage-pr step, {label}: expected rc={want_rc} "
+                       f"outputs={want}, got rc={rc} outputs={got}: "
+                       f"{out.strip()[:300]}")
+
+    rc, out, signals, outcomes, _s = _spec_meta_run({})
+    if rc != 0 or [x.get("source") for x in signals] != ["spec-meta"]:
+        fail(case, f"control: a plan run reading 'spec' with no open stage "
+                   f"PR must still emit one spec-meta signal, got rc={rc} "
+                   f"signals={signals}")
+    rc, out, signals, outcomes, summary = _spec_meta_run(
+        {"STAGE_PR": "42", "STAGE_PR_BRANCH": "plan/999-fixture"})
+    if rc != 0 or signals:
+        fail(case, f"an open stage PR must skip the stage check, got rc={rc} "
+                   f"signals={signals}")
+    elif "#42" not in summary:
+        fail(case, f"the skip must leave a step-summary note naming the PR, "
+                   f"got {summary!r}")
+    rc, out, signals, outcomes, _s = _spec_meta_run(
+        {"STAGE_PR_OUTCOME": "failure"})
+    if rc != 0 or len(signals) != 1 or \
+            {"collector": "collect-spec-meta", "outcome": "failed"} not in outcomes:
+        fail(case, f"a failed stage-PR read must keep the signal and record "
+                   f"collect-spec-meta failed, got rc={rc} signals={signals} "
+                   f"outcomes={outcomes}")
+
+    # Wiring: the read runs before the collector, survives its own failure,
+    # pins bash (the collect job runs in a caller-supplied container), and
+    # the collector reads its outputs and outcome.
+    with open(WATCHDOG, encoding="utf-8") as fh:
+        steps = yaml.safe_load(fh)["jobs"]["collect"]["steps"]
+    names = [st.get("name") for st in steps]
+    if STAGE_PR_STEP not in names or SPEC_META_STEP not in names or \
+            names.index(STAGE_PR_STEP) > names.index(SPEC_META_STEP):
+        fail(case, "the stage-pr step must run in the collect job before "
+                   "collect-spec-meta")
+    else:
+        sp = steps[names.index(STAGE_PR_STEP)]
+        sm_env = steps[names.index(SPEC_META_STEP)].get("env") or {}
+        if sp.get("id") != "stage-pr" or sp.get("shell") != "bash" or \
+                sp.get("continue-on-error") is not True:
+            fail(case, "the stage-pr step must carry id stage-pr, shell: "
+                       "bash and continue-on-error: true")
+        sp_env = sp.get("env") or {}
+        for k, out in (("PLAN_BRANCH", "plan-branch"),
+                       ("TASKS_BRANCH", "tasks-branch")):
+            if sp_env.get(k) != "${{ steps.spec-slug.outputs.%s }}" % out:
+                fail(case, f"the stage-pr step's {k} must read the identity "
+                           f"composite's {out} output, got {sp_env.get(k)!r}")
+        with open(COMPOSITE, encoding="utf-8") as fh:
+            comp = yaml.safe_load(fh)
+        resolve_run = comp["runs"]["steps"][0]["run"]
+        for out, pre in (("plan-branch", "PLAN_PREFIX"),
+                         ("tasks-branch", "TASKS_PREFIX")):
+            if out not in (comp.get("outputs") or {}) or \
+                    f'echo "{out}=${{slug:+${pre}$slug}}"' not in resolve_run:
+                fail(case, f"the identity composite must emit {out} as "
+                           f"{pre} + slug (empty with no slug)")
+        want_env = {"STAGE_PR": "${{ steps.stage-pr.outputs.number }}",
+                    "STAGE_PR_BRANCH": "${{ steps.stage-pr.outputs.branch }}",
+                    "STAGE_PR_OUTCOME": "${{ steps.stage-pr.outcome }}"}
+        for k, v in want_env.items():
+            if sm_env.get(k) != v:
+                fail(case, f"collect-spec-meta env {k} must be {v!r}, got "
+                           f"{sm_env.get(k)!r}")
+    if not any(f.startswith(case) for f in failures):
+        note("an open plan/ or tasks/ PR skips collect-spec-meta with a "
+             "note; a failed read keeps the signal and marks it untrusted")
+
+
+# #889 (found by the code review of #1336): the class-vocabulary comment in
+# watchdog.yml names these as synonyms of missing-spec-metadata (#118,
+# #120, #122). Offering one beside it in the built-in vocabulary, or keying
+# the evidence gate on it, gives the agent two names for one defect.
+RETIRED_CLASS_SYNONYMS = ("missing-spec-artifact", "spec-excluded-missing-meta")
+
+
+def case_no_retired_class_synonym():
+    case = "#889: no retired finding-class synonym is offered or keyed"
+    vocab = find_step(WATCHDOG, "Resolve finding-class vocabulary")["run"]
+    m = re.search(r"builtin_classes='(\[[^']*\])'", vocab)
+    builtin = set(json.loads(m.group(1))) if m else None
+    gate = find_step(WATCHDOG, "Evidence validity gate")["run"]
+    arms = set()
+    for pat in re.findall(r"^\s*([a-z0-9|-]+)\)\s+keys=", gate, re.M):
+        arms.update(pat.split("|"))
+    if builtin is None or not arms:
+        fail(case, "could not read builtin_classes or the evidence gate's "
+                   "key arms from watchdog.yml")
+        return
+    for syn in RETIRED_CLASS_SYNONYMS:
+        if syn in builtin:
+            fail(case, f"builtin_classes still offers {syn!r}")
+        if syn in arms:
+            fail(case, f"Evidence validity gate still keys {syn!r}")
+    if "missing-spec-metadata" not in builtin or "missing-spec-metadata" not in arms:
+        fail(case, "missing-spec-metadata, the kept name, must stay in both")
+    if not any(f.startswith(case) for f in failures):
+        note("the built-in vocabulary and evidence gate carry one name "
+             "for the spec-metadata defect")
+
+
 CASES = [
     case_r7_fixture_rows,
     case_sc001_name_independence_at_the_composite,
@@ -495,6 +681,8 @@ CASES = [
     lambda: case_site_three_states(SITES[3]),
     case_self_inspection_guard_uses_resolved_stage,
     case_fr014_name_warning,
+    case_open_stage_pr_skips_spec_meta,
+    case_no_retired_class_synonym,
 ]
 
 
