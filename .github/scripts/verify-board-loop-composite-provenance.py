@@ -537,10 +537,11 @@ def job_problems(job_id, job, pr_reachable=False):
                 "({3!r}) -- rule (b)".format(
                     job_id, checkout, d, (steps[d] or {}).get("name", d)))
     step = steps[checkout] or {}
-    ref = ((step.get("with") or {})).get("ref")
-    if not pr_reachable and ref != EXPECTED_REF:
-        problems.append("{0}: trusted-copy checkout ref is {1!r}, not {2!r} -- rule (c)".format(
-            job_id, ref, EXPECTED_REF))
+    folded, clashes = _with_folded(step)
+    ref = folded.get("ref")
+    if not pr_reachable and (ref != EXPECTED_REF or clashes):
+        problems.append("{0}: trusted-copy checkout ref is {1!r}{3}, not {2!r} -- rule (c)".format(
+            job_id, ref, EXPECTED_REF, " (with: keys collide once folded)" if clashes else ""))
     if step.get("continue-on-error") is True:
         problems.append(
             "{0}: trusted-copy checkout carries continue-on-error: true -- rule (d)".format(
@@ -629,12 +630,12 @@ def _untrusted_root_checkout(step):
     step = step or {}
     if not _is_checkout(step):
         return None
-    w = step.get("with") or {}
+    w, clashes = _with_folded(step)
     path = str(w.get("path") or "").strip()
-    if path not in ("", ".", "./"):
+    if path not in ("", ".", "./") and not clashes:
         return None
     ref, repo = w.get("ref"), w.get("repository")
-    if repo in TRUSTED_ROOT_REPOS and (ref is None or ref in TRUSTED_ROOT_REFS):
+    if not clashes and repo in TRUSTED_ROOT_REPOS and (ref is None or ref in TRUSTED_ROOT_REFS):
         return None
     return "{0!r} (repository={1!r}, ref={2!r})".format(step.get("name"), repo, ref)
 
@@ -966,6 +967,24 @@ def mut_untrusted_root_ref(docs):
     return docs
 
 
+def mut_untrusted_root_ref_capitalised(docs):
+    """The same change as mut_untrusted_root_ref, with the input spelled
+    `Ref:`: the runner folds input names, so it is the same checkout
+    (found by #1307's validator re-check)."""
+    step = _other_step(docs, "shared-pr-reviewer.yml", "find", _is_checkout)
+    step["with"].pop("ref", None)
+    step["with"]["Ref"] = "${{ needs.prepare.outputs.head-sha }}"
+    return docs
+
+
+def mut_ref_changed_capitalised(doc):
+    """fix's trusted-copy checkout keeps ref: github.sha and adds Ref: main;
+    the runner folds input names, so main may be what it checks out."""
+    steps = _job_steps(doc, "fix")
+    steps[_checkout_index(steps)]["with"]["Ref"] = "main"
+    return doc
+
+
 def mut_side_checkout_moved_to_root(docs):
     """The watchdog's metrics-branch checkout loses its path:, so the
     trial-bound composite after it resolves from the metrics branch."""
@@ -1027,6 +1046,10 @@ MUTATIONS = [
      "doc", mut_prove_gate_root_checkout_capitalised, "rule (h)"),
     ("prove's workspace checkout adds REF: github.sha beside its default-branch ref",
      "doc", mut_prove_root_ref_twice_in_cases, "rule (h)"),
+    ("shared-pr-reviewer.yml's find job checks the PR head out at the root, the input spelled Ref:",
+     "others", mut_untrusted_root_ref_capitalised, "rule (g)"),
+    ("fix's trusted-copy checkout adds Ref: main beside its github.sha ref",
+     "doc", mut_ref_changed_capitalised, "rule (c)"),
 ]
 
 
