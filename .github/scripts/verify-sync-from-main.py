@@ -36,6 +36,7 @@ import wc_sync_from_main  # noqa: E402
 HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wc_sync_from_main.py")
 STAGE = ".github/workflows/rebase.yml"
 WRAPPER = ".github/workflows/wing-commander-rebase.yml"
+ARCH_DOC = "docs/architecture.md"
 SWITCH = "sync-method: ${{ vars.WING_COMMANDER_SPEC_BRANCH_SYNC || 'rebase' }}"
 
 results = []
@@ -632,6 +633,21 @@ def main():
     check("helper marker pattern matches a conflict line and not prose",
           bool(wc_sync_from_main.MARKER.search("a\n<<<<<<< HEAD\nb"))
           and not wc_sync_from_main.MARKER.search("a ======= b"), "")
+
+    # The architecture doc's switch-back sentence (#889, code review of
+    # #1087): only a clean rebase flattens sync commits; one whose sync
+    # commit carried a conflict resolution can re-conflict and escalate
+    # (FR-012), so the doc must not promise every next rebase flattens them.
+    with open(ARCH_DOC, encoding="utf-8") as fh:
+        arch = " ".join(fh.read().split())
+    at = arch.find("Switching back to `rebase` does not repair history")
+    switch_back = arch[at:arch.find("History readers cope with both", at)] if at >= 0 else ""
+    check("docs/architecture.md says only a clean rebase flattens sync commits",
+          "A clean rebase flattens them" in switch_back
+          and "rebase:blocked" in switch_back
+          and "the next rebase flattens them" not in switch_back,
+          "the switch-back paragraph is missing or promises every rebase flattens: "
+          + repr(switch_back[:160]))
 
     # Wrapper wiring (FR-006, constitution VII).
     with open(STAGE, encoding="utf-8") as fh:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 37 - no template expressions in action-manifest descriptions.
+"""Gate 37 - no template expressions or stray quotes in action-manifest descriptions.
 
 WHY THIS EXISTS
 ---------------
@@ -19,12 +19,19 @@ of any `.github/actions/*/action.yml`. An example belongs in backticks;
 even a template that happens to validate today (a `github.*` read) is prose
 pretending to be code, one edit away from #261's shape.
 
-Self-test: --self-test runs two inline fixtures (one clean, one carrying
-the exact #261 shape) through the same scan, proving the detector detects
-(constitution VIII).
+Nor may such a description open with a double quote it never closes. A
+folded or plain scalar keeps a leading `"` as text, so the rendered
+description starts with a stray quote (#889, code review of #1315: the
+wing-commander-spec-meta `identity-ok` output). A description that quotes
+a value in balanced pairs is fine.
+
+Self-test: --self-test runs three inline fixtures (one clean, one carrying
+the exact #261 shape, one carrying #1315's stray opening quote) through the
+same scan, proving the detector detects (constitution VIII).
 
 Usage: python3 .github/scripts/verify-action-manifest-descriptions.py [--self-test]
-Exit: 0 clean; 1 any templated description (or a self-test failure).
+Exit: 0 clean; 1 any templated or stray-quoted description (or a
+self-test failure).
 """
 import glob
 import io
@@ -60,6 +67,14 @@ def scan(root="."):
                         f"the WHOLE action fail to load, silently at every "
                         f"non-fatal call site (#261). Quote the example in "
                         f"backticks instead.")
+                text = desc.strip()
+                if text.startswith('"') and text.count('"') % 2 == 1:
+                    failures.append(
+                        f"{rel}: {section}.{name}'s description opens with a "
+                        f"double quote it never closes - a folded or plain "
+                        f"scalar keeps it as text, so the rendered "
+                        f"description starts with a stray quote (#889, code "
+                        f"review of #1315). Drop the quote.")
     return failures, len(paths)
 
 
@@ -71,6 +86,11 @@ inputs:
     description: >
       `steps.x.outputs.ceiling` from the ceiling step - prose, in backticks.
     required: false
+outputs:
+  ok:
+    description: >-
+      "true" when the read succeeded - a quoted value in a balanced pair.
+    value: x
 runs:
   using: composite
   steps:
@@ -94,11 +114,29 @@ runs:
 """
 
 
+STRAY_QUOTE = """\
+name: broken
+description: carries #1315's stray opening quote
+outputs:
+  identity-ok:
+    description: >-
+      "true when the file's spec_dir names exactly the directory it was read
+      from.
+    value: x
+runs:
+  using: composite
+  steps:
+    - run: echo ok
+      shell: bash
+"""
+
+
 def self_test():
     bad = 0
     for label, source, expect_failure in (
             ("clean manifest passes", CLEAN, False),
-            ("the #261 shape is caught", TEMPLATED, True)):
+            ("the #261 shape is caught", TEMPLATED, True),
+            ("an unclosed opening quote is caught", STRAY_QUOTE, True)):
         with tempfile.TemporaryDirectory(prefix="wc-gate37-") as root:
             adir = os.path.join(root, ".github", "actions", "fixture")
             os.makedirs(adir)
@@ -117,7 +155,7 @@ def self_test():
                   f"got: {failures}")
         else:
             print(f"[ok] {label}")
-    print(f"Gate 37 self-test: {2 - bad}/2 fixtures behaved as specified.")
+    print(f"Gate 37 self-test: {3 - bad}/3 fixtures behaved as specified.")
     return 1 if bad else 0
 
 
@@ -133,7 +171,7 @@ def main():
               ".github/actions - discovery broke or the actions moved.")
         return 1
     print(f"Gate 37: {seen} action manifest(s) scanned, "
-          f"{len(failures)} templated description(s).")
+          f"{len(failures)} templated or stray-quoted description(s).")
     return 1 if failures else 0
 
 

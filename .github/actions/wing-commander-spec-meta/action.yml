@@ -52,7 +52,7 @@ outputs:
     value: ${{ steps.read.outputs.found }}
   identity-ok:
     description: >-
-      "true when the file's spec_dir names exactly the directory it was read
+      true when the file's spec_dir names exactly the directory it was read
       from. Fields from a file that fails this check must not be trusted.
     value: ${{ steps.read.outputs.identity-ok }}
   spec-dir:
