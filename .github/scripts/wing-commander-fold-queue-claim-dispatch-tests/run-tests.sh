@@ -55,6 +55,9 @@ REMOTE="$WORK/fold-queue-remote.git"
 git init --quiet --bare "$REMOTE"
 
 trap 'rm -f "$SCRIPT"; rm -rf "$WORK"' EXIT
+# Every temp path from here on, ours or a step's, lands in the trapped
+# directory -- see run-local-gates.py's TEMP FILES.
+export TMPDIR="$WORK/wc-tmp"; mkdir -p "$TMPDIR"
 
 SPEC_DIR_FIXTURE="specs/074-serialized-fold-dispatch"
 mkdir -p "$WORK/$SPEC_DIR_FIXTURE"

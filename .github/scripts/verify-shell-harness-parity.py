@@ -43,7 +43,10 @@ gate runs left ~555,000 entries in /tmp): scratch_dir() directories are
 gone once the process exits, even through sys.exit(1); the self-tests that
 leaked one directory per fixture leave TMPDIR empty; and the harnesses
 whose kept paths now come from scratch_dir() do not go back to a bare
-mkdtemp() for them.
+mkdtemp() for them. The shell harnesses that left `tmp.*` entries point
+TMPDIR into their trapped directory, and the cheap ones leave an empty
+TMPDIR; run-local-gates.py removes its inline-gate scripts and points
+every gate's TMPDIR at a directory it removes.
 
 Usage: python3 .github/scripts/verify-shell-harness-parity.py
 Requires: bash. See wc_shell_harness.py for running this on Windows.
@@ -577,6 +580,95 @@ def case_self_tests_leave_tmpdir_empty():
                 fail(case, f"left behind: {sorted(left)}")
 
 
+# Shell harnesses that once left `tmp.*` entries per run (#889): each
+# points TMPDIR into the directory its EXIT trap removes. {file: the
+# argv that runs a cheap slice of it under an empty TMPDIR, or None when
+# no slice is cheap enough to run here, which leaves the text check}.
+TMPDIR_CONTAINED_HARNESSES = {
+    "auto-update-spec-kit-tests/run-tests.sh": ["t1_detect"],
+    "auto-update-spec-kit-tests/lib.sh": None,
+    "e2e-provisioning-tests/run-tests.sh": ["t5_refuse_foreign"],
+    "e2e-provisioning-tests/lib.sh": None,
+    "wing-commander-fold-queue-release-tests/run-tests.sh": [],
+    "wing-commander-fold-queue-claim-dispatch-tests/run-tests.sh": None,
+    "wing-commander-fold-queue-admit-tests/run-tests.sh": None,
+    "size-path-backstop-tests/run-tests.sh": [],
+    "verify-narrative-drift-routing.sh": [],
+    "verify-turn-budget-collector.sh": [],
+}
+TMPDIR_EXPORT = re.compile(
+    r'^export TMPDIR="\$(\w+)/wc-tmp"; mkdir -p "\$TMPDIR"$', re.M)
+
+
+def case_shell_harnesses_contain_tmpdir(bash):
+    import subprocess
+    for script, argv in TMPDIR_CONTAINED_HARNESSES.items():
+        case = f"{script} points TMPDIR into its trapped directory"
+        with open(os.path.join(HERE, script), encoding="utf-8") as fh:
+            text = fh.read()
+        m = TMPDIR_EXPORT.search(text)
+        if not m or not re.search(
+                r"trap '[^']*\$" + m.group(1) + r"\b[^']*' EXIT",
+                text[:m.start()]):
+            fail(case, "no `export TMPDIR=\"$DIR/wc-tmp\"` after an EXIT "
+                       "trap that removes $DIR")
+            continue
+        if argv is None:
+            continue
+        case = f"{script} {' '.join(argv)} leaves TMPDIR empty"
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = subprocess.run(
+                [bash, os.path.join(HERE, script)] + argv,
+                cwd=ROOT, env=dict(os.environ, TMPDIR=tmp),
+                capture_output=True, text=True, timeout=300)
+            if proc.returncode != 0:
+                fail(case, f"harness failed (rc={proc.returncode}): "
+                           f"{(proc.stdout + proc.stderr)[-300:]}")
+            left = os.listdir(tmp)
+            if left:
+                fail(case, f"left behind: {sorted(left)}")
+
+
+def case_local_runner_contains_tmpdir():
+    import subprocess
+    runner = os.path.join(HERE, "run-local-gates.py")
+    case = "run-local-gates.py leaves TMPDIR empty when no gate matches"
+    with tempfile.TemporaryDirectory() as tmp:
+        proc = subprocess.run(
+            [sys.executable, runner, "--no-such-gate-matches-this--"],
+            cwd=ROOT, env=dict(os.environ, TMPDIR=tmp),
+            capture_output=True, text=True, timeout=300)
+        if "no gates matched" not in proc.stdout + proc.stderr:
+            fail(case, f"unexpected run (rc={proc.returncode}): "
+                       f"{(proc.stdout + proc.stderr)[-300:]}")
+        left = os.listdir(tmp)
+        if left:
+            fail(case, f"left behind: {sorted(left)}")
+    case = "run-local-gates.py gives every gate a TMPDIR it removes"
+    probe = (
+        "import importlib.util, os, subprocess, sys\n"
+        "spec = importlib.util.spec_from_file_location('r', sys.argv[1])\n"
+        "r = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(r)\n"
+        "root = r._contain_temp()\n"
+        "child = subprocess.run([sys.executable, '-c', "
+        "'import tempfile; print(tempfile.mkdtemp())'], "
+        "capture_output=True, text=True).stdout.strip()\n"
+        "print(root); print(child)\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        proc = subprocess.run(
+            [sys.executable, "-c", probe, runner], cwd=ROOT,
+            env=dict(os.environ, TMPDIR=tmp),
+            capture_output=True, text=True, timeout=60)
+        lines = proc.stdout.split()
+        if proc.returncode != 0 or len(lines) != 2 or not (
+                lines[0].startswith(tmp) and os.path.dirname(lines[1])
+                == lines[0]):
+            fail(case, f"child temp dir is not under the runner's root: "
+                       f"rc={proc.returncode} out={proc.stdout!r} "
+                       f"err={proc.stderr[-300:]!r}")
+
+
 def case_kept_paths_use_scratch_dir():
     for script, prefixes in SCRATCH_DIR_USERS.items():
         with open(os.path.join(HERE, script), encoding="utf-8") as fh:
@@ -614,6 +706,8 @@ def main():
     case_scratch_dirs_removed_at_exit()
     case_self_tests_leave_tmpdir_empty()
     case_kept_paths_use_scratch_dir()
+    case_shell_harnesses_contain_tmpdir(bash)
+    case_local_runner_contains_tmpdir()
     if failures:
         print(f"FAIL: {len(failures)} failure(s).")
         return 1

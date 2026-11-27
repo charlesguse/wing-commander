@@ -47,8 +47,12 @@ else:
 PYEOF
 }
 
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+# Every temp path from here on, ours or a step's, lands in the trapped
+# directory -- see run-local-gates.py's TEMP FILES.
+export TMPDIR="$WORK/wc-tmp"; mkdir -p "$TMPDIR"
 SCRIPT="$(mktemp)"
-trap 'rm -f "$SCRIPT" "$OUT_FILE"' EXIT
 extract_shell > "$SCRIPT"
 
 run_case() {
@@ -96,8 +100,6 @@ run_case "over threshold, board-loop's own larger thresholds" "$BIG_DIFF_ONE_FIL
 
 # --- pr-conversation.yml's per-leg backstop (#734/#850) -----------------
 CONFIRM_SCRIPT="$(mktemp)"
-WORK="$(mktemp -d)"
-trap 'rm -rf "$SCRIPT" "$OUT_FILE" "$CONFIRM_SCRIPT" "$WORK"' EXIT
 python3 - "$PR_CONVERSATION_YML" > "$CONFIRM_SCRIPT" <<'PYEOF'
 import sys
 import yaml
