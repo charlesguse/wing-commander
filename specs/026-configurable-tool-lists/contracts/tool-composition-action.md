@@ -105,7 +105,7 @@ run with a clear error if the inputs conflict (FR-010).
    hold this.
 6. **Emit outputs** via `$GITHUB_OUTPUT`, consistent with existing
    composite actions' output style (e.g. `wing-commander-context`).
-6. **Never reached on validation failure** — steps 2–5 only run once step 1
+7. **Never reached on validation failure** — steps 2–6 only run once step 1
    passes for both directions.
 
 ## Call-site shape (one call per internal agent step)
