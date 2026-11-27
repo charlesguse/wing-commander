@@ -155,7 +155,9 @@ PR_READ_EVENTS = {"schedule", "workflow_dispatch", PR_EVENT}
 # comparison of unlike types coerces both sides to numbers (null and '' to
 # 0). Where a reading is not certain it is UNKNOWN, never a guess: a string
 # with a non-ASCII character compares as UNKNOWN, since GitHub ignores case
-# by ordinal upper-casing, which Python's lower() does not match there.
+# by ordinal upper-casing, which Python's lower() does not match there; and
+# a path through an object filter (`.*`) is UNKNOWN, since it yields an
+# array, which is truthy even when empty.
 
 UNKNOWN = ("unknown", None)
 TRUTHY = ("truthy", None)
@@ -334,12 +336,17 @@ class _PrEval(object):
             return _known(low == "true")
         if low == "null":
             return _known(None)
+        parts = name.split(".")
+        if "*" in parts:
+            # An object filter yields an array even over null or an empty
+            # object (inputs.*, a skipped need's outputs.*), and an array
+            # is truthy and equal to no string: never a known null.
+            return UNKNOWN
         if low == "github.event_name":
             return _known(PR_EVENT)
         if low.startswith("inputs."):
             # A pull_request event has no inputs; a missing one is null.
             return _known(None)
-        parts = name.split(".")
         # Only a direct need that is certainly skipped has a known result
         # and empty outputs; `needs` holds nothing else.
         if parts[0] == "needs" and len(parts) >= 3 and parts[1] in self.needs \
@@ -835,6 +842,11 @@ PR_CONDITION_CASES = [
     # A non-ASCII string compares as unknown: GitHub's ordinal ignore-case
     # does not fold U+212A (KELVIN SIGN) to 'k', as Python's lower() does.
     ("always() && needs.a.result != 's\u212aipped'", {"a"}, ["a"], False),
+    # An object filter is an array, truthy even when empty: a skipped
+    # need's outputs.* and inputs.* are not null.
+    ("always() && needs.a.outputs.*", {"a"}, ["a"], False),
+    ("always() && needs.a.outputs.* != ''", {"a"}, ["a"], False),
+    ("inputs.*", set(), [], False),
 ]
 
 
