@@ -106,7 +106,11 @@ if [ ! -s "$listing" ]; then
   # repository's own info/exclude (never the branch's .gitignore).
   exclude="$(git rev-parse --git-path info/exclude 2>/dev/null)" || exclude=""
   if [ -n "$exclude" ] && ! grep -qxF "/$PIPE/" "$exclude" 2>/dev/null; then
-    mkdir -p "$(dirname "$exclude")" && printf '\n/%s/\n' "$PIPE" >> "$exclude" \
+    # A newline first only when the file's last line lacks one, so the
+    # line is never glued onto it and never follows a blank line.
+    sep=""
+    if [ -s "$exclude" ] && [ -n "$(tail -c 1 -- "$exclude" 2>/dev/null)" ]; then sep='\n'; fi
+    mkdir -p "$(dirname "$exclude")" && printf '%b/%s/\n' "$sep" "$PIPE" >> "$exclude" \
       || echo "::warning::pipeline-checkout guard: could not add /$PIPE/ to $exclude; a 'git add -A' may stage it."
   fi
   exit 0

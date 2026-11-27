@@ -664,9 +664,9 @@ closed PR:
 - `teardown-done` — final PR (`spec/NNN-slug → main`) **merged**: delete the
   spec-draft, spec, plan, tasks, and any impl `*-iterN` branches for that spec
   (each identified by its configurable-with-default prefix — defaults
-  `spec-draft/`, `spec/`, `plan/`, `tasks/`, `impl/`); close the lifecycle
-  issue (atomically, with a
-  Haiku-written completion summary); flip its label to `stage:done`.
+  `spec-draft/`, `spec/`, `plan/`, `tasks/`, `impl/`); add `stage:done` to
+  the lifecycle issue, then close it (atomically, with a Haiku-written
+  completion summary) and remove its other `stage:*` labels.
 - `teardown-rejected` — draft PR (`spec-draft/NNN-slug → main`) **closed
   unmerged**: delete `spec-draft/NNN-slug`; remove the `stage:*`/`spec:*`
   labels; comment that the spec was rejected; leave the issue **open** so

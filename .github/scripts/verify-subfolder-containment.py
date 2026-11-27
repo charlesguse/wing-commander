@@ -151,6 +151,16 @@ def contain(case, script):
             git(tmp, "add", "-A")
             git(tmp, "commit", "-q", "-m", "earlier run")
         base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp, capture_output=True, text=True, check=True).stdout.strip()
+        if case.get("bulk_remote_branches"):
+            # #889: many branches the remote already carried before the
+            # agent, each at its own commit, so each is its own tip.
+            tree = rev(tmp, base + "^{tree}")
+            specs = []
+            for i in range(case["bulk_remote_branches"]):
+                sha = subprocess.run(["git", "commit-tree", tree, "-p", base, "-m", f"bulk {i}"], cwd=tmp,
+                                     capture_output=True, text=True, check=True).stdout.strip()
+                specs.append(f"{sha}:refs/heads/bulk/{i}")
+            git(tmp, "push", "-q", "origin", *specs)
         helpers = ""
         if case.get("snapshot"):
             # MF-48: install-pre-push's helper copies and its pre-agent
@@ -253,8 +263,22 @@ def contain(case, script):
             git(tmp, "commit", "-q", "-m", "agent")
         env = {"PROJECT": case["project"], "BASE_SHA": case.get("base_sha", base), "DEFAULT_BRANCH": case.get("default_branch", "main"),
                "HELPERS_DIR": helpers}
+        calls = os.path.join(top, "git-calls")
+        if "max_ancestry_calls" in case:
+            # A git on PATH that logs each subcommand before running the
+            # real one, so the case can count the check's ancestry calls.
+            shim_dir = os.path.join(top, "shim")
+            os.makedirs(shim_dir)
+            with open(os.path.join(shim_dir, "git"), "w", encoding="utf-8") as fh:
+                fh.write(f"#!/bin/sh\nprintf '%s\\n' \"$1\" >> '{calls}'\nexec '{shutil.which('git')}' \"$@\"\n")
+            os.chmod(os.path.join(shim_dir, "git"), 0o755)
+            env["PATH"] = shim_dir + os.pathsep + os.environ.get("PATH", "")
         r, out = run_script(script, env, tmp, "wing-commander-containment")
         r.github_output = out
+        r.git_calls = []
+        if os.path.exists(calls):
+            with open(calls, encoding="utf-8") as fh:
+                r.git_calls = fh.read().split()
         return r
 
 
@@ -1127,6 +1151,22 @@ def check_trusted_checkout_excluded(errors):
             lines = fh.read().splitlines()
         if "*.log" not in lines or "/.wing-commander-pipeline/" not in lines:
             errors.append(f"trusted checkout exclude: appending the exclude line corrupted an info/exclude with no trailing newline: {lines!r}")
+    # #889 (found by the code review of #1044): a file that already ends in
+    # a newline, or is empty, gains the line and no blank line before it.
+    for before, want in (("*.log\n", "*.log\n/.wing-commander-pipeline/\n"),
+                         ("", "/.wing-commander-pipeline/\n")):
+        with tempfile.TemporaryDirectory() as tmp:
+            git(tmp, "init", "-q")
+            os.makedirs(os.path.join(tmp, ".wing-commander-pipeline"))
+            excl = os.path.join(tmp, ".git", "info", "exclude")
+            os.makedirs(os.path.dirname(excl), exist_ok=True)
+            with open(excl, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(before)
+            subprocess.run(["bash", GUARD], cwd=tmp, capture_output=True, text=True, check=False)
+            with open(excl, encoding="utf-8", newline="") as fh:
+                got = fh.read()
+            if got != want:
+                errors.append(f"trusted checkout exclude: appending to an info/exclude holding {before!r} left {got!r}, want {want!r}")
     # Single home: the guard writes info/exclude in exactly one place (#1043
     # pasted a second copy beside #1030's). The counter must ignore a comment
     # that quotes the path and see a write however it spells the path.
@@ -1253,6 +1293,13 @@ def main():
             for p in case.get("names", []):
                 if p not in r.stdout + r.stderr:
                     errors.append(f"containment {name}: output does not name {p!r}")
+        if "max_ancestry_calls" in case:
+            # #889: one ancestry call per moved head and tip could start
+            # thousands of git processes in a step that blocks publish.
+            n = sum(1 for c in r.git_calls if c in ("merge-base", "rev-list"))
+            if n > case["max_ancestry_calls"] or not r.git_calls:
+                errors.append(f"containment {name}: the pushed-branch check made {n} merge-base/rev-list "
+                              f"call(s), want at most {case['max_ancestry_calls']} (logged {len(r.git_calls)} git call(s))")
         # A crafted file name must not end the outside-paths heredoc and
         # forge lines of its own in $GITHUB_OUTPUT.
         lines = r.github_output.splitlines()

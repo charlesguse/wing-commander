@@ -168,14 +168,28 @@ runs:
               [ -n "$r" ] && git log -g --format='%H %gs' "$r" 2>/dev/null | awk '$2 == "update" && $3 == "by" && $4 == "push" {print $1}'
             done <<< "$tracking"; } | sort -u)"
           remote_tips="$(git for-each-ref --format='%(objectname)' refs/remotes/ | sort -u)"
+          # Every commit each tip set reaches, listed once per set by one
+          # rev-list (#889): one `merge-base --is-ancestor` per moved head
+          # and tip could start thousands of git processes in this step,
+          # which blocks publish. A tip whose object is gone is dropped
+          # first (cat-file reports it missing), as the per-tip check
+          # skipped it; any other failure fails the check rather than read
+          # as "not reached".
+          local_reach="$(mktemp)" && remote_reach="$(mktemp)" || {
+            echo "::error::wing-commander-containment: could not create a temporary file for the pushed-branch check."
+            exit 1
+          }
+          reach_list() {
+            printf '%s\n' "$1" | sed '/^$/d' \
+              | git cat-file --batch-check='%(objectname) %(objecttype)' \
+              | awk '$2 == "commit" {print $1}' | git rev-list --stdin > "$2"
+          }
+          if ! reach_list "$local_tips" "$local_reach" || ! reach_list "$remote_tips" "$remote_reach"; then
+            echo "::error::wing-commander-containment: could not list the commits this checkout's branches reach, so pushes to other branches cannot be checked."
+            exit 1
+          fi
           reaches() {
-            local t
-            while read -r t; do
-              if [ -n "$t" ] && git merge-base --is-ancestor "$1" "$t" 2>/dev/null; then
-                return 0
-              fi
-            done <<< "$2"
-            return 1
+            grep -qxF -- "$1" "$2"
           }
           # A tip this checkout does not hold was never pushed from it --
           # unless one of its reflogs names it: a commit it held, pushed and
@@ -192,7 +206,7 @@ runs:
               fi
               continue
             fi
-            if ! reaches "$sha" "$local_tips" && reaches "$sha" "$remote_tips"; then
+            if ! reaches "$sha" "$local_reach" && reaches "$sha" "$remote_reach"; then
               continue
             fi
             pushed="$pushed$ref $sha $ref 0"$'\n'
