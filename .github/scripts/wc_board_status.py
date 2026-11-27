@@ -87,45 +87,20 @@ def _title(text):
 
 
 def _switch_on(value):
-    """The wing-commander-watch-guard composite's pause test: "true" in any
-    case, padding stripped. Board status reads a switch through
-    switch_set(), which uses this only for the switches that guard reads."""
-    return str(value or "").strip().lower() == "true"
-
-
-# How each switch's own reader turns its value into on or off, so the status
-# says what the pipeline will do (#889; owner decision 2026-11-27, on the
-# Roadmap issue: mirror each switch's real reader). verify-board-status.py
-# ties every entry to the reader it names and drives a fixture per switch.
-#   exact       only the exact text "true": board-loop.yml's merge decision
-#               (jq `$switch_on == "true"`) and board_backlog_lines.
-#               selection_gate (`!= "true"`)
-#   expression  "true" in any case, padding kept: a workflow's
-#               `vars.WING_COMMANDER_* == 'true'` (or `!= 'true'`), which
-#               GitHub compares case-insensitively and never trims
-#   guard       _switch_on, the watch-guard composite's own test
-SWITCH_READERS = {
-    "auto_release_paused": "expression",
-    "board_auto_merge": "exact",
-    "board_backlog_lines": "exact",
-    "board_can_push_workflows": "expression",
-    "board_loop_paused": "expression",
-    "lifecycle_auto_merge": "expression",
-    "feature_health_paused": "guard",
-    "merge_evidence_paused": "guard",
-    "proof_list_paused": "guard",
-    "review_gate_paused": "expression",
-}
-_READS = {
-    "exact": lambda value: str(value or "") == "true",
-    "expression": lambda value: str(value or "").lower() == "true",
-    "guard": _switch_on,
-}
+    """The one switch rule (owner decision 2026-11-27, on the Roadmap issue:
+    all switches work the same way): on when the value equals "true"
+    compared case-insensitively, with no trimming. That is GitHub's own
+    `vars.X == 'true'`, which most switches are read by, so "True" and
+    "TRUE" are on and "true ", " true", "yes" and "1" are off. The
+    watch-guard composite, wc_feature_health.collect and Board status read
+    switches through this; verify-board-status.py runs every reader against
+    it."""
+    return str(value or "").lower() == "true"
 
 
 def switch_set(switches, key):
-    """Whether switch `key` is on, read the way its own reader reads it."""
-    return _READS[SWITCH_READERS[key]]((switches or {}).get(key))
+    """Whether switch `key` is on, by the one switch rule."""
+    return _switch_on((switches or {}).get(key))
 
 
 def lifecycle_wait(issue, prs, switches):

@@ -253,10 +253,12 @@ def resolve_tracking(open_issues, bot_login, title_prefix, maintainer_logins=(),
 def selection_gate(env):
     """FR-023/FR-025: (True, None) or (False, reason). `env` carries
     backlog_lines_switch, loop_paused and constitution_text (None when
-    unreadable)."""
-    if env.get("backlog_lines_switch") != "true":
+    unreadable). The switch is read by the one switch rule, whose home is
+    wc_board_status._switch_on: "true" in any case, never trimmed."""
+    import wc_board_status
+    if not wc_board_status._switch_on(env.get("backlog_lines_switch")):
         return False, "backlog lines switch is not true"
-    if env.get("loop_paused") in (True, "true"):
+    if wc_board_status._switch_on(env.get("loop_paused")):
         return False, "board loop is paused"
     text = env.get("constitution_text")
     if text is None:
