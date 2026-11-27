@@ -60,7 +60,11 @@ worth of disk, not one entry in the OS temp dir per run: a day of local
 runs once left about 555,000 entries in /tmp and filled the disk (#889).
 Gate 140 (verify-shell-harness-parity.py) runs this script under an
 empty TMPDIR and fails on anything left behind. The timing cache below
-is resolved before the redirect, so it still lives in the OS temp dir.
+is resolved before the redirect, so it still lives in the OS temp dir;
+so does wc_actionlint.py's pinned actionlint/shellcheck download cache,
+which reads the OS temp dir from WC_OS_TMPDIR, set here before the
+redirect -- otherwise every local run would download both again, and a
+run offline would fail on a cache it used to have.
 
 WHAT IT DOES NOT RUN
 --------------------
@@ -377,6 +381,7 @@ def _contain_temp():
     """Make one scratch directory, point this process's and every child's
     temp dir at it, and return it -- see TEMP FILES in the module
     docstring. The caller removes it."""
+    os.environ.setdefault("WC_OS_TMPDIR", tempfile.gettempdir())
     root = tempfile.mkdtemp(prefix="wc-local-gates-")
     for name in ("TMPDIR", "TEMP", "TMP"):
         os.environ[name] = root

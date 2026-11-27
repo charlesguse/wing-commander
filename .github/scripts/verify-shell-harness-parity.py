@@ -667,6 +667,32 @@ def case_local_runner_contains_tmpdir():
             fail(case, f"child temp dir is not under the runner's root: "
                        f"rc={proc.returncode} out={proc.stdout!r} "
                        f"err={proc.stderr[-300:]!r}")
+    case = ("run-local-gates.py keeps the pinned-tool cache in the OS "
+            "temp dir")
+    probe = (
+        "import importlib.util, os, subprocess, sys\n"
+        "spec = importlib.util.spec_from_file_location('r', sys.argv[1])\n"
+        "r = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(r)\n"
+        "root = r._contain_temp()\n"
+        "print(subprocess.run([sys.executable, '-c', "
+        "'import sys; sys.path.insert(0, sys.argv[1]); import wc_actionlint;"
+        " print(wc_actionlint._cache_root())', sys.argv[2]], "
+        "capture_output=True, text=True).stdout.strip())\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("RUNNER_TEMP", "WC_OS_TMPDIR")}
+        env["TMPDIR"] = tmp
+        proc = subprocess.run(
+            [sys.executable, "-c", probe, runner, HERE], cwd=ROOT, env=env,
+            capture_output=True, text=True, timeout=60)
+        got = proc.stdout.strip()
+        if proc.returncode != 0 or os.path.realpath(got) != \
+                os.path.realpath(tmp):
+            fail(case, f"a gate's wc_actionlint cache root is {got!r}, not "
+                       f"the OS temp dir {tmp!r}, so every local run "
+                       f"downloads actionlint and shellcheck again: "
+                       f"rc={proc.returncode} err={proc.stderr[-300:]!r}")
 
 
 def case_kept_paths_use_scratch_dir():
