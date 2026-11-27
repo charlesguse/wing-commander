@@ -1627,7 +1627,11 @@ jobs:
                     gate_last_failure[$prefix]="decision script: $(tail -c 300 "$RUNNER_TEMP/auto-release-merge-decision-err.txt")"
                   else
                     gate_failures[$prefix]=0
-                    merge_head="$(printf '%s\n' "$merge_decision" | head -1)"
+                    # read from a here-string, not printf piped to head:
+                    # under pipefail, head can exit before printf writes the
+                    # decision's second line, and the SIGPIPE'd printf
+                    # (rc 141) would end this step just before the merge.
+                    IFS= read -r merge_head <<<"$merge_decision" || merge_head=""
                     case "$merge_head" in
                       merge)
                         gate_blocked_since[$prefix]=""

@@ -29,7 +29,9 @@ step, and the publish step reads its `ok` output:
 sync-method merge pushes plainly, with no lease: a "[rejected]"
 non-fast-forward is its branch race (wc_sync_from_main.py push-race), and
 the warning names a plain push, never a force-with-lease one. Its
-"[remote rejected]" refusal fails like rebase mode's.
+"[remote rejected]" refusal fails like rebase mode's, and after a failed
+credential the error names the plain push and the sync commit, never a
+lease or a rebased result (#889, found by the code review of #1300).
 
 This harness EXECUTES the shipped publish step (wc_shell_harness.run_step)
 inside a real clone of a real local bare remote. A race is the branch
@@ -166,6 +168,10 @@ def suite(script, quiet=False):
        rc != 0 and tip != rebased and "::error::" in out and "credential" in out
        and "not a branch race" in out and "branch moved since checkout" not in out,
        "rc={0}\n{1}".format(rc, out))
+    ck("rebase mode: the credential arm names the lease and the rebased result",
+       "the lease did not refuse it" in out and "rebased result was not published" in out
+       and "sync commit" not in out,
+       "rc={0}\n{1}".format(rc, out))
     rc, out, summary, tip, rebased, mover = run(script, moved=True, credential_ok="false")
     ck("a lease refusal stays the branch-moved warning even after a failed credential",
        rc == 0 and tip == mover and "branch moved since checkout" in out and "::error::" not in out,
@@ -204,6 +210,11 @@ def suite(script, quiet=False):
        rc != 0 and "credential" in out and "not a branch race" in out
        and "branch moved since checkout" not in out,
        "rc={0}\n{1}".format(rc, out))
+    ck("merge mode: the credential arm names the plain push and the sync commit, "
+       "not a lease or a rebased result (#889, found by the code review of #1300)",
+       "plain push was not rejected" in out and "sync commit was not published" in out
+       and "lease" not in out and "rebased result" not in out,
+       "rc={0}\n{1}".format(rc, out))
     return failed
 
 
@@ -221,6 +232,11 @@ MUTATIONS = (
      '  } >> "$GITHUB_STEP_SUMMARY"\n  exit 1\nfi', '  } >> "$GITHUB_STEP_SUMMARY"\nfi'),
     ("merge mode warned as a force-with-lease push",
      'how="plain push rejected as not a fast-forward"', 'how="force-with-lease push rejected"'),
+    ("merge mode's credential arm worded as a lease refusal",
+     'not_race="the plain push was not rejected as a non-fast-forward"',
+     'not_race="the lease did not refuse it"'),
+    ("merge mode's credential arm said the rebased result was lost",
+     'lost="the sync commit was not published"', 'lost="the rebased result was not published"'),
 )
 
 
