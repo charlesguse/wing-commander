@@ -8,3 +8,5 @@
 - [ ] T008 Drill: dispatch the cap hand-off on a scratch issue
 - [ ] T009 Post-merge proof (FR-024/SC-008): re-drive one board-loop run and record the evidence on the PR
 - [ ] T010 Post-merge proof reminder: after the implementation PR merges, use the `prove-after-merge` skill to re-drive one board-loop run
+- [ ] T011 After merge, dispatch `wing-commander-feature-health.yml` on the default branch, then `board-status.yml`, and record the proof listed in quickstart.md
+- [ ] T012 After merge, dispatch `migrate-stranded-review-lifecycles.yml` with `dry-run: true`, review the listed lifecycles, then dispatch it for real

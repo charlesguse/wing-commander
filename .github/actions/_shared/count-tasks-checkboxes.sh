@@ -188,13 +188,15 @@ counts="$(printf '%s\n' "$content" | WC_GATE_READY="$GATE_SUITE_READY" WC_OOB="$
     # "Post-merge", "After merge" and "Drill" also open ordinary build tasks,
     # so they are human-only only when a verb that acts on a live run
     # follows: prove, re-drive, or dispatch with its object ("dispatch the
-    # ..."), or the noun "proof", which is how tasks.md names the FR-004
-    # post-merge proof ("Post-merge proof (SC-008): re-drive one run").
+    # ...", or a backticked workflow: "After merge, dispatch `x.yml`", the
+    # shape of specs/123 T039 and specs/126 T032), or the noun "proof", which
+    # is how tasks.md names the FR-004 post-merge proof ("Post-merge proof
+    # (SC-008): re-drive one run").
     # "Check", "verify", "confirm" and "record" can each start or name a
     # build deliverable ("Post-merge check for stale labels", "Drill: record
     # format"), and "dispatch" alone can be a noun ("Drill: dispatch table"),
     # so those stay buildable (FR-007, ambiguity stays buildable).
-    if (t ~ /^(post-merge|after (the )?merge|drill)[ ,:-]+(the |a |one )?(prove|proof|re-?drive|dispatch[ \t]+(the|a|an|one|it|its|each|every))([^a-z0-9-]|$)/) return 1
+    if (t ~ /^(post-merge|after (the )?merge|drill)[ ,:-]+(the |a |one )?(prove|proof|re-?drive|dispatch[ \t]+(the|a|an|one|it|its|each|every|`[^`]+`))([^a-z0-9-]|$)/) return 1
     if (index(oob, "\n" line "\n") > 0) return 1
     # The suite must be the verb'"'"'s own object ("run the gate suite ...",
     # "run `python .github/scripts/run-local-gates.py` ..."): a line that
