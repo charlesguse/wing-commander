@@ -88,6 +88,8 @@ clarification questions, merge the spec PR, merge the plan PR when
 | Rounds | 5 per spec PR; 2 failed attempts per head, then it stops |
 | May push | fixes and clarification markers inside the spec's own directory, at most 200 changed lines per push |
 | Never | approves, requests changes or merges. It posts one comment review and the `spec-pr-review` commit status, which is `success` only for "ready for the owner" |
+| Counts | only in-scope findings (a spec defect: buildability, a conflict, or a contradictory, untestable or undecided requirement) toward "not ready", fixes and markers. A plan-level finding is listed as report-only and recorded on the lifecycle issue for the plan stage |
+| Stopped round | a budget or convergence stop never announces the PR ready; markers it pushed still move the issue to `stage:clarify` |
 | Kill switch | `WING_COMMANDER_SPEC_REVIEW_PAUSED` |
 
 [CLAUDE.md](../CLAUDE.md) separately tells sessions to give a spec PR at most

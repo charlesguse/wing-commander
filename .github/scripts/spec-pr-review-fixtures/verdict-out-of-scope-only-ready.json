@@ -1,0 +1,1 @@
+{"note": "Owner decision 2026-11-27 (#890): out-of-scope findings do not make the spec not ready.", "input": [{"title": "names a step's shape", "in_scope": false}], "expect": {"verdict": "ready for the owner", "in_scope_count": 0}}
