@@ -264,10 +264,10 @@ def scan_dispatchable_and_uses_graph(workflows_dir):
     come from (previously duplicated inline as a `board-loop.yml` `run:`
     step -- CLAUDE.md "shared logic has exactly one home"). Reads every
     workflow file under `workflows_dir` off the checked-out tree, exactly
-    as the `prove` job's own comment requires ("the merge commit's own
-    tree, so a wrapper added or removed by the very merge being proven is
-    accounted for") -- callers must invoke this against that checkout,
-    never a cached/prior tree.
+    as the `prove` job's own comment requires ("the default branch's tip,
+    which holds the merge being proven ... so a wrapper added or removed by
+    the very merge being proven is accounted for") -- callers must invoke
+    this against that checkout, never a cached/prior tree.
 
     Also closes a testability gap a runtime-only duplicate of this scan
     had: `is_safe_redrive_target()` was previously exercised only against
