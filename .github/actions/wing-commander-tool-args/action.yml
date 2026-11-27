@@ -140,6 +140,16 @@ runs:
         # Whole, not narrowed to GET: a method or field flag anywhere in
         # the call makes it a write (spec 051, #338).
         PROJECT_API_DENY: "Bash(gh api:*)"
+        # #1310: every agent is denied reading /proc (appended just before
+        # step 6's emit). The process environment holds the model
+        # credential and whatever GH_TOKEN the step runs with, and
+        # /proc/<pid>/environ shows it to a bare Read, Grep or Glob grant.
+        # The Bash rule covers a granted reader (`cat`, `head`, `grep`, ...)
+        # given a /proc path, absolute or relative. It matches the
+        # command's text, not the path the shell resolves, so it backs up
+        # the read-only agent steps' own `WC_BOT_TOKEN: ''` override and
+        # does not replace it. A constant tool list, not a command.
+        AGENT_PROC_DENIES: "Read(//proc/**),Bash(*proc/*)"
       run: |
         set -uo pipefail
 
@@ -542,6 +552,10 @@ runs:
         if [ -n "${PROJECT:-}" ]; then
           effective_disallowed="${effective_disallowed:+$effective_disallowed,}$HOOK_BYPASS_DENIES"
         fi
+        # #1310: the /proc denies, for every caller, appended after step 3
+        # so no extra-allowed-tools or override reopens them, and after
+        # step 4 so the tooling statement does not name them.
+        effective_disallowed="${effective_disallowed:+$effective_disallowed,}$AGENT_PROC_DENIES"
 
         # 6. Emit (only reached once validation in step 1 passes).
         echo "allowed-tools=$effective_allowed" >> "$GITHUB_OUTPUT"
