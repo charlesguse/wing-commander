@@ -35,7 +35,8 @@ step) run under different shells is refused too, that a shipped-step cache
 file another user could have written is not trusted (nor a FIFO
 planted at its name allowed to block the reader), and that no other harness
 script carries a shell argv of its own (the mapping's single home is
-wc_shell_harness).
+wc_shell_harness), and that no script but wc_fetch_job_logs_harness names
+the fetch-job-logs composite's action.yml (that runner's single home, #889).
 
 It also holds the harness's temp-directory hygiene (#889: a day of local
 gate runs left ~555,000 entries in /tmp): scratch_dir() directories are
@@ -478,6 +479,47 @@ def case_single_home():
                            f"{line.strip()}")
 
 
+# The fetch-job-logs composite's runner has one home too (#889): a harness
+# that names the composite's action.yml is running its own copy of the step,
+# the shape in which verify-gate-19.py's copy lost $GITHUB_ACTION_PATH.
+FETCH_RUNNER_HOME = "wc_fetch_job_logs_harness.py"
+FETCH_ACTION_REF = "wing-commander-fetch-job-logs/action.yml"
+
+
+def fetch_runner_copies(texts):
+    """{relpath: text} -> the scripts other than the home that name the
+    composite's action.yml."""
+    return sorted(rel for rel, text in texts.items()
+                  if os.path.basename(rel) != FETCH_RUNNER_HOME
+                  and FETCH_ACTION_REF in text)
+
+
+def case_fetch_runner_single_home():
+    case = "fetch-job-logs runner single home"
+    this = os.path.abspath(__file__)
+    texts = {}
+    for path in sorted(glob.glob(os.path.join(HERE, "**", "*.py"),
+                                 recursive=True)):
+        if os.path.abspath(path) == this:
+            continue
+        with open(path, encoding="utf-8") as fh:
+            texts[os.path.relpath(path, ROOT)] = fh.read()
+    home = os.path.join(".github", "scripts", FETCH_RUNNER_HOME)
+    if FETCH_ACTION_REF not in texts.get(home, ""):
+        fail(case, f"{home} no longer names {FETCH_ACTION_REF}; this check "
+                   f"would pass on nothing")
+    for rel in fetch_runner_copies(texts):
+        fail(case, f"{rel} names {FETCH_ACTION_REF}: run the composite's "
+                   f"step through {FETCH_RUNNER_HOME}'s run_fetch_step() "
+                   f"instead of a copy of the runner")
+    # The detector detects: a planted copy is reported, the home is not.
+    planted = fetch_runner_copies({
+        home: f'"{FETCH_ACTION_REF}"',
+        "verify-pasted.py": f'FETCH = ".github/actions/{FETCH_ACTION_REF}"'})
+    if planted != ["verify-pasted.py"]:
+        fail(case, f"self-test: a planted copy read as {planted}")
+
+
 def case_scratch_dirs_removed_at_exit():
     """scratch_dir() hands out a live directory and removes it at exit,
     including an exit through sys.exit(non-zero)."""
@@ -568,6 +610,7 @@ def main():
     case_foreign_cache_ignored()
     case_cache_fifo_does_not_hang()
     case_single_home()
+    case_fetch_runner_single_home()
     case_scratch_dirs_removed_at_exit()
     case_self_tests_leave_tmpdir_empty()
     case_kept_paths_use_scratch_dir()

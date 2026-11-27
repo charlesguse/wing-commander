@@ -57,6 +57,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wc_shell_harness import (  # noqa: E402
     GH_ESCAPE_REFUSAL, ensure_jq, find_step, gh_escape_guard_preamble,
     resolve_bash, run_step, step_shell, use_utf8_stdout)
+from wc_fetch_job_logs_harness import run_fetch_step, shipped_fetch  # noqa: E402
 
 WATCHDOG = ".github/workflows/watchdog.yml"
 STEP = "Collect: step summaries"
@@ -361,22 +362,10 @@ MUTATIONS = [
 # file the read-only agent reads. An unreadable job listing must reach that
 # file as `failed`, never as `ok` with no jobs ("nothing failed").
 STAGE_STEP = "Stage failed-job logs"
-FETCH_ACTION = ".github/actions/wing-commander-fetch-job-logs/action.yml"
-FETCH_STEP = "Fetch job logs"
 UNREADABLE_LISTING = '[{"id": 901, "name": "implement", "conclusion": "fail'
 UNCHECKED = object()
 FAILED_JOBS = [{"id": 901, "name": "implement", "conclusion": "failure"},
                {"id": 902, "name": "lint", "conclusion": "success"}]
-
-
-_FETCH = []
-
-
-def shipped_fetch():
-    """The shipped helper's run: script, read once."""
-    if not _FETCH:
-        _FETCH.append(str(find_step(FETCH_ACTION, FETCH_STEP)["run"]))
-    return _FETCH[0]
 
 
 def run_fetch(fetch_script, listing, out_dir, tmproot, raw=False, logs=None,
@@ -443,16 +432,10 @@ def run_fetch(fetch_script, listing, out_dir, tmproot, raw=False, logs=None,
                 fh.write("#!/usr/bin/env bash\nexit 1\n")
             os.chmod(os.path.join(bindir, "mv"), 0o755)
         env = {"PATH": bindir + os.pathsep + os.environ["PATH"],
-               "GITHUB_REPOSITORY": "charlesguse/wing-commander",
-               "RUN_ID": "1", "GH_TOKEN": "x", "OUT_DIR": out_dir,
-               "CONCLUSIONS": conclusions,
-               # As on the runner: the composite resolves
-               # ../../scripts/gh-allows-escape-sequences.sh from here.
-               "GITHUB_ACTION_PATH": action_path or os.path.abspath(
-                   os.path.dirname(FETCH_ACTION))}
-        rc, _out, outs, _sum = run_step(
-            BASH, fetch_script, workdir, env, runner_temp,
-            shell=step_shell(FETCH_ACTION, FETCH_STEP))
+               "CONCLUSIONS": conclusions}
+        rc, _out, outs, _sum = run_fetch_step(
+            BASH, workdir, env, runner_temp, out_dir, script=fetch_script,
+            action_path=action_path)
 
         def text(name):
             try:
