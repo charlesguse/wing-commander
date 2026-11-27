@@ -29,12 +29,15 @@ import glob
 import json
 import os
 import re
+import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import board_merge  # noqa: E402
 from board_readiness import CONDITIONS as READINESS_CONDITIONS  # noqa: E402
-from board_item_marker import render_bump_verification  # noqa: E402
+from board_item_marker import (last_converged_review_head, marker_json,  # noqa: E402
+                               render_bump_verification, write_marker)
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 FIXTURES_DIR = os.path.join(SCRIPTS_DIR, "fixtures", "board-merge")
@@ -1301,6 +1304,87 @@ def check_merged_proof_disposition():
             ok("a merged fix PR touching {0} keeps the actions_only() disposition".format(files[0]))
 
 
+def _board_marker(payload):
+    return "<!-- wing-commander-board-item: {0} -->".format(marker_json(payload))
+
+
+def check_marker_round_and_verdict():
+    """#889 (found by the code review of #1059). A merged/handed-over
+    marker carries the round of the newest well-formed marker, so an
+    unparsable newest marker does not hand a re-admitted item its review
+    round budget back; and a review verdict counts as converged only as
+    the whole comment the review job posts, never the sentence quoted in
+    another loop comment."""
+    bot = "wing-commander[bot]"
+    comments = [
+        _bot_comment("Review round 3: pushed a follow-up.\n\n" + _board_marker(
+            {"step": "review", "round": 3, "pr": 42, "branch": "fix/12-thing", "base_sha": None}),
+            40, "2026-10-01T00:00:00Z"),
+        _bot_comment("Status.\n\n<!-- wing-commander-board-item: {not json} -->", 41, "2026-10-02T00:00:00Z"),
+    ]
+    script = os.path.join(SCRIPTS_DIR, "board_item_marker.py")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "comments.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(comments, fh)
+        env = {key: value for key, value in os.environ.items()
+               if key not in ("GITHUB_RUN_ID", "BOARD_LINE_ID")}
+        proc = subprocess.run([sys.executable, "-I", script, "--step", "handed-over", "--pr", "42",
+                               "--branch", "fix/12-thing", "--carry-round-from", path, "--bot-login", bot],
+                              capture_output=True, text=True, env=env)
+    match = re.search(r'"round": (\d+)', proc.stdout)
+    if proc.returncode != 0 or not match or match.group(1) != "3":
+        fail("--carry-round-from past an unparsable newest marker gave round {0!r} (rc={1}), expected 3".format(
+            match.group(1) if match else proc.stdout, proc.returncode))
+    else:
+        ok("--carry-round-from carries the newest well-formed marker's round past an unparsable one")
+
+    head = "a" * 40
+    # The converged comment exactly as the review job renders it: board-loop.yml's
+    # own printf format around write_marker()'s own output, with and without the
+    # `**Run:**` line, so a wording change on either side fails here rather than
+    # silently in every later merge and resume (review of #1321).
+    found = None
+    if os.path.isfile(BOARD_LOOP):
+        with open(BOARD_LOOP, encoding="utf-8") as fh:
+            found = re.search(r"printf '(Review round %s converged -- [^']*)'", fh.read())
+    if found is None:
+        fail("{0} has no `printf 'Review round %s converged -- ...'` comment to check the verdict reader "
+             "against".format(BOARD_LOOP))
+        return
+    fmt = found.group(1).replace("\\n", "\n").replace("%s", "{}")
+    run_keys = ("GITHUB_SERVER_URL", "GITHUB_REPOSITORY", "GITHUB_RUN_ID")
+    saved = {key: os.environ.get(key) for key in run_keys + ("BOARD_LINE_ID",)}
+    rendered = []
+    try:
+        os.environ.pop("BOARD_LINE_ID", None)
+        for run_env in ({}, dict(zip(run_keys, ("https://github.com", "o/r", "1")))):
+            for key in run_keys:
+                os.environ.pop(key, None)
+            os.environ.update(run_env)
+            rendered.append(fmt.format(2, 42, head, write_marker("readiness", 2, 42, "fix/12-thing", None,
+                                                                   nr_count=0)))
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    sentence = rendered[0].split("\n\n", 1)[0]
+    marker = _board_marker({"step": "readiness", "round": 2, "pr": 42})
+    quoted = _bot_comment("Triage notes:\n\n> {0}\n\n{1}".format(sentence, marker), 43)
+    trailing = _bot_comment("{0}\n\nA later note.\n\n{1}".format(sentence, marker), 44)
+    if any(last_converged_review_head(42, [_bot_comment(body, 42)], bot) != head for body in rendered):
+        fail("the converged verdict the review job posts (board-loop.yml's printf around write_marker()) "
+             "is no longer read as converged")
+    elif last_converged_review_head(42, [quoted], bot) is not None:
+        fail("a converged verdict quoted inside another loop comment is read as converged")
+    elif last_converged_review_head(42, [trailing], bot) is not None:
+        fail("a converged verdict followed by other text is read as converged")
+    else:
+        ok("a review verdict counts as converged only as the review job's whole comment")
+
+
 def main():
     if not os.path.isdir(FIXTURES_DIR):
         fail("fixtures directory {0} does not exist".format(FIXTURES_DIR))
@@ -1311,6 +1395,7 @@ def main():
     check_bump_pick_and_dedup()
     check_round2_findings()
     check_quoted_verification_record()
+    check_marker_round_and_verdict()
     check_run_blocks_text_self_test()
     check_structural_self_test()
     check_gh_blocked_reasons()

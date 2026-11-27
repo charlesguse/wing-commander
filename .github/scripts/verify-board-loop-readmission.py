@@ -171,6 +171,9 @@ DIRECT_CASES = (
     "pr-lookup-fails-defaults-review",
     "budget-spent-unmoved-resolves-review",
     "converged-then-budget-spent-resolves-review",
+    # #889 (found by the code review of #1059): the converged sentence
+    # quoted inside another loop comment is not a converged verdict.
+    "converged-sentence-quoted-resolves-review",
 )
 
 

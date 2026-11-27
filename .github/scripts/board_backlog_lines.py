@@ -253,10 +253,12 @@ def resolve_tracking(open_issues, bot_login, title_prefix, maintainer_logins=(),
 def selection_gate(env):
     """FR-023/FR-025: (True, None) or (False, reason). `env` carries
     backlog_lines_switch, loop_paused and constitution_text (None when
-    unreadable)."""
-    if env.get("backlog_lines_switch") != "true":
+    unreadable). The switch is read by the one switch rule, whose home is
+    wc_board_status._switch_on: "true" in any case, never trimmed."""
+    import wc_board_status
+    if not wc_board_status._switch_on(env.get("backlog_lines_switch")):
         return False, "backlog lines switch is not true"
-    if env.get("loop_paused") in (True, "true"):
+    if wc_board_status._switch_on(env.get("loop_paused")):
         return False, "board loop is paused"
     text = env.get("constitution_text")
     if text is None:
@@ -297,11 +299,12 @@ def title_for(text, prefix="Fix: "):
 
 
 # The one home of the closing-keyword pattern: the board loop's keyword
-# hold reads it, and verify-pr-closing-keywords.py (Gate 182) and
-# wc_proof_list.closing_targets() read it through closing_keyword_refs().
-# verify-board-backlog-lines.py fails if Gate 182's script carries its own
-# copy or another script reads CLOSING_RE itself. The named groups say
-# which issue a hit names; they change no match.
+# hold reads it, and verify-pr-closing-keywords.py (Gate 182),
+# wc_proof_list.closing_targets(), wc_merge_evidence.linked_issue() and
+# wc_shared_review.resolve_purpose_source() read it through
+# closing_keyword_refs(). verify-board-backlog-lines.py
+# fails if another script spells its own copy or reads CLOSING_RE itself.
+# The named groups say which issue a hit names; they change no match.
 CLOSING_RE = re.compile(
     r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[:\s]+"
     r"(?:https?://github\.com/(?P<url_repo>[\w.-]+/[\w.-]+)/issues/(?P<url_n>\d+)"

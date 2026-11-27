@@ -85,51 +85,21 @@ class Origins(object):
         self.heads = heads
         self.cwd = cwd
         self._cache = {}
-        self._main_side = None
 
     def _is_ancestor(self, commit, ref):
         return git(["merge-base", "--is-ancestor", commit, ref],
                    self.cwd, check=False).returncode == 0
 
-    def _main_side_commits(self):
-        """Commits that arrived through a sync commit (merge sync, spec 118):
-        reachable from the second parent of a merge on the latest head's
-        first-parent chain and not on that chain themselves. The lines a
-        sync commit's own conflict resolution wrote stay the sync commit's,
-        so they still count as the loop's work (FR-011). Decided from git
-        alone -- no new input (research D9)."""
-        if self._main_side is None:
-            head = self.heads[-1]
-            side = set()
-            # A merge is a sync of the default branch only when its second
-            # parent is an ancestor of the fetched base: ancestry, never the
-            # subject, which anyone can write and whose quoted ref depends on
-            # how the merge was spelled. A merge of any other branch stays
-            # the loop's work. Callers pass the freshly fetched default
-            # branch as --base; a stale one recognises no later sync, and
-            # measure() warns to fetch it.
-            # Each sync contributes second-parent history minus first-parent
-            # history, so main's earlier history is not swept in.
-            # check=False: an unreachable head or shallow checkout yields no
-            # main-side commits instead of raising, like the other probes.
-            # ^base: a sync commit is never in the base, so main's own
-            # first-parent history below the fork point is not walked.
-            for row in _lines(git(["log", "--first-parent", "--merges",
-                                   "--format=%P", head, "^" + self.base], self.cwd,
-                                  check=False).stdout):
-                ps = row.split()
-                if len(ps) < 2 or not self._is_ancestor(ps[1], self.base):
-                    continue
-                side.update(_lines(git(["rev-list", ps[1], "^" + ps[0]], self.cwd,
-                                        check=False).stdout))
-            self._main_side = side
-        return self._main_side
-
     def of(self, commit):
         # A commit in the freshly fetched base is main's, including merges of
-        # main the loop made; it is never loop-written (research D2).
+        # main the loop made; it is never loop-written (research D2). That
+        # covers a sync commit's main side too (merge sync, spec 118): a
+        # merge syncs the default branch only when its second parent is an
+        # ancestor of the base, so everything it brings in already is --
+        # ancestry, never the subject, which anyone can write. A stale base
+        # recognises no later sync, and measure() warns to fetch it.
         if commit not in self._cache:
-            if self._is_ancestor(commit, self.base) or commit in self._main_side_commits():
+            if self._is_ancestor(commit, self.base):
                 label = "main"
             elif self._is_ancestor(commit, self.heads[0]):
                 label = "pr"
@@ -324,9 +294,7 @@ def measure(base, heads, findings, cwd, counts=None):
         if any(not origins._is_ancestor(parent, base)
                for line in merges if line
                for parent in line.split()[2:]
-               if not origins._is_ancestor(parent, heads[k - 1])
-               # A sync commit's main side is already labelled main.
-               and parent not in origins._main_side_commits()):
+               if not origins._is_ancestor(parent, heads[k - 1])):
             report["warnings"].append(
                 "pass {0} merged commits --base does not contain: fetch the base "
                 "branch, or they are counted as pass {0}'s".format(k))

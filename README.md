@@ -96,7 +96,7 @@ or pull request it governs, so the next session finds it.
 
 | For | Look at |
 |---|---|
-| What waits on the owner, what is moving, `main`'s CI, the last release, the merge switches | the open issue titled "Board status", rewritten daily |
+| What waits on the owner, what is moving, `main`'s CI, the last release, the board loop, merge and auto-release switches | the open issue titled "Board status", rewritten daily |
 | Which specs are in flight, queued, proposed or parked; goals; owner decisions | the open issue titled "Roadmap" |
 | Small defects waiting for a fix | the open issue titled "Maintenance backlog", one checklist line each |
 | One feature's whole history | its lifecycle issue |

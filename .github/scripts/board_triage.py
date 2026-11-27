@@ -472,6 +472,14 @@ TRIAGE_CLOSE_GROUNDS = ("rate_limit", "action_bump")
 #: (followed by the ground and a comma). verify-feature-health.py checks the
 #: workflow still writes it.
 TRIAGE_CLOSE_COMMENT_PREFIX = "Triage closed this issue on ground "
+#: How board-loop.yml's triage step opens the comment it posts instead when
+#: the item is a Maintenance-backlog line: the line is ticked and the backlog
+#: issue stays open, so the triage close sentence follows this prefix (after
+#: any directed attribution) on an open issue. Read by wc_feature_health's
+#: triage_close signal; verify-feature-health.py checks the workflow still
+#: writes it.
+BACKLOG_TICK_COMMENT_PREFIX = "Backlog line `"
+BACKLOG_TICK_COMMENT_SUFFIX = "` ticked, not closed: "
 
 
 def defer_on_rate_limit(verdict, agent_verdict):

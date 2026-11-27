@@ -364,7 +364,6 @@ class SyncCommit(GitBacked):
         self.run_git("checkout", "-q", "pr")
         h = self.merge(other, "sync: merge feature into pr")
         origins = wc.Origins("main", [h0, h], self.repo)
-        self.assertNotIn(other, origins._main_side_commits())
         self.assertNotEqual(origins.of(other), "main")
 
     def test_a_sync_is_recognised_whatever_the_base_spelling_or_subject(self):
@@ -376,12 +375,11 @@ class SyncCommit(GitBacked):
         self.run_git("update-ref", "refs/remotes/origin/main", new)
         for base in ("origin/main", "main", "refs/remotes/origin/main", new):
             origins = wc.Origins(wc.rev(base, self.repo), [h0, h1], self.repo)
-            self.assertIn(new, origins._main_side_commits(), base)
             self.assertEqual(origins.of(new), "main", base)
 
     def test_a_stale_base_recognises_no_later_sync_and_warns(self):
         old, new, h0, h1, h2 = self.sync_repo()
-        self.assertNotIn(new, wc.Origins(old, [h0, h1], self.repo)._main_side_commits())
+        self.assertNotEqual(wc.Origins(old, [h0, h1], self.repo).of(new), "main")
         report = wc.measure(old, [h0, h1, h2], [], self.repo)
         self.assertTrue([w for w in report["warnings"] if "merged commits" in w])
 
@@ -408,22 +406,27 @@ class SyncCommit(GitBacked):
         report = wc.measure(new, [h0, h1, h2], [], self.repo)
         self.assertEqual([w for w in report["warnings"] if "merged commits" in w], [])
 
-    def test_main_side_walk_stops_at_the_base(self):
-        old, _new, h0, h1, _h2 = self.sync_repo()
+    def test_a_sync_commits_main_side_is_labelled_by_ancestry_alone(self):
+        # A sync's second parent is an ancestor of the base, so its whole
+        # main side already is: no walk of the head's merges is needed, and
+        # a second label source would be dead logic (#889).
+        old, new, h0, h1, h2 = self.sync_repo()
         seen = []
         real = wc.git
 
         def spy(args, cwd=None, check=True, input=None):
             seen.append(list(args))
             return real(args, cwd, check=check, input=input)
-        origins = wc.Origins(old, [h0, h1], self.repo)
-        wc.git = spy
-        try:
-            origins._main_side_commits()
-        finally:
-            wc.git = real
-        walks = [a for a in seen if a[:3] == ["log", "--first-parent", "--merges"]]
-        self.assertTrue(walks and all("^" + old in a for a in walks), walks)
+        for base in (old, new):
+            origins = wc.Origins(base, [h0, h1, h2], self.repo)
+            wc.git = spy
+            try:
+                labels = {c: origins.of(c) for c in (old, new, h0, h1, h2)}
+            finally:
+                wc.git = real
+            for c, label in labels.items():
+                self.assertEqual(label == "main", origins._is_ancestor(c, base), (base, c, label))
+        self.assertEqual([a for a in seen if a[:1] != ["merge-base"]], [], seen)
 
     def test_unreachable_head_does_not_raise(self):
         old, new, h0, _h1, _h2 = self.sync_repo()
@@ -432,10 +435,9 @@ class SyncCommit(GitBacked):
 
     def test_main_side_excludes_history_the_branch_already_had(self):
         old, new, h0, h1, _h2 = self.sync_repo()
-        side = wc.Origins(new, [h0, h1], self.repo)._main_side_commits()
-        self.assertEqual(side, {new})
-        self.assertNotIn(old, side)
-        self.assertEqual(wc.Origins(new, [h0, h1], self.repo).of(h0), "pr")
+        origins = wc.Origins(new, [h0, h1], self.repo)
+        self.assertEqual(origins.of(new), "main")
+        self.assertEqual(origins.of(h0), "pr")
 
     def sync_repo(self, conflict=False):
         """base <- pr (h0) ; main moves ; sync commit (h1) ; pr fix (h2).
