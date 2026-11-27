@@ -186,9 +186,14 @@ counts="$(printf '%s\n' "$content" | WC_GATE_READY="$GATE_SUITE_READY" WC_OOB="$
     t = tolower(strip_lead(line))
     if (t ~ /^(re-drive|prove after merge|prove-after-merge)([^a-z0-9-]|$)/) return 1
     # "Post-merge", "After merge" and "Drill" also open ordinary build tasks,
-    # so they are human-only only when a proof/dispatch verb follows; anything
-    # else stays buildable (ambiguity stays buildable).
-    if (t ~ /^(post-merge|after (the )?merge|drill)[ ,:-]+(the |a |one )?(prove|proof|verify|re-?drive|dispatch|confirm|record|check)([^a-z0-9-]|$)/) return 1
+    # so they are human-only only when a verb that acts on a live run
+    # follows: prove, re-drive, or dispatch with its object ("dispatch the
+    # ..."). "Check", "verify", "confirm", "record" and "proof" can each start
+    # or name a build deliverable ("Post-merge check for stale labels",
+    # "Drill: record format"), and "dispatch" alone can be a noun ("Drill:
+    # dispatch table"), so those stay buildable (FR-007, ambiguity stays
+    # buildable).
+    if (t ~ /^(post-merge|after (the )?merge|drill)[ ,:-]+(the |a |one )?(prove|re-?drive|dispatch[ \t]+(the|a|an|one|it|its|each|every))([^a-z0-9-]|$)/) return 1
     if (index(oob, "\n" line "\n") > 0) return 1
     # The suite must be the verb'"'"'s own object ("run the gate suite ...",
     # "run `python .github/scripts/run-local-gates.py` ..."): a line that
