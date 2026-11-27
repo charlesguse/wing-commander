@@ -61,6 +61,7 @@ SNAP = {
         issue(724, ["spec-request", "stage:review", "stage:stalled", "spec:097-recorded-stop-point"]),
         issue(723, ["spec-request", "stage:spec", "stage:implement", "spec:096-durable-prove-entry"]),
         issue(760, ["spec-request", "stage:tasks", "spec:101-read-only-gh-grants"]),
+        issue(762, ["spec-request", "stage:review", "stage:done", "spec:102-teardown-close-failed"]),
         issue(780, ["board:stalled"], "held fix"),
         issue(979, ["auto-release:failed"], "auto-release failed"),
         issue(902, ["found-by:implement"]),
@@ -111,6 +112,11 @@ def render_half():
     check("two leftover stage labels read as the furthest one", 723 in pipeline
           and pipeline[723][1] == "implement", pipeline.get(723))
     check("a tasks PR in auto review mode is the pipeline's", 760 in pipeline, pipeline.get(760))
+    # cleanup.yml adds stage:done before its close (#889): an OPEN issue at
+    # stage:done is a teardown whose close failed, not pipeline work.
+    check("an open issue at stage:done is an incomplete teardown waiting on the owner",
+          762 in owner and "teardown incomplete" in owner[762][1] and 762 not in pipeline,
+          (owner.get(762), pipeline.get(762)))
     check("a board:stalled hold waits on the owner", 780 in owner, owner.get(780))
     check("an auto-release failure waits on the owner (the board loop never acts on it)",
           979 in owner and "auto-release:failed" not in rows["signals"], owner.get(979))
@@ -173,7 +179,7 @@ def render_half():
         {"id": "bl-0a1b2c3d", "text": "flaky gate", "detail": "PR #7"}])))
     check("the line the board loop holds is named by backlog issue and line id (specs/121 FR-018)",
           "The board loop is working line `bl-0a1b2c3d` on #889 (PR #7): flaky gate" in held, held)
-    check("the waiting-on-you count is in its heading", "### Waiting on you (9)" in body, body)
+    check("the waiting-on-you count is in its heading", "### Waiting on you (10)" in body, body)
     check("PRs outside any lifecycle are named", "not part of a lifecycle: #909" in body, body)
     check("the roadmap is linked", "Roadmap issue, #890" in body, body)
     check("the board loop line names every merge switch, all off by default",

@@ -123,6 +123,11 @@ def lifecycle_wait(issue, prs, switches):
             who, what = "pipeline", "final PR {0} with the lifecycle review gate".format(pr_ref or "(none open)")
         else:
             who, what = "owner", "review and merge the final PR ({0})".format(pr_ref or "none open")
+    elif stage == "stage:done":
+        # Every issue here is open, and cleanup.yml adds stage:done before
+        # its close (#889), so an open one at stage:done is a teardown whose
+        # close failed: nothing re-drives it, so it waits on the owner.
+        who, what = "owner", "teardown incomplete: re-run its cleanup run or close it"
     elif stage == "":
         who, what = "pipeline", "intake"
     else:
