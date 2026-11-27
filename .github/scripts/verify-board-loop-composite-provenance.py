@@ -56,14 +56,17 @@ pull_request event github.sha is the PR's merge commit, and a checkout with
 no ref gets that same commit. For a PR closed without merging, that is the
 PR's own unreviewed tree, and the job would run its composites with the
 App's private key and import its .github/scripts with the bot token.
-  (h) in every job that can run on a pull_request event, every checkout of
-      this repository -- the trusted copy and the workspace root alike --
-      names `ref: ${{ github.event.repository.default_branch }}`. The
-      trusted copy is held whatever `repository:` it names, and so is any
-      checkout whose `repository:` is an expression; only a literal
-      owner/name is another repository. A pull_request_review or
-      pull_request_review_comment trigger (github.sha is the merge commit
-      there too) holds every job.
+  (h) in every job that can run on a pull_request event, every checkout --
+      the trusted copy and the workspace root alike -- names this
+      repository (no `repository:`, or `${{ github.repository }}`) and
+      `ref: ${{ github.event.repository.default_branch }}`. No other
+      `repository:` is allowed there: a literal owner/name can spell this
+      repository (actions/checkout then takes github.sha), and a branch
+      name resolves in whatever repository an expression names. Any
+      trigger other than schedule, workflow_dispatch and pull_request
+      holds every job: github.sha is the PR's merge commit on the
+      pull_request_review triggers, and the caller's on workflow_call, and
+      the evaluator below reads only pull_request.
 Which jobs can run on that event is worked out from the file, never
 listed. Each job's `if:` is evaluated as it would read on a pull_request
 event: no inputs, `github.event_name` known, every job that cannot run
@@ -135,7 +138,8 @@ TRUSTED_ROOT_REPOS = (None, "${{ github.repository }}")
 # can run on a pull_request event.
 PR_SAFE_REF = "${{ github.event.repository.default_branch }}"
 PR_EVENT = "pull_request"
-PR_REVIEW_EVENTS = {"pull_request_review", "pull_request_review_comment"}
+# The triggers rule (h) reads job by job. Any other trigger holds every job.
+PR_READ_EVENTS = {"schedule", "workflow_dispatch", PR_EVENT}
 
 
 # --- rule (h): which jobs can run on a pull_request event -------------------
@@ -149,7 +153,9 @@ PR_REVIEW_EVENTS = {"pull_request_review", "pull_request_review_comment"}
 # than `==`, `||` and `&&` return an operand rather than a bool, function
 # names ignore case, `needs` holds only a job's direct needs, and a
 # comparison of unlike types coerces both sides to numbers (null and '' to
-# 0). Where a reading is not certain it is UNKNOWN, never a guess.
+# 0). Where a reading is not certain it is UNKNOWN, never a guess: a string
+# with a non-ASCII character compares as UNKNOWN, since GitHub ignores case
+# by ordinal upper-casing, which Python's lower() does not match there.
 
 UNKNOWN = ("unknown", None)
 TRUTHY = ("truthy", None)
@@ -199,6 +205,8 @@ def _truth(v):
 
 def _loose_eq(a, b):
     """GitHub's `==` on two known values: True, False, or None (unknown)."""
+    if any(isinstance(x, str) and not x.isascii() for x in (a, b)):
+        return None
     if isinstance(a, str) and isinstance(b, str):
         return a.lower() == b.lower()
     if isinstance(a, bool) and isinstance(b, bool):
@@ -369,9 +377,10 @@ def pr_reachable_jobs(doc):
     on = (doc or {}).get("on", (doc or {}).get(True))
     events = set(on) if isinstance(on, (dict, list)) else ({on} if on else set())
     jobs = (doc or {}).get("jobs") or {}
-    if events & PR_REVIEW_EVENTS:
-        # github.sha is the PR's merge commit on these too, and the
-        # evaluator reads only pull_request: every job counts (fail closed).
+    if events - PR_READ_EVENTS:
+        # A trigger the evaluator does not read: github.sha can be a PR's
+        # merge commit there too (pull_request_review, or workflow_call
+        # from a caller on pull_request), so every job counts (fail closed).
         return set(jobs)
     if PR_EVENT not in events:
         return set()
@@ -391,8 +400,8 @@ def pr_reachable_jobs(doc):
 
 
 def rule_h_problems(job_id, job):
-    """(h) every checkout of this repository in a job that can run on a
-    pull_request event names the default branch."""
+    """(h) every checkout in a job that can run on a pull_request event
+    names this repository and the default branch."""
     problems = []
     for i, step in enumerate((job or {}).get("steps") or []):
         step = step or {}
@@ -400,12 +409,15 @@ def rule_h_problems(job_id, job):
             continue
         w = step.get("with") or {}
         repo = w.get("repository")
-        # The trusted copy is held whatever repository it names (rule (c)
-        # was), and so is any checkout whose repository is an expression,
-        # which can name this one; only a literal owner/name is another.
-        if step.get("name") != CHECKOUT_NAME and repo not in TRUSTED_ROOT_REPOS \
-                and "${{" not in str(repo):
-            continue
+        # No other repository: a literal owner/name can spell this one
+        # (actions/checkout then takes github.sha), and the default
+        # branch's name resolves in whatever repository an expression names.
+        if repo not in TRUSTED_ROOT_REPOS:
+            problems.append(
+                "{0}: can run on a pull_request event, but step {1} ({2!r}) checks out "
+                "repository {3!r}; every checkout there names this repository (no "
+                "repository:, or {4!r}) -- rule (h)".format(
+                    job_id, i, step.get("name"), repo, TRUSTED_ROOT_REPOS[1]))
         if w.get("ref") != PR_SAFE_REF:
             problems.append(
                 "{0}: can run on a pull_request event, where github.sha is the PR's merge "
@@ -757,6 +769,32 @@ def mut_review_trigger_added(doc):
     return doc
 
 
+def mut_prove_root_repo_literal(doc):
+    """prove's workspace checkout names a repository as a literal owner/name
+    and drops its ref: a literal can spell this repository, and with no ref
+    actions/checkout then takes the PR's merge commit."""
+    w = _checkout_named(_job_steps(doc, "prove"), "Checkout")["with"]
+    w["repository"] = "example-owner/wing-commander"
+    del w["ref"]
+    return doc
+
+
+def mut_prove_gate_side_other_repo(doc):
+    """prove-gate's trusted copy names another repository by expression,
+    keeping the default-branch ref: the branch name resolves there."""
+    w = _checkout_named(_job_steps(doc, "prove-gate"), CHECKOUT_NAME)["with"]
+    w["repository"] = "${{ vars.WC_OTHER_REPOSITORY }}"
+    return doc
+
+
+def mut_workflow_call_trigger_added(doc):
+    """A workflow_call trigger is added: a caller on pull_request hands its
+    merge commit down as github.sha, so every job is held to rule (h)."""
+    on = doc["on"] if "on" in doc else doc[True]
+    on["workflow_call"] = {}
+    return doc
+
+
 # Rule (h)'s evaluator on fixed conditions: (if:, jobs certainly skipped on
 # a pull_request event, this job's needs, True when it is certainly skipped).
 PR_CONDITION_CASES = [
@@ -794,6 +832,9 @@ PR_CONDITION_CASES = [
     ("always() && !needs.a.result.x", {"a"}, ["a"], False),
     # needs.a.outputs is an object, never equal to ''.
     ("always() && needs.a.outputs != ''", {"a"}, ["a"], False),
+    # A non-ASCII string compares as unknown: GitHub's ordinal ignore-case
+    # does not fold U+212A (KELVIN SIGN) to 'k', as Python's lower() does.
+    ("always() && needs.a.result != 'sKipped'", {"a"}, ["a"], False),
 ]
 
 
@@ -892,6 +933,12 @@ MUTATIONS = [
      "doc", mut_prove_gate_side_repo_spelled_out, "rule (h)"),
     ("a pull_request_review trigger is added with every other job still at github.sha",
      "doc", mut_review_trigger_added, "rule (h)"),
+    ("prove's workspace checkout names a literal owner/name with no ref",
+     "doc", mut_prove_root_repo_literal, "rule (h)"),
+    ("prove-gate's trusted copy names another repository by expression, at the default branch",
+     "doc", mut_prove_gate_side_other_repo, "rule (h)"),
+    ("a workflow_call trigger is added with every other job still at github.sha",
+     "doc", mut_workflow_call_trigger_added, "rule (h)"),
 ]
 
 
