@@ -266,6 +266,29 @@
       "expect": "fail",
       "names": ["spec/other/001-x"]
     },
+    "concurrent_run_beside_many_remote_branches_needs_few_ancestry_calls": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "bulk_remote_branches": 40,
+      "concurrent_pushes": {"spec/q/002-y": ["q/spec.md"], "main": ["README.md"]},
+      "agent_fetch": true,
+      "modify": ["a/b/x.md"],
+      "max_ancestry_calls": 6,
+      "expect": "pass"
+    },
+    "agent_push_beside_many_remote_branches_still_fails": {
+      "project": "a/b",
+      "base_files": ["a/b/x.md", "README.md"],
+      "snapshot": true,
+      "bulk_remote_branches": 40,
+      "agent_pushes": {"spec/other/001-x": ["README.md"]},
+      "concurrent_pushes": {"spec/q/002-y": ["q/spec.md"]},
+      "agent_fetch": true,
+      "modify": ["a/b/x.md"],
+      "expect": "fail",
+      "names": ["spec/other/001-x"]
+    },
     "agent_push_of_a_raw_sha_through_origin_fails": {
       "project": "a/b",
       "base_files": ["a/b/x.md", "README.md"],
