@@ -71,6 +71,11 @@ alone has them — not left to be inferred from spec.md):
   ],
   "per_model_available": true,
   "emitted_at": "2026-08-25T14:03:11Z",
+  "permission_denials": {
+    "available": true,
+    "total": 2,
+    "by_tool": { "Bash": 2 }
+  },
   "branch_advance": {
     "available": true,
     "branch": "spec/050-branch-drift-sha-baseline",
@@ -115,6 +120,28 @@ the commit the branch was created from. A single reader-side rule
 reader needing to know which one applies — a widening of the field's
 definition that every already-persisted value already satisfied.
 
+`permission_denials` (additive per rule 1 above) counts the tool calls
+the permission system refused in the run. One refusal is one entry of
+the transcript's terminal result record's `permission_denials` list.
+The watchdog's denied-tool signal reads the same field from every
+result record; this group, like the record's other fields, reads only
+the terminal one. `total` is the
+number of entries, and `by_tool` maps a tool class to its count. A
+class is the tool's own name when it is one of the action's built-in
+tools (`Bash`, `Edit`, `MultiEdit`, `Write`, `Read`, `Glob`, `Grep`,
+`LS`, `NotebookEdit`, `NotebookRead`, `WebFetch`, `WebSearch`, `Task`,
+`Agent`, `TodoWrite`, `Skill`), `mcp` for any `mcp__` tool, and
+`other` for anything else. The group never carries a denied command,
+its input or any other text from the transcript.
+
+`available` is `true` only when the result record carries the list:
+an empty list is `available: true, total: 0, by_tool: {}`. A missing
+or unparseable transcript, or a result record with no list, gives
+`available: false` with `total` and `by_tool` null, never a zero. A
+record with no `permission_denials` key at all, including every record
+written before this group existed, MUST be read as `available: false`;
+its absence is never a schema violation, as for `branch_advance`.
+
 ## Field reference
 
 See data-model.md's "Agent run metrics record" table for the full
@@ -150,6 +177,7 @@ explains the rationale for each field's presence.
   "per_model": [],
   "per_model_available": false,
   "emitted_at": "2026-08-25T14:03:11Z",
+  "permission_denials": { "available": false, "total": null, "by_tool": null },
   "branch_advance": { "available": false, "branch": null, "before_sha": null, "before_available": false, "after_sha": null, "after_available": false, "commits": null, "commits_available": false }
 }
 ```
