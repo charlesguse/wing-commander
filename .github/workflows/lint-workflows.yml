@@ -2359,7 +2359,7 @@ jobs:
           NOT_A_COMMAND = ALWAYS_AVAILABLE | SHARED_SHELL_FUNCTIONS | {
               "[", "[[", "]]", "]", "{", "}", "DOLLARSUBST", "GHEXPR"}
 
-          # `<<<` is a here-string, not a heredoc: no closer line follows.
+          # (?<!<)/(?!<): a here-string `<<< "word ..."` is not a heredoc opener.
           HEREDOC_OPEN = re.compile(r"(?<!<)<<(?!<)[-~]?\s*['\"]?(\w+)['\"]?")
           TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.+-]*$")
 
